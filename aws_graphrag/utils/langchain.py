@@ -614,7 +614,7 @@ def setup_chain(
     model_id: LanguageModelId,
     prompt_class: type[BasePrompt],
     parser: BaseOutputParser,
-    custom_prompts: CustomPromptConfig | None = None,
+    custom_prompts: "CustomPromptConfig | None" = None,
 ) -> Runnable:
     try:
         llm = factory.get_model(model_id=model_id)
@@ -640,7 +640,7 @@ def setup_chain_with_output_fixing(
     model_id: LanguageModelId,
     prompt_class: type[BasePrompt],
     parser: BaseOutputParser,
-    custom_prompts=None,
+    custom_prompts: "CustomPromptConfig | None" = None,
 ) -> Runnable:
     try:
         llm = factory.get_model(model_id=model_id)

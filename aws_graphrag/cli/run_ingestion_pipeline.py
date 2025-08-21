@@ -196,7 +196,7 @@ class IngestionPipelineRunner:
 
     def _create_pipeline_config(self) -> PipelineConfig:
         stages = {
-            PipelineStageType.DOCUMENT_PARSING: False,
+            PipelineStageType.DOCUMENT_PARSING: True,
             PipelineStageType.DOCUMENT_LOADING: True,
             PipelineStageType.TEXT_CHUNKING: True,
             PipelineStageType.TRANSLATION: True,
@@ -207,7 +207,7 @@ class IngestionPipelineRunner:
             PipelineStageType.CLAIM_RESOLUTION: True,
             PipelineStageType.GRAPH_ANALYSIS: True,
             PipelineStageType.COMMUNITY_DETECTION: True,
-            PipelineStageType.INDEXING: False,
+            PipelineStageType.INDEXING: True,
         }
 
         return PipelineConfig(
