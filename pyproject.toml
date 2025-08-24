@@ -86,7 +86,7 @@ docs = [
 ]
 
 [project.urls]
-Repository = "https://codecatalyst.aws/spaces/secc-dev/projects/secc-aiml/source-repositories/aws-native-graphrag"
+Repository = "https://codecatalyst.aws/spaces/secc-dev/projects/secc-aiml/source-repositories/aws-graphrag"
 
 [tool.hatch.version]
 path = "aws_graphrag/__init__.py"

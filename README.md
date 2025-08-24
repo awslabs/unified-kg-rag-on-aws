@@ -19,51 +19,45 @@ Built from the ground up based on Microsoft's "From Local to Global: A Graph RAG
 ## ✨ Features & Advantages
 
 ### 🏗️ **AWS-Native Design**
-- **Fully Managed**: Built on AWS managed services (Bedrock, Neptune, OpenSearch, S3)
-- **Scalable**: Handles large-scale document processing with parallel execution
-- **Cost-Optimized**: Intelligent caching and incremental indexing
-- **Secure**: Leverages AWS IAM and VPC for enterprise-grade security
+- **AWS Service Integration**: Seamless integration with Bedrock, Neptune, OpenSearch, S3, and other AWS services
+- **Scalable**: Parallel processing architecture supporting large-scale document processing
+- **Cost-Optimized**: Intelligent caching and S3 synchronization for cost optimization with elastic task retry
+- **Enterprise Security**: S3 encryption and private VPC-based enterprise-grade security implementation
 
 ### 🚀 **Triple Hybrid Search Architecture**
-- **Vector Search**: Semantic similarity using Amazon Bedrock embeddings
-- **Keyword Search**: Lexical matching with BM25 algorithm  
-- **Graph Search**: Relationship-based traversal through knowledge graphs
-- **Unified Scoring**: RRF (Reciprocal Rank Fusion) for optimal result ranking
+- **Semantic Search**: High-quality vector search based on Amazon Bedrock embedding models
+- **Lexical Search**: Precise keyword matching using BM25 algorithm
+- **Relationship-based Search**: Connectivity analysis through knowledge graph traversal
+- **Result Optimization**: Enhanced search accuracy with RRF algorithm and Amazon Bedrock reranking models
 
 ### 🧠 **Advanced Knowledge Graph Processing**
-- **Entity Resolution**: Automatic deduplication and merging of similar entities
-- **Community Detection**: Leiden algorithms for topic clustering
-- **Multi-hop Reasoning**: Complex query answering across document boundaries
-- **Source Traceability**: Every answer includes verifiable source references
+- **Precise Entity Resolution**: Automatic detection and integration of duplicate entities
+- **Topic Clustering**: Efficient community detection based on Leiden algorithm
+- **Complex Reasoning**: Multi-hop reasoning capabilities across document boundaries
+- **Source Transparency**: Verifiable information sources provided for all responses
 
-### 🔍 **Dynamic Search Strategies**
-- **Simple Search**: Direct vector/keyword search without graph traversal
-- **Local Search**: Entity-focused detailed analysis
-- **Global Search**: Community-based broad insights  
-- **Drift Search**: Iterative exploration with expanding context
+### 🔍 **Intelligent Search Strategies**
+- **Simple Search**: Direct search approach for fast results
+- **Local Search**: Entity-focused deep analysis
+- **Global Search**: Community-based comprehensive insights
+- **Progressive Exploration**: Gradual knowledge discovery through context expansion
 
 ### 🎯 **Comprehensive Evaluation Framework**
-- **LangChain Integration**: Built-in evaluators for RAG performance assessment
-- **RAGAS Metrics**: Faithfulness, answer relevancy, context precision/recall
-- **Graph Quality**: Entity/relationship extraction accuracy evaluation
-- **End-to-End Performance**: Response time, throughput, and cost analysis
-- **Automated Benchmarking**: Standard dataset evaluation with detailed reporting
+- **LangChain-based Evaluation**: RAG performance measurement through built-in evaluators
+- **RAGAS Metrics**: Multi-dimensional evaluation including answer faithfulness, relevancy, and context accuracy
 
-### 🔧 **Domain-Specific Prompt Tuning**
-- **Customizable Prompts**: Tailor all system and human prompts for specific domains
-- **Flexible Configuration**: Override default prompts through YAML configuration
-- **Multi-Stage Support**: Customize prompts for extraction, refinement, and generation
-- **Domain Optimization**: Adapt language and instructions for specialized use cases
+### 🔧 **User Support**
+- **Domain-specific Prompts**: Prompt optimization tailored to business characteristics
+- **Flexible Configuration**: Detailed option adjustment through YAML configuration files
+- **Comprehensive Monitoring**: Detailed logging and performance monitoring capabilities
 
 ### 🌍 **Multilingual Support**
-- **Auto-Detection**: Automatic language identification
-- **Real-time Translation**: Non-English content translated to English
-- **Global Deployment**: Support for international document collections
+- **Automatic Language Processing**: Automatic English conversion of multilingual documents during indexing and search
 
-### 📊 **Advanced Visualization & Analytics**
-- **Interactive Graph Visualization**: Knowledge graph exploration with Node2Vec embeddings and UMAP-based 2D visualization of entity relationships
-- **Graph Analysis**: Centrality metrics (degree, betweenness, PageRank, closeness, eigenvector) and community detection
-- **Export Capabilities**: Static and interactive visualization formats for analysis and presentation
+### 📊 **Visualization & Analytics Tools**
+- **Interactive Graph**: Intuitive graph visualization using Node2Vec and UMAP technologies
+- **Network Analysis**: Graph structure analysis through various centrality metrics
+- **Export Capabilities**: Various visualization formats for presentation and analysis
 
 ## 🏛️ Architecture Overview
 
@@ -93,7 +87,7 @@ The framework implements a sophisticated indexing and retrieval pipeline:
 - **Configurable Strategies**: Flexible processing approaches per stage
 - **Error Handling**: Optional continuation on stage failures
 
-### Retrieval Pipeline  
+### Retrieval Pipeline
 ![Retrieval Pipeline](./assets/retrieval_pipeline.png)
 
 #### Multi-Strategy Architecture
@@ -170,7 +164,29 @@ pip install -e .
 # Copy and configure settings
 cp config-template.yaml config.yaml
 # Edit config.yaml with your AWS service endpoints
+
+# Copy and configure environment variables (if using username/password authentication)
+cp .env-template .env
+# Edit .env file with your OpenSearch credentials if not using IAM authentication
 ```
+
+### Environment Configuration
+
+If your OpenSearch cluster uses username/password authentication instead of IAM, create a `.env` file:
+
+```bash
+cp .env-template .env
+```
+
+Then edit the `.env` file with your OpenSearch credentials:
+
+```bash
+# OpenSearch Authentication (only required if use_iam is false in config.yaml)
+OPENSEARCH_USERNAME=your_opensearch_username
+OPENSEARCH_PASSWORD=your_opensearch_password
+```
+
+**Note**: The `.env` file is only needed when `use_iam: false` is set in your `config.yaml` OpenSearch configuration. If you're using IAM authentication (`use_iam: true`), you can skip this step.
 
 ## 📖 Usage
 
@@ -188,22 +204,22 @@ Edit the configuration file with your AWS service endpoints and settings:
 aws:
   region_name: "us-east-1"  # AWS region for services
   profile_name: null        # AWS profile name (optional)
-  
+
   bedrock:
     region_name: "us-west-2"  # Bedrock service region
-  
+
   neptune:
     endpoint: "your-neptune-cluster.cluster-xyz.us-east-1.neptune.amazonaws.com"  # Required: Neptune cluster endpoint
     port: 8182
     use_iam: true
-  
+
   opensearch:
     endpoint: "https://your-opensearch-domain.us-east-1.es.amazonaws.com"  # Required: OpenSearch domain endpoint
     port: 443
     use_ssl: true
     verify_certs: true
-    use_iam: false
-  
+    use_iam: false  # Set to false if using username/password authentication
+
   s3:
     bucket_name: "your-s3-bucket-name"  # Required: S3 bucket for caching
 
@@ -212,7 +228,7 @@ processing:
   max_concurrency: 5        # Maximum parallel operations
   batch_size: 10           # Batch processing size
   parallel_workers: 4      # Number of parallel workers
-  
+
   # Text Chunking
   chunking:
     chunker_type: "intelligent"  # "intelligent" or "simple"
@@ -220,13 +236,13 @@ processing:
     min_chunk_size: 5000
     max_chunk_size: 50000
     chunk_overlap: 500
-  
+
   # Graph Extraction
   graph_extraction:
     extraction_model_id: "anthropic.claude-sonnet-4-20250514-v1:0"
     max_entities_per_chunk: 100
     max_relationships_per_chunk: 100
-  
+
   # Translation
   translation:
     translation_model_id: "anthropic.claude-3-5-haiku-20241022-v1:0"
@@ -244,7 +260,7 @@ indexing:
 search:
   answer_generation_model_id: "anthropic.claude-sonnet-4-20250514-v1:0"  # Main LLM for answer generation
   entity_extraction_model_id: "anthropic.claude-3-5-haiku-20241022-v1:0"
-  
+
   # Hybrid search weights
   hybrid:
     lexical_weight: 0.5
@@ -256,75 +272,75 @@ custom_prompts:
   graph_extraction_system: |
     You are an expert knowledge graph extractor specialized in [DOMAIN].
     Extract entities and relationships from the provided text, focusing on [DOMAIN-SPECIFIC CONCEPTS].
-    
+
   graph_extraction_human: |
     Extract entities and relationships from this [DOMAIN] text:
     {input_text}
-    
+
     Extraction Limits:
     - Maximum Entities: {max_entities_per_chunk}
     - Maximum Relationships: {max_relationships_per_chunk}
-    
+
   # Claim Extraction Prompts (Variables: input_text, entity_specs)
   claim_extraction_system: |
-    You are a [DOMAIN] claim extraction specialist. Extract factual assertions 
+    You are a [DOMAIN] claim extraction specialist. Extract factual assertions
     focusing on [DOMAIN-SPECIFIC CLAIMS].
-    
+
   claim_extraction_human: |
     Extract claims from this [DOMAIN] text:
     {input_text}
-    
+
     Entity specifications: {entity_specs}
-    
+
   # Graph Refinement/Gleaning Prompts (Variables: input_text, entity_specs, relationships_specs)
   graph_refinement_system: |
-    You are a [DOMAIN] knowledge graph refinement expert. Improve and enhance 
+    You are a [DOMAIN] knowledge graph refinement expert. Improve and enhance
     the extracted entities and relationships for [DOMAIN-SPECIFIC ACCURACY].
-    
+
   graph_refinement_human: |
     Refine the knowledge graph from this [DOMAIN] text:
     {input_text}
-    
+
     Current entities: {entity_specs}
     Current relationships: {relationships_specs}
-    
+
   # Community Report Prompts (Variables: community_summary, community_entities, community_relationships)
   community_report_system: |
     You are a [DOMAIN] analyst creating comprehensive community reports.
     Focus on [DOMAIN-SPECIFIC ANALYSIS CRITERIA].
-    
+
   community_report_human: |
     Create a comprehensive report for this [DOMAIN] community:
-    
+
     Summary: {community_summary}
     Key Entities: {community_entities}
     Relationships: {community_relationships}
-    
+
   # Entity Extraction Prompts (Variables: query, target_language)
   entity_extraction_system: |
     You are a [DOMAIN] expert. Extract relevant entities from user queries.
     Pay special attention to [DOMAIN-SPECIFIC TERMINOLOGY].
-    
+
   entity_extraction_human: |
     Extract key entities from this [DOMAIN] query: "{query}"
     Target language: {target_language}
-    
+
   # Keyword Expansion Prompts (Variables: query, entities, topics, max_keywords)
   keyword_expansion_system: |
     You are a [DOMAIN] search specialist. Expand queries with relevant keywords
     focusing on [DOMAIN-SPECIFIC TERMINOLOGY].
-    
+
   keyword_expansion_human: |
     Expand keywords for this [DOMAIN] query: "{query}"
     Entities: {entities}
     Topics: {topics}
     Maximum keywords: {max_keywords}
-    
+
   # Query Refinement Prompts (Variables: original_query, results_summary, iteration)
   query_refinement_system: |
     You are a [DOMAIN] search specialist. Refine queries for better [DOMAIN] results
     based on previous search iterations.
-    
+
   query_refinement_human: |
     Refine this [DOMAIN] query based on results:
     Original query: "{original_query}"
@@ -338,21 +354,21 @@ custom_prompts:
 ```yaml
 custom_prompts:
   graph_extraction_system: |
-    You are a medical knowledge extractor. Extract medical entities (diseases, symptoms, treatments, medications) 
+    You are a medical knowledge extractor. Extract medical entities (diseases, symptoms, treatments, medications)
     and their relationships. Focus on clinical accuracy and medical terminology.
-    
+
   graph_extraction_human: |
     Extract medical entities and relationships from this clinical text:
     {input_text}
-    
+
     Extraction Limits:
     - Maximum Entities: {max_entities_per_chunk}
     - Maximum Relationships: {max_relationships_per_chunk}
-    
+
   entity_extraction_system: |
-    You are a medical expert. Extract medical entities from queries including diseases, symptoms, 
+    You are a medical expert. Extract medical entities from queries including diseases, symptoms,
     treatments, medications, and anatomical terms.
-    
+
   entity_extraction_human: |
     Extract medical entities from this query: "{query}"
     Target language: {target_language}
@@ -362,16 +378,16 @@ custom_prompts:
 ```yaml
 custom_prompts:
   graph_extraction_system: |
-    You are a legal document analyzer. Extract legal entities (cases, statutes, regulations, parties) 
+    You are a legal document analyzer. Extract legal entities (cases, statutes, regulations, parties)
     and their relationships. Focus on legal precedents and regulatory connections.
-    
+
   community_report_system: |
-    You are a legal analyst. Create reports focusing on case law, regulatory frameworks, 
+    You are a legal analyst. Create reports focusing on case law, regulatory frameworks,
     and legal precedents within each topic cluster.
-    
+
   community_report_human: |
     Create a comprehensive legal analysis report for this community:
-    
+
     Summary: {community_summary}
     Key Legal Entities: {community_entities}
     Legal Relationships: {community_relationships}
@@ -381,13 +397,13 @@ custom_prompts:
 ```yaml
 custom_prompts:
   graph_extraction_system: |
-    You are a financial analyst. Extract financial entities (companies, markets, instruments, metrics) 
+    You are a financial analyst. Extract financial entities (companies, markets, instruments, metrics)
     and their relationships. Focus on financial performance and market connections.
-    
+
   keyword_expansion_system: |
     You are a financial search specialist. Expand queries with financial terminology,
     market indicators, and economic concepts.
-    
+
   keyword_expansion_human: |
     Expand financial keywords for this query: "{query}"
     Financial entities: {entities}
@@ -460,7 +476,7 @@ Create an evaluation dataset file (e.g., `eval_questions.json`) with the followi
     }
   },
   {
-    "id": "q2", 
+    "id": "q2",
     "question": "How do entities X and Y relate to each other?",
     "answer": "Entity X influences Entity Y through relationship Z.",
     "category": "relationships",
@@ -589,13 +605,13 @@ This project is licensed under the MIT-0 License - see the [LICENSE](LICENSE) fi
 
 ## 📚 References
 
-- [From Local to Global: A Graph RAG Approach to Query-Focused Summarization](https://arxiv.org/abs/2404.16130) 
-- [GraphRAG: Unlocking LLM Discovery on Narrative Private Data](https://www.microsoft.com/en-us/research/blog/graphrag-unlocking-llm-discovery-on-narrative-private-data/) 
-- [GraphRAG: New Tool for Complex Data Discovery Now on GitHub](https://www.microsoft.com/en-us/research/blog/graphrag-new-tool-for-complex-data-discovery-now-on-github/) 
+- [From Local to Global: A Graph RAG Approach to Query-Focused Summarization](https://arxiv.org/abs/2404.16130)
+- [GraphRAG: Unlocking LLM Discovery on Narrative Private Data](https://www.microsoft.com/en-us/research/blog/graphrag-unlocking-llm-discovery-on-narrative-private-data/)
+- [GraphRAG: New Tool for Complex Data Discovery Now on GitHub](https://www.microsoft.com/en-us/research/blog/graphrag-new-tool-for-complex-data-discovery-now-on-github/)
 - [GraphRAG Auto-Tuning Provides Rapid Adaptation to New Domains](https://www.microsoft.com/en-us/research/blog/graphrag-auto-tuning-provides-rapid-adaptation-to-new-domains/)
-- [Introducing DRIFT Search: Combining Global and Local Search Methods to Improve Quality and Efficiency](https://www.microsoft.com/en-us/research/blog/introducing-drift-search-combining-global-and-local-search-methods-to-improve-quality-and-efficiency/) 
-- [GraphRAG: Improving Global Search via Dynamic Community Selection](https://www.microsoft.com/en-us/research/blog/graphrag-improving-global-search-via-dynamic-community-selection/) 
-- [LazyGraphRAG: Setting a New Standard for Quality and Cost](https://www.microsoft.com/en-us/research/blog/lazygraphrag-setting-a-new-standard-for-quality-and-cost/) 
+- [Introducing DRIFT Search: Combining Global and Local Search Methods to Improve Quality and Efficiency](https://www.microsoft.com/en-us/research/blog/introducing-drift-search-combining-global-and-local-search-methods-to-improve-quality-and-efficiency/)
+- [GraphRAG: Improving Global Search via Dynamic Community Selection](https://www.microsoft.com/en-us/research/blog/graphrag-improving-global-search-via-dynamic-community-selection/)
+- [LazyGraphRAG: Setting a New Standard for Quality and Cost](https://www.microsoft.com/en-us/research/blog/lazygraphrag-setting-a-new-standard-for-quality-and-cost/)
 - [Introducing GraphRAG 1.0](https://www.microsoft.com/en-us/research/blog/moving-to-graphrag-1-0-streamlining-ergonomics-for-developers-and-users/)
 - [Microsoft GraphRAG Library](https://github.com/microsoft/graphrag)
 
