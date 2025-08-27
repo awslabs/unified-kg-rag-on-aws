@@ -242,7 +242,13 @@ class EvaluationRunner:
         display_ascii_art(version=__version__)
         console.rule("[bold]Initializing Evaluation[/bold]", style="blue")
 
-        queries, ground_truths = self._load_data()
+        self.evaluation_manager = EvaluationManager(
+            config=self.config, rag_chain=self.rag_chain
+        )
+
+        queries, ground_truths = self.evaluation_manager.load_data(
+            eval_data_path=self.args.eval_data_path
+        )
 
         if not ground_truths:
             logger.warning(
@@ -252,10 +258,6 @@ class EvaluationRunner:
                 EvaluationGroundTruth(query_id=q.query_id, ground_truth="")
                 for q in queries
             ]
-
-        self.evaluation_manager = EvaluationManager(
-            config=self.config, rag_chain=self.rag_chain
-        )
 
         console.rule(
             f"[bold]Running Evaluation on {len(queries)} Queries[/bold]", style="blue"

@@ -490,20 +490,21 @@ Create an evaluation dataset file (e.g., `eval_questions.json`) with the followi
 ### Python API Usage
 
 ```python
-from aws_graphrag.models import Config
+import nest_asyncio
+
+from aws_graphrag.core import get_config
+from aws_graphrag.models import PipelineConfig, SearchStrategy, SearchType
 from aws_graphrag.retrieval import RAGInput, create_rag_chain
 from aws_graphrag.ingestion import DataIngestionPipeline
 
+nest_asyncio.apply()
+
 # Initialize configuration
-config = Config.from_yaml("config.yaml")
+config = get_config("config.yaml")  # Specify your config path
 
 # Index documents
-pipeline = DataIngestionPipeline(config)
-await pipeline.run(
-    source_directory="./documents",
-    force_rebuild=False,
-    s3_sync=True
-)
+pipeline = DataIngestionPipeline(config=config, pipeline_config=PipelineConfig())
+await pipeline.run(source_directory="./documents")
 
 # Create RAG chain
 rag_chain = await create_rag_chain(config)
@@ -511,8 +512,8 @@ rag_chain = await create_rag_chain(config)
 # Query with different strategies
 rag_input = RAGInput(
     query="What are the key relationships between entities X and Y?",
-    search_strategy="local",
-    search_type="hybrid",
+    search_strategy=SearchStrategy.AUTO,
+    search_type=SearchType.HYBRID,
     top_k=10,
     use_memory=True,
     conversation_id="session-123"
@@ -520,7 +521,6 @@ rag_input = RAGInput(
 
 result = await rag_chain.ainvoke(rag_input)
 print(f"Answer: {result.answer}")
-print(f"Sources: {[source.title for source in result.sources]}")
 ```
 
 ### Advanced Usage
@@ -530,8 +530,8 @@ print(f"Sources: {[source.title for source in result.sources]}")
 # Use specific search strategy with custom parameters
 rag_input = RAGInput(
     query="Detailed analysis of specific entity",
-    search_strategy="local",
-    search_type="hybrid",
+    search_strategy=SearchStrategy.LOCAL,
+    search_type=SearchType.HYBRID,
     top_k=20,
     retrieval_multiplier=2,
     filters={"category": "research"}
@@ -547,7 +547,7 @@ rag_input = RAGInput(
     query="What are the main themes?",
     use_memory=True,
     conversation_id="my-session",
-    search_strategy="global"
+    search_strategy=SearchStrategy.GLOBAL
 )
 
 # Follow-up query with context
@@ -561,19 +561,20 @@ follow_up = RAGInput(
 #### Pipeline Resume and Caching
 ```python
 # Resume pipeline from specific stage
-pipeline = DataIngestionPipeline(config)
+pipeline = DataIngestionPipeline(
+    config=config,
+    pipeline_config=PipelineConfig(),
+)
+
 await pipeline.run(
     source_directory="./documents",
     pipeline_id="existing-pipeline-id",
-    resume_from_stage="graph_extraction",
-    s3_sync=True,
-    s3_bucket_name="my-cache-bucket"
+    resume_from_stage="graph_extraction"
 )
 
 # Force rebuild ignoring cache
 await pipeline.run(
-    source_directory="./documents",
-    force_rebuild=True
+    source_directory="./documents"
 )
 ```
 
@@ -582,17 +583,14 @@ await pipeline.run(
 from aws_graphrag.evaluation import EvaluationManager
 
 # Run comprehensive evaluation
-eval_manager = EvaluationManager(config)
-results = await eval_manager.evaluate(
-    eval_data_path="eval_questions.json",
-    search_strategy="auto",
-    search_type="hybrid",
-    top_k=10
+eval_manager = EvaluationManager(config, rag_chain)
+queries, ground_truths = eval_manager.load_data(
+    eval_data_path="my_eval_data.json",
 )
 
-print(f"Faithfulness: {results.faithfulness}")
-print(f"Answer Relevancy: {results.answer_relevancy}")
-print(f"Context Precision: {results.context_precision}")
+results = await eval_manager.evaluate_dataset(
+  queries, ground_truths
+)
 ```
 
 ## 🤝 Contributing

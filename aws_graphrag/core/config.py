@@ -104,15 +104,15 @@ class ConfigLoader:
 _config_loader = ConfigLoader()
 
 
-def get_config(config_path: Path | None = None) -> Config:
+def get_config(config_path: str | Path | None = None) -> Config:
     if config_path is not None:
-        loader = ConfigLoader(config_path)
+        loader = ConfigLoader(Path(config_path))
         return loader.load_config()
     return _config_loader.config
 
 
-def reload_config(config_path: Path | None = None) -> Config:
+def reload_config(config_path: str | Path | None = None) -> Config:
     if config_path is not None:
-        loader = ConfigLoader(config_path)
+        loader = ConfigLoader(Path(config_path))
         return loader.load_config()
     return _config_loader.reload_config()

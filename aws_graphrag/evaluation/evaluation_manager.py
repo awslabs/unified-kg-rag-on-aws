@@ -16,6 +16,7 @@ from aws_graphrag.models import (
     EvaluationResult,
     EvaluationSummary,
     EvaluatorType,
+    SearchStrategy,
 )
 from aws_graphrag.retrieval import RAGOutput
 from aws_graphrag.utils import BatchProcessor
@@ -70,6 +71,73 @@ class EvaluationManager:
             logger.warning("No evaluators were successfully initialized")
         else:
             logger.info(f"Initialized {enabled_count} evaluators")
+
+    @staticmethod
+    def load_data(
+        eval_data_path: str | Path, base_metadata: dict[str, Any] | None = None
+    ) -> tuple[list[EvaluationQuery], list[EvaluationGroundTruth]]:
+        if not eval_data_path:
+            raise ValueError("Evaluation data path is required.")
+
+        if base_metadata is None:
+            base_metadata = {}
+
+        try:
+            with open(eval_data_path, encoding="utf-8") as f:
+                data = json.load(f)
+
+            queries = []
+            ground_truths = []
+
+            cleaned_base_metadata = {
+                k: v for k, v in base_metadata.items() if v is not None
+            }
+
+            for i, item in enumerate(data):
+                if not isinstance(item, dict) or "question" not in item:
+                    logger.warning(f"Skipping invalid item at index {i}: '{item}'")
+                    continue
+
+                final_metadata = cleaned_base_metadata.copy()
+                final_metadata.update(item.get("metadata", {}))
+                if "search_strategy" not in final_metadata:
+                    final_metadata["search_strategy"] = SearchStrategy.AUTO.value
+
+                query_id = item.get("query_id", item.get("id", f"q_{i}"))
+                query = EvaluationQuery(
+                    query_id=query_id,
+                    question=item["question"],
+                    category=item.get("category"),
+                    difficulty=item.get("difficulty"),
+                    metadata=final_metadata,
+                )
+                queries.append(query)
+
+                ground_truth_value = item.get("answer")
+                if ground_truth_value:
+                    gt = EvaluationGroundTruth(
+                        query_id=query_id,
+                        ground_truth=str(ground_truth_value),
+                        reference_sources=item.get("reference_sources", []),
+                        expected_entities=item.get("expected_entities", []),
+                        expected_relationships=item.get("expected_relationships", []),
+                    )
+                    ground_truths.append(gt)
+
+            logger.info(
+                f"Loaded {len(queries)} queries and {len(ground_truths)} ground truths from '{eval_data_path}'."
+            )
+            return queries, ground_truths
+
+        except FileNotFoundError:
+            logger.error(f"Evaluation data file not found: '{eval_data_path}'")
+            raise
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding JSON from '{eval_data_path}': {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to load data from '{eval_data_path}': {e}")
+            raise
 
     async def evaluate_dataset(
         self,
