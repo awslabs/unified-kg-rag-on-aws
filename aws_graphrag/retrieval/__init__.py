@@ -6,6 +6,7 @@ from .memory_manager import (
     MemoryManager,
 )
 from .rag_chain import (
+    ChainMode,
     GraphRAGChain,
     RAGInput,
     RAGOutput,
@@ -24,6 +25,7 @@ __all__ = [
     "BaseContextBuilder",
     "BaseGraphRAGRetriever",
     "BaseSearchStrategy",
+    "ChainMode",
     "DriftSearchStrategy",
     "GlobalSearchStrategy",
     "GraphRAGChatMessageHistory",

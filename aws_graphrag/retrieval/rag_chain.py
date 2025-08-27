@@ -2,6 +2,7 @@ import asyncio
 import time
 import uuid
 from collections.abc import AsyncGenerator, Generator
+from enum import Enum
 from functools import lru_cache
 from typing import Any
 
@@ -62,6 +63,11 @@ logger = get_logger(__name__)
 DEFAULT_ERROR_MESSAGE: str = (
     "I apologize, but an error occurred while processing your request. Please try again in a moment."
 )
+
+
+class ChainMode(str, Enum):
+    RAG = "rag"
+    SEARCH = "search"
 
 
 class ProcessedQuery(BaseModel):
@@ -136,15 +142,20 @@ class RAGOutput(BaseModel):
     )
 
 
-class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
+class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict]):
     def __init__(
-        self, config: Config, boto_session: boto3.Session | None = None, **kwargs: Any
+        self,
+        config: Config,
+        boto_session: boto3.Session | None = None,
+        mode: ChainMode = ChainMode.RAG,
+        **kwargs: Any,
     ) -> None:
         super().__init__()
         self.config = config
         self.boto_session = boto_session or boto3.Session(
             profile_name=self.config.aws.profile_name
         )
+        self.mode = mode
         self.ignore_errors = self.config.processing.ignore_errors
         self.memory_manager = get_memory_manager()
         self.token_manager = TokenManager(self.config)
@@ -157,16 +168,26 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         self.chain = self._build_chain()
 
     def _build_chain(self) -> Runnable:
-        return (
+        base_chain = (
             RunnableLambda(self._resolve_strategy)
             | RunnablePassthrough.assign(
                 processed_query=self._query_processing_branch()
             )
             | RunnableLambda(self._load_memory_step)
             | RunnablePassthrough.assign(search_results=self._search_step)
-            | RunnablePassthrough.assign(context=self._context_building_step)
+        )
+
+        rag_branch = (
+            RunnablePassthrough.assign(context=self._context_building_step)
             | RunnablePassthrough.assign(answer=self._answer_generation_step)
             | RunnableLambda(self._format_output_step)
+        )
+
+        search_branch = RunnableLambda(self._format_search_output_step)
+
+        return base_chain | RunnableBranch(
+            (lambda state: self.mode == ChainMode.RAG, rag_branch),
+            search_branch,
         )
 
     async def _resolve_strategy(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -422,12 +443,30 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             metadata=metadata,
         )
 
+    @staticmethod
+    def _format_search_output_step(state: dict[str, Any]) -> dict:
+        sr: SearchResult = state["search_results"]
+        sr.search_strategy = state["resolved_strategy"].value
+
+        metadata = {
+            "search_strategy": sr.search_strategy,
+            "processing_time": time.time() - state["start_time"],
+            "total_results": len(sr.results),
+            **sr.metadata,
+        }
+
+        return {
+            "search_results": sr.model_dump(),
+            "processed_query": state["processed_query"].model_dump(),
+            "metadata": metadata,
+        }
+
     def invoke(
         self,
         inputs: RAGInput | dict[str, Any],
         config: RunnableConfig | None = None,
         **kwargs: Any,
-    ) -> RAGOutput:
+    ) -> RAGOutput | dict:
         return asyncio.run(self.ainvoke(inputs, config, **kwargs))
 
     async def ainvoke(
@@ -435,7 +474,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         inputs: RAGInput | dict[str, Any],
         config: RunnableConfig | None = None,
         **kwargs: Any,
-    ) -> RAGOutput:
+    ) -> RAGOutput | dict:
         rag_input, input_dict = self._prepare_invoke(inputs)
 
         try:
@@ -482,7 +521,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         input_dict["start_time"] = time.time()
         return rag_input, input_dict
 
-    async def _save_memory(self, output: RAGOutput | None):
+    async def _save_memory(self, output: RAGOutput | dict | None):
         if not isinstance(output, RAGOutput) or not output.conversation_id:
             return
 
@@ -507,6 +546,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> Generator[str, None, None]:
+        if self.mode == ChainMode.SEARCH:
+            logger.warning("Streaming is not supported in SEARCH mode.")
+            return
+
         _, input_dict = self._prepare_invoke(inputs)
         answer_chain = self.chain | (lambda x: x["answer"])
 
@@ -522,6 +565,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[str, None]:
+        if self.mode == ChainMode.SEARCH:
+            logger.warning("Streaming is not supported in SEARCH mode.")
+            return
+
         _, input_dict = self._prepare_invoke(inputs)
         answer_chain = self.chain | (lambda x: x["answer"])
 
@@ -534,6 +581,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
 
 async def create_rag_chain(
-    config: Config, boto_session: boto3.Session | None = None, **kwargs: Any
+    config: Config,
+    boto_session: boto3.Session | None = None,
+    mode: ChainMode = ChainMode.RAG,
+    **kwargs: Any,
 ) -> GraphRAGChain:
-    return GraphRAGChain(config=config, boto_session=boto_session, **kwargs)
+    return GraphRAGChain(config=config, boto_session=boto_session, mode=mode, **kwargs)

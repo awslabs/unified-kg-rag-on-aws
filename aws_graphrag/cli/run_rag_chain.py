@@ -14,7 +14,7 @@ from rich.panel import Panel
 
 from aws_graphrag.core import get_config, get_logger
 from aws_graphrag.models import Constants, SearchStrategy, SearchType
-from aws_graphrag.retrieval import GraphRAGChain, RAGInput, create_rag_chain
+from aws_graphrag.retrieval import ChainMode, GraphRAGChain, RAGInput, create_rag_chain
 from aws_graphrag.utils import console, display_ascii_art
 
 ROOT_DIRECTORY = Path(__file__).resolve().parent.parent
@@ -49,6 +49,12 @@ class CommandLineInterface:
             "-i",
             action="store_true",
             help="Launch interactive chat mode for continuous conversation",
+        )
+        parser.add_argument(
+            "--mode",
+            default=ChainMode.RAG.value,
+            choices=[cm.value for cm in ChainMode],
+            help="Set the execution mode: 'rag' for full generation, 'search' for retrieval only",
         )
         parser.add_argument(
             "--conversation-id",
@@ -192,7 +198,9 @@ class RAGChainRunner:
     async def _initialize_chain(self) -> None:
         console.print("[bold]Initializing RAG chain...[/bold]")
         try:
-            self.rag_chain = await create_rag_chain(config=self.config)
+            self.rag_chain = await create_rag_chain(
+                config=self.config, mode=ChainMode(self.args.mode)
+            )
             console.print("[green]GraphRAG chain initialized successfully![/green]")
         except Exception as e:
             logger.error(f"Failed to initialize RAG chain: {e}", exc_info=True)
@@ -241,6 +249,9 @@ class RAGChainRunner:
                     retrieval_multiplier=self.args.retrieval_multiplier,
                     enable_query_processing=not self.args.disable_query_processing,
                 )
+                if self.rag_chain:
+                    self.rag_chain.mode = ChainMode.RAG
+
                 result = await self._run_query(rag_input)
                 self._print_result(result, verbose=True)
                 state["conversation_id"] = result.get(
@@ -261,12 +272,17 @@ class RAGChainRunner:
             raise RuntimeError("RAG chain not initialized")
         try:
             console.print(
-                "[bold]Executing RAG query...[/bold]",
+                f"[bold]Executing RAG query in '{self.args.mode}' mode...[/bold]",
                 "[dim]This may take some time depending on query complexity[/dim]",
             )
             result = await self.rag_chain.ainvoke(rag_input)
             console.print("\n[bold green]Query executed successfully![/bold green]")
-            return {"success": True, **result.model_dump()}
+
+            if isinstance(result, dict):
+                return {"success": True, **result}
+            else:
+                return {"success": True, **result.model_dump()}
+
         except Exception as e:
             logger.error(f"Error during query execution: {e}", exc_info=True)
             console.print(f"\n[bold red]Error executing query: {e}[/bold red]")
@@ -280,6 +296,7 @@ class RAGChainRunner:
         config_lines = [
             "[bold blue]RAG Configuration[/bold blue]",
             "[bold]Current Configuration[/bold]",
+            f"[dim]Execution Mode:[/dim] {self.args.mode}",  # 모드 정보 표시
             f"[dim]Search Strategy:[/dim] {self.args.search_strategy}",
             f"[dim]Search Type:[/dim] {self.args.search_type}",
             f"[dim]Top K Results:[/dim] {self.args.top_k}",
@@ -324,10 +341,15 @@ class RAGChainRunner:
             console.print(f"\n[red]Error: {result.get('error', 'Unknown error')}[/red]")
             return
 
-        console.print("\n\n" + "=" * 50)
-        console.print("[bold blue]Final Answer:[/bold blue]")
-        console.print(result.get("answer", "No answer generated."))
-        console.print("=" * 50)
+        if answer := result.get("answer"):
+            console.print("\n\n" + "=" * 50)
+            console.print("[bold blue]Final Answer:[/bold blue]")
+            console.print(answer)
+            console.print("=" * 50)
+        else:
+            console.print("\n\n" + "=" * 50)
+            console.print("[bold blue]Search Mode Results[/bold blue]")
+            console.print("=" * 50)
 
         if verbose:
             console.print("\n[bold]Details:[/bold]")
@@ -357,7 +379,11 @@ class RAGChainRunner:
                         )
                     )
 
-            if sources := result.get("sources"):
+            sources = result.get("sources")
+            if not sources and result.get("search_results"):
+                sources = result.get("search_results", {}).get("results", [])
+
+            if sources:
                 sources_content = ""
                 for i, source in enumerate(sources[:5], 1):
                     score = source.get("score", 0)
@@ -375,31 +401,22 @@ class RAGChainRunner:
                     )
                 )
 
-            search_result = result.get("search_result", {})
+            search_result = result.get("search_results", {})
             metadata = result.get("metadata", {})
 
             metrics_content = ""
             all_metadata = {**search_result, **metadata}
 
             for key, value in all_metadata.items():
-                if key == "strategy":
+                if key in ["results", "query"]:
+                    continue
+                if key == "search_strategy":
                     metrics_content += f"  - Search Strategy: {value}\n"
-                elif key == "total_results":
-                    metrics_content += f"  - Total Results: {value}\n"
                 elif key == "processing_time":
                     metrics_content += f"  - Processing Time: {value:.2f}s\n"
-                elif key == "iterations_completed":
-                    metrics_content += f"  - Iterations Completed: {value}\n"
-                elif isinstance(value, (int | float)):
-                    formatted_value = (
-                        f"{value:.3f}" if isinstance(value, float) else str(value)
-                    )
-                    metrics_content += (
-                        f"  - {key.replace('_', ' ').title()}: {formatted_value}\n"
-                    )
-                elif isinstance(value, (str | bool)):
+                elif isinstance(value, int | float | str | bool):
                     metrics_content += f"  - {key.replace('_', ' ').title()}: {value}\n"
-                elif isinstance(value, (list | dict)) and len(str(value)) < 100:
+                elif isinstance(value, list | dict) and len(str(value)) < 100:
                     metrics_content += f"  - {key.replace('_', ' ').title()}: {value}\n"
 
             if metrics_content:
@@ -448,6 +465,7 @@ class RAGChainRunner:
     def _handle_show_config(self, state: dict[str, Any], **kwargs: Any) -> None:
         config_lines = [
             "[bold]Current Configuration:[/bold]",
+            "[dim]Execution Mode:[/dim] rag (Interactive mode)",
             f"[dim]Search Strategy:[/dim] {self.args.search_strategy}",
             f"[dim]Search Type:[/dim] {self.args.search_type}",
             f"[dim]Top K Results:[/dim] {self.args.top_k}",
