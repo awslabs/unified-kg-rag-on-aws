@@ -31,19 +31,18 @@ class NeptuneIndexer(GraphIndexer):
         entity_prefix = self.neptune_config.entity_label_prefix.capitalize()
         community_prefix = self.neptune_config.community_label_prefix.capitalize()
 
-        labels_to_delete = [self._get_name(entity_prefix, s) for s in suffixes] + [
+        labels_to_delete = {self._get_name(entity_prefix, s) for s in suffixes} | {
             self._get_name(community_prefix, s) for s in suffixes
-        ]
+        }
 
         try:
             if labels_to_delete:
-                g = self.neptune_client.g
-                g.V().hasLabel(*labels_to_delete).drop().iterate()
-                logger.info(f"Cleared Neptune data for '{labels_to_delete}'")
-
+                logger.info(f"Clearing Neptune data for labels: {labels_to_delete}")
+                for label in labels_to_delete:
+                    self.neptune_client.delete_vertices_in_batches(label)
             return True
         except Exception as e:
-            logger.error(f"Failed to clear Neptune data for '{labels_to_delete}': {e}")
+            logger.error(f"Failed to clear Neptune data for suffixes '{suffixes}': {e}")
             return False
 
     def get_entity_count(self, suffixes: list[str]) -> int:
@@ -56,11 +55,7 @@ class NeptuneIndexer(GraphIndexer):
         try:
             g = self.neptune_client.g
             result = g.V().hasLabel(*entity_labels).count().next()
-            return (
-                int(result)
-                if isinstance(result, (int | float)) and result is not None
-                else 0
-            )
+            return int(result) if isinstance(result, (int | float)) else 0
         except Exception as e:
             logger.error(f"Failed to get entity count for '{entity_labels}': {e}")
             return 0
@@ -74,28 +69,23 @@ class NeptuneIndexer(GraphIndexer):
     def index_entities(self, entities: list[Entity]) -> IndexingStats:
         def get_traversal_builder(label: str) -> Callable:
             def builder(g: GraphTraversalSource, batch: list[Entity]) -> GraphTraversal:
-                traversal = g
+                t = g
                 for entity in batch:
                     props = self._build_vertex_properties(
                         entity,
                         {
-                            "name": entity.name or "",
-                            "type": entity.type or "",
-                            "description": entity.description or "",
-                            "rank": entity.rank or 1,
-                            "text_unit_ids": entity.text_unit_ids or [],
-                            "community_ids": entity.community_ids or [],
+                            "name": entity.name,
+                            "type": entity.type,
+                            "description": entity.description,
+                            "rank": entity.rank,
+                            "text_unit_ids": entity.text_unit_ids,
+                            "community_ids": entity.community_ids,
                         },
                     )
-                    v_traversal = traversal.add_v(label).property("id", entity.id)
-                    for key, value in props.items():
-                        if isinstance(value, list):
-                            for item in value:
-                                v_traversal = v_traversal.property(key, item)
-                        else:
-                            v_traversal = v_traversal.property(key, value)
-                    traversal = v_traversal
-                return cast(GraphTraversal, traversal)
+                    v_traversal = t.add_v(label).property("id", entity.id)
+                    self._add_properties_to_traversal(v_traversal, props)
+                    t = v_traversal
+                return cast(GraphTraversal, t)
 
             return builder
 
@@ -112,35 +102,30 @@ class NeptuneIndexer(GraphIndexer):
             def builder(
                 g: GraphTraversalSource, batch: list[Relationship]
             ) -> GraphTraversal:
-                traversal = g
+                t = g
                 for rel in batch:
                     props = self._build_vertex_properties(
                         rel,
                         {
-                            "source_name": rel.source_name or "",
-                            "target_name": rel.target_name or "",
-                            "weight": rel.weight or 1.0,
-                            "description": rel.description or "",
-                            "rank": rel.rank or 1,
-                            "text_unit_ids": rel.text_unit_ids or [],
+                            "source_name": rel.source_name,
+                            "target_name": rel.target_name,
+                            "weight": rel.weight,
+                            "description": rel.description,
+                            "rank": rel.rank,
+                            "text_unit_ids": rel.text_unit_ids,
                         },
                     )
-                    edge_traversal = (
-                        traversal.V()
+                    e_traversal = (
+                        t.V()
                         .hasLabel(entity_label)
                         .has("id", rel.source_id)
                         .addE(rel.type or "RELATED_TO")
                         .to(__.V().hasLabel(entity_label).has("id", rel.target_id))
                         .property("id", rel.id)
                     )
-                    for key, value in props.items():
-                        if isinstance(value, list):
-                            for item in value:
-                                edge_traversal = edge_traversal.property(key, item)
-                        else:
-                            edge_traversal = edge_traversal.property(key, value)
-                    traversal = edge_traversal
-                return cast(GraphTraversal, traversal)
+                    self._add_properties_to_traversal(e_traversal, props)
+                    t = e_traversal
+                return cast(GraphTraversal, t)
 
             return builder
 
@@ -159,12 +144,10 @@ class NeptuneIndexer(GraphIndexer):
 
         total_stats = IndexingStats()
         grouped_items = self._group_items_by_suffix(communities)
-        edge_batch_size = self.neptune_config.batch_size
 
         for suffix, comms in grouped_items.items():
             stats = IndexingStats(total_items=len(comms))
             start_time = time.time()
-
             community_label = self._get_name(
                 self.neptune_config.community_label_prefix.capitalize(), suffix
             )
@@ -179,31 +162,24 @@ class NeptuneIndexer(GraphIndexer):
                     f"Indexing {len(comms)} communities for '{community_label}'..."
                 )
                 for batch in self._batch_iterator(comms):
-                    traversal = self.neptune_client.g
+                    t = self.neptune_client.g
                     for comm in batch:
                         props = self._build_vertex_properties(
                             comm,
                             {
-                                "name": comm.name or "",
-                                "level": comm.level or 0,
-                                "parent": comm.parent or "",
-                                "size": comm.size or 0,
-                                "period": comm.period or "",
-                                "children": comm.children or [],
+                                "name": comm.name,
+                                "level": comm.level,
+                                "parent": comm.parent,
+                                "size": comm.size,
+                                "period": comm.period,
+                                "children": comm.children,
                             },
                         )
-                        v_traversal = traversal.add_v(community_label).property(
-                            "id", comm.id
-                        )
-                        for key, value in props.items():
-                            if isinstance(value, list):
-                                for item in value:
-                                    v_traversal = v_traversal.property(key, item)
-                            else:
-                                v_traversal = v_traversal.property(key, value)
-                        traversal = v_traversal
+                        v_traversal = t.add_v(community_label).property("id", comm.id)
+                        self._add_properties_to_traversal(v_traversal, props)
+                        t = v_traversal
                     self._execute_with_retries(
-                        cast(GraphTraversal, traversal), "Community vertex indexing"
+                        cast(GraphTraversal, t), "Community vertex indexing"
                     )
 
                 logger.info(
@@ -212,9 +188,7 @@ class NeptuneIndexer(GraphIndexer):
                 for comm in comms:
                     if not comm.entity_ids:
                         continue
-
-                    for i in range(0, len(comm.entity_ids), edge_batch_size):
-                        entity_id_batch = comm.entity_ids[i : i + edge_batch_size]
+                    for entity_id_batch in self._batch_iterator(comm.entity_ids):
                         edge_traversal = (
                             self.neptune_client.g.V()
                             .hasLabel(entity_label)
@@ -225,9 +199,7 @@ class NeptuneIndexer(GraphIndexer):
                         self._execute_with_retries(
                             edge_traversal, "Community edge indexing"
                         )
-
                 stats.add_success(len(comms))
-
             except Exception as e:
                 logger.error(
                     f"Failed to index communities for '{community_label}': {e}"
@@ -237,17 +209,18 @@ class NeptuneIndexer(GraphIndexer):
             stats.processing_time = time.time() - start_time
             total_stats.merge(stats)
 
-        if total_stats.failed_items > 0:
-            logger.warning(
-                f"Indexed {total_stats.successful_items}/{total_stats.total_items} "
-                f"communities ({total_stats.failed_items} failed)"
-            )
-        else:
-            logger.info(
-                f"Successfully indexed {total_stats.successful_items} communities"
-            )
-
+        self._log_indexing_summary("communities", total_stats)
         return total_stats
+
+    def _add_properties_to_traversal(
+        self, traversal: GraphTraversal, props: dict[str, Any]
+    ) -> None:
+        for key, value in props.items():
+            if isinstance(value, list):
+                for item in value:
+                    traversal.property(key, item)
+            else:
+                traversal.property(key, value)
 
     def _build_vertex_properties(
         self, item: Any, base_props: dict[str, Any]
@@ -257,7 +230,6 @@ class NeptuneIndexer(GraphIndexer):
             for k, v in base_props.items()
             if v is not None
         }
-
         if hasattr(item, "attributes") and item.attributes:
             for key, value in item.attributes.items():
                 if value is not None:
@@ -294,18 +266,16 @@ class NeptuneIndexer(GraphIndexer):
             return IndexingStats()
 
         grouped_items = self._group_items_by_suffix(items)
-        total_stats = IndexingStats()
+        total_stats = IndexingStats(total_items=len(items))
 
         for suffix, chunk in grouped_items.items():
             label = self._get_name(label_prefix, suffix)
             if clear_label_prefix:
-                self._clear_existing_data_by_label(
-                    self._get_name(clear_label_prefix, suffix)
-                )
+                clear_label = self._get_name(clear_label_prefix, suffix)
+                self._clear_existing_data_by_label(clear_label)
 
             start_time = time.time()
             stats = IndexingStats(total_items=len(chunk))
-
             try:
                 logger.info(
                     f"Indexing {len(chunk)} {item_type_name.lower()}s for '{label}'..."
@@ -330,24 +300,17 @@ class NeptuneIndexer(GraphIndexer):
             stats.processing_time = time.time() - start_time
             total_stats.merge(stats)
 
-        if total_stats.failed_items > 0:
-            logger.warning(
-                f"Indexed {total_stats.successful_items}/{len(items)} {item_type_name.lower()}s "
-                f"({total_stats.failed_items} failed)"
-            )
-        else:
-            logger.info(
-                f"Successfully indexed {total_stats.successful_items} {item_type_name.lower()}s"
-            )
-
+        self._log_indexing_summary(f"{item_type_name.lower()}s", total_stats)
         return total_stats
 
     def _clear_existing_data_by_label(self, label: str) -> None:
         try:
-            g = self.neptune_client.g
-            if g.V().hasLabel(label).limit(1).count().next() == 0:
-                return
-            g.V().hasLabel(label).drop().iterate()
+            count_result = (
+                self.neptune_client.g.V().hasLabel(label).limit(1).count().next()
+            )
+            count = count_result[0] if isinstance(count_result, list) else count_result
+            if count > 0:
+                self.neptune_client.delete_vertices_in_batches(label)
         except Exception as e:
             logger.error(f"Failed to clear data for label '{label}': {e}")
             raise
@@ -360,7 +323,6 @@ class NeptuneIndexer(GraphIndexer):
     ) -> None:
         if not items:
             return
-
         for batch in self._batch_iterator(items):
             g = self.neptune_client.g
             traversal = traversal_builder(g, batch)
@@ -371,7 +333,6 @@ class NeptuneIndexer(GraphIndexer):
     ) -> None:
         max_retries = self.neptune_config.max_retries
         delay = self.neptune_config.retry_delay_seconds
-
         for attempt in range(max_retries + 1):
             try:
                 traversal.iterate()
@@ -391,3 +352,15 @@ class NeptuneIndexer(GraphIndexer):
         batch_size = self.neptune_config.batch_size
         for i in range(0, len(items), batch_size):
             yield items[i : i + batch_size]
+
+    def _log_indexing_summary(self, item_type_name: str, stats: IndexingStats) -> None:
+        if stats.failed_items > 0:
+            logger.warning(
+                f"Indexed {stats.successful_items}/{stats.total_items} {item_type_name} "
+                f"({stats.failed_items} failed) in {stats.processing_time:.2f}s."
+            )
+        else:
+            logger.info(
+                f"Successfully indexed {stats.successful_items} {item_type_name} "
+                f"in {stats.processing_time:.2f}s."
+            )

@@ -446,13 +446,13 @@ run-rag --interactive --use-memory --conversation-id my-session --config-path co
 #### 3. Evaluate Performance
 ```bash
 # Run evaluation on test dataset
-run-eval --eval-data-path eval_questions.json --config-path config.yaml
+run-eval --eval-data-path my_eval_data.json --config-path config.yaml
 
 # Save results to specific directory
-run-eval --eval-data-path eval_questions.json --outputs-directory ./results --config-path config.yaml
+run-eval --eval-data-path my_eval_data.json --outputs-directory ./results --config-path config.yaml
 
 # Evaluate with specific search strategy
-run-eval --eval-data-path eval_questions.json --search-strategy global --search-type vector --config-path config.yaml
+run-eval --eval-data-path my_eval_data.json --search-strategy global --search-type vector --config-path config.yaml
 ```
 
 **Evaluation Dataset Format**
