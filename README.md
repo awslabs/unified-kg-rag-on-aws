@@ -457,7 +457,7 @@ run-eval --eval-data-path my_eval_data.json --search-strategy global --search-ty
 
 **Evaluation Dataset Format**
 
-Create an evaluation dataset file (e.g., `eval_questions.json`) with the following structure:
+Create an evaluation dataset file (e.g., `my_eval_data.json`) with the following structure:
 
 ```json
 [

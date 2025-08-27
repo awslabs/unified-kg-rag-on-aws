@@ -4,9 +4,8 @@ from datetime import datetime
 from typing import Any
 
 import boto3
-import igraph as ig
-import leidenalg
 import networkx as nx
+from graspologic.partition import leiden
 from pydantic import BaseModel, Field
 
 from aws_graphrag.aws import BedrockLanguageModelFactory
@@ -129,49 +128,40 @@ class CommunityDetector(BaseProcessor):
 
     def analyze_hierarchy(self) -> None:
         try:
-            ig_graph, node_map = self._to_igraph()
+            base_partition = self._get_base_partition()
         except ValueError as e:
-            logger.error(f"Failed to convert NetworkX graph to igraph: {e}")
+            logger.error(f"Failed to detect base communities: {e}")
             return
 
-        base_partition = self._get_base_partition(ig_graph)
         if not base_partition:
-            logger.error(
-                "Failed to detect base communities - aborting hierarchy analysis"
-            )
+            logger.error("Failed to detect base communities - aborting hierarchy analysis")
             return
 
-        self.base_modularity = (
-            base_partition.modularity if base_partition.modularity is not None else 0.0
-        )
+        self.base_modularity = nx.community.modularity(self.graph, base_partition)
 
         logger.info(
             f"Base partition found with {len(base_partition)} communities and modularity {self.base_modularity:.4f}"
         )
 
         partitions = [base_partition]
-        graphs = [ig_graph]
         max_levels = self.community_detection_config.max_levels
 
-        current_graph = ig_graph
         current_partition = base_partition
 
         for level in range(1, max_levels):
             logger.info(f"Creating level {level} communities...")
 
             try:
-                cluster_graph = self._create_cluster_graph(
-                    current_graph, current_partition
-                )
+                cluster_graph = self._create_cluster_graph(current_partition)
 
-                if cluster_graph.vcount() < 2:
+                if cluster_graph.number_of_nodes() < 2:
                     logger.info(
-                        f"Cluster graph has only {cluster_graph.vcount()} nodes, stopping hierarchy at level {level-1}"
+                        f"Cluster graph has only {cluster_graph.number_of_nodes()} nodes, stopping hierarchy at level {level-1}"
                     )
                     break
 
                 logger.info(
-                    f"Created cluster graph with {cluster_graph.vcount()} nodes and {cluster_graph.ecount()} edges"
+                    f"Created cluster graph with {cluster_graph.number_of_nodes()} nodes and {cluster_graph.number_of_edges()} edges"
                 )
 
                 base_resolution = self.community_detection_config.resolution
@@ -184,17 +174,14 @@ class CommunityDetector(BaseProcessor):
                 ]
 
                 best_partition = None
-                best_num_communities = cluster_graph.vcount()
+                best_num_communities = cluster_graph.number_of_nodes()
 
                 for cluster_resolution in cluster_resolutions:
                     try:
                         candidate_partition = self._get_base_partition(
                             cluster_graph, resolution_override=cluster_resolution
                         )
-                        if (
-                            candidate_partition
-                            and len(candidate_partition) < cluster_graph.vcount()
-                        ):
+                        if candidate_partition and len(candidate_partition) < cluster_graph.number_of_nodes():
                             num_communities = len(candidate_partition)
 
                             if 1 < num_communities < best_num_communities:
@@ -202,9 +189,7 @@ class CommunityDetector(BaseProcessor):
                                 best_num_communities = num_communities
 
                     except Exception as e:
-                        logger.debug(
-                            f"Failed with resolution '{cluster_resolution}': {e}"
-                        )
+                        logger.debug(f"Failed with resolution '{cluster_resolution}': {e}")
                         continue
 
                 if best_partition:
@@ -219,9 +204,6 @@ class CommunityDetector(BaseProcessor):
                     break
 
                 partitions.append(next_partition)
-                graphs.append(cluster_graph)
-
-                current_graph = cluster_graph
                 current_partition = next_partition
 
             except Exception as e:
@@ -229,105 +211,86 @@ class CommunityDetector(BaseProcessor):
                 break
 
         logger.info(f"Hierarchy construction completed with {len(partitions)} levels")
-        self._process_hierarchical_partitions(partitions, node_map)
-
-    def _to_igraph(self) -> tuple[ig.Graph, dict[int, str]]:
-        if not self.graph or not self.graph.nodes:
-            raise ValueError("Cannot convert an empty or invalid graph.")
-
-        ig_graph = ig.Graph.TupleList(self.graph.edges(), directed=False)
-        node_list = list(self.graph.nodes())
-        node_to_idx = {node: i for i, node in enumerate(node_list)}
-
-        ig_graph.vs["name"] = node_list
-
-        if self.graph.number_of_edges() > 0:
-            weights = [
-                float(data.get("weight", 1.0))
-                for _, _, data in self.graph.edges(data=True)
-            ]
-            ig_graph.es["weight"] = weights
-
-        idx_to_node_map = {i: node for node, i in node_to_idx.items()}
-        return ig_graph, idx_to_node_map
+        self._process_hierarchical_partitions(partitions)
 
     def _get_base_partition(
-        self, ig_graph: ig.Graph, resolution_override: float | None = None
-    ) -> leidenalg.RBConfigurationVertexPartition | None:
-        if not ig_graph.ecount():
-            logger.warning(
-                "Graph has no edges. Treating each node as a separate community."
-            )
-            return leidenalg.RBConfigurationVertexPartition(
-                ig_graph, list(range(ig_graph.vcount()))
-            )
+        self, graph: nx.Graph | None = None, resolution_override: float | None = None
+    ) -> list[set[str]] | None:
+        target_graph = graph or self.graph
+        
+        if not target_graph or target_graph.number_of_edges() == 0:
+            logger.warning("Graph has no edges. Treating each node as a separate community.")
+            return [{node} for node in target_graph.nodes()]
 
         try:
-            weights_param = (
-                ig_graph.es["weight"] if "weight" in ig_graph.es.attributes() else None
-            )
             resolution = (
                 resolution_override
                 if resolution_override is not None
                 else self.community_detection_config.resolution
             )
 
-            partition = leidenalg.find_partition(
-                ig_graph,
-                leidenalg.RBConfigurationVertexPartition,
-                resolution_parameter=resolution,
-                seed=self.community_detection_config.random_state,
-                n_iterations=self.community_detection_config.max_iterations,
-                weights=weights_param,
+            all_nodes = set(target_graph.nodes())
+            
+            partition_dict = leiden(
+                target_graph,
+                resolution=resolution,
+                random_seed=self.community_detection_config.random_state,
             )
-            return partition
+
+            communities = defaultdict(set)
+            partitioned_nodes = set()
+            
+            for node, label in partition_dict.items():
+                communities[label].add(node)
+                partitioned_nodes.add(node)
+
+            missing_nodes = all_nodes - partitioned_nodes
+            next_label = max(communities.keys()) + 1 if communities else 0
+            for node in missing_nodes:
+                communities[next_label] = {node}
+                next_label += 1
+            
+            return list(communities.values())
+            
         except Exception as e:
             logger.error(f"Error during Leiden partitioning: {e}")
             return None
 
-    @staticmethod
-    def _create_cluster_graph(
-        graph: ig.Graph, partition: leidenalg.RBConfigurationVertexPartition
-    ) -> ig.Graph:
+    def _create_cluster_graph(self, partition: list[set[str]]) -> nx.Graph:
         num_communities = len(partition)
+        cluster_graph = nx.Graph()
 
-        cluster_graph = ig.Graph(n=num_communities)
-        cluster_graph.vs["name"] = [f"cluster_{i}" for i in range(num_communities)]
+        for i in range(num_communities):
+            cluster_graph.add_node(i, name=f"cluster_{i}")
+
+        node_to_community = {}
+        for comm_idx, nodes in enumerate(partition):
+            for node in nodes:
+                node_to_community[node] = comm_idx
 
         edge_weights = defaultdict(float)
 
-        for edge in graph.es:
-            source_idx = edge.source
-            target_idx = edge.target
+        for source, target, data in self.graph.edges(data=True):
+            source_community = node_to_community.get(source)
+            target_community = node_to_community.get(target)
 
-            source_community = partition.membership[source_idx]
-            target_community = partition.membership[target_idx]
-
+            if source_community is None or target_community is None:
+                continue
             if source_community == target_community:
                 continue
 
-            edge_weight = edge["weight"] if "weight" in edge.attributes() else 1.0
+            edge_weight = data.get("weight", 1.0)
             comm_pair = tuple(sorted([source_community, target_community]))
             edge_weights[comm_pair] += edge_weight
 
-        edges_to_add = []
-        weights_to_add = []
-
         for (comm1, comm2), weight in edge_weights.items():
             if weight > 0:
-                edges_to_add.append((comm1, comm2))
-                weights_to_add.append(weight)
-
-        if edges_to_add:
-            cluster_graph.add_edges(edges_to_add)
-            cluster_graph.es["weight"] = weights_to_add
+                cluster_graph.add_edge(comm1, comm2, weight=weight)
 
         return cluster_graph
 
     def _process_hierarchical_partitions(
-        self,
-        partitions: list[leidenalg.RBConfigurationVertexPartition],
-        base_node_map: dict[int, str],
+        self, partitions: list[list[set[str]]]
     ):
         self.all_communities.clear()
         self.node_to_community_l0.clear()
@@ -337,9 +300,8 @@ class CommunityDetector(BaseProcessor):
         l0_partition = partitions[0]
         level_0_communities = {}
 
-        for i, nodes_indices in enumerate(l0_partition):
+        for i, nodes in enumerate(l0_partition):
             comm_id = f"L0_C{i}"
-            nodes = {base_node_map[node_idx] for node_idx in nodes_indices}
 
             for node_id in nodes:
                 self.node_to_community_l0[node_id] = comm_id
@@ -358,12 +320,12 @@ class CommunityDetector(BaseProcessor):
             partition = partitions[level]
             current_level_map = {}
 
-            for i, cluster_indices in enumerate(partition):
+            for i, cluster_nodes in enumerate(partition):
                 parent_comm_id = f"L{level}_C{i}"
                 parent_nodes = set()
                 child_comm_ids = []
 
-                for cluster_idx in cluster_indices:
+                for cluster_idx in cluster_nodes:
                     if cluster_idx in previous_level_map:
                         child_comm_id = previous_level_map[cluster_idx]
                         child_comm = self.all_communities.get(child_comm_id)
