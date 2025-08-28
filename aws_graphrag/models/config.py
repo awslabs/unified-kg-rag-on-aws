@@ -3,7 +3,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import BaseModel, Field, model_validator
 
 from .evaluation import EvaluationMetricType, EvaluatorType
@@ -1009,6 +1008,22 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for generating community analysis reports",
     )
+    answer_generation_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for generating answers from knowledge graph",
+    )
+    answer_generation_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for generating answers from knowledge graph",
+    )
+    context_building_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for building context from knowledge graph",
+    )
+    context_building_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for building context from knowledge graph",
+    )
     entity_extraction_system: str | None = Field(
         default=None,
         description="Custom system prompt for extracting named entities from user queries",
@@ -1032,6 +1047,14 @@ class CustomPromptConfig(BaseModel):
     query_refinement_human: str | None = Field(
         default=None,
         description="Custom human prompt for refining queries based on intermediate results",
+    )
+    strategy_selection_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for selecting search strategy based on user query",
+    )
+    strategy_selection_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for selecting search strategy based on user query",
     )
 
 

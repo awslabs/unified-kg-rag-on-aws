@@ -70,6 +70,11 @@ class CommandLineInterface:
             help="Suffix for multi-tenant or versioned indices",
         )
         parser.add_argument(
+            "--enable-thinking",
+            action="store_true",
+            help="Enable thinking mode for language model reasoning and step-by-step problem solving",
+        )
+        parser.add_argument(
             "--search-strategy",
             default="auto",
             choices=[ss.value for ss in SearchStrategy],
@@ -175,6 +180,7 @@ class RAGChainRunner:
             rag_input = RAGInput(
                 query=self.args.query,
                 suffix=self.args.suffix,
+                enable_thinking=self.args.enable_thinking,
                 search_strategy=self.args.search_strategy,
                 search_type=SearchType(self.args.search_type),
                 conversation_id=self.args.conversation_id,
@@ -199,7 +205,9 @@ class RAGChainRunner:
         console.print("[bold]Initializing RAG chain...[/bold]")
         try:
             self.rag_chain = await create_rag_chain(
-                config=self.config, mode=ChainMode(self.args.mode)
+                config=self.config,
+                mode=ChainMode(self.args.mode),
+                enable_thinking=self.args.enable_thinking,
             )
             console.print("[green]GraphRAG chain initialized successfully![/green]")
         except Exception as e:
@@ -240,6 +248,7 @@ class RAGChainRunner:
                 rag_input = RAGInput(
                     query=raw_input,
                     suffix=self.args.suffix,
+                    enable_thinking=self.args.enable_thinking,
                     search_strategy=self.args.search_strategy,
                     search_type=self.args.search_type,
                     conversation_id=state["conversation_id"],

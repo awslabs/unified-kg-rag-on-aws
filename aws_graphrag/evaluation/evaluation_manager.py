@@ -16,7 +16,6 @@ from aws_graphrag.models import (
     EvaluationResult,
     EvaluationSummary,
     EvaluatorType,
-    SearchStrategy,
 )
 from aws_graphrag.retrieval import RAGOutput
 from aws_graphrag.utils import BatchProcessor
@@ -100,8 +99,6 @@ class EvaluationManager:
 
                 final_metadata = cleaned_base_metadata.copy()
                 final_metadata.update(item.get("metadata", {}))
-                if "search_strategy" not in final_metadata:
-                    final_metadata["search_strategy"] = SearchStrategy.AUTO.value
 
                 query_id = item.get("query_id", item.get("id", f"q_{i}"))
                 query = EvaluationQuery(
@@ -194,6 +191,7 @@ class EvaluationManager:
                         retrieved_contexts=self._extract_from_result(
                             raw_result, "sources", []
                         ),
+                        enable_thinking=rag_metadata.get("enable_thinking", False),
                         search_strategy=rag_metadata.get("search_strategy"),
                         response_time=rag_metadata.get("processing_time"),
                         search_type=query.metadata.get("search_type"),

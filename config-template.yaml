@@ -313,6 +313,14 @@ custom_prompts:
   community_report_system: null
   community_report_human: null
 
+  # Answer Generation Prompts
+  answer_generation_system: null
+  answer_generation_human: null
+
+  # Context Building Prompts
+  context_building_system: null
+  context_building_human: null
+
   # Entity Extraction Prompts
   entity_extraction_system: null
   entity_extraction_human: null
@@ -324,3 +332,7 @@ custom_prompts:
   # Query Refinement Prompts
   query_refinement_system: null
   query_refinement_human: null
+
+  # Strategy Selection Prompts
+  strategy_selection_system: null
+  strategy_selection_human: null

@@ -89,6 +89,10 @@ class RAGInput(BaseModel):
     suffix: str | None = Field(
         default=None, description="Suffix for multi-tenant or versioned indices"
     )
+    enable_thinking: bool = Field(
+        default=False,
+        description="Enable thinking mode for language model reasoning and step-by-step problem solving",
+    )
     search_strategy: SearchStrategy = Field(
         default=SearchStrategy.AUTO,
         description="The search strategy to use (auto, drift, global, local, simple)",
@@ -142,7 +146,7 @@ class RAGOutput(BaseModel):
     )
 
 
-class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict]):
+class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     def __init__(
         self,
         config: Config,
@@ -186,7 +190,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict]):
         search_branch = RunnableLambda(self._format_search_output_step)
 
         return base_chain | RunnableBranch(
-            (lambda state: self.mode == ChainMode.RAG, rag_branch),
+            (lambda _: self.mode == ChainMode.RAG, rag_branch),
             search_branch,
         )
 
@@ -216,7 +220,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict]):
         return state
 
     def _get_chain_for_prompt(
-        self, prompt_class: type[BasePrompt], parser: BaseOutputParser
+        self,
+        prompt_class: type[BasePrompt],
+        parser: BaseOutputParser,
+        **kwargs: Any,
     ) -> Runnable:
         model_id_map: dict[type[BasePrompt], LanguageModelId] = {
             EntityExtractionPrompt: self.config.search.entity_extraction_model_id,
@@ -231,6 +238,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict]):
             prompt_class=prompt_class,
             parser=parser,
             custom_prompts=self.config.custom_prompts,
+            **kwargs,
         )
 
     def _query_processing_branch(self) -> Runnable:
@@ -417,7 +425,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict]):
             return ""
 
     def _answer_generation_step(self, state: dict[str, Any]) -> Runnable:
-        return self._get_chain_for_prompt(AnswerGenerationPrompt, StrOutputParser())
+        enable_thinking = state.get("enable_thinking", False)
+        return self._get_chain_for_prompt(
+            AnswerGenerationPrompt,
+            StrOutputParser(),
+            enable_thinking=enable_thinking,
+        )
 
     @staticmethod
     def _format_output_step(state: dict[str, Any]) -> RAGOutput:

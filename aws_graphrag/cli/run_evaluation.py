@@ -1,6 +1,5 @@
 import argparse
 import asyncio
-import json
 import logging
 import sys
 import time
@@ -16,7 +15,6 @@ from aws_graphrag.core import get_config, get_logger
 from aws_graphrag.evaluation import EvaluationManager
 from aws_graphrag.models import (
     EvaluationGroundTruth,
-    EvaluationQuery,
     EvaluationSummary,
     SearchStrategy,
     SearchType,
@@ -58,6 +56,11 @@ class CommandLineInterface:
         parser.add_argument(
             "--suffix",
             help="Suffix for multi-tenant or versioned indices",
+        )
+        parser.add_argument(
+            "--enable-thinking",
+            action="store_true",
+            help="Enable thinking mode for language model reasoning and step-by-step problem solving",
         )
         parser.add_argument(
             "--search-strategy",
@@ -116,68 +119,6 @@ class EvaluationRunner:
             )
             sys.exit(1)
 
-    def _load_data(self) -> tuple[list[EvaluationQuery], list[EvaluationGroundTruth]]:
-        eval_data_path = self.args.eval_data_path
-        if not eval_data_path:
-            raise ValueError("eval_data path is required")
-
-        try:
-            with open(eval_data_path, encoding="utf-8") as f:
-                data = json.load(f)
-
-            queries = []
-            ground_truths = []
-
-            base_metadata = {
-                "suffix": self.args.suffix,
-                "search_strategy": self.args.search_strategy,
-                "search_type": self.args.search_type,
-                "top_k": self.args.top_k,
-                "retrieval_multiplier": self.args.retrieval_multiplier,
-            }
-            base_metadata = {k: v for k, v in base_metadata.items() if v is not None}
-
-            for i, item in enumerate(data):
-                if not isinstance(item, dict) or "question" not in item:
-                    logger.warning(f"Skipping invalid item at index {i}: '{item}'")
-                    continue
-
-                final_metadata = base_metadata.copy()
-                final_metadata.update(item.get("metadata", {}))
-                if "search_strategy" not in final_metadata:
-                    final_metadata["search_strategy"] = SearchStrategy.AUTO
-
-                query_id = item.get("query_id", item.get("id", f"q_{i}"))
-                query = EvaluationQuery(
-                    query_id=query_id,
-                    question=item["question"],
-                    category=item.get("category"),
-                    difficulty=item.get("difficulty"),
-                    metadata=final_metadata,
-                )
-                queries.append(query)
-
-                ground_truth_value = item.get("answer")
-                if ground_truth_value:
-                    gt = EvaluationGroundTruth(
-                        query_id=query_id,
-                        ground_truth=ground_truth_value,
-                        reference_sources=item.get("reference_sources", []),
-                        expected_entities=item.get("expected_entities", []),
-                        expected_relationships=item.get("expected_relationships", []),
-                    )
-                    ground_truths.append(gt)
-
-            logger.info(
-                f"Loaded {len(queries)} queries and {len(ground_truths)} ground truths."
-            )
-            return queries, ground_truths
-
-        except Exception as e:
-            console.print(
-                f"[red]Failed to load data from '{eval_data_path}': {e}[/red]"
-            )
-            raise
 
     @staticmethod
     def _print_summary(
@@ -247,7 +188,15 @@ class EvaluationRunner:
         )
 
         queries, ground_truths = self.evaluation_manager.load_data(
-            eval_data_path=self.args.eval_data_path
+            eval_data_path=self.args.eval_data_path,
+            base_metadata={
+                "suffix": self.args.suffix,
+                "enable_thinking": self.args.enable_thinking,
+                "search_strategy": self.args.search_strategy,
+                "search_type": self.args.search_type,
+                "top_k": self.args.top_k,
+                "retrieval_multiplier": self.args.retrieval_multiplier,
+            },
         )
 
         if not ground_truths:

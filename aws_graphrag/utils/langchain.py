@@ -615,9 +615,10 @@ def setup_chain(
     prompt_class: type[BasePrompt],
     parser: BaseOutputParser,
     custom_prompts: "CustomPromptConfig | None" = None,
+    **kwargs: Any,
 ) -> Runnable:
     try:
-        llm = factory.get_model(model_id=model_id)
+        llm = factory.get_model(model_id=model_id, **kwargs)
         model_info = factory.get_model_info(model_id)
         enable_prompt_cache = (
             model_info.supports_prompt_caching if model_info else False

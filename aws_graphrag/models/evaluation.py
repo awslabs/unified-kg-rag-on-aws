@@ -68,6 +68,10 @@ class EvaluationResult(BaseModel):
     response_time: float | None = Field(
         default=None, description="Time taken to generate the answer in seconds."
     )
+    enable_thinking: bool = Field(
+        default=False,
+        description="Enable thinking mode for language model reasoning and step-by-step problem solving",
+    )
     search_strategy: str | None = Field(
         default=None,
         description="Search strategy used for this evaluation. Options: auto, drift, local, global, simple",

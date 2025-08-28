@@ -11,6 +11,15 @@ if TYPE_CHECKING:
 class AnswerGenerationPrompt(BasePrompt):
     input_variables = ["query", "context"]
 
+    @classmethod
+    def _get_custom_prompts(
+        cls, custom_prompts: "CustomPromptConfig"
+    ) -> tuple[str | None, str | None]:
+        return (
+            custom_prompts.answer_generation_system,
+            custom_prompts.answer_generation_human,
+        )
+
     system_prompt_template = """You are an expert AI assistant specialized in synthesizing information from knowledge
 graphs to provide accurate, comprehensive answers. Your goal is to deliver precise, well-structured responses using only
 the provided context.
@@ -140,6 +149,15 @@ Relevance Score (1-10):"""
 @dataclass(frozen=True)
 class ContextBuildingPrompt(BasePrompt):
     input_variables = ["query", "search_results", "conversation_history"]
+
+    @classmethod
+    def _get_custom_prompts(
+        cls, custom_prompts: "CustomPromptConfig"
+    ) -> tuple[str | None, str | None]:
+        return (
+            custom_prompts.context_building_system,
+            custom_prompts.context_building_human,
+        )
 
     system_prompt_template = """You are an expert context synthesizer for knowledge graph retrieval systems. Transform
 diverse information sources into a unified, comprehensive context that enables precise and complete query responses.
@@ -514,6 +532,15 @@ Return only the refined query, nothing else:"""
 @dataclass(frozen=True)
 class StrategySelectionPrompt(BasePrompt):
     input_variables = ["query"]
+
+    @classmethod
+    def _get_custom_prompts(
+        cls, custom_prompts: "CustomPromptConfig"
+    ) -> tuple[str | None, str | None]:
+        return (
+            custom_prompts.strategy_selection_system,
+            custom_prompts.strategy_selection_human,
+        )
 
     system_prompt_template = """You are an expert search strategy selector for advanced knowledge graph retrieval
 systems. Analyze user queries comprehensively and select the optimal search strategy based on query characteristics,
