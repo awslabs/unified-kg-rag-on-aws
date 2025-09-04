@@ -2,12 +2,15 @@ from pathlib import Path
 
 from langchain_core.documents import Document as LangChainDocument
 
-from aws_graphrag.models import Document, DocumentContent, Page
+from aws_graphrag.models import Constants, Document, DocumentContent, Page
 from aws_graphrag.utils import generate_stable_id
 
 
 def convert_langchain_to_document(
-    langchain_docs: list[LangChainDocument], file_path: str | Path, n_chars: int = 100
+    langchain_docs: list[LangChainDocument],
+    file_path: str | Path,
+    n_chars: int = 100,
+    index_value: str | None = None,
 ) -> Document:
     path = Path(file_path)
 
@@ -16,6 +19,8 @@ def convert_langchain_to_document(
     )
 
     metadata = langchain_docs[0].metadata if langchain_docs else {}
+    if index_value is not None:
+        metadata[Constants.INDEX.value] = index_value
     document_id = generate_stable_id(f"doc:{path.name}:{combined_text[:n_chars]}")
 
     pages = [

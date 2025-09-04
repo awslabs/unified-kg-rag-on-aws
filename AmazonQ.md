@@ -1,89 +1,126 @@
-# Claude Development Principles
+# Development Guidelines
 
-## Core Philosophy
+## Code Implementation Rules
 
-### Rapid Prototyping
-- **Implementation First**: Validate core functionality with working code before extensive documentation
-- **Self-Documenting Code**: Express intent through clear function names and logical structure
-- **Iterative Refinement**: Build in small, testable increments with frequent validation
-- **Documentation After Stabilization**: Comprehensive documentation follows API stabilization
+### Write Minimal, Working Code
+- Generate only essential code to solve the immediate problem
+- Avoid extensive comments, docstrings, or documentation during development
+- Use clear function names and structure to express intent
+- Build incrementally with frequent validation
+- **Always seek the simplest, most optimal solution - avoid over-engineering**
+- **Start with the most straightforward approach before adding complexity**
+- **Prioritize working solutions over perfect architecture**
 
-### Modular Architecture
-- **Single Responsibility**: Each module has one clear, well-defined purpose
-- **Interface-Based Design**: Abstract interfaces enable swappable implementations
-- **Dependency Injection**: Support testing and configuration through DI patterns
-- **Clear Module Boundaries**: Well-defined APIs with proper encapsulation
+### Python Code Standards
 
-### AWS-Native Design
-- **Managed Services Priority**: Minimize operational overhead with AWS services
-- **Cloud-Native Patterns**: Leverage event-driven, serverless, and auto-scaling architectures
-- **Loose Coupling**: Enable independent development/deployment via APIs, queues, and events
-- **Infrastructure as Code**: Ensure reproducible deployments with CloudFormation/CDK
+**Type Hints & Naming:**
 
-## Coding Principles
-
-### Naming and Types
 ```python
-# ✅ Modern built-in generics
-def process_docs(docs: list[dict[str, str]]) -> dict[str, list[str]]:
-    pass
-
-# ❌ Avoid legacy typing imports
-from typing import Dict, List
-def process_docs(docs: List[Dict[str, str]]) -> Dict[str, List[str]]:
-    pass
-```
-
-- **Intent-Revealing Names**: `document_processor` vs `doc_proc`
-- **Consistent Conventions**: Follow PEP 8 (`snake_case` functions/variables, `PascalCase` classes)
-- **Mandatory Type Hints**: Apply comprehensive type hints to all function signatures
-- **Modern Types**: Prefer built-in `dict`, `list`, `tuple` over `typing` module equivalents
-
-### Function Design
-```python
-# ✅ Clear signature
-def extract_metadata(document: dict[str, str], include_timestamps: bool = True) -> dict[str, str | int]:
+# ✅ Use modern built-in types with descriptive names
+def extract_document_metadata(documents: list[dict[str, str]],
+                            include_timestamps: bool = True) -> dict[str, str | int]:
     return {}
 
-# ❌ Unclear signature
-def process(*args, **kwargs):
+# ❌ Avoid legacy typing and unclear names
+from typing import Dict, List
+def process(*args, **kwargs) -> Dict[str, List[str]]:
     pass
 ```
 
-- **Small, Focused Functions**: Keep under 20-30 lines with single purpose
-- **Explicit Parameters**: Avoid `*args`, `**kwargs` in favor of clear signatures
-- **Pure Functions Preferred**: Minimize external state modifications
-- **Immutability Patterns**: Use Pydantic models, return new objects vs mutation
+**Function Design:**
+- Keep functions under 20-30 lines with single responsibility
+- Use explicit parameters instead of `*args`, `**kwargs`
+- Prefer pure functions that return new objects vs mutation
+- Use Pydantic models for data validation at boundaries
+- **Choose the most direct implementation path**
 
-### Error Handling
+**Logging:**
+
 ```python
-# ✅ Specific custom exceptions
-class DocumentProcessingError(Exception):
-    def __init__(self, document_id: str, reason: str):
-        self.document_id = document_id
-        super().__init__(f"Failed to process document {document_id}: {reason}")
+# ✅ Use % formatting for performance
+logger.info("Processing document %s with %d pages", document_id, page_count)
 
-# ✅ Resource management
-def process_with_aws():
-    with boto3.client('s3') as client:
-        # Safe client usage
-        pass
+# ❌ Avoid f-strings in logging
+logger.info(f"Processing document {document_id} with {page_count} pages")
 ```
 
-- **Specific Exceptions**: Custom exceptions for clear error categorization
-- **Input Validation**: Pydantic validation at module boundaries with fail-fast approach
-- **Resource Management**: Context managers for safe resource handling
-- **Graceful Degradation**: Meaningful fallback behaviors for partial failures
+## Architecture Patterns
 
-## Technology Stack
+### Required Libraries
+- **Data Models**: Use Pydantic (not dataclasses)
+- **File Operations**: Use pathlib (not os.path)
+- **Package Management**: Use uv (not pip)
+- **Choose tools that solve problems efficiently, not for novelty**
 
-### Core Libraries
-- **Data Structures**: Pydantic (instead of dataclasses)
-- **File System**: pathlib (instead of os.path)
-- **Prompt Management**: Python files (.py) for version control
-- **Package Management**: uv (instead of pip)
+### LangChain Integration
+Structure all LLM interactions using LangChain Expression Language (LCEL):
 
-### Integration Patterns
-- **LCEL(LangChain Expression Language) Utilization**: Structure LLM interactions as reusable, modular chains
-- **Consistent AWS Clients**: Standardize boto3 session management
+```python
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
+prompt = ChatPromptTemplate.from_template("Analyze: {document}")
+chain = prompt | llm | StrOutputParser()
+```
+
+- Store prompts in Python files (.py) for version control
+- Build modular, reusable chains using LCEL syntax
+- Use proper output parsers for structured responses
+- **Implement the minimal chain structure that meets requirements**
+
+### AWS Services
+- Prioritize managed services to minimize operational overhead
+- Use boto3 with consistent session management patterns
+- Implement event-driven communication with EventBridge, SQS, SNS
+- Design for horizontal scaling with stateless services
+- **Select AWS services based on actual needs, not feature completeness**
+
+## Error Handling & Reliability
+
+### Exception Management
+- Create specific custom exceptions for different error types
+- Implement fail-fast principle - detect errors early
+- Use Pydantic validation at module boundaries
+- Design graceful degradation for partial functionality
+- **Handle only the errors you can meaningfully recover from**
+
+### Testing Approach
+- Create essential tests in `tests/` directory structure:
+
+```text
+tests/
+├── unit/           # Core business logic tests
+├── integration/    # AWS service integration tests
+└── fixtures/       # Test data and mocks
+```
+
+- Focus on unit tests, selective integration tests
+- Ensure test isolation and repeatability
+- Avoid test proliferation - quality over quantity
+- **Test critical paths first, edge cases second**
+
+## Project Structure Guidelines
+
+### Organization Principles
+- Group related functionality by feature, not technical layer
+- Separate presentation, business logic, and data layers
+- Use clear module boundaries with well-defined APIs
+- Implement dependency injection for testability
+- **Start with simple flat structure, refactor when complexity demands it**
+
+### Performance Considerations
+- Use async patterns for I/O-bound operations
+- Implement caching strategies and connection pooling
+- Design for event-driven architecture to decouple components
+- Optimize for horizontal scaling patterns
+- **Optimize based on measured bottlenecks, not assumptions**
+
+## Development Philosophy
+
+### Simplicity First
+- **Solve the immediate problem with the most straightforward approach**
+- **Avoid premature abstractions and complex design patterns**
+- **Refactor toward better design only when current approach becomes limiting**
+- **Question every dependency and feature - remove what doesn't add clear value**
+- **Prefer boring, proven solutions over exciting new approaches**
+- **Build incrementally: working solution → optimized solution → scalable solution**

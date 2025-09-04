@@ -38,16 +38,20 @@ class BaseParser(ABC):
         self.stats = ParsingStats()
 
     @abstractmethod
-    def parse_file(self, file_path: str | Path) -> Document:
+    def parse_file(
+        self, file_path: str | Path, index_value: str | None = None
+    ) -> Document:
         pass
 
-    def parse_files(self, file_paths: list[str | Path]) -> list[Document]:
+    def parse_files(
+        self, file_paths: list[str | Path], index_value: str | None = None
+    ) -> list[Document]:
         documents = []
         self.stats = ParsingStats(num_total_files=len(file_paths))
 
         for file_path in file_paths:
             try:
-                doc = self.parse_file(file_path)
+                doc = self.parse_file(file_path, index_value)
                 documents.append(doc)
                 self.stats.num_successful_files += 1
             except Exception as e:
@@ -71,11 +75,15 @@ class FileParser(BaseParser):
         self.loader_kwargs = loader_kwargs or {}
         self.file_type_name = file_type_name
 
-    def parse_file(self, file_path: str | Path) -> Document:
+    def parse_file(
+        self, file_path: str | Path, index_value: str | None = None
+    ) -> Document:
         try:
             loader = self.loader_class(str(file_path), **self.loader_kwargs)
             langchain_docs = loader.load()
-            document = convert_langchain_to_document(langchain_docs, file_path)
+            document = convert_langchain_to_document(
+                langchain_docs, file_path, index_value
+            )
 
             if (
                 document.content

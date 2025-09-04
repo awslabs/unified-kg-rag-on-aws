@@ -201,7 +201,9 @@ class DirectoryLoader(BaseLoader):
     def load_single(self, file_path: Path) -> Document:
         if self.parse_files and self.config and file_path.suffix.lower() != ".json":
             parser = ParserFactory.create_parser(file_path, self.config)
-            return parser.parse_file(file_path)
+            return parser.parse_file(
+                file_path, self.config.processing.document_parsing.index_value
+            )
         return Document.from_json(file_path)
 
     def _deduplicate_documents(self, documents: list[Document]) -> list[Document]:

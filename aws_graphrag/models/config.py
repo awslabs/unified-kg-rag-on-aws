@@ -190,6 +190,9 @@ class DocumentParsingConfig(BaseModel):
     target_directory: str | Path | None = Field(
         default=None, description="Directory to save parsed documents to"
     )
+    index_value: str | None = Field(
+        default=None, description="Value to index the parsed documents with"
+    )
 
 
 class ChunkingConfig(BaseModel):

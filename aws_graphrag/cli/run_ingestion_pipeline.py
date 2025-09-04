@@ -97,6 +97,11 @@ class CommandLineInterface:
             help="Continue pipeline execution even when individual stages encounter errors",
         )
         parser.add_argument(
+            "--enabled-stages",
+            type=lambda s: [item.strip() for item in s.split(",")],
+            help="Comma-separated list of pipeline stages to enable (e.g., 'DOCUMENT_PARSING,TEXT_CHUNKING'). If not specified, all stages are enabled.",
+        )
+        parser.add_argument(
             "--config-path",
             type=str,
             help="Path to custom configuration file",
@@ -195,20 +200,27 @@ class IngestionPipelineRunner:
         console.print(Panel.fit(info_content, border_style="blue"))
 
     def _create_pipeline_config(self) -> PipelineConfig:
-        stages = {
-            PipelineStageType.DOCUMENT_PARSING: True,
-            PipelineStageType.DOCUMENT_LOADING: True,
-            PipelineStageType.TEXT_CHUNKING: True,
-            PipelineStageType.TRANSLATION: True,
-            PipelineStageType.GRAPH_EXTRACTION: True,
-            PipelineStageType.GRAPH_RESOLUTION: True,
-            PipelineStageType.GLEANING: True,
-            PipelineStageType.CLAIM_EXTRACTION: True,
-            PipelineStageType.CLAIM_RESOLUTION: True,
-            PipelineStageType.GRAPH_ANALYSIS: True,
-            PipelineStageType.COMMUNITY_DETECTION: True,
-            PipelineStageType.INDEXING: True,
-        }
+        all_stages = {stage.name: stage for stage in PipelineStageType}
+
+        if self.args.enabled_stages:
+            enabled_stages_set = {
+                stage_name.upper() for stage_name in self.args.enabled_stages
+            }
+            stages = {
+                stage_enum: stage_name in enabled_stages_set
+                for stage_name, stage_enum in all_stages.items()
+            }
+            invalid_stages = enabled_stages_set - set(all_stages.keys())
+            if invalid_stages:
+                console.print(
+                    f"[red]Error: Invalid stage names provided: {', '.join(invalid_stages)}[/red]"
+                )
+                console.print(
+                    f"[yellow]Available stages are: {', '.join(all_stages.keys())}[/yellow]"
+                )
+                sys.exit(1)
+        else:
+            stages = dict.fromkeys(PipelineStageType, True)
 
         return PipelineConfig(
             stages_enabled=stages,

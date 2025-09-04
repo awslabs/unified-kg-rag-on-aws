@@ -281,7 +281,9 @@ class DocumentParsingStage(PipelineStage):
         for file_path in files_to_parse:
             try:
                 parser = ParserFactory.create_parser(file_path, self.config)
-                document = parser.parse_file(file_path)
+                document = parser.parse_file(
+                    file_path, self.config.processing.document_parsing.index_value
+                )
                 parsed_documents.append(document)
 
                 if self.target_directory:

@@ -236,30 +236,49 @@ class BedrockCrossRegionModelHelper:
     ) -> str:
         try:
             bedrock_client = boto_session.client("bedrock", region_name=region_name)
-            cross_region_id = (
+
+            global_model_id = (
                 BedrockCrossRegionModelHelper._build_cross_region_model_id(
-                    model_id, region_name
+                    model_id, region_name, is_global=True
                 )
             )
             if BedrockCrossRegionModelHelper._is_cross_region_model_available(
-                bedrock_client, cross_region_id
+                bedrock_client, global_model_id
             ):
-                logger.debug(f"Using cross-region model: '{cross_region_id}'")
-                return cross_region_id
+                logger.debug(f"Using global cross-region model: '{global_model_id}'")
+                return global_model_id
+
+            regional_model_id = (
+                BedrockCrossRegionModelHelper._build_cross_region_model_id(
+                    model_id, region_name, is_global=False
+                )
+            )
+            if BedrockCrossRegionModelHelper._is_cross_region_model_available(
+                bedrock_client, regional_model_id
+            ):
+                logger.debug(
+                    f"Using regional cross-region model: '{regional_model_id}'"
+                )
+                return regional_model_id
+
             logger.debug(
-                f"Cross-region model not available, using standard model: '{model_id.value}'"
+                f"Cross-region models not available, using standard model: '{model_id.value}'"
             )
             return model_id.value
+
         except Exception as e:
             logger.warning(
-                f"Failed to resolve cross-region model for '{model_id.value}': {e}. Falling back to standard model."
+                f"Failed to resolve cross-region model for '{model_id.value}': {e}. "
+                f"Falling back to standard model."
             )
             return model_id.value
 
     @staticmethod
     def _build_cross_region_model_id(
-        model_id: LanguageModelId, region_name: str
+        model_id: LanguageModelId, region_name: str, is_global: bool = False
     ) -> str:
+        if is_global:
+            return f"global.{model_id.value}"
         prefix = "apac" if region_name.startswith("ap-") else region_name[:2]
         return f"{prefix}.{model_id.value}"
 

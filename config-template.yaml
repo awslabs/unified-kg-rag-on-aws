@@ -50,6 +50,7 @@ processing:
   document_parsing:
     source_directory: # Add source directory here
     target_directory: null
+    index_value: null
 
   # Text Chunking
   chunking:
