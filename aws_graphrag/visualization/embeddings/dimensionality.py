@@ -106,7 +106,8 @@ class DimensionalityReducer:
                 metric=self.umap_config.metric,
                 random_state=self.umap_config.random_state,
             )
-            return reducer.fit_transform(embeddings)
+            result = reducer.fit_transform(embeddings)
+            return np.asarray(result)
         except ImportError:
             logger.warning("UMAP is not installed. Falling back to PCA.")
             return self._apply_pca(embeddings)

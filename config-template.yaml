@@ -199,7 +199,7 @@ indexing:
 # Search Configuration
 search:
   translation_model_id: "anthropic.claude-3-5-haiku-20241022-v1:0"
-  entity_extraction_model_id: "anthropic.claude-3-5-haiku-20241022-v1:0"
+  entity_extraction_model_id: "anthropic.claude-sonnet-4-20250514-v1:0"
   strategy_selection_model_id: "anthropic.claude-sonnet-4-20250514-v1:0"
   context_building_model_id: "anthropic.claude-sonnet-4-20250514-v1:0"
   answer_generation_model_id: "anthropic.claude-sonnet-4-20250514-v1:0"

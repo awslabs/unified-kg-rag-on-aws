@@ -31,7 +31,7 @@ except (FileNotFoundError, ImportError, ValueError):
 
 
 class CommandLineInterface:
-    def __init__(self):
+    def __init__(self) -> None:
         self.parser = self._setup_arguments()
 
     @staticmethod
@@ -244,16 +244,21 @@ class RAGChainRunner:
                     else:
                         handler(state=state, args=cmd_args)
                     continue
-
                 rag_input = RAGInput(
                     query=raw_input,
                     suffix=self.args.suffix,
                     enable_thinking=self.args.enable_thinking,
                     search_strategy=self.args.search_strategy,
                     search_type=self.args.search_type,
-                    conversation_id=state["conversation_id"],
+                    conversation_id=(
+                        str(state["conversation_id"])
+                        if state["conversation_id"] is not None
+                        else None
+                    ),
                     use_memory=True,
-                    filters=state["filters"],
+                    filters=(
+                        state["filters"] if isinstance(state["filters"], dict) else None
+                    ),
                     top_k=self.args.top_k,
                     retrieval_multiplier=self.args.retrieval_multiplier,
                     enable_query_processing=not self.args.disable_query_processing,
@@ -331,7 +336,7 @@ class RAGChainRunner:
 
     @staticmethod
     def _parse_filters(filter_args: list[str] | None) -> dict[str, Any]:
-        filters = {}
+        filters: dict[str, Any] = {}
         if not filter_args:
             return filters
         for item in filter_args:

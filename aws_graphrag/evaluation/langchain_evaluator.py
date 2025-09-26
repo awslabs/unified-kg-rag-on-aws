@@ -126,16 +126,19 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
                 continue
 
             metric_config = self.METRIC_MAPPING[metric_type]
-            eval_kwargs = {"llm": self.llm}
+            eval_kwargs: dict[str, Any] = {"llm": self.llm}
             if "criteria" in metric_config:
                 eval_kwargs["criteria"] = metric_config["criteria"]
             if "prompt_template" in metric_config:
                 eval_kwargs["prompt"] = PromptTemplate.from_template(
-                    metric_config["prompt_template"]
+                    str(metric_config["prompt_template"])
                 )
 
+            evaluator_type = metric_config["type"]
+            evaluator_type_value = LCEvaluatorType(evaluator_type)
+
             self.evaluators[metric_type] = load_evaluator(
-                metric_config["type"], **eval_kwargs
+                evaluator_type_value, **eval_kwargs
             )
 
     @staticmethod

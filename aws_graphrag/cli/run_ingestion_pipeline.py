@@ -24,7 +24,7 @@ except (FileNotFoundError, ImportError, ValueError):
 
 
 class CommandLineInterface:
-    def __init__(self):
+    def __init__(self) -> None:
         self.parser = self._setup_arguments()
 
     @staticmethod

@@ -150,7 +150,8 @@ class OpenSearchClient:
 
     @_handle_opensearch_errors
     def alias_exists(self, alias_name: str) -> bool:
-        return self.client.indices.exists_alias(name=alias_name)
+        result = self.client.indices.exists_alias(name=alias_name)
+        return bool(result)
 
     @_handle_opensearch_errors
     def bulk_index(
@@ -238,7 +239,7 @@ class OpenSearchClient:
 
         logger.debug(f"Executing count on indices '{final_indices}'")
         response = self.client.count(**params)
-        return response.get("count", 0)
+        return int(response.get("count", 0))
 
     @_handle_opensearch_errors
     def delete_alias(
@@ -295,17 +296,20 @@ class OpenSearchClient:
             else index_patterns
         )
         try:
-            return self.client.indices.stats(index=target, metric="_all")
+            result = self.client.indices.stats(index=target, metric="_all")
+            return dict(result)
         except NotFoundError:
             return {}
 
     @_handle_opensearch_errors
     def search(self, **kwargs: Any) -> dict[str, Any]:
-        return self.client.search(**kwargs)
+        result = self.client.search(**kwargs)
+        return dict(result)
 
     @_handle_async_opensearch_errors
     async def asearch(self, **kwargs: Any) -> dict[str, Any]:
-        return await self.async_client.search(**kwargs)
+        result = await self.async_client.search(**kwargs)
+        return dict(result)
 
     @_handle_opensearch_errors
     def update_alias(

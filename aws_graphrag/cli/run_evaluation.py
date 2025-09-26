@@ -32,7 +32,7 @@ except (FileNotFoundError, ImportError, ValueError):
 
 
 class CommandLineInterface:
-    def __init__(self):
+    def __init__(self) -> None:
         self.parser = self._setup_arguments()
 
     @staticmethod
@@ -118,7 +118,6 @@ class EvaluationRunner:
                 f"[red]Error: Evaluation data file not found: '{eval_data_path}'[/red]"
             )
             sys.exit(1)
-
 
     @staticmethod
     def _print_summary(

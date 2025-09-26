@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Any, ClassVar, Generic, TypeVar
 
 import boto3
 from botocore.config import Config as BotoConfig
 from langchain_aws import BedrockEmbeddings, ChatBedrock, ChatBedrockConverse
 from langchain_aws.document_compressors.rerank import BedrockRerank
+from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
 from langchain_core.documents import Document
 from pydantic import BaseModel, Field, PrivateAttr
 from tiktoken import Encoding, get_encoding
@@ -484,7 +486,7 @@ class BedrockLanguageModelFactory(
         model_info: LanguageModelInfo,
         is_cross_region: bool,
         **kwargs: Any,
-    ):
+    ) -> None:
         enable_perf = kwargs.get("enable_performance_optimization", False)
         enable_think = kwargs.get("enable_thinking", False)
 
@@ -540,7 +542,10 @@ class BedrockRerankWrapper(BaseBedrockWrapper, BedrockRerank):
     max_document_tokens: int | None = Field(default=None)
 
     def compress_documents(
-        self, documents: list[Document], query: str, **kwargs: Any
+        self,
+        documents: Sequence[Document],
+        query: str,
+        callbacks: list[BaseCallbackHandler] | BaseCallbackManager | None = None,
     ) -> list[Document]:
         if len(documents) > self.max_documents:
             logger.warning(
@@ -561,7 +566,7 @@ class BedrockRerankWrapper(BaseBedrockWrapper, BedrockRerank):
             )
 
         try:
-            result = super().compress_documents(documents, truncated_query, **kwargs)
+            result = super().compress_documents(documents, truncated_query)
             return list(result)
         except Exception as e:
             raise RerankModelError(f"Reranking failed: {e}") from e

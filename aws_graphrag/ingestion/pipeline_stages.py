@@ -189,9 +189,11 @@ class PipelineStage(ABC):
         if not stats_obj:
             return {}
         if hasattr(stats_obj, "to_dict") and callable(stats_obj.to_dict):
-            return stats_obj.to_dict()
+            result = stats_obj.to_dict()
+            if isinstance(result, dict):
+                return result
         if hasattr(stats_obj, "__dict__"):
-            return stats_obj.__dict__
+            return dict(stats_obj.__dict__)
         logger.warning(
             f"Could not convert stats object of type {type(stats_obj)} to dict"
         )

@@ -493,7 +493,7 @@ class CacheManager:
             with open(chunk_file, encoding="utf-8") as f:
                 chunk_data = json.loads(f.read())
 
-            preview_data = chunk_data[:max_items]
+            preview_data: list[Any] = chunk_data[:max_items]
 
             if data_type and preview_data:
                 preview_data = [data_type.model_validate(item) for item in preview_data]

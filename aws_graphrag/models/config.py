@@ -869,7 +869,7 @@ class SearchConfig(BaseModel):
         description="Language model identifier used for translating queries into the target language",
     )
     entity_extraction_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V3_5_HAIKU,
+        default=LanguageModelId.CLAUDE_V4_SONNET,
         description="Language model identifier used for extracting named entities from user queries",
     )
     strategy_selection_model_id: LanguageModelId = Field(

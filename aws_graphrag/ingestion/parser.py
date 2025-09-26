@@ -79,10 +79,11 @@ class FileParser(BaseParser):
         self, file_path: str | Path, index_value: str | None = None
     ) -> Document:
         try:
-            loader = self.loader_class(str(file_path), **self.loader_kwargs)
+            loader_kwargs = {**self.loader_kwargs, "file_path": str(file_path)}
+            loader = self.loader_class(**loader_kwargs)
             langchain_docs = loader.load()
             document = convert_langchain_to_document(
-                langchain_docs, file_path, index_value
+                langchain_docs, file_path, index_value=index_value
             )
 
             if (

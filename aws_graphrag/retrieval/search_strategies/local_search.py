@@ -70,7 +70,9 @@ class LocalSearchStrategy(BaseSearchStrategy):
             f"'{', '.join(text_unit_ids[:5])}{'...' if len(text_unit_ids) > 5 else ''}'"
         )
 
-        text_units = await self._execute_opensearch_retrieval(text_unit_ids)
+        text_units = await self._execute_opensearch_retrieval(
+            text_unit_ids, query.suffix
+        )
         all_results = {"neptune_entities": expanded_entity_nodes, **text_units}
 
         final_results = self.hybrid_scorer.fuse_and_rerank_results(
@@ -115,6 +117,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
             search_type=query.search_type,
             top_k=n_candidates,
             index_prefixes=[self.config.indexing.opensearch.entities_index_prefix],
+            suffix=query.suffix,
         )
 
         try:
@@ -164,7 +167,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
         return filtered_nodes
 
     async def _execute_opensearch_retrieval(
-        self, text_unit_ids: list[str]
+        self, text_unit_ids: list[str], suffix: str | None
     ) -> dict[str, list[RetrievalResult]]:
         if not self.opensearch_retriever or not text_unit_ids:
             return {}
@@ -174,6 +177,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
             search_type=SearchType.LEXICAL,
             top_k=len(text_unit_ids),
             index_prefixes=[self.config.indexing.opensearch.text_units_index_prefix],
+            suffix=suffix,
             filters={"id": text_unit_ids},
         )
 

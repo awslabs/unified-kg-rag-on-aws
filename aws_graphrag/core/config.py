@@ -81,6 +81,7 @@ class ConfigLoader:
         final_key = path_tuple[-1]
         current_value = getattr(current, final_key)
 
+        parsed_value: bool | int | float | str
         if isinstance(current_value, bool):
             parsed_value = value.lower() in ("true", "1", "yes", "on")
         elif isinstance(current_value, int):
