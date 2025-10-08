@@ -66,25 +66,32 @@ class S3EncryptionType(str, Enum):
 
 
 class EmbeddingModelId(str, Enum):
-    EMBED_ENGLISH_V3 = "cohere.embed-english-v3"
     EMBED_MULTILINGUAL_V3 = "cohere.embed-multilingual-v3"
+    EMBED_ENGLISH_V3 = "cohere.embed-english-v3"
     TITAN_EMBED_V1 = "amazon.titan-embed-text-v1"
     TITAN_EMBED_V2 = "amazon.titan-embed-text-v2:0"
+    # NOTE: add new models here
 
 
 class LanguageModelId(str, Enum):
+    CLAUDE_V3_HAIKU = "anthropic.claude-3-haiku-20240307-v1:0"
+    CLAUDE_V3_SONNET = "anthropic.claude-3-sonnet-20240229-v1:0"
+    CLAUDE_V3_OPUS = "anthropic.claude-3-opus-20240229-v1:0"
     CLAUDE_V3_5_HAIKU = "anthropic.claude-3-5-haiku-20241022-v1:0"
     CLAUDE_V3_5_SONNET = "anthropic.claude-3-5-sonnet-20240620-v1:0"
     CLAUDE_V3_5_SONNET_V2 = "anthropic.claude-3-5-sonnet-20241022-v2:0"
     CLAUDE_V3_7_SONNET = "anthropic.claude-3-7-sonnet-20250219-v1:0"
     CLAUDE_V4_SONNET = "anthropic.claude-sonnet-4-20250514-v1:0"
+    CLAUDE_V4_5_SONNET = "anthropic.claude-sonnet-4-5-20250929-v1:0"
     CLAUDE_V4_OPUS = "anthropic.claude-opus-4-20250514-v1:0"
     CLAUDE_V4_1_OPUS = "anthropic.claude-opus-4-1-20250805-v1:0"
+    # NOTE: add new models here
 
 
 class RerankModelId(str, Enum):
     AMAZON_RERANK_V1 = "amazon.rerank-v1:0"
     COHERE_RERANK_V3_5 = "cohere.rerank-v3-5:0"
+    # NOTE: add new models here
 
 
 class BedrockConfig(BaseModel):
@@ -256,6 +263,9 @@ class TranslationConfig(BaseModel):
     )
     target_language: LanguageCode = Field(
         default=LanguageCode.EN, description="Target language code for translation"
+    )
+    additional_target_languages: list[LanguageCode] | None = Field(
+        default=None, description="Additional target languages for translation"
     )
 
 

@@ -69,6 +69,7 @@ processing:
   translation:
     translation_model_id: "anthropic.claude-3-5-haiku-20241022-v1:0"
     target_language: "en"
+    additional_target_languages: null
 
   # Graph Extraction
   graph_extraction:

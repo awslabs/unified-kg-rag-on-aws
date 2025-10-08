@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from aws_graphrag.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import Config, TextUnit
+from aws_graphrag.models import Config, LanguageCode, TextUnit
 from aws_graphrag.prompts import TextTranslationPrompt
 from aws_graphrag.utils import BatchProcessor, setup_chain
 
@@ -60,6 +60,12 @@ class TextUnitTranslator:
         self.config = config
         self.translation_config = config.processing.translation
         self.target_language = self.translation_config.target_language
+        self.additional_target_languages = (
+            self.translation_config.additional_target_languages or []
+        )
+        self.all_target_languages = [
+            self.target_language
+        ] + self.additional_target_languages
         self.boto_session = boto_session or boto3.Session(
             profile_name=config.aws.profile_name
         )
@@ -87,15 +93,20 @@ class TextUnitTranslator:
             return text_units
 
         start_time = time.time()
-        self.stats = TranslationStats(num_total_units=len(text_units))
+        total_translation_tasks = len(text_units) * len(self.all_target_languages)
+        self.stats = TranslationStats(num_total_units=total_translation_tasks)
 
         logger.info(
             f"Starting translation of {len(text_units)} text units to "
-            f"'{self.target_language.value}'"
+            f"{len(self.all_target_languages)} language(s): "
+            f"{', '.join([lang.value for lang in self.all_target_languages])}"
         )
 
         try:
-            self._translate_text_units_batch(text_units)
+            for target_language in self.all_target_languages:
+                logger.info(f"Translating to '{target_language.value}'...")
+                self._translate_text_units_batch(text_units, target_language)
+
             self.stats.total_processing_time = time.time() - start_time
             self._log_completion_summary(self.stats)
         except Exception as e:
@@ -103,38 +114,45 @@ class TextUnitTranslator:
 
         return text_units
 
-    def _translate_text_units_batch(self, text_units: list[TextUnit]) -> None:
+    def _translate_text_units_batch(
+        self, text_units: list[TextUnit], target_language: LanguageCode
+    ) -> None:
         texts_to_translate = [unit.text for unit in text_units]
 
         try:
             translation_results = self.batch_processor.execute_with_fallback(
                 items_to_process=texts_to_translate,
-                prepare_inputs_func=self._create_chain_inputs,
+                prepare_inputs_func=lambda texts: self._create_chain_inputs(
+                    texts, target_language
+                ),
                 batch_func=self.translator.batch,
                 sequential_func=self.translator.invoke,
-                task_name="Translation",
+                task_name=f"Translation ({target_language.value})",
                 run_config=self.config.processing.model_dump(),
                 show_progress=self.show_progress,
             )
         except Exception as e:
-            logger.error(f"Translation failed: {e}", exc_info=True)
+            logger.error(
+                f"Translation to '{target_language.value}' failed: {e}", exc_info=True
+            )
             return
 
         for text_unit, result in zip(text_units, translation_results, strict=True):
-            self._apply_translation_result(text_unit, result)
+            self._apply_translation_result(text_unit, result, target_language)
 
-    def _create_chain_inputs(self, texts: list[str]) -> list[dict[str, Any]]:
+    def _create_chain_inputs(
+        self, texts: list[str], target_language: LanguageCode
+    ) -> list[dict[str, Any]]:
         try:
             return [
-                {"text": text, "target_language": self.target_language}
-                for text in texts
+                {"text": text, "target_language": target_language} for text in texts
             ]
         except Exception as e:
             logger.error(f"Failed to create translation inputs: {e}")
             return []
 
     def _apply_translation_result(
-        self, text_unit: TextUnit, result: str | None
+        self, text_unit: TextUnit, result: str | None, target_language: LanguageCode
     ) -> None:
         if not result or not result.strip():
             if self.stats:
@@ -145,7 +163,7 @@ class TextUnitTranslator:
             if text_unit.translated_texts is None:
                 text_unit.translated_texts = {}
 
-            text_unit.translated_texts[self.target_language] = result.strip()
+            text_unit.translated_texts[target_language.value] = result.strip()
 
             if self.stats:
                 self.stats.num_translated += 1

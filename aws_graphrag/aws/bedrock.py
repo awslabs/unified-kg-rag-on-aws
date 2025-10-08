@@ -57,6 +57,10 @@ class LanguageModelInfo(BaseModel):
         default=False,
         description="Whether the model supports thinking/reasoning capabilities.",
     )
+    supports_1m_context_window: bool = Field(
+        default=False,
+        description="Whether the model supports 1M context window.",
+    )
 
 
 class RerankModelInfo(BaseModel):
@@ -78,6 +82,7 @@ class RerankModelInfo(BaseModel):
     )
 
 
+
 _EMBEDDING_MODEL_INFO: dict[EmbeddingModelId, EmbeddingModelInfo] = {
     EmbeddingModelId.TITAN_EMBED_V1: EmbeddingModelInfo(
         dimensions=1536, max_sequence_length=50000, max_sequence_tokens=8192
@@ -91,45 +96,60 @@ _EMBEDDING_MODEL_INFO: dict[EmbeddingModelId, EmbeddingModelInfo] = {
     EmbeddingModelId.EMBED_MULTILINGUAL_V3: EmbeddingModelInfo(
         dimensions=1024, max_sequence_length=2048, max_sequence_tokens=512
     ),
+    # NOTE: add new models here
 }
 
 _LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
-    LanguageModelId.CLAUDE_V3_5_HAIKU: LanguageModelInfo(
+    LanguageModelId.CLAUDE_V3_HAIKU: LanguageModelInfo(
         context_window_size=200000,
         max_output_tokens=4096,
+        supports_prompt_caching=True,
+    ),
+    LanguageModelId.CLAUDE_V3_5_HAIKU: LanguageModelInfo(
+        context_window_size=200000,
+        max_output_tokens=8192,
         supports_performance_optimization=True,
         supports_prompt_caching=True,
     ),
     LanguageModelId.CLAUDE_V3_5_SONNET: LanguageModelInfo(
-        context_window_size=200000, max_output_tokens=4096
+        context_window_size=200000, max_output_tokens=8192
     ),
     LanguageModelId.CLAUDE_V3_5_SONNET_V2: LanguageModelInfo(
-        context_window_size=200000, max_output_tokens=4096, supports_prompt_caching=True
+        context_window_size=200000, max_output_tokens=8192, supports_prompt_caching=True
     ),
     LanguageModelId.CLAUDE_V3_7_SONNET: LanguageModelInfo(
         context_window_size=200000,
-        max_output_tokens=8192,
+        max_output_tokens=64000,
         supports_prompt_caching=True,
         supports_thinking=True,
     ),
     LanguageModelId.CLAUDE_V4_SONNET: LanguageModelInfo(
         context_window_size=200000,
-        max_output_tokens=8192,
+        max_output_tokens=64000,
         supports_prompt_caching=True,
         supports_thinking=True,
+        supports_1m_context_window=True,
+    ),
+    LanguageModelId.CLAUDE_V4_5_SONNET: LanguageModelInfo(
+        context_window_size=200000,
+        max_output_tokens=64000,
+        supports_prompt_caching=True,
+        supports_thinking=True,
+        supports_1m_context_window=True,
     ),
     LanguageModelId.CLAUDE_V4_OPUS: LanguageModelInfo(
         context_window_size=200000,
-        max_output_tokens=8192,
+        max_output_tokens=32000,
         supports_prompt_caching=True,
         supports_thinking=True,
     ),
     LanguageModelId.CLAUDE_V4_1_OPUS: LanguageModelInfo(
         context_window_size=200000,
-        max_output_tokens=8192,
+        max_output_tokens=32000,
         supports_prompt_caching=True,
         supports_thinking=True,
     ),
+    # NOTE: add new models here
 }
 
 _RERANK_MODEL_INFO: dict[str, RerankModelInfo] = {
@@ -139,6 +159,7 @@ _RERANK_MODEL_INFO: dict[str, RerankModelInfo] = {
     RerankModelId.COHERE_RERANK_V3_5: RerankModelInfo(
         max_documents=1000, max_query_tokens=512, max_document_tokens=4096
     ),
+# NOTE: add new models here
 }
 
 
@@ -384,7 +405,6 @@ class BedrockLanguageModelFactory(
 ):
     DEFAULT_TEMPERATURE: ClassVar[float] = 0.0
     DEFAULT_TOP_K: ClassVar[int] = 50
-    DEFAULT_TOP_P: ClassVar[float] = 0.95
     DEFAULT_THINKING_BUDGET_TOKENS: ClassVar[int] = 2048
     DEFAULT_LATENCY_MODE: ClassVar[str] = "normal"
 
@@ -399,23 +419,20 @@ class BedrockLanguageModelFactory(
     ) -> ChatBedrock | ChatBedrockConverse:
         model_info = self.get_model_info(model_id)
         if not model_info:
-            raise LanguageModelError(
-                f"Unsupported language model ID: '{model_id.value}'"
-            )
-
+            raise LanguageModelError(f"Unsupported language model ID: '{model_id.value}'")
         resolved_model_id = BedrockCrossRegionModelHelper.get_cross_region_model_id(
-            self.boto_session, model_id, self.region_name
+            self.boto_session, model_id, self.region_name or ""
         )
         is_cross_region = resolved_model_id != model_id.value
-
         model_config = self._build_model_config(
             model_info, resolved_model_id, is_cross_region, **kwargs
         )
-
         model_class = ChatBedrockConverse if is_cross_region else ChatBedrock
         model = model_class(**model_config)
         logger.debug(
-            f"Created language model: '{resolved_model_id}' with class {model_class.__name__}"
+            "Created language model: '%s' with class %s",
+            resolved_model_id,
+            model_class.__name__,
         )
         return model
 
@@ -427,8 +444,8 @@ class BedrockLanguageModelFactory(
         **kwargs: Any,
     ) -> dict[str, Any]:
         enable_thinking = kwargs.get("enable_thinking", False)
+        supports_1m_context_window = kwargs.get("supports_1m_context_window", False)
         temperature = kwargs.get("temperature", self.DEFAULT_TEMPERATURE)
-
         final_temperature = (
             1.0
             if self._should_enable_thinking(enable_thinking, model_info)
@@ -436,13 +453,10 @@ class BedrockLanguageModelFactory(
         )
         if final_temperature != temperature:
             logger.debug("Adjusting temperature to 1.0 for thinking mode")
-
         final_max_tokens = self._validate_max_tokens(
             kwargs.get("max_tokens"), model_info
         )
-
         config = self._build_base_config(resolved_model_id, is_cross_region, **kwargs)
-
         if is_cross_region:
             config.update(
                 {"max_tokens": final_max_tokens, "temperature": final_temperature}
@@ -451,7 +465,16 @@ class BedrockLanguageModelFactory(
             config["model_kwargs"].update(
                 {"max_tokens": final_max_tokens, "temperature": final_temperature}
             )
-
+        if supports_1m_context_window and model_info.supports_1m_context_window:
+            if is_cross_region:
+                config.setdefault("additional_model_request_fields", {}).update(
+                    {"anthropic_beta": ["context-1m-2025-08-07"]}
+                )
+            else:
+                config["model_kwargs"].setdefault(
+                    "additionalModelRequestFields", {}
+                ).update({"anthropic_beta": ["context-1m-2025-08-07"]})
+            logger.debug("Applied 1M context window support")
         self._apply_model_features(config, model_info, is_cross_region, **kwargs)
         return config
 
@@ -459,18 +482,19 @@ class BedrockLanguageModelFactory(
         self, resolved_model_id: str, is_cross_region: bool, **kwargs: Any
     ) -> dict[str, Any]:
         config = {
-            "model": resolved_model_id,
+            "model_id": resolved_model_id,
             "region_name": self.region_name,
-            "credentials_profile_name": self.boto_session.profile_name,
             "client": self._client,
             "callbacks": kwargs.get("callbacks"),
         }
-
+        if (
+            self.boto_session.profile_name
+            and self.boto_session.profile_name != "default"
+        ):
+            config["credentials_profile_name"] = self.boto_session.profile_name
         common_params = {
-            "top_p": kwargs.get("top_p", self.DEFAULT_TOP_P),
             "stop_sequences": ["\n\nHuman:"],
         }
-
         if is_cross_region:
             config.update(common_params)
         else:
@@ -486,17 +510,17 @@ class BedrockLanguageModelFactory(
         model_info: LanguageModelInfo,
         is_cross_region: bool,
         **kwargs: Any,
-    ) -> None:
+    ):
         enable_perf = kwargs.get("enable_performance_optimization", False)
         enable_think = kwargs.get("enable_thinking", False)
-
         if self._should_enable_performance_optimization(
             enable_perf, model_info, is_cross_region
         ):
             latency = kwargs.get("latency_mode", self.DEFAULT_LATENCY_MODE)
             config.setdefault("performanceConfig", {}).update({"latency": latency})
-            logger.debug(f"Applied performance optimization (latency_mode='{latency}')")
-
+            logger.debug(
+                "Applied performance optimization (latency_mode='%s')", latency
+            )
         if self._should_enable_thinking(enable_think, model_info):
             budget = kwargs.get(
                 "thinking_budget_tokens", self.DEFAULT_THINKING_BUDGET_TOKENS
@@ -505,7 +529,7 @@ class BedrockLanguageModelFactory(
             config.setdefault("additional_model_request_fields", {}).update(
                 think_config
             )
-            logger.debug(f"Applied thinking mode (budget_tokens={budget})")
+            logger.debug("Applied thinking mode (budget_tokens=%d)", budget)
 
     @staticmethod
     def _validate_max_tokens(
@@ -514,7 +538,9 @@ class BedrockLanguageModelFactory(
         final_max_tokens = max_tokens or model_info.max_output_tokens
         if final_max_tokens > model_info.max_output_tokens:
             logger.warning(
-                f"Requested max_tokens ({final_max_tokens}) exceeds model's maximum ({model_info.max_output_tokens}). Adjusting."
+                "Requested max_tokens (%d) exceeds model's maximum (%d). Adjusting.",
+                final_max_tokens,
+                model_info.max_output_tokens,
             )
             return model_info.max_output_tokens
         return final_max_tokens
@@ -549,9 +575,16 @@ class BedrockRerankWrapper(BaseBedrockWrapper, BedrockRerank):
     ) -> list[Document]:
         if len(documents) > self.max_documents:
             logger.warning(
-                f"Number of documents ({len(documents)}) exceeds limit ({self.max_documents}). Taking first {self.max_documents} documents."
+                f"Document count ({len(documents)}) exceeds limit ({self.max_documents}). Using first {self.max_documents} documents."
             )
             documents = documents[: self.max_documents]
+
+        original_top_n = self.top_n
+        if self.top_n is not None and len(documents) < self.top_n:
+            self.top_n = len(documents)
+            logger.info(
+                f"Adjusted top_n from {original_top_n} to {self.top_n} to match document count"
+            )
 
         truncated_query = self._truncate_text(
             query, self.max_query_length, self.max_query_tokens, "query"
@@ -566,10 +599,14 @@ class BedrockRerankWrapper(BaseBedrockWrapper, BedrockRerank):
             )
 
         try:
-            result = super().compress_documents(documents, truncated_query)
+            result = super().compress_documents(
+                documents, truncated_query, callbacks=callbacks
+            )
             return list(result)
         except Exception as e:
-            raise RerankModelError(f"Reranking failed: {e}") from e
+            raise RuntimeError(f"Reranking failed: {e}") from e
+        finally:
+            self.top_n = original_top_n
 
 
 class BedrockRerankModelFactory(
