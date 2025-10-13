@@ -273,7 +273,7 @@ class BatchProcessor(BaseModel):
         logger.info(f"Processing {len(inputs)} items concurrently for '{task_name}'")
         semaphore = asyncio.Semaphore(self.max_concurrency)
 
-        async def _process_one(single_input):
+        async def _process_one(single_input: dict[str, Any]) -> Any:
             async with semaphore:
                 try:
                     return await sequential_func(single_input)

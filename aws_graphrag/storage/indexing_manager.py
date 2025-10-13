@@ -181,7 +181,7 @@ class IndexingManager:
     @staticmethod
     def _enrich_text_units(
         text_units: list[TextUnit] | None, communities: list[Community] | None
-    ):
+    ) -> None:
         if not text_units or not communities:
             return
 
@@ -197,7 +197,9 @@ class IndexingManager:
                         text_unit.community_ids.append(community.id)
 
     @staticmethod
-    def _log_completion_summary(results: dict[str, IndexingStats], elapsed_time: float):
+    def _log_completion_summary(
+        results: dict[str, IndexingStats], elapsed_time: float
+    ) -> None:
         total_items = total_successful = total_failed = 0
 
         for stats in results.values():

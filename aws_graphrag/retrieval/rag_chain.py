@@ -457,7 +457,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         )
 
     @staticmethod
-    def _format_search_output_step(state: dict[str, Any]) -> dict:
+    def _format_search_output_step(state: dict[str, Any]) -> dict[str, Any]:
         sr: SearchResult = state["search_results"]
         sr.search_strategy = state["resolved_strategy"].value
 
@@ -487,7 +487,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         inputs: RAGInput | dict[str, Any],
         config: RunnableConfig | None = None,
         **kwargs: Any,
-    ) -> RAGOutput | dict:
+    ) -> RAGOutput | dict[str, Any]:
         rag_input, input_dict = self._prepare_invoke(inputs)
 
         try:
