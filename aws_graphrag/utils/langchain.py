@@ -176,6 +176,10 @@ class BatchProcessor(BaseModel):
                 logger.error(
                     f"Sequential processing failed for single item in '{task_name}': {e}"
                 )
+                # Note.
+                # If not processed, add an empty dict
+                # To fill in results for all inputs -> later map them one by one using zip
+                results.append({})
                 continue
 
         logger.info(
