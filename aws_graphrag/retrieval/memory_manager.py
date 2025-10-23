@@ -1,5 +1,6 @@
 import asyncio
 import threading
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -52,10 +53,6 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
             parser=CommaSeparatedListOutputParser(),
         )
 
-    @property
-    def messages(self) -> list[BaseMessage]:
-        return self._messages
-
     def add_message(self, message: BaseMessage) -> None:
         self._messages.append(message)
         if len(self._messages) > self.max_messages:
@@ -63,7 +60,7 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
         self._update_context(message)
         self.updated_at = datetime.now()
 
-    def add_messages(self, messages: list[BaseMessage]) -> None:
+    def add_messages(self, messages: Sequence[BaseMessage]) -> None:
         for message in messages:
             self.add_message(message)
 
@@ -156,11 +153,12 @@ class GraphRAGConversationBufferMemory(BaseChatMemory):
 
     @property
     def buffer(self) -> list[BaseMessage] | str:
+        messages = self.chat_memory.messages
         return (
-            self.chat_memory.messages
+            messages
             if self.return_messages
             else get_buffer_string(
-                self.chat_memory.messages,
+                messages,
                 human_prefix=self.human_prefix,
                 ai_prefix=self.ai_prefix,
             )
@@ -236,7 +234,7 @@ class MemoryManager:
         history = await self.get_or_create_memory(conv_id)
         return GraphRAGConversationBufferMemory(chat_memory=history, **kwargs)
 
-    async def add_message(self, conv_id: str, role: MessageRole, content: str):
+    async def add_message(self, conv_id: str, role: MessageRole, content: str) -> None:
         memory = await self.get_or_create_memory(conv_id)
         message_map = {
             MessageRole.USER: HumanMessage,
@@ -261,7 +259,7 @@ class MemoryManager:
             del self._memories[cid]
         return len(to_remove)
 
-    async def _cleanup_oldest_unsafe(self, count: int):
+    async def _cleanup_oldest_unsafe(self, count: int) -> None:
         if count <= 0:
             return
 
@@ -278,7 +276,7 @@ class MemoryManager:
                 f"Removed {len(to_remove)} oldest conversations to maintain capacity"
             )
 
-    async def periodic_cleanup_task(self):
+    async def periodic_cleanup_task(self) -> None:
         while True:
             await asyncio.sleep(self.config.memory.cleanup_interval_hours * 3600)
             try:

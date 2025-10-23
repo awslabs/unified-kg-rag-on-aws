@@ -55,7 +55,7 @@ class BaseParser(ABC):
                 documents.append(doc)
                 self.stats.num_successful_files += 1
             except Exception as e:
-                logger.error(f"Failed to parse {file_path}: {e}")
+                logger.error(f"Failed to parse '{file_path}': {e}")
                 self.stats.num_failed_files += 1
 
         logger.info(f"Parsing completed - Success rate: {self.stats.success_rate:.2f}%")
@@ -88,7 +88,8 @@ class FileParser(BaseParser):
 
             if (
                 document.content
-                and document.content.text
+                and hasattr(document.content, "text")
+                and isinstance(document.content.text, str)
                 and document.content.text.strip() == ""
             ):
                 raise DataProcessingError(
@@ -103,7 +104,7 @@ class FileParser(BaseParser):
 
 
 class ParserFactory:
-    _loader_configs = {
+    _loader_configs: dict[str, tuple[type[BaseLoader], dict, str]] = {
         ".csv": (CSVLoader, {}, "CSV"),
         ".htm": (UnstructuredHTMLLoader, {}, "HTML"),
         ".html": (UnstructuredHTMLLoader, {}, "HTML"),

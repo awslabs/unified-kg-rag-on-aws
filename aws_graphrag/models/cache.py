@@ -45,9 +45,11 @@ class CacheEntry(BaseModel):
 
     @property
     def exists_locally(self) -> bool:
-        if self.metadata.get("is_chunked", False):
+        if "is_chunked" in self.metadata and self.metadata["is_chunked"]:
             return True
-        return self.local_path is not None and self.local_path.exists()
+        if self.local_path is None:
+            return False
+        return Path(self.local_path).exists()
 
     @property
     def is_expired(self) -> bool:
@@ -76,7 +78,7 @@ class CacheIndex(BaseModel):
         self.updated_at = datetime.now()
 
     def get_entry(self, key: str) -> CacheEntry | None:
-        return self.entries.get(key)
+        return self.entries[key] if key in self.entries else None
 
 
 class CacheStats(BaseModel):
@@ -110,9 +112,12 @@ class CacheStats(BaseModel):
 
     def record_hit(self, stage_name: str) -> None:
         self.hit_count += 1
-        self.stage_stats.setdefault(stage_name, {"hits": 0, "misses": 0})["hits"] += 1
+        if stage_name not in self.stage_stats:
+            self.stage_stats[stage_name] = {"hits": 0, "misses": 0}
+        self.stage_stats[stage_name]["hits"] += 1
 
     def record_miss(self, stage_name: str) -> None:
         self.miss_count += 1
-        self.stage_stats.setdefault(stage_name, {"hits": 0, "misses": 0})["misses"] += 1
-
+        if stage_name not in self.stage_stats:
+            self.stage_stats[stage_name] = {"hits": 0, "misses": 0}
+        self.stage_stats[stage_name]["misses"] += 1

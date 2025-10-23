@@ -1,7 +1,7 @@
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import boto3
 from pydantic import BaseModel
@@ -86,7 +86,9 @@ class DataIngestionPipeline:
         PipelineStageType.TRANSLATION,
     }
 
-    STAGE_OUTPUT_MAPPING = {
+    STAGE_OUTPUT_MAPPING: dict[
+        PipelineStageType, dict[str, tuple[type[BaseModel], str]]
+    ] = {
         PipelineStageType.CLAIM_EXTRACTION: {"claims": (Claim, "claims")},
         PipelineStageType.CLAIM_RESOLUTION: {
             "resolved_claims": (Claim, "resolved_claims")
@@ -173,7 +175,7 @@ class DataIngestionPipeline:
                 prefix=self.pipeline_config.s3_prefix,
             )
         else:
-            self.s3_cache_manager = None
+            self.s3_cache_manager: S3CacheManager | None = None
 
     def _initialize_stages(
         self,
@@ -200,7 +202,7 @@ class DataIngestionPipeline:
                     stage_enabled = stage_enabled and claim_config.enabled
 
             if stage_enabled:
-                kwargs = {}
+                kwargs: dict[str, Any] = {}
                 if stage_type in self.INPUT_DIR_REQUIRED_STAGES:
                     kwargs["source_directory"] = self.source_directory
                 if stage_type in self.BOTO_REQUIRED_STAGES:
@@ -675,7 +677,7 @@ class DataIngestionPipeline:
     ) -> float:
         for result in context.stage_results:
             if result.stage_name.lower().startswith(stage_name_prefix):
-                return result.metrics.get(metric_name, 0.0)
+                return float(result.metrics.get(metric_name, 0.0))
         return 0.0
 
     @staticmethod

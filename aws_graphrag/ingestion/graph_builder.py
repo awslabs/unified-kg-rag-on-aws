@@ -64,7 +64,7 @@ class GraphBuilder:
             )
 
     def _both_nodes_exist(self, source_id: str, target_id: str) -> bool:
-        return self.graph.has_node(source_id) and self.graph.has_node(target_id)
+        return bool(self.graph.has_node(source_id) and self.graph.has_node(target_id))
 
     def _add_claims(self) -> None:
         stats = {

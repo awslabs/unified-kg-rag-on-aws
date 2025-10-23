@@ -285,7 +285,8 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
     @staticmethod
     async def _execute_traversal(traversal: Traversal) -> list[Any]:
         try:
-            return traversal.to_list()
+            result: list[Any] = traversal.to_list()
+            return result
         except Exception as e:
             logger.error(f"Gremlin traversal execution failed: {e}")
             return []
@@ -375,7 +376,7 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
                 0.2 if query_lower in node.get("name", "").lower() else 0.0
             )
         else:
-            importance = node.get("importance", 0.5)
+            importance = float(node.get("importance", 0.5))
             type_boost = 0.0
             text_match_score = 0.0
             if query_lower in node.get("name", "").lower():
@@ -389,7 +390,7 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             + (text_match_score * score_weights["text"])
             + (type_boost * score_weights["type"])
         )
-        return min(score, 1.0)
+        return float(min(score, 1.0))
 
     def _record_metrics(
         self, result_count: int, entity_count: int, community_count: int

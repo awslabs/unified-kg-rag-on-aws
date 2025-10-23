@@ -1,7 +1,9 @@
 from abc import ABC
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from langchain_core.messages import BaseMessage, SystemMessage
 from langchain_core.prompts import (
     ChatPromptTemplate,
     HumanMessagePromptTemplate,
@@ -72,36 +74,35 @@ class BasePrompt(ABC):
     @classmethod
     def _create_cached_messages(
         cls, instance: "BasePrompt"
-    ) -> list[HumanMessagePromptTemplate | SystemMessagePromptTemplate]:
-        return [
-            SystemMessagePromptTemplate.from_template(
-                template=[
-                    {"type": "text", "text": instance.system_prompt_template},
-                    {"cachePoint": {"type": "default"}},
-                ],
-                input_variables=instance.input_variables,
-            ),
-            HumanMessagePromptTemplate.from_template(
-                template=[
-                    {"type": "text", "text": instance.human_prompt_template},
-                    {"cachePoint": {"type": "default"}},
-                ],
-                input_variables=instance.input_variables,
-            ),
-        ]
+    ) -> Sequence[
+        BaseMessage | HumanMessagePromptTemplate | SystemMessagePromptTemplate
+    ]:
+        system_msg = SystemMessage(
+            content=[
+                {
+                    "type": "text",
+                    "text": instance.system_prompt_template,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+        )
+
+        human_msg_template = HumanMessagePromptTemplate.from_template(
+            template=instance.human_prompt_template
+        )
+
+        return [system_msg, human_msg_template]
 
     @classmethod
     def _create_standard_messages(
         cls, instance: "BasePrompt"
-    ) -> list[HumanMessagePromptTemplate | SystemMessagePromptTemplate]:
+    ) -> Sequence[HumanMessagePromptTemplate | SystemMessagePromptTemplate]:
         return [
             SystemMessagePromptTemplate.from_template(
                 template=instance.system_prompt_template,
-                input_variables=instance.input_variables,
             ),
             HumanMessagePromptTemplate.from_template(
                 template=instance.human_prompt_template,
-                input_variables=instance.input_variables,
             ),
         ]
 

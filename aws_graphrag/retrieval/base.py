@@ -122,7 +122,7 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         self,
         config: Config,
         retrievers: dict[str, BaseGraphRAGRetriever],
-        context_builder: BaseContextBuilder,
+        context_builder: BaseContextBuilder | None = None,
         boto_session: boto3.Session | None = None,
         optimization_threshold_factor: int = 2,
         default_max_tokens: int = 4096,
@@ -156,7 +156,7 @@ class BaseSearchStrategy(MetricsMixin, ABC):
 
     @staticmethod
     def _get_ids(results: list[RetrievalResult], key: str) -> list[str]:
-        ids_set = set()
+        ids_set: set[str] = set()
         for result in results:
             if ids := result.metadata.get(key):
                 if isinstance(ids, list):

@@ -206,8 +206,8 @@ class GraphExtractor(BaseProcessor):
         result: dict[str, Any],
         text_unit: TextUnit,
     ) -> tuple[list[Entity], list[Relationship]]:
-        entities = []
-        relationships = []
+        entities: list[Entity] = []
+        relationships: list[Relationship] = []
 
         if not isinstance(result, dict) or (
             "entities" not in result or "relationships" not in result
@@ -237,7 +237,12 @@ class GraphExtractor(BaseProcessor):
     def _merge_entities(self, entities: list[Entity]) -> list[Entity]:
         field_mergers = {
             "description": self._merge_description,
-            "text_unit_ids": lambda current, new: list(set(current + new)),
+            "text_unit_ids": lambda current, new: list(
+                set(
+                    (current if isinstance(current, list) else [])
+                    + (new if isinstance(new, list) else [])
+                )
+            ),
         }
 
         return self._merge_items(
@@ -252,9 +257,17 @@ class GraphExtractor(BaseProcessor):
         self, relationships: list[Relationship]
     ) -> list[Relationship]:
         field_mergers = {
-            "weight": lambda current, new: (current or 0.0) + (new or 0.0),
+            "weight": lambda current, new: (
+                current if isinstance(current, (int, float)) else 0.0
+            )
+            + (new if isinstance(new, (int, float)) else 0.0),
             "description": self._merge_description,
-            "text_unit_ids": lambda current, new: list(set(current + new)),
+            "text_unit_ids": lambda current, new: list(
+                set(
+                    (current if isinstance(current, list) else [])
+                    + (new if isinstance(new, list) else [])
+                )
+            ),
         }
 
         return self._merge_items(

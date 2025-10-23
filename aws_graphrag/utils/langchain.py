@@ -12,6 +12,7 @@ from langchain_core.output_parsers import BaseOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
 from lxml import etree
 from pydantic import BaseModel, Field
+from tenacity import RetryCallState
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
 
@@ -146,7 +147,7 @@ class BatchProcessor(BaseModel):
 
     @staticmethod
     def _create_retry_log_callback(operation_name: str) -> Callable:
-        def log_retry(retry_state):
+        def log_retry(retry_state: RetryCallState) -> None:
             wait_time = retry_state.next_action.sleep if retry_state.next_action else 0
             logger.warning(
                 f"Retrying '{operation_name}' (attempt {retry_state.attempt_number} failed). Waiting {wait_time:.1f}s"
@@ -261,9 +262,10 @@ class BatchProcessor(BaseModel):
 
     def _create_async_batch_func(self, batch_func: Callable[..., Any]) -> Callable:
         async def _batch_func(inputs: list[dict[str, Any]]) -> list[Any]:
-            return await batch_func(
+            result = await batch_func(
                 inputs, config=RunnableConfig(max_concurrency=self.max_concurrency)
             )
+            return list(result)
 
         return _batch_func
 
@@ -310,8 +312,10 @@ class RobustXMLOutputParser(XMLOutputParser):
             if self._sections_preserved(original_sections, result):
                 return result
             raise ValueError("Missing sections in parsed result")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(
+                f"Standard XML parsing failed: {type(e).__name__}: {e}. Trying lxml recovery..."
+            )
 
         try:
             cleaned_text = self._clean_xml_for_lxml(text)
@@ -319,8 +323,10 @@ class RobustXMLOutputParser(XMLOutputParser):
             if self._sections_preserved(original_sections, result):
                 return result
             raise ValueError("Missing sections in lxml result")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(
+                f"LXML recovery parsing failed: {type(e).__name__}: {e}. Trying sanitization..."
+            )
 
         try:
             sanitized_text = self._sanitize_xml_content(text)
@@ -328,8 +334,10 @@ class RobustXMLOutputParser(XMLOutputParser):
             if self._sections_preserved(original_sections, result):
                 return result
             raise ValueError("Missing sections in sanitized result")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(
+                f"Sanitized XML parsing failed: {type(e).__name__}: {e}. Trying aggressive cleaning..."
+            )
 
         try:
             aggressively_cleaned = self._aggressively_clean_xml(text)
@@ -337,31 +345,39 @@ class RobustXMLOutputParser(XMLOutputParser):
             if self._sections_preserved(original_sections, result):
                 return result
             raise ValueError("Missing sections in aggressive result")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(
+                f"Aggressive cleaning parsing failed: {type(e).__name__}: {e}. Trying XML fallback..."
+            )
 
         try:
             fallback_result = self._extract_xml_fallback(text)
             if fallback_result:
                 return fallback_result
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(
+                f"XML fallback extraction failed: {type(e).__name__}: {e}. Trying tags fallback..."
+            )
 
         try:
             fallback_result = self._extract_tags_fallback(text)
             if fallback_result:
                 return fallback_result
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(
+                f"Tags fallback extraction failed: {type(e).__name__}: {e}. Trying list fallback..."
+            )
 
         try:
             fallback_result = self._extract_list_fallback(text)
             if fallback_result:
                 return fallback_result
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(
+                f"List fallback extraction failed: {type(e).__name__}: {e}. All methods exhausted."
+            )
 
-        logger.error(f"All XML parsing attempts failed for content: '{text[:200]}...'")
+        logger.error("All XML parsing attempts failed for content: '%s...'", text[:200])
         raise ValueError(
             f"Failed to parse XML after multiple attempts. Content preview: '{text[:200]}...'"
         )
@@ -451,7 +467,7 @@ class RobustXMLOutputParser(XMLOutputParser):
         if not nested_matches:
             return content
 
-        result = {}
+        result: dict[str, Any] = {}
         for nested_tag, nested_content in nested_matches:
             parsed_nested = RobustXMLOutputParser._parse_xml_element(nested_content)
 
@@ -488,7 +504,7 @@ class RobustXMLOutputParser(XMLOutputParser):
             raise ValueError("lxml parser recovered a null tree")
 
         def _convert_etree_to_dict(element: etree._Element) -> dict[str, Any]:
-            result = {}
+            result: dict[str, Any] = {}
             children = list(element)
 
             if children:
@@ -509,9 +525,10 @@ class RobustXMLOutputParser(XMLOutputParser):
             if element.attrib:
                 if not isinstance(result[element.tag], dict):
                     result[element.tag] = {"#text": result[element.tag]}
-                result[element.tag].update(
-                    {f"@{k}": v for k, v in element.attrib.items()}
-                )
+                if isinstance(result[element.tag], dict):
+                    result[element.tag].update(
+                        {f"@{k}": v for k, v in element.attrib.items()}
+                    )
 
             if element.text and element.text.strip():
                 text = element.text.strip()
@@ -522,7 +539,7 @@ class RobustXMLOutputParser(XMLOutputParser):
                         result[element.tag]["#text"] = text
 
             if not result[element.tag]:
-                result[element.tag] = ""
+                result[element.tag] = {}
 
             return result
 
@@ -545,8 +562,9 @@ class RobustXMLOutputParser(XMLOutputParser):
         cleaned = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", "", xml_content)
         cleaned = re.sub(r"&(?!(?:amp|lt|gt|quot|apos);)", "&amp;", cleaned)
 
-        def selective_escape(match: re.Match) -> str:
-            return html.escape(match.group(0), quote=False)
+        def selective_escape(match: re.Match[str]) -> str:
+            escaped: str = html.escape(match.group(0), quote=False)
+            return escaped
 
         cleaned = re.sub(r">([^<]*)<", selective_escape, cleaned)
         return cleaned.strip()

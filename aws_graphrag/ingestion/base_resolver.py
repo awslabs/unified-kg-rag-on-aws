@@ -80,7 +80,7 @@ class FuzzyMatcher:
     def _build_indices(self) -> None:
         self.exact_index = {name: name for name in self.candidates}
         self.normalized_index = {normalize_name(name): name for name in self.candidates}
-        self.abbreviation_index = {}
+        self.abbreviation_index: dict[str, str] = {}
         for name in self.candidates:
             for abbrev in self._generate_abbreviations(name):
                 if abbrev not in self.abbreviation_index:
@@ -143,7 +143,7 @@ class FuzzyMatcher:
 
     @classmethod
     def _generate_abbreviations(cls, text: str) -> set[str]:
-        abbrevs = set()
+        abbrevs: set[str] = set()
         if not text:
             return abbrevs
 

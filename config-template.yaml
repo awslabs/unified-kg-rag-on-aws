@@ -8,6 +8,8 @@ aws:
   # Bedrock Configuration
   bedrock:
     region_name: "us-west-2"
+    assumed_role_arn: null
+    enable_global_profile: true
 
   # Neptune Configuration
   neptune:
@@ -33,7 +35,7 @@ aws:
 # Global Output Fixing Configuration
 fixing:
   enabled: false
-  fixing_model_id: "anthropic.claude-sonnet-4-20250514-v1:0"
+  fixing_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
 
 # Data Processing Configuration
 processing:
@@ -55,7 +57,7 @@ processing:
   # Text Chunking
   chunking:
     chunker_type: "intelligent"
-    chunking_model_id: "anthropic.claude-3-5-haiku-20241022-v1:0"
+    chunking_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     content_type: "markdown"
     min_chunk_size: 5000
     max_chunk_size: 50000
@@ -67,20 +69,20 @@ processing:
 
   # Translation
   translation:
-    translation_model_id: "anthropic.claude-3-5-haiku-20241022-v1:0"
+    translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     target_language: "en"
     additional_target_languages: null
 
   # Graph Extraction
   graph_extraction:
-    extraction_model_id: "anthropic.claude-sonnet-4-20250514-v1:0"
+    extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
     max_entities_per_chunk: 100
     max_relationships_per_chunk: 100
 
   # Gleaning (Iterative Information Extraction)
   gleaning:
     enabled: true
-    graph_refinement_model_id: "anthropic.claude-sonnet-4-20250514-v1:0"
+    graph_refinement_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
     max_rounds: 3
     convergence_threshold: 0.8
     quality_threshold: 0.9
@@ -91,7 +93,7 @@ processing:
 
   # Claim Extraction
   claim_extraction:
-    extraction_model_id: "anthropic.claude-sonnet-4-20250514-v1:0"
+    extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
     max_entities_per_prompt: 200
     similarity_threshold: 0.3
 
@@ -127,7 +129,7 @@ graph:
     # Community report generation
     report_generation:
       enabled: true
-      report_generation_model_id: "anthropic.claude-sonnet-4-20250514-v1:0"
+      report_generation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
       max_entities_per_report: 50
       summary_length: "medium"
       include_statistics: true
@@ -199,11 +201,11 @@ indexing:
 
 # Search Configuration
 search:
-  translation_model_id: "anthropic.claude-3-5-haiku-20241022-v1:0"
-  entity_extraction_model_id: "anthropic.claude-sonnet-4-20250514-v1:0"
-  strategy_selection_model_id: "anthropic.claude-sonnet-4-20250514-v1:0"
-  context_building_model_id: "anthropic.claude-sonnet-4-20250514-v1:0"
-  answer_generation_model_id: "anthropic.claude-sonnet-4-20250514-v1:0"
+  translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+  entity_extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+  strategy_selection_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+  context_building_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+  answer_generation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
 
   # Hybrid search weights
   hybrid:
@@ -227,8 +229,8 @@ search:
 
   # Global Search Configuration
   global_search:
-    community_relevance_model_id: "anthropic.claude-3-5-haiku-20241022-v1:0"
-    map_reduce_model_id: "anthropic.claude-3-5-haiku-20241022-v1:0"
+    community_relevance_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    map_reduce_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     max_communities: 10
     relevance_threshold: 0.5
     use_dynamic_selection: true
@@ -238,9 +240,9 @@ search:
   drift_search:
     enable_query_refinement: true
     enable_keyword_extraction: true
-    query_refinement_model_id: "anthropic.claude-3-5-haiku-20241022-v1:0"
-    keyword_expansion_model_id: "anthropic.claude-3-5-haiku-20241022-v1:0"
-    convergence_assessment_model_id: "anthropic.claude-3-5-haiku-20241022-v1:0"
+    query_refinement_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    keyword_expansion_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    convergence_assessment_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     max_iterations: 3
     initial_top_k: 5
     summary_length: 5
@@ -280,7 +282,7 @@ logging:
 evaluation:
   outputs_directory: "outputs/evaluation"
   embedding_model_id: "amazon.titan-embed-text-v2:0"
-  evaluation_model_id: "anthropic.claude-sonnet-4-20250514-v1:0"
+  evaluation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
   enabled_evaluators:
     - langchain
     - ragas

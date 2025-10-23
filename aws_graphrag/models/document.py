@@ -269,7 +269,7 @@ class Document(BaseDocument):
         return text_parts, html_parts, markdown_parts
 
     @classmethod
-    def from_json(cls, input_path: str | Path) -> "Document":
+    def from_json_file(cls, input_path: str | Path) -> "Document":
         path = Path(input_path)
         if not path.is_file():
             raise FileNotFoundError(f"JSON file not found at '{path}'")
@@ -278,7 +278,7 @@ class Document(BaseDocument):
         data["page_content"] = data.get("content", {}).get("text", "")
         return cls.model_validate(data)
 
-    def to_json(self, output_path: str | Path | None = None, **kwargs: Any) -> str:
+    def to_json_file(self, output_path: str | Path | None = None, **kwargs: Any) -> str:
         kwargs.setdefault("indent", 2)
         json_data = self.model_dump_json(**kwargs)
 

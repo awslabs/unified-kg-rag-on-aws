@@ -64,7 +64,7 @@ class HierarchicalCommunity(BaseModel):
         description="Ordered list of child community identifiers at the next lower hierarchical level",
     )
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self.community_id)
 
 
@@ -134,7 +134,9 @@ class CommunityDetector(BaseProcessor):
             return
 
         if not base_partition:
-            logger.error("Failed to detect base communities - aborting hierarchy analysis")
+            logger.error(
+                "Failed to detect base communities - aborting hierarchy analysis"
+            )
             return
 
         self.base_modularity = nx.community.modularity(self.graph, base_partition)
@@ -181,7 +183,11 @@ class CommunityDetector(BaseProcessor):
                         candidate_partition = self._get_base_partition(
                             cluster_graph, resolution_override=cluster_resolution
                         )
-                        if candidate_partition and len(candidate_partition) < cluster_graph.number_of_nodes():
+                        if (
+                            candidate_partition
+                            and len(candidate_partition)
+                            < cluster_graph.number_of_nodes()
+                        ):
                             num_communities = len(candidate_partition)
 
                             if 1 < num_communities < best_num_communities:
@@ -189,7 +195,9 @@ class CommunityDetector(BaseProcessor):
                                 best_num_communities = num_communities
 
                     except Exception as e:
-                        logger.debug(f"Failed with resolution '{cluster_resolution}': {e}")
+                        logger.debug(
+                            f"Failed with resolution '{cluster_resolution}': {e}"
+                        )
                         continue
 
                 if best_partition:
@@ -217,9 +225,11 @@ class CommunityDetector(BaseProcessor):
         self, graph: nx.Graph | None = None, resolution_override: float | None = None
     ) -> list[set[str]] | None:
         target_graph = graph or self.graph
-        
+
         if not target_graph or target_graph.number_of_edges() == 0:
-            logger.warning("Graph has no edges. Treating each node as a separate community.")
+            logger.warning(
+                "Graph has no edges. Treating each node as a separate community."
+            )
             return [{node} for node in target_graph.nodes()]
 
         try:
@@ -230,7 +240,7 @@ class CommunityDetector(BaseProcessor):
             )
 
             all_nodes = set(target_graph.nodes())
-            
+
             partition_dict = leiden(
                 target_graph,
                 resolution=resolution,
@@ -239,7 +249,7 @@ class CommunityDetector(BaseProcessor):
 
             communities = defaultdict(set)
             partitioned_nodes = set()
-            
+
             for node, label in partition_dict.items():
                 communities[label].add(node)
                 partitioned_nodes.add(node)
@@ -249,9 +259,9 @@ class CommunityDetector(BaseProcessor):
             for node in missing_nodes:
                 communities[next_label] = {node}
                 next_label += 1
-            
+
             return list(communities.values())
-            
+
         except Exception as e:
             logger.error(f"Error during Leiden partitioning: {e}")
             return None
@@ -268,7 +278,7 @@ class CommunityDetector(BaseProcessor):
             for node in nodes:
                 node_to_community[node] = comm_idx
 
-        edge_weights = defaultdict(float)
+        edge_weights: dict[tuple[int, int], float] = defaultdict(float)
 
         for source, target, data in self.graph.edges(data=True):
             source_community = node_to_community.get(source)
@@ -280,7 +290,8 @@ class CommunityDetector(BaseProcessor):
                 continue
 
             edge_weight = data.get("weight", 1.0)
-            comm_pair = tuple(sorted([source_community, target_community]))
+            comm_pair_list = sorted([source_community, target_community])
+            comm_pair: tuple[int, int] = (comm_pair_list[0], comm_pair_list[1])
             edge_weights[comm_pair] += edge_weight
 
         for (comm1, comm2), weight in edge_weights.items():
@@ -291,7 +302,7 @@ class CommunityDetector(BaseProcessor):
 
     def _process_hierarchical_partitions(
         self, partitions: list[list[set[str]]]
-    ):
+    ) -> None:
         self.all_communities.clear()
         self.node_to_community_l0.clear()
 
@@ -326,8 +337,13 @@ class CommunityDetector(BaseProcessor):
                 child_comm_ids = []
 
                 for cluster_idx in cluster_nodes:
-                    if cluster_idx in previous_level_map:
-                        child_comm_id = previous_level_map[cluster_idx]
+                    cluster_idx_int = (
+                        int(cluster_idx)
+                        if isinstance(cluster_idx, str)
+                        else cluster_idx
+                    )
+                    if cluster_idx_int in previous_level_map:
+                        child_comm_id = previous_level_map[cluster_idx_int]
                         child_comm = self.all_communities.get(child_comm_id)
 
                         if child_comm:
@@ -419,7 +435,7 @@ class CommunityDetector(BaseProcessor):
                 community_size_distribution={},
             )
 
-        size_distribution = defaultdict(int)
+        size_distribution: dict[int, int] = defaultdict(int)
         for size in community_sizes:
             size_distribution[size] += 1
 
@@ -434,12 +450,14 @@ class CommunityDetector(BaseProcessor):
 
     def _extract_attributes_from_graph(self) -> dict[str, Any]:
         if hasattr(self.graph, "graph") and self.graph.graph:
-            return self.graph.graph.get("attributes", {})
-
+            attributes = self.graph.graph.get("attributes", {})
+            if isinstance(attributes, dict):
+                return attributes
+            return {}
         for _, node_data in self.graph.nodes(data=True):
-            if node_attributes := node_data.get("attributes"):
+            node_attributes = node_data.get("attributes")
+            if isinstance(node_attributes, dict):
                 return node_attributes
-
         return {}
 
     def _create_community_object(

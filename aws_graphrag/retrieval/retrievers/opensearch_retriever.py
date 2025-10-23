@@ -287,7 +287,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             if isinstance(value, dict):
                 clauses.append({"range": {key: value}})
             elif isinstance(value, list):
-                clauses.append({"terms": {key: value}})
+                clauses.append({"terms": {key: {"terms": value}}})
             else:
                 clauses.append({"term": {key: value}})
 

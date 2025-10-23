@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aws-graphrag"
-version = "0.2.0"
+version = "0.2.1"
 description = "AWS Native Knowledge Graph RAG Framework"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,6 +26,7 @@ classifiers = [
 ]
 dependencies = [
     "asyncio-throttle>=1.0.2",
+    "black>=25.9.0",
     "bokeh>=3.7.3",
     "boto3>=1.38.45",
     "datasets>=4.0.0",
@@ -33,10 +34,10 @@ dependencies = [
     "future>=1.0.0",
     "graspologic>=3.4.1",
     "gremlinpython>=3.7.3",
-    "langchain>=0.3.26",
-    "langchain-aws>=0.2.27",
-    "langchain-community>=0.3.27",
-    "langchain-core>=0.3.66",
+    "langchain>=0.3.26,<1.0.0",
+    "langchain-aws>=0.2.27,<1.0.0",
+    "langchain-community>=0.3.27,<1.0.0",
+    "langchain-core>=0.3.66,<1.0.0",
     "langchain-text-splitters>=0.3.8",
     "lxml>=6.0.0",
     "networkx>=3.4",

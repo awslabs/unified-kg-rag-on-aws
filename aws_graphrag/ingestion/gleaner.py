@@ -269,7 +269,7 @@ class GraphGleaner(BaseProcessor):
             current_relationships = round_stats["relationships"]
             current_quality = round_stats["quality"]
 
-            stats.rounds.append(round_stats["round_info"])
+            stats.rounds = stats.rounds + [round_stats["round_info"]]
             stats.total_entities_added += round_stats["round_info"].entities_added
             stats.total_relationships_added += round_stats[
                 "round_info"
@@ -447,7 +447,10 @@ class GraphGleaner(BaseProcessor):
             return [], [], {}
 
         all_new_entities, all_new_relationships = [], []
-        quality_scores_aggregator = {"completeness": [], "accuracy": []}
+        quality_scores_aggregator: dict[str, list[float]] = {
+            "completeness": [],
+            "accuracy": [],
+        }
 
         for item, result_data in zip(text_units, results, strict=True):
             new_entities, new_relationships, quality_scores = (
@@ -497,13 +500,14 @@ class GraphGleaner(BaseProcessor):
         return sum(values) / len(values) if values else 0.0
 
     def _parse_refinement_output(
-            self,
-            result_data: dict[str, Any] | list[Any],
-            unit: TextUnit,
-            existing_entities: list[Entity],
+        self,
+        result_data: dict[str, Any] | list[Any],
+        unit: TextUnit,
+        existing_entities: list[Entity],
     ) -> tuple[list[Entity], list[Relationship], dict[str, float]]:
-        new_entities, new_relationships = [], []
-        quality_scores = {}
+        new_entities: list[Entity] = []
+        new_relationships: list[Relationship] = []
+        quality_scores: dict[str, float] = {}
 
         if not result_data:
             logger.debug(f"No result data for text unit '{unit.id}'")

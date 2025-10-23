@@ -2,7 +2,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aws_graphrag.models import (
     Claim,
@@ -78,7 +78,7 @@ class PipelineStateManager:
         )
         return metadata_path.exists() and metadata_path.stat().st_size > 0
 
-    def load_pipeline_metadata(self, pipeline_id: str) -> dict:
+    def load_pipeline_metadata(self, pipeline_id: str) -> dict[str, Any]:
         metadata_path = (
             self.cache_manager.get_pipeline_cache_dir(pipeline_id)
             / self.PIPELINE_METADATA_FILE
@@ -93,6 +93,11 @@ class PipelineStateManager:
 
             with open(metadata_path, encoding="utf-8") as f:
                 metadata = json.load(f)
+
+            if not isinstance(metadata, dict):
+                raise PipelineStateError(
+                    f"Metadata file does not contain a JSON object: '{metadata_path}'"
+                )
 
             required_fields = ["pipeline_id", "start_time", "status"]
             if not all(field in metadata for field in required_fields):
@@ -414,10 +419,10 @@ class PipelineResumeManager:
         for context_attr, _ in cache_mapping.items():
             try:
                 model_class = self.CONTEXT_ATTR_TO_MODEL.get(context_attr)
-                data = self.cache_manager.load_stage_result(
+                data: Any = self.cache_manager.load_stage_result(
                     cache_key=context_attr,
                     pipeline_id=pipeline_id,
-                    data_type=model_class,
+                    data_type=model_class if model_class else None,
                 )
 
                 if data is not None:

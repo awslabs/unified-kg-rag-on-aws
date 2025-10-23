@@ -1,4 +1,5 @@
 import functools
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
@@ -39,20 +40,23 @@ class NeptuneClient:
         )
         self._connection: DriverRemoteConnection | None = None
         self._g: GraphTraversalSource | None = None
+        self._lock = threading.RLock()  # Reentrant lock for thread safety
         logger.debug("Neptune client initialized")
 
     @property
     def g(self) -> GraphTraversalSource:
-        if self._g is None or self.connection.is_closed():
-            self._g = traversal().withRemote(self.connection)
-        return self._g
+        with self._lock:
+            if self._g is None or self.connection.is_closed():
+                self._g = traversal().withRemote(self.connection)
+            return self._g
 
     @property
     def connection(self) -> DriverRemoteConnection:
-        if self._connection is None or self._connection.is_closed():
-            logger.debug("Establishing new Neptune connection")
-            self._connection = self._create_connection()
-        return self._connection
+        with self._lock:
+            if self._connection is None or self._connection.is_closed():
+                logger.debug("Establishing new Neptune connection")
+                self._connection = self._create_connection()
+            return self._connection
 
     def _create_connection(self) -> DriverRemoteConnection:
         if not self.neptune_config.endpoint:
@@ -135,14 +139,26 @@ class NeptuneClient:
         logger.info("Successfully cleared Neptune graph.")
 
     def close(self) -> None:
-        if self._connection and not self._connection.is_closed():
-            try:
-                self._connection.close()
-                self._connection = None
-                self._g = None
-                logger.info("Closed Neptune connection")
-            except Exception as e:
-                logger.error(f"Error closing Neptune connection: {e}")
+        with self._lock:
+            if self._connection and not self._connection.is_closed():
+                try:
+                    self._connection.close()
+                    self._connection = None
+                    self._g = None
+                    logger.info("Closed Neptune connection")
+                except Exception as e:
+                    logger.error(f"Error closing Neptune connection: {e}")
+
+    def __enter__(self) -> "NeptuneClient":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        self.close()
 
     @_handle_neptune_errors
     def get_graph_stats(self) -> dict[str, Any]:
@@ -169,7 +185,7 @@ class NeptuneClient:
             return (
                 traversal_query.next()
                 if has_terminating_step
-                else traversal_query.toList()
+                else traversal_query.to_list()
             )
         except Exception as e:
             logger.error(f"Failed to execute traversal: {e}", exc_info=True)

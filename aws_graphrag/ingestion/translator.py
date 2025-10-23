@@ -140,8 +140,9 @@ class TextUnitTranslator:
         for text_unit, result in zip(text_units, translation_results, strict=True):
             self._apply_translation_result(text_unit, result, target_language)
 
+    @staticmethod
     def _create_chain_inputs(
-        self, texts: list[str], target_language: LanguageCode
+        texts: list[str], target_language: LanguageCode
     ) -> list[dict[str, Any]]:
         try:
             return [

@@ -98,7 +98,10 @@ class ChunkingStats(BaseModel):
         }
 
     def add_num_chunk_chars(self, num_chunk_chars: int) -> None:
-        self.num_chunk_chars.append(num_chunk_chars)
+        if hasattr(self, "__dict__") and "num_chunk_chars" in self.__dict__:
+            self.__dict__["num_chunk_chars"].append(num_chunk_chars)
+        else:
+            getattr(self, "num_chunk_chars").append(num_chunk_chars)
 
 
 class ChunkQualityValidator:
@@ -442,7 +445,7 @@ class BaseChunker(ABC):
             logger.info(f"Starting chunking process for {len(documents)} documents")
             self.stats = ChunkingStats(num_total_documents=len(documents))
             start_time = time.time()
-            all_text_units = []
+            all_text_units: list[TextUnit] = []
 
             with tqdm(
                 total=len(documents),
@@ -578,11 +581,14 @@ class BaseChunker(ABC):
             content_type = self.config.processing.chunking.content_type
 
             primary_content = getattr(doc.content, content_type, None)
-            if primary_content:
+            if isinstance(primary_content, str) and primary_content:
                 return primary_content
 
             fallback_content = getattr(doc.content, "text", None)
-            return fallback_content
+            if isinstance(fallback_content, str) and fallback_content:
+                return fallback_content
+
+            return None
 
         except Exception as e:
             logger.warning(
@@ -999,7 +1005,7 @@ class ChunkerFactory:
         chunker_type: ChunkingStrategy = ChunkingStrategy.INTELLIGENT,
         boto_session: boto3.Session | None = None,
         show_progress: bool = True,
-        **kwargs,
+        **kwargs: Any,
     ) -> BaseChunker:
         logger.info(f"Creating chunker of type: '{chunker_type.value}'")
         if chunker_type == ChunkingStrategy.SIMPLE:

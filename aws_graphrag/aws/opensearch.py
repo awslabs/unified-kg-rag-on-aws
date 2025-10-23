@@ -233,7 +233,7 @@ class OpenSearchClient:
             ",".join(index_names) if isinstance(index_names, list) else index_names
         )
 
-        params = {"index": final_indices, "ignore_unavailable": True}
+        params: dict[str, Any] = {"index": final_indices}
         if query:
             params["body"] = query
 

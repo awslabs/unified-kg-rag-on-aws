@@ -1,5 +1,6 @@
 import re
 import time
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import datetime
 from functools import partial
@@ -113,7 +114,7 @@ class ClaimExtractor(BaseProcessor):
         self.boto_session = boto_session or boto3.Session(
             profile_name=self.config.aws.profile_name
         )
-        self.extraction_config = self.config.processing.claim_extraction
+        self.claim_extraction_config = self.config.processing.claim_extraction
         self.ignore_errors = self.config.processing.ignore_errors
         self.max_workers = max_workers or max(1, int(cpu_count() * 0.8))
         self.use_process_pool = use_process_pool
@@ -133,7 +134,7 @@ class ClaimExtractor(BaseProcessor):
         )
         self.claim_extractor = setup_chain(
             factory=self.factory,
-            model_id=self.extraction_config.extraction_model_id,
+            model_id=self.claim_extraction_config.extraction_model_id,
             prompt_class=ClaimExtractionPrompt,
             parser=robust_xml_output_parser,
             custom_prompts=self.config.custom_prompts,
@@ -211,8 +212,8 @@ class ClaimExtractor(BaseProcessor):
         self, text_units: list[TextUnit], all_entities: list[Entity]
     ) -> list[dict[str, Any]]:
         config_for_task = {
-            "similarity_threshold": self.extraction_config.similarity_threshold,
-            "max_entities_per_prompt": self.extraction_config.max_entities_per_prompt,
+            "similarity_threshold": self.claim_extraction_config.similarity_threshold,
+            "max_entities_per_prompt": self.claim_extraction_config.max_entities_per_prompt,
             "target_language": self.config.processing.translation.target_language.value,
         }
 
@@ -344,10 +345,15 @@ class ClaimExtractor(BaseProcessor):
         return generate_stable_id(claim_id_content)
 
     def _merge_claims(self, claims: list[Claim]) -> list[Claim]:
-        field_mergers = {
+        def safe_list_merge(current: list[str], new: list[str]) -> list[str]:
+            merged_current = current if current is not None else []
+            merged_new = new if new is not None else []
+            return list(set(merged_current + merged_new))
+
+        field_mergers: dict[str, Callable[[Any, Any], Any]] = {
             "description": self._merge_description,
             "source_text": self._merge_description,
-            "text_unit_ids": lambda current, new: list(set(current + new)),
+            "text_unit_ids": safe_list_merge,
         }
         return self._merge_items(
             items=claims,

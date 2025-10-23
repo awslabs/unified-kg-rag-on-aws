@@ -77,7 +77,7 @@ class GraphAnalyzer:
         self,
         node_to_community_map: dict[str, str],
         community_metrics: CommunityMetrics | None,
-    ):
+    ) -> None:
         if not self._graph:
             return
         nx.set_node_attributes(self._graph, node_to_community_map, "community_id")
@@ -156,7 +156,7 @@ class GraphAnalyzer:
         self,
         metric_name: str,
         computation_func: Callable,
-        kwargs: dict[str, Any],
+        kwargs: Any,
         centrality_data: dict[str, CentralityMetrics],
     ) -> None:
         try:

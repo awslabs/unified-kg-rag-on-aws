@@ -7,6 +7,7 @@ from pathlib import Path
 
 from datasketch import MinHash, MinHashLSH
 from langchain_core.document_loaders.base import BaseLoader
+from langchain_core.documents import Document as BaseDocument
 
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import Config, Document
@@ -97,7 +98,7 @@ class DirectoryLoader(BaseLoader):
         self.failed_files: list[str] = []
         self.directory_hash: str | None = None
 
-    def load(self) -> list[Document]:
+    def load(self) -> list[BaseDocument]:
         start_time = time.time()
         logger.info(f"Starting document loading from: '{self.source_directory}'")
 
@@ -204,7 +205,7 @@ class DirectoryLoader(BaseLoader):
             return parser.parse_file(
                 file_path, self.config.processing.document_parsing.index_value
             )
-        return Document.from_json(file_path)
+        return Document.from_json_file(file_path)
 
     def _deduplicate_documents(self, documents: list[Document]) -> list[Document]:
         if len(documents) < 2:

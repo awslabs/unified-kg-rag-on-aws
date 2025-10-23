@@ -175,26 +175,26 @@ class BaseGraphRAGEvaluator(BaseEvaluator):
 
     @staticmethod
     def _extract_search_metadata(result: EvaluationResult) -> dict[str, Any]:
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         if result.search_strategy:
             metadata["search_strategy"] = result.search_strategy
         if result.search_type:
             metadata["search_type"] = result.search_type
         if result.top_k:
-            metadata["top_k"] = result.top_k
+            metadata["top_k"] = str(result.top_k)
         if result.retrieval_multiplier:
-            metadata["retrieval_multiplier"] = result.retrieval_multiplier
+            metadata["retrieval_multiplier"] = str(result.retrieval_multiplier)
         if result.response_time:
-            metadata["response_time"] = result.response_time
+            metadata["response_time"] = str(result.response_time)
 
         if result.retrieved_contexts:
             num_contexts = len(result.retrieved_contexts)
-            metadata["num_contexts"] = num_contexts
+            metadata["num_contexts"] = int(num_contexts)
             if num_contexts > 0:
                 avg_length = (
                     sum(len(ctx) for ctx in result.retrieved_contexts) / num_contexts
                 )
-                metadata["avg_context_length"] = avg_length
+                metadata["avg_context_length"] = float(avg_length)
 
         return metadata

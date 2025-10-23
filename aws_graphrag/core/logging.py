@@ -53,7 +53,7 @@ class LoggingSetup:
     ) -> None:
         timestamper = structlog.processors.TimeStamper(fmt="ISO")
 
-        processors = [
+        processors: list[structlog.types.Processor] = [
             structlog.stdlib.filter_by_level,
             structlog.stdlib.add_logger_name,
             structlog.stdlib.add_log_level,
@@ -118,9 +118,7 @@ class LoggingSetup:
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     config = get_config()
     LoggingSetup.setup_logging(config)
-    logger = structlog.get_logger(name)
-    if hasattr(logger, "_logger") and logger._logger is None:
-        logger = logger.bind()
+    logger: structlog.stdlib.BoundLogger = structlog.get_logger(name)
     return logger
 
 

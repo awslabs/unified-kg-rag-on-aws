@@ -366,11 +366,11 @@ class EvaluationManager:
             for metric in report.metrics:
                 metric_values[metric.metric_type].append(metric.value)
 
-        statistics_dict = {}
+        statistics_dict: dict[str, dict[str, float]] = {}
         for metric_type, values in metric_values.items():
             if not values:
                 continue
-            statistics_dict[metric_type] = {
+            statistics_dict[metric_type.value] = {
                 "mean": statistics.mean(values),
                 "median": statistics.median(values),
                 "stdev": statistics.stdev(values) if len(values) > 1 else 0.0,

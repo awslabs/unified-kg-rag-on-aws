@@ -61,7 +61,10 @@ class NeptuneIndexer(GraphIndexer):
             return 0
 
     def get_stats(self) -> dict[str, Any]:
-        return self.neptune_client.get_graph_stats()
+        stats = self.neptune_client.get_graph_stats()
+        if not isinstance(stats, dict):
+            return {}
+        return stats
 
     def initialize(self) -> bool:
         return True
@@ -260,7 +263,7 @@ class NeptuneIndexer(GraphIndexer):
         label_prefix: str,
         clear_label_prefix: str,
         traversal_builder_func: Callable,
-        **kwargs,
+        **kwargs: Any,
     ) -> IndexingStats:
         if not items:
             return IndexingStats()

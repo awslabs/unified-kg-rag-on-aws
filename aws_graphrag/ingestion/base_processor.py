@@ -201,8 +201,8 @@ class BaseProcessor:
             frequency_fields = []
 
         merged_items_map = {}
-        merge_counts = defaultdict(int)
-        frequency_counts = {
+        merge_counts: dict[str, int] = defaultdict(int)
+        frequency_counts: dict[str, dict[str, dict[str, int]]] = {
             field: defaultdict(lambda: defaultdict(int)) for field in frequency_fields
         }
 
@@ -228,8 +228,8 @@ class BaseProcessor:
 
         for item_id, item in merged_items_map.items():
             for field in frequency_fields:
-                counts = frequency_counts[field].get(item_id)
-                if counts:
+                counts = frequency_counts.get(field, {}).get(item_id, {})
+                if isinstance(counts, dict) and counts:
                     most_frequent_value = max(counts, key=lambda k: counts[k])
                     setattr(item, field, most_frequent_value)
 
@@ -273,6 +273,8 @@ def check_relationship_relevance_task(
     rel: Relationship, relevant_entity_names: set[str]
 ) -> tuple[Relationship, bool]:
     is_relevant = (
-        bool(rel.source_name) and rel.source_name.lower() in relevant_entity_names
-    ) or (bool(rel.target_name) and rel.target_name.lower() in relevant_entity_names)
+        rel.source_name is not None and rel.source_name.lower() in relevant_entity_names
+    ) or (
+        rel.target_name is not None and rel.target_name.lower() in relevant_entity_names
+    )
     return rel, is_relevant

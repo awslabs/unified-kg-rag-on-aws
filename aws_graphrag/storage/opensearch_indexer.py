@@ -124,7 +124,8 @@ class OpenSearchIndexer(VectorIndexer):
                 self._get_name(self.opensearch_config.entities_index_prefix, suffix)
                 for suffix in suffixes
             ]
-            return self.opensearch_client.count(alias_names)
+            count = self.opensearch_client.count(alias_names)
+            return int(count) if count is not None else 0
         except NotFoundError:
             return 0
         except Exception as e:
@@ -198,10 +199,11 @@ class OpenSearchIndexer(VectorIndexer):
             }
 
             if unit.community_ids:
-                if isinstance(unit.community_ids, (list | tuple | set)):
-                    doc["community_ids"] = list(unit.community_ids)
-                else:
-                    doc["community_ids"] = unit.community_ids
+                doc["community_ids"] = (
+                    list(unit.community_ids)
+                    if isinstance(unit.community_ids, (list, tuple, set))
+                    else unit.community_ids
+                )
 
             if hasattr(unit, "translated_texts") and unit.translated_texts:
                 if translated := unit.translated_texts.get(self.target_language):

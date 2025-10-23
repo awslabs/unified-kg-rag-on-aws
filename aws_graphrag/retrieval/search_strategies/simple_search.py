@@ -25,7 +25,7 @@ class SimpleSearchStrategy(BaseSearchStrategy):
         self,
         config: Config,
         retrievers: dict[str, BaseGraphRAGRetriever],
-        context_builder: BaseContextBuilder,
+        context_builder: BaseContextBuilder | None = None,
         boto_session: boto3.Session | None = None,
         **kwargs: Any,
     ):

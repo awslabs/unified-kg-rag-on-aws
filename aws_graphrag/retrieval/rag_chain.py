@@ -1,7 +1,7 @@
 import asyncio
 import time
 import uuid
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Iterator
 from enum import Enum
 from functools import lru_cache
 from typing import Any
@@ -172,12 +172,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         self.chain = self._build_chain()
 
     def _build_chain(self) -> Runnable:
-        base_chain = (
-            RunnableLambda(self._resolve_strategy)
+        base_chain: Runnable = (
+            RunnableLambda(self._resolve_strategy, afunc=self._resolve_strategy)
             | RunnablePassthrough.assign(
                 processed_query=self._query_processing_branch()
             )
-            | RunnableLambda(self._load_memory_step)
+            | RunnableLambda(self._load_memory_step, afunc=self._load_memory_step)
             | RunnablePassthrough.assign(search_results=self._search_step)
         )
 
@@ -352,7 +352,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     def _get_strategy_instance(
         self, strategy_type: SearchStrategy
     ) -> BaseSearchStrategy:
-        strategy_map = {
+        strategy_map: dict[SearchStrategy, type[BaseSearchStrategy]] = {
             SearchStrategy.SIMPLE: SimpleSearchStrategy,
             SearchStrategy.LOCAL: LocalSearchStrategy,
             SearchStrategy.GLOBAL: GlobalSearchStrategy,
@@ -360,13 +360,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         }
 
         if strategy_type == SearchStrategy.SIMPLE:
-            retrievers: dict[str, BaseGraphRAGRetriever] = {
+            retrievers = {
                 RetrieverType.OPENSEARCH.value: self._get_retriever(
                     RetrieverType.OPENSEARCH
                 )
             }
         else:
-            retrievers: dict[str, BaseGraphRAGRetriever] = {
+            retrievers = {
                 RetrieverType.OPENSEARCH.value: self._get_retriever(
                     RetrieverType.OPENSEARCH
                 ),
@@ -382,13 +382,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     @lru_cache
     def _get_retriever(self, retriever_type: RetrieverType) -> BaseGraphRAGRetriever:
         if retriever_type == RetrieverType.OPENSEARCH:
-            client = OpenSearchClient(
+            opensearch_client = OpenSearchClient(
                 config=self.config, boto_session=self.boto_session
             )
-            return OpenSearchRetriever(config=self.config, opensearch_client=client)
+            return OpenSearchRetriever(
+                config=self.config, opensearch_client=opensearch_client
+            )
         elif retriever_type == RetrieverType.NEPTUNE:
-            client = NeptuneClient(config=self.config, boto_session=self.boto_session)
-            return NeptuneRetriever(config=self.config, neptune_client=client)
+            neptune_client = NeptuneClient(
+                config=self.config, boto_session=self.boto_session
+            )
+            return NeptuneRetriever(config=self.config, neptune_client=neptune_client)
         else:
             raise ValueError(f"Unknown retriever type: '{retriever_type}'")
 
@@ -411,13 +415,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             context_builder = self._get_chain_for_prompt(
                 ContextBuildingPrompt, StrOutputParser()
             )
-            return context_builder.invoke(
+            result = context_builder.invoke(
                 {
                     "query": query.original_query,
                     "search_results": search_context,
                     "conversation_history": history,
                 }
             )
+            return str(result)
         except Exception as e:
             if not self.ignore_errors:
                 raise
@@ -476,24 +481,24 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
     def invoke(
         self,
-        inputs: RAGInput | dict[str, Any],
-        config: RunnableConfig | None = None,
-        **kwargs: Any,
-    ) -> RAGOutput | dict:
-        return asyncio.run(self.ainvoke(inputs, config, **kwargs))
-
-    async def ainvoke(
-        self,
-        inputs: RAGInput | dict[str, Any],
+        input: RAGInput,
         config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> RAGOutput | dict[str, Any]:
-        rag_input, input_dict = self._prepare_invoke(inputs)
+        return asyncio.run(self.ainvoke(input, config, **kwargs))
+
+    async def ainvoke(
+        self,
+        input: RAGInput,
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> RAGOutput | dict[str, Any]:
+        rag_input, input_dict = self._prepare_invoke(input)
 
         try:
             output = await self.chain.ainvoke(input_dict, config)
             await self._save_memory(output)
-            return output
+            return RAGOutput(**output)
         except Exception as e:
             if not self.ignore_errors:
                 raise
@@ -534,7 +539,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         input_dict["start_time"] = time.time()
         return rag_input, input_dict
 
-    async def _save_memory(self, output: RAGOutput | dict | None):
+    async def _save_memory(self, output: RAGOutput | dict | None) -> None:
         if not isinstance(output, RAGOutput) or not output.conversation_id:
             return
 
@@ -555,15 +560,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
     def stream(
         self,
-        inputs: RAGInput | dict[str, Any],
+        input: RAGInput,
         config: RunnableConfig | None = None,
         **kwargs: Any,
-    ) -> Generator[str, None, None]:
+    ) -> Iterator[RAGOutput | dict[str, Any]]:
         if self.mode == ChainMode.SEARCH:
             logger.warning("Streaming is not supported in SEARCH mode.")
             return
 
-        _, input_dict = self._prepare_invoke(inputs)
+        _, input_dict = self._prepare_invoke(input)
         answer_chain = self.chain | (lambda x: x["answer"])
 
         try:
@@ -574,15 +579,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
     async def astream(
         self,
-        inputs: RAGInput | dict[str, Any],
+        input: RAGInput,
         config: RunnableConfig | None = None,
         **kwargs: Any,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[RAGOutput, None]:
         if self.mode == ChainMode.SEARCH:
             logger.warning("Streaming is not supported in SEARCH mode.")
             return
 
-        _, input_dict = self._prepare_invoke(inputs)
+        _, input_dict = self._prepare_invoke(input)
         answer_chain = self.chain | (lambda x: x["answer"])
 
         try:

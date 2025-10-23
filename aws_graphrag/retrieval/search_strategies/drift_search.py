@@ -37,7 +37,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         self,
         config: Config,
         retrievers: dict[str, BaseGraphRAGRetriever],
-        context_builder: BaseContextBuilder,
+        context_builder: BaseContextBuilder | None = None,
         boto_session: boto3.Session | None = None,
         entity_focus_multiplier: int = 2,
         **kwargs: Any,
@@ -93,8 +93,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
 
         current_query = query.model_copy(deep=True)
         all_results = []
-        seen_hashes = set()
-        metrics = []
+        seen_hashes: set[str] = set()
+        metrics: list[dict[str, Any]] = []
 
         all_results.extend(candidate_communities)
         self._update_seen_content(candidate_communities, seen_hashes)
@@ -182,7 +182,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
             return []
 
     @staticmethod
-    def _update_seen_content(results: list[RetrievalResult], seen_hashes: set[str]):
+    def _update_seen_content(
+        results: list[RetrievalResult], seen_hashes: set[str]
+    ) -> None:
         for result in results:
             seen_hashes.add(compute_hash(result.content, algorithm="md5", length=16))
 
@@ -383,7 +385,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
 
     def _record_search_metrics(
         self, processing_time: float, results_count: int, iterations: int
-    ):
+    ) -> None:
         self._record_timing("processing_time", processing_time)
         self._record_metric("retrieved_count", results_count)
         self._record_metric("iterations_completed", iterations)

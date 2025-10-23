@@ -227,7 +227,7 @@ class DocumentLoadingStage(PipelineStage):
         input_count = len(discovered_files)
 
         result = self.loader.load()
-        context.documents = result
+        context.documents = [Document(**doc.model_dump()) for doc in result]
         output_count = len(context.documents)
 
         if self.loader.failed_files:
@@ -351,7 +351,7 @@ class DocumentParsingStage(PipelineStage):
         output_path = self.target_directory / output_filename
 
         try:
-            document.to_json(output_path)
+            document.to_json_file(output_path)
             logger.debug(f"Saved parsed document: '{output_path}'")
         except Exception as e:
             logger.error(f"Failed to save parsed document '{output_path}': {e}")
@@ -426,10 +426,12 @@ class TranslationStage(PipelineStage):
         translated_units = self.translator.translate_text_units(context.text_units)
         context.translated_units = translated_units
 
-        translation_stats = {}
+        translation_stats: dict[str, Any] = {}
         try:
             if hasattr(self.translator, "stats"):
-                translation_stats = self.translator.stats
+                stats = self.translator.stats
+                if stats is not None:
+                    translation_stats = self._stats_to_dict(stats)
         except Exception as e:
             logger.warning(f"Failed to get translation stats: {e}")
 

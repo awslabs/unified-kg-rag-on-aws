@@ -35,15 +35,15 @@ class StaticRenderer:
             return
 
         unique_degrees = set(degrees)
-        bins = max(1, min(50, len(unique_degrees)))
+        num_bins = max(1, min(50, len(unique_degrees)))
 
         if self.log_scale_x and min(degrees) > 0:
             log_min = np.log10(min(degrees))
             log_max = np.log10(max(degrees))
-            bins = np.logspace(log_min, log_max, bins + 1)
+            bins = np.logspace(log_min, log_max, num_bins + 1)
             hist, edges = np.histogram(degrees, bins=bins)
         else:
-            hist, edges = np.histogram(degrees, bins=bins)
+            hist, edges = np.histogram(degrees, bins=num_bins)
 
         bar_width = (edges[1] - edges[0]) if len(edges) > 1 else 1.0
         spacing = bar_width * 0.1
@@ -171,13 +171,11 @@ class StaticRenderer:
 
         unique_sizes = set(sizes)
         bins = max(1, min(50, len(unique_sizes)))
-
         if self.log_scale_x and min(sizes) > 0:
-            # Use log-spaced bins for log scale
             log_min = np.log10(min(sizes))
             log_max = np.log10(max(sizes))
-            bins = np.logspace(log_min, log_max, bins + 1)
-            hist, edges = np.histogram(sizes, bins=bins)
+            log_bins = np.logspace(log_min, log_max, bins + 1)
+            hist, edges = np.histogram(sizes, bins=log_bins)
         else:
             hist, edges = np.histogram(sizes, bins=bins)
 

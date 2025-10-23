@@ -4,6 +4,8 @@ from typing import Any, ClassVar, Generic, TypeVar
 
 import boto3
 from botocore.config import Config as BotoConfig
+from botocore.credentials import RefreshableCredentials
+from botocore.session import get_session
 from langchain_aws import BedrockEmbeddings, ChatBedrock, ChatBedrockConverse
 from langchain_aws.document_compressors.rerank import BedrockRerank
 from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
@@ -21,6 +23,9 @@ from aws_graphrag.core import (
 from aws_graphrag.models import Config, EmbeddingModelId, LanguageModelId, RerankModelId
 
 logger = get_logger(__name__)
+
+
+DEFAULT_ROLE_SESSION_NAME: str = "aws-graphrag-role-session"
 
 
 class EmbeddingModelInfo(BaseModel):
@@ -82,7 +87,6 @@ class RerankModelInfo(BaseModel):
     )
 
 
-
 _EMBEDDING_MODEL_INFO: dict[EmbeddingModelId, EmbeddingModelInfo] = {
     EmbeddingModelId.TITAN_EMBED_V1: EmbeddingModelInfo(
         dimensions=1536, max_sequence_length=50000, max_sequence_tokens=8192
@@ -109,6 +113,11 @@ _LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
         context_window_size=200000,
         max_output_tokens=8192,
         supports_performance_optimization=True,
+        supports_prompt_caching=True,
+    ),
+    LanguageModelId.CLAUDE_V4_5_HAIKU: LanguageModelInfo(
+        context_window_size=200000,
+        max_output_tokens=64000,
         supports_prompt_caching=True,
     ),
     LanguageModelId.CLAUDE_V3_5_SONNET: LanguageModelInfo(
@@ -159,7 +168,7 @@ _RERANK_MODEL_INFO: dict[str, RerankModelInfo] = {
     RerankModelId.COHERE_RERANK_V3_5: RerankModelInfo(
         max_documents=1000, max_query_tokens=512, max_document_tokens=4096
     ),
-# NOTE: add new models here
+    # NOTE: add new models here
 }
 
 
@@ -219,6 +228,9 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
         self.boto_session = boto_session or boto3.Session(
             profile_name=config.aws.profile_name
         )
+        self.boto_session = get_assumed_role_boto_session(
+            self.boto_session, assumed_role_arn=config.aws.bedrock.assumed_role_arn
+        )
         self.region_name = region_name or config.aws.bedrock.region_name
         boto_config = BotoConfig(
             read_timeout=self.BOTO_READ_TIMEOUT,
@@ -255,22 +267,27 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
 class BedrockCrossRegionModelHelper:
     @staticmethod
     def get_cross_region_model_id(
-        boto_session: boto3.Session, model_id: LanguageModelId, region_name: str
+        boto_session: boto3.Session,
+        model_id: LanguageModelId,
+        region_name: str,
+        enable_global_profile: bool = False,
     ) -> str:
         try:
             bedrock_client = boto_session.client("bedrock", region_name=region_name)
 
-            global_model_id = (
-                BedrockCrossRegionModelHelper._build_cross_region_model_id(
-                    model_id, region_name, is_global=True
+            if enable_global_profile:
+                global_model_id = (
+                    BedrockCrossRegionModelHelper._build_cross_region_model_id(
+                        model_id, region_name, is_global=True
+                    )
                 )
-            )
-            if BedrockCrossRegionModelHelper._is_cross_region_model_available(
-                bedrock_client, global_model_id
-            ):
-                logger.debug(f"Using global cross-region model: '{global_model_id}'")
-                return global_model_id
-
+                if BedrockCrossRegionModelHelper._is_cross_region_model_available(
+                    bedrock_client, global_model_id
+                ):
+                    logger.debug(
+                        "Using global cross-region model: '%s'", global_model_id
+                    )
+                    return global_model_id
             regional_model_id = (
                 BedrockCrossRegionModelHelper._build_cross_region_model_id(
                     model_id, region_name, is_global=False
@@ -280,19 +297,19 @@ class BedrockCrossRegionModelHelper:
                 bedrock_client, regional_model_id
             ):
                 logger.debug(
-                    f"Using regional cross-region model: '{regional_model_id}'"
+                    "Using regional cross-region model: '%s'", regional_model_id
                 )
                 return regional_model_id
-
             logger.debug(
-                f"Cross-region models not available, using standard model: '{model_id.value}'"
+                "Cross-region models not available, using standard model: '%s'",
+                model_id.value,
             )
             return model_id.value
-
         except Exception as e:
             logger.warning(
-                f"Failed to resolve cross-region model for '{model_id.value}': {e}. "
-                f"Falling back to standard model."
+                "Failed to resolve cross-region model for '%s': %s. Falling back to standard model.",
+                model_id.value,
+                e,
             )
             return model_id.value
 
@@ -415,13 +432,20 @@ class BedrockLanguageModelFactory(
         return _LANGUAGE_MODEL_INFO
 
     def get_model(
-        self, model_id: LanguageModelId, **kwargs: Any
+        self,
+        model_id: LanguageModelId,
+        **kwargs: Any,
     ) -> ChatBedrock | ChatBedrockConverse:
         model_info = self.get_model_info(model_id)
         if not model_info:
-            raise LanguageModelError(f"Unsupported language model ID: '{model_id.value}'")
+            raise LanguageModelError(
+                f"Unsupported language model ID: '{model_id.value}'"
+            )
         resolved_model_id = BedrockCrossRegionModelHelper.get_cross_region_model_id(
-            self.boto_session, model_id, self.region_name or ""
+            self.boto_session,
+            model_id,
+            self.region_name or "",
+            enable_global_profile=self.config.aws.bedrock.enable_global_profile,
         )
         is_cross_region = resolved_model_id != model_id.value
         model_config = self._build_model_config(
@@ -510,7 +534,7 @@ class BedrockLanguageModelFactory(
         model_info: LanguageModelInfo,
         is_cross_region: bool,
         **kwargs: Any,
-    ):
+    ) -> None:
         enable_perf = kwargs.get("enable_performance_optimization", False)
         enable_think = kwargs.get("enable_thinking", False)
         if self._should_enable_performance_optimization(
@@ -526,9 +550,12 @@ class BedrockLanguageModelFactory(
                 "thinking_budget_tokens", self.DEFAULT_THINKING_BUDGET_TOKENS
             )
             think_config = {"thinking": {"type": "enabled", "budget_tokens": budget}}
-            config.setdefault("additional_model_request_fields", {}).update(
-                think_config
-            )
+            if is_cross_region:
+                config.setdefault("additional_model_request_fields", {}).update(
+                    think_config
+                )
+            else:
+                config.setdefault("model_kwargs", {}).update(think_config)
             logger.debug("Applied thinking mode (budget_tokens=%d)", budget)
 
     @staticmethod
@@ -604,7 +631,7 @@ class BedrockRerankWrapper(BaseBedrockWrapper, BedrockRerank):
             )
             return list(result)
         except Exception as e:
-            raise RuntimeError(f"Reranking failed: {e}") from e
+            raise RerankModelError(f"Reranking failed: {e}") from e
         finally:
             self.top_n = original_top_n
 
@@ -615,7 +642,7 @@ class BedrockRerankModelFactory(
     DEFAULT_TOP_K: ClassVar[int] = 100
 
     def _get_boto_service_name(self) -> str:
-        return "bedrock-agent-runtime"
+        return "bedrock-runtime"
 
     def _get_model_info_dict(self) -> dict[str, RerankModelInfo]:
         return _RERANK_MODEL_INFO
@@ -648,3 +675,45 @@ class BedrockRerankModelFactory(
         )
         logger.debug(f"Created rerank model: '{model_id}'")
         return model
+
+
+def get_assumed_role_boto_session(
+    boto_session: boto3.Session,
+    assumed_role_arn: str | None = None,
+    role_session_name: str = DEFAULT_ROLE_SESSION_NAME,
+    duration_seconds: int = 3600,
+) -> boto3.Session:
+    if assumed_role_arn is None:
+        return boto_session
+
+    def refresh_credentials() -> dict[str, Any]:
+        sts_client = boto_session.client("sts")
+        assumed_role = sts_client.assume_role(
+            RoleArn=assumed_role_arn,
+            RoleSessionName=role_session_name,
+            DurationSeconds=duration_seconds,
+        )
+        credentials = assumed_role["Credentials"]
+
+        return {
+            "access_key": credentials["AccessKeyId"],
+            "secret_key": credentials["SecretAccessKey"],
+            "token": credentials["SessionToken"],
+            "expiry_time": credentials["Expiration"].isoformat(),
+        }
+
+    session_credentials = RefreshableCredentials.create_from_metadata(
+        metadata=refresh_credentials(),
+        refresh_using=refresh_credentials,
+        method="sts-assume-role",
+    )
+
+    botocore_session = get_session()
+    botocore_session.set_credentials(
+        session_credentials.access_key,
+        session_credentials.secret_key,
+        session_credentials.token,
+    )
+    botocore_session.set_config_variable("region", boto_session.region_name)
+
+    return boto3.Session(botocore_session=botocore_session)

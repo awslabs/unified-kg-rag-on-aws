@@ -78,6 +78,7 @@ class LanguageModelId(str, Enum):
     CLAUDE_V3_SONNET = "anthropic.claude-3-sonnet-20240229-v1:0"
     CLAUDE_V3_OPUS = "anthropic.claude-3-opus-20240229-v1:0"
     CLAUDE_V3_5_HAIKU = "anthropic.claude-3-5-haiku-20241022-v1:0"
+    CLAUDE_V4_5_HAIKU = "anthropic.claude-haiku-4-5-20251001-v1:0"
     CLAUDE_V3_5_SONNET = "anthropic.claude-3-5-sonnet-20240620-v1:0"
     CLAUDE_V3_5_SONNET_V2 = "anthropic.claude-3-5-sonnet-20241022-v2:0"
     CLAUDE_V3_7_SONNET = "anthropic.claude-3-7-sonnet-20250219-v1:0"
@@ -97,6 +98,12 @@ class RerankModelId(str, Enum):
 class BedrockConfig(BaseModel):
     region_name: str = Field(
         default="us-west-2", min_length=1, description="AWS Bedrock service region"
+    )
+    assumed_role_arn: str | None = Field(
+        default=None, description="AWS assumed role ARN for Bedrock service"
+    )
+    enable_global_profile: bool = Field(
+        default=True, description="Enable global profile for Bedrock service"
     )
 
 
@@ -185,7 +192,7 @@ class FixingConfig(BaseModel):
         default=True, description="Enable automatic fixing of malformed model responses"
     )
     fixing_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_SONNET,
+        default=LanguageModelId.CLAUDE_V4_5_SONNET,
         description="Language model for output correction",
     )
 
@@ -208,7 +215,7 @@ class ChunkingConfig(BaseModel):
         description="Text chunking strategy to use",
     )
     chunking_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V3_5_HAIKU,
+        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
         description="Language model for intelligent chunking",
     )
     content_type: str = Field(
@@ -258,7 +265,7 @@ class ChunkingConfig(BaseModel):
 
 class TranslationConfig(BaseModel):
     translation_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V3_5_HAIKU,
+        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
         description="Language model for text translation",
     )
     target_language: LanguageCode = Field(
@@ -271,7 +278,7 @@ class TranslationConfig(BaseModel):
 
 class GraphExtractionConfig(BaseModel):
     extraction_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_SONNET,
+        default=LanguageModelId.CLAUDE_V4_5_SONNET,
         description="Language model for entity and relationship extraction",
     )
     max_entities_per_chunk: int = Field(
@@ -287,7 +294,7 @@ class GleaningConfig(BaseModel):
         default=True, description="Enable gleaning for improved extraction"
     )
     graph_refinement_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_SONNET,
+        default=LanguageModelId.CLAUDE_V4_5_SONNET,
         description="Language model for graph refinement",
     )
     max_rounds: int = Field(default=3, ge=1, description="Maximum gleaning rounds")
@@ -332,7 +339,7 @@ class GleaningConfig(BaseModel):
 
 class ClaimExtractionConfig(BaseModel):
     extraction_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_SONNET,
+        default=LanguageModelId.CLAUDE_V4_5_SONNET,
         description="Language model for claim extraction",
     )
     max_entities_per_prompt: int = Field(
@@ -481,7 +488,7 @@ class ReportGenerationConfig(BaseModel):
         default=True, description="Enable automatic community report generation"
     )
     report_generation_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_SONNET,
+        default=LanguageModelId.CLAUDE_V4_5_SONNET,
         description="Language model for community report generation",
     )
     max_entities_per_report: int = Field(
@@ -776,11 +783,11 @@ class RerankingConfig(BaseModel):
 
 class GlobalSearchConfig(BaseModel):
     community_relevance_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V3_5_HAIKU,
+        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
         description="Language model used for scoring community relevance to search queries",
     )
     map_reduce_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V3_5_HAIKU,
+        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
         description="Language model used for map-reduce summarization operations",
     )
     max_communities: int = Field(
@@ -814,15 +821,15 @@ class DriftSearchConfig(BaseModel):
         description="Enable automatic keyword extraction from search results",
     )
     query_refinement_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V3_5_HAIKU,
+        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
         description="Language model used for refining search queries based on intermediate results",
     )
     keyword_expansion_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V3_5_HAIKU,
+        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
         description="Language model used for expanding keywords from discovered entities",
     )
     convergence_assessment_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V3_5_HAIKU,
+        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
         description="Language model used for assessing search convergence",
     )
     max_iterations: int = Field(
@@ -875,23 +882,23 @@ class TokenManagerConfig(BaseModel):
 
 class SearchConfig(BaseModel):
     translation_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V3_5_HAIKU,
+        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
         description="Language model identifier used for translating queries into the target language",
     )
     entity_extraction_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_SONNET,
+        default=LanguageModelId.CLAUDE_V4_5_SONNET,
         description="Language model identifier used for extracting named entities from user queries",
     )
     strategy_selection_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_SONNET,
+        default=LanguageModelId.CLAUDE_V4_5_SONNET,
         description="Language model identifier used for automatically selecting the optimal search strategy",
     )
     context_building_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_SONNET,
+        default=LanguageModelId.CLAUDE_V4_5_SONNET,
         description="Language model identifier used for building and structuring contextual information",
     )
     answer_generation_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_SONNET,
+        default=LanguageModelId.CLAUDE_V4_5_SONNET,
         description="Language model identifier used for generating final answers from retrieved context",
     )
     hybrid: HybridConfig = Field(
@@ -1081,7 +1088,7 @@ class EvaluationConfig(BaseModel):
         description="Embedding model identifier for evaluation",
     )
     evaluation_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_SONNET,
+        default=LanguageModelId.CLAUDE_V4_5_SONNET,
         description="Language model identifier used for evaluation",
     )
     enabled_evaluators: list[EvaluatorType] = Field(
