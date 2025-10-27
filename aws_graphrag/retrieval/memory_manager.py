@@ -72,6 +72,10 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
     def is_expired(self) -> bool:
         return datetime.now() > self.updated_at + self.ttl
 
+    @property
+    def messages(self) -> list[BaseMessage]:
+        return self._messages
+
     def _update_context(self, message: BaseMessage) -> None:
         if not isinstance(message, HumanMessage):
             return

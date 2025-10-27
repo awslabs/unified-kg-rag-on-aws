@@ -135,7 +135,7 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         self.boto_session = boto_session or boto3.Session(
             profile_name=self.config.aws.profile_name
         )
-        self.hybrid_scorer = HybridScorer(self.config)
+        self.hybrid_scorer = HybridScorer(self.config, boto_session=self.boto_session)
         self.token_manager = TokenManager(self.config)
         self.optimization_threshold_factor = optimization_threshold_factor
         self.default_max_tokens = default_max_tokens

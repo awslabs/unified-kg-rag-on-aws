@@ -173,11 +173,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
     def _build_chain(self) -> Runnable:
         base_chain: Runnable = (
-            RunnableLambda(self._resolve_strategy, afunc=self._resolve_strategy)
+            RunnableLambda(self._resolve_strategy)
             | RunnablePassthrough.assign(
                 processed_query=self._query_processing_branch()
             )
-            | RunnableLambda(self._load_memory_step, afunc=self._load_memory_step)
+            | RunnableLambda(self._load_memory_step)
             | RunnablePassthrough.assign(search_results=self._search_step)
         )
 
@@ -498,7 +498,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         try:
             output = await self.chain.ainvoke(input_dict, config)
             await self._save_memory(output)
-            return RAGOutput(**output)
+            if isinstance(output, RAGOutput):
+                return output
+            elif isinstance(output, dict):
+                return RAGOutput(**output)
+            else:
+                return output
         except Exception as e:
             if not self.ignore_errors:
                 raise

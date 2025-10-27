@@ -3,9 +3,8 @@ from collections.abc import Sequence
 from typing import Any, ClassVar, Generic, TypeVar
 
 import boto3
+from aws_assume_role_lib.aws_assume_role_lib import assume_role
 from botocore.config import Config as BotoConfig
-from botocore.credentials import RefreshableCredentials
-from botocore.session import get_session
 from langchain_aws import BedrockEmbeddings, ChatBedrock, ChatBedrockConverse
 from langchain_aws.document_compressors.rerank import BedrockRerank
 from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
@@ -642,7 +641,7 @@ class BedrockRerankModelFactory(
     DEFAULT_TOP_K: ClassVar[int] = 100
 
     def _get_boto_service_name(self) -> str:
-        return "bedrock-runtime"
+        return "bedrock-agent-runtime"
 
     def _get_model_info_dict(self) -> dict[str, RerankModelInfo]:
         return _RERANK_MODEL_INFO
@@ -686,34 +685,14 @@ def get_assumed_role_boto_session(
     if assumed_role_arn is None:
         return boto_session
 
-    def refresh_credentials() -> dict[str, Any]:
-        sts_client = boto_session.client("sts")
-        assumed_role = sts_client.assume_role(
-            RoleArn=assumed_role_arn,
-            RoleSessionName=role_session_name,
-            DurationSeconds=duration_seconds,
-        )
-        credentials = assumed_role["Credentials"]
-
-        return {
-            "access_key": credentials["AccessKeyId"],
-            "secret_key": credentials["SecretAccessKey"],
-            "token": credentials["SessionToken"],
-            "expiry_time": credentials["Expiration"].isoformat(),
-        }
-
-    session_credentials = RefreshableCredentials.create_from_metadata(
-        metadata=refresh_credentials(),
-        refresh_using=refresh_credentials,
-        method="sts-assume-role",
+    logger.info(
+        "Using aws-assume-role-lib to assume role: '%s' with session name: '%s'",
+        assumed_role_arn,
+        role_session_name,
     )
-
-    botocore_session = get_session()
-    botocore_session.set_credentials(
-        session_credentials.access_key,
-        session_credentials.secret_key,
-        session_credentials.token,
+    return assume_role(
+        boto_session,
+        assumed_role_arn,
+        RoleSessionName=role_session_name,
+        DurationSeconds=duration_seconds,
     )
-    botocore_session.set_config_variable("region", boto_session.region_name)
-
-    return boto3.Session(botocore_session=botocore_session)

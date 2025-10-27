@@ -16,12 +16,15 @@ logger = get_logger(__name__)
 
 
 class HybridScorer(MetricsMixin):
-    def __init__(self, config: Config, **kwargs: Any) -> None:
+    def __init__(
+        self, config: Config, boto_session: Any | None = None, **kwargs: Any
+    ) -> None:
         super().__init__(**kwargs)
         self.config = config
+        self.boto_session = boto_session
         self.fusion_config = config.search.fusion
         self.rerank_factory: BedrockRerankModelFactory | None = None
-        self.rerank_model = None
+        self.rerank_model: Any = None
         self._initialize_reranking()
 
     def _initialize_reranking(self) -> None:
@@ -33,6 +36,7 @@ class HybridScorer(MetricsMixin):
 
             self.rerank_factory = BedrockRerankModelFactory(
                 config=self.config,
+                boto_session=self.boto_session,
                 region_name=self.config.aws.bedrock.region_name,
             )
 
@@ -61,7 +65,10 @@ class HybridScorer(MetricsMixin):
             for name, res_list in results_dict.items()
         }
 
-        fusion_methods: dict[FusionMethod, Callable] = {
+        fusion_methods: dict[
+            FusionMethod,
+            Callable[[dict[str, list[RetrievalResult]]], list[RetrievalResult]],
+        ] = {
             FusionMethod.RRF: self._reciprocal_rank_fusion,
             FusionMethod.WEIGHTED: self._weighted_fusion,
         }
@@ -77,7 +84,7 @@ class HybridScorer(MetricsMixin):
                 combined_results, top_k=top_k, retrieval_multiplier=retrieval_multiplier
             )
 
-        if self.rerank_model and query:
+        if self.rerank_model is not None and query is not None:
             combined_results = self._apply_bedrock_reranking(combined_results, query)
 
         combined_results.sort(key=lambda x: x.score or 0.0, reverse=True)
@@ -247,12 +254,11 @@ class HybridScorer(MetricsMixin):
             finally:
                 if adjusted_top_n != original_top_n:
                     self.rerank_model.top_n = original_top_n
-
             reranked_results = []
             for i, doc in enumerate(reranked_docs):
-                key = doc.metadata.get("key")
-                if key is not None:
-                    original_result = result_map.get(key)
+                key_value = doc.metadata.get("key")
+                if key_value is not None and isinstance(key_value, str):
+                    original_result = result_map.get(key_value)
 
                     if original_result:
                         reranked_result = original_result.model_copy(deep=True)

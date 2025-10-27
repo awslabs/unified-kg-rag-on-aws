@@ -26,6 +26,7 @@ classifiers = [
 ]
 dependencies = [
     "asyncio-throttle>=1.0.2",
+    "aws-assume-role-lib>=2.10.0",
     "black>=25.9.0",
     "bokeh>=3.7.3",
     "boto3>=1.38.45",
