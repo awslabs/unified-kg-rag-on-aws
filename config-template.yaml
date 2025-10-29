@@ -7,7 +7,7 @@ aws:
 
   # Bedrock Configuration
   bedrock:
-    region_name: "us-west-2"
+    region_name: "ap-northeast-2"
     assumed_role_arn: null
     enable_global_profile: true
 

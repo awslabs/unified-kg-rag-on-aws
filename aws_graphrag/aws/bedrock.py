@@ -269,9 +269,13 @@ class BedrockCrossRegionModelHelper:
         boto_session: boto3.Session,
         model_id: LanguageModelId,
         region_name: str,
+        assumed_role_arn: str | None = None,
         enable_global_profile: bool = False,
     ) -> str:
         try:
+            boto_session = get_assumed_role_boto_session(
+                boto_session, assumed_role_arn=assumed_role_arn
+            )
             bedrock_client = boto_session.client("bedrock", region_name=region_name)
 
             if enable_global_profile:
@@ -444,6 +448,7 @@ class BedrockLanguageModelFactory(
             self.boto_session,
             model_id,
             self.region_name or "",
+            assumed_role_arn=self.config.aws.bedrock.assumed_role_arn,
             enable_global_profile=self.config.aws.bedrock.enable_global_profile,
         )
         is_cross_region = resolved_model_id != model_id.value
