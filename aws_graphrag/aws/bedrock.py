@@ -690,6 +690,35 @@ def get_assumed_role_boto_session(
     if assumed_role_arn is None:
         return boto_session
 
+    try:
+        credentials = boto_session.get_credentials()
+        if credentials and hasattr(credentials, "method"):
+            if credentials.method == "assume-role":
+                sts_client = boto_session.client("sts")
+                try:
+                    caller_identity = sts_client.get_caller_identity()
+                    current_arn = caller_identity.get("Arn", "")
+                    if "assumed-role" in current_arn:
+                        current_role_name = (
+                            current_arn.split("/")[-2] if "/" in current_arn else ""
+                        )
+                        target_role_name = (
+                            assumed_role_arn.split("/")[-1]
+                            if "/" in assumed_role_arn
+                            else ""
+                        )
+
+                        if current_role_name == target_role_name:
+                            logger.debug(
+                                "Already using assumed role '%s', skipping duplicate assume",
+                                assumed_role_arn,
+                            )
+                            return boto_session
+                except Exception as e:
+                    logger.debug(f"Could not verify current role identity: {e}")
+    except Exception as e:
+        logger.debug(f"Could not check assumed role status: {e}")
+
     logger.info(
         "Using aws-assume-role-lib to assume role: '%s' with session name: '%s'",
         assumed_role_arn,
