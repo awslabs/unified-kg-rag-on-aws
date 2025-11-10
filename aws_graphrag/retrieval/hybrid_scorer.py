@@ -107,13 +107,21 @@ class HybridScorer(MetricsMixin):
         if not results:
             return []
 
-        scores = [r.score for r in results if r.score is not None]
-        if not scores:
+        min_score = float("inf")
+        max_score = float("-inf")
+        has_score = False
+
+        for r in results:
+            if r.score is not None:
+                has_score = True
+                min_score = min(min_score, r.score)
+                max_score = max(max_score, r.score)
+
+        if not has_score:
             for r in results:
                 r.score = 0.5
             return results
 
-        min_score, max_score = min(scores), max(scores)
         score_range = max_score - min_score
 
         for result in results:
@@ -140,7 +148,7 @@ class HybridScorer(MetricsMixin):
                 key = self._get_result_key(result)
                 scores[key] += 1.0 / (k + rank)
                 if key not in objects:
-                    objects[key] = result.model_copy(deep=True)
+                    objects[key] = result.model_copy()
 
         for key, score in scores.items():
             if key in objects:
@@ -161,7 +169,7 @@ class HybridScorer(MetricsMixin):
                 key = self._get_result_key(result)
                 scores[key] += (result.score or 0.0) * weight
                 if key not in objects:
-                    objects[key] = result.model_copy(deep=True)
+                    objects[key] = result.model_copy()
 
         for key, score in scores.items():
             if key in objects:
@@ -186,21 +194,39 @@ class HybridScorer(MetricsMixin):
 
         target_count = top_k * retrieval_multiplier
         results.sort(key=lambda x: x.score or 0.0, reverse=True)
-        selected: list[RetrievalResult] = [results[0]]
-        remaining = results[1:]
 
-        def calculate_mmr(candidate: RetrievalResult) -> float:
+        word_sets: dict[int, set[str]] = {}
+        for i, result in enumerate(results):
+            if result.content:
+                word_sets[i] = set(result.content.lower().split())
+            else:
+                word_sets[i] = set()
+
+        selected_indices: list[int] = [0]
+        remaining_indices = set(range(1, len(results)))
+
+        def calculate_mmr(candidate_idx: int) -> float:
+            candidate = results[candidate_idx]
             relevance = candidate.score or 0.0
-            max_similarity = max(
-                self._calculate_jaccard_similarity(candidate, selected_result)
-                for selected_result in selected
-            )
+
+            max_similarity = 0.0
+            candidate_words = word_sets[candidate_idx]
+
+            for selected_idx in selected_indices:
+                selected_words = word_sets[selected_idx]
+                intersection = len(candidate_words.intersection(selected_words))
+                union = len(candidate_words.union(selected_words))
+                similarity = intersection / union if union > 0 else 0.0
+                max_similarity = max(max_similarity, similarity)
+
             return lambda_val * relevance - (1 - lambda_val) * max_similarity
 
-        while remaining and len(selected) < target_count:
-            best_candidate = max(remaining, key=calculate_mmr)
-            selected.append(best_candidate)
-            remaining.remove(best_candidate)
+        while remaining_indices and len(selected_indices) < target_count:
+            best_idx = max(remaining_indices, key=calculate_mmr)
+            selected_indices.append(best_idx)
+            remaining_indices.remove(best_idx)
+
+        selected = [results[i] for i in selected_indices]
 
         filtered_count = len(results) - len(selected)
         if filtered_count > 0:
@@ -261,12 +287,16 @@ class HybridScorer(MetricsMixin):
                     original_result = result_map.get(key_value)
 
                     if original_result:
-                        reranked_result = original_result.model_copy(deep=True)
+                        reranked_result = original_result.model_copy()
                         new_score = doc.metadata.get(
                             "relevance_score", 1.0 - (i * 0.01)
                         )
                         reranked_result.score = new_score
-                        reranked_result.metadata = reranked_result.metadata or {}
+                        reranked_result.metadata = (
+                            dict(reranked_result.metadata)
+                            if reranked_result.metadata
+                            else {}
+                        )
                         reranked_result.metadata.update(
                             {
                                 "reranked": True,
