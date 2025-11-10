@@ -194,7 +194,7 @@ class BaseBedrockWrapper:
         final_text = text
         truncated = False
 
-        if max_tokens and len(token_ids) > max_tokens:
+        if max_tokens and len(token_ids) > max_tokens - self.buffer_tokens:
             effective_tokens = max_tokens - self.buffer_tokens
             truncated_token_ids = token_ids[:effective_tokens]
             final_text = self._tokenizer.decode(truncated_token_ids)
@@ -651,10 +651,17 @@ class BedrockRerankModelFactory(
     def _get_model_info_dict(self) -> dict[str, RerankModelInfo]:
         return _RERANK_MODEL_INFO
 
-    def get_model(self, model_id: str, **kwargs: Any) -> BedrockRerankWrapper:
+    def get_model(self, model_id: RerankModelId | str, **kwargs: Any) -> BedrockRerankWrapper:
+        # Convert string to RerankModelId enum if needed
+        if isinstance(model_id, str):
+            try:
+                model_id = RerankModelId(model_id)
+            except ValueError:
+                raise RerankModelError(f"Unsupported rerank model ID: '{model_id}'")
+
         model_info = self.get_model_info(model_id)
         if not model_info:
-            raise RerankModelError(f"Unsupported rerank model ID: '{model_id}'")
+            raise RerankModelError(f"Unsupported rerank model ID: '{model_id.value}'")
 
         top_k = kwargs.pop("top_k", self.DEFAULT_TOP_K)
         if top_k > model_info.max_documents:
@@ -663,7 +670,7 @@ class BedrockRerankModelFactory(
             )
             top_k = model_info.max_documents
 
-        model_arn = f"arn:aws:bedrock:{self.region_name}::foundation-model/{model_id}"
+        model_arn = f"arn:aws:bedrock:{self.region_name}::foundation-model/{model_id.value}"
 
         model = BedrockRerankWrapper(
             model_arn=model_arn,
@@ -677,7 +684,7 @@ class BedrockRerankModelFactory(
             client=self._client,
             **kwargs,
         )
-        logger.debug(f"Created rerank model: '{model_id}'")
+        logger.debug(f"Created rerank model: '{model_id.value}'")
         return model
 
 
