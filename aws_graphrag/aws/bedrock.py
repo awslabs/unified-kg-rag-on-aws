@@ -654,12 +654,13 @@ class BedrockRerankModelFactory(
     def get_model(
         self, model_id: RerankModelId | str, **kwargs: Any
     ) -> BedrockRerankWrapper:
-        # Convert string to RerankModelId enum if needed
         if isinstance(model_id, str):
             try:
                 model_id = RerankModelId(model_id)
-            except ValueError:
-                raise RerankModelError(f"Unsupported rerank model ID: '{model_id}'")
+            except ValueError as e:
+                raise RerankModelError(
+                    f"Unsupported rerank model ID: '{model_id}'"
+                ) from e
 
         model_info = self.get_model_info(model_id)
         if not model_info:
