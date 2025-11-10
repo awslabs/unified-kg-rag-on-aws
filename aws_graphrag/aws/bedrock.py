@@ -177,7 +177,7 @@ WrapperT = TypeVar("WrapperT")
 
 
 class BaseBedrockWrapper:
-    buffer_tokens: int = Field(default=128, ge=0)
+    buffer_tokens: int = Field(default=512, ge=0)
     _tokenizer: Encoding = PrivateAttr()
 
     def __init__(self, **kwargs: Any) -> None:
@@ -651,7 +651,9 @@ class BedrockRerankModelFactory(
     def _get_model_info_dict(self) -> dict[str, RerankModelInfo]:
         return _RERANK_MODEL_INFO
 
-    def get_model(self, model_id: RerankModelId | str, **kwargs: Any) -> BedrockRerankWrapper:
+    def get_model(
+        self, model_id: RerankModelId | str, **kwargs: Any
+    ) -> BedrockRerankWrapper:
         # Convert string to RerankModelId enum if needed
         if isinstance(model_id, str):
             try:
@@ -670,7 +672,9 @@ class BedrockRerankModelFactory(
             )
             top_k = model_info.max_documents
 
-        model_arn = f"arn:aws:bedrock:{self.region_name}::foundation-model/{model_id.value}"
+        model_arn = (
+            f"arn:aws:bedrock:{self.region_name}::foundation-model/{model_id.value}"
+        )
 
         model = BedrockRerankWrapper(
             model_arn=model_arn,
