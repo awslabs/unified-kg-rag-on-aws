@@ -177,7 +177,7 @@ WrapperT = TypeVar("WrapperT")
 
 
 class BaseBedrockWrapper:
-    buffer_tokens: int = Field(default=512, ge=0)
+    buffer_tokens: int = Field(default=128, ge=0)
     _tokenizer: Encoding = PrivateAttr()
 
     def __init__(self, **kwargs: Any) -> None:
@@ -194,7 +194,7 @@ class BaseBedrockWrapper:
         final_text = text
         truncated = False
 
-        if max_tokens and len(token_ids) > max_tokens - self.buffer_tokens:
+        if max_tokens and len(token_ids) > max_tokens:
             effective_tokens = max_tokens - self.buffer_tokens
             truncated_token_ids = token_ids[:effective_tokens]
             final_text = self._tokenizer.decode(truncated_token_ids)
@@ -345,6 +345,7 @@ class BedrockCrossRegionModelHelper:
 
 
 class BedrockEmbeddingsWrapper(BaseBedrockWrapper, BedrockEmbeddings):
+    buffer_tokens: int = Field(default=512, ge=0)
     max_sequence_length: int | None = Field(default=None)
     max_sequence_tokens: int | None = Field(default=None)
 
@@ -592,6 +593,7 @@ class BedrockLanguageModelFactory(
 
 
 class BedrockRerankWrapper(BaseBedrockWrapper, BedrockRerank):
+    buffer_tokens: int = Field(default=64, ge=0)
     max_documents: int = Field(default=1000, ge=1)
     max_query_length: int | None = Field(default=None)
     max_query_tokens: int | None = Field(default=None)
