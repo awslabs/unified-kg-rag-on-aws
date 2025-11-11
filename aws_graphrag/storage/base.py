@@ -1,3 +1,4 @@
+import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from datetime import datetime
@@ -88,12 +89,31 @@ class BaseIndexer(ABC):
             return Constants.DEFAULT_SUFFIX.value
 
         index_value = item.attributes.get(Constants.INDEX.value)
-        if isinstance(index_value, str) and index_value:
-            return index_value
-        if isinstance(index_value, (list | tuple)) and index_value:
-            return str(index_value[0])
+        suffix = None
 
-        return Constants.DEFAULT_SUFFIX.value
+        if isinstance(index_value, str) and index_value:
+            suffix = index_value
+        elif isinstance(index_value, (list | tuple)) and index_value:
+            suffix = str(index_value[0])
+        else:
+            return Constants.DEFAULT_SUFFIX.value
+
+        cls._validate_suffix_format(suffix)
+        return suffix
+
+    @classmethod
+    def _validate_suffix_format(cls, suffix: str) -> None:
+        if not re.match(r"^[a-z0-9-]+$", suffix):
+            invalid_chars = set(re.findall(r"[^a-z0-9-]", suffix))
+            error_msg = (
+                f"Invalid suffix format: '{suffix}'. "
+                f"OpenSearch requires index names to be lowercase and only contain: "
+                f"lowercase letters (a-z), numbers (0-9), and hyphens (-). "
+                f"Found invalid characters: {invalid_chars}. "
+                f"Please update your configuration to use a valid suffix (e.g., '{suffix.lower().replace('_', '-')}')."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
     def _get_name(
         self, base: str, suffix: str | None, add_timestamp: bool = False

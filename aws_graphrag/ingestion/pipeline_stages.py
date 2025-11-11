@@ -917,6 +917,9 @@ class IndexingStage(PipelineStage):
         )
         total_failed = sum(stats.failed_items for stats in indexing_results.values())
 
+        # Validate that no backend has completely failed
+        self._validate_backend_success(indexing_results)
+
         metrics = {
             "indexing_results": {k: v.to_dict() for k, v in indexing_results.items()},
             "total_indexed": total_indexed,
@@ -936,3 +939,45 @@ class IndexingStage(PipelineStage):
         logger.info("=" * 60)
 
         return input_count, total_indexed, metrics
+
+    def _validate_backend_success(self, indexing_results: dict[str, Any]) -> None:
+        opensearch_keys = [
+            k for k in indexing_results.keys() if k.startswith("opensearch_")
+        ]
+        neptune_keys = [k for k in indexing_results.keys() if k.startswith("neptune_")]
+
+        backend_groups = {
+            "OpenSearch": opensearch_keys,
+            "Neptune": neptune_keys,
+        }
+
+        failed_backends = []
+
+        for backend_name, keys in backend_groups.items():
+            if not keys:
+                continue
+
+            backend_total = 0
+            backend_successful = 0
+
+            for key in keys:
+                stats = indexing_results.get(key)
+                if stats:
+                    backend_total += stats.total_items
+                    backend_successful += stats.successful_items
+
+            if backend_total > 0 and backend_successful == 0:
+                failed_backends.append(backend_name)
+                logger.error(
+                    f"{backend_name} backend completely failed: "
+                    f"0/{backend_total} items indexed successfully"
+                )
+
+        if failed_backends:
+            error_msg = (
+                f"Indexing failed: {', '.join(failed_backends)} backend(s) "
+                f"completely failed to index any items. "
+                f"This indicates a critical configuration or connectivity issue. "
+                f"Check the logs above for specific error details."
+            )
+            raise PipelineStageError(error_msg)
