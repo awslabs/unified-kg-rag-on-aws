@@ -177,7 +177,6 @@ WrapperT = TypeVar("WrapperT")
 
 
 class BaseBedrockWrapper:
-    buffer_tokens: int = 0
     _tokenizer: Encoding = PrivateAttr()
 
     def __init__(self, **kwargs: Any) -> None:

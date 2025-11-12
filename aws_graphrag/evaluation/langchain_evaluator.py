@@ -142,6 +142,18 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             )
 
     @staticmethod
+    def _strip_markdown_code_fence(text: str) -> str:
+        text = text.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            if lines[0].strip() in ("```json", "```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+        return text
+
+    @staticmethod
     def _parse_score(eval_result: dict[str, Any]) -> float:
         score = eval_result.get("score") or eval_result.get("value")
         if isinstance(score, (int | float)):
@@ -259,7 +271,8 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
 
         if metric_type == EvaluationMetricType.PARTIAL_CORRECTNESS:
             try:
-                data = json.loads(raw_explanation)
+                cleaned_explanation = self._strip_markdown_code_fence(raw_explanation)
+                data = json.loads(cleaned_explanation)
                 if isinstance(data, dict) and "reasoning" in data:
                     explanation = data["reasoning"]
             except (json.JSONDecodeError, TypeError):
@@ -336,7 +349,8 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
 
         if metric_type == EvaluationMetricType.PARTIAL_CORRECTNESS:
             try:
-                data = json.loads(raw_explanation)
+                cleaned_explanation = self._strip_markdown_code_fence(raw_explanation)
+                data = json.loads(cleaned_explanation)
                 if isinstance(data, dict) and "reasoning" in data:
                     explanation = data["reasoning"]
             except (json.JSONDecodeError, TypeError):
