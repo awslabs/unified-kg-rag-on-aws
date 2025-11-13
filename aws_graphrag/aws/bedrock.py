@@ -213,7 +213,7 @@ class BaseBedrockWrapper:
 
 
 class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
-    BOTO_READ_TIMEOUT: ClassVar[int] = 300
+    BOTO_READ_TIMEOUT: ClassVar[int] = 900
     BOTO_MAX_ATTEMPTS: ClassVar[int] = 3
 
     def __init__(

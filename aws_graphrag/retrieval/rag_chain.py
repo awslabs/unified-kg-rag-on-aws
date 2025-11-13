@@ -496,14 +496,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         rag_input, input_dict = self._prepare_invoke(input)
 
         try:
-            output = await self.chain.ainvoke(input_dict, config)
+            output: RAGOutput | dict[str, Any] = await self.chain.ainvoke(
+                input_dict, config
+            )
             await self._save_memory(output)
             if isinstance(output, RAGOutput):
                 return output
-            elif isinstance(output, dict):
+            if isinstance(output, dict):
+                if self.mode == ChainMode.SEARCH:
+                    return output
                 return RAGOutput(**output)
-            else:
-                return output
+            return output
         except Exception as e:
             if not self.ignore_errors:
                 raise
@@ -513,22 +516,32 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             )
             processing_time = time.time() - input_dict["start_time"]
 
+            search_result = SearchResult(
+                query=SearchQuery(query=rag_input.query),
+                results=[],
+                total_results=0,
+                search_strategy="error",
+                processing_time=processing_time,
+                metadata={"error": str(e)},
+            )
+            processed_query = ProcessedQuery(
+                original_query=rag_input.query, final_query=rag_input.query
+            )
+            error_metadata = {"error": True, "processing_time": processing_time}
+
+            if self.mode == ChainMode.SEARCH:
+                return {
+                    "search_results": search_result.model_dump(),
+                    "processed_query": processed_query.model_dump(),
+                    "metadata": error_metadata,
+                }
             return RAGOutput(
                 answer=DEFAULT_ERROR_MESSAGE,
                 sources=[],
-                search_results=SearchResult(
-                    query=SearchQuery(query=rag_input.query),
-                    results=[],
-                    total_results=0,
-                    search_strategy="error",
-                    processing_time=processing_time,
-                    metadata={"error": str(e)},
-                ),
+                search_results=search_result,
                 conversation_id=rag_input.conversation_id,
-                processed_query=ProcessedQuery(
-                    original_query=rag_input.query, final_query=rag_input.query
-                ),
-                metadata={"error": True, "processing_time": processing_time},
+                processed_query=processed_query,
+                metadata=error_metadata,
             )
 
     @staticmethod
