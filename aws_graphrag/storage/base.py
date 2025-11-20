@@ -103,14 +103,14 @@ class BaseIndexer(ABC):
 
     @classmethod
     def _validate_suffix_format(cls, suffix: str) -> None:
-        if not re.match(r"^[a-z0-9-]+$", suffix):
-            invalid_chars = set(re.findall(r"[^a-z0-9-]", suffix))
+        if not re.match(r"^[a-z0-9-_]+$", suffix):
+            invalid_chars = set(re.findall(r"[^a-z0-9-_]", suffix))
             error_msg = (
                 f"Invalid suffix format: '{suffix}'. "
                 f"OpenSearch requires index names to be lowercase and only contain: "
-                f"lowercase letters (a-z), numbers (0-9), and hyphens (-). "
+                f"lowercase letters (a-z), numbers (0-9), hyphens (-), and underscores (_). "
                 f"Found invalid characters: {invalid_chars}. "
-                f"Please update your configuration to use a valid suffix (e.g., '{suffix.lower().replace('_', '-')}')."
+                f"Please update your configuration to use a valid suffix."
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
