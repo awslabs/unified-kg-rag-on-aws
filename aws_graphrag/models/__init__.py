@@ -1,3 +1,4 @@
+# Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 from .base import Identified, Named
 from .cache import CacheEntry, CacheIndex, CacheStats, CacheStrategy
 from .community import Community

@@ -1,3 +1,4 @@
+# Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, ClassVar, Generic, TypeVar

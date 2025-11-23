@@ -1,3 +1,4 @@
+# Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 from .base import BaseEvaluator, BaseGraphRAGEvaluator
 from .evaluation_manager import EvaluationManager
 from .langchain_evaluator import LangChainEvaluator

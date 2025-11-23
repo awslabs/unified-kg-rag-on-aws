@@ -1,3 +1,4 @@
+# Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 import hashlib
 import re
 import uuid
@@ -12,7 +13,7 @@ def compute_hash(data: str, algorithm: str = "sha256", length: int = 16) -> str:
 
     algorithm = algorithm.lower()
     if algorithm == "md5":
-        hash_obj = hashlib.md5(encoded_data)
+        hash_obj = hashlib.md5(encoded_data, usedforsecurity=False)
     elif algorithm == "sha256":
         hash_obj = hashlib.sha256(encoded_data)
     else:
