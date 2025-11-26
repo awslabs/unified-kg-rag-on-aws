@@ -100,6 +100,9 @@ _EMBEDDING_MODEL_INFO: dict[EmbeddingModelId, EmbeddingModelInfo] = {
     EmbeddingModelId.EMBED_MULTILINGUAL_V3: EmbeddingModelInfo(
         dimensions=1024, max_sequence_length=2048, max_sequence_tokens=512
     ),
+    EmbeddingModelId.EMBED_V4: EmbeddingModelInfo(
+        dimensions=1024, max_sequence_length=2048, max_sequence_tokens=512
+    ),
     # NOTE: add new models here
 }
 
@@ -148,15 +151,24 @@ _LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
     ),
     LanguageModelId.CLAUDE_V4_OPUS: LanguageModelInfo(
         context_window_size=200000,
-        max_output_tokens=32000,
+        max_output_tokens=64000,
         supports_prompt_caching=True,
         supports_thinking=True,
+        supports_1m_context_window=True,
     ),
     LanguageModelId.CLAUDE_V4_1_OPUS: LanguageModelInfo(
         context_window_size=200000,
-        max_output_tokens=32000,
+        max_output_tokens=64000,
         supports_prompt_caching=True,
         supports_thinking=True,
+        supports_1m_context_window=True,
+    ),
+    LanguageModelId.CLAUDE_V4_5_OPUS: LanguageModelInfo(
+        context_window_size=200000,
+        max_output_tokens=64000,
+        supports_prompt_caching=True,
+        supports_thinking=True,
+        supports_1m_context_window=True,
     ),
     # NOTE: add new models here
 }

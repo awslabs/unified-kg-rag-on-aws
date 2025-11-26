@@ -68,6 +68,7 @@ class S3EncryptionType(str, Enum):
 
 class EmbeddingModelId(str, Enum):
     EMBED_MULTILINGUAL_V3 = "cohere.embed-multilingual-v3"
+    EMBED_V4 = "cohere.embed-v4:0"
     EMBED_ENGLISH_V3 = "cohere.embed-english-v3"
     TITAN_EMBED_V1 = "amazon.titan-embed-text-v1"
     TITAN_EMBED_V2 = "amazon.titan-embed-text-v2:0"
@@ -87,6 +88,7 @@ class LanguageModelId(str, Enum):
     CLAUDE_V4_5_SONNET = "anthropic.claude-sonnet-4-5-20250929-v1:0"
     CLAUDE_V4_OPUS = "anthropic.claude-opus-4-20250514-v1:0"
     CLAUDE_V4_1_OPUS = "anthropic.claude-opus-4-1-20250805-v1:0"
+    CLAUDE_V4_5_OPUS = "anthropic.claude-opus-4-5-20251101-v1:0"
     # NOTE: add new models here
 
 

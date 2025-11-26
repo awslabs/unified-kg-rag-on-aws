@@ -43,7 +43,7 @@ processing:
   batch_size: 10
   max_retries: 3
   parallel_workers: 4
-  ignore_errors: False
+  ignore_errors: false
   deduplicate: true
   resolution_method: "minhash"
   similarity_threshold: 0.8
