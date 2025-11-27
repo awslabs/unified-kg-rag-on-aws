@@ -42,7 +42,6 @@ processing:
   max_concurrency: 5
   batch_size: 10
   max_retries: 3
-  parallel_workers: 4
   ignore_errors: false
   deduplicate: true
   resolution_method: "minhash"
@@ -123,8 +122,11 @@ graph:
   community_detection:
     resolution: 1.0
     random_state: 42
-    max_iterations: 100
     max_levels: 5
+    trials: 3
+    extra_forced_iterations: 2
+    min_community_size: 3
+    auto_resolution: true
 
     # Community report generation
     report_generation:

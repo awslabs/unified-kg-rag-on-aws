@@ -227,7 +227,6 @@ aws:
 processing:
   max_concurrency: 5        # Maximum parallel operations
   batch_size: 10           # Batch processing size
-  parallel_workers: 4      # Number of parallel workers
 
   # Text Chunking
   chunking:

@@ -227,7 +227,6 @@ class IngestionPipelineRunner:
             stages_enabled=stages,
             batch_size=self.config.processing.batch_size,
             max_retries=self.config.processing.max_retries,
-            parallel_workers=self.config.processing.parallel_workers,
             continue_on_error=self.args.continue_on_error,
             cache_enabled=not self.args.force_rebuild,
             local_directory=self.args.cache_directory,

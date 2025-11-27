@@ -167,42 +167,12 @@ class CommunityDetector(BaseProcessor):
                     f"Created cluster graph with {cluster_graph.number_of_nodes()} nodes and {cluster_graph.number_of_edges()} edges"
                 )
 
-                base_resolution = self.community_detection_config.resolution
-                cluster_resolutions = [
-                    base_resolution * 0.1,
-                    base_resolution * 0.2,
-                    base_resolution * 0.3,
-                    base_resolution * 0.5,
-                    base_resolution * 0.7,
-                ]
+                next_partition = self._get_base_partition(cluster_graph)
 
-                best_partition = None
-                best_num_communities = cluster_graph.number_of_nodes()
-
-                for cluster_resolution in cluster_resolutions:
-                    try:
-                        candidate_partition = self._get_base_partition(
-                            cluster_graph, resolution_override=cluster_resolution
-                        )
-                        if (
-                            candidate_partition
-                            and len(candidate_partition)
-                            < cluster_graph.number_of_nodes()
-                        ):
-                            num_communities = len(candidate_partition)
-
-                            if 1 < num_communities < best_num_communities:
-                                best_partition = candidate_partition
-                                best_num_communities = num_communities
-
-                    except Exception as e:
-                        logger.debug(
-                            f"Failed with resolution '{cluster_resolution}': {e}"
-                        )
-                        continue
-
-                if best_partition:
-                    next_partition = best_partition
+                if (
+                    next_partition
+                    and 1 < len(next_partition) < cluster_graph.number_of_nodes()
+                ):
                     logger.info(
                         f"Selected partition with {len(next_partition)} communities for level {level}"
                     )
@@ -223,7 +193,7 @@ class CommunityDetector(BaseProcessor):
         self._process_hierarchical_partitions(partitions)
 
     def _get_base_partition(
-        self, graph: nx.Graph | None = None, resolution_override: float | None = None
+        self, graph: nx.Graph | None = None
     ) -> list[set[str]] | None:
         target_graph = graph or self.graph
 
@@ -234,38 +204,127 @@ class CommunityDetector(BaseProcessor):
             return [{node} for node in target_graph.nodes()]
 
         try:
-            resolution = (
-                resolution_override
-                if resolution_override is not None
-                else self.community_detection_config.resolution
-            )
+            config = self.community_detection_config
+
+            if config.auto_resolution:
+                resolution = self._find_optimal_resolution(target_graph)
+            else:
+                resolution = config.resolution
 
             all_nodes = set(target_graph.nodes())
 
             partition_dict = leiden(
                 target_graph,
                 resolution=resolution,
-                random_seed=self.community_detection_config.random_state,
+                random_seed=config.random_state,
+                trials=config.trials,
+                extra_forced_iterations=config.extra_forced_iterations,
             )
 
-            communities = defaultdict(set)
-            partitioned_nodes = set()
-
-            for node, label in partition_dict.items():
-                communities[label].add(node)
-                partitioned_nodes.add(node)
-
+            communities = self._partition_dict_to_communities(partition_dict)
+            partitioned_nodes = set(partition_dict.keys())
             missing_nodes = all_nodes - partitioned_nodes
             next_label = max(communities.keys()) + 1 if communities else 0
             for node in missing_nodes:
                 communities[next_label] = {node}
                 next_label += 1
 
+            if config.min_community_size > 1:
+                communities = self._merge_small_communities(
+                    dict(communities), target_graph, config.min_community_size
+                )
+
             return list(communities.values())
 
         except Exception as e:
             logger.error(f"Error during Leiden partitioning: {e}")
             return None
+
+    @staticmethod
+    def _partition_dict_to_communities(
+        partition_dict: dict[str, int],
+    ) -> dict[int, set[str]]:
+        communities: dict[int, set[str]] = defaultdict(set)
+        for node, label in partition_dict.items():
+            communities[label].add(node)
+        return dict(communities)
+
+    def _find_optimal_resolution(self, graph: nx.Graph) -> float:
+        best_resolution = self.community_detection_config.resolution
+        best_modularity = -1.0
+
+        resolution_candidates = [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0]
+
+        for resolution in resolution_candidates:
+            try:
+                partition_dict = leiden(
+                    graph,
+                    resolution=resolution,
+                    random_seed=self.community_detection_config.random_state,
+                    trials=1,
+                )
+
+                communities = self._partition_dict_to_communities(partition_dict)
+                partition = list(communities.values())
+
+                if len(partition) < 2:
+                    continue
+
+                modularity = nx.community.modularity(graph, partition)
+
+                if modularity > best_modularity:
+                    best_modularity = modularity
+                    best_resolution = resolution
+
+            except Exception as e:
+                logger.debug(f"Resolution {resolution} failed: {e}")
+                continue
+
+        logger.info(
+            f"Auto-selected resolution {best_resolution} with modularity {best_modularity:.4f}"
+        )
+        return best_resolution
+
+    def _merge_small_communities(
+        self,
+        communities: dict[int, set[str]],
+        graph: nx.Graph,
+        min_size: int,
+    ) -> dict[int, set[str]]:
+        node_to_comm: dict[str, int] = {}
+        for comm_id, nodes in communities.items():
+            for node in nodes:
+                node_to_comm[node] = comm_id
+
+        small_comms = [
+            cid for cid, nodes in communities.items() if len(nodes) < min_size
+        ]
+
+        for small_comm_id in small_comms:
+            if small_comm_id not in communities:
+                continue
+
+            nodes = communities[small_comm_id]
+
+            neighbor_counts: dict[int, int] = defaultdict(int)
+            for node in nodes:
+                for neighbor in graph.neighbors(node):
+                    if neighbor in node_to_comm:
+                        neighbor_comm = node_to_comm[neighbor]
+                        if (
+                            neighbor_comm != small_comm_id
+                            and neighbor_comm in communities
+                        ):
+                            neighbor_counts[neighbor_comm] += 1
+
+            if neighbor_counts:
+                target_comm = max(neighbor_counts, key=lambda x: neighbor_counts[x])
+                communities[target_comm].update(nodes)
+                for node in nodes:
+                    node_to_comm[node] = target_comm
+                del communities[small_comm_id]
+
+        return communities
 
     def _create_cluster_graph(self, partition: list[set[str]]) -> nx.Graph:
         num_communities = len(partition)
@@ -291,8 +350,10 @@ class CommunityDetector(BaseProcessor):
                 continue
 
             edge_weight = data.get("weight", 1.0)
-            comm_pair_list = sorted([source_community, target_community])
-            comm_pair: tuple[int, int] = (comm_pair_list[0], comm_pair_list[1])
+            comm_pair = (
+                min(source_community, target_community),
+                max(source_community, target_community),
+            )
             edge_weights[comm_pair] += edge_weight
 
         for (comm1, comm2), weight in edge_weights.items():
@@ -334,17 +395,12 @@ class CommunityDetector(BaseProcessor):
 
             for i, cluster_nodes in enumerate(partition):
                 parent_comm_id = f"L{level}_C{i}"
-                parent_nodes = set()
-                child_comm_ids = []
+                parent_nodes: set[str] = set()
+                child_comm_ids: list[str] = []
 
                 for cluster_idx in cluster_nodes:
-                    cluster_idx_int = (
-                        int(cluster_idx)
-                        if isinstance(cluster_idx, str)
-                        else cluster_idx
-                    )
-                    if cluster_idx_int in previous_level_map:
-                        child_comm_id = previous_level_map[cluster_idx_int]
+                    if cluster_idx in previous_level_map:
+                        child_comm_id = previous_level_map[cluster_idx]
                         child_comm = self.all_communities.get(child_comm_id)
 
                         if child_comm:

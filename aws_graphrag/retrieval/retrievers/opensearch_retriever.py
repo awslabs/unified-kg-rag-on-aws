@@ -1,6 +1,7 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 import asyncio
 import time
+from collections.abc import Coroutine
 from typing import Any, ClassVar
 
 import boto3
@@ -16,6 +17,7 @@ logger = get_logger(__name__)
 
 class OpenSearchRetriever(BaseGraphRAGRetriever):
     MAX_SIZE: ClassVar[int] = 100
+    TERMS_BATCH_SIZE: ClassVar[int] = 500
 
     def __init__(
         self,
@@ -60,8 +62,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         start_time = time.time()
+        query_preview = query.query[:50] if query.query else "(empty)"
         logger.info(
-            f"OpenSearch retrieval started - query: '{query.query[:50]}...' ('{query.search_type.value}')"
+            f"OpenSearch retrieval started - query: '{query_preview}...' ('{query.search_type.value}')"
         )
 
         search_type = query.search_type or SearchType.HYBRID
@@ -71,19 +74,32 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             query_vector = await self._get_query_vector(
                 query.query, search_type, ["any"]
             )
-            search_tasks = self._create_search_tasks(
-                query, search_type, index_prefixes, query_vector
-            )
 
-            if not search_tasks:
-                logger.warning(
-                    f"No searchable indices available for query: {query.query[:50]}"
+            large_filter = self._find_large_filter_list(query.filters)
+            if large_filter:
+                large_list_key, large_list_values = large_filter
+                all_results = await self._execute_batched_retrieval(
+                    query,
+                    large_list_key,
+                    large_list_values,
+                    search_type,
+                    index_prefixes,
+                    query_vector,
                 )
-                return []
+            else:
+                search_tasks = self._create_search_tasks(
+                    query, search_type, index_prefixes, query_vector
+                )
 
-            all_results = []
-            for results in await asyncio.gather(*search_tasks):
-                all_results.extend(results)
+                if not search_tasks:
+                    logger.warning(
+                        f"No searchable indices available for query: {query_preview}"
+                    )
+                    return []
+
+                all_results = []
+                for results in await asyncio.gather(*search_tasks):
+                    all_results.extend(results)
 
             all_results.sort(key=lambda x: x.score, reverse=True)
             final_results = all_results[: query.top_k * query.retrieval_multiplier]
@@ -106,7 +122,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         search_type: SearchType,
         index_prefixes: list[str],
         query_vector: list[float] | None,
-    ) -> list:
+    ) -> list[Coroutine[Any, Any, list[RetrievalResult]]]:
         search_tasks = []
         for prefix in index_prefixes:
             mapping = self._field_mappings.get(prefix)
@@ -283,7 +299,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         if not filters:
             return []
 
-        clauses = []
+        clauses: list[dict[str, Any]] = []
         for key, value in filters.items():
             if isinstance(value, dict):
                 clauses.append({"range": {key: value}})
@@ -293,6 +309,58 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 clauses.append({"term": {key: value}})
 
         return clauses
+
+    def _find_large_filter_list(
+        self, filters: dict[str, Any] | None
+    ) -> tuple[str, list[Any]] | None:
+        if not filters:
+            return None
+
+        for key, value in filters.items():
+            if isinstance(value, list) and len(value) > self.TERMS_BATCH_SIZE:
+                return (key, value)
+
+        return None
+
+    async def _execute_batched_retrieval(
+        self,
+        query: SearchQuery,
+        large_list_key: str,
+        large_list_values: list[Any],
+        search_type: SearchType,
+        index_prefixes: list[str],
+        query_vector: list[float] | None,
+    ) -> list[RetrievalResult]:
+        all_results: list[RetrievalResult] = []
+        seen_ids: set[str] = set()
+        total_batches = (
+            len(large_list_values) + self.TERMS_BATCH_SIZE - 1
+        ) // self.TERMS_BATCH_SIZE
+
+        logger.info(
+            f"Executing batched retrieval: {len(large_list_values)} items in {total_batches} batches"
+        )
+
+        for batch_idx in range(0, len(large_list_values), self.TERMS_BATCH_SIZE):
+            batch = large_list_values[batch_idx : batch_idx + self.TERMS_BATCH_SIZE]
+            batch_filters = {**(query.filters or {}), large_list_key: batch}
+            batch_query = query.model_copy(update={"filters": batch_filters})
+
+            search_tasks = self._create_search_tasks(
+                batch_query, search_type, index_prefixes, query_vector
+            )
+
+            for results in await asyncio.gather(*search_tasks):
+                for result in results:
+                    if result.source is not None:
+                        if result.source not in seen_ids:
+                            seen_ids.add(result.source)
+                            all_results.append(result)
+
+        logger.debug(
+            f"Batched retrieval completed: {len(all_results)} unique results from {total_batches} batches"
+        )
+        return all_results
 
     async def _execute_search(
         self, aliases: list[str], body: dict[str, Any], params: dict[str, Any]

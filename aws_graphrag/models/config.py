@@ -374,11 +374,6 @@ class ProcessingConfig(BaseModel):
         ge=0,
         description="Maximum number of retry attempts for failed operations",
     )
-    parallel_workers: int = Field(
-        default=4,
-        ge=1,
-        description="Maximum number of parallel workers for processing",
-    )
     ignore_errors: bool = Field(
         default=False,
         description="Ignore errors and continue processing",
@@ -515,17 +510,31 @@ class CommunityDetectionConfig(BaseModel):
         default=1.0,
         gt=0.0,
         le=10.0,
-        description="Community detection resolution parameter",
+        description="Community detection resolution parameter (higher = fewer communities)",
     )
     random_state: int = Field(
         default=42, description="Random seed for reproducible results"
     )
-    max_iterations: int = Field(
-        default=100,
-        ge=1,
-        description="Maximum iterations for community detection",
-    )
     max_levels: int = Field(default=5, ge=1, description="Maximum hierarchy levels")
+    trials: int = Field(
+        default=3,
+        ge=1,
+        description="Number of independent Leiden runs to find best partition",
+    )
+    extra_forced_iterations: int = Field(
+        default=2,
+        ge=0,
+        description="Additional optimization iterations after convergence",
+    )
+    min_community_size: int = Field(
+        default=3,
+        ge=1,
+        description="Minimum nodes per community (smaller ones merged to neighbors)",
+    )
+    auto_resolution: bool = Field(
+        default=True,
+        description="Automatically find optimal resolution via modularity maximization",
+    )
     report_generation: ReportGenerationConfig = Field(
         default_factory=ReportGenerationConfig,
         description="Community report generation configuration",
@@ -1208,12 +1217,6 @@ class PipelineConfig(BaseModel):
         ge=0,
         le=10,
         description="The maximum number of retries for a failed operation.",
-    )
-    parallel_workers: int = Field(
-        default=4,
-        ge=1,
-        le=100,
-        description="The number of parallel workers to use for processing.",
     )
     continue_on_error: bool = Field(
         default=False,
