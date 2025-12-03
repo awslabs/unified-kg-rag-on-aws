@@ -1,4 +1,4 @@
-Name: aws-graphrag-build-deploy
+Name: prd_aws-graphrag
 SchemaVersion: "1.0"
 
 # Optional - Set automatic triggers.
