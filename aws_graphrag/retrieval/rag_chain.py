@@ -4,7 +4,6 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, Iterator
 from enum import Enum
-from functools import lru_cache
 from typing import Any
 
 import boto3
@@ -170,6 +169,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             region_name=config.aws.bedrock.region_name,
         )
         self.search_strategy_instance: BaseSearchStrategy | None = None
+        self._retriever_cache: dict[tuple[RetrieverType, int | None], BaseGraphRAGRetriever] = {}
+        self._cached_loop_id: int | None = None
         self.chain = self._build_chain()
 
     def _build_chain(self) -> Runnable:
@@ -380,22 +381,46 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             config=self.config, retrievers=retrievers, context_builder=context_builder
         )
 
-    @lru_cache
     def _get_retriever(self, retriever_type: RetrieverType) -> BaseGraphRAGRetriever:
+        current_loop_id = self._get_current_loop_id()
+
+        # Invalidate cache if event loop changed
+        if current_loop_id is not None and self._cached_loop_id != current_loop_id:
+            logger.debug(
+                "Event loop changed (old=%s, new=%s), clearing retriever cache",
+                self._cached_loop_id,
+                current_loop_id,
+            )
+            self._retriever_cache.clear()
+            self._cached_loop_id = current_loop_id
+
+        cache_key = (retriever_type, current_loop_id)
+        if cache_key in self._retriever_cache:
+            return self._retriever_cache[cache_key]
+
         if retriever_type == RetrieverType.OPENSEARCH:
             opensearch_client = OpenSearchClient(
                 config=self.config, boto_session=self.boto_session
             )
-            return OpenSearchRetriever(
+            retriever = OpenSearchRetriever(
                 config=self.config, opensearch_client=opensearch_client
             )
         elif retriever_type == RetrieverType.NEPTUNE:
             neptune_client = NeptuneClient(
                 config=self.config, boto_session=self.boto_session
             )
-            return NeptuneRetriever(config=self.config, neptune_client=neptune_client)
+            retriever = NeptuneRetriever(config=self.config, neptune_client=neptune_client)
         else:
             raise ValueError(f"Unknown retriever type: '{retriever_type}'")
+
+        self._retriever_cache[cache_key] = retriever
+        return retriever
+
+    def _get_current_loop_id(self) -> int | None:
+        try:
+            return id(asyncio.get_running_loop())
+        except RuntimeError:
+            return None
 
     def _context_building_step(self, state: dict[str, Any]) -> str:
         try:

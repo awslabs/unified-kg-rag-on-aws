@@ -1,4 +1,5 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+import asyncio
 from collections.abc import Callable, Generator
 from functools import wraps
 from typing import Any
@@ -72,6 +73,7 @@ class OpenSearchClient:
         )
         self._client: OpenSearch | None = None
         self._async_client: AsyncOpenSearch | None = None
+        self._bound_loop_id: int | None = None
 
     @property
     def client(self) -> OpenSearch:
@@ -81,9 +83,27 @@ class OpenSearchClient:
 
     @property
     def async_client(self) -> AsyncOpenSearch:
-        if self._async_client is None:
+        current_loop_id = self._get_current_loop_id()
+
+        if self._async_client is None or (
+            current_loop_id is not None and self._bound_loop_id != current_loop_id
+        ):
+            if self._async_client is not None:
+                logger.debug(
+                    "Event loop changed (old=%s, new=%s), recreating async client",
+                    self._bound_loop_id,
+                    current_loop_id,
+                )
             self._async_client = self._create_async_client()
+            self._bound_loop_id = current_loop_id
+
         return self._async_client
+
+    def _get_current_loop_id(self) -> int | None:
+        try:
+            return id(asyncio.get_running_loop())
+        except RuntimeError:
+            return None
 
     def _create_client(self) -> OpenSearch:
         params = self._get_base_connection_params()
