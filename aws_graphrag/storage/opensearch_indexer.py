@@ -377,19 +377,38 @@ class OpenSearchIndexer(VectorIndexer):
         ]
         return list(zip(*all_embeddings, strict=True))
 
-    def _batch_embed(self, texts: list[str]) -> list[list[float] | None]:
+    def _batch_embed(
+        self, texts: list[str], batch_size: int = 50
+    ) -> list[list[float] | None]:
+        result: list[list[float] | None] = [None] * len(texts)
+
         valid_texts_with_indices = [
             (i, text) for i, text in enumerate(texts) if text and text.strip()
         ]
         if not valid_texts_with_indices:
-            return [None] * len(texts)
+            return result
 
-        indices, valid_texts = zip(*valid_texts_with_indices, strict=True)
-        embeddings = self.embedding_model.embed_documents(list(valid_texts))
+        for batch_start in range(0, len(valid_texts_with_indices), batch_size):
+            batch = valid_texts_with_indices[batch_start : batch_start + batch_size]
+            indices, batch_texts = zip(*batch, strict=True)
 
-        result: list[list[float] | None] = [None] * len(texts)
-        for i, emb in zip(indices, embeddings, strict=True):
-            result[i] = emb
+            try:
+                embeddings = self.embedding_model.embed_documents(list(batch_texts))
+                for i, emb in zip(indices, embeddings, strict=True):
+                    result[i] = emb
+            except Exception as e:
+                logger.warning(
+                    f"Batch embedding failed ({len(batch)} items), "
+                    f"retrying individually: {e}"
+                )
+                for i, text in batch:
+                    try:
+                        emb = self.embedding_model.embed_documents([text])
+                        result[i] = emb[0] if emb else None
+                    except Exception as item_error:
+                        logger.error(f"Failed to embed text at index {i}: {item_error}")
+                        result[i] = None
+
         return result
 
     @staticmethod
