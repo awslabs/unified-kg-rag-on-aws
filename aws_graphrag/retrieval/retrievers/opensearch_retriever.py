@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 
 class OpenSearchRetriever(BaseGraphRAGRetriever):
     MAX_SIZE: ClassVar[int] = 100
-    TERMS_BATCH_SIZE: ClassVar[int] = 500
+    TERMS_BATCH_SIZE: ClassVar[int] = 300
 
     def __init__(
         self,
