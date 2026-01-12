@@ -17,9 +17,9 @@ logger = get_logger(__name__)
 
 class OpenSearchRetriever(BaseGraphRAGRetriever):
     MAX_SIZE: ClassVar[int] = 100
-    TERMS_BATCH_SIZE: ClassVar[int] = 300
-    MAX_TOTAL_CLAUSES: ClassVar[int] = 800
-    RESERVED_CLAUSES: ClassVar[int] = 200
+    TERMS_BATCH_SIZE: ClassVar[int] = 150
+    MAX_TOTAL_CLAUSES: ClassVar[int] = 600
+    RESERVED_CLAUSES: ClassVar[int] = 300
 
     def __init__(
         self,
@@ -318,16 +318,29 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         if not filters:
             return self.TERMS_BATCH_SIZE
 
-        list_filter_count = sum(
-            1 for v in filters.values() if isinstance(v, list) and len(v) > 0
-        )
-        if list_filter_count == 0:
+        list_filters = [
+            (k, v) for k, v in filters.items() if isinstance(v, list) and len(v) > 0
+        ]
+        if not list_filters:
             return self.TERMS_BATCH_SIZE
+
+        list_filter_count = len(list_filters)
+        total_terms = sum(len(v) for _, v in list_filters)
 
         available_clauses = self.MAX_TOTAL_CLAUSES - self.RESERVED_CLAUSES
         safe_size = available_clauses // list_filter_count
 
-        return max(50, min(safe_size, self.TERMS_BATCH_SIZE))
+        min_batch_size = max(1, available_clauses // max(list_filter_count, 1) // 2)
+
+        final_size = max(min_batch_size, min(safe_size, self.TERMS_BATCH_SIZE))
+
+        logger.debug(
+            f"Batch size calculation: {list_filter_count} list filters, "
+            f"total_terms={total_terms}, available_clauses={available_clauses}, "
+            f"safe_size={safe_size}, min_batch_size={min_batch_size}, final_size={final_size}"
+        )
+
+        return final_size
 
     @staticmethod
     def _find_all_large_filter_lists(
