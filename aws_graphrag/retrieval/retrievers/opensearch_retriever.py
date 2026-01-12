@@ -18,6 +18,8 @@ logger = get_logger(__name__)
 class OpenSearchRetriever(BaseGraphRAGRetriever):
     MAX_SIZE: ClassVar[int] = 100
     TERMS_BATCH_SIZE: ClassVar[int] = 300
+    MAX_TOTAL_CLAUSES: ClassVar[int] = 800
+    RESERVED_CLAUSES: ClassVar[int] = 200
 
     def __init__(
         self,
@@ -75,11 +77,15 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 query.query, search_type, ["any"]
             )
 
-            large_filters = self._find_all_large_filter_lists(query.filters)
+            safe_batch_size = self._calculate_safe_batch_size(query.filters)
+            large_filters = self._find_all_large_filter_lists(
+                query.filters, safe_batch_size
+            )
             if large_filters:
                 all_results = await self._execute_multi_batched_retrieval(
                     query,
                     large_filters,
+                    safe_batch_size,
                     search_type,
                     index_prefixes,
                     query_vector,
@@ -308,15 +314,31 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
         return clauses
 
+    def _calculate_safe_batch_size(self, filters: dict[str, Any] | None) -> int:
+        if not filters:
+            return self.TERMS_BATCH_SIZE
+
+        list_filter_count = sum(
+            1 for v in filters.values() if isinstance(v, list) and len(v) > 0
+        )
+        if list_filter_count == 0:
+            return self.TERMS_BATCH_SIZE
+
+        available_clauses = self.MAX_TOTAL_CLAUSES - self.RESERVED_CLAUSES
+        safe_size = available_clauses // list_filter_count
+
+        return max(50, min(safe_size, self.TERMS_BATCH_SIZE))
+
+    @staticmethod
     def _find_all_large_filter_lists(
-        self, filters: dict[str, Any] | None
+        filters: dict[str, Any] | None, batch_size: int
     ) -> dict[str, list[Any]]:
         if not filters:
             return {}
 
         large_filters = {}
         for key, value in filters.items():
-            if isinstance(value, list) and len(value) > self.TERMS_BATCH_SIZE:
+            if isinstance(value, list) and len(value) > batch_size:
                 large_filters[key] = value
         return large_filters
 
@@ -324,6 +346,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         self,
         query: SearchQuery,
         large_filters: dict[str, list[Any]],
+        batch_size: int,
         search_type: SearchType,
         index_prefixes: list[str],
         query_vector: list[float] | None,
@@ -334,15 +357,15 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         filter_batches: dict[str, list[list[Any]]] = {}
         for key, values in large_filters.items():
             filter_batches[key] = [
-                values[i : i + self.TERMS_BATCH_SIZE]
-                for i in range(0, len(values), self.TERMS_BATCH_SIZE)
+                values[i : i + batch_size] for i in range(0, len(values), batch_size)
             ]
 
         max_batches = max(len(batches) for batches in filter_batches.values())
 
         logger.info(
             f"Executing multi-batched retrieval: {len(large_filters)} large filters, "
-            f"{max_batches} batches (filter sizes: {', '.join(f'{k}={len(v)}' for k, v in large_filters.items())})"
+            f"{max_batches} batches, batch_size={batch_size} "
+            f"(filter sizes: {', '.join(f'{k}={len(v)}' for k, v in large_filters.items())})"
         )
 
         for batch_idx in range(max_batches):
