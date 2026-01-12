@@ -208,7 +208,7 @@ wheels = [
 
 [[package]]
 name = "aws-graphrag"
-version = "0.2.1"
+version = "0.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "asyncio-throttle" },
@@ -287,7 +287,7 @@ requires-dist = [
     { name = "datasketch", specifier = ">=1.6.5" },
     { name = "future", specifier = ">=1.0.0" },
     { name = "graspologic", specifier = ">=3.4.1" },
-    { name = "gremlinpython", specifier = ">=3.7.3" },
+    { name = "gremlinpython", specifier = ">=3.6.3,<3.7.0" },
     { name = "isort", marker = "extra == 'dev'", specifier = ">=5.12.0" },
     { name = "langchain", specifier = ">=0.3.26,<1.0.0" },
     { name = "langchain-aws", specifier = ">=0.2.27,<1.0.0" },
@@ -1108,7 +1108,7 @@ wheels = [
 
 [[package]]
 name = "gremlinpython"
-version = "3.7.3"
+version = "3.6.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aenum" },
@@ -1117,9 +1117,9 @@ dependencies = [
     { name = "isodate" },
     { name = "nest-asyncio" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e3/bd/706ef9c0589f2742c9860d877151807ec9b0f1a2904a605502247c9f773c/gremlinpython-3.7.3.tar.gz", hash = "sha256:c8144bd1099fdcf072deff9a15e260efa9a1a065220495f799f6fc1ff6b83ef4", size = 52585 }
+sdist = { url = "https://files.pythonhosted.org/packages/7f/0f/b11aa2c12a528a21a13db55ef7e61f5cf53951e3d14cb8a6e64fe47b35e6/gremlinpython-3.6.8.tar.gz", hash = "sha256:fc675fb0934cefca585dab42c8a5c27668f2a81fbe10a8f47b090de219a736c3", size = 51390 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c2/64/65c9ab3deb11c5e0607c51fcddff3be33a06720cdd08768375720893e994/gremlinpython-3.7.3-py3-none-any.whl", hash = "sha256:56e0da437be3336971761dfeaab8532f0c583aaab760d8783c4a0bb389cfd341", size = 78436 },
+    { url = "https://files.pythonhosted.org/packages/f5/28/5376b344bfe0db6ab3a045fbdf4a2cb39909d94b1b25b7ea2856df484b78/gremlinpython-3.6.8-py3-none-any.whl", hash = "sha256:a2984bb07547f7fecb61e334a9015a40ad1522d07fdaedba5d4057b26d48c25e", size = 77152 },
 ]
 
 [[package]]

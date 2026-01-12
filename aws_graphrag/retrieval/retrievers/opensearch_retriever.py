@@ -75,13 +75,11 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 query.query, search_type, ["any"]
             )
 
-            large_filter = self._find_large_filter_list(query.filters)
-            if large_filter:
-                large_list_key, large_list_values = large_filter
-                all_results = await self._execute_batched_retrieval(
+            large_filters = self._find_all_large_filter_lists(query.filters)
+            if large_filters:
+                all_results = await self._execute_multi_batched_retrieval(
                     query,
-                    large_list_key,
-                    large_list_values,
+                    large_filters,
                     search_type,
                     index_prefixes,
                     query_vector,
@@ -310,40 +308,49 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
         return clauses
 
-    def _find_large_filter_list(
+    def _find_all_large_filter_lists(
         self, filters: dict[str, Any] | None
-    ) -> tuple[str, list[Any]] | None:
+    ) -> dict[str, list[Any]]:
         if not filters:
-            return None
+            return {}
 
+        large_filters = {}
         for key, value in filters.items():
             if isinstance(value, list) and len(value) > self.TERMS_BATCH_SIZE:
-                return (key, value)
+                large_filters[key] = value
+        return large_filters
 
-        return None
-
-    async def _execute_batched_retrieval(
+    async def _execute_multi_batched_retrieval(
         self,
         query: SearchQuery,
-        large_list_key: str,
-        large_list_values: list[Any],
+        large_filters: dict[str, list[Any]],
         search_type: SearchType,
         index_prefixes: list[str],
         query_vector: list[float] | None,
     ) -> list[RetrievalResult]:
         all_results: list[RetrievalResult] = []
         seen_ids: set[str] = set()
-        total_batches = (
-            len(large_list_values) + self.TERMS_BATCH_SIZE - 1
-        ) // self.TERMS_BATCH_SIZE
+
+        filter_batches: dict[str, list[list[Any]]] = {}
+        for key, values in large_filters.items():
+            filter_batches[key] = [
+                values[i : i + self.TERMS_BATCH_SIZE]
+                for i in range(0, len(values), self.TERMS_BATCH_SIZE)
+            ]
+
+        max_batches = max(len(batches) for batches in filter_batches.values())
 
         logger.info(
-            f"Executing batched retrieval: {len(large_list_values)} items in {total_batches} batches"
+            f"Executing multi-batched retrieval: {len(large_filters)} large filters, "
+            f"{max_batches} batches (filter sizes: {', '.join(f'{k}={len(v)}' for k, v in large_filters.items())})"
         )
 
-        for batch_idx in range(0, len(large_list_values), self.TERMS_BATCH_SIZE):
-            batch = large_list_values[batch_idx : batch_idx + self.TERMS_BATCH_SIZE]
-            batch_filters = {**(query.filters or {}), large_list_key: batch}
+        for batch_idx in range(max_batches):
+            batch_filters = {**(query.filters or {})}
+            for key, batches in filter_batches.items():
+                actual_batch_idx = min(batch_idx, len(batches) - 1)
+                batch_filters[key] = batches[actual_batch_idx]
+
             batch_query = query.model_copy(update={"filters": batch_filters})
 
             search_tasks = self._create_search_tasks(
@@ -358,7 +365,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                             all_results.append(result)
 
         logger.debug(
-            f"Batched retrieval completed: {len(all_results)} unique results from {total_batches} batches"
+            f"Multi-batched retrieval completed: {len(all_results)} unique results from {max_batches} batches"
         )
         return all_results
 
