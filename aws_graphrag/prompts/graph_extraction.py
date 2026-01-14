@@ -54,6 +54,14 @@ output format requirements.
 - Include relevant context from the text
 - Avoid speculation or external knowledge
 
+## Entity Confidence Scoring (1-10 scale):
+Assign a confidence score based on how clearly the entity is identified in the text:
+- **9-10**: Explicitly named and clearly defined in text, unambiguous identification
+- **7-8**: Clearly mentioned with sufficient context, minor ambiguity possible
+- **5-6**: Mentioned but requires inference from context, moderate certainty
+- **3-4**: Implied or partially referenced, significant inference required
+- **1-2**: Weakly implied, high uncertainty in identification
+
 # RELATIONSHIP EXTRACTION RULES
 
 ## Relationship Types (be specific and descriptive):
@@ -86,6 +94,7 @@ MANDATORY: Use this exact XML structure with no deviations:
 <name>EXACT_ENTITY_NAME</name>
 <type>ENTITY_TYPE</type>
 <description>Clear description of entity role and significance in the text.</description>
+<confidence>NUMERIC_VALUE_1_TO_10</confidence>
 </entity>
 </entities>
 
@@ -106,6 +115,7 @@ MANDATORY: Use this exact XML structure with no deviations:
 ✓ Entity limits and relationship limits are respected
 ✓ XML format is followed precisely
 ✓ No external knowledge or assumptions added
+✓ Confidence scores accurately reflect extraction certainty (1-10 scale)
 
 Focus on accuracy over quantity. Extract meaningful, verifiable information only."""
 
@@ -123,10 +133,11 @@ provided.
 1. Read the text carefully and identify all significant entities
 2. Classify each entity using the specified types
 3. Create clear descriptions for each entity
-4. Identify meaningful relationships between entities
-5. Assign appropriate relationship types and strength scores
-6. Verify entity name consistency between sections
-7. Format output using the exact XML structure
+4. Assign confidence scores based on extraction certainty (1-10 scale)
+5. Identify meaningful relationships between entities
+6. Assign appropriate relationship types and strength scores
+7. Verify entity name consistency between sections
+8. Format output using the exact XML structure
 
 ## CRITICAL REMINDERS:
 - Use ONLY the entity types specified in the system prompt

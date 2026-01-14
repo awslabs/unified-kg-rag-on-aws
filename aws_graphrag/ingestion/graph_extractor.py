@@ -42,6 +42,22 @@ class ExtractionStats(BaseModel):
     total_processing_time: float = Field(
         default=0.0, description="Total time spent processing extractions (in seconds)"
     )
+    entities_filtered_by_confidence: int = Field(
+        default=0,
+        description="Number of entities filtered out due to low confidence score",
+    )
+    relationships_filtered_by_confidence: int = Field(
+        default=0,
+        description="Number of relationships filtered out due to entity confidence filtering",
+    )
+    average_entity_confidence: float = Field(
+        default=0.0,
+        description="Average confidence score of extracted entities",
+    )
+    confidence_threshold_applied: float = Field(
+        default=0.0,
+        description="Confidence threshold value used for filtering",
+    )
 
     @property
     def processed_unit_count(self) -> int:
@@ -195,9 +211,28 @@ class GraphExtractor(BaseProcessor):
         all_entities = self._merge_entities(all_entities)
         all_relationships = self._merge_relationships(all_relationships)
 
+        all_entities, filtered_count = self._filter_entities_by_confidence(all_entities)
+        self.stats.entities_filtered_by_confidence = filtered_count
+
+        if filtered_count > 0:
+            all_relationships, rel_filtered_count = self._filter_orphan_relationships(
+                all_relationships, all_entities
+            )
+            self.stats.relationships_filtered_by_confidence = rel_filtered_count
+
+        if all_entities:
+            self.stats.average_entity_confidence = sum(
+                e.confidence or 1.0 for e in all_entities
+            ) / len(all_entities)
+
+        self.stats.confidence_threshold_applied = (
+            self.extraction_config.entity_confidence_threshold
+        )
+
         logger.info(
-            f"Entity and relationship merging completed - "
-            f"{original_entities_count} -> {len(all_entities)} entities, "
+            f"Entity and relationship processing completed - "
+            f"{original_entities_count} -> {len(all_entities)} entities "
+            f"(filtered: {self.stats.entities_filtered_by_confidence}), "
             f"{original_relationships_count} -> {len(all_relationships)} relationships"
         )
         return all_entities, all_relationships
@@ -244,6 +279,11 @@ class GraphExtractor(BaseProcessor):
                     + (new if isinstance(new, list) else [])
                 )
             ),
+            "confidence": lambda current, new: (
+                ((current or 1.0) + (new or 1.0)) / 2.0
+                if current is not None and new is not None
+                else (current or new or 1.0)
+            ),
         }
 
         return self._merge_items(
@@ -281,6 +321,63 @@ class GraphExtractor(BaseProcessor):
             ),
         )
 
+    def _filter_entities_by_confidence(
+        self, entities: list[Entity]
+    ) -> tuple[list[Entity], int]:
+        threshold = self.extraction_config.entity_confidence_threshold
+
+        if threshold <= 0.0:
+            return entities, 0
+
+        filtered_entities = []
+        removed_count = 0
+
+        for entity in entities:
+            confidence = entity.confidence if entity.confidence is not None else 1.0
+            if confidence >= threshold:
+                filtered_entities.append(entity)
+            else:
+                removed_count += 1
+                logger.debug(
+                    f"Filtered entity '{entity.name}' with confidence {confidence:.2f} "
+                    f"(threshold: {threshold})"
+                )
+
+        if removed_count > 0:
+            logger.info(
+                f"Confidence filtering removed {removed_count} entities "
+                f"(threshold: {threshold})"
+            )
+
+        return filtered_entities, removed_count
+
+    def _filter_orphan_relationships(
+        self,
+        relationships: list[Relationship],
+        valid_entities: list[Entity],
+    ) -> tuple[list[Relationship], int]:
+        valid_entity_ids = {entity.id for entity in valid_entities}
+
+        filtered_relationships = []
+        removed_count = 0
+
+        for rel in relationships:
+            if rel.source_id in valid_entity_ids and rel.target_id in valid_entity_ids:
+                filtered_relationships.append(rel)
+            else:
+                removed_count += 1
+                logger.debug(
+                    f"Filtered orphan relationship '{rel.source_name}' -> '{rel.target_name}'"
+                )
+
+        if removed_count > 0:
+            logger.info(
+                f"Filtered {removed_count} orphan relationships "
+                f"(referenced entities were filtered by confidence)"
+            )
+
+        return filtered_relationships, removed_count
+
     @staticmethod
     def _log_completion_summary(stats: ExtractionStats) -> None:
         if not stats:
@@ -294,6 +391,15 @@ class GraphExtractor(BaseProcessor):
             f"Entities: {stats.total_entities_extracted}, "
             f"Relationships: {stats.total_relationships_extracted}"
         )
+
+        if stats.entities_filtered_by_confidence > 0:
+            logger.info(
+                f"Confidence filtering - "
+                f"Threshold: {stats.confidence_threshold_applied:.2f}, "
+                f"Entities filtered: {stats.entities_filtered_by_confidence}, "
+                f"Relationships filtered: {stats.relationships_filtered_by_confidence}, "
+                f"Average confidence: {stats.average_entity_confidence:.2f}"
+            )
 
         if stats.num_failed_extractions > 0:
             logger.warning(

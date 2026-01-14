@@ -77,6 +77,8 @@ processing:
     extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
     max_entities_per_chunk: 100
     max_relationships_per_chunk: 100
+    entity_confidence_threshold: 0.0
+    enable_confidence_extraction: true
 
   # Gleaning (Iterative Information Extraction)
   gleaning:

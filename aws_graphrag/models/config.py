@@ -290,6 +290,18 @@ class GraphExtractionConfig(BaseModel):
     max_relationships_per_chunk: int = Field(
         default=50, ge=1, description="Maximum relationships per text chunk"
     )
+    entity_confidence_threshold: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence score for filtering entities. "
+        "Entities below this threshold are excluded. Set to 0.0 to disable filtering.",
+    )
+    enable_confidence_extraction: bool = Field(
+        default=True,
+        description="Enable confidence score extraction from LLM. "
+        "When disabled, all entities default to confidence 1.0.",
+    )
 
 
 class GleaningConfig(BaseModel):

@@ -47,9 +47,11 @@ class BaseProcessor:
             attributes = self._parse_attributes(
                 entity_data.get("attributes"), text_unit
             )
+            confidence = self._parse_confidence(entity_data)
 
             logger.debug(
-                f"Successfully parsed entity: '{normalized_name}' (from: '{name}', id: {entity_id[:8]})"
+                f"Successfully parsed entity: '{normalized_name}' "
+                f"(from: '{name}', id: {entity_id[:8]}, confidence: {confidence:.2f})"
             )
             return Entity(
                 id=entity_id,
@@ -62,6 +64,7 @@ class BaseProcessor:
                 text_unit_ids=[text_unit.id],
                 community_ids=None,
                 rank=entity_data.get("rank", 1),
+                confidence=confidence,
                 attributes=attributes,
                 created_at=datetime.now(),
                 updated_at=datetime.now(),
@@ -176,6 +179,24 @@ class BaseProcessor:
         try:
             return float(value)
         except (ValueError, TypeError):
+            return default
+
+    @staticmethod
+    def _parse_confidence(data: dict[str, Any], default: float = 1.0) -> float:
+        value = data.get("confidence")
+        if value is None:
+            return default
+        try:
+            raw_confidence = float(value)
+            if raw_confidence > 1.0:
+                normalized = raw_confidence / 10.0
+            else:
+                normalized = raw_confidence
+            return max(0.0, min(1.0, normalized))
+        except (ValueError, TypeError):
+            logger.warning(
+                f"Invalid confidence value '{value}', using default {default}"
+            )
             return default
 
     @staticmethod

@@ -657,29 +657,3 @@ def setup_chain(
         raise GraphRAGException(
             f"Failed to setup LLM chain with model '{model_id.value}': {e}"
         ) from e
-
-
-def setup_chain_with_output_fixing(
-    factory: BedrockLanguageModelFactory,
-    model_id: LanguageModelId,
-    prompt_class: type[BasePrompt],
-    parser: BaseOutputParser,
-    custom_prompts: "CustomPromptConfig | None" = None,
-) -> Runnable:
-    try:
-        llm = factory.get_model(model_id=model_id)
-        model_info = factory.get_model_info(model_id)
-        enable_prompt_cache = (
-            model_info.supports_prompt_caching if model_info else False
-        )
-        prompt = prompt_class.get_prompt(
-            enable_prompt_cache=enable_prompt_cache, custom_prompts=custom_prompts
-        )
-        chain = prompt | llm | parser
-        logger.debug(f"Successfully created LLM chain with model: '{model_id.value}'")
-        return chain
-    except Exception as e:
-        logger.error(f"Failed to setup LLM chain with model '{model_id.value}': {e}")
-        raise GraphRAGException(
-            f"Failed to setup LLM chain with model '{model_id.value}': {e}"
-        ) from e

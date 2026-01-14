@@ -82,6 +82,7 @@ class NeptuneIndexer(GraphIndexer):
                             "type": entity.type,
                             "description": entity.description,
                             "rank": entity.rank,
+                            "confidence": entity.confidence,
                             "text_unit_ids": entity.text_unit_ids,
                             "community_ids": entity.community_ids,
                         },

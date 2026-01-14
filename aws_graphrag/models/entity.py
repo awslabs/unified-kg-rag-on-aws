@@ -20,3 +20,9 @@ class Entity(Named):
         1,
         description="Rank of the entity, used for sorting. Higher rank indicates more important entity",
     )
+    confidence: float | None = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence score of the entity extraction (0.0-1.0). Higher values indicate more reliable extraction from source text.",
+    )

@@ -199,6 +199,9 @@ class EntityResolver(BaseResolver):
             (e for e in entities if e.name == canonical_name), entities[0]
         )
 
+        confidences = [e.confidence for e in entities if e.confidence is not None]
+        merged_confidence = sum(confidences) / len(confidences) if confidences else 1.0
+
         return Entity(
             id=primary_entity.id,
             short_id=primary_entity.short_id,
@@ -216,6 +219,7 @@ class EntityResolver(BaseResolver):
                 [e.community_ids for e in entities if e.community_ids]
             ),
             rank=max((e.rank for e in entities if e.rank is not None), default=1),
+            confidence=merged_confidence,
             attributes=self._merge_attributes(
                 [e.attributes for e in entities if e.attributes]
             ),

@@ -233,6 +233,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "description_embedding": embeddings[1],
                 "type": entity.type or "",
                 "rank": entity.rank or 1.0,
+                "confidence": entity.confidence if entity.confidence is not None else 1.0,
             }
 
         return self._index_item_type(
@@ -537,6 +538,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "description_embedding": self._get_knn_vector_mapping(),
                 "type": {"type": "keyword"},
                 "rank": {"type": "double"},
+                "confidence": {"type": "double"},
                 "attributes": {"type": "object", "dynamic": True},
             }
         )
