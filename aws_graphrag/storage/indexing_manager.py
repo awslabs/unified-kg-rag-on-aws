@@ -220,6 +220,15 @@ class IndexingManager:
                 if stats and stats.errors:
                     logger.warning(f"{data_type} errors: {stats.errors[:2]}")
 
+        for task_name, stats in results.items():
+            if stats and stats.total_items > 0:
+                failure_rate = stats.failed_items / stats.total_items
+                if failure_rate > 0.5:
+                    logger.warning(
+                        f"High failure rate for '{task_name}': "
+                        f"{stats.failed_items}/{stats.total_items} ({failure_rate:.1%})"
+                    )
+
     def validate_indexing_integrity(self, text_units: list[TextUnit]) -> dict[str, Any]:
         suffixes = self._discover_suffixes(text_units)
         if not suffixes:

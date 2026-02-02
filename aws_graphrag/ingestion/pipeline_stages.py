@@ -942,6 +942,26 @@ class IndexingStage(PipelineStage):
         return input_count, total_indexed, metrics
 
     def _validate_backend_success(self, indexing_results: dict[str, Any]) -> None:
+        # 1) Per-index-type validation: fail if any individual index type completely failed
+        failed_index_types = []
+        for key, stats in indexing_results.items():
+            if stats and stats.total_items > 0 and stats.successful_items == 0:
+                failed_index_types.append(key)
+                logger.error(
+                    f"Index type '{key}' completely failed: "
+                    f"0/{stats.total_items} items indexed successfully"
+                )
+
+        if failed_index_types:
+            error_msg = (
+                f"Indexing failed: {', '.join(failed_index_types)} "
+                f"completely failed to index any items. "
+                f"This indicates a critical configuration or connectivity issue. "
+                f"Check the logs above for specific error details."
+            )
+            raise PipelineStageError(error_msg)
+
+        # 2) Backend-level validation (defensive): fail if entire backend has zero successes
         opensearch_keys = [
             k for k in indexing_results.keys() if k.startswith("opensearch_")
         ]
