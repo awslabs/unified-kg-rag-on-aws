@@ -151,7 +151,7 @@ class NeptuneIndexer(GraphIndexer):
         grouped_items = self._group_items_by_suffix(communities)
 
         for suffix, comms in grouped_items.items():
-            stats = IndexingStats(total_items=len(comms))
+            stats = IndexingStats()
             start_time = time.time()
             community_label = self._get_name(
                 self.neptune_config.community_label_prefix.capitalize(), suffix
@@ -162,54 +162,62 @@ class NeptuneIndexer(GraphIndexer):
 
             self._clear_existing_data_by_label(community_label)
 
-            try:
-                logger.info(
-                    f"Indexing {len(comms)} communities for '{community_label}'..."
-                )
-                for batch in self._batch_iterator(comms):
-                    t = self.neptune_client.g
-                    for comm in batch:
-                        props = self._build_vertex_properties(
-                            comm,
-                            {
-                                "name": comm.name,
-                                "level": comm.level,
-                                "parent": comm.parent,
-                                "size": comm.size,
-                                "period": comm.period,
-                                "children": comm.children,
-                            },
-                        )
-                        v_traversal = t.add_v(community_label).property("id", comm.id)
-                        self._add_properties_to_traversal(v_traversal, props)
-                        t = v_traversal
-                    self._execute_with_retries(
-                        cast(GraphTraversal, t), "Community vertex indexing"
+            def community_vertex_builder(
+                g: GraphTraversalSource, batch: list[Community]
+            ) -> GraphTraversal:
+                t = g
+                for comm in batch:
+                    props = self._build_vertex_properties(
+                        comm,
+                        {
+                            "name": comm.name,
+                            "level": comm.level,
+                            "parent": comm.parent,
+                            "size": comm.size,
+                            "period": comm.period,
+                            "children": comm.children,
+                        },
                     )
+                    v_traversal = t.add_v(community_label).property("id", comm.id)
+                    self._add_properties_to_traversal(v_traversal, props)
+                    t = v_traversal
+                return cast(GraphTraversal, t)
 
-                logger.info(
-                    f"Indexing 'MemberOf' edges for {len(comms)} communities..."
-                )
-                for comm in comms:
-                    if not comm.entity_ids:
-                        continue
-                    for entity_id_batch in self._batch_iterator(comm.entity_ids):
+            logger.info(
+                f"Indexing {len(comms)} communities for '{community_label}'..."
+            )
+            vertex_stats = self._execute_batch_traversal(
+                comms, community_vertex_builder, "Community vertex indexing"
+            )
+            stats.merge(vertex_stats)
+
+            logger.info(
+                f"Indexing 'MemberOf' edges for {len(comms)} communities..."
+            )
+            for comm in comms:
+                if not comm.entity_ids:
+                    continue
+                for entity_id_batch in self._batch_iterator(comm.entity_ids):
+                    try:
                         edge_traversal = (
                             self.neptune_client.g.V()
                             .hasLabel(entity_label)
                             .has("id", P.within(entity_id_batch))
                             .addE("MemberOf")
-                            .to(__.V().hasLabel(community_label).has("id", comm.id))
+                            .to(
+                                __.V()
+                                .hasLabel(community_label)
+                                .has("id", comm.id)
+                            )
                         )
                         self._execute_with_retries(
                             edge_traversal, "Community edge indexing"
                         )
-                stats.add_success(len(comms))
-            except Exception as e:
-                logger.error(
-                    f"Failed to index communities for '{community_label}': {e}"
-                )
-                stats.add_error(str(e), len(comms))
+                    except Exception as e:
+                        logger.warning(
+                            f"Community edge indexing failed for community "
+                            f"'{comm.id}': {e}"
+                        )
 
             stats.processing_time = time.time() - start_time
             total_stats.merge(stats)
@@ -223,7 +231,8 @@ class NeptuneIndexer(GraphIndexer):
         for key, value in props.items():
             if isinstance(value, list):
                 for item in value:
-                    traversal.property(key, item)
+                    if item is not None:
+                        traversal.property(key, item)
             else:
                 traversal.property(key, value)
 
@@ -271,7 +280,7 @@ class NeptuneIndexer(GraphIndexer):
             return IndexingStats()
 
         grouped_items = self._group_items_by_suffix(items)
-        total_stats = IndexingStats(total_items=len(items))
+        total_stats = IndexingStats()
 
         for suffix, chunk in grouped_items.items():
             label = self._get_name(label_prefix, suffix)
@@ -280,27 +289,20 @@ class NeptuneIndexer(GraphIndexer):
                 self._clear_existing_data_by_label(clear_label)
 
             start_time = time.time()
-            stats = IndexingStats(total_items=len(chunk))
-            try:
-                logger.info(
-                    f"Indexing {len(chunk)} {item_type_name.lower()}s for '{label}'..."
-                )
-                final_kwargs = kwargs.copy()
-                if "entity_label" in final_kwargs:
-                    final_kwargs["entity_label"] = self._get_name(
-                        final_kwargs["entity_label"], suffix
-                    )
 
-                traversal_builder = traversal_builder_func(label=label, **final_kwargs)
-                self._execute_batch_traversal(
-                    chunk, traversal_builder, f"{item_type_name} indexing"
+            logger.info(
+                f"Indexing {len(chunk)} {item_type_name.lower()}s for '{label}'..."
+            )
+            final_kwargs = kwargs.copy()
+            if "entity_label" in final_kwargs:
+                final_kwargs["entity_label"] = self._get_name(
+                    final_kwargs["entity_label"], suffix
                 )
-                stats.add_success(len(chunk))
-            except Exception as e:
-                logger.error(
-                    f"Failed to index {item_type_name.lower()}s for '{label}': {e}"
-                )
-                stats.add_error(str(e), len(chunk))
+
+            traversal_builder = traversal_builder_func(label=label, **final_kwargs)
+            stats = self._execute_batch_traversal(
+                chunk, traversal_builder, f"{item_type_name} indexing"
+            )
 
             stats.processing_time = time.time() - start_time
             total_stats.merge(stats)
@@ -325,13 +327,35 @@ class NeptuneIndexer(GraphIndexer):
         items: list[Any],
         traversal_builder: Callable[[GraphTraversalSource, list[Any]], GraphTraversal],
         operation_name: str,
-    ) -> None:
+    ) -> IndexingStats:
+        stats = IndexingStats(total_items=len(items))
         if not items:
-            return
+            return stats
+
         for batch in self._batch_iterator(items):
-            g = self.neptune_client.g
-            traversal = traversal_builder(g, batch)
-            self._execute_with_retries(traversal, operation_name)
+            try:
+                g = self.neptune_client.g
+                traversal = traversal_builder(g, batch)
+                self._execute_with_retries(traversal, operation_name)
+                stats.add_success(len(batch))
+            except Exception as batch_error:
+                logger.warning(
+                    f"Batch {operation_name} failed ({len(batch)} items), "
+                    f"falling back to individual indexing: {batch_error}"
+                )
+                for item in batch:
+                    try:
+                        g = self.neptune_client.g
+                        traversal = traversal_builder(g, [item])
+                        self._execute_with_retries(traversal, operation_name)
+                        stats.add_success(1)
+                    except Exception as item_error:
+                        stats.add_error(str(item_error))
+                        logger.warning(
+                            f"Individual {operation_name} failed: {item_error}"
+                        )
+
+        return stats
 
     def _execute_with_retries(
         self, traversal: GraphTraversal, operation_name: str
