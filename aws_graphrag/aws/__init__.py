@@ -8,11 +8,13 @@ from .bedrock import (
 from .neptune import NeptuneClient
 from .opensearch import OpenSearchClient
 from .s3_cache import S3CacheManager
+from .token_counter import BedrockTokenCounter
 
 __all__ = [
     "BedrockEmbeddingModelFactory",
     "BedrockLanguageModelFactory",
     "BedrockRerankModelFactory",
+    "BedrockTokenCounter",
     "EmbeddingModelInfo",
     "NeptuneClient",
     "OpenSearchClient",

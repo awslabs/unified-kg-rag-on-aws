@@ -256,8 +256,8 @@ search:
 
   # Token Manager Configuration
   token_manager:
-    model_name: "gpt-4"
     max_context_tokens: 200000
+    token_count_cache_size: 1024
 
 # Memory Configuration
 memory:

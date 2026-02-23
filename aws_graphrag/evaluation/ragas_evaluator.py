@@ -16,9 +16,11 @@ from ragas.metrics import (
     context_recall,
     faithfulness,
 )
-from tiktoken import get_encoding
+from botocore.config import Config as BotoConfig
 
 from aws_graphrag.aws import BedrockEmbeddingModelFactory, BedrockLanguageModelFactory
+from aws_graphrag.aws.bedrock import get_assumed_role_boto_session
+from aws_graphrag.aws.token_counter import BedrockTokenCounter
 from aws_graphrag.core import EvaluationException, get_logger
 from aws_graphrag.models import (
     Config,
@@ -65,7 +67,18 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         self.boto_session = boto_session or boto3.Session(
             profile_name=config.aws.profile_name
         )
-        self._tokenizer = get_encoding("cl100k_base")
+        assumed_session = get_assumed_role_boto_session(
+            self.boto_session, assumed_role_arn=config.aws.bedrock.assumed_role_arn
+        )
+        bedrock_client = assumed_session.client(
+            "bedrock-runtime",
+            region_name=config.aws.bedrock.region_name,
+            config=BotoConfig(retries={"max_attempts": 3}),
+        )
+        self._token_counter = BedrockTokenCounter(
+            model_id=config.evaluation.evaluation_model_id.value,
+            client=bedrock_client,
+        )
         self.ignore_errors = config.processing.ignore_errors
         super().__init__(
             config=config,
@@ -112,8 +125,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             safe_contexts = []
             current_tokens = 0
             for context in result.retrieved_contexts:
-                context_tokens = self._tokenizer.encode(context, allowed_special="all")
-                context_token_count = len(context_tokens)
+                context_token_count = self._token_counter.count_tokens(context)
 
                 if (
                     current_tokens + context_token_count
@@ -121,8 +133,9 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 ):
                     remaining_tokens = max_tokens - current_tokens
                     if remaining_tokens > self.BUFFER_TOKENS:
-                        truncated_tokens = context_tokens[:remaining_tokens]
-                        truncated_context = self._tokenizer.decode(truncated_tokens)
+                        truncated_context, _ = self._token_counter.truncate_to_token_limit(
+                            context, remaining_tokens
+                        )
                         safe_contexts.append(truncated_context + "...")
                     break
 

@@ -11,8 +11,8 @@ from langchain_aws.document_compressors.rerank import BedrockRerank
 from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
 from langchain_core.documents import Document
 from pydantic import BaseModel, Field, PrivateAttr
-from tiktoken import Encoding, get_encoding
 
+from aws_graphrag.aws.token_counter import BedrockTokenCounter
 from aws_graphrag.core import (
     AWSServiceError,
     EmbeddingModelError,
@@ -190,11 +190,11 @@ WrapperT = TypeVar("WrapperT")
 
 
 class BaseBedrockWrapper:
-    _tokenizer: Encoding = PrivateAttr()
+    _token_counter: BedrockTokenCounter | None = PrivateAttr(default=None)
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, token_counter: BedrockTokenCounter | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._tokenizer = get_encoding("cl100k_base")
+        self._token_counter = token_counter
 
     def _truncate_text(
         self, text: str, max_chars: int | None, max_tokens: int | None, text_type: str
@@ -202,22 +202,24 @@ class BaseBedrockWrapper:
         if not max_chars and not max_tokens:
             return text
 
-        token_ids = self._tokenizer.encode(text, allowed_special="all")
         final_text = text
-        truncated = False
 
-        if max_tokens and len(token_ids) > max_tokens:
+        if max_tokens and self._token_counter is not None:
             effective_tokens = max_tokens - self.buffer_tokens
-            truncated_token_ids = token_ids[:effective_tokens]
-            final_text = self._tokenizer.decode(truncated_token_ids)
-            logger.warning(
-                f"{text_type.capitalize()} token count ({len(token_ids)}) exceeds maximum ({max_tokens}). Truncating."
+            truncated, token_count = self._token_counter.truncate_to_token_limit(
+                text, effective_tokens
             )
-            truncated = True
+            if len(truncated) < len(text):
+                final_text = truncated
+                original_count = self._token_counter.count_tokens(text)
+                logger.warning(
+                    f"{text_type.capitalize()} token count ({original_count}) exceeds maximum ({max_tokens}). Truncating."
+                )
 
         if max_chars and len(text) > max_chars:
-            if not truncated or len(text[:max_chars]) < len(final_text):
-                final_text = text[:max_chars]
+            char_truncated = text[:max_chars]
+            if len(char_truncated) < len(final_text):
+                final_text = char_truncated
                 logger.warning(
                     f"{text_type.capitalize()} character count ({len(text)}) exceeds maximum ({max_chars}). Truncating."
                 )
@@ -419,12 +421,16 @@ class BedrockEmbeddingModelFactory(
             if isinstance(supported_dims, list):
                 model_kwargs["dimensions"] = dimensions
 
+        token_counter = BedrockTokenCounter(
+            model_id=model_id.value, client=self._client
+        )
         model = BedrockEmbeddingsWrapper(
             client=self._client,
             model_id=model_id.value,
             model_kwargs=model_kwargs,
             max_sequence_length=model_info.max_sequence_length,
             max_sequence_tokens=model_info.max_sequence_tokens,
+            token_counter=token_counter,
             **kwargs,
         )
         logger.debug(f"Created embedding model: '{model_id.value}'")
@@ -691,6 +697,14 @@ class BedrockRerankModelFactory(
             f"arn:aws:bedrock:{self.region_name}::foundation-model/{model_id.value}"
         )
 
+        bedrock_runtime_client = self.boto_session.client(
+            "bedrock-runtime",
+            region_name=self.region_name,
+            config=BotoConfig(retries={"max_attempts": self.BOTO_MAX_ATTEMPTS}),
+        )
+        token_counter = BedrockTokenCounter(
+            model_id=model_id.value, client=bedrock_runtime_client
+        )
         model = BedrockRerankWrapper(
             model_arn=model_arn,
             top_n=top_k,
@@ -701,6 +715,7 @@ class BedrockRerankModelFactory(
             region_name=self.region_name,
             credentials_profile_name=self.boto_session.profile_name,
             client=self._client,
+            token_counter=token_counter,
             **kwargs,
         )
         logger.debug(f"Created rerank model: '{model_id.value}'")

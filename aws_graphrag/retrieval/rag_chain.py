@@ -162,7 +162,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         self.mode = mode
         self.ignore_errors = self.config.processing.ignore_errors
         self.memory_manager = get_memory_manager()
-        self.token_manager = TokenManager(self.config)
+        self.token_manager = TokenManager(self.config, boto_session=self.boto_session)
         self.factory = BedrockLanguageModelFactory(
             config=config,
             boto_session=boto_session,

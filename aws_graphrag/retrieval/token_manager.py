@@ -2,9 +2,12 @@
 from enum import Enum
 from typing import Any, ClassVar
 
-import tiktoken
+import boto3
+from botocore.config import Config as BotoConfig
 from pydantic import BaseModel, Field
 
+from aws_graphrag.aws.bedrock import get_assumed_role_boto_session
+from aws_graphrag.aws.token_counter import BedrockTokenCounter
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import Config, RetrievalResult
 
@@ -63,22 +66,37 @@ class TokenManager(MetricsMixin):
         SectionType.GENERAL: 0.8,
     }
 
-    def __init__(self, config: Config, **kwargs: Any) -> None:
+    def __init__(
+        self, config: Config, boto_session: boto3.Session | None = None, **kwargs: Any
+    ) -> None:
         super().__init__(**kwargs)
         self.config = config.search.token_manager
 
-        try:
-            self.tokenizer = tiktoken.encoding_for_model(self.config.model_name)
-        except KeyError:
-            logger.warning(
-                f"Model '{self.config.model_name}' tokenizer not found, using 'cl100k_base'"
-            )
-            self.tokenizer = tiktoken.get_encoding("cl100k_base")
+        boto_session = boto_session or boto3.Session(
+            profile_name=config.aws.profile_name
+        )
+        boto_session = get_assumed_role_boto_session(
+            boto_session, assumed_role_arn=config.aws.bedrock.assumed_role_arn
+        )
+        bedrock_client = boto_session.client(
+            "bedrock-runtime",
+            region_name=config.aws.bedrock.region_name,
+            config=BotoConfig(
+                retries={"max_attempts": 3},
+            ),
+        )
+
+        model_id = config.search.answer_generation_model_id.value
+        self._token_counter = BedrockTokenCounter(
+            model_id=model_id,
+            client=bedrock_client,
+            cache_maxsize=self.config.token_count_cache_size,
+        )
 
     def count_tokens(self, text: str) -> int:
         if not text:
             return 0
-        return len(self.tokenizer.encode(text))
+        return self._token_counter.count_tokens(text)
 
     def optimize_context(
         self,

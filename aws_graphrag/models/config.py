@@ -891,16 +891,15 @@ class DriftSearchConfig(BaseModel):
 
 
 class TokenManagerConfig(BaseModel):
-    model_name: str = Field(
-        default="gpt-4",
-        min_length=1,
-        max_length=100,
-        description="The name of the language model used for token counting and management operations",
-    )
     max_context_tokens: int = Field(
         default=200000,
         ge=1024,
         description="Maximum number of tokens allowed in the context window for optimal performance",
+    )
+    token_count_cache_size: int = Field(
+        default=1024,
+        ge=1,
+        description="Maximum number of entries in the LRU cache for Bedrock token counting",
     )
 
 

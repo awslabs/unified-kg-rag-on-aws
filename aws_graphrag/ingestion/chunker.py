@@ -11,11 +11,13 @@ from langchain.text_splitter import (
     MarkdownHeaderTextSplitter,
     RecursiveCharacterTextSplitter,
 )
+from botocore.config import Config as BotoConfig
 from pydantic import BaseModel, Field
-from tiktoken import get_encoding
 from tqdm import tqdm
 
 from aws_graphrag.aws import BedrockLanguageModelFactory
+from aws_graphrag.aws.bedrock import get_assumed_role_boto_session
+from aws_graphrag.aws.token_counter import BedrockTokenCounter
 from aws_graphrag.core import DataProcessingError, get_logger
 from aws_graphrag.models import ChunkingStrategy, Config, Document, TextUnit
 from aws_graphrag.prompts import TextChunkingPrompt
@@ -408,11 +410,32 @@ class ChunkProcessor:
 
 
 class BaseChunker(ABC):
-    def __init__(self, config: Config, show_progress: bool = True) -> None:
+    def __init__(
+        self,
+        config: Config,
+        show_progress: bool = True,
+        boto_session: boto3.Session | None = None,
+    ) -> None:
         self.config = config
         self.chunking_config = self.config.processing.chunking
         self.show_progress = show_progress
         self.stats = ChunkingStats()
+
+        session = boto_session or boto3.Session(
+            profile_name=config.aws.profile_name
+        )
+        session = get_assumed_role_boto_session(
+            session, assumed_role_arn=config.aws.bedrock.assumed_role_arn
+        )
+        bedrock_client = session.client(
+            "bedrock-runtime",
+            region_name=config.aws.bedrock.region_name,
+            config=BotoConfig(retries={"max_attempts": 3}),
+        )
+        self._token_counter = BedrockTokenCounter(
+            model_id=config.indexing.opensearch.embedding_model_id.value,
+            client=bedrock_client,
+        )
 
         self.fallback_splitter = self._create_splitter(
             self.chunking_config.fallback_chunk_size, self.chunking_config.chunk_overlap
@@ -520,8 +543,8 @@ class BaseChunker(ABC):
                 f"Failed to process {self.stats.num_failed_documents} documents"
             )
 
-    @staticmethod
     def _create_text_unit(
+        self,
         chunk_text: str,
         document: Document,
         chunk_id: int,
@@ -530,7 +553,7 @@ class BaseChunker(ABC):
         pre_chunk_id: int,
     ) -> TextUnit:
         try:
-            n_tokens = BaseChunker._calculate_token_count(chunk_text)
+            n_tokens = self._calculate_token_count(chunk_text)
 
             attributes = {
                 "file_name": document.file_name,
@@ -567,11 +590,9 @@ class BaseChunker(ABC):
         except Exception as e:
             raise DataProcessingError(f"Failed to create text unit: {e}") from e
 
-    @staticmethod
-    def _calculate_token_count(text: str) -> int:
+    def _calculate_token_count(self, text: str) -> int:
         try:
-            encoding = get_encoding("cl100k_base")
-            return len(encoding.encode(text))
+            return self._token_counter.count_tokens(text)
         except Exception:
             return len(text.split())
 
@@ -600,9 +621,13 @@ class BaseChunker(ABC):
 
 class SimpleTextChunker(BaseChunker):
     def __init__(
-        self, config: Config, show_progress: bool = True, **kwargs: Any
+        self,
+        config: Config,
+        show_progress: bool = True,
+        boto_session: boto3.Session | None = None,
+        **kwargs: Any,
     ) -> None:
-        super().__init__(config, show_progress=show_progress)
+        super().__init__(config, show_progress=show_progress, boto_session=boto_session)
         logger.debug("Initialized SimpleTextChunker")
 
     def _chunk_single_document(self, doc: Document) -> list[TextUnit]:
@@ -639,7 +664,7 @@ class IntelligentTextChunker(BaseChunker):
         show_progress: bool = True,
         **kwargs: Any,
     ) -> None:
-        super().__init__(config, show_progress=show_progress)
+        super().__init__(config, show_progress=show_progress, boto_session=boto_session)
         self.boto_session = boto_session or boto3.Session(
             profile_name=self.config.aws.profile_name
         )
@@ -1010,7 +1035,7 @@ class ChunkerFactory:
     ) -> BaseChunker:
         logger.info(f"Creating chunker of type: '{chunker_type.value}'")
         if chunker_type == ChunkingStrategy.SIMPLE:
-            return SimpleTextChunker(config, show_progress, **kwargs)
+            return SimpleTextChunker(config, show_progress, boto_session=boto_session, **kwargs)
         if chunker_type == ChunkingStrategy.INTELLIGENT:
             return IntelligentTextChunker(config, boto_session, show_progress, **kwargs)
         raise DataProcessingError(f"Unknown chunker type: '{chunker_type}'")
