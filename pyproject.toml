@@ -30,6 +30,7 @@ dependencies = [
     "black>=25.9.0",
     "bokeh>=3.7.3",
     "boto3>=1.38.45",
+    "boto3-stubs~=1.42.62",
     "datasets>=2.14.0,<4.0.0",
     "datasketch>=1.6.5",
     "future>=1.0.0",
