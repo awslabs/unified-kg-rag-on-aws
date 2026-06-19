@@ -92,7 +92,7 @@ black, isort, mypy, and pytest+coverage. Install hooks with `pre-commit install`
 
 ## Notes
 
-- This file (not `AmazonQ.md`) holds project conventions for Claude Code.
+- This file holds project conventions for Claude Code and contributors.
 - `references/graphrag` and `references/LightRAG` are vendored upstream copies
   for porting reference — not part of this package.
 - Ask before side-effecting AWS actions (resource creation, real-AWS tests).
