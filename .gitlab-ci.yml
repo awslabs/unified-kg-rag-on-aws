@@ -13,8 +13,11 @@ stages:
   - quality
   - security
 
+# Official uv image bundles uv + Python (no curl/pip bootstrap needed); the
+# slim Debian base used by python:3.x-slim ships without curl, which broke the
+# previous uv-install step.
 default:
-  image: python:3.12-slim
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 variables:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -31,8 +34,6 @@ workflow:
 quality:
   stage: quality
   before_script:
-    - curl -LsSf https://astral.sh/uv/install.sh | sh
-    - export PATH="$HOME/.local/bin:$PATH"
     - uv sync --extra dev
   script:
     - uv run ruff check aws_graphrag tests
@@ -61,12 +62,9 @@ quality:
 # ---------------------------------------------------------------------------
 security_scan:
   stage: security
-  image: python:3.12
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
   needs: []
   allow_failure: true
-  before_script:
-    - curl -LsSf https://astral.sh/uv/install.sh | sh
-    - export PATH="$HOME/.local/bin:$PATH"
   script:
     - >-
       uvx git+https://github.com/awslabs/automated-security-helper.git@v3.1.2
