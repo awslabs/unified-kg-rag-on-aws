@@ -35,6 +35,28 @@ We welcome contributions to the AWS Native Graph RAG framework! This document pr
 
 ## 📋 Development Guidelines
 
+### Extending the framework (ports, adapters & registries)
+
+The codebase uses a hexagonal (ports & adapters) architecture with registries, so
+most extensions need **no edits to existing dispatch code**. See `CLAUDE.md` for
+the full guide. In short:
+
+- **New search strategy** — subclass `BaseSearchStrategy`, decorate with
+  `@register_strategy(SearchStrategy.X, required_retrievers=(...))`, export from
+  `retrieval/search_strategies/__init__.py`.
+- **New storage / LLM backend** — implement the relevant port in
+  `core/ports/` and register it; do not hardcode it into a manager's `__init__`.
+- **New evaluator** — subclass `BaseGraphRAGEvaluator`, add an
+  `EVALUATOR_MAPPING` entry and an `EvaluatorType` enum value.
+- **New visualization renderer** — subclass `BaseRenderer`, decorate with
+  `@register_renderer("name")`; the manager and `run-visualization` pick it up.
+- **New config section** — add a Pydantic `BaseModel`, attach via
+  `Field(default_factory=...)`, document it in `config-template.yaml`.
+
+Tests run **AWS-free by default** — use the port-based fakes in
+`tests/fixtures/fakes/` (or `moto`) rather than ad-hoc boto3 mocks. Markers:
+`unit`, `integration`, `property`, `aws` (real AWS, skipped in CI), `slow`.
+
 ### Code Style
 - Follow **PEP 8** standards
 - Use **type hints** for all function parameters and return values

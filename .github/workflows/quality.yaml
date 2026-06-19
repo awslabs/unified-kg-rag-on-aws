@@ -1,0 +1,48 @@
+name: Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check aws_graphrag tests
+
+      - name: Format check (black)
+        run: uv run black --check aws_graphrag tests
+
+      - name: Import order (isort)
+        run: uv run isort --check-only aws_graphrag tests
+
+      - name: Type check (mypy)
+        run: uv run mypy aws_graphrag
+
+      - name: Tests (pytest, AWS-free)
+        # The `aws` marker gates tests needing real AWS services; excluded in CI.
+        # Coverage floor ratchets up each milestone toward the 80% target as the
+        # suite grows (the project started with zero tests).
+        run: >-
+          uv run pytest -m "not aws"
+          --cov=aws_graphrag --cov-report=term-missing --cov-fail-under=30

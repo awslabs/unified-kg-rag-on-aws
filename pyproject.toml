@@ -60,7 +60,6 @@ dependencies = [
     "scikit-learn>=1.7.1",
     "structlog>=25.4.0",
     "tenacity>=9.1.2",
-    "tiktoken>=0.9.0",
     "tqdm>=4.67.1",
     "types-boto3[full]>=1.39.4",
     "umap-learn>=0.5.6",
@@ -70,15 +69,19 @@ dependencies = [
 run-ingestion = "aws_graphrag.cli.run_ingestion_pipeline:main"
 run-rag = "aws_graphrag.cli.run_rag_chain:main"
 run-eval = "aws_graphrag.cli.run_evaluation:main"
+run-visualization = "aws_graphrag.cli.run_visualization:main"
+run-prompt-tuning = "aws_graphrag.cli.run_prompt_tuning:main"
 
 [project.optional-dependencies]
 dev = [
-    "black>=23.0.0",
+    "black>=25.9.0",
+    "hypothesis>=6.100.0",
     "isort>=5.12.0",
+    "moto[dynamodb,s3]>=5.0.0",
     "mypy>=1.7.0",
     "pre-commit>=3.5.0",
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.12.0",
     "ruff>=0.3.0",
@@ -127,6 +130,8 @@ skip_gitignore = true
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+
+[tool.ruff.lint]
 select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
@@ -141,7 +146,7 @@ ignore = [
     "B008",  # do not perform function calls in argument defaults
 ]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/**/*.py" = ["B018"]
 
@@ -168,6 +173,19 @@ module = [
     "datasketch.*",
     "leidenalg.*",
     "community.*",
+    "networkx.*",
+    "pandas.*",
+    "pyvis.*",
+    "ragas.*",
+    "sklearn.*",
+    "umap.*",
+    "datasets.*",
+    "lxml.*",
+    "nest_asyncio.*",
+    "tqdm.*",
+    "yaml.*",
+    "bokeh.*",
+    "requests_aws4auth.*",
 ]
 ignore_missing_imports = true
 
@@ -177,10 +195,12 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short --strict-markers"
+asyncio_mode = "auto"
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",
-    "aws: Tests requiring AWS services",
+    "property: Property-based tests (hypothesis)",
+    "aws: Tests requiring real AWS services (skipped by default)",
     "slow: Slow tests",
 ]
 filterwarnings = [
@@ -207,7 +227,18 @@ exclude_lines = [
 ]
 
 [dependency-groups]
+# Mirrors [project.optional-dependencies].dev so `uv sync` installs the full
+# dev toolchain without an extra flag. Keep the two lists in sync.
 dev = [
+    "black>=25.9.0",
+    "hypothesis>=6.100.0",
+    "isort>=5.12.0",
+    "moto[dynamodb,s3]>=5.0.0",
+    "mypy>=1.7.0",
+    "pre-commit>=3.5.0",
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "ruff>=0.3.0",
 ]

@@ -196,5 +196,6 @@ inputs/
 logs/
 outputs/
 reference/
+references/
 
 config.yaml

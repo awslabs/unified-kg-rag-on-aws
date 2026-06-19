@@ -6,6 +6,13 @@ A production-ready, AWS-native knowledge graph RAG (Retrieval-Augmented Generati
 
 Built from the ground up based on Microsoft's "From Local to Global: A Graph RAG Approach to Query-Focused Summarization" paper and subsequent research, this framework is specifically designed to leverage AWS native services for enterprise-scale deployment.
 
+> **What's new**
+> - **Two retrieval methodologies, one infrastructure.** Choose per query via `search_strategy`: GraphRAG community-summary (`auto`/`drift`/`global`/`local`/`simple`) or **LightRAG dual-level keyword** (`mix`/`hybrid`/`naive`). Both share the same ingestion, indexing, caching, multilingual translation, and hybrid (lexical + semantic + graph) scoring — only the retrieval algorithm differs.
+> - **Incremental indexing.** Enable the DynamoDB document-status registry (`aws.dynamodb`) to diff a corpus by content hash and re-index only new/changed documents, merging into the live graph (idempotent upserts; deletions remove a document's exclusive artifacts).
+> - **Prompt tuning.** `run-prompt-tuning` profiles a corpus (domain/language/persona/entity-types) and emits domain-adapted `custom_prompts`.
+> - **Standalone visualization & graph-aware evaluation.** `run-visualization` renders from exported graph data without re-ingesting; the `graph_aware` evaluator scores entity/relationship coverage.
+> - **Hexagonal architecture.** Ports & adapters (`core/ports/`) + registries make storage backends, retrieval strategies, evaluators, and renderers pluggable. See `CLAUDE.md`.
+
 ## 📋 Table of Contents
 
 - [✨ Features & Advantages](#-features--advantages)
@@ -452,6 +459,24 @@ run-eval --eval-data-path my_eval_data.json --outputs-directory ./results --conf
 
 # Evaluate with specific search strategy
 run-eval --eval-data-path my_eval_data.json --search-strategy global --search-type vector --config-path config.yaml
+
+# Use a LightRAG methodology mode
+run-rag --query "Your question" --search-strategy mix --config-path config.yaml
+```
+
+#### 4. Visualize the Graph (standalone)
+```bash
+# Render visualizations from previously exported graph data (no re-ingestion)
+run-visualization --data-path visualization_data.json --output-dir ./viz --config-path config.yaml
+
+# Render only specific renderers
+run-visualization --data-path visualization_data.json --renderers interactive --config-path config.yaml
+```
+
+#### 5. Tune Prompts for Your Domain
+```bash
+# Profile a corpus and emit domain-adapted custom_prompts YAML to merge into config
+run-prompt-tuning --source-dir ./source --output tuned_prompts.yaml --config-path config.yaml
 ```
 
 **Evaluation Dataset Format**
