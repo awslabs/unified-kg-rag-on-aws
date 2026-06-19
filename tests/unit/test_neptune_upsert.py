@@ -8,6 +8,7 @@ vertices, drop-edge-by-id before addE, and multi-valued list properties via
 Cardinality.set (not a JSON string) — using a recording fake traversal so no
 Neptune connection is needed.
 """
+
 from __future__ import annotations
 
 import pytest

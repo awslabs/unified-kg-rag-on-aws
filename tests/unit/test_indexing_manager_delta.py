@@ -5,6 +5,7 @@ These verify that the incremental path dispatches to the indexers' idempotent
 ``upsert_*`` / ``delete_by_id`` methods (not the full-rebuild ``index_*``), with
 the indexers themselves mocked so no AWS clients are constructed.
 """
+
 from __future__ import annotations
 
 import pytest

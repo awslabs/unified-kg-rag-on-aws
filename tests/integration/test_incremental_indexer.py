@@ -6,6 +6,7 @@ Exercises the full add -> change -> delete cycle through the
 fake indexing manager, with no AWS clients involved. Lineage is attributed
 per-document so deletion removes only a document's *exclusive* artifacts.
 """
+
 from __future__ import annotations
 
 import pytest

@@ -6,6 +6,7 @@ services, and port-based fakes (``tests/fixtures/fakes``) stand in for Neptune /
 OpenSearch / DynamoDB. ``moto`` provides mocked AWS APIs where an adapter must
 be exercised against a boto3 surface.
 """
+
 from __future__ import annotations
 
 import pytest

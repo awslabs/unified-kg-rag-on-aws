@@ -1,5 +1,6 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 """Unit tests for pure helpers in utils/common.py."""
+
 from __future__ import annotations
 
 import pytest
@@ -17,13 +18,16 @@ pytestmark = pytest.mark.unit
 
 class TestComputeHash:
     def test_unsupported_algorithm_raises(self) -> None:
+        # Only sha256 is supported; md5 (and others) are rejected.
         with pytest.raises(ValueError, match="Unsupported algorithm"):
-            compute_hash("x", algorithm="sha1")
+            compute_hash("x", algorithm="md5")
 
-    def test_md5_and_sha256_differ(self) -> None:
-        assert compute_hash("x", algorithm="md5") != compute_hash(
-            "x", algorithm="sha256"
-        )
+    def test_sha256_is_default(self) -> None:
+        import hashlib
+
+        expected = hashlib.sha256(b"x").hexdigest()[:16]
+        assert compute_hash("x") == expected
+        assert compute_hash("x", algorithm="sha256") == expected
 
 
 class TestEnsureList:

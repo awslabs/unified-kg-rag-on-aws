@@ -5,6 +5,7 @@ Structurally conforms to ``aws_graphrag.core.ports.DocStatusPort``. The diff
 logic here is the reference behaviour the production DynamoDB adapter (M2) must
 match; both are exercised by the same test suite.
 """
+
 from __future__ import annotations
 
 from aws_graphrag.models import DocStatusRecord, DocumentDelta

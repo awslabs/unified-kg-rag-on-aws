@@ -1,5 +1,6 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 """Unit tests for DocStatus models and the DocStatusPort diff contract (M1/M2)."""
+
 from __future__ import annotations
 
 import pytest

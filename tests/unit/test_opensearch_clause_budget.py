@@ -5,6 +5,7 @@ The clause-budget knobs moved from hardcoded ClassVars to config; this verifies
 ``_calculate_safe_batch_size`` reads the instance attributes (set from config in
 __init__) without constructing any AWS client.
 """
+
 from __future__ import annotations
 
 import pytest

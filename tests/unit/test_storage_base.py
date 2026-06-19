@@ -1,5 +1,6 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 """Unit tests for storage/base.py: IndexingStats and BaseIndexer suffix logic."""
+
 from __future__ import annotations
 
 import pytest

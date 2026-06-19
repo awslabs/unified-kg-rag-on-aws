@@ -5,6 +5,7 @@ Uses fake retrievers (no AWS) and a stubbed HybridScorer to assert that each
 mode (naive / hybrid / mix) queries the correct indices with the correct
 keyword lists, fusing through the shared scorer.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -13,7 +14,7 @@ import aws_graphrag.retrieval.search_strategies  # noqa: F401
 from aws_graphrag.models import (
     Config,
     RetrievalResult,
-    RetrieverType,
+    RetrieverRole,
     SearchQuery,
     SearchStrategy,
 )
@@ -45,12 +46,12 @@ class FakeRetriever:
 
 def _make_strategy(config: Config):
     spec = get_strategy_spec(SearchStrategy.MIX)
-    os_r, neptune_r = FakeRetriever("opensearch"), FakeRetriever("neptune")
+    os_r, neptune_r = FakeRetriever("document"), FakeRetriever("graph")
     strategy = spec.strategy_class(
         config=config,
         retrievers={
-            RetrieverType.OPENSEARCH.value: os_r,
-            RetrieverType.NEPTUNE.value: neptune_r,
+            RetrieverRole.DOCUMENT.value: os_r,
+            RetrieverRole.GRAPH.value: neptune_r,
         },
     )
     # Stub the shared scorer to just flatten the source dict (avoid Bedrock).

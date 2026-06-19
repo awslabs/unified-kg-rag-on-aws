@@ -4,6 +4,7 @@
 Relevance now uses the authoritative ``text_unit_ids`` recorded during
 extraction instead of token-overlap heuristics — exact and language-agnostic.
 """
+
 from __future__ import annotations
 
 import pytest

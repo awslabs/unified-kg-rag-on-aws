@@ -1,5 +1,6 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 """Unit tests for LightRAG dual-keyword JSON parsing and mode detection (M3)."""
+
 from __future__ import annotations
 
 import pytest

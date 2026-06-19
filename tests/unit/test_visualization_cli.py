@@ -1,5 +1,6 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 """Unit tests for the standalone visualization CLI + renderer registry (M4)."""
+
 from __future__ import annotations
 
 import json

@@ -1,5 +1,6 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 """Smoke tests confirming shared fixtures build valid domain objects."""
+
 from __future__ import annotations
 
 import pytest

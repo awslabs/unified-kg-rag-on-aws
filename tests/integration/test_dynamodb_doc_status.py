@@ -5,6 +5,7 @@ These run AWS-free via ``moto`` (no ``aws`` marker needed). They assert the
 adapter's behaviour is identical to the in-memory ``FakeDocStatusStore``, which
 is the reference the production adapter must match.
 """
+
 from __future__ import annotations
 
 import boto3

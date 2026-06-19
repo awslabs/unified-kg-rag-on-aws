@@ -4,6 +4,7 @@
 Exercises the pure doc-preparation and mapping logic that backs the LightRAG
 high-level (relationship) retrieval path, without constructing AWS clients.
 """
+
 from __future__ import annotations
 
 import pytest
