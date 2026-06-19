@@ -9,6 +9,7 @@ from opensearchpy.exceptions import NotFoundError
 from aws_graphrag.aws import BedrockEmbeddingModelFactory, OpenSearchClient
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import (
+    Claim,
     CommunityReport,
     Config,
     Constants,
@@ -91,6 +92,7 @@ class OpenSearchIndexer(VectorIndexer):
                 self.opensearch_config.entities_index_prefix,
                 self.opensearch_config.community_reports_index_prefix,
                 self.opensearch_config.relationships_index_prefix,
+                self.opensearch_config.claims_index_prefix,
             ]
 
             aliases_to_delete = [
@@ -151,6 +153,7 @@ class OpenSearchIndexer(VectorIndexer):
                     self.opensearch_config.entities_index_prefix,
                     self.opensearch_config.community_reports_index_prefix,
                     self.opensearch_config.relationships_index_prefix,
+                    self.opensearch_config.claims_index_prefix,
                 ]
             ]
             return {
@@ -324,6 +327,49 @@ class OpenSearchIndexer(VectorIndexer):
             mapping_func=self._get_relationships_mapping,
             embedding_field_extractors=[lambda r: r.description or ""],
             prepare_doc_func=self._prepare_relationship_doc,
+        )
+
+    @staticmethod
+    def _prepare_claim_doc(
+        claim: Claim, embeddings: tuple[list[float], ...]
+    ) -> dict[str, Any]:
+        return {
+            "id": claim.id,
+            "subject_id": claim.subject_id,
+            "subject_name": claim.subject_name or "",
+            "object_id": claim.object_id,
+            "object_name": claim.object_name or "",
+            "type": claim.type or "",
+            "status": claim.status or "",
+            "description": claim.description or "",
+            "description_embedding": embeddings[0],
+            "source_text": claim.source_text or "",
+        }
+
+    def index_claims(self, claims: list[Claim]) -> IndexingStats:
+        """Embed and index claim (covariate) descriptions as searchable vectors.
+
+        Connects claim extraction to retrieval: claims become first-class
+        searchable artifacts (mirrors the relationship vector index).
+        """
+        return self._index_item_type(
+            items=claims,
+            item_type_name="claims",
+            alias_prefix=self.opensearch_config.claims_index_prefix,
+            mapping_func=self._get_claims_mapping,
+            embedding_field_extractors=[lambda c: c.description or ""],
+            prepare_doc_func=self._prepare_claim_doc,
+        )
+
+    def upsert_claims(self, claims: list[Claim]) -> IndexingStats:
+        """Upsert claim vectors by id into the live index (delta)."""
+        return self._upsert_item_type(
+            items=claims,
+            item_type_name="claims",
+            alias_prefix=self.opensearch_config.claims_index_prefix,
+            mapping_func=self._get_claims_mapping,
+            embedding_field_extractors=[lambda c: c.description or ""],
+            prepare_doc_func=self._prepare_claim_doc,
         )
 
     def upsert_text_units(self, text_units: list[TextUnit]) -> IndexingStats:
@@ -776,6 +822,23 @@ class OpenSearchIndexer(VectorIndexer):
                 "description_embedding": self._get_knn_vector_mapping(),
                 "weight": {"type": "double"},
                 "rank": {"type": "double"},
+                "attributes": {"type": "object", "dynamic": True},
+            }
+        )
+
+    def _get_claims_mapping(self) -> dict[str, Any]:
+        return self._get_base_mapping(
+            {
+                "id": {"type": "keyword"},
+                "subject_id": {"type": "keyword"},
+                "object_id": {"type": "keyword"},
+                "subject_name": {"type": "text", "analyzer": self.analyzer},
+                "object_name": {"type": "text", "analyzer": self.analyzer},
+                "type": {"type": "keyword"},
+                "status": {"type": "keyword"},
+                "description": {"type": "text", "analyzer": self.analyzer},
+                "description_embedding": self._get_knn_vector_mapping(),
+                "source_text": {"type": "text", "analyzer": self.analyzer},
                 "attributes": {"type": "object", "dynamic": True},
             }
         )

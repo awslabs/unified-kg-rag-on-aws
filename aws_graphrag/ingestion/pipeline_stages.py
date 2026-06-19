@@ -941,6 +941,7 @@ class IndexingStage(PipelineStage):
         relationships = context.resolved_relationships
         communities = context.communities or []
         community_reports = context.community_reports or []
+        claims = context.resolved_claims or context.claims or []
 
         input_count = (
             len(text_units)
@@ -948,6 +949,7 @@ class IndexingStage(PipelineStage):
             + len(relationships)
             + len(communities)
             + len(community_reports)
+            + len(claims)
         )
 
         indexing_results = self.indexing_manager.index_all_data(
@@ -956,6 +958,7 @@ class IndexingStage(PipelineStage):
             relationships=relationships,
             communities=communities,
             community_reports=community_reports,
+            claims=claims,
         )
 
         total_indexed = sum(

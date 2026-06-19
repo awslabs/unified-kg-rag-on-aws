@@ -735,6 +735,12 @@ class OpenSearchIndexingConfig(BaseModel):
         max_length=100,
         description="Index name prefix for relationship documents (LightRAG global retrieval)",
     )
+    claims_index_prefix: str = Field(
+        default="graphrag-claims",
+        min_length=1,
+        max_length=100,
+        description="Index name prefix for claim (covariate) documents",
+    )
     hybrid_search_pipeline_name: str = Field(
         default="graphrag-hybrid-search-pipeline",
         min_length=1,

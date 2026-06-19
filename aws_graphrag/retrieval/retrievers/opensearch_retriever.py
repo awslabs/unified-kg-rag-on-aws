@@ -59,6 +59,15 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 "lexical": ["description", "source_name", "target_name"],
                 "vector": ["description_embedding"],
             },
+            self._opensearch_config.claims_index_prefix: {
+                "lexical": [
+                    "description",
+                    "subject_name",
+                    "object_name",
+                    "source_text",
+                ],
+                "vector": ["description_embedding"],
+            },
             self._opensearch_config.community_reports_index_prefix: {
                 "lexical": ["name", "summary", "full_content"],
                 "vector": [

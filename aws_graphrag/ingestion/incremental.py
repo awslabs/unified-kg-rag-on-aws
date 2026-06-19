@@ -27,6 +27,7 @@ from aws_graphrag.ingestion.delta_detector import (
     filter_documents_to_process,
 )
 from aws_graphrag.models import (
+    Claim,
     Community,
     CommunityReport,
     DocStatus,
@@ -99,6 +100,7 @@ class IncrementalIndexer:
         relationships: list[Relationship] | None = None,
         communities: list[Community] | None = None,
         community_reports: list[CommunityReport] | None = None,
+        claims: list[Claim] | None = None,
     ) -> dict[str, IndexingStats]:
         """Upsert delta artifacts and update the registry for processed docs.
 
@@ -113,6 +115,7 @@ class IncrementalIndexer:
             relationships=relationships,
             communities=communities,
             community_reports=community_reports,
+            claims=claims,
         )
         self._record_processed(lineages, fingerprints)
         return results

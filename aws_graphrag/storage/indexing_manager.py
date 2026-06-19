@@ -8,6 +8,7 @@ from typing import Any, NamedTuple
 
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import (
+    Claim,
     Community,
     CommunityReport,
     Config,
@@ -97,6 +98,7 @@ class IndexingManager:
         relationships: list[Relationship] | None = None,
         communities: list[Community] | None = None,
         community_reports: list[CommunityReport] | None = None,
+        claims: list[Claim] | None = None,
     ) -> dict[str, IndexingStats]:
         start_time = time.time()
         results: dict[str, IndexingStats] = {}
@@ -123,6 +125,11 @@ class IndexingManager:
                 self.opensearch_indexer.index_relationships,
                 [relationships],
                 "opensearch_relationships",
+            ),
+            IndexingTask(
+                self.opensearch_indexer.index_claims,
+                [claims],
+                "opensearch_claims",
             ),
             IndexingTask(
                 self.neptune_indexer.index_entities, [entities], "neptune_entities"
@@ -159,6 +166,7 @@ class IndexingManager:
         relationships: list[Relationship] | None = None,
         communities: list[Community] | None = None,
         community_reports: list[CommunityReport] | None = None,
+        claims: list[Claim] | None = None,
     ) -> dict[str, IndexingStats]:
         """Idempotently upsert a delta set into the live stores (incremental run).
 
@@ -192,6 +200,11 @@ class IndexingManager:
                 self.opensearch_indexer.upsert_relationships,
                 [relationships],
                 "opensearch_relationships",
+            ),
+            IndexingTask(
+                self.opensearch_indexer.upsert_claims,
+                [claims],
+                "opensearch_claims",
             ),
             IndexingTask(
                 self.neptune_indexer.upsert_entities, [entities], "neptune_entities"
