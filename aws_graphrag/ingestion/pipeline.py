@@ -18,6 +18,7 @@ from aws_graphrag.core import (
     get_cache_manager,
     get_logger,
 )
+from aws_graphrag.core.metrics import MetricsSink, NullMetricsSink
 from aws_graphrag.models import (
     Claim,
     Community,
@@ -129,9 +130,13 @@ class DataIngestionPipeline:
         source_directory: Path | None = None,
         target_directory: Path | None = None,
         boto_session: boto3.Session | None = None,
+        metrics_sink: MetricsSink | None = None,
     ) -> None:
         self.config = config
         self.pipeline_config = pipeline_config
+        # Where pipeline metrics are forwarded (CloudWatch EMF, etc.). Defaults
+        # to a no-op so the library assumes no monitoring backend.
+        self.metrics_sink: MetricsSink = metrics_sink or NullMetricsSink()
         self.source_directory = source_directory or Path(
             self.config.processing.document_parsing.source_directory
         )
@@ -595,6 +600,7 @@ class DataIngestionPipeline:
         total_duration = time.time() - start_time
         context.duration_seconds = total_duration
         context.global_metrics = self._create_pipeline_metrics(context)
+        self._emit_metrics(context.global_metrics, context.pipeline_id)
 
         failed_stages = [
             r for r in context.stage_results if r.status == PipelineStageStatus.FAILED
@@ -653,6 +659,22 @@ class DataIngestionPipeline:
             "stage_throughput": stage_throughput,
         }
         return PipelineMetrics(**metric_data)
+
+    def _emit_metrics(self, metrics: PipelineMetrics, pipeline_id: str) -> None:
+        """Forward scalar pipeline metrics to the configured sink (best-effort)."""
+        try:
+            scalars = {
+                k: v
+                for k, v in metrics.model_dump().items()
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+            }
+            self.metrics_sink.emit(
+                namespace="aws_graphrag/ingestion",
+                metrics=scalars,
+                dimensions={"pipeline_id": pipeline_id},
+            )
+        except Exception as e:  # never let metrics emission break a run
+            logger.warning("Metrics emission failed: %s", e)
 
     @staticmethod
     def _calculate_stage_performance(

@@ -227,7 +227,15 @@ class DocumentLoadingStage(PipelineStage):
         input_count = len(discovered_files)
 
         result = self.loader.load()
-        context.documents = [Document(**doc.model_dump()) for doc in result]
+        documents = [Document(**doc.model_dump()) for doc in result]
+
+        # Incremental indexing: when the DynamoDB doc-status registry is enabled,
+        # diff against it and process only new/changed documents.
+        delta_skipped = 0
+        if self.config.aws.dynamodb.enabled:
+            documents, delta_skipped = self._apply_incremental_filter(documents)
+
+        context.documents = documents
         output_count = len(context.documents)
 
         if self.loader.failed_files:
@@ -236,6 +244,7 @@ class DocumentLoadingStage(PipelineStage):
         metrics = {
             "file_count": input_count,
             "success_count": output_count,
+            "delta_skipped": delta_skipped,
             "failed_files": self.loader.failed_files,
         }
 
@@ -246,6 +255,40 @@ class DocumentLoadingStage(PipelineStage):
         logger.info("=" * 60)
 
         return input_count, output_count, metrics
+
+    def _apply_incremental_filter(
+        self, documents: list[Document]
+    ) -> tuple[list[Document], int]:
+        """Keep only new/changed documents per the DynamoDB doc-status registry.
+
+        Degrades to processing everything (and logs) if the registry is
+        unreachable, so an enabled-but-misconfigured registry never blocks a run.
+        Imported lazily to avoid a hard dependency when the feature is off.
+        """
+        try:
+            from aws_graphrag.aws import DynamoDBDocStatusStore
+            from aws_graphrag.ingestion.delta_detector import (
+                detect_delta,
+                filter_documents_to_process,
+            )
+
+            store = DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
+            delta, _ = detect_delta(documents, store)
+            if delta.is_empty:
+                logger.info("Incremental: no new/changed documents detected")
+            to_process = filter_documents_to_process(documents, delta)
+            skipped = len(documents) - len(to_process)
+            logger.info(
+                "Incremental filter: %d to process, %d unchanged (skipped)",
+                len(to_process),
+                skipped,
+            )
+            return to_process, skipped
+        except Exception as e:
+            logger.warning(
+                "Incremental filter unavailable (%s); processing all documents", e
+            )
+            return documents, 0
 
 
 class DocumentParsingStage(PipelineStage):

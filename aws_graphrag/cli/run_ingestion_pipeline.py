@@ -10,7 +10,14 @@ from dotenv import load_dotenv
 from rich.panel import Panel
 from rich.prompt import Confirm
 
-from aws_graphrag.core import PipelineExecutionError, get_config, get_logger
+from aws_graphrag.core import (
+    CloudWatchEMFSink,
+    MetricsSink,
+    NullMetricsSink,
+    PipelineExecutionError,
+    get_config,
+    get_logger,
+)
 from aws_graphrag.ingestion import DataIngestionPipeline
 from aws_graphrag.models import PipelineConfig, PipelineContext, PipelineStageType
 from aws_graphrag.utils import console, display_ascii_art, display_pipeline_results
@@ -101,6 +108,14 @@ class CommandLineInterface:
             "--enabled-stages",
             type=lambda s: [item.strip() for item in s.split(",")],
             help="Comma-separated list of pipeline stages to enable (e.g., 'DOCUMENT_PARSING,TEXT_CHUNKING'). If not specified, all stages are enabled.",
+        )
+        parser.add_argument(
+            "--metrics-sink",
+            type=str,
+            choices=["none", "cloudwatch"],
+            default="none",
+            help="Where to forward pipeline metrics: 'none' (default) or "
+            "'cloudwatch' (CloudWatch EMF to stdout, auto-extracted by CloudWatch Logs)",
         )
         parser.add_argument(
             "--config-path",
@@ -199,6 +214,12 @@ class IngestionPipelineRunner:
 
         info_content = "\n".join(info_lines)
         console.print(Panel.fit(info_content, border_style="blue"))
+
+    def _build_metrics_sink(self) -> MetricsSink:
+        if self.args.metrics_sink == "cloudwatch":
+            logger.info("Forwarding pipeline metrics to CloudWatch (EMF)")
+            return CloudWatchEMFSink()
+        return NullMetricsSink()
 
     def _create_pipeline_config(self) -> PipelineConfig:
         all_stages = {stage.name: stage for stage in PipelineStageType}
@@ -334,6 +355,7 @@ class IngestionPipelineRunner:
             source_directory=self.args.source_directory,
             target_directory=self.args.target_directory,
             boto_session=boto_session,
+            metrics_sink=self._build_metrics_sink(),
         )
 
         if self._handle_metadata_operations():

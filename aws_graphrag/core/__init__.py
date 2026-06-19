@@ -17,6 +17,7 @@ from .exceptions import (
     RerankModelError,
 )
 from .logging import get_logger
+from .metrics import CloudWatchEMFSink, MetricsSink, NullMetricsSink
 from .pipeline_manager import PipelineResumeManager, PipelineStateManager
 
 if TYPE_CHECKING:
@@ -31,6 +32,7 @@ def get_cache_manager() -> "type[CacheManager]":
 
 __all__ = [
     "AWSServiceError",
+    "CloudWatchEMFSink",
     "ConfigLoader",
     "DataProcessingError",
     "EmbeddingModelError",
@@ -38,6 +40,8 @@ __all__ = [
     "GraphError",
     "GraphRAGException",
     "LanguageModelError",
+    "MetricsSink",
+    "NullMetricsSink",
     "PipelineExecutionError",
     "PipelineResumeError",
     "PipelineResumeManager",

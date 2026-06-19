@@ -1,0 +1,56 @@
+# Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+"""Unit tests for the pluggable metrics sink (operational excellence)."""
+
+from __future__ import annotations
+
+import io
+import json
+import logging
+
+import pytest
+
+from aws_graphrag.core import CloudWatchEMFSink, MetricsSink, NullMetricsSink
+
+pytestmark = pytest.mark.unit
+
+
+def _emf_logger() -> tuple[logging.Logger, io.StringIO]:
+    buf = io.StringIO()
+    lg = logging.getLogger("test.emf")
+    lg.handlers = [logging.StreamHandler(buf)]
+    lg.setLevel(logging.INFO)
+    lg.propagate = False
+    return lg, buf
+
+
+def test_sinks_conform_to_protocol() -> None:
+    assert isinstance(NullMetricsSink(), MetricsSink)
+    lg, _ = _emf_logger()
+    assert isinstance(CloudWatchEMFSink(emf_logger=lg), MetricsSink)
+
+
+def test_null_sink_is_noop() -> None:
+    assert NullMetricsSink().emit("ns", {"a": 1.0}, {"d": "x"}) is None
+
+
+def test_emf_emits_numeric_metrics_and_dimensions() -> None:
+    lg, buf = _emf_logger()
+    CloudWatchEMFSink(emf_logger=lg).emit(
+        "aws_graphrag/ingestion",
+        {"entities": 42, "rate": 0.5, "name": "ignored"},
+        {"pipeline_id": "p1"},
+    )
+    out = json.loads(buf.getvalue())
+    cw = out["_aws"]["CloudWatchMetrics"][0]
+    assert cw["Namespace"] == "aws_graphrag/ingestion"
+    assert {m["Name"] for m in cw["Metrics"]} == {"entities", "rate"}
+    assert cw["Dimensions"] == [["pipeline_id"]]
+    assert out["entities"] == 42
+    assert out["pipeline_id"] == "p1"
+    assert "name" not in out  # non-numeric dropped
+
+
+def test_emf_no_numeric_metrics_emits_nothing() -> None:
+    lg, buf = _emf_logger()
+    CloudWatchEMFSink(emf_logger=lg).emit("ns", {"only": "strings"})
+    assert buf.getvalue() == ""
