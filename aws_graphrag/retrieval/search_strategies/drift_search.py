@@ -17,6 +17,7 @@ from aws_graphrag.models import (
     RetrieverType,
     SearchQuery,
     SearchResult,
+    SearchStrategy,
 )
 from aws_graphrag.prompts import (
     ConvergenceAssessmentPrompt,
@@ -28,11 +29,13 @@ from aws_graphrag.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
+from aws_graphrag.retrieval.strategy_registry import register_strategy
 from aws_graphrag.utils import compute_hash, safe_float_parse, setup_chain
 
 logger = get_logger(__name__)
 
 
+@register_strategy(SearchStrategy.DRIFT)
 class DriftSearchStrategy(BaseSearchStrategy):
     def __init__(
         self,
@@ -365,7 +368,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         try:
             results = await self.opensearch_retriever.aretrieve(entity_search_query)
             return [
-                result.metadata.get("id", result.source)
+                str(result.metadata.get("id") or result.source)
                 for result in results
                 if result.metadata or result.source
             ]

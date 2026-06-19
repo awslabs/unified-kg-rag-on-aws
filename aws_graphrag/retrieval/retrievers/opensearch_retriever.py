@@ -2,7 +2,7 @@
 import asyncio
 import time
 from collections.abc import Coroutine
-from typing import Any, ClassVar
+from typing import Any
 
 import boto3
 
@@ -16,11 +16,6 @@ logger = get_logger(__name__)
 
 
 class OpenSearchRetriever(BaseGraphRAGRetriever):
-    MAX_SIZE: ClassVar[int] = 100
-    TERMS_BATCH_SIZE: ClassVar[int] = 150
-    MAX_TOTAL_CLAUSES: ClassVar[int] = 600
-    RESERVED_CLAUSES: ClassVar[int] = 300
-
     def __init__(
         self,
         config: Config,
@@ -31,6 +26,14 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         super().__init__(config, boto_session, **kwargs)
         self._opensearch_client = opensearch_client
         self._opensearch_config = config.indexing.opensearch
+        # Clause-budget knobs are config-driven so they can track the cluster's
+        # indices.query.bool.max_clause_count without code changes. Stored as
+        # private attributes (this is a pydantic model, which rejects undeclared
+        # public attributes).
+        self._max_size = self._opensearch_config.max_query_size
+        self._terms_batch_size = self._opensearch_config.terms_batch_size
+        self._max_total_clauses = self._opensearch_config.max_total_clauses
+        self._reserved_clauses = self._opensearch_config.reserved_clauses
         self._embedding_factory = BedrockEmbeddingModelFactory(
             config=config,
             boto_session=boto_session,
@@ -51,6 +54,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             self._opensearch_config.entities_index_prefix: {
                 "lexical": ["name", "description"],
                 "vector": ["name_embedding", "description_embedding"],
+            },
+            self._opensearch_config.relationships_index_prefix: {
+                "lexical": ["description", "source_name", "target_name"],
+                "vector": ["description_embedding"],
             },
             self._opensearch_config.community_reports_index_prefix: {
                 "lexical": ["name", "summary", "full_content"],
@@ -185,7 +192,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         vector_fields: list[str],
         query_vector: list[float] | None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        size = min(query.top_k * query.retrieval_multiplier, self.MAX_SIZE)
+        size = min(query.top_k * query.retrieval_multiplier, self._max_size)
         filters = self._build_filter_clauses(query.filters)
 
         main_query = self._build_main_query(
@@ -316,23 +323,23 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
     def _calculate_safe_batch_size(self, filters: dict[str, Any] | None) -> int:
         if not filters:
-            return self.TERMS_BATCH_SIZE
+            return self._terms_batch_size
 
         list_filters = [
             (k, v) for k, v in filters.items() if isinstance(v, list) and len(v) > 0
         ]
         if not list_filters:
-            return self.TERMS_BATCH_SIZE
+            return self._terms_batch_size
 
         list_filter_count = len(list_filters)
         total_terms = sum(len(v) for _, v in list_filters)
 
-        available_clauses = self.MAX_TOTAL_CLAUSES - self.RESERVED_CLAUSES
+        available_clauses = self._max_total_clauses - self._reserved_clauses
         safe_size = available_clauses // list_filter_count
 
         min_batch_size = max(1, available_clauses // max(list_filter_count, 1) // 2)
 
-        final_size = max(min_batch_size, min(safe_size, self.TERMS_BATCH_SIZE))
+        final_size = max(min_batch_size, min(safe_size, self._terms_batch_size))
 
         logger.debug(
             f"Batch size calculation: {list_filter_count} list filters, "
@@ -469,6 +476,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return SectionType.TEXT
         if index_name.startswith(opensearch_config.entities_index_prefix):
             return SectionType.ENTITY
+        if index_name.startswith(opensearch_config.relationships_index_prefix):
+            return SectionType.RELATIONSHIP
         if index_name.startswith(opensearch_config.community_reports_index_prefix):
             return SectionType.COMMUNITY
 

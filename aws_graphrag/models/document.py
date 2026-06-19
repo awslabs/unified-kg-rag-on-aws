@@ -161,6 +161,119 @@ class Page(BaseModel):
         return f"Page(page_number={self.page_number}, elements={len(self.elements)})"
 
 
+class DocStatus(str, Enum):
+    """Processing lifecycle of a document in the incremental-indexing registry.
+
+    Adapted from LightRAG's DocStatus state machine. A run advances a document
+    PENDING -> PARSING -> PROCESSING -> PROCESSED, or to FAILED on error.
+    """
+
+    PENDING = "pending"
+    PARSING = "parsing"
+    PROCESSING = "processing"
+    PROCESSED = "processed"
+    FAILED = "failed"
+
+
+class DocStatusRecord(BaseModel):
+    """Per-document state persisted across indexing runs (DocStatusPort).
+
+    Stores the content hash for change detection and the ids of every graph
+    artifact the document produced, so a delta run can merge or remove exactly
+    the affected entities/relationships/text-units/communities.
+    """
+
+    doc_id: str = Field(description="Stable document identifier (path-normalized)")
+    content_hash: str = Field(description="Content hash used for change detection")
+    status: DocStatus = Field(
+        default=DocStatus.PENDING, description="Current processing status"
+    )
+    suffix: str = Field(
+        default="default",
+        description="Index/label suffix the document's artifacts were written under",
+    )
+    file_path: str | None = Field(default=None, description="Source file path")
+    content_summary: str | None = Field(
+        default=None, description="Short summary/preview of the document content"
+    )
+    content_length: int | None = Field(
+        default=None, ge=0, description="Length of the document content in characters"
+    )
+    entity_ids: list[str] = Field(
+        default_factory=list, description="Entity ids produced by this document"
+    )
+    relationship_ids: list[str] = Field(
+        default_factory=list, description="Relationship ids produced by this document"
+    )
+    text_unit_ids: list[str] = Field(
+        default_factory=list, description="Text-unit ids produced by this document"
+    )
+    community_ids: list[str] = Field(
+        default_factory=list, description="Community ids this document contributed to"
+    )
+    error_info: str | None = Field(
+        default=None, description="Error detail if status is FAILED"
+    )
+    created_at: str | None = Field(
+        default=None, description="ISO timestamp when first registered"
+    )
+    updated_at: str | None = Field(
+        default=None, description="ISO timestamp of the last status change"
+    )
+
+
+class DocumentLineage(BaseModel):
+    """Per-document artifact attribution for an incremental commit.
+
+    Lets the orchestrator record exactly which entities/relationships/text-units/
+    communities a single document produced (and under which index suffix), so a
+    later change/delete can remove that document's *exclusive* artifacts without
+    touching ones shared with surviving documents.
+    """
+
+    doc_id: str = Field(description="Stable document id these artifacts belong to")
+    suffix: str = Field(
+        default="default",
+        description="Index/label suffix the artifacts were written under",
+    )
+    entity_ids: list[str] = Field(default_factory=list)
+    relationship_ids: list[str] = Field(default_factory=list)
+    text_unit_ids: list[str] = Field(default_factory=list)
+    community_ids: list[str] = Field(default_factory=list)
+
+
+class DocumentDelta(BaseModel):
+    """Partition of an incoming corpus relative to the persisted registry.
+
+    Produced by ``DocStatusPort.diff``: ``changed`` documents exist with a
+    different content hash, ``deleted`` were present before but are absent now.
+    ``is_empty`` lets an update run short-circuit when nothing changed.
+    """
+
+    new: list[str] = Field(
+        default_factory=list, description="Doc ids not previously seen"
+    )
+    changed: list[str] = Field(
+        default_factory=list, description="Doc ids whose content hash changed"
+    )
+    unchanged: list[str] = Field(
+        default_factory=list, description="Doc ids with an identical content hash"
+    )
+    deleted: list[str] = Field(
+        default_factory=list, description="Doc ids removed from the corpus"
+    )
+
+    @property
+    def is_empty(self) -> bool:
+        """True when no documents were added, changed, or removed."""
+        return not (self.new or self.changed or self.deleted)
+
+    @property
+    def to_process(self) -> list[str]:
+        """Doc ids requiring (re)indexing this run: new + changed."""
+        return self.new + self.changed
+
+
 class Document(BaseDocument):
     document_id: str = Field(description="Unique identifier for the document")
     file_name: str = Field(description="Name of the source file")

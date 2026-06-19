@@ -212,6 +212,46 @@ class OpenSearchClient:
 
         return {"errors": bool(errors), "items": errors}
 
+    def bulk_delete(
+        self, index: str, ids: list[str], refresh: bool = True
+    ) -> dict[str, Any]:
+        """Delete documents by id from ``index`` (used by incremental removals).
+
+        Missing ids are ignored. Returns the same ``{errors, items}`` shape as
+        :meth:`bulk_index`.
+        """
+        if not ids:
+            return {"errors": False, "items": []}
+
+        def generate_actions() -> Generator[dict[str, Any], None, None]:
+            for doc_id in ids:
+                yield {"_op_type": "delete", "_index": index, "_id": str(doc_id)}
+
+        success_count, errors = 0, []
+        try:
+            for ok, result in streaming_bulk(
+                client=self.client,
+                actions=generate_actions(),
+                chunk_size=100,
+                raise_on_error=False,
+            ):
+                if ok:
+                    success_count += 1
+                else:
+                    # A delete of a missing doc reports not_found; treat as ok.
+                    delete_result = result.get("delete", {})
+                    if delete_result.get("result") == "not_found":
+                        success_count += 1
+                    else:
+                        errors.append(result)
+        except Exception as e:
+            raise AWSServiceError("Streaming bulk delete failed.") from e
+
+        if refresh and success_count > 0:
+            self.client.indices.refresh(index=index)
+
+        return {"errors": bool(errors), "items": errors}
+
     @_handle_opensearch_errors
     def create_ingest_pipeline(self, pipeline_id: str, body: dict[str, Any]) -> None:
         if not self.check_ingest_pipeline_exists(pipeline_id):

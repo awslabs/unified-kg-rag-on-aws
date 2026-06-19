@@ -3,7 +3,12 @@ from typing import Any
 
 import networkx as nx
 import numpy as np
-from bokeh.models import ColumnDataSource, HoverTool, NumeralTickFormatter, Title
+from bokeh.models import (  # type: ignore[attr-defined]
+    ColumnDataSource,
+    HoverTool,
+    NumeralTickFormatter,
+    Title,
+)
 from bokeh.palettes import Blues8
 from bokeh.plotting import figure, output_file, save
 from bokeh.transform import dodge

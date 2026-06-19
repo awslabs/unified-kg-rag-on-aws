@@ -120,6 +120,11 @@ class IndexingManager:
                 "opensearch_community_reports",
             ),
             IndexingTask(
+                self.opensearch_indexer.index_relationships,
+                [relationships],
+                "opensearch_relationships",
+            ),
+            IndexingTask(
                 self.neptune_indexer.index_entities, [entities], "neptune_entities"
             ),
         ]
@@ -145,6 +150,95 @@ class IndexingManager:
 
         elapsed_time = time.time() - start_time
         self._log_completion_summary(results, elapsed_time)
+        return results
+
+    def index_delta(
+        self,
+        text_units: list[TextUnit] | None = None,
+        entities: list[Entity] | None = None,
+        relationships: list[Relationship] | None = None,
+        communities: list[Community] | None = None,
+        community_reports: list[CommunityReport] | None = None,
+    ) -> dict[str, IndexingStats]:
+        """Idempotently upsert a delta set into the live stores (incremental run).
+
+        Routes to the indexers' ``upsert_*`` methods instead of the full
+        rebuild path, so only changed/new artifacts are written and existing
+        data is preserved. Entities (graph + vector) are upserted before
+        relationships, which depend on entity vertices existing.
+        """
+        start_time = time.time()
+        results: dict[str, IndexingStats] = {}
+
+        self._enrich_text_units(text_units, communities)
+
+        phase1_tasks = [
+            IndexingTask(
+                self.opensearch_indexer.upsert_text_units,
+                [text_units],
+                "opensearch_text_units",
+            ),
+            IndexingTask(
+                self.opensearch_indexer.upsert_entities,
+                [entities],
+                "opensearch_entities",
+            ),
+            IndexingTask(
+                self.opensearch_indexer.index_community_reports,
+                [community_reports],
+                "opensearch_community_reports",
+            ),
+            IndexingTask(
+                self.opensearch_indexer.upsert_relationships,
+                [relationships],
+                "opensearch_relationships",
+            ),
+            IndexingTask(
+                self.neptune_indexer.upsert_entities, [entities], "neptune_entities"
+            ),
+        ]
+        logger.info("--- Starting Delta Indexing Phase 1 (upsert) ---")
+        results.update(self._run_indexing_phase(phase1_tasks))
+
+        phase2_tasks = [
+            IndexingTask(
+                self.neptune_indexer.upsert_relationships,
+                [relationships],
+                "neptune_relationships",
+            ),
+            IndexingTask(
+                self.neptune_indexer.index_communities,
+                [communities],
+                "neptune_communities",
+            ),
+        ]
+        logger.info("--- Starting Delta Indexing Phase 2 (upsert) ---")
+        results.update(self._run_indexing_phase(phase2_tasks))
+
+        elapsed_time = time.time() - start_time
+        self._log_completion_summary(results, elapsed_time)
+        return results
+
+    def delete_documents(
+        self, ids_by_suffix: dict[str, list[str]]
+    ) -> dict[str, IndexingStats]:
+        """Delete artifacts for removed documents from both stores by id.
+
+        ``ids_by_suffix`` maps a tenant/version suffix to the entity/relationship/
+        text-unit/community ids that belonged only to deleted documents.
+        """
+        results: dict[str, IndexingStats] = {}
+        for suffix, ids in ids_by_suffix.items():
+            if not ids:
+                continue
+            results[f"neptune_delete_{suffix}"] = self.neptune_indexer.delete_by_id(ids)
+            for prefix in (
+                self.opensearch_indexer.opensearch_config.text_units_index_prefix,
+                self.opensearch_indexer.opensearch_config.entities_index_prefix,
+                self.opensearch_indexer.opensearch_config.relationships_index_prefix,
+            ):
+                key = f"opensearch_delete_{prefix}_{suffix}"
+                results[key] = self.opensearch_indexer.delete_by_id(ids, prefix, suffix)
         return results
 
     def _run_indexing_phase(

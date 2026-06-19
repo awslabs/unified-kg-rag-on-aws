@@ -15,6 +15,7 @@ from aws_graphrag.models import (
     RetrieverType,
     SearchQuery,
     SearchResult,
+    SearchStrategy,
 )
 from aws_graphrag.prompts import CommunityRelevancePrompt, MapReduceSummaryPrompt
 from aws_graphrag.retrieval.base import (
@@ -22,12 +23,14 @@ from aws_graphrag.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
+from aws_graphrag.retrieval.strategy_registry import register_strategy
 from aws_graphrag.retrieval.token_manager import SectionType
 from aws_graphrag.utils import safe_float_parse, setup_chain
 
 logger = get_logger(__name__)
 
 
+@register_strategy(SearchStrategy.GLOBAL)
 class GlobalSearchStrategy(BaseSearchStrategy):
     MAX_TEXT_UNITS: ClassVar[int] = 100
 

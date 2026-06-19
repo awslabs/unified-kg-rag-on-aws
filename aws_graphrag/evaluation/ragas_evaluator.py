@@ -5,6 +5,7 @@ from typing import Any, ClassVar
 
 import boto3
 import pandas as pd
+from botocore.config import Config as BotoConfig
 from datasets import Dataset
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseLanguageModel
@@ -16,7 +17,6 @@ from ragas.metrics import (
     context_recall,
     faithfulness,
 )
-from botocore.config import Config as BotoConfig
 
 from aws_graphrag.aws import BedrockEmbeddingModelFactory, BedrockLanguageModelFactory
 from aws_graphrag.aws.bedrock import get_assumed_role_boto_session
@@ -133,8 +133,10 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 ):
                     remaining_tokens = max_tokens - current_tokens
                     if remaining_tokens > self.BUFFER_TOKENS:
-                        truncated_context, _ = self._token_counter.truncate_to_token_limit(
-                            context, remaining_tokens
+                        truncated_context, _ = (
+                            self._token_counter.truncate_to_token_limit(
+                                context, remaining_tokens
+                            )
                         )
                         safe_contexts.append(truncated_context + "...")
                     break
@@ -226,23 +228,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             logger.error(f"Ragas async evaluation failed for batch: {e}")
             return [self._create_empty_report(q.query_id) for q in queries]
 
-    def evaluate_batch(
-        self,
-        queries: list[EvaluationQuery],
-        results: list[EvaluationResult],
-        ground_truths: list[str],
-        **kwargs: Any,
-    ) -> list[EvaluationReport]:
-        try:
-            loop = asyncio.get_running_loop()
-            return loop.run_until_complete(
-                self.aevaluate_batch(queries, results, ground_truths, **kwargs)
-            )
-        except RuntimeError:
-            return asyncio.run(
-                self.aevaluate_batch(queries, results, ground_truths, **kwargs)
-            )
-
     async def aevaluate_single(
         self,
         query: EvaluationQuery,
@@ -271,9 +256,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             return asyncio.run(
                 self.aevaluate_single(query, result, ground_truth, **kwargs)
             )
-
-    def get_supported_metrics(self) -> list[str]:
-        return list(self.METRIC_MAPPING.keys())
 
     def validate_config(self) -> bool:
         unsupported_metrics = set(self.config.evaluation.ragas_metrics) - set(

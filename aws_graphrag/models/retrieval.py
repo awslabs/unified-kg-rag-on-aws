@@ -17,6 +17,11 @@ class SearchStrategy(str, Enum):
     GLOBAL = "global"
     LOCAL = "local"
     SIMPLE = "simple"
+    # LightRAG dual-level keyword methodology (high/low keywords over the shared
+    # 3-store hybrid infrastructure).
+    MIX = "mix"
+    HYBRID = "hybrid"
+    NAIVE = "naive"
 
 
 class SearchType(str, Enum):
@@ -86,6 +91,14 @@ class SearchQuery(BaseModel):
     optional_keywords: list[str] = Field(
         default_factory=list,
         description="Optional keywords to boost relevance (not required for matching)",
+    )
+    hl_keywords: list[str] = Field(
+        default_factory=list,
+        description="High-level keywords (themes/intent) for relationship retrieval (LightRAG)",
+    )
+    ll_keywords: list[str] = Field(
+        default_factory=list,
+        description="Low-level keywords (specific entities) for entity retrieval (LightRAG)",
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Additional search query metadata"

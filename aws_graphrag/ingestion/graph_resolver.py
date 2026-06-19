@@ -219,6 +219,10 @@ class EntityResolver(BaseResolver):
                 [e.community_ids for e in entities if e.community_ids]
             ),
             rank=max((e.rank for e in entities if e.rank is not None), default=1),
+            frequency=max(
+                (e.frequency for e in entities if e.frequency is not None),
+                default=None,
+            ),
             confidence=merged_confidence,
             attributes=self._merge_attributes(
                 [e.attributes for e in entities if e.attributes]

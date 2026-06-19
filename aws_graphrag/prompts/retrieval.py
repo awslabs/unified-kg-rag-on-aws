@@ -358,6 +358,59 @@ Extract key entities for knowledge graph search (comma-separated list only):"""
 
 
 @dataclass(frozen=True)
+class KeywordsExtractionPrompt(BasePrompt):
+    """Dual-level keyword extractor for LightRAG-style retrieval.
+
+    Produces high-level keywords (themes/intent -> relationship retrieval) and
+    low-level keywords (specific entities -> entity retrieval) as strict JSON.
+    Ported from LightRAG's ``keywords_extraction`` prompt; language-parameterized
+    so it shares aws-graphrag's multilingual support.
+    """
+
+    input_variables = ["query", "target_language"]
+    output_variables = ["high_level_keywords", "low_level_keywords"]
+
+    @classmethod
+    def _get_custom_prompts(
+        cls, custom_prompts: "CustomPromptConfig"
+    ) -> tuple[str | None, str | None]:
+        return (
+            custom_prompts.keywords_extraction_system,
+            custom_prompts.keywords_extraction_human,
+        )
+
+    system_prompt_template = """You are an expert keyword extractor for a Retrieval-Augmented
+Generation system. Identify two distinct types of keywords in the user's query for effective
+knowledge-graph retrieval.
+
+GOAL — extract exactly two keyword types:
+1. high_level_keywords: overarching concepts, themes, the user's core intent, the subject area,
+   or the type of question. These drive relationship/theme retrieval.
+2. low_level_keywords: specific entities, proper nouns, technical jargon, product names, or
+   concrete items. These drive entity retrieval.
+
+INSTRUCTIONS & CONSTRAINTS:
+1. Output MUST be a valid JSON object and nothing else — no markdown fences, no comments,
+   no text before or after.
+2. The JSON must contain exactly two keys: "high_level_keywords" (array of strings) and
+   "low_level_keywords" (array of strings).
+3. The first character of your response must be {{ and the last must be }}.
+4. Derive all keywords ONLY from the user's query. Do not invent entities not in the query.
+5. Prefer concise meaningful phrases; keep multi-word concepts intact rather than splitting them.
+6. For trivial/vague/nonsensical queries (e.g. "hello", "ok"), return
+   {{"high_level_keywords": [], "low_level_keywords": []}}.
+7. No duplicates within a list; keep lists short and high-signal.
+8. All keywords MUST be in {target_language}. Proper nouns keep their original language.
+
+EXAMPLE OUTPUT:
+{{"high_level_keywords": ["cloud architecture", "scalability"], "low_level_keywords": ["AWS Lambda", "API Gateway"]}}"""
+
+    human_prompt_template = """Query: "{query}"
+
+Extract the dual-level keywords as a single JSON object (in {target_language}):"""
+
+
+@dataclass(frozen=True)
 class KeywordExpansionPrompt(BasePrompt):
     input_variables = ["query", "entities", "topics", "max_keywords"]
 

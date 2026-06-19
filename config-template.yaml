@@ -31,6 +31,14 @@ aws:
     encryption:
       encryption_type: "AES256"
       kms_key_id: null
+  # DynamoDB document-status registry for incremental indexing. When enabled,
+  # each indexing run diffs the corpus against this table (by content hash) and
+  # only re-indexes new/changed documents, merging into the live graph.
+  dynamodb:
+    enabled: false
+    table_name: "aws-graphrag-doc-status"
+    create_table_if_missing: true
+    billing_mode: "PAY_PER_REQUEST"
 
 # Global Output Fixing Configuration
 fixing:
@@ -90,13 +98,17 @@ processing:
     min_improvement_threshold: 0.03
     max_entities_per_prompt: 200
     max_relationships_per_prompt: 200
-    similarity_threshold: 0.3
+    # Scaling constants for the count-based quality/convergence estimates
+    # (defaults shown; tune per corpus scale rather than hardcoding).
+    quality_completeness_weight: 0.6
+    initial_quality_entity_scale: 50
+    initial_quality_relationship_scale: 100
+    convergence_change_scale: 20
 
   # Claim Extraction
   claim_extraction:
     extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
     max_entities_per_prompt: 200
-    similarity_threshold: 0.3
 
 # Graph Configuration
 graph:
@@ -112,6 +124,8 @@ graph:
       pagerank_alpha: 0.85
       pagerank_max_iter: 100
       betweenness_k: null
+      eigenvector_max_iter: 1000
+      eigenvector_tol: 0.001
 
     # Graph statistics
     statistics:
@@ -181,6 +195,21 @@ indexing:
     text_units_index_alias: "graphrag-text-units"
     entities_index_alias: "graphrag-entities"
     community_reports_index_alias: "graphrag-community-reports"
+    # Relationship vector index — enables LightRAG high-level keyword retrieval
+    # (mix/hybrid modes). Built automatically during indexing.
+    relationships_index_prefix: "graphrag-relationships"
+    # Text analyzer per language code (extend without code changes); unlisted
+    # languages use default_analyzer.
+    default_analyzer: "standard"
+    language_analyzers:
+      en: "english"
+      ko: "nori"
+    # Query clause budget — keep max_total_clauses under the cluster's
+    # indices.query.bool.max_clause_count.
+    max_query_size: 100
+    terms_batch_size: 150
+    max_total_clauses: 600
+    reserved_clauses: 300
 
     # Index settings
     index_settings:
@@ -230,6 +259,12 @@ search:
     enabled: true
     rerank_model_id: "cohere.rerank-v3-5:0"
     top_k: 100
+
+  # LightRAG dual-level keyword search (mix/hybrid/naive modes)
+  lightrag_search:
+    # When keyword extraction yields nothing, a query shorter than this falls
+    # back to using the raw query as a low-level keyword (0 disables the gate).
+    raw_query_fallback_max_len: 50
 
   # Global Search Configuration
   global_search:

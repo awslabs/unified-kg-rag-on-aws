@@ -192,9 +192,18 @@ WrapperT = TypeVar("WrapperT")
 class BaseBedrockWrapper:
     _token_counter: BedrockTokenCounter | None = PrivateAttr(default=None)
 
-    def __init__(self, token_counter: BedrockTokenCounter | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self, token_counter: BedrockTokenCounter | None = None, **kwargs: Any
+    ) -> None:
         super().__init__(**kwargs)
         self._token_counter = token_counter
+
+    @property
+    def _buffer_tokens(self) -> int:
+        # Concrete subclasses (embeddings/rerank wrappers) declare buffer_tokens
+        # as a pydantic Field; read it generically so the shared truncation
+        # logic stays here without shadowing the subclass field.
+        return int(getattr(self, "buffer_tokens", 0))
 
     def _truncate_text(
         self, text: str, max_chars: int | None, max_tokens: int | None, text_type: str
@@ -205,7 +214,7 @@ class BaseBedrockWrapper:
         final_text = text
 
         if max_tokens and self._token_counter is not None:
-            effective_tokens = max_tokens - self.buffer_tokens
+            effective_tokens = max_tokens - self._buffer_tokens
             truncated, token_count = self._token_counter.truncate_to_token_limit(
                 text, effective_tokens
             )
@@ -249,8 +258,10 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
             read_timeout=self.BOTO_READ_TIMEOUT,
             retries={"max_attempts": self.BOTO_MAX_ATTEMPTS},
         )
+        # Service name is resolved dynamically per subclass, so it is a plain
+        # str and does not match types-boto3's literal-overloaded client().
         self._client = self.boto_session.client(
-            self._get_boto_service_name(),
+            self._get_boto_service_name(),  # type: ignore[call-overload]
             region_name=self.region_name,
             config=boto_config,
         )
@@ -430,7 +441,9 @@ class BedrockEmbeddingModelFactory(
             model_kwargs=model_kwargs,
             max_sequence_length=model_info.max_sequence_length,
             max_sequence_tokens=model_info.max_sequence_tokens,
-            token_counter=token_counter,
+            # Accepted by BaseBedrockWrapper.__init__; pydantic's generated
+            # __init__ signature hides it from mypy.
+            token_counter=token_counter,  # type: ignore[call-arg]
             **kwargs,
         )
         logger.debug(f"Created embedding model: '{model_id.value}'")
@@ -715,7 +728,9 @@ class BedrockRerankModelFactory(
             region_name=self.region_name,
             credentials_profile_name=self.boto_session.profile_name,
             client=self._client,
-            token_counter=token_counter,
+            # Accepted by BaseBedrockWrapper.__init__; pydantic's generated
+            # __init__ signature hides it from mypy.
+            token_counter=token_counter,  # type: ignore[call-arg]
             **kwargs,
         )
         logger.debug(f"Created rerank model: '{model_id.value}'")

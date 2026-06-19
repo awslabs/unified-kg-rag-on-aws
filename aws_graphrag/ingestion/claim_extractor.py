@@ -1,5 +1,4 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
-import re
 import time
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
@@ -62,17 +61,12 @@ def _prepare_claim_input_task(
     else:
         unit_text = unit.text or ""
 
-    unit_text_lower = unit_text.lower()
-    unit_tokens = set(re.findall(r"\b\w+\b", unit_text_lower))
-
     entity_specs_str = ""
     if config["max_entities_per_prompt"] > 0 and all_entities:
         relevant_entities = [
             entity
             for entity in all_entities
-            if check_entity_relevance_task(
-                entity, unit_text_lower, unit_tokens, config["similarity_threshold"]
-            )[1]
+            if check_entity_relevance_task(entity, unit.id)[1]
         ]
         entity_specs_str = format_entities_with_limit_task(
             relevant_entities, config["max_entities_per_prompt"]
@@ -213,7 +207,6 @@ class ClaimExtractor(BaseProcessor):
         self, text_units: list[TextUnit], all_entities: list[Entity]
     ) -> list[dict[str, Any]]:
         config_for_task = {
-            "similarity_threshold": self.claim_extraction_config.similarity_threshold,
             "max_entities_per_prompt": self.claim_extraction_config.max_entities_per_prompt,
             "target_language": self.config.processing.translation.target_language.value,
         }

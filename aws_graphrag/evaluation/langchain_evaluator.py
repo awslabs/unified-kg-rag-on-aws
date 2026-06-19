@@ -365,9 +365,6 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             explanation=explanation,
         )
 
-    def get_supported_metrics(self) -> list[str]:
-        return [metric.value for metric in self.METRIC_MAPPING]
-
     def validate_config(self) -> bool:
         unsupported = set(self.config.evaluation.langchain_metrics) - set(
             self.METRIC_MAPPING

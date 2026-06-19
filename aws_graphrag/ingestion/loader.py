@@ -134,7 +134,9 @@ class DirectoryLoader(BaseLoader):
         if self.failed_files:
             logger.warning(f"Failed to load {len(self.failed_files)} files")
 
-        return docs
+        # Document is a BaseDocument subclass; widen the invariant list type to
+        # match the BaseLoader.load() supertype signature.
+        return list(docs)
 
     def _validate_directory(self) -> None:
         if not self.source_directory.exists():

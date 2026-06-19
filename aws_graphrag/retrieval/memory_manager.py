@@ -73,8 +73,10 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
     def is_expired(self) -> bool:
         return datetime.now() > self.updated_at + self.ttl
 
+    # LangChain's BaseChatMessageHistory types `messages` as a writeable
+    # attribute; we expose it read-only and mutate via _messages.
     @property
-    def messages(self) -> list[BaseMessage]:
+    def messages(self) -> list[BaseMessage]:  # type: ignore[override]
         return self._messages
 
     def _update_context(self, message: BaseMessage) -> None:
@@ -281,29 +283,6 @@ class MemoryManager:
                 f"Removed {len(to_remove)} oldest conversations to maintain capacity"
             )
 
-    async def periodic_cleanup_task(self) -> None:
-        while True:
-            await asyncio.sleep(self.config.memory.cleanup_interval_hours * 3600)
-            try:
-                async with self._lock:
-                    num_removed = await self._cleanup_expired_unsafe()
-                    self._last_cleanup = datetime.now()
-                    if num_removed > 0:
-                        logger.info(f"Cleaned up {num_removed} expired conversations")
-            except Exception as e:
-                logger.error(f"Memory cleanup failed: {e}")
-
-    async def get_stats(self) -> dict[str, Any]:
-        async with self._lock:
-            num_convs = len(self._memories)
-            total_msgs = sum(len(mem.messages) for mem in self._memories.values())
-            return {
-                "total_conversations": num_convs,
-                "total_messages": total_msgs,
-                "avg_messages_per_conv": total_msgs / num_convs if num_convs else 0,
-                "last_cleanup": self._last_cleanup.isoformat(),
-            }
-
 
 _memory_manager: MemoryManager | None = None
 _manager_lock = threading.Lock()
@@ -317,11 +296,3 @@ def get_memory_manager() -> MemoryManager:
             if _memory_manager is None:
                 _memory_manager = MemoryManager(config=get_config())
     return _memory_manager
-
-
-def start_memory_cleanup_task() -> asyncio.Task | None:
-    manager = get_memory_manager()
-    if manager.config.memory.auto_cleanup:
-        logger.info("Starting periodic memory cleanup task")
-        return asyncio.create_task(manager.periodic_cleanup_task())
-    return None

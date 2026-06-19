@@ -20,6 +20,10 @@ class Entity(Named):
         1,
         description="Rank of the entity, used for sorting. Higher rank indicates more important entity",
     )
+    frequency: int | None = Field(
+        None,
+        description="Number of text units supporting the entity (recomputed on merge)",
+    )
     confidence: float | None = Field(
         default=1.0,
         ge=0.0,

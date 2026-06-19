@@ -8,25 +8,14 @@ from aws_graphrag.core import get_logger
 
 logger = get_logger(__name__)
 
-_tiktoken_encoding = None
-
-
-def _get_tiktoken_fallback():
-    global _tiktoken_encoding
-    if _tiktoken_encoding is None:
-        try:
-            from tiktoken import get_encoding
-
-            _tiktoken_encoding = get_encoding("cl100k_base")
-        except Exception:
-            _tiktoken_encoding = None
-    return _tiktoken_encoding
-
 
 class BedrockTokenCounter:
     """Token counter using the Bedrock count_tokens API for accurate token measurement.
 
-    Falls back to tiktoken cl100k_base if the Bedrock API call fails (e.g., unsupported model).
+    The Bedrock ``count_tokens`` API is the single source of truth. If a call
+    fails (e.g. transient error or a model that does not support the API), it
+    degrades to a whitespace word count purely to keep the pipeline running — no
+    third-party tokenizer is used, so counting stays consistent with the model.
     """
 
     MAX_TRUNCATION_ITERATIONS: int = 8
@@ -47,7 +36,11 @@ class BedrockTokenCounter:
         self._cached_count = _cached_count
 
     def count_tokens(self, text: str) -> int:
-        """Count tokens using Bedrock count_tokens API with LRU cache and tiktoken fallback."""
+        """Count tokens via the Bedrock count_tokens API (LRU-cached).
+
+        Degrades to a whitespace word count only if the API call fails, so the
+        pipeline never crashes on an unsupported model or transient error.
+        """
         if not text:
             return 0
         try:
@@ -55,13 +48,11 @@ class BedrockTokenCounter:
         except Exception as e:
             logger.debug(
                 f"Bedrock count_tokens failed for model '{self.model_id}': {e}. "
-                "Falling back to tiktoken."
+                "Degrading to whitespace word count."
             )
-            return self._tiktoken_count(text)
+            return len(text.split())
 
-    def truncate_to_token_limit(
-        self, text: str, max_tokens: int
-    ) -> tuple[str, int]:
+    def truncate_to_token_limit(self, text: str, max_tokens: int) -> tuple[str, int]:
         """Truncate text to fit within max_tokens using ratio-based estimation and verification.
 
         Returns:
@@ -113,11 +104,4 @@ class BedrockTokenCounter:
                 ]
             },
         )
-        return response["totalTokens"]
-
-    @staticmethod
-    def _tiktoken_count(text: str) -> int:
-        encoding = _get_tiktoken_fallback()
-        if encoding is not None:
-            return len(encoding.encode(text))
-        return len(text.split())
+        return int(response["totalTokens"])

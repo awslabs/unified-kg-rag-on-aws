@@ -16,7 +16,6 @@ from aws_graphrag.models import (
     PipelineStageType,
 )
 from aws_graphrag.storage import IndexingManager
-from aws_graphrag.visualization import GraphVisualizationManager
 
 from .chunker import ChunkerFactory
 from .claim_extractor import ClaimExtractor
@@ -824,6 +823,9 @@ class CommunityDetectionStage(PipelineStage):
 
         if self.config.graph.visualization.enabled and context.knowledge_graph:
             try:
+                # Imported lazily to avoid an import cycle (visualization.base
+                # imports ingestion, which imports this module).
+                from aws_graphrag.visualization import GraphVisualizationManager
 
                 logger.info("Generating graph visualizations...")
                 analyzer = GraphAnalyzer(self.config)

@@ -14,11 +14,19 @@ class EvaluationMetricType(str, Enum):
     CORRECTNESS = "correctness"
     FAITHFULNESS = "faithfulness"
     PARTIAL_CORRECTNESS = "partial_correctness"
+    # Graph-aware retrieval metrics (use EvaluationGroundTruth.expected_*).
+    ENTITY_PRECISION = "entity_precision"
+    ENTITY_RECALL = "entity_recall"
+    ENTITY_F1 = "entity_f1"
+    RELATIONSHIP_PRECISION = "relationship_precision"
+    RELATIONSHIP_RECALL = "relationship_recall"
+    RELATIONSHIP_F1 = "relationship_f1"
 
 
 class EvaluatorType(str, Enum):
     LANGCHAIN = "langchain"
     RAGAS = "ragas"
+    GRAPH_AWARE = "graph_aware"
 
 
 class EvaluationQuery(BaseModel):

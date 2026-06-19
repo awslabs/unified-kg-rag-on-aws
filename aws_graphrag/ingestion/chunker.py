@@ -6,12 +6,12 @@ from datetime import datetime
 from typing import Any
 
 import boto3
+from botocore.config import Config as BotoConfig
 from langchain.text_splitter import (
     HTMLHeaderTextSplitter,
     MarkdownHeaderTextSplitter,
     RecursiveCharacterTextSplitter,
 )
-from botocore.config import Config as BotoConfig
 from pydantic import BaseModel, Field
 from tqdm import tqdm
 
@@ -104,7 +104,7 @@ class ChunkingStats(BaseModel):
         if hasattr(self, "__dict__") and "num_chunk_chars" in self.__dict__:
             self.__dict__["num_chunk_chars"].append(num_chunk_chars)
         else:
-            getattr(self, "num_chunk_chars").append(num_chunk_chars)
+            self.num_chunk_chars.append(num_chunk_chars)
 
 
 class ChunkQualityValidator:
@@ -421,9 +421,7 @@ class BaseChunker(ABC):
         self.show_progress = show_progress
         self.stats = ChunkingStats()
 
-        session = boto_session or boto3.Session(
-            profile_name=config.aws.profile_name
-        )
+        session = boto_session or boto3.Session(profile_name=config.aws.profile_name)
         session = get_assumed_role_boto_session(
             session, assumed_role_arn=config.aws.bedrock.assumed_role_arn
         )
@@ -1035,7 +1033,9 @@ class ChunkerFactory:
     ) -> BaseChunker:
         logger.info(f"Creating chunker of type: '{chunker_type.value}'")
         if chunker_type == ChunkingStrategy.SIMPLE:
-            return SimpleTextChunker(config, show_progress, boto_session=boto_session, **kwargs)
+            return SimpleTextChunker(
+                config, show_progress, boto_session=boto_session, **kwargs
+            )
         if chunker_type == ChunkingStrategy.INTELLIGENT:
             return IntelligentTextChunker(config, boto_session, show_progress, **kwargs)
         raise DataProcessingError(f"Unknown chunker type: '{chunker_type}'")

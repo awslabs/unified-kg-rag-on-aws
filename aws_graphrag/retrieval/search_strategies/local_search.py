@@ -11,6 +11,7 @@ from aws_graphrag.models import (
     RetrieverType,
     SearchQuery,
     SearchResult,
+    SearchStrategy,
     SearchType,
 )
 from aws_graphrag.retrieval.base import (
@@ -18,10 +19,12 @@ from aws_graphrag.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
+from aws_graphrag.retrieval.strategy_registry import register_strategy
 
 logger = get_logger(__name__)
 
 
+@register_strategy(SearchStrategy.LOCAL)
 class LocalSearchStrategy(BaseSearchStrategy):
     ENTITY_FREQUENCY_THRESHOLD: ClassVar[int] = 20
 

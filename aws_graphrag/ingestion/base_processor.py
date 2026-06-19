@@ -1,5 +1,4 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
-import re
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
@@ -64,6 +63,7 @@ class BaseProcessor:
                 text_unit_ids=[text_unit.id],
                 community_ids=None,
                 rank=entity_data.get("rank", 1),
+                frequency=None,
                 confidence=confidence,
                 attributes=attributes,
                 created_at=datetime.now(),
@@ -271,32 +271,18 @@ class BaseProcessor:
         return list(merged_items_map.values())
 
 
-def check_entity_relevance_task(
-    entity: Entity, unit_text: str, unit_tokens: set[str], threshold: float
-) -> tuple[Entity, bool]:
-    entity_tokens = set(re.findall(r"\b\w+\b", entity.name.lower()))
-    if entity_tokens & unit_tokens:
-        return entity, True
-    similarity = calculate_similarity_task(entity.name.lower(), unit_text)
-    return entity, similarity > threshold
+def check_entity_relevance_task(entity: Entity, unit_id: str) -> tuple[Entity, bool]:
+    """An entity is relevant to a text unit iff it was extracted from it.
 
-
-def calculate_similarity_task(text1: str, text2: str) -> float:
-    tokens1 = set(re.findall(r"\b\w+\b", text1))
-    tokens2 = set(re.findall(r"\b\w+\b", text2))
-    if not tokens1 or not tokens2:
-        return 0.0
-    intersection = len(tokens1 & tokens2)
-    union = len(tokens1 | tokens2)
-    return intersection / union if union > 0 else 0.0
+    Uses the authoritative ``text_unit_ids`` lineage recorded during extraction
+    rather than re-deriving relevance from token overlap — which is exact,
+    language-agnostic, and free of brittle substring/Jaccard heuristics.
+    """
+    return entity, unit_id in (entity.text_unit_ids or [])
 
 
 def check_relationship_relevance_task(
-    rel: Relationship, relevant_entity_names: set[str]
+    rel: Relationship, unit_id: str
 ) -> tuple[Relationship, bool]:
-    is_relevant = (
-        rel.source_name is not None and rel.source_name.lower() in relevant_entity_names
-    ) or (
-        rel.target_name is not None and rel.target_name.lower() in relevant_entity_names
-    )
-    return rel, is_relevant
+    """A relationship is relevant to a text unit iff it was extracted from it."""
+    return rel, unit_id in (rel.text_unit_ids or [])

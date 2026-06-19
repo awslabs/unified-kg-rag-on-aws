@@ -5,6 +5,7 @@ from .bedrock import (
     BedrockRerankModelFactory,
     EmbeddingModelInfo,
 )
+from .dynamodb import DynamoDBDocStatusStore
 from .neptune import NeptuneClient
 from .opensearch import OpenSearchClient
 from .s3_cache import S3CacheManager
@@ -15,6 +16,7 @@ __all__ = [
     "BedrockLanguageModelFactory",
     "BedrockRerankModelFactory",
     "BedrockTokenCounter",
+    "DynamoDBDocStatusStore",
     "EmbeddingModelInfo",
     "NeptuneClient",
     "OpenSearchClient",

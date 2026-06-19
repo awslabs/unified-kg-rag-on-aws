@@ -13,8 +13,11 @@ from aws_graphrag.models import Config
 from .embeddings.dimensionality import DimensionalityReducer
 from .embeddings.node2vec import BedrockNodeEmbedder
 from .exporters.html_exporter import HTMLExporter
-from .renderers.interactive import InteractiveRenderer
-from .renderers.static import StaticRenderer
+from .renderers import (
+    RenderContext,
+    get_renderer_class,
+    registered_renderers,
+)
 
 logger = get_logger(__name__)
 
@@ -40,8 +43,6 @@ class GraphVisualizationManager:
         self.embedder = BedrockNodeEmbedder(self.config, self.boto_session)
 
         self.reducer = DimensionalityReducer(self.viz_config.layout)
-        self.interactive_renderer = InteractiveRenderer(self.viz_config.interactive)
-        self.static_renderer = StaticRenderer(self.viz_config.static)
         self.html_exporter = HTMLExporter()
 
     def run(self) -> None:
@@ -92,34 +93,33 @@ class GraphVisualizationManager:
             embeddings, method=self.viz_config.layout_method
         )
 
-    def _generate_visualizations(self, outputs_dir: Path, layout: dict[str, Any]):
+    def _generate_visualizations(
+        self, outputs_dir: Path, layout: dict[str, Any]
+    ) -> None:
         if not self.analyzer.graph:
             return
 
-        self.interactive_renderer.create_network_visualization(
-            self.analyzer.graph, layout, str(outputs_dir / "interactive_graph.html")
+        # Drive the registered renderers through the shared registry so the
+        # manager and the standalone CLI use one rendering path.
+        context = RenderContext(
+            graph=self.analyzer.graph,
+            layout=layout,
+            communities=self.community_detector.generate_community_objects(),
+            community_hierarchy=list(self.community_detector.all_communities.values()),
+            centrality=self.analyzer.calculate_centrality(),
         )
-        self.interactive_renderer.create_community_hierarchy(
-            list(self.community_detector.all_communities.values()),
-            str(outputs_dir / "community_hierarchy.html"),
-        )
+        renderer_configs = {
+            "interactive": self.viz_config.interactive,
+            "static": self.viz_config.static,
+        }
+        for name in registered_renderers():
+            try:
+                renderer_cls = get_renderer_class(name)
+                renderer_cls(renderer_configs[name]).render(context, outputs_dir)
+            except Exception as e:
+                logger.warning("Renderer '%s' failed: %s", name, e)
 
-        self.static_renderer.plot_degree_distribution(
-            self.analyzer.graph, str(outputs_dir / "degree_distribution.html")
-        )
-        centrality_data = self.analyzer.calculate_centrality()
-        if centrality_data:
-            self.static_renderer.plot_centrality_comparison(
-                centrality_data, str(outputs_dir / "centrality_comparison.html")
-            )
-
-        communities = self.community_detector.generate_community_objects()
-        if communities:
-            self.static_renderer.plot_community_size_distribution(
-                communities, str(outputs_dir / "community_size_distribution.html")
-            )
-
-    def _export_summary_report(self, outputs_dir: Path):
+    def _export_summary_report(self, outputs_dir: Path) -> None:
         report_data = {
             "graph_stats": self.analyzer.get_graph_statistics(),
             "centrality_data": self.analyzer.calculate_centrality(),

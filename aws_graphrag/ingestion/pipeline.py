@@ -168,6 +168,7 @@ class DataIngestionPipeline:
         self.state_manager = PipelineStateManager(self.cache_manager)
         self.resume_manager = PipelineResumeManager(self.state_manager)
 
+        self.s3_cache_manager: S3CacheManager | None = None
         if self.pipeline_config.s3_sync_enabled:
             self.s3_cache_manager = S3CacheManager(
                 config=self.config,
@@ -175,8 +176,6 @@ class DataIngestionPipeline:
                 bucket_name=self.pipeline_config.s3_bucket_name,
                 prefix=self.pipeline_config.s3_prefix,
             )
-        else:
-            self.s3_cache_manager: S3CacheManager | None = None
 
     def _initialize_stages(
         self,
@@ -622,7 +621,7 @@ class DataIngestionPipeline:
         cache_stats = self.cache_manager.get_cache_stats(context.pipeline_id)
         stage_durations, stage_throughput = self._calculate_stage_performance(context)
 
-        metric_data = {
+        metric_data: dict[str, Any] = {
             "pipeline_id": context.pipeline_id,
             "total_duration_seconds": context.duration_seconds,
             "total_documents_processed": len(context.documents or []),

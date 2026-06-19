@@ -1,5 +1,4 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
-import re
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from functools import partial
@@ -90,25 +89,17 @@ def prepare_input_task(
     else:
         unit_text = unit.text or ""
 
-    unit_text_lower = unit_text.lower()
-    unit_tokens = set(re.findall(r"\b\w+\b", unit_text_lower))
-
     relevant_entities = []
     if all_entities:
         for entity in all_entities:
-            _, is_relevant = check_entity_relevance_task(
-                entity, unit_text_lower, unit_tokens, config["similarity_threshold"]
-            )
+            _, is_relevant = check_entity_relevance_task(entity, unit.id)
             if is_relevant:
                 relevant_entities.append(entity)
 
-    relevant_entity_names = {entity.name.lower() for entity in relevant_entities}
     relevant_relationships = []
-    if relevant_entity_names and all_relationships:
+    if all_relationships:
         for rel in all_relationships:
-            _, is_relevant = check_relationship_relevance_task(
-                rel, relevant_entity_names
-            )
+            _, is_relevant = check_relationship_relevance_task(rel, unit.id)
             if is_relevant:
                 relevant_relationships.append(rel)
 
@@ -206,7 +197,6 @@ class GraphGleaner(BaseProcessor):
         self.max_relationships_per_prompt = (
             self.gleaning_config.max_relationships_per_prompt
         )
-        self.similarity_threshold = self.gleaning_config.similarity_threshold
 
         robust_xml_output_parser = create_robust_xml_output_parser(
             factory=self.factory,
@@ -303,14 +293,15 @@ class GraphGleaner(BaseProcessor):
 
         return current_entities, current_relationships, stats
 
-    @staticmethod
     def _calculate_initial_quality(
-        entities: list[Entity], relationships: list[Relationship]
+        self, entities: list[Entity], relationships: list[Relationship]
     ) -> float:
         if not entities and not relationships:
             return 0.0
-        entity_completeness = min(0.5, len(entities) / 50.0)
-        relationship_completeness = min(0.5, len(relationships) / 100.0)
+        entity_scale = self.gleaning_config.initial_quality_entity_scale
+        rel_scale = self.gleaning_config.initial_quality_relationship_scale
+        entity_completeness = min(0.5, len(entities) / entity_scale)
+        relationship_completeness = min(0.5, len(relationships) / rel_scale)
         return (entity_completeness + relationship_completeness) / 2.0
 
     def _perform_gleaning_round(
@@ -382,7 +373,6 @@ class GraphGleaner(BaseProcessor):
         current_relationships: list[Relationship],
     ) -> tuple[list[Entity], list[Relationship], dict[str, float]]:
         config_for_task = {
-            "similarity_threshold": self.similarity_threshold,
             "max_entities_per_prompt": self.max_entities_per_prompt,
             "max_relationships_per_prompt": self.max_relationships_per_prompt,
             "target_language": self.config.processing.translation.target_language.value,
@@ -481,11 +471,13 @@ class GraphGleaner(BaseProcessor):
         }
         return all_new_entities, all_new_relationships, avg_quality_scores
 
-    @staticmethod
-    def _calculate_graph_quality(quality_scores: dict[str, float]) -> float:
+    def _calculate_graph_quality(self, quality_scores: dict[str, float]) -> float:
         completeness = quality_scores.get("completeness", 0.5)
         accuracy = quality_scores.get("accuracy", 0.5)
-        return (completeness * 0.6) + (accuracy * 0.4)
+        completeness_weight = self.gleaning_config.quality_completeness_weight
+        return (completeness * completeness_weight) + (
+            accuracy * (1.0 - completeness_weight)
+        )
 
     @staticmethod
     def _aggregate_quality_scores(
@@ -728,13 +720,16 @@ class GraphGleaner(BaseProcessor):
 
         return final_relationships
 
-    @staticmethod
     def _calculate_convergence_score(
-        entities_added: int, relationships_added: int, quality_improvement: float
+        self,
+        entities_added: int,
+        relationships_added: int,
+        quality_improvement: float,
     ) -> float:
         if entities_added == 0 and relationships_added == 0:
             return 1.0
-        change_rate = (entities_added + relationships_added) / 20.0
+        change_scale = self.gleaning_config.convergence_change_scale
+        change_rate = (entities_added + relationships_added) / change_scale
         convergence = 1.0 - min(1.0, change_rate + abs(quality_improvement))
         return max(0.0, convergence)
 

@@ -131,14 +131,14 @@ class DimensionalityReducer:
             init="pca",
             learning_rate="auto",
         )
-        return tsne.fit_transform(embeddings)
+        return np.asarray(tsne.fit_transform(embeddings))
 
     def _apply_pca(self, embeddings: np.ndarray) -> np.ndarray:
         n_components = min(
             self.pca_config.n_components, embeddings.shape[1], embeddings.shape[0]
         )
         pca = PCA(n_components=n_components, random_state=self.pca_config.random_state)
-        return pca.fit_transform(embeddings)
+        return np.asarray(pca.fit_transform(embeddings))
 
     @staticmethod
     def _generate_random_layout(nodes: list[str]) -> dict[str, tuple[float, float]]:

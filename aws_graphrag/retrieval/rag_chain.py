@@ -1,5 +1,6 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 import asyncio
+import json
 import time
 import uuid
 from collections.abc import AsyncGenerator, Iterator
@@ -42,6 +43,7 @@ from aws_graphrag.prompts import (
     BasePrompt,
     ContextBuildingPrompt,
     EntityExtractionPrompt,
+    KeywordsExtractionPrompt,
     StrategySelectionPrompt,
     TranslationPrompt,
 )
@@ -50,18 +52,28 @@ from aws_graphrag.utils import setup_chain
 from .base import BaseContextBuilder, BaseGraphRAGRetriever, BaseSearchStrategy
 from .memory_manager import get_memory_manager
 from .retrievers import NeptuneRetriever, OpenSearchRetriever
-from .search_strategies import (
+
+# Importing the package executes each strategy module's @register_strategy
+# decorator, populating the strategy registry used by _get_strategy_instance.
+from .search_strategies import (  # noqa: F401
     DriftSearchStrategy,
     GlobalSearchStrategy,
     LocalSearchStrategy,
     SimpleSearchStrategy,
 )
+from .strategy_registry import get_strategy_spec
 from .token_manager import TokenManager
 
 logger = get_logger(__name__)
 
 DEFAULT_ERROR_MESSAGE: str = (
     "I apologize, but an error occurred while processing your request. Please try again in a moment."
+)
+
+# Strategies that use LightRAG dual-level keyword retrieval rather than the
+# GraphRAG community-summary methodology.
+LIGHTRAG_STRATEGIES: frozenset[SearchStrategy] = frozenset(
+    {SearchStrategy.MIX, SearchStrategy.HYBRID, SearchStrategy.NAIVE}
 )
 
 
@@ -82,6 +94,14 @@ class ProcessedQuery(BaseModel):
     entities: list[str] = Field(
         default_factory=list, description="List of entities extracted from the query"
     )
+    hl_keywords: list[str] = Field(
+        default_factory=list,
+        description="High-level keywords (LightRAG modes only)",
+    )
+    ll_keywords: list[str] = Field(
+        default_factory=list,
+        description="Low-level keywords (LightRAG modes only)",
+    )
 
 
 class RAGInput(BaseModel):
@@ -95,7 +115,10 @@ class RAGInput(BaseModel):
     )
     search_strategy: SearchStrategy = Field(
         default=SearchStrategy.AUTO,
-        description="The search strategy to use (auto, drift, global, local, simple)",
+        description=(
+            "The search strategy: GraphRAG (auto, drift, global, local, simple) "
+            "or LightRAG dual-level keyword (mix, hybrid, naive)"
+        ),
     )
     search_type: SearchType = Field(
         default=SearchType.HYBRID,
@@ -169,17 +192,21 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             region_name=config.aws.bedrock.region_name,
         )
         self.search_strategy_instance: BaseSearchStrategy | None = None
-        self._retriever_cache: dict[tuple[RetrieverType, int | None], BaseGraphRAGRetriever] = {}
+        self._retriever_cache: dict[
+            tuple[RetrieverType, int | None], BaseGraphRAGRetriever
+        ] = {}
         self._cached_loop_id: int | None = None
         self.chain = self._build_chain()
 
     def _build_chain(self) -> Runnable:
+        # RunnableLambda accepts coroutine functions at runtime; the stubs only
+        # type the sync-callable overload.
         base_chain: Runnable = (
-            RunnableLambda(self._resolve_strategy)
+            RunnableLambda(self._resolve_strategy)  # type: ignore[arg-type]
             | RunnablePassthrough.assign(
                 processed_query=self._query_processing_branch()
             )
-            | RunnableLambda(self._load_memory_step)
+            | RunnableLambda(self._load_memory_step)  # type: ignore[arg-type]
             | RunnablePassthrough.assign(search_results=self._search_step)
         )
 
@@ -229,6 +256,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     ) -> Runnable:
         model_id_map: dict[type[BasePrompt], LanguageModelId] = {
             EntityExtractionPrompt: self.config.search.entity_extraction_model_id,
+            KeywordsExtractionPrompt: self.config.search.entity_extraction_model_id,
             TranslationPrompt: self.config.search.translation_model_id,
             StrategySelectionPrompt: self.config.search.strategy_selection_model_id,
             ContextBuildingPrompt: self.config.search.context_building_model_id,
@@ -305,11 +333,21 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                         raise entity_data
                 entity_data = []
 
+            final_query = translated_query or original_query
+            hl_keywords: list[str] = []
+            ll_keywords: list[str] = []
+            if self._is_lightrag_mode(inputs):
+                hl_keywords, ll_keywords = await self._extract_dual_keywords(
+                    final_query, target_language
+                )
+
             return ProcessedQuery(
                 original_query=original_query,
                 translated_query=translated_query,
-                final_query=translated_query or original_query,
+                final_query=final_query,
                 entities=entity_data,
+                hl_keywords=hl_keywords,
+                ll_keywords=ll_keywords,
             )
         except Exception as e:
             if not self.ignore_errors:
@@ -318,6 +356,51 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             return ProcessedQuery(
                 original_query=original_query, final_query=original_query, entities=[]
             )
+
+    @staticmethod
+    def _is_lightrag_mode(state: dict[str, Any]) -> bool:
+        strategy = state.get("resolved_strategy")
+        return strategy in LIGHTRAG_STRATEGIES
+
+    async def _extract_dual_keywords(
+        self, query: str, target_language: Any
+    ) -> tuple[list[str], list[str]]:
+        """Extract LightRAG high/low-level keywords as two lists.
+
+        Robust to the LLM wrapping the JSON in prose or code fences. Returns
+        empty lists on failure when ``ignore_errors`` is set.
+        """
+        try:
+            extractor = self._get_chain_for_prompt(
+                KeywordsExtractionPrompt, StrOutputParser()
+            )
+            raw = await extractor.ainvoke(
+                {"query": query, "target_language": target_language}
+            )
+            payload = self._parse_keyword_json(raw)
+            hl = [str(k) for k in payload.get("high_level_keywords", []) if k]
+            ll = [str(k) for k in payload.get("low_level_keywords", []) if k]
+            return hl, ll
+        except Exception as e:
+            if not self.ignore_errors:
+                raise
+            logger.warning(f"Dual-keyword extraction failed: {e}")
+            return [], []
+
+    @staticmethod
+    def _parse_keyword_json(raw: str) -> dict[str, Any]:
+        text = raw.strip()
+        # Strip a leading/trailing markdown code fence if present.
+        if text.startswith("```"):
+            text = text.split("```", 2)[1] if "```" in text[3:] else text[3:]
+            if text.lstrip().startswith("json"):
+                text = text.lstrip()[4:]
+        # Isolate the JSON object.
+        start, end = text.find("{"), text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            text = text[start : end + 1]
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else {}
 
     async def _load_memory_step(self, state: dict[str, Any]) -> dict[str, Any]:
         if not state.get("use_memory") or not (cid := state.get("conversation_id")):
@@ -339,6 +422,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             set(processed.entities + state.get("relevant_entities", []))
         )
 
+        resolved_strategy: SearchStrategy = state["resolved_strategy"]
+        metadata: dict[str, Any] = {}
+        if resolved_strategy in LIGHTRAG_STRATEGIES:
+            metadata["lightrag_mode"] = resolved_strategy.value
+
         search_query = SearchQuery(
             query=processed.final_query,
             search_type=state.get("search_type", SearchType.HYBRID),
@@ -347,37 +435,25 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             suffix=state.get("suffix"),
             max_tokens=state.get("max_tokens"),
             entity_focus=entity_focus or [],
+            hl_keywords=processed.hl_keywords,
+            ll_keywords=processed.ll_keywords,
             filters=state.get("filters"),
+            metadata=metadata,
         )
         return await self.search_strategy_instance.asearch(search_query)
 
     def _get_strategy_instance(
         self, strategy_type: SearchStrategy
     ) -> BaseSearchStrategy:
-        strategy_map: dict[SearchStrategy, type[BaseSearchStrategy]] = {
-            SearchStrategy.SIMPLE: SimpleSearchStrategy,
-            SearchStrategy.LOCAL: LocalSearchStrategy,
-            SearchStrategy.GLOBAL: GlobalSearchStrategy,
-            SearchStrategy.DRIFT: DriftSearchStrategy,
+        spec = get_strategy_spec(strategy_type)
+
+        retrievers = {
+            retriever_type.value: self._get_retriever(retriever_type)
+            for retriever_type in spec.required_retrievers
         }
 
-        if strategy_type == SearchStrategy.SIMPLE:
-            retrievers = {
-                RetrieverType.OPENSEARCH.value: self._get_retriever(
-                    RetrieverType.OPENSEARCH
-                )
-            }
-        else:
-            retrievers = {
-                RetrieverType.OPENSEARCH.value: self._get_retriever(
-                    RetrieverType.OPENSEARCH
-                ),
-                RetrieverType.NEPTUNE.value: self._get_retriever(RetrieverType.NEPTUNE),
-            }
-
-        strategy_class = strategy_map[strategy_type]
         context_builder: BaseContextBuilder | None = None
-        return strategy_class(
+        return spec.strategy_class(
             config=self.config, retrievers=retrievers, context_builder=context_builder
         )
 
@@ -398,6 +474,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         if cache_key in self._retriever_cache:
             return self._retriever_cache[cache_key]
 
+        retriever: BaseGraphRAGRetriever
         if retriever_type == RetrieverType.OPENSEARCH:
             opensearch_client = OpenSearchClient(
                 config=self.config, boto_session=self.boto_session
@@ -409,7 +486,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             neptune_client = NeptuneClient(
                 config=self.config, boto_session=self.boto_session
             )
-            retriever = NeptuneRetriever(config=self.config, neptune_client=neptune_client)
+            retriever = NeptuneRetriever(
+                config=self.config, neptune_client=neptune_client
+            )
         else:
             raise ValueError(f"Unknown retriever type: '{retriever_type}'")
 
@@ -528,11 +607,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             await self._save_memory(output)
             if isinstance(output, RAGOutput):
                 return output
-            if isinstance(output, dict):
-                if self.mode == ChainMode.SEARCH:
-                    return output
-                return RAGOutput(**output)
-            return output
+            if self.mode == ChainMode.SEARCH:
+                return output
+            return RAGOutput(**output)
         except Exception as e:
             if not self.ignore_errors:
                 raise

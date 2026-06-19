@@ -126,14 +126,9 @@ class HybridScorer(MetricsMixin):
         score_range = max_score - min_score
 
         for result in results:
-            if result.score is not None:
-                result.score = (
-                    0.5
-                    if score_range == 0
-                    else (result.score - min_score) / score_range
-                )
-            else:
-                result.score = 0.5
+            result.score = (
+                0.5 if score_range == 0 else (result.score - min_score) / score_range
+            )
 
         return results
 

@@ -22,9 +22,13 @@ from .config import (
 from .conversation import ConversationContext, MessageRole
 from .covariate import Claim, Covariate
 from .document import (
+    DocStatus,
+    DocStatusRecord,
     Document,
     DocumentContent,
+    DocumentDelta,
     DocumentElement,
+    DocumentLineage,
     ElementContent,
     ElementType,
     Page,
@@ -71,9 +75,13 @@ __all__ = [
     "ContextBuilderResult",
     "Covariate",
     "ConversationContext",
+    "DocStatus",
+    "DocStatusRecord",
     "Document",
     "DocumentContent",
+    "DocumentDelta",
     "DocumentElement",
+    "DocumentLineage",
     "ElementContent",
     "ElementType",
     "EmbeddingModelId",

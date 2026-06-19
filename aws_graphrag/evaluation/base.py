@@ -56,32 +56,6 @@ class BaseEvaluator(ABC):
     ) -> EvaluationReport:
         pass
 
-    def evaluate_batch(
-        self,
-        queries: list[EvaluationQuery],
-        results: list[EvaluationResult],
-        ground_truths: list[str],
-        **kwargs: Any,
-    ) -> list[EvaluationReport]:
-        reports = []
-        iterator = zip(queries, results, ground_truths, strict=True)
-        progress_iterator = tqdm(
-            iterator,
-            desc=f"Evaluating with '{self.evaluator_type.value}'",
-            total=len(queries),
-            disable=not self.show_progress,
-        )
-
-        for query, result, ground_truth in progress_iterator:
-            try:
-                report = self.evaluate_single(query, result, ground_truth, **kwargs)
-                reports.append(report)
-            except Exception as e:
-                logger.error(f"Failed to evaluate query '{query.query_id}': {e}")
-                reports.append(self._create_empty_report(query.query_id))
-
-        return reports
-
     async def aevaluate_batch(
         self,
         queries: list[EvaluationQuery],
@@ -139,9 +113,6 @@ class BaseEvaluator(ABC):
             metadata={"evaluation_failed": True},
         )
 
-    def get_supported_metrics(self) -> list[str]:
-        return []
-
     def validate_config(self) -> bool:
         return True
 
@@ -170,9 +141,6 @@ class BaseGraphRAGEvaluator(BaseEvaluator):
         **kwargs: Any,
     ) -> EvaluationReport:
         pass
-
-    def set_rag_chain(self, rag_chain: Any) -> None:
-        self.rag_chain = rag_chain
 
     @staticmethod
     def _extract_search_metadata(result: EvaluationResult) -> dict[str, Any]:

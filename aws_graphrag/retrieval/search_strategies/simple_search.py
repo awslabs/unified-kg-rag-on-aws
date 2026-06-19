@@ -11,16 +11,21 @@ from aws_graphrag.models import (
     RetrieverType,
     SearchQuery,
     SearchResult,
+    SearchStrategy,
 )
 from aws_graphrag.retrieval.base import (
     BaseContextBuilder,
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
+from aws_graphrag.retrieval.strategy_registry import register_strategy
 
 logger = get_logger(__name__)
 
 
+@register_strategy(
+    SearchStrategy.SIMPLE, required_retrievers=(RetrieverType.OPENSEARCH,)
+)
 class SimpleSearchStrategy(BaseSearchStrategy):
     def __init__(
         self,

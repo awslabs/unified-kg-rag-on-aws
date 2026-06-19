@@ -371,7 +371,9 @@ class CommunityDetector(BaseProcessor):
         logger.info(f"Processing {len(partitions)} levels of partitions")
 
         l0_partition = partitions[0]
-        level_0_communities = {}
+        # Keys are partition member identities, which Leiden may emit as ints
+        # or node-label strings depending on the input graph.
+        level_0_communities: dict[Any, str] = {}
 
         for i, nodes in enumerate(l0_partition):
             comm_id = f"L0_C{i}"
@@ -391,7 +393,7 @@ class CommunityDetector(BaseProcessor):
 
         for level in range(1, len(partitions)):
             partition = partitions[level]
-            current_level_map = {}
+            current_level_map: dict[Any, str] = {}
 
             for i, cluster_nodes in enumerate(partition):
                 parent_comm_id = f"L{level}_C{i}"

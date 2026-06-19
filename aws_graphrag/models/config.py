@@ -168,6 +168,26 @@ class S3Config(BaseModel):
     )
 
 
+class DynamoDBConfig(BaseModel):
+    enabled: bool = Field(
+        default=False,
+        description="Enable the DynamoDB document-status registry for incremental indexing",
+    )
+    table_name: str = Field(
+        default="aws-graphrag-doc-status",
+        min_length=1,
+        description="DynamoDB table holding per-document status and lineage",
+    )
+    create_table_if_missing: bool = Field(
+        default=True,
+        description="Create the doc-status table on first use if it does not exist",
+    )
+    billing_mode: str = Field(
+        default="PAY_PER_REQUEST",
+        description="Billing mode used when auto-creating the table",
+    )
+
+
 class AWSConfig(BaseModel):
     region_name: str = Field(
         default="ap-northeast-2", min_length=1, description="AWS region name"
@@ -187,6 +207,10 @@ class AWSConfig(BaseModel):
     )
     s3: S3Config = Field(
         default_factory=S3Config, description="AWS S3 storage configuration"
+    )
+    dynamodb: DynamoDBConfig = Field(
+        default_factory=DynamoDBConfig,
+        description="AWS DynamoDB document-status registry configuration",
     )
 
 
@@ -336,11 +360,26 @@ class GleaningConfig(BaseModel):
         le=1.0,
         description="Minimum improvement required between rounds",
     )
-    similarity_threshold: float = Field(
-        default=0.3,
+    quality_completeness_weight: float = Field(
+        default=0.6,
         ge=0.0,
         le=1.0,
-        description="Similarity threshold for duplicate filtering",
+        description="Weight of the LLM completeness score in the blended graph-quality score (accuracy gets the remainder)",
+    )
+    initial_quality_entity_scale: int = Field(
+        default=50,
+        ge=1,
+        description="Entity count at which initial completeness saturates (scales the count-based seed quality estimate)",
+    )
+    initial_quality_relationship_scale: int = Field(
+        default=100,
+        ge=1,
+        description="Relationship count at which initial completeness saturates",
+    )
+    convergence_change_scale: int = Field(
+        default=20,
+        ge=1,
+        description="New entities+relationships per round treated as a full unit of change when scoring convergence",
     )
 
     @model_validator(mode="after")
@@ -361,12 +400,6 @@ class ClaimExtractionConfig(BaseModel):
         default=100,
         ge=0,
         description="Maximum entities per claim extraction prompt",
-    )
-    similarity_threshold: float = Field(
-        default=0.3,
-        ge=0.0,
-        le=1.0,
-        description="Similarity threshold for relevant entity filtering",
     )
 
 
@@ -460,6 +493,16 @@ class CentralityConfig(BaseModel):
         default=None,
         ge=1,
         description="Sample size for betweenness calculation (None for all nodes)",
+    )
+    eigenvector_max_iter: int = Field(
+        default=1000,
+        ge=1,
+        description="Maximum iterations for eigenvector centrality convergence",
+    )
+    eigenvector_tol: float = Field(
+        default=1.0e-3,
+        gt=0.0,
+        description="Convergence tolerance for eigenvector centrality",
     )
 
 
@@ -685,11 +728,26 @@ class OpenSearchIndexingConfig(BaseModel):
         max_length=100,
         description="Index name prefix for community report documents",
     )
+    relationships_index_prefix: str = Field(
+        default="graphrag-relationships",
+        min_length=1,
+        max_length=100,
+        description="Index name prefix for relationship documents (LightRAG global retrieval)",
+    )
     hybrid_search_pipeline_name: str = Field(
         default="graphrag-hybrid-search-pipeline",
         min_length=1,
         max_length=100,
         description="OpenSearch pipeline name for combining lexical and vector search results",
+    )
+    default_analyzer: str = Field(
+        default="standard",
+        min_length=1,
+        description="OpenSearch text analyzer used when the language has no specific mapping",
+    )
+    language_analyzers: dict[str, str] = Field(
+        default_factory=lambda: {"en": "english", "ko": "nori"},
+        description="Maps a language code to its OpenSearch text analyzer; extend without code changes",
     )
     embedding_model_id: EmbeddingModelId = Field(
         default=EmbeddingModelId.TITAN_EMBED_V2,
@@ -703,6 +761,26 @@ class OpenSearchIndexingConfig(BaseModel):
     refresh_after_batch: bool = Field(
         default=True,
         description="Whether to refresh OpenSearch indices after each batch operation for immediate visibility",
+    )
+    max_query_size: int = Field(
+        default=100,
+        ge=1,
+        description="Maximum number of hits returned per OpenSearch query",
+    )
+    terms_batch_size: int = Field(
+        default=150,
+        ge=1,
+        description="Batch size when partitioning large terms filters to stay under the clause limit",
+    )
+    max_total_clauses: int = Field(
+        default=600,
+        ge=1,
+        description="Upper bound on boolean clauses per query (must stay under the cluster's max_clause_count)",
+    )
+    reserved_clauses: int = Field(
+        default=300,
+        ge=0,
+        description="Clause budget reserved for non-filter query parts when batching terms filters",
     )
     index_settings: dict[str, Any] = Field(
         default_factory=lambda: {
@@ -903,6 +981,19 @@ class TokenManagerConfig(BaseModel):
     )
 
 
+class LightRAGSearchConfig(BaseModel):
+    raw_query_fallback_max_len: int = Field(
+        default=50,
+        ge=0,
+        description=(
+            "When dual-level keyword extraction yields no keywords, a query whose "
+            "length is below this (0 disables the gate) falls back to using the raw "
+            "query as a low-level keyword, mirroring LightRAG. Longer queries skip "
+            "the fallback to avoid an over-broad graph scan."
+        ),
+    )
+
+
 class SearchConfig(BaseModel):
     translation_model_id: LanguageModelId = Field(
         default=LanguageModelId.CLAUDE_V4_5_HAIKU,
@@ -938,6 +1029,10 @@ class SearchConfig(BaseModel):
     )
     drift_search: DriftSearchConfig = Field(
         default_factory=DriftSearchConfig, description="Drift search configuration"
+    )
+    lightrag_search: LightRAGSearchConfig = Field(
+        default_factory=LightRAGSearchConfig,
+        description="LightRAG dual-level keyword search configuration",
     )
     token_manager: TokenManagerConfig = Field(
         default_factory=TokenManagerConfig, description="Token management configuration"
@@ -1075,6 +1170,22 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for extracting named entities from user queries",
     )
+    keywords_extraction_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for dual-level (high/low) keyword extraction (LightRAG)",
+    )
+    keywords_extraction_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for dual-level (high/low) keyword extraction (LightRAG)",
+    )
+    corpus_profile_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for corpus profiling during prompt tuning",
+    )
+    corpus_profile_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for corpus profiling during prompt tuning",
+    )
     keyword_expansion_system: str | None = Field(
         default=None,
         description="Custom system prompt for expanding search queries with relevant keywords",
@@ -1184,13 +1295,6 @@ class Config(BaseModel):
     custom_prompts: CustomPromptConfig = Field(
         default_factory=CustomPromptConfig, description="Custom prompt configuration"
     )
-
-    def update(self, config_override: dict[str, Any] | None = None) -> "Config":
-        if config_override:
-            self.model_validate(config_override)
-        else:
-            self.model_validate(self.model_dump())
-        return self
 
 
 class PipelineConfig(BaseModel):

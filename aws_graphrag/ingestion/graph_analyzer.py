@@ -135,7 +135,10 @@ class GraphAnalyzer:
             "eigenvector": (
                 self.analysis_config.centrality.calculate_eigenvector,
                 nx.eigenvector_centrality,
-                {"max_iter": 1000, "tol": 1.0e-3},
+                {
+                    "max_iter": self.analysis_config.centrality.eigenvector_max_iter,
+                    "tol": self.analysis_config.centrality.eigenvector_tol,
+                },
             ),
         }
 

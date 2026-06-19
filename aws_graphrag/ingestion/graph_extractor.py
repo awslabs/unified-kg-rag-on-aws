@@ -1,5 +1,6 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 import time
+from collections.abc import Callable
 from typing import Any
 
 import boto3
@@ -271,7 +272,7 @@ class GraphExtractor(BaseProcessor):
         return entities, relationships
 
     def _merge_entities(self, entities: list[Entity]) -> list[Entity]:
-        field_mergers = {
+        field_mergers: dict[str, Callable[[Any, Any], Any]] = {
             "description": self._merge_description,
             "text_unit_ids": lambda current, new: list(
                 set(
@@ -297,11 +298,11 @@ class GraphExtractor(BaseProcessor):
     def _merge_relationships(
         self, relationships: list[Relationship]
     ) -> list[Relationship]:
-        field_mergers = {
+        field_mergers: dict[str, Callable[[Any, Any], Any]] = {
             "weight": lambda current, new: (
-                current if isinstance(current, (int, float)) else 0.0
+                current if isinstance(current, (int | float)) else 0.0
             )
-            + (new if isinstance(new, (int, float)) else 0.0),
+            + (new if isinstance(new, (int | float)) else 0.0),
             "description": self._merge_description,
             "text_unit_ids": lambda current, new: list(
                 set(

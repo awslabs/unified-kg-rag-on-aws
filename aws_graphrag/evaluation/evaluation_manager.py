@@ -22,6 +22,7 @@ from aws_graphrag.retrieval import RAGOutput
 from aws_graphrag.utils import BatchProcessor
 
 from .base import BaseEvaluator
+from .graph_aware_evaluator import GraphAwareEvaluator
 from .langchain_evaluator import LangChainEvaluator
 from .ragas_evaluator import RagasEvaluator
 
@@ -32,6 +33,7 @@ class EvaluationManager:
     EVALUATOR_MAPPING = {
         EvaluatorType.LANGCHAIN: LangChainEvaluator,
         EvaluatorType.RAGAS: RagasEvaluator,
+        EvaluatorType.GRAPH_AWARE: GraphAwareEvaluator,
     }
 
     def __init__(self, config: Config, rag_chain: Runnable | None = None) -> None:
@@ -101,7 +103,7 @@ class EvaluationManager:
                 final_metadata = cleaned_base_metadata.copy()
                 final_metadata.update(item.get("metadata", {}))
 
-                query_id = item.get("query_id", item.get("id", f"q_{i}"))
+                query_id = str(item.get("query_id", item.get("id", f"q_{i}")))
                 query = EvaluationQuery(
                     query_id=query_id,
                     question=item["question"],
@@ -318,9 +320,16 @@ class EvaluationManager:
     ) -> list[EvaluationReport]:
         all_reports = []
         ground_truth_map = {gt.query_id: gt.ground_truth for gt in ground_truths}
+        gt_obj_map = {gt.query_id: gt for gt in ground_truths}
 
         for result in results:
             result.ground_truth = ground_truth_map.get(result.query_id, "")
+            # Thread graph-aware expectations onto the result so the
+            # GraphAwareEvaluator can score entity/relationship coverage without
+            # changing the evaluator signature.
+            if gt := gt_obj_map.get(result.query_id):
+                result.metadata["expected_entities"] = gt.expected_entities
+                result.metadata["expected_relationships"] = gt.expected_relationships
 
         gt_list = [res.ground_truth for res in results]
 

@@ -1,5 +1,5 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -92,7 +92,7 @@ class HTMLExporter:
         centrality_html, centrality_js = self._render_centrality(
             data.get("centrality_data") or {}
         )
-        report_date = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        report_date = datetime.now(tz=UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
         return f"""
         <body>
@@ -191,9 +191,12 @@ class HTMLExporter:
             if not any(getattr(c, metric, None) for c in centrality_data.values()):
                 continue
 
+            def _metric_key(node: Any, metric_name: str = metric) -> float:
+                return getattr(node, metric_name, None) or -1
+
             sorted_nodes = sorted(
                 centrality_data.values(),
-                key=lambda x, m=metric: getattr(x, m) or -1,
+                key=_metric_key,
                 reverse=True,
             )[:10]
 

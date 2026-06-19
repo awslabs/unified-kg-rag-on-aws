@@ -2,11 +2,11 @@
 from .base_processor import BaseProcessor
 from .base_resolver import BaseResolver, FuzzyMatcher
 from .chunker import (
-    ChunkProcessor,
-    ChunkQualityValidator,
     ChunkerFactory,
     ChunkingStats,
     ChunkingStrategy,
+    ChunkProcessor,
+    ChunkQualityValidator,
     IntelligentTextChunker,
     SimpleTextChunker,
 )
@@ -16,16 +16,20 @@ from .community_detector import (
     CommunityMetrics,
     HierarchicalCommunity,
 )
+from .delta_detector import (
+    compute_content_hash,
+    compute_doc_id,
+    detect_delta,
+    filter_documents_to_process,
+    fingerprint_documents,
+)
 from .gleaner import GleaningRound, GleaningStats, GraphGleaner
 from .graph_analyzer import CentralityMetrics, GraphAnalyzer, GraphStatistics
 from .graph_extractor import ExtractionStats, GraphExtractor
 from .graph_resolver import EntityResolver, GraphResolver, RelationshipResolver
+from .incremental import IncrementalIndexer
 from .loader import DirectoryLoader
-from .parser import (
-    BaseParser,
-    ParserFactory,
-    ParsingStats
-)
+from .parser import BaseParser, ParserFactory, ParsingStats
 from .pipeline import DataIngestionPipeline
 from .pipeline_stages import (
     ClaimExtractionStage,
@@ -63,6 +67,12 @@ __all__ = [
     "DataIngestionPipeline",
     "DirectoryLoader",
     "DocumentLoadingStage",
+    "IncrementalIndexer",
+    "compute_content_hash",
+    "compute_doc_id",
+    "detect_delta",
+    "filter_documents_to_process",
+    "fingerprint_documents",
     "DocumentParsingStage",
     "EntityResolver",
     "ExtractionStats",
