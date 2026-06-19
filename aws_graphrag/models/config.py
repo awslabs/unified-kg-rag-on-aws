@@ -1193,6 +1193,14 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for corpus profiling during prompt tuning",
     )
+    extraction_examples_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for generating few-shot extraction examples during prompt tuning",
+    )
+    extraction_examples_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for generating few-shot extraction examples during prompt tuning",
+    )
     keyword_expansion_system: str | None = Field(
         default=None,
         description="Custom system prompt for expanding search queries with relevant keywords",

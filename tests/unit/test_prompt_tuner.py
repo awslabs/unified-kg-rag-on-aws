@@ -45,6 +45,25 @@ class TestBuildCustomPrompts:
         system = PromptTuner.build_custom_prompts(profile)["graph_extraction_system"]
         assert "Focus on these domain entity types" not in system
 
+    def test_adapts_community_report_persona(self) -> None:
+        profile = CorpusProfile(
+            domain="clinical oncology", persona="You are a medical expert."
+        )
+        cp = PromptTuner.build_custom_prompts(profile)
+        assert "medical expert" in cp["community_report_system"]
+        assert "clinical oncology" in cp["community_report_system"]
+
+    def test_few_shot_examples_embedded_when_present(self) -> None:
+        profile = CorpusProfile(few_shot_examples="EXAMPLE TEXT: ...")
+        system = PromptTuner.build_custom_prompts(profile)["graph_extraction_system"]
+        assert "DOMAIN EXAMPLE" in system
+        assert "EXAMPLE TEXT: ..." in system
+
+    def test_no_few_shot_examples_omits_block(self) -> None:
+        profile = CorpusProfile(few_shot_examples="")
+        system = PromptTuner.build_custom_prompts(profile)["graph_extraction_system"]
+        assert "DOMAIN EXAMPLE" not in system
+
 
 class TestSampleAndParse:
     @pytest.fixture
@@ -77,6 +96,17 @@ class TestSampleAndParse:
             return CorpusProfile(domain="finance", entity_types=["TICKER"])
 
         mocker.patch.object(tuner, "profile_corpus", side_effect=_fake_profile)
+
+        async def _fake_examples(_profile, _texts):
+            return "EXAMPLE TEXT: a trade settled."
+
+        mocker.patch.object(tuner, "generate_examples", side_effect=_fake_examples)
         result = await tuner.tune(["some financial text"])
         assert result["profile"]["domain"] == "finance"
         assert "graph_extraction_system" in result["custom_prompts"]
+        assert "DOMAIN EXAMPLE" in result["custom_prompts"]["graph_extraction_system"]
+
+    async def test_generate_examples_empty_corpus_returns_empty(
+        self, tuner: PromptTuner
+    ) -> None:
+        assert await tuner.generate_examples(CorpusProfile(), []) == ""

@@ -20,7 +20,7 @@ from langchain_core.output_parsers import StrOutputParser
 from aws_graphrag.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import Config
-from aws_graphrag.prompts import CorpusProfilePrompt
+from aws_graphrag.prompts import CorpusProfilePrompt, ExtractionExamplesPrompt
 from aws_graphrag.utils import setup_chain
 
 logger = get_logger(__name__)
@@ -34,6 +34,7 @@ class CorpusProfile:
     language: str = "English"
     persona: str = "You are an expert knowledge-graph extraction specialist."
     entity_types: list[str] = field(default_factory=list)
+    few_shot_examples: str = ""
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> CorpusProfile:
@@ -104,17 +105,56 @@ class PromptTuner:
         parsed = json.loads(text)
         return parsed if isinstance(parsed, dict) else {}
 
+    async def generate_examples(self, profile: CorpusProfile, texts: list[str]) -> str:
+        """Generate a domain-adapted few-shot extraction example (LLM-driven).
+
+        Grounds the extraction prompt in a worked example drawn from the corpus
+        itself — MS GraphRAG's few-shot tuning step. Returns an empty string if
+        the corpus is empty or generation fails (extraction still works without
+        examples, so this degrades gracefully rather than failing the tune).
+        """
+        corpus_sample = self.sample_corpus(texts)
+        if not corpus_sample:
+            return ""
+
+        chain = setup_chain(
+            factory=self.factory,
+            model_id=self.config.search.entity_extraction_model_id,
+            prompt_class=ExtractionExamplesPrompt,
+            parser=StrOutputParser(),
+            custom_prompts=self.config.custom_prompts,
+        )
+        try:
+            example = await chain.ainvoke(
+                {
+                    "domain": profile.domain,
+                    "persona": profile.persona,
+                    "entity_types": ", ".join(profile.entity_types) or "any relevant",
+                    "corpus_sample": corpus_sample,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - examples are best-effort
+            logger.warning("Few-shot example generation failed: %s", exc)
+            return ""
+        return str(example).strip()
+
     @staticmethod
     def build_custom_prompts(profile: CorpusProfile) -> dict[str, str]:
         """Turn a profile into ``custom_prompts`` override strings.
 
-        Currently adapts the graph-extraction system prompt with the domain
-        persona and entity-type guidance; the structure makes it easy to extend
-        to other prompts.
+        Adapts both extraction-side prompts (graph extraction with persona,
+        entity-type guidance, and any generated few-shot example) and the
+        community-report persona, so the whole indexing pipeline speaks the
+        corpus's domain — not just entity extraction.
         """
         entity_guidance = (
             f"Focus on these domain entity types: {', '.join(profile.entity_types)}."
             if profile.entity_types
+            else ""
+        )
+        examples_block = (
+            f"\n\n# DOMAIN EXAMPLE\n{profile.few_shot_examples}"
+            if profile.few_shot_examples
             else ""
         )
         graph_extraction_system = (
@@ -122,17 +162,29 @@ class PromptTuner:
             f"You extract entities and relationships from {profile.domain} documents "
             f"written in {profile.language}. {entity_guidance}\n\n"
             "Follow the output format exactly as specified in the human message."
+            f"{examples_block}"
         )
-        return {"graph_extraction_system": graph_extraction_system}
+        community_report_system = (
+            f"{profile.persona}\n\n"
+            f"You analyze communities of entities and relationships extracted from "
+            f"{profile.domain} documents and write reports in {profile.language}. "
+            "Follow the output format exactly as specified in the human message."
+        )
+        return {
+            "graph_extraction_system": graph_extraction_system,
+            "community_report_system": community_report_system,
+        }
 
     async def tune(self, texts: list[str]) -> dict[str, Any]:
-        """End-to-end: profile the corpus and return a custom_prompts dict."""
+        """End-to-end: profile the corpus, generate examples, return overrides."""
         profile = await self.profile_corpus(texts)
+        profile.few_shot_examples = await self.generate_examples(profile, texts)
         logger.info(
-            "Corpus profile: domain='%s', language='%s', %d entity types",
+            "Corpus profile: domain='%s', language='%s', %d entity types, examples=%s",
             profile.domain,
             profile.language,
             len(profile.entity_types),
+            "yes" if profile.few_shot_examples else "no",
         )
         return {
             "profile": {
