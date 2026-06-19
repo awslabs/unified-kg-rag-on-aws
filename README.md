@@ -1,5 +1,7 @@
 # AWS Native Graph RAG
 
+📖 **[한국어 README](./README.ko.md)** · 🛠 **[기술 문서 / Technical Docs (KO)](./docs/tech-doc.md)** · 🤝 **[Contributing](./CONTRIBUTING.md)** · 🧭 **[Project Guide](./CLAUDE.md)**
+
 ![Knowledge Graph](./assets/interactive_graph.jpg)
 
 A production-ready, AWS-native knowledge graph RAG (Retrieval-Augmented Generation) framework that transforms large-scale multilingual documents into dynamic knowledge graphs, enabling intelligent question-answering with complex multi-hop reasoning capabilities.
@@ -43,28 +45,44 @@ Built from the ground up based on Microsoft's "From Local to Global: A Graph RAG
 - **Complex Reasoning**: Multi-hop reasoning capabilities across document boundaries
 - **Source Transparency**: Verifiable information sources provided for all responses
 
-### 🔍 **Intelligent Search Strategies**
-- **Simple Search**: Direct search approach for fast results
-- **Local Search**: Entity-focused deep analysis
-- **Global Search**: Community-based comprehensive insights
-- **Progressive Exploration**: Gradual knowledge discovery through context expansion
+### 🔍 **Two Selectable Methodologies, One Infrastructure**
+Pick per query via `search_strategy`; both share the same ingestion, indexing,
+caching, multilingual, and hybrid-scoring stack — only the retrieval algorithm differs.
+- **GraphRAG (community-summary)**: `simple` (direct), `local` (entity-focused),
+  `global` (community-based), `drift` (progressive exploration), `auto` (LLM router)
+- **LightRAG (dual-level keyword)**: `mix`, `hybrid`, `naive` — high/low keyword
+  extraction over an entity index + a relationship vector index + graph expansion
+
+### ♻️ **Incremental Indexing**
+- **Content-hash delta detection**: a DynamoDB document-status registry re-indexes
+  only new/changed documents and merges into the live graph (idempotent upserts)
+- **Deletion lineage**: removing a document deletes only its *exclusive* artifacts
 
 ### 🎯 **Comprehensive Evaluation Framework**
 - **LangChain-based Evaluation**: RAG performance measurement through built-in evaluators
-- **RAGAS Metrics**: Multi-dimensional evaluation including answer faithfulness, relevancy, and context accuracy
+- **RAGAS Metrics**: Answer faithfulness, relevancy, and context accuracy
+- **Graph-aware Evaluation**: entity/relationship coverage precision/recall/F1 against
+  ground-truth expectations (deterministic, LLM-free, word-boundary matching)
 
 ### 🔧 **User Support**
-- **Domain-specific Prompts**: Prompt optimization tailored to business characteristics
-- **Flexible Configuration**: Detailed option adjustment through YAML configuration files
-- **Comprehensive Monitoring**: Detailed logging and performance monitoring capabilities
+- **Domain-specific Prompts**: customizable per-prompt overrides via config
+- **Automatic Prompt Tuning**: profile a corpus (domain/language/persona/entity-types)
+  and emit domain-adapted prompts (`run-prompt-tuning`)
+- **Flexible Configuration**: detailed option adjustment through YAML configuration files
+- **Comprehensive Monitoring**: structured logging and performance metrics
 
 ### 🌍 **Multilingual Support**
-- **Automatic Language Processing**: Automatic English conversion of multilingual documents during indexing and search
+- **Automatic Language Processing**: translation during indexing/search, language-aware
+  analyzers, and multilingual keyword extraction — applied to both methodologies
 
 ### 📊 **Visualization & Analytics Tools**
-- **Interactive Graph**: Intuitive graph visualization using Node2Vec and UMAP technologies
-- **Network Analysis**: Graph structure analysis through various centrality metrics
-- **Export Capabilities**: Various visualization formats for presentation and analysis
+- **Interactive Graph**: Node2Vec + UMAP graph visualization
+- **Network Analysis**: centrality metrics and graph statistics
+- **Standalone CLI**: render from exported graph data without re-ingesting (`run-visualization`)
+
+### 🧱 **Hexagonal Architecture**
+- **Ports & adapters**: pluggable storage/retrieval backends and a registry for
+  strategies, evaluators, and renderers — extend without editing dispatch code (see `CLAUDE.md`)
 
 ## 🏛️ Architecture Overview
 
@@ -88,6 +106,7 @@ The framework implements a sophisticated indexing and retrieval pipeline:
 - **Claim Extraction/Resolution**: Factual assertions extraction and validation
 
 #### Key Features:
+- **Incremental Indexing**: content-hash delta detection + merge (DynamoDB registry)
 - **Resumable Pipeline**: Stage checkpointing for interrupted runs
 - **Comprehensive Caching**: S3 sync with local cache management
 - **Parallel Processing**: Batch optimization and concurrent execution
