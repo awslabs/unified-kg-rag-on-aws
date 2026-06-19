@@ -165,7 +165,10 @@ class OpenSearchClient:
             )
 
         if self.opensearch_config.username and self.opensearch_config.password:
-            return self.opensearch_config.username, self.opensearch_config.password
+            return (
+                self.opensearch_config.username,
+                self.opensearch_config.password.get_secret_value(),
+            )
 
         raise AWSServiceError("No OpenSearch auth method configured (IAM or basic).")
 

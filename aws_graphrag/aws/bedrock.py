@@ -1,7 +1,7 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar, Generic, Literal, TypeVar
 
 import boto3
 from aws_assume_role_lib.aws_assume_role_lib import assume_role
@@ -238,7 +238,18 @@ class BaseBedrockWrapper:
 
 class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
     BOTO_READ_TIMEOUT: ClassVar[int] = 900
-    BOTO_MAX_ATTEMPTS: ClassVar[int] = 3
+    BOTO_MAX_ATTEMPTS: ClassVar[int] = 5
+    # "adaptive" adds client-side rate limiting on top of retries, which is
+    # materially better for throttling-heavy Bedrock workloads than "standard".
+    BOTO_RETRY_MODE: ClassVar[Literal["legacy", "standard", "adaptive"]] = "adaptive"
+
+    def _boto_config(self, read_timeout: int | None = None) -> BotoConfig:
+        # botocore accepts a plain retries dict at runtime; its stub uses a
+        # private _RetryDict that a local dict does not nominally satisfy.
+        retries = {"max_attempts": self.BOTO_MAX_ATTEMPTS, "mode": self.BOTO_RETRY_MODE}
+        if read_timeout is not None:
+            return BotoConfig(read_timeout=read_timeout, retries=retries)  # type: ignore[arg-type]
+        return BotoConfig(retries=retries)  # type: ignore[arg-type]
 
     def __init__(
         self,
@@ -254,10 +265,7 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
             self.boto_session, assumed_role_arn=config.aws.bedrock.assumed_role_arn
         )
         self.region_name = region_name or config.aws.bedrock.region_name
-        boto_config = BotoConfig(
-            read_timeout=self.BOTO_READ_TIMEOUT,
-            retries={"max_attempts": self.BOTO_MAX_ATTEMPTS},
-        )
+        boto_config = self._boto_config(read_timeout=self.BOTO_READ_TIMEOUT)
         # Service name is resolved dynamically per subclass, so it is a plain
         # str and does not match types-boto3's literal-overloaded client().
         self._client = self.boto_session.client(
@@ -713,7 +721,7 @@ class BedrockRerankModelFactory(
         bedrock_runtime_client = self.boto_session.client(
             "bedrock-runtime",
             region_name=self.region_name,
-            config=BotoConfig(retries={"max_attempts": self.BOTO_MAX_ATTEMPTS}),
+            config=self._boto_config(),
         )
         token_counter = BedrockTokenCounter(
             model_id=model_id.value, client=bedrock_runtime_client

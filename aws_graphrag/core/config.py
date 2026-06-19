@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from aws_graphrag.models import Config
 
@@ -82,8 +82,19 @@ class ConfigLoader:
         final_key = path_tuple[-1]
         current_value = getattr(current, final_key)
 
-        parsed_value: bool | int | float | str
-        if isinstance(current_value, bool):
+        # Coerce the string env value to the field's declared type. SecretStr is
+        # handled by field annotation (current_value may be None at default) so a
+        # value set from the environment stays masked and exposes
+        # .get_secret_value() regardless of validate_assignment.
+        annotation = type(current).model_fields[final_key].annotation
+        is_secret = current_value is not None and isinstance(current_value, SecretStr)
+        if not is_secret and annotation is not None:
+            is_secret = SecretStr in getattr(annotation, "__args__", (annotation,))
+
+        parsed_value: bool | int | float | str | SecretStr
+        if is_secret:
+            parsed_value = SecretStr(value)
+        elif isinstance(current_value, bool):
             parsed_value = value.lower() in ("true", "1", "yes", "on")
         elif isinstance(current_value, int):
             parsed_value = int(value)

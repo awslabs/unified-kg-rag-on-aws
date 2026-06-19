@@ -17,6 +17,7 @@ from aws_graphrag.models import (
     TextUnit,
 )
 from aws_graphrag.storage import IndexingStats, VectorIndexer
+from aws_graphrag.utils.common import compute_hash
 
 logger = get_logger(__name__)
 
@@ -48,6 +49,9 @@ class OpenSearchIndexer(VectorIndexer):
         self.analyzer = self.opensearch_config.language_analyzers.get(
             self.target_language, self.opensearch_config.default_analyzer
         )
+        # Per-process content-hash -> embedding cache (avoids re-embedding
+        # duplicate/unchanged text within and across incremental runs).
+        self._embedding_cache: dict[str, list[float]] = {}
 
     def _resolve_embedding_dimension(self) -> int:
         model_info = self.embedding_factory.get_model_info(
@@ -580,32 +584,52 @@ class OpenSearchIndexer(VectorIndexer):
     ) -> list[list[float] | None]:
         result: list[list[float] | None] = [None] * len(texts)
 
-        valid_texts_with_indices = [
-            (i, text) for i, text in enumerate(texts) if text and text.strip()
-        ]
-        if not valid_texts_with_indices:
-            return result
+        # Content-hash embedding cache: identical text is embedded once per
+        # process, avoiding re-embedding duplicate chunks within a run and
+        # unchanged chunks across incremental runs. Only cache-miss, de-duplicated
+        # texts hit Bedrock; the result is fanned back out to every index sharing
+        # that text.
+        key_to_indices: dict[str, list[int]] = {}
+        unique: list[tuple[str, str]] = []  # (content_hash, text) to embed
+        seen_keys: set[str] = set()
+        for i, text in enumerate(texts):
+            if not text or not text.strip():
+                continue
+            key = compute_hash(text, length=32)
+            key_to_indices.setdefault(key, []).append(i)
+            cached = self._embedding_cache.get(key)
+            if cached is not None:
+                result[i] = cached
+            elif key not in seen_keys:
+                seen_keys.add(key)
+                unique.append((key, text))
 
-        for batch_start in range(0, len(valid_texts_with_indices), batch_size):
-            batch = valid_texts_with_indices[batch_start : batch_start + batch_size]
-            indices, batch_texts = zip(*batch, strict=True)
+        def _store(key: str, emb: list[float] | None) -> None:
+            if emb is not None:
+                self._embedding_cache[key] = emb
+            for idx in key_to_indices[key]:
+                result[idx] = emb
 
+        for batch_start in range(0, len(unique), batch_size):
+            batch = unique[batch_start : batch_start + batch_size]
+            keys = [k for k, _ in batch]
+            batch_texts = [t for _, t in batch]
             try:
-                embeddings = self.embedding_model.embed_documents(list(batch_texts))
-                for i, emb in zip(indices, embeddings, strict=True):
-                    result[i] = emb
+                embeddings = self.embedding_model.embed_documents(batch_texts)
+                for key, emb in zip(keys, embeddings, strict=True):
+                    _store(key, emb)
             except Exception as e:
                 logger.warning(
                     f"Batch embedding failed ({len(batch)} items), "
                     f"retrying individually: {e}"
                 )
-                for i, text in batch:
+                for key, text in batch:
                     try:
                         single_embs = self.embedding_model.embed_documents([text])
-                        result[i] = single_embs[0] if single_embs else None
+                        _store(key, single_embs[0] if single_embs else None)
                     except Exception as item_error:
-                        logger.error(f"Failed to embed text at index {i}: {item_error}")
-                        result[i] = None
+                        logger.error(f"Failed to embed text '{key}': {item_error}")
+                        _store(key, None)
 
         return result
 

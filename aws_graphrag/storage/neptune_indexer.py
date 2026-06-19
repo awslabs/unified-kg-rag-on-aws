@@ -1,5 +1,6 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 import json
+import random
 import time
 from collections.abc import Callable, Iterator
 from typing import Any, cast
@@ -505,10 +506,15 @@ class NeptuneIndexer(GraphIndexer):
                         f"Failed {operation_name} after {attempt + 1} attempts: {e}"
                     )
                     raise
+                # Exponential backoff with full jitter so concurrent workers do
+                # not retry a throttled endpoint in lock-step.
+                backoff = delay * (2**attempt)
+                sleep_for = random.uniform(0, backoff)
                 logger.warning(
-                    f"{operation_name} attempt {attempt + 1} failed, retrying in {delay}s: {e}"
+                    f"{operation_name} attempt {attempt + 1} failed, retrying in "
+                    f"{sleep_for:.2f}s: {e}"
                 )
-                time.sleep(delay)
+                time.sleep(sleep_for)
 
     def _batch_iterator(self, items: list[Any]) -> Iterator[list[Any]]:
         batch_size = self.neptune_config.batch_size

@@ -4,7 +4,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from .evaluation import EvaluationMetricType, EvaluatorType
 from .retrieval import FusionMethod
@@ -132,8 +132,9 @@ class OpenSearchConfig(BaseModel):
     username: str | None = Field(
         default=None, description="OpenSearch authentication username"
     )
-    password: str | None = Field(
-        default=None, description="OpenSearch authentication password"
+    password: SecretStr | None = Field(
+        default=None,
+        description="OpenSearch authentication password (masked in logs/repr)",
     )
     use_ssl: bool = Field(default=True, description="Enable SSL/TLS connection")
     verify_certs: bool = Field(default=True, description="Verify SSL/TLS certificates")

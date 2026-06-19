@@ -137,8 +137,11 @@ class BatchProcessor(BaseModel):
         return _batch_func
 
     def _create_retry_decorator(self, operation_name: str) -> Callable:
+        # Exponential backoff WITH jitter (wait_random_exponential) to spread
+        # concurrent retries and avoid hammering a throttled Bedrock endpoint in
+        # lock-step. Bounded by max_retries so non-retryable errors still fail fast.
         return tenacity.retry(
-            wait=tenacity.wait_exponential(
+            wait=tenacity.wait_random_exponential(
                 multiplier=self.retry_multiplier, max=self.retry_max_wait
             ),
             stop=tenacity.stop_after_attempt(self.max_retries),
