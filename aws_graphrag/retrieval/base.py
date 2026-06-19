@@ -131,6 +131,8 @@ class BaseSearchStrategy(MetricsMixin, ABC):
     ) -> None:
         super().__init__(**kwargs)
         self.config = config
+        # Retrievers are keyed by RetrieverRole value ("graph" / "document"),
+        # not by concrete backend, so strategies stay backend-agnostic.
         self.retrievers = retrievers
         self.context_builder = context_builder
         self.boto_session = boto_session or boto3.Session(
@@ -140,6 +142,20 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         self.token_manager = TokenManager(self.config, boto_session=self.boto_session)
         self.optimization_threshold_factor = optimization_threshold_factor
         self.default_max_tokens = default_max_tokens
+
+    @property
+    def graph_retriever(self) -> BaseGraphRAGRetriever | None:
+        """The retriever bound to the GRAPH role (graph traversal/expansion)."""
+        from aws_graphrag.models import RetrieverRole
+
+        return self.retrievers.get(RetrieverRole.GRAPH.value)
+
+    @property
+    def document_retriever(self) -> BaseGraphRAGRetriever | None:
+        """The retriever bound to the DOCUMENT role (vector/lexical lookup)."""
+        from aws_graphrag.models import RetrieverRole
+
+        return self.retrievers.get(RetrieverRole.DOCUMENT.value)
 
     def search(self, query: SearchQuery) -> SearchResult:
         return asyncio.run(self.asearch(query))

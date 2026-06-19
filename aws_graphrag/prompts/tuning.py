@@ -6,6 +6,7 @@ detection, persona, entity types) into a single corpus-analysis prompt that
 emits a structured JSON profile. That profile then parameterizes domain-adapted
 ``custom_prompts`` fragments.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

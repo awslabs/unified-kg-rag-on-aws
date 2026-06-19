@@ -6,6 +6,7 @@ registry of :class:`BaseRenderer` adapters. A new renderer (e.g. a Cytoscape or
 D3 exporter) is added by subclassing ``BaseRenderer`` and decorating it with
 ``@register_renderer(...)`` — no edit to the manager.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

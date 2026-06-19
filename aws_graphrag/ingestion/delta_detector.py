@@ -11,6 +11,7 @@ same registry entry on every run. ``content_hash`` is computed over the
 aggregated document text so a content edit is detected even when the path is
 unchanged.
 """
+
 from __future__ import annotations
 
 from pathlib import PurePosixPath

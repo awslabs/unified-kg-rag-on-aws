@@ -8,7 +8,6 @@ from aws_graphrag.core import get_logger
 from aws_graphrag.models import (
     Config,
     RetrievalResult,
-    RetrieverType,
     SearchQuery,
     SearchResult,
     SearchStrategy,
@@ -38,8 +37,6 @@ class LocalSearchStrategy(BaseSearchStrategy):
         **kwargs: Any,
     ):
         super().__init__(config, retrievers, context_builder, boto_session, **kwargs)
-        self.neptune_retriever = retrievers.get(RetrieverType.NEPTUNE.value)
-        self.opensearch_retriever = retrievers.get(RetrieverType.OPENSEARCH.value)
         self.entity_focus_multiplier = entity_focus_multiplier
 
     async def asearch(self, query: SearchQuery) -> SearchResult:
@@ -55,7 +52,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
             f"'{', '.join(candidate_entity_ids[:5])}{'...' if len(candidate_entity_ids) > 5 else ''}'"
         )
 
-        expanded_entity_nodes = await self._execute_neptune_retrieval(
+        expanded_entity_nodes = await self._expand_via_graph(
             query, candidate_entity_ids
         )
         filtered_entity_nodes = self._filter_entities(
@@ -74,10 +71,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
             f"'{', '.join(text_unit_ids[:5])}{'...' if len(text_unit_ids) > 5 else ''}'"
         )
 
-        text_units = await self._execute_opensearch_retrieval(
-            text_unit_ids, query.suffix
-        )
-        all_results = {"neptune_entities": expanded_entity_nodes, **text_units}
+        text_units = await self._retrieve_documents(text_unit_ids, query.suffix)
+        all_results = {"graph_entities": expanded_entity_nodes, **text_units}
 
         final_results = self.hybrid_scorer.fuse_and_rerank_results(
             all_results,
@@ -112,7 +107,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
         )
 
     async def _find_candidate_entities(self, query: SearchQuery) -> list[str]:
-        if not self.opensearch_retriever or not query.entity_focus:
+        if not self.document_retriever or not query.entity_focus:
             return []
 
         n_candidates = len(query.entity_focus) * self.entity_focus_multiplier
@@ -125,16 +120,16 @@ class LocalSearchStrategy(BaseSearchStrategy):
         )
 
         try:
-            results = await self.opensearch_retriever.aretrieve(search_query)
+            results = await self.document_retriever.aretrieve(search_query)
             return [res.source for res in results if res.source]
         except Exception as e:
             logger.error(f"Failed to find candidate entities: {e}")
             return []
 
-    async def _execute_neptune_retrieval(
+    async def _expand_via_graph(
         self, query: SearchQuery, seed_entity_ids: list[str]
     ) -> list[RetrievalResult]:
-        if not self.neptune_retriever or not seed_entity_ids:
+        if not self.graph_retriever or not seed_entity_ids:
             return []
 
         search_query = query.model_copy(deep=True)
@@ -144,7 +139,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
         search_query.filters["id"] = seed_entity_ids
 
         try:
-            return await self.neptune_retriever.aretrieve(search_query)
+            return await self.graph_retriever.aretrieve(search_query)
         except Exception as e:
             logger.error(f"Neptune retrieval failed: {e}")
             return []
@@ -170,10 +165,10 @@ class LocalSearchStrategy(BaseSearchStrategy):
 
         return filtered_nodes
 
-    async def _execute_opensearch_retrieval(
+    async def _retrieve_documents(
         self, text_unit_ids: list[str], suffix: str | None
     ) -> dict[str, list[RetrievalResult]]:
-        if not self.opensearch_retriever or not text_unit_ids:
+        if not self.document_retriever or not text_unit_ids:
             return {}
 
         search_query = SearchQuery(
@@ -186,8 +181,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
         )
 
         try:
-            results = await self.opensearch_retriever.aretrieve(search_query)
-            return {"opensearch_text_units": results}
+            results = await self.document_retriever.aretrieve(search_query)
+            return {"text_units": results}
         except Exception as e:
             logger.error(f"OpenSearch retrieval failed: {e}")
             return {}

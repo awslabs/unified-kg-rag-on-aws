@@ -12,7 +12,6 @@ from aws_graphrag.core import get_logger
 from aws_graphrag.models import (
     Config,
     RetrievalResult,
-    RetrieverType,
     SearchQuery,
     SearchResult,
     SearchStrategy,
@@ -44,8 +43,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     ) -> None:
         super().__init__(config, retrievers, context_builder, boto_session, **kwargs)
         self.global_search_config = config.search.global_search
-        self.neptune_retriever = self.retrievers.get(RetrieverType.NEPTUNE.value)
-        self.opensearch_retriever = self.retrievers.get(RetrieverType.OPENSEARCH.value)
         self.ignore_errors = config.processing.ignore_errors
 
         factory = BedrockLanguageModelFactory(
@@ -192,12 +189,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         index_prefixes = [
             self.config.indexing.opensearch.community_reports_index_prefix
         ]
-        return await self._execute_opensearch_retrieval(query, index_prefixes)
+        return await self._retrieve_documents(query, index_prefixes)
 
     async def _retrieve_reports_by_ids(
         self, community_ids: list[str], query: SearchQuery
     ) -> list[RetrievalResult]:
-        if not self.opensearch_retriever or not community_ids:
+        if not self.document_retriever or not community_ids:
             return []
 
         try:
@@ -210,23 +207,21 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             index_prefixes = [
                 self.config.indexing.opensearch.community_reports_index_prefix
             ]
-            return await self._execute_opensearch_retrieval(
-                search_query, index_prefixes
-            )
+            return await self._retrieve_documents(search_query, index_prefixes)
         except Exception as e:
             logger.error(f"OpenSearch retrieval failed: {e}")
             return []
 
-    async def _execute_opensearch_retrieval(
+    async def _retrieve_documents(
         self, query: SearchQuery, index_prefixes: list[str]
     ) -> list[RetrievalResult]:
-        if not self.opensearch_retriever:
+        if not self.document_retriever:
             return []
 
         try:
             search_query = query.model_copy(deep=True)
             search_query.index_prefixes = index_prefixes
-            return await self.opensearch_retriever.aretrieve(search_query)
+            return await self.document_retriever.aretrieve(search_query)
         except Exception as e:
             logger.error(f"OpenSearch retrieval failed: {e}")
             return []
@@ -234,7 +229,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     async def _retrieve_community_nodes(
         self, query: SearchQuery, community_ids: list[str]
     ) -> list[RetrievalResult]:
-        if not self.neptune_retriever:
+        if not self.graph_retriever:
             return []
 
         try:
@@ -247,7 +242,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             ]
 
             return await asyncio.wait_for(
-                self.neptune_retriever.aretrieve(search_query), timeout=30.0
+                self.graph_retriever.aretrieve(search_query), timeout=30.0
             )
         except Exception as e:
             logger.error(f"Neptune community retrieval failed: {e}")
@@ -311,7 +306,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         return self.hybrid_scorer.fuse_and_rerank_results(
             {
                 "opensearch_community_reports": selected,
-                "opensearch_text_units": context,
+                "text_units": context,
             },
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,
@@ -333,7 +328,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         search_query.top_k = min(query.top_k, self.MAX_TEXT_UNITS)
         index_prefixes = [self.config.indexing.opensearch.text_units_index_prefix]
 
-        return await self._execute_opensearch_retrieval(search_query, index_prefixes)
+        return await self._retrieve_documents(search_query, index_prefixes)
 
     async def _apply_map_reduce(
         self, results: list[RetrievalResult], query: SearchQuery

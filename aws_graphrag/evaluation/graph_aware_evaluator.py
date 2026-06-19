@@ -11,6 +11,7 @@ Expected artifacts are threaded onto ``EvaluationResult.metadata`` by the
 manager (keys ``expected_entities`` / ``expected_relationships``), so this
 evaluator needs no signature change to the abstract base.
 """
+
 from __future__ import annotations
 
 from datetime import datetime

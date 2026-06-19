@@ -5,6 +5,7 @@ These present the existing ``InteractiveRenderer`` / ``StaticRenderer`` (whose
 methods differ) behind the uniform :class:`BaseRenderer.render` interface so the
 manager and the standalone CLI drive them through the registry.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -52,8 +52,10 @@ from .pipeline import (
 )
 from .relationship import Relationship
 from .retrieval import (
+    Collection,
     ContextBuilderResult,
     RetrievalResult,
+    RetrieverRole,
     SearchQuery,
     SearchResult,
     SearchStrategy,
@@ -68,6 +70,7 @@ __all__ = [
     "CacheStrategy",
     "ChunkingStrategy",
     "Claim",
+    "Collection",
     "Community",
     "CommunityReport",
     "Config",
@@ -112,6 +115,7 @@ __all__ = [
     "RerankModelId",
     "ResolutionMethod",
     "RetrievalResult",
+    "RetrieverRole",
     "RetrieverType",
     "S3EncryptionType",
     "SearchQuery",

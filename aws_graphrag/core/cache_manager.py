@@ -312,7 +312,7 @@ class CacheManager:
         stage_cache_dir.mkdir(parents=True, exist_ok=True)
 
         serialized_data = self.serialize_data(data)
-        content_hash = compute_hash(serialized_data, algorithm="md5", length=16)
+        content_hash = compute_hash(serialized_data, length=16)
         cache_file = stage_cache_dir / f"{cache_key}.json"
 
         with open(cache_file, "w", encoding="utf-8") as f:
@@ -378,9 +378,9 @@ class CacheManager:
 
             chunk_size = chunk_file.stat().st_size
             total_size += chunk_size
-            chunk_hashes.append(compute_hash(chunk_json, algorithm="md5", length=16))
+            chunk_hashes.append(compute_hash(chunk_json, length=16))
 
-        master_hash = compute_hash("".join(chunk_hashes), algorithm="md5", length=16)
+        master_hash = compute_hash("".join(chunk_hashes), length=16)
 
         entry = CacheEntry(
             key=cache_key,

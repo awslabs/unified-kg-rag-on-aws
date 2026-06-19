@@ -7,6 +7,7 @@ The output is a YAML-ready dict the user pastes under ``custom_prompts`` in
 their config — keeping prompt tuning a deliberate, reviewable step rather than
 opaque runtime behaviour.
 """
+
 from __future__ import annotations
 
 import json

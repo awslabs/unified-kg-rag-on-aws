@@ -164,16 +164,13 @@ class HTMLExporter:
             ),
         }
 
-        return "".join(
-            f"""<div class="card">
+        return "".join(f"""<div class="card">
                 <div class="icon">{self._get_icon(icon_name)}</div>
                 <div class="text">
                     <h3>{title}</h3>
                     <p class="value">{value}</p>
                 </div>
-            </div>"""
-            for title, (value, icon_name) in cards_data.items()
-        )
+            </div>""" for title, (value, icon_name) in cards_data.items())
 
     @staticmethod
     def _render_centrality(

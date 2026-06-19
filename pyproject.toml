@@ -144,6 +144,7 @@ select = [
 ignore = [
     "E501",  # line too long, handled by black
     "B008",  # do not perform function calls in argument defaults
+    "UP042", # str+Enum is intentional (StrEnum changes str()/format semantics)
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -169,10 +170,7 @@ show_error_codes = true
 [[tool.mypy.overrides]]
 module = [
     "gremlin_python.*",
-    "igraph.*",
     "datasketch.*",
-    "leidenalg.*",
-    "community.*",
     "networkx.*",
     "pandas.*",
     "pyvis.*",

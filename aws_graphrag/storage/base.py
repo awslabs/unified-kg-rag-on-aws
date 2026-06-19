@@ -144,6 +144,15 @@ class BaseIndexer(ABC):
 
 
 class GraphIndexer(BaseIndexer):
+    """Write-side port for the knowledge-graph backend (full + delta).
+
+    This ABC is the single write-side contract for graph stores: the full-run
+    ``index_*`` methods plus the incremental ``upsert_*``/``delete_by_id`` surface
+    used by :class:`~aws_graphrag.ingestion.incremental.IncrementalIndexer`.
+    Adapters (e.g. NeptuneIndexer) implement it; nothing depends on a concrete
+    backend.
+    """
+
     @abstractmethod
     def index_entities(self, entities: list[Entity]) -> IndexingStats:
         pass
@@ -157,11 +166,30 @@ class GraphIndexer(BaseIndexer):
         pass
 
     @abstractmethod
+    def upsert_entities(self, entities: list[Entity]) -> IndexingStats:
+        """Idempotently merge entities into the live graph (delta semantics)."""
+
+    @abstractmethod
+    def upsert_relationships(self, relationships: list[Relationship]) -> IndexingStats:
+        """Idempotently merge relationships into the live graph (delta)."""
+
+    @abstractmethod
+    def delete_by_id(self, ids: list[str]) -> IndexingStats:
+        """Delete vertices/edges by id (for removed/changed documents)."""
+
+    @abstractmethod
     def get_entity_count(self, suffixes: list[str]) -> int:
         pass
 
 
 class VectorIndexer(BaseIndexer):
+    """Write-side port for the vector/lexical backend (full + delta).
+
+    Single write-side contract for vector stores: full-run ``index_*`` plus the
+    incremental ``upsert_*``/``delete_by_id`` surface. Adapters (e.g.
+    OpenSearchIndexer) implement it.
+    """
+
     @abstractmethod
     def index_text_units(self, text_units: list[TextUnit]) -> IndexingStats:
         pass
@@ -173,6 +201,28 @@ class VectorIndexer(BaseIndexer):
     @abstractmethod
     def index_community_reports(self, reports: list[CommunityReport]) -> IndexingStats:
         pass
+
+    @abstractmethod
+    def index_relationships(self, relationships: list[Relationship]) -> IndexingStats:
+        """Embed and index relationship descriptions (LightRAG global)."""
+
+    @abstractmethod
+    def upsert_text_units(self, text_units: list[TextUnit]) -> IndexingStats:
+        """Upsert text units by id into the live index (delta)."""
+
+    @abstractmethod
+    def upsert_entities(self, entities: list[Entity]) -> IndexingStats:
+        """Upsert entities by id into the live index (delta)."""
+
+    @abstractmethod
+    def upsert_relationships(self, relationships: list[Relationship]) -> IndexingStats:
+        """Upsert relationship vectors by id into the live index (delta)."""
+
+    @abstractmethod
+    def delete_by_id(
+        self, ids: list[str], alias_prefix: str, suffix: str
+    ) -> IndexingStats:
+        """Delete documents by id from the live aliased index (delta)."""
 
     @abstractmethod
     def get_entity_count(self, suffixes: list[str]) -> int:

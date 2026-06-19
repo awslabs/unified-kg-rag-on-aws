@@ -10,6 +10,7 @@ The production adapter (M2) will be DynamoDB (``aws_graphrag.aws.dynamodb``);
 today only the in-memory fake (``tests/fixtures/fakes``) exists. Both conform to
 this Protocol structurally.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable

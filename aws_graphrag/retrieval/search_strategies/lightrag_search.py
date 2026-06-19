@@ -14,6 +14,7 @@ aws-graphrag's *shared* infrastructure rather than as a separate, reduced path:
 So a LightRAG-mode query enjoys the same hybrid scoring, multilingual handling,
 and caching as the GraphRAG strategies — only the retrieval algorithm differs.
 """
+
 from __future__ import annotations
 
 import time
@@ -25,7 +26,6 @@ from aws_graphrag.core import get_logger
 from aws_graphrag.models import (
     Config,
     RetrievalResult,
-    RetrieverType,
     SearchQuery,
     SearchResult,
     SearchStrategy,
@@ -47,14 +47,16 @@ logger = get_logger(__name__)
 class LightRAGSearchStrategy(BaseSearchStrategy):
     """Dual-level keyword retrieval (LightRAG) over the shared hybrid stack.
 
-    The same class serves three modes, distinguished by ``query.search_type`` is
-    NOT used for mode here — instead the resolved :class:`SearchStrategy` is
-    passed via ``query.metadata['lightrag_mode']`` by the chain, defaulting to
-    ``mix``:
+    The same class serves three modes, distinguished by the resolved
+    :class:`SearchStrategy` passed via ``query.metadata['lightrag_mode']``
+    (default ``mix``):
 
     - ``naive``: vector chunk retrieval only (no graph).
-    - ``hybrid``: ll->entities + hl->relationships + Neptune expansion.
+    - ``hybrid``: ll->entities + hl->relationships + graph expansion.
     - ``mix``: hybrid graph retrieval blended with naive chunk retrieval.
+
+    Backends are accessed only through the abstract GRAPH / DOCUMENT retriever
+    roles (``self.graph_retriever`` / ``self.document_retriever``).
     """
 
     def __init__(
@@ -66,8 +68,6 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         **kwargs: Any,
     ) -> None:
         super().__init__(config, retrievers, context_builder, boto_session, **kwargs)
-        self.opensearch_retriever = retrievers.get(RetrieverType.OPENSEARCH.value)
-        self.neptune_retriever = retrievers.get(RetrieverType.NEPTUNE.value)
         self._os_config = config.indexing.opensearch
 
     def _mode(self, query: SearchQuery) -> str:
@@ -117,9 +117,9 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 results_by_source.get("lightrag_entities", []), "id"
             )
             if entity_ids:
-                expanded = await self._expand_via_neptune(query, entity_ids)
+                expanded = await self._expand_via_graph(query, entity_ids)
                 if expanded:
-                    results_by_source["neptune_entities"] = expanded
+                    results_by_source["graph_entities"] = expanded
 
             if mode == SearchStrategy.MIX.value:
                 results_by_source.update(await self._retrieve_chunks(query))
@@ -159,7 +159,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         self, query: SearchQuery
     ) -> dict[str, list[RetrievalResult]]:
         """Low-level keywords -> entities index (LightRAG local component)."""
-        if not self.opensearch_retriever:
+        if not self.document_retriever:
             return {}
         search_query = SearchQuery(
             query=", ".join(query.ll_keywords),
@@ -169,7 +169,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             suffix=query.suffix,
         )
         try:
-            results = await self.opensearch_retriever.aretrieve(search_query)
+            results = await self.document_retriever.aretrieve(search_query)
             return {"lightrag_entities": results}
         except Exception as e:
             logger.error("Entity retrieval (ll_keywords) failed: %s", e)
@@ -179,7 +179,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         self, query: SearchQuery
     ) -> dict[str, list[RetrievalResult]]:
         """High-level keywords -> relationships index (LightRAG global component)."""
-        if not self.opensearch_retriever:
+        if not self.document_retriever:
             return {}
         search_query = SearchQuery(
             query=", ".join(query.hl_keywords),
@@ -189,7 +189,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             suffix=query.suffix,
         )
         try:
-            results = await self.opensearch_retriever.aretrieve(search_query)
+            results = await self.document_retriever.aretrieve(search_query)
             return {"lightrag_relationships": results}
         except Exception as e:
             logger.error("Relationship retrieval (hl_keywords) failed: %s", e)
@@ -199,7 +199,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         self, query: SearchQuery
     ) -> dict[str, list[RetrievalResult]]:
         """Naive vector chunk retrieval over the text-units index."""
-        if not self.opensearch_retriever:
+        if not self.document_retriever:
             return {}
         search_query = SearchQuery(
             query=query.query,
@@ -209,17 +209,17 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             suffix=query.suffix,
         )
         try:
-            results = await self.opensearch_retriever.aretrieve(search_query)
+            results = await self.document_retriever.aretrieve(search_query)
             return {"lightrag_chunks": results}
         except Exception as e:
             logger.error("Chunk retrieval failed: %s", e)
             return {}
 
-    async def _expand_via_neptune(
+    async def _expand_via_graph(
         self, query: SearchQuery, seed_entity_ids: list[str]
     ) -> list[RetrievalResult]:
         """Expand seed entities through the graph (shared with GraphRAG local)."""
-        if not self.neptune_retriever or not seed_entity_ids:
+        if not self.graph_retriever or not seed_entity_ids:
             return []
         search_query = query.model_copy(deep=True)
         search_query.search_type = SearchType.HYBRID
@@ -228,7 +228,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         search_query.filters = (search_query.filters or {}).copy()
         search_query.filters["id"] = seed_entity_ids
         try:
-            return await self.neptune_retriever.aretrieve(search_query)
+            return await self.graph_retriever.aretrieve(search_query)
         except Exception as e:
             logger.error("Neptune expansion failed: %s", e)
             return []

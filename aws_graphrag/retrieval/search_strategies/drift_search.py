@@ -14,7 +14,6 @@ from aws_graphrag.core import get_logger
 from aws_graphrag.models import (
     Config,
     RetrievalResult,
-    RetrieverType,
     SearchQuery,
     SearchResult,
     SearchStrategy,
@@ -48,8 +47,6 @@ class DriftSearchStrategy(BaseSearchStrategy):
     ):
         super().__init__(config, retrievers, context_builder, boto_session, **kwargs)
         self.drift_config = self.config.search.drift_search
-        self.neptune_retriever = retrievers.get(RetrieverType.NEPTUNE.value)
-        self.opensearch_retriever = retrievers.get(RetrieverType.OPENSEARCH.value)
         self.entity_focus_multiplier = entity_focus_multiplier
         self.ignore_errors = config.processing.ignore_errors
 
@@ -170,7 +167,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
     async def _find_candidate_communities(
         self, query: SearchQuery
     ) -> list[RetrievalResult]:
-        if not self.opensearch_retriever:
+        if not self.document_retriever:
             return []
 
         search_query = query.model_copy(deep=True)
@@ -180,7 +177,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         search_query.top_k = self.config.search.drift_search.initial_top_k
 
         try:
-            return await self.opensearch_retriever.aretrieve(search_query)
+            return await self.document_retriever.aretrieve(search_query)
         except Exception as e:
             logger.error(f"Failed to find candidate communities: {e}")
             return []
@@ -190,7 +187,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         results: list[RetrievalResult], seen_hashes: set[str]
     ) -> None:
         for result in results:
-            seen_hashes.add(compute_hash(result.content, algorithm="md5", length=16))
+            seen_hashes.add(compute_hash(result.content, length=16))
 
     async def _should_stop(
         self, iteration: int, metrics: list[dict[str, Any]], original_query: str
@@ -327,18 +324,18 @@ class DriftSearchStrategy(BaseSearchStrategy):
         tasks = []
         candidate_entity_ids = await self._find_candidate_entities_for_iteration(query)
 
-        if self.neptune_retriever and candidate_entity_ids:
-            neptune_query = query.model_copy(deep=True)
-            neptune_query.query = ""
-            neptune_query.entity_focus = []
-            neptune_query.filters = (neptune_query.filters or {}).copy()
-            neptune_query.filters["id"] = candidate_entity_ids
-            tasks.append(self.neptune_retriever.aretrieve(neptune_query))
+        if self.graph_retriever and candidate_entity_ids:
+            graph_query = query.model_copy(deep=True)
+            graph_query.query = ""
+            graph_query.entity_focus = []
+            graph_query.filters = (graph_query.filters or {}).copy()
+            graph_query.filters["id"] = candidate_entity_ids
+            tasks.append(self.graph_retriever.aretrieve(graph_query))
 
-        if self.opensearch_retriever:
-            opensearch_query = query.model_copy(deep=True)
-            opensearch_query.top_k = query.top_k
-            tasks.append(self.opensearch_retriever.aretrieve(opensearch_query))
+        if self.document_retriever:
+            document_query = query.model_copy(deep=True)
+            document_query.top_k = query.top_k
+            tasks.append(self.document_retriever.aretrieve(document_query))
 
         if not tasks:
             return []
@@ -354,7 +351,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
     async def _find_candidate_entities_for_iteration(
         self, query: SearchQuery
     ) -> list[str]:
-        if not self.opensearch_retriever:
+        if not self.document_retriever:
             return []
 
         n_candidates = len(query.entity_focus) * self.entity_focus_multiplier
@@ -366,7 +363,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         entity_search_query.retrieval_multiplier = 1
 
         try:
-            results = await self.opensearch_retriever.aretrieve(entity_search_query)
+            results = await self.document_retriever.aretrieve(entity_search_query)
             return [
                 str(result.metadata.get("id") or result.source)
                 for result in results
@@ -383,8 +380,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         return [
             result
             for result in results
-            if compute_hash(result.content, algorithm="md5", length=16)
-            not in seen_hashes
+            if compute_hash(result.content, length=16) not in seen_hashes
         ]
 
     def _record_search_metrics(

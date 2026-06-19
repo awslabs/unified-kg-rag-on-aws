@@ -308,7 +308,7 @@ class DataIngestionPipeline:
 
         subdirs.sort()
         directory_identifier = "_".join(subdirs) if subdirs else source_directory.name
-        directory_hash = compute_hash(directory_identifier, algorithm="md5", length=8)
+        directory_hash = compute_hash(directory_identifier, length=8)
 
         return f"pipeline-{directory_hash}-{timestamp}"
 

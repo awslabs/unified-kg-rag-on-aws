@@ -9,6 +9,7 @@ incoming corpus against this registry to compute a :class:`DocumentDelta`
 The reference diff behaviour matches the in-memory ``FakeDocStatusStore`` used in
 tests; both conform structurally to ``aws_graphrag.core.ports.DocStatusPort``.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any

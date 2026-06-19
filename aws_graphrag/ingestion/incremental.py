@@ -13,6 +13,7 @@ Extraction of the delta documents themselves is delegated to the caller (the
 existing 12-stage pipeline run on the filtered subset), so this orchestrator
 stays storage-focused and is exercised end-to-end with in-memory fakes.
 """
+
 from __future__ import annotations
 
 from collections import defaultdict

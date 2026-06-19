@@ -48,8 +48,10 @@ class BasePrompt(ABC):
         enable_prompt_cache: bool = False,
         custom_prompts: "CustomPromptConfig | None" = None,
     ) -> ChatPromptTemplate:
-        system_template = cls.system_prompt_template
-        human_template = cls.human_prompt_template
+        # Concrete prompt subclasses define these dataclass fields as class-level
+        # attributes, so class access is valid at runtime.
+        system_template = cls.system_prompt_template  # type: ignore[misc]
+        human_template = cls.human_prompt_template  # type: ignore[misc]
 
         if custom_prompts:
             custom_system, custom_human = cls._get_custom_prompts(custom_prompts)
@@ -59,7 +61,7 @@ class BasePrompt(ABC):
                 human_template = custom_human
 
         instance = cls(
-            input_variables=cls.input_variables,
+            input_variables=cls.input_variables,  # type: ignore[misc]
             output_variables=cls.output_variables,
             system_prompt_template=system_template,
             human_prompt_template=human_template,

@@ -175,7 +175,7 @@ class HybridScorer(MetricsMixin):
 
     @staticmethod
     def _get_result_key(result: RetrievalResult) -> str:
-        content_hash = compute_hash(result.content, algorithm="md5", length=16)
+        content_hash = compute_hash(result.content, length=16)
         return f"{result.source or 'unknown'}-{content_hash}"
 
     def _apply_diversity_filtering(

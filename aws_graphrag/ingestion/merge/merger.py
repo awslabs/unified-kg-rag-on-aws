@@ -6,6 +6,7 @@ existing (``old``) artifacts plus the freshly computed ``delta`` and returns the
 merged set, preserving the old item's id where the natural key matches so graph
 references stay stable.
 """
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field

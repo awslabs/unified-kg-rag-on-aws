@@ -10,6 +10,7 @@ strategy no longer requires editing dispatch code.
 This mirrors the declarative-factory pattern already used by
 ``ParserFactory._loader_configs`` and ``EvaluationManager.EVALUATOR_MAPPING``.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -17,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeVar
 
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import RetrieverType, SearchStrategy
+from aws_graphrag.models import RetrieverRole, SearchStrategy
 
 if TYPE_CHECKING:
     from aws_graphrag.retrieval.base import BaseSearchStrategy
@@ -31,13 +32,14 @@ class StrategySpec:
 
     Attributes:
         strategy_class: The ``BaseSearchStrategy`` subclass implementing the mode.
-        required_retrievers: Retriever types the strategy needs injected. The
-            ``rag_chain`` builds exactly these and passes them keyed by value.
+        required_roles: Retriever ROLES the strategy needs injected (GRAPH /
+            DOCUMENT), not concrete backends. The composition root binds each
+            role to an adapter, so strategies stay backend-agnostic.
     """
 
     strategy_class: type[BaseSearchStrategy]
-    required_retrievers: tuple[RetrieverType, ...] = field(
-        default=(RetrieverType.OPENSEARCH, RetrieverType.NEPTUNE)
+    required_roles: tuple[RetrieverRole, ...] = field(
+        default=(RetrieverRole.DOCUMENT, RetrieverRole.GRAPH)
     )
 
 
@@ -49,16 +51,16 @@ StrategyT = TypeVar("StrategyT", bound="type[BaseSearchStrategy]")
 def register_strategy(
     strategy: SearchStrategy,
     *,
-    required_retrievers: tuple[RetrieverType, ...] = (
-        RetrieverType.OPENSEARCH,
-        RetrieverType.NEPTUNE,
+    required_roles: tuple[RetrieverRole, ...] = (
+        RetrieverRole.DOCUMENT,
+        RetrieverRole.GRAPH,
     ),
 ) -> Callable[[StrategyT], StrategyT]:
     """Class decorator that registers a search strategy under ``strategy``.
 
     Args:
         strategy: The ``SearchStrategy`` enum value this class implements.
-        required_retrievers: Retriever types to inject when instantiating it.
+        required_roles: Retriever roles to inject when instantiating it.
 
     Raises:
         ValueError: If ``strategy`` is already registered to another class.
@@ -72,7 +74,7 @@ def register_strategy(
                 f"to '{cls.__name__}'."
             )
         _REGISTRY[strategy] = StrategySpec(
-            strategy_class=cls, required_retrievers=tuple(required_retrievers)
+            strategy_class=cls, required_roles=tuple(required_roles)
         )
         logger.debug(
             "Registered search strategy '%s' -> %s", strategy.value, cls.__name__

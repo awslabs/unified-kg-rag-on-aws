@@ -5,6 +5,7 @@ Samples documents from a directory, profiles the corpus domain/language/persona/
 entity-types via Bedrock, and writes domain-adapted ``custom_prompts`` as a YAML
 fragment the user reviews and merges into their config.
 """
+
 from __future__ import annotations
 
 import argparse

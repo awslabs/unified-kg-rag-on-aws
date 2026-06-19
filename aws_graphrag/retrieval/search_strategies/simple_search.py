@@ -1,21 +1,15 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 import time
-from typing import Any
-
-import boto3
 
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import (
-    Config,
     RetrievalResult,
-    RetrieverType,
+    RetrieverRole,
     SearchQuery,
     SearchResult,
     SearchStrategy,
 )
 from aws_graphrag.retrieval.base import (
-    BaseContextBuilder,
-    BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
 from aws_graphrag.retrieval.strategy_registry import register_strategy
@@ -23,28 +17,15 @@ from aws_graphrag.retrieval.strategy_registry import register_strategy
 logger = get_logger(__name__)
 
 
-@register_strategy(
-    SearchStrategy.SIMPLE, required_retrievers=(RetrieverType.OPENSEARCH,)
-)
+@register_strategy(SearchStrategy.SIMPLE, required_roles=(RetrieverRole.DOCUMENT,))
 class SimpleSearchStrategy(BaseSearchStrategy):
-    def __init__(
-        self,
-        config: Config,
-        retrievers: dict[str, BaseGraphRAGRetriever],
-        context_builder: BaseContextBuilder | None = None,
-        boto_session: boto3.Session | None = None,
-        **kwargs: Any,
-    ):
-        super().__init__(config, retrievers, context_builder, boto_session, **kwargs)
-        self.opensearch_retriever = retrievers.get(RetrieverType.OPENSEARCH.value)
-
     async def asearch(self, query: SearchQuery) -> SearchResult:
         start_time = time.time()
         logger.info(
             f"Simple search started - query: '{query.query[:50]}...' ('{query.search_type.value}')"
         )
 
-        all_results = await self._execute_opensearch_retrieval(query)
+        all_results = await self._retrieve_documents(query)
         if not all_results:
             logger.warning(f"No results found for query: '{query.query[:50]}...'")
             return SearchResult(
@@ -79,14 +60,14 @@ class SimpleSearchStrategy(BaseSearchStrategy):
             metadata={},
         )
 
-    async def _execute_opensearch_retrieval(
+    async def _retrieve_documents(
         self, query: SearchQuery
     ) -> dict[str, list[RetrievalResult]]:
-        if not self.opensearch_retriever:
+        if not self.document_retriever:
             return {}
 
         try:
-            results = await self.opensearch_retriever.aretrieve(query)
+            results = await self.document_retriever.aretrieve(query)
             return {"opensearch_all": results} if results else {}
         except Exception as e:
             logger.error(f"OpenSearch retrieval failed: {e}")

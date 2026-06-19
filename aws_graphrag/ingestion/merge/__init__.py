@@ -14,6 +14,7 @@ aws-graphrag's Pydantic domain models (no pandas):
 These functions are pure (old + delta -> merged), so they are exercised entirely
 with in-memory fixtures and back the upsert path in the indexers.
 """
+
 from .merger import (
     DeltaMergeResult,
     merge_communities,

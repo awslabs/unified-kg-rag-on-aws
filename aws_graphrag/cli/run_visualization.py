@@ -6,6 +6,7 @@ Renders visualizations from a previously exported visualization-data JSON
 re-running ingestion. Drives the renderer registry, so any registered renderer
 (``--renderers interactive static``) can be produced independently.
 """
+
 from __future__ import annotations
 
 import argparse

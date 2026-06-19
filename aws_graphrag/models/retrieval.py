@@ -11,6 +11,34 @@ class FusionMethod(str, Enum):
     WEIGHTED = "weighted"
 
 
+class RetrieverRole(str, Enum):
+    """Abstract retriever roles a search strategy depends on.
+
+    Strategies request retrievers by ROLE (what it does), not by concrete
+    backend product. The composition root binds each role to an adapter — GRAPH
+    to a graph store (Neptune today), DOCUMENT to a vector/lexical store
+    (OpenSearch today) — so a backend can be swapped without touching strategy
+    code.
+    """
+
+    GRAPH = "graph"
+    DOCUMENT = "document"
+
+
+class Collection(str, Enum):
+    """Logical artifact collections a strategy can target.
+
+    Backend-neutral retrieval intent: the adapter maps a collection to its own
+    physical name (OpenSearch alias prefix or graph node label), so strategies
+    never reference Neptune labels or OpenSearch index prefixes directly.
+    """
+
+    ENTITIES = "entities"
+    RELATIONSHIPS = "relationships"
+    TEXT_UNITS = "text_units"
+    COMMUNITY_REPORTS = "community_reports"
+
+
 class SearchStrategy(str, Enum):
     AUTO = "auto"
     DRIFT = "drift"

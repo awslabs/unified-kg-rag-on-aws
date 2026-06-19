@@ -3,7 +3,7 @@ import asyncio
 import json
 import time
 import uuid
-from collections.abc import AsyncGenerator, Iterator
+from collections.abc import AsyncGenerator, Callable, Iterator
 from enum import Enum
 from typing import Any
 
@@ -32,7 +32,7 @@ from aws_graphrag.models import (
     Config,
     LanguageModelId,
     MessageRole,
-    RetrieverType,
+    RetrieverRole,
     SearchQuery,
     SearchResult,
     SearchStrategy,
@@ -193,7 +193,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         )
         self.search_strategy_instance: BaseSearchStrategy | None = None
         self._retriever_cache: dict[
-            tuple[RetrieverType, int | None], BaseGraphRAGRetriever
+            tuple[RetrieverRole, int | None], BaseGraphRAGRetriever
         ] = {}
         self._cached_loop_id: int | None = None
         self.chain = self._build_chain()
@@ -447,9 +447,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     ) -> BaseSearchStrategy:
         spec = get_strategy_spec(strategy_type)
 
+        # Inject retrievers keyed by abstract role ("graph"/"document"), so the
+        # strategy never names a concrete backend.
         retrievers = {
-            retriever_type.value: self._get_retriever(retriever_type)
-            for retriever_type in spec.required_retrievers
+            role.value: self._get_retriever(role) for role in spec.required_roles
         }
 
         context_builder: BaseContextBuilder | None = None
@@ -457,7 +458,21 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             config=self.config, retrievers=retrievers, context_builder=context_builder
         )
 
-    def _get_retriever(self, retriever_type: RetrieverType) -> BaseGraphRAGRetriever:
+    def _build_graph_retriever(self) -> BaseGraphRAGRetriever:
+        neptune_client = NeptuneClient(
+            config=self.config, boto_session=self.boto_session
+        )
+        return NeptuneRetriever(config=self.config, neptune_client=neptune_client)
+
+    def _build_document_retriever(self) -> BaseGraphRAGRetriever:
+        opensearch_client = OpenSearchClient(
+            config=self.config, boto_session=self.boto_session
+        )
+        return OpenSearchRetriever(
+            config=self.config, opensearch_client=opensearch_client
+        )
+
+    def _get_retriever(self, role: RetrieverRole) -> BaseGraphRAGRetriever:
         current_loop_id = self._get_current_loop_id()
 
         # Invalidate cache if event loop changed
@@ -470,28 +485,21 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             self._retriever_cache.clear()
             self._cached_loop_id = current_loop_id
 
-        cache_key = (retriever_type, current_loop_id)
+        cache_key = (role, current_loop_id)
         if cache_key in self._retriever_cache:
             return self._retriever_cache[cache_key]
 
-        retriever: BaseGraphRAGRetriever
-        if retriever_type == RetrieverType.OPENSEARCH:
-            opensearch_client = OpenSearchClient(
-                config=self.config, boto_session=self.boto_session
-            )
-            retriever = OpenSearchRetriever(
-                config=self.config, opensearch_client=opensearch_client
-            )
-        elif retriever_type == RetrieverType.NEPTUNE:
-            neptune_client = NeptuneClient(
-                config=self.config, boto_session=self.boto_session
-            )
-            retriever = NeptuneRetriever(
-                config=self.config, neptune_client=neptune_client
-            )
-        else:
-            raise ValueError(f"Unknown retriever type: '{retriever_type}'")
+        # Role -> adapter builder. Swapping a backend means changing the builder
+        # bound to a role here, not editing any strategy.
+        builders: dict[RetrieverRole, Callable[[], BaseGraphRAGRetriever]] = {
+            RetrieverRole.GRAPH: self._build_graph_retriever,
+            RetrieverRole.DOCUMENT: self._build_document_retriever,
+        }
+        builder = builders.get(role)
+        if builder is None:
+            raise ValueError(f"No retriever bound to role: '{role}'")
 
+        retriever = builder()
         self._retriever_cache[cache_key] = retriever
         return retriever
 

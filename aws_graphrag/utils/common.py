@@ -9,16 +9,16 @@ RE_EXTRA_SPACES = re.compile(r"\s+")
 
 
 def compute_hash(data: str, algorithm: str = "sha256", length: int = 16) -> str:
-    encoded_data = data.encode("utf-8")
+    """Compute a truncated content hash for dedup / cache-key / id purposes.
 
-    algorithm = algorithm.lower()
-    if algorithm == "md5":
-        hash_obj = hashlib.md5(encoded_data, usedforsecurity=False)
-    elif algorithm == "sha256":
-        hash_obj = hashlib.sha256(encoded_data)
-    else:
+    SHA-256 is used for all hashing (no MD5) — these are content fingerprints,
+    not security digests, but standardizing on SHA-256 avoids weak-algorithm
+    findings and keeps one code path. ``algorithm`` is accepted for backward
+    compatibility; only "sha256" is supported.
+    """
+    if algorithm.lower() != "sha256":
         raise ValueError(f"Unsupported algorithm: '{algorithm}'")
-
+    hash_obj = hashlib.sha256(data.encode("utf-8"))
     return hash_obj.hexdigest()[:length]
 
 

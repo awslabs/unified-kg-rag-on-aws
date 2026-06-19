@@ -1,25 +1,20 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
-"""Hexagonal (ports & adapters) interfaces for aws-graphrag.
+"""Hexagonal (ports & adapters) interfaces owned by the domain core.
 
-A *port* is an abstract interface owned by the domain core. *Adapters* are the
-concrete implementations that bind a port to an external technology — Neptune,
-OpenSearch, DynamoDB, S3, Bedrock. Domain and algorithm code depends only on
-ports, never on a specific adapter, so backends can be swapped or faked (see
-``tests/fixtures/fakes``) without touching business logic.
+A *port* is an abstract interface the domain depends on; *adapters* are the
+concrete implementations binding it to a technology. Ports live here so domain
+code never imports a concrete backend.
 
-These ports are introduced incrementally (strangler pattern). ``DocStatusPort``
-is exercised today via the in-memory fake; ``GraphStorePort`` and
-``VectorStorePort`` declare the forward surface (incl. the upsert/delete methods
-M2/M3 will add) that existing indexers will be migrated behind — they are not
-yet wired into the concrete classes. They are defined as ``typing.Protocol`` so
-classes conform structurally without inheriting, avoiding a base-class swap.
+``DocStatusPort`` is the document-status registry boundary used by incremental
+indexing (adapter: ``aws_graphrag.aws.dynamodb``; in-memory fake in tests).
+
+The write-side store contracts (full + delta) live as ABCs in
+``aws_graphrag.storage.base`` (``GraphIndexer`` / ``VectorIndexer``) and the
+read-side retrieval contract is ``aws_graphrag.retrieval.base.BaseGraphRAGRetriever`` —
+both are real, implemented ports; they are kept next to their adapters rather
+than duplicated here.
 """
-from .doc_status import DocStatusPort
-from .graph_store import GraphStorePort
-from .vector_store import VectorStorePort
 
-__all__ = [
-    "DocStatusPort",
-    "GraphStorePort",
-    "VectorStorePort",
-]
+from .doc_status import DocStatusPort
+
+__all__ = ["DocStatusPort"]
