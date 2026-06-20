@@ -6,6 +6,8 @@ from datetime import datetime
 from multiprocessing import cpu_count
 from typing import Any, NamedTuple
 
+from aws_graphrag.adapters.storage.neptune_indexer import NeptuneIndexer
+from aws_graphrag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import (
     Claim,
@@ -18,8 +20,6 @@ from aws_graphrag.models import (
 )
 
 from .base import BaseIndexer, IndexingStats
-from .neptune_indexer import NeptuneIndexer
-from .opensearch_indexer import OpenSearchIndexer
 
 logger = get_logger(__name__)
 

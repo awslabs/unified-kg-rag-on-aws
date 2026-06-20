@@ -6,6 +6,11 @@ from typing import Any
 import boto3
 import networkx as nx
 
+from aws_graphrag.adapters.renderers import (
+    RenderContext,
+    get_renderer_class,
+    registered_renderers,
+)
 from aws_graphrag.core import get_logger
 from aws_graphrag.ingestion import CommunityDetector, GraphAnalyzer
 from aws_graphrag.models import Config
@@ -13,11 +18,6 @@ from aws_graphrag.models import Config
 from .embeddings.dimensionality import DimensionalityReducer
 from .embeddings.node2vec import BedrockNodeEmbedder
 from .exporters.html_exporter import HTMLExporter
-from .renderers import (
-    RenderContext,
-    get_renderer_class,
-    registered_renderers,
-)
 
 logger = get_logger(__name__)
 

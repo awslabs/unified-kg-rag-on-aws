@@ -8,17 +8,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aws_graphrag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from aws_graphrag.models import Claim
-from aws_graphrag.storage.opensearch_indexer import OpenSearchIndexer
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
 def indexer(mocker):
-    mocker.patch("aws_graphrag.storage.opensearch_indexer.OpenSearchClient")
+    mocker.patch("aws_graphrag.adapters.storage.opensearch_indexer.OpenSearchClient")
     factory = mocker.patch(
-        "aws_graphrag.storage.opensearch_indexer.BedrockEmbeddingModelFactory"
+        "aws_graphrag.adapters.storage.opensearch_indexer.BedrockEmbeddingModelFactory"
     )
     factory.return_value.get_model_info.return_value = MagicMock(dimensions=1024)
     factory.return_value.get_model.return_value = MagicMock()
@@ -61,10 +61,10 @@ def test_claims_mapping_has_knn_vector(indexer) -> None:
 
 def test_claims_index_is_retrievable(indexer) -> None:
     # The claims index prefix is wired into the retriever field mappings.
-    from aws_graphrag.models import Config
-    from aws_graphrag.retrieval.retrievers.opensearch_retriever import (
+    from aws_graphrag.adapters.retrievers.opensearch_retriever import (
         OpenSearchRetriever,
     )
+    from aws_graphrag.models import Config
 
     retriever = OpenSearchRetriever.__new__(OpenSearchRetriever)
     retriever._opensearch_config = Config().indexing.opensearch

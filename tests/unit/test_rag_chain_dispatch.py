@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-import aws_graphrag.retrieval.search_strategies  # noqa: F401  (registers strategies)
+import aws_graphrag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from aws_graphrag.models import Config, RetrieverRole, SearchStrategy
 from aws_graphrag.retrieval.rag_chain import GraphRAGChain
 from aws_graphrag.retrieval.strategy_registry import (

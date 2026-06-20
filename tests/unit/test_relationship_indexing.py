@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
+from aws_graphrag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from aws_graphrag.models import Relationship
-from aws_graphrag.storage.opensearch_indexer import OpenSearchIndexer
 
 pytestmark = pytest.mark.unit
 

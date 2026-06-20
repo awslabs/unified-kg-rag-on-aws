@@ -27,6 +27,16 @@ from aws_graphrag.adapters.aws import (
     NeptuneClient,
     OpenSearchClient,
 )
+from aws_graphrag.adapters.retrievers import NeptuneRetriever, OpenSearchRetriever
+
+# Importing the package executes each strategy module's @register_strategy
+# decorator, populating the strategy registry used by _get_strategy_instance.
+from aws_graphrag.adapters.search_strategies import (  # noqa: F401
+    DriftSearchStrategy,
+    GlobalSearchStrategy,
+    LocalSearchStrategy,
+    SimpleSearchStrategy,
+)
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import (
     Config,
@@ -51,16 +61,6 @@ from aws_graphrag.utils import setup_chain
 
 from .base import BaseContextBuilder, BaseGraphRAGRetriever, BaseSearchStrategy
 from .memory_manager import get_memory_manager
-from .retrievers import NeptuneRetriever, OpenSearchRetriever
-
-# Importing the package executes each strategy module's @register_strategy
-# decorator, populating the strategy registry used by _get_strategy_instance.
-from .search_strategies import (  # noqa: F401
-    DriftSearchStrategy,
-    GlobalSearchStrategy,
-    LocalSearchStrategy,
-    SimpleSearchStrategy,
-)
 from .strategy_registry import get_strategy_spec
 from .token_manager import TokenManager
 

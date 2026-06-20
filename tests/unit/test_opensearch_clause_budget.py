@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.retrieval.retrievers.opensearch_retriever import OpenSearchRetriever
+from aws_graphrag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 
 pytestmark = pytest.mark.unit
 

@@ -8,15 +8,15 @@ from pathlib import Path
 
 import pytest
 
-from aws_graphrag.cli.run_visualization import load_render_context, run_visualization
-from aws_graphrag.models import Config
-from aws_graphrag.visualization.renderers import (
+from aws_graphrag.adapters.renderers import (
     BaseRenderer,
     RenderContext,
     get_renderer_class,
     register_renderer,
     registered_renderers,
 )
+from aws_graphrag.cli.run_visualization import load_render_context, run_visualization
+from aws_graphrag.models import Config
 
 pytestmark = pytest.mark.unit
 

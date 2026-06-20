@@ -14,6 +14,7 @@ from langchain_core.prompts import PromptTemplate
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import EvaluationException, get_logger
+from aws_graphrag.evaluation.base import BaseGraphRAGEvaluator
 from aws_graphrag.models import (
     Config,
     EvaluationMetric,
@@ -23,8 +24,6 @@ from aws_graphrag.models import (
     EvaluationResult,
     EvaluatorType,
 )
-
-from .base import BaseGraphRAGEvaluator
 
 logger = get_logger(__name__)
 PARTIAL_CORRECTNESS_PROMPT_TEMPLATE = """You are an expert evaluator tasked with assessing the correctness of a

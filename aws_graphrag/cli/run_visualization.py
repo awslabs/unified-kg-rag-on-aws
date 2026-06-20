@@ -17,14 +17,14 @@ from typing import Any
 
 import networkx as nx
 
-from aws_graphrag.core import get_config, get_logger
-from aws_graphrag.ingestion.community_detector import HierarchicalCommunity
-from aws_graphrag.models import Community
-from aws_graphrag.visualization.renderers import (
+from aws_graphrag.adapters.renderers import (
     RenderContext,
     get_renderer_class,
     registered_renderers,
 )
+from aws_graphrag.core import get_config, get_logger
+from aws_graphrag.ingestion.community_detector import HierarchicalCommunity
+from aws_graphrag.models import Community
 
 logger = get_logger(__name__)
 

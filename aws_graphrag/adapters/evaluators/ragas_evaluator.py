@@ -18,10 +18,14 @@ from ragas.metrics import (
     faithfulness,
 )
 
-from aws_graphrag.adapters.aws import BedrockEmbeddingModelFactory, BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws import (
+    BedrockEmbeddingModelFactory,
+    BedrockLanguageModelFactory,
+)
 from aws_graphrag.adapters.aws.bedrock import get_assumed_role_boto_session
 from aws_graphrag.adapters.aws.token_counter import BedrockTokenCounter
 from aws_graphrag.core import EvaluationException, get_logger
+from aws_graphrag.evaluation.base import BaseGraphRAGEvaluator
 from aws_graphrag.models import (
     Config,
     EvaluationMetric,
@@ -31,8 +35,6 @@ from aws_graphrag.models import (
     EvaluationResult,
     EvaluatorType,
 )
-
-from .base import BaseGraphRAGEvaluator
 
 logger = get_logger(__name__)
 

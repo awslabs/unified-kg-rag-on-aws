@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-import aws_graphrag.retrieval.search_strategies  # noqa: F401
+import aws_graphrag.adapters.search_strategies  # noqa: F401
 from aws_graphrag.models import (
     Config,
     RetrievalResult,

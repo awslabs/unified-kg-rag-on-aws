@@ -17,7 +17,7 @@ from aws_graphrag.models import (
     Relationship,
     TextUnit,
 )
-from aws_graphrag.storage import IndexingStats, VectorIndexer
+from aws_graphrag.storage.base import IndexingStats, VectorIndexer
 from aws_graphrag.utils.common import compute_hash
 
 logger = get_logger(__name__)
