@@ -260,7 +260,6 @@ dependencies = [
     { name = "boto3" },
     { name = "datasets" },
     { name = "datasketch" },
-    { name = "future" },
     { name = "graspologic" },
     { name = "gremlinpython" },
     { name = "langchain" },
@@ -344,7 +343,6 @@ requires-dist = [
     { name = "boto3-stubs", marker = "extra == 'dev'", specifier = "~=1.42.62" },
     { name = "datasets", specifier = ">=2.14.0,<4.0.0" },
     { name = "datasketch", specifier = ">=1.6.5" },
-    { name = "future", specifier = ">=1.0.0" },
     { name = "graspologic", specifier = ">=3.4.1" },
     { name = "gremlinpython", specifier = ">=3.6.3,<3.7.0" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.100.0" },
@@ -4274,14 +4272,14 @@ full = [
 
 [[package]]
 name = "types-boto3-full"
-version = "1.43.33"
+version = "1.43.34"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4a/21/ff598dc51f8d4c7b3deb28dfadea29df7dab878857e7a4f62215698a39cb/types_boto3_full-1.43.33.tar.gz", hash = "sha256:094f2784376e4b2ddab3b1c2e71a8a7e81105783b01389a2f09ad8b4c3a876a8", size = 8928927, upload-time = "2026-06-19T03:42:28.752Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/4a/b9a89ef70cec1d791c1d8973d7b189d2cd51ef402907b96f831562c2d9bc/types_boto3_full-1.43.34.tar.gz", hash = "sha256:67f85599862a9f561ca312cb6c123b7080d4ec50d17f4889edf2b860af5788a1", size = 8933633, upload-time = "2026-06-20T02:46:13.765Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/54/2d/ce28648d05387d579d3ac8e0b5b21b4449a2b06407806e3335782a5431b8/types_boto3_full-1.43.33-py3-none-any.whl", hash = "sha256:b80d26446458746b06ccc00e69edb0533b5797919389b46f221dd54d4b618dd6", size = 13457257, upload-time = "2026-06-19T03:42:25.068Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/d5/cc371d75b80bc13b3a8c1dc9e7a97f81dc51c0b7b63467250192cb583a59/types_boto3_full-1.43.34-py3-none-any.whl", hash = "sha256:841e33dcf42af1e93224996e1e1dbee4b012595e6f1faa2f7af629c4d0ce7957", size = 13460686, upload-time = "2026-06-20T02:46:09.851Z" },
 ]
 
 [[package]]

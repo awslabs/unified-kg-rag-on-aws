@@ -31,7 +31,6 @@ dependencies = [
     "boto3>=1.38.45",
     "datasets>=2.14.0,<4.0.0",
     "datasketch>=1.6.5",
-    "future>=1.0.0",
     "graspologic>=3.4.1",
     "gremlinpython>=3.6.3,<3.7.0",
     "langchain>=0.3.26,<1.0.0",

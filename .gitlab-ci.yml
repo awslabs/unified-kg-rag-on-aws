@@ -22,6 +22,10 @@ default:
 variables:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   UV_LINK_MODE: copy
+  # mypy with the boto3 stubs peaks well above 1 GB on a cold run; the default
+  # k8s runner limit OOM-killed (exit 137) the quality job. Give it headroom.
+  KUBERNETES_MEMORY_REQUEST: "2Gi"
+  KUBERNETES_MEMORY_LIMIT: "4Gi"
 
 workflow:
   rules:
