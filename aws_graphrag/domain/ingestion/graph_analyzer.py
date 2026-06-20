@@ -5,8 +5,7 @@ from typing import Any
 import networkx as nx
 from pydantic import BaseModel, Field
 
-from aws_graphrag.adapters.ingestion.community_detector import CommunityMetrics
-from aws_graphrag.domain.models import Config
+from aws_graphrag.domain.models import CommunityMetrics, Config
 from aws_graphrag.shared import GraphError, get_logger
 
 logger = get_logger(__name__)

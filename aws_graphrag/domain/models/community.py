@@ -1,7 +1,30 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from .base import Named
+
+
+class CommunityMetrics(BaseModel):
+    """Graph-level community-structure statistics (detector output, domain model)."""
+
+    modularity: float = Field(
+        description="Modularity score measuring the quality of community division (higher values indicate better community structure)"
+    )
+    num_communities: int = Field(
+        description="Total number of distinct communities identified in the graph"
+    )
+    average_community_size: float = Field(
+        description="Mean number of nodes per community across all detected communities"
+    )
+    largest_community_size: int = Field(
+        description="Number of nodes in the most populous community"
+    )
+    smallest_community_size: int = Field(
+        description="Number of nodes in the least populous community"
+    )
+    community_size_distribution: dict[int, int] = Field(
+        description="Histogram mapping community sizes to their frequency counts (size -> number of communities with that size)"
+    )
 
 
 class Community(Named):

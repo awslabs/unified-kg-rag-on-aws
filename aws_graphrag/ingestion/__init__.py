@@ -11,7 +11,6 @@ from aws_graphrag.adapters.ingestion.chunker import (
 from aws_graphrag.adapters.ingestion.claim_extractor import ClaimExtractor
 from aws_graphrag.adapters.ingestion.community_detector import (
     CommunityDetector,
-    CommunityMetrics,
     HierarchicalCommunity,
 )
 from aws_graphrag.adapters.ingestion.gleaner import (
@@ -69,6 +68,7 @@ from aws_graphrag.domain.ingestion.graph_resolver import (
     RelationshipResolver,
 )
 from aws_graphrag.domain.ingestion.incremental import IncrementalIndexer
+from aws_graphrag.domain.models import CommunityMetrics
 
 __all__ = [
     "BaseParser",

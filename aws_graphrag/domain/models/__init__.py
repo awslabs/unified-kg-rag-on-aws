@@ -1,7 +1,7 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 from .base import Identified, Named
 from .cache import CacheEntry, CacheIndex, CacheStats, CacheStrategy
-from .community import Community
+from .community import Community, CommunityMetrics
 from .community_report import CommunityReport
 from .config import (
     ChunkingStrategy,
@@ -72,6 +72,7 @@ __all__ = [
     "Claim",
     "Collection",
     "Community",
+    "CommunityMetrics",
     "CommunityReport",
     "Config",
     "Constants",

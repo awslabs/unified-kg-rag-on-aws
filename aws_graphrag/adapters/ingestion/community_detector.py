@@ -11,7 +11,12 @@ from pydantic import BaseModel, Field
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.domain.ingestion.base_processor import BaseProcessor
-from aws_graphrag.domain.models import Community, CommunityReport, Config
+from aws_graphrag.domain.models import (
+    Community,
+    CommunityMetrics,
+    CommunityReport,
+    Config,
+)
 from aws_graphrag.domain.prompts import CommunityReportPrompt
 from aws_graphrag.shared import GraphError, get_logger
 from aws_graphrag.shared.utils import (
@@ -22,27 +27,6 @@ from aws_graphrag.shared.utils import (
 )
 
 logger = get_logger(__name__)
-
-
-class CommunityMetrics(BaseModel):
-    modularity: float = Field(
-        description="Modularity score measuring the quality of community division (higher values indicate better community structure)"
-    )
-    num_communities: int = Field(
-        description="Total number of distinct communities identified in the graph"
-    )
-    average_community_size: float = Field(
-        description="Mean number of nodes per community across all detected communities"
-    )
-    largest_community_size: int = Field(
-        description="Number of nodes in the most populous community"
-    )
-    smallest_community_size: int = Field(
-        description="Number of nodes in the least populous community"
-    )
-    community_size_distribution: dict[int, int] = Field(
-        description="Histogram mapping community sizes to their frequency counts (size -> number of communities with that size)"
-    )
 
 
 class HierarchicalCommunity(BaseModel):
