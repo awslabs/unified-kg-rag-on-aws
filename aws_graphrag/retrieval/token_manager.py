@@ -9,9 +9,8 @@ from pydantic import BaseModel, Field
 from aws_graphrag.adapters.aws.bedrock import get_assumed_role_boto_session
 from aws_graphrag.adapters.aws.token_counter import BedrockTokenCounter
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import Config, RetrievalResult
-
-from .mixins import MetricsMixin
+from aws_graphrag.domain.models import Config, RetrievalResult
+from aws_graphrag.domain.retrieval.mixins import MetricsMixin
 
 logger = get_logger(__name__)
 

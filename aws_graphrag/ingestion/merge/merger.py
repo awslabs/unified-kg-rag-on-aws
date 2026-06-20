@@ -12,7 +12,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import Community, CommunityReport, Entity, Relationship
+from aws_graphrag.domain.models import Community, CommunityReport, Entity, Relationship
 from aws_graphrag.utils.common import normalize_name
 
 logger = get_logger(__name__)

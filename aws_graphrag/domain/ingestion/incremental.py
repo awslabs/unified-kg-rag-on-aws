@@ -20,12 +20,12 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from aws_graphrag.core import get_logger
-from aws_graphrag.ingestion.delta_detector import (
+from aws_graphrag.domain.ingestion.delta_detector import (
     compute_doc_id,
     detect_delta,
     filter_documents_to_process,
 )
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     Claim,
     Community,
     CommunityReport,

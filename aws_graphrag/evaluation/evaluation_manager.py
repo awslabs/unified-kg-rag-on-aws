@@ -11,7 +11,7 @@ from langchain_core.runnables import Runnable
 from aws_graphrag.adapters.evaluators.langchain_evaluator import LangChainEvaluator
 from aws_graphrag.adapters.evaluators.ragas_evaluator import RagasEvaluator
 from aws_graphrag.core import EvaluationException, get_logger
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     Config,
     EvaluationGroundTruth,
     EvaluationQuery,

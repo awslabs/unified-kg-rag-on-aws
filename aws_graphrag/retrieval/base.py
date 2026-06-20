@@ -10,7 +10,7 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     Config,
     Constants,
     ContextBuilderResult,
@@ -18,9 +18,9 @@ from aws_graphrag.models import (
     SearchQuery,
     SearchResult,
 )
+from aws_graphrag.domain.retrieval.mixins import MetricsMixin
 
 from .hybrid_scorer import HybridScorer
-from .mixins import MetricsMixin
 from .token_manager import TokenManager
 
 logger = get_logger(__name__)
@@ -146,14 +146,14 @@ class BaseSearchStrategy(MetricsMixin, ABC):
     @property
     def graph_retriever(self) -> BaseGraphRAGRetriever | None:
         """The retriever bound to the GRAPH role (graph traversal/expansion)."""
-        from aws_graphrag.models import RetrieverRole
+        from aws_graphrag.domain.models import RetrieverRole
 
         return self.retrievers.get(RetrieverRole.GRAPH.value)
 
     @property
     def document_retriever(self) -> BaseGraphRAGRetriever | None:
         """The retriever bound to the DOCUMENT role (vector/lexical lookup)."""
-        from aws_graphrag.models import RetrieverRole
+        from aws_graphrag.domain.models import RetrieverRole
 
         return self.retrievers.get(RetrieverRole.DOCUMENT.value)
 

@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import pytest
 
+from aws_graphrag.domain.models import Community, CommunityReport, Entity, Relationship
 from aws_graphrag.ingestion.merge import (
     merge_communities,
     merge_community_reports,
     merge_entities,
     merge_relationships,
 )
-from aws_graphrag.models import Community, CommunityReport, Entity, Relationship
 
 pytestmark = pytest.mark.unit
 

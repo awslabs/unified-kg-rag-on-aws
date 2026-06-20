@@ -6,7 +6,7 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import SecretStr, ValidationError
 
-from aws_graphrag.models import Config
+from aws_graphrag.domain.models import Config
 
 
 class ConfigLoader:

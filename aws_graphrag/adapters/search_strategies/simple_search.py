@@ -2,17 +2,17 @@
 import time
 
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
     SearchResult,
     SearchStrategy,
 )
+from aws_graphrag.domain.retrieval.strategy_registry import register_strategy
 from aws_graphrag.retrieval.base import (
     BaseSearchStrategy,
 )
-from aws_graphrag.retrieval.strategy_registry import register_strategy
 
 logger = get_logger(__name__)
 

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from aws_graphrag.adapters.storage.opensearch_indexer import OpenSearchIndexer
-from aws_graphrag.models import Claim
+from aws_graphrag.domain.models import Claim
 
 pytestmark = pytest.mark.unit
 
@@ -22,7 +22,7 @@ def indexer(mocker):
     )
     factory.return_value.get_model_info.return_value = MagicMock(dimensions=1024)
     factory.return_value.get_model.return_value = MagicMock()
-    from aws_graphrag.models import Config
+    from aws_graphrag.domain.models import Config
 
     return OpenSearchIndexer(config=Config())
 
@@ -64,7 +64,7 @@ def test_claims_index_is_retrievable(indexer) -> None:
     from aws_graphrag.adapters.retrievers.opensearch_retriever import (
         OpenSearchRetriever,
     )
-    from aws_graphrag.models import Config
+    from aws_graphrag.domain.models import Config
 
     retriever = OpenSearchRetriever.__new__(OpenSearchRetriever)
     retriever._opensearch_config = Config().indexing.opensearch

@@ -16,7 +16,7 @@ from pathlib import Path
 import yaml
 
 from aws_graphrag.core import get_config, get_logger
-from aws_graphrag.prompts.tuner import PromptTuner
+from aws_graphrag.domain.prompts.tuner import PromptTuner
 
 logger = get_logger(__name__)
 

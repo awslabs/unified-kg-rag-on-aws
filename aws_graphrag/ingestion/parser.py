@@ -14,7 +14,7 @@ from langchain_community.document_loaders.base import BaseLoader
 from pydantic import BaseModel, Field
 
 from aws_graphrag.core import DataProcessingError, get_logger
-from aws_graphrag.models import Config, Document
+from aws_graphrag.domain.models import Config, Document
 from aws_graphrag.utils import convert_langchain_to_document
 
 logger = get_logger(__name__)

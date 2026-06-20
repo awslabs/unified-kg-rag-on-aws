@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from .base import BasePrompt
 
 if TYPE_CHECKING:
-    from ..models.config import CustomPromptConfig
+    from aws_graphrag.domain.models.config import CustomPromptConfig
 
 
 @dataclass(frozen=True)

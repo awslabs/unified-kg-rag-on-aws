@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from aws_graphrag.models.document import DocStatusRecord, DocumentDelta
+    from aws_graphrag.domain.models.document import DocStatusRecord, DocumentDelta
 
 
 @runtime_checkable

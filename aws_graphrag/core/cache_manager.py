@@ -7,7 +7,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     CacheEntry,
     CacheIndex,
     CacheStats,

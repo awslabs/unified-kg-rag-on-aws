@@ -12,7 +12,7 @@ from langchain_core.prompts import (
 )
 
 if TYPE_CHECKING:
-    from ..models.config import CustomPromptConfig
+    from aws_graphrag.domain.models.config import CustomPromptConfig
 
 
 @dataclass(frozen=True)

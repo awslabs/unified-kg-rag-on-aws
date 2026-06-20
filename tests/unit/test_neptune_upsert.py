@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.models import Config, Entity, Relationship
+from aws_graphrag.domain.models import Config, Entity, Relationship
 
 pytestmark = pytest.mark.unit
 

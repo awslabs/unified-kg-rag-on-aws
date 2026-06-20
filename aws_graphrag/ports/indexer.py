@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     Community,
     CommunityReport,
     Config,
@@ -148,7 +148,7 @@ class GraphIndexer(BaseIndexer):
 
     This ABC is the single write-side contract for graph stores: the full-run
     ``index_*`` methods plus the incremental ``upsert_*``/``delete_by_id`` surface
-    used by :class:`~aws_graphrag.ingestion.incremental.IncrementalIndexer`.
+    used by :class:`~aws_graphrag.domain.ingestion.incremental.IncrementalIndexer`.
     Adapters (e.g. NeptuneIndexer) implement it; nothing depends on a concrete
     backend.
     """

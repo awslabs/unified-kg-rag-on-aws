@@ -7,7 +7,11 @@ from typing import Any
 import boto3
 
 from aws_graphrag.core import PipelineStageError, get_logger
-from aws_graphrag.models import (
+from aws_graphrag.domain.ingestion.claim_resolver import ClaimResolver
+from aws_graphrag.domain.ingestion.graph_analyzer import GraphAnalyzer
+from aws_graphrag.domain.ingestion.graph_builder import GraphBuilder
+from aws_graphrag.domain.ingestion.graph_resolver import GraphResolver
+from aws_graphrag.domain.models import (
     Config,
     Document,
     PipelineContext,
@@ -19,13 +23,9 @@ from aws_graphrag.storage import IndexingManager
 
 from .chunker import ChunkerFactory
 from .claim_extractor import ClaimExtractor
-from .claim_resolver import ClaimResolver
 from .community_detector import CommunityDetector, CommunityMetrics
 from .gleaner import GraphGleaner
-from .graph_analyzer import GraphAnalyzer
-from .graph_builder import GraphBuilder
 from .graph_extractor import GraphExtractor
-from .graph_resolver import GraphResolver
 from .loader import DirectoryLoader
 from .parser import ParserFactory
 from .translator import TextUnitTranslator
@@ -267,7 +267,7 @@ class DocumentLoadingStage(PipelineStage):
         """
         try:
             from aws_graphrag.adapters.aws import DynamoDBDocStatusStore
-            from aws_graphrag.ingestion.delta_detector import (
+            from aws_graphrag.domain.ingestion.delta_detector import (
                 detect_delta,
                 filter_documents_to_process,
             )

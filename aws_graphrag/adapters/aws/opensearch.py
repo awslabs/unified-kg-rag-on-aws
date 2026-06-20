@@ -16,7 +16,7 @@ from opensearchpy.helpers import streaming_bulk
 from requests_aws4auth import AWS4Auth
 
 from aws_graphrag.core import AWSServiceError, get_logger
-from aws_graphrag.models import Config
+from aws_graphrag.domain.models import Config
 
 logger = get_logger(__name__)
 

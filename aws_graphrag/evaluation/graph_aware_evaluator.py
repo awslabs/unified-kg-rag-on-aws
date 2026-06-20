@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Any
 
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     Config,
     EvaluationMetric,
     EvaluationMetricType,

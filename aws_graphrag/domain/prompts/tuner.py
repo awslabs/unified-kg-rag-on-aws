@@ -19,8 +19,8 @@ from langchain_core.output_parsers import StrOutputParser
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import Config
-from aws_graphrag.prompts import CorpusProfilePrompt, ExtractionExamplesPrompt
+from aws_graphrag.domain.models import Config
+from aws_graphrag.domain.prompts import CorpusProfilePrompt, ExtractionExamplesPrompt
 from aws_graphrag.utils import setup_chain
 
 logger = get_logger(__name__)

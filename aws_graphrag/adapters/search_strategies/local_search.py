@@ -5,7 +5,7 @@ from typing import Any, ClassVar
 import boto3
 
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     Config,
     RetrievalResult,
     SearchQuery,
@@ -13,12 +13,12 @@ from aws_graphrag.models import (
     SearchStrategy,
     SearchType,
 )
+from aws_graphrag.domain.retrieval.strategy_registry import register_strategy
 from aws_graphrag.retrieval.base import (
     BaseContextBuilder,
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
-from aws_graphrag.retrieval.strategy_registry import register_strategy
 
 logger = get_logger(__name__)
 

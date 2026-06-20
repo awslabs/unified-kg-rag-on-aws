@@ -8,8 +8,8 @@ from pydantic import BaseModel, Field
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import Config, LanguageCode, TextUnit
-from aws_graphrag.prompts import TextTranslationPrompt
+from aws_graphrag.domain.models import Config, LanguageCode, TextUnit
+from aws_graphrag.domain.prompts import TextTranslationPrompt
 from aws_graphrag.utils import BatchProcessor, setup_chain
 
 logger = get_logger(__name__)

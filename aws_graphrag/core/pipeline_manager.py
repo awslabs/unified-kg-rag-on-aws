@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     Claim,
     Community,
     CommunityReport,

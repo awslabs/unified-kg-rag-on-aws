@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.ingestion.base_processor import (
+from aws_graphrag.domain.ingestion.base_processor import (
     check_entity_relevance_task,
     check_relationship_relevance_task,
 )
-from aws_graphrag.models import Entity, Relationship
+from aws_graphrag.domain.models import Entity, Relationship
 
 pytestmark = pytest.mark.unit
 

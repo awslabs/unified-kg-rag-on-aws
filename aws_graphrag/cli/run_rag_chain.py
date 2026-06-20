@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from rich.panel import Panel
 
 from aws_graphrag.core import get_config, get_logger
-from aws_graphrag.models import Constants, SearchStrategy, SearchType
+from aws_graphrag.domain.models import Constants, SearchStrategy, SearchType
 from aws_graphrag.retrieval import ChainMode, GraphRAGChain, RAGInput, create_rag_chain
 from aws_graphrag.utils import console, display_ascii_art
 

@@ -18,7 +18,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import Config, DocStatusRecord, DocumentDelta
+from aws_graphrag.domain.models import Config, DocStatusRecord, DocumentDelta
 
 if TYPE_CHECKING:
     from types_boto3_dynamodb import DynamoDBClient

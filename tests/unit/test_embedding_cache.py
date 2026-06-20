@@ -20,7 +20,7 @@ def indexer(mocker):
     )
     factory.return_value.get_model_info.return_value = MagicMock(dimensions=1024)
     factory.return_value.get_model.return_value = MagicMock()
-    from aws_graphrag.models import Config
+    from aws_graphrag.domain.models import Config
 
     ix = OpenSearchIndexer(config=Config())
     embedded: list[str] = []

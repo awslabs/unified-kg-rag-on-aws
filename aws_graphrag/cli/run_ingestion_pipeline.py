@@ -18,8 +18,12 @@ from aws_graphrag.core import (
     get_config,
     get_logger,
 )
+from aws_graphrag.domain.models import (
+    PipelineConfig,
+    PipelineContext,
+    PipelineStageType,
+)
 from aws_graphrag.ingestion import DataIngestionPipeline
-from aws_graphrag.models import PipelineConfig, PipelineContext, PipelineStageType
 from aws_graphrag.utils import console, display_ascii_art, display_pipeline_results
 
 load_dotenv()

@@ -8,7 +8,7 @@ from typing import Any
 import structlog
 from structlog.stdlib import LoggerFactory
 
-from aws_graphrag.models import LoggingConfig
+from aws_graphrag.domain.models import LoggingConfig
 
 from .config import Config, get_config
 

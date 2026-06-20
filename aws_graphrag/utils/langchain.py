@@ -19,11 +19,11 @@ from tqdm.asyncio import tqdm as async_tqdm
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import GraphRAGException, get_logger
-from aws_graphrag.models import LanguageModelId
-from aws_graphrag.prompts import BasePrompt
+from aws_graphrag.domain.models import LanguageModelId
+from aws_graphrag.domain.prompts import BasePrompt
 
 if TYPE_CHECKING:
-    from ..models.config import CustomPromptConfig
+    from aws_graphrag.domain.models.config import CustomPromptConfig
 
 logger = get_logger(__name__)
 

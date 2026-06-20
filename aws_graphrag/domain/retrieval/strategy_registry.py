@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeVar
 
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import RetrieverRole, SearchStrategy
+from aws_graphrag.domain.models import RetrieverRole, SearchStrategy
 
 if TYPE_CHECKING:
     from aws_graphrag.retrieval.base import BaseSearchStrategy

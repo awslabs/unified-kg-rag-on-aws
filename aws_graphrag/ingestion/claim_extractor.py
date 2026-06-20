@@ -13,8 +13,12 @@ from tqdm import tqdm
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import Claim, Config, Entity, TextUnit
-from aws_graphrag.prompts import ClaimExtractionPrompt
+from aws_graphrag.domain.ingestion.base_processor import (
+    BaseProcessor,
+    check_entity_relevance_task,
+)
+from aws_graphrag.domain.models import Claim, Config, Entity, TextUnit
+from aws_graphrag.domain.prompts import ClaimExtractionPrompt
 from aws_graphrag.utils import (
     BatchProcessor,
     create_robust_xml_output_parser,
@@ -22,8 +26,6 @@ from aws_graphrag.utils import (
     generate_stable_id,
     setup_chain,
 )
-
-from .base_processor import BaseProcessor, check_entity_relevance_task
 
 logger = get_logger(__name__)
 

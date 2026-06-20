@@ -23,8 +23,8 @@ from aws_graphrag.adapters.renderers import (
     registered_renderers,
 )
 from aws_graphrag.core import get_config, get_logger
+from aws_graphrag.domain.models import Community
 from aws_graphrag.ingestion.community_detector import HierarchicalCommunity
-from aws_graphrag.models import Community
 
 logger = get_logger(__name__)
 

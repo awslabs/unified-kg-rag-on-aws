@@ -13,8 +13,8 @@ from aws_graphrag.adapters.search_strategies import (
     LocalSearchStrategy,
     SimpleSearchStrategy,
 )
-from aws_graphrag.models import RetrieverRole, SearchStrategy
-from aws_graphrag.retrieval.strategy_registry import (
+from aws_graphrag.domain.models import RetrieverRole, SearchStrategy
+from aws_graphrag.domain.retrieval.strategy_registry import (
     StrategySpec,
     get_strategy_spec,
     register_strategy,

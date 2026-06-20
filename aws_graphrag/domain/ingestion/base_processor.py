@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, TypeVar
 
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import Config, Entity, Relationship, TextUnit
+from aws_graphrag.domain.models import Config, Entity, Relationship, TextUnit
 from aws_graphrag.utils import generate_stable_id, normalize_name
 
 T = TypeVar("T")

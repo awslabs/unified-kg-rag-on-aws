@@ -2,7 +2,7 @@
 import networkx as nx
 
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import Claim, Entity, Relationship
+from aws_graphrag.domain.models import Claim, Entity, Relationship
 
 logger = get_logger(__name__)
 

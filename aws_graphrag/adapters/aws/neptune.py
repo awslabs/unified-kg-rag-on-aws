@@ -13,7 +13,7 @@ from gremlin_python.process.anonymous_traversal import traversal
 from gremlin_python.process.graph_traversal import GraphTraversal, GraphTraversalSource
 
 from aws_graphrag.core import AWSServiceError, get_logger
-from aws_graphrag.models import Config
+from aws_graphrag.domain.models import Config
 
 logger = get_logger(__name__)
 

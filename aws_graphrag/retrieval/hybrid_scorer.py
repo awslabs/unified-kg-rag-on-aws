@@ -8,10 +8,9 @@ from langchain_core.documents import Document
 
 from aws_graphrag.adapters.aws import BedrockRerankModelFactory
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import Config, FusionMethod, RetrievalResult
+from aws_graphrag.domain.models import Config, FusionMethod, RetrievalResult
+from aws_graphrag.domain.retrieval.mixins import MetricsMixin
 from aws_graphrag.utils import compute_hash
-
-from .mixins import MetricsMixin
 
 logger = get_logger(__name__)
 

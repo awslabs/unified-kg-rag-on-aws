@@ -9,10 +9,9 @@ from pydantic import BaseModel
 from tqdm import tqdm
 
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import Claim, Config, Entity
+from aws_graphrag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
+from aws_graphrag.domain.models import Claim, Config, Entity
 from aws_graphrag.utils import normalize_name
-
-from .base_resolver import BaseResolver, FuzzyMatcher
 
 logger = get_logger(__name__)
 

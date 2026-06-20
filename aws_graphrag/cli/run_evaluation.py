@@ -13,13 +13,13 @@ from rich.panel import Panel
 from rich.table import Table
 
 from aws_graphrag.core import get_config, get_logger
-from aws_graphrag.evaluation import EvaluationManager
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     EvaluationGroundTruth,
     EvaluationSummary,
     SearchStrategy,
     SearchType,
 )
+from aws_graphrag.evaluation import EvaluationManager
 from aws_graphrag.retrieval import GraphRAGChain
 from aws_graphrag.utils import console, display_ascii_art
 

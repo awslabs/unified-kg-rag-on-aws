@@ -9,7 +9,7 @@ from typing import Any, NamedTuple
 from aws_graphrag.adapters.storage.neptune_indexer import NeptuneIndexer
 from aws_graphrag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     Claim,
     Community,
     CommunityReport,

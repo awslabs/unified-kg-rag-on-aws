@@ -8,7 +8,7 @@ match; both are exercised by the same test suite.
 
 from __future__ import annotations
 
-from aws_graphrag.models import DocStatusRecord, DocumentDelta
+from aws_graphrag.domain.models import DocStatusRecord, DocumentDelta
 
 
 class FakeDocStatusStore:

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from aws_graphrag.adapters.aws import BedrockEmbeddingModelFactory
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import Config
+from aws_graphrag.domain.models import Config
 
 logger = get_logger(__name__)
 

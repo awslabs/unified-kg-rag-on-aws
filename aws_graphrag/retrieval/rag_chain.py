@@ -38,7 +38,7 @@ from aws_graphrag.adapters.search_strategies import (  # noqa: F401
     SimpleSearchStrategy,
 )
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     Config,
     LanguageModelId,
     MessageRole,
@@ -48,7 +48,7 @@ from aws_graphrag.models import (
     SearchStrategy,
     SearchType,
 )
-from aws_graphrag.prompts import (
+from aws_graphrag.domain.prompts import (
     AnswerGenerationPrompt,
     BasePrompt,
     ContextBuildingPrompt,
@@ -57,11 +57,11 @@ from aws_graphrag.prompts import (
     StrategySelectionPrompt,
     TranslationPrompt,
 )
+from aws_graphrag.domain.retrieval.strategy_registry import get_strategy_spec
 from aws_graphrag.utils import setup_chain
 
 from .base import BaseContextBuilder, BaseGraphRAGRetriever, BaseSearchStrategy
 from .memory_manager import get_memory_manager
-from .strategy_registry import get_strategy_spec
 from .token_manager import TokenManager
 
 logger = get_logger(__name__)

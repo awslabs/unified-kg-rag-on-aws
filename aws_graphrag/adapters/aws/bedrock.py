@@ -20,7 +20,12 @@ from aws_graphrag.core import (
     RerankModelError,
     get_logger,
 )
-from aws_graphrag.models import Config, EmbeddingModelId, LanguageModelId, RerankModelId
+from aws_graphrag.domain.models import (
+    Config,
+    EmbeddingModelId,
+    LanguageModelId,
+    RerankModelId,
+)
 
 logger = get_logger(__name__)
 

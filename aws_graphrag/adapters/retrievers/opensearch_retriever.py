@@ -8,7 +8,7 @@ import boto3
 
 from aws_graphrag.adapters.aws import BedrockEmbeddingModelFactory, OpenSearchClient
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import Config, RetrievalResult, SearchQuery, SearchType
+from aws_graphrag.domain.models import Config, RetrievalResult, SearchQuery, SearchType
 from aws_graphrag.retrieval.base import BaseGraphRAGRetriever
 from aws_graphrag.retrieval.token_manager import SectionType
 

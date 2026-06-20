@@ -11,7 +11,7 @@ from langchain_core.document_loaders.base import BaseLoader
 from langchain_core.documents import Document as BaseDocument
 
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import Config, Document
+from aws_graphrag.domain.models import Config, Document
 from aws_graphrag.utils import compute_hash
 
 from .parser import ParserFactory

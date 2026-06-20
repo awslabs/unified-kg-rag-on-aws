@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.models import Entity, Relationship
+from aws_graphrag.domain.models import Entity, Relationship
 from aws_graphrag.ports.indexer import IndexingStats
 
 pytestmark = pytest.mark.unit
@@ -42,7 +42,7 @@ def manager(mocker):
         "aws_graphrag.storage.indexing_manager.NeptuneIndexer",
         return_value=neptune_indexer,
     )
-    from aws_graphrag.models import Config
+    from aws_graphrag.domain.models import Config
     from aws_graphrag.storage.indexing_manager import IndexingManager
 
     mgr = IndexingManager(config=Config())

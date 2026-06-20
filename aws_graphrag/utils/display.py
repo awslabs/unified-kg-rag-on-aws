@@ -3,7 +3,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     Claim,
     Community,
     CommunityReport,

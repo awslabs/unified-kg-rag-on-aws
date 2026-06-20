@@ -8,16 +8,15 @@ from pydantic import BaseModel, Field
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import Config, Entity, Relationship, TextUnit
-from aws_graphrag.prompts import GraphExtractionPrompt
+from aws_graphrag.domain.ingestion.base_processor import BaseProcessor
+from aws_graphrag.domain.models import Config, Entity, Relationship, TextUnit
+from aws_graphrag.domain.prompts import GraphExtractionPrompt
 from aws_graphrag.utils import (
     BatchProcessor,
     create_robust_xml_output_parser,
     ensure_list,
     setup_chain,
 )
-
-from .base_processor import BaseProcessor
 
 logger = get_logger(__name__)
 

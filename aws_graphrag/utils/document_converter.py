@@ -3,7 +3,7 @@ from pathlib import Path
 
 from langchain_core.documents import Document as LangChainDocument
 
-from aws_graphrag.models import Constants, Document, DocumentContent, Page
+from aws_graphrag.domain.models import Constants, Document, DocumentContent, Page
 from aws_graphrag.utils import generate_stable_id
 
 

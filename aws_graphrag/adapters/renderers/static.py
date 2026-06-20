@@ -14,8 +14,8 @@ from bokeh.plotting import figure, output_file, save
 from bokeh.transform import dodge
 
 from aws_graphrag.core import get_logger
+from aws_graphrag.domain.models import Community
 from aws_graphrag.ingestion import CentralityMetrics
-from aws_graphrag.models import Community
 
 logger = get_logger(__name__)
 

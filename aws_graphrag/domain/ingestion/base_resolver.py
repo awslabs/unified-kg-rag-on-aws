@@ -10,7 +10,7 @@ from typing import Any, ClassVar, TypeAlias
 from datasketch import MinHash, MinHashLSH
 
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import Config, ResolutionMethod
+from aws_graphrag.domain.models import Config, ResolutionMethod
 from aws_graphrag.utils import normalize_name
 
 logger = get_logger(__name__)

@@ -19,7 +19,7 @@ from aws_graphrag.core import (
     get_logger,
 )
 from aws_graphrag.core.metrics import MetricsSink, NullMetricsSink
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     Claim,
     Community,
     CommunityReport,

@@ -11,24 +11,24 @@ from langchain_core.output_parsers import (
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import get_logger
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     Config,
     RetrievalResult,
     SearchQuery,
     SearchResult,
     SearchStrategy,
 )
-from aws_graphrag.prompts import (
+from aws_graphrag.domain.prompts import (
     ConvergenceAssessmentPrompt,
     KeywordExpansionPrompt,
     QueryRefinementPrompt,
 )
+from aws_graphrag.domain.retrieval.strategy_registry import register_strategy
 from aws_graphrag.retrieval.base import (
     BaseContextBuilder,
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
-from aws_graphrag.retrieval.strategy_registry import register_strategy
 from aws_graphrag.utils import compute_hash, safe_float_parse, setup_chain
 
 logger = get_logger(__name__)
