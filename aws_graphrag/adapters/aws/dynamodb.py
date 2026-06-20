@@ -7,7 +7,7 @@ incoming corpus against this registry to compute a :class:`DocumentDelta`
 (new / changed / unchanged / deleted) and merges instead of re-indexing wholesale.
 
 The reference diff behaviour matches the in-memory ``FakeDocStatusStore`` used in
-tests; both conform structurally to ``aws_graphrag.core.ports.DocStatusPort``.
+tests; both conform structurally to ``aws_graphrag.ports.DocStatusPort``.
 """
 
 from __future__ import annotations

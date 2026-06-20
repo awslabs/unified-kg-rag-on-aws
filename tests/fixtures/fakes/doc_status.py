@@ -1,7 +1,7 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 """In-memory fake implementing ``DocStatusPort`` for fast, AWS-free tests.
 
-Structurally conforms to ``aws_graphrag.core.ports.DocStatusPort``. The diff
+Structurally conforms to ``aws_graphrag.ports.DocStatusPort``. The diff
 logic here is the reference behaviour the production DynamoDB adapter (M2) must
 match; both are exercised by the same test suite.
 """

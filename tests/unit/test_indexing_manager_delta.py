@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from aws_graphrag.models import Entity, Relationship
-from aws_graphrag.storage.base import IndexingStats
+from aws_graphrag.ports.indexer import IndexingStats
 
 pytestmark = pytest.mark.unit
 

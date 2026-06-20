@@ -18,8 +18,7 @@ from aws_graphrag.models import (
     Relationship,
     TextUnit,
 )
-
-from .base import BaseIndexer, IndexingStats
+from aws_graphrag.ports.indexer import BaseIndexer, IndexingStats
 
 logger = get_logger(__name__)
 

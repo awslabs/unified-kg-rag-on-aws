@@ -15,7 +15,7 @@ from gremlin_python.process.traversal import Cardinality, P
 from aws_graphrag.adapters.aws import NeptuneClient
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import Community, Config, Constants, Entity, Relationship
-from aws_graphrag.storage.base import GraphIndexer, IndexingStats
+from aws_graphrag.ports.indexer import GraphIndexer, IndexingStats
 
 logger = get_logger(__name__)
 

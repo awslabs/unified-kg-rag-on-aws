@@ -14,7 +14,7 @@ import pytest
 from aws_graphrag.ingestion import IncrementalIndexer
 from aws_graphrag.ingestion.delta_detector import compute_doc_id
 from aws_graphrag.models import Document, DocumentLineage, Entity
-from aws_graphrag.storage.base import IndexingStats
+from aws_graphrag.ports.indexer import IndexingStats
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 
 pytestmark = pytest.mark.integration
