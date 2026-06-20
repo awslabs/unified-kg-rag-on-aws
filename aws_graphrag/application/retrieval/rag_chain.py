@@ -42,6 +42,7 @@ from aws_graphrag.adapters.retrievers import NeptuneRetriever, OpenSearchRetriev
 from aws_graphrag.adapters.search_strategies import (  # noqa: F401
     DriftSearchStrategy,
     GlobalSearchStrategy,
+    LightRAGSearchStrategy,
     LocalSearchStrategy,
     SimpleSearchStrategy,
 )

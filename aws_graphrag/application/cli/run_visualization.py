@@ -23,6 +23,7 @@ from aws_graphrag.adapters.renderers import (
     get_renderer_class,
     registered_renderers,
 )
+from aws_graphrag.domain.ingestion.graph_analyzer import CentralityMetrics
 from aws_graphrag.domain.models import Community
 from aws_graphrag.shared import get_config, get_logger
 
@@ -92,12 +93,17 @@ def load_render_context(data_path: Path) -> RenderContext:
         )
 
     entries = _hierarchy_entries(data)
+    centrality = {
+        node_id: CentralityMetrics(**metrics)
+        for node_id, metrics in (data.get("centrality") or {}).items()
+        if isinstance(metrics, dict)
+    }
     return RenderContext(
         graph=graph,
         layout=data.get("layout", {}),
         communities=_to_communities(entries),
         community_hierarchy=_to_hierarchical_communities(entries),
-        centrality=data.get("centrality", {}),
+        centrality=centrality,
     )
 
 
@@ -112,9 +118,9 @@ def run_visualization(
     written: list[Path] = []
     for name in renderer_names:
         renderer_cls = get_renderer_class(name)
-        renderer_config = (
-            viz_config.interactive if name == "interactive" else viz_config.static
-        )
+        # Resolve config generically (no hardcoded renderer names) so a newly
+        # registered renderer works without editing this dispatch.
+        renderer_config = getattr(viz_config, name, None)
         try:
             paths = renderer_cls(renderer_config).render(context, output_dir)
             written.extend(paths)

@@ -108,14 +108,14 @@ class GraphVisualizationManager:
             community_hierarchy=list(self.community_detector.all_communities.values()),
             centrality=self.analyzer.calculate_centrality(),
         )
-        renderer_configs = {
-            "interactive": self.viz_config.interactive,
-            "static": self.viz_config.static,
-        }
         for name in registered_renderers():
             try:
                 renderer_cls = get_renderer_class(name)
-                renderer_cls(renderer_configs[name]).render(context, outputs_dir)
+                # Resolve each renderer's config block generically (viz_config
+                # attribute named after the renderer); a renderer without a
+                # dedicated config block gets None. No hardcoded renderer list.
+                renderer_config = getattr(self.viz_config, name, None)
+                renderer_cls(renderer_config).render(context, outputs_dir)
             except Exception as e:
                 logger.warning("Renderer '%s' failed: %s", name, e)
 
@@ -136,6 +136,12 @@ class GraphVisualizationManager:
         data = self.analyzer.export_graph_data()
         data["layout"] = self._generate_layout()
         data["communities"] = self.community_detector.export_community_data()
+        # Serialize centrality so the standalone CLI can render the centrality
+        # comparison plot without re-running analysis.
+        data["centrality"] = {
+            node_id: metrics.model_dump(exclude_none=True)
+            for node_id, metrics in self.analyzer.calculate_centrality().items()
+        }
 
         try:
             with open(output_path, "w", encoding="utf-8") as f:

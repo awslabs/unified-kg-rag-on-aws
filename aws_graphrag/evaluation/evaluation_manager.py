@@ -113,14 +113,20 @@ class EvaluationManager:
                 )
                 queries.append(query)
 
-                ground_truth_value = item.get("answer")
-                if ground_truth_value:
+                # Build a ground truth when ANY ground-truth signal is present —
+                # not only a textual answer — so graph-aware evaluation works on
+                # datasets that supply only expected_entities/relationships.
+                answer = item.get("answer")
+                expected_entities = item.get("expected_entities", [])
+                expected_relationships = item.get("expected_relationships", [])
+                reference_sources = item.get("reference_sources", [])
+                if answer or expected_entities or expected_relationships:
                     gt = EvaluationGroundTruth(
                         query_id=query_id,
-                        ground_truth=str(ground_truth_value),
-                        reference_sources=item.get("reference_sources", []),
-                        expected_entities=item.get("expected_entities", []),
-                        expected_relationships=item.get("expected_relationships", []),
+                        ground_truth=str(answer) if answer else "",
+                        reference_sources=reference_sources,
+                        expected_entities=expected_entities,
+                        expected_relationships=expected_relationships,
                     )
                     ground_truths.append(gt)
 
