@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.aws.token_counter import BedrockTokenCounter
+from aws_graphrag.adapters.aws.token_counter import BedrockTokenCounter
 
 pytestmark = pytest.mark.unit
 

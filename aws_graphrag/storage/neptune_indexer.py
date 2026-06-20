@@ -12,7 +12,7 @@ from gremlin_python.process.graph_traversal import (
 )
 from gremlin_python.process.traversal import Cardinality, P
 
-from aws_graphrag.aws import NeptuneClient
+from aws_graphrag.adapters.aws import NeptuneClient
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import Community, Config, Constants, Entity, Relationship
 from aws_graphrag.storage import GraphIndexer, IndexingStats

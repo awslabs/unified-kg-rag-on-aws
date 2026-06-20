@@ -22,7 +22,7 @@ from langchain_core.runnables import (
 )
 from pydantic import BaseModel, Field
 
-from aws_graphrag.aws import (
+from aws_graphrag.adapters.aws import (
     BedrockLanguageModelFactory,
     NeptuneClient,
     OpenSearchClient,

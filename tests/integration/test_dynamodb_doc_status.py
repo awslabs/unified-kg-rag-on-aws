@@ -12,7 +12,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from aws_graphrag.aws import DynamoDBDocStatusStore
+from aws_graphrag.adapters.aws import DynamoDBDocStatusStore
 from aws_graphrag.core.ports import DocStatusPort
 from aws_graphrag.models import Config, DocStatus, DocStatusRecord
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore

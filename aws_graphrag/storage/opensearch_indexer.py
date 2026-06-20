@@ -6,7 +6,7 @@ from typing import Any
 import boto3
 from opensearchpy.exceptions import NotFoundError
 
-from aws_graphrag.aws import BedrockEmbeddingModelFactory, OpenSearchClient
+from aws_graphrag.adapters.aws import BedrockEmbeddingModelFactory, OpenSearchClient
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import (
     Claim,

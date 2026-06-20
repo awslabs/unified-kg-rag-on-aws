@@ -9,7 +9,7 @@ from langchain_core.output_parsers import (
     StrOutputParser,
 )
 
-from aws_graphrag.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import (
     Config,

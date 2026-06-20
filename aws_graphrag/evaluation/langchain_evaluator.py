@@ -12,7 +12,7 @@ from langchain.evaluation.schema import EvaluatorType as LCEvaluatorType
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.prompts import PromptTemplate
 
-from aws_graphrag.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import EvaluationException, get_logger
 from aws_graphrag.models import (
     Config,

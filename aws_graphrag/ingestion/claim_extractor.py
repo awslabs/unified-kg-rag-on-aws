@@ -11,7 +11,7 @@ import boto3
 from pydantic import BaseModel
 from tqdm import tqdm
 
-from aws_graphrag.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import Claim, Config, Entity, TextUnit
 from aws_graphrag.prompts import ClaimExtractionPrompt

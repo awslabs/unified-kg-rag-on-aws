@@ -6,7 +6,7 @@ import networkx as nx
 import numpy as np
 from pydantic import BaseModel, Field
 
-from aws_graphrag.aws import BedrockEmbeddingModelFactory
+from aws_graphrag.adapters.aws import BedrockEmbeddingModelFactory
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import Config
 

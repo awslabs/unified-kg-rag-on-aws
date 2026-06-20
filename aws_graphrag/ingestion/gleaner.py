@@ -9,7 +9,7 @@ import boto3
 from pydantic import BaseModel, Field
 from tqdm import tqdm
 
-from aws_graphrag.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import Config, Entity, Relationship, TextUnit
 from aws_graphrag.prompts import GraphRefinementPrompt

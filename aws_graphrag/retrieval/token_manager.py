@@ -6,8 +6,8 @@ import boto3
 from botocore.config import Config as BotoConfig
 from pydantic import BaseModel, Field
 
-from aws_graphrag.aws.bedrock import get_assumed_role_boto_session
-from aws_graphrag.aws.token_counter import BedrockTokenCounter
+from aws_graphrag.adapters.aws.bedrock import get_assumed_role_boto_session
+from aws_graphrag.adapters.aws.token_counter import BedrockTokenCounter
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import Config, RetrievalResult
 

@@ -7,7 +7,7 @@ from typing import Any, TypeVar
 import boto3
 from pydantic import BaseModel
 
-from aws_graphrag.aws import S3CacheManager
+from aws_graphrag.adapters.aws import S3CacheManager
 from aws_graphrag.core import (
     PipelineExecutionError,
     PipelineResumeError,

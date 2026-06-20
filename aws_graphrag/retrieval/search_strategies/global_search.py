@@ -7,7 +7,7 @@ import boto3
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable
 
-from aws_graphrag.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import (
     Config,

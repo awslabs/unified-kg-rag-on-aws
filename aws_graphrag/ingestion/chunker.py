@@ -15,9 +15,9 @@ from langchain.text_splitter import (
 from pydantic import BaseModel, Field
 from tqdm import tqdm
 
-from aws_graphrag.aws import BedrockLanguageModelFactory
-from aws_graphrag.aws.bedrock import get_assumed_role_boto_session
-from aws_graphrag.aws.token_counter import BedrockTokenCounter
+from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws.bedrock import get_assumed_role_boto_session
+from aws_graphrag.adapters.aws.token_counter import BedrockTokenCounter
 from aws_graphrag.core import DataProcessingError, get_logger
 from aws_graphrag.models import ChunkingStrategy, Config, Document, TextUnit
 from aws_graphrag.prompts import TextChunkingPrompt

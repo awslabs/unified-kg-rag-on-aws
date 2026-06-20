@@ -13,7 +13,7 @@ from gremlin_python.process.graph_traversal import (
 )
 from gremlin_python.process.traversal import Order, P, TextP, Traversal
 
-from aws_graphrag.aws import NeptuneClient
+from aws_graphrag.adapters.aws import NeptuneClient
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import Config, RetrievalResult, SearchQuery
 from aws_graphrag.retrieval.base import BaseGraphRAGRetriever

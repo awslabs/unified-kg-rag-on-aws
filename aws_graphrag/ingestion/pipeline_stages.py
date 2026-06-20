@@ -266,7 +266,7 @@ class DocumentLoadingStage(PipelineStage):
         Imported lazily to avoid a hard dependency when the feature is off.
         """
         try:
-            from aws_graphrag.aws import DynamoDBDocStatusStore
+            from aws_graphrag.adapters.aws import DynamoDBDocStatusStore
             from aws_graphrag.ingestion.delta_detector import (
                 detect_delta,
                 filter_documents_to_process,

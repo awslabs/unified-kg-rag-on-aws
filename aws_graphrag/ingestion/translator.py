@@ -6,7 +6,7 @@ import boto3
 from langchain_core.output_parsers import StrOutputParser
 from pydantic import BaseModel, Field
 
-from aws_graphrag.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import Config, LanguageCode, TextUnit
 from aws_graphrag.prompts import TextTranslationPrompt

@@ -9,7 +9,7 @@ import networkx as nx
 from graspologic.partition import leiden
 from pydantic import BaseModel, Field
 
-from aws_graphrag.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import GraphError, get_logger
 from aws_graphrag.models import Community, CommunityReport, Config
 from aws_graphrag.prompts import CommunityReportPrompt

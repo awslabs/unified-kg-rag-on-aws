@@ -6,7 +6,7 @@ from typing import Any
 
 from langchain_core.documents import Document
 
-from aws_graphrag.aws import BedrockRerankModelFactory
+from aws_graphrag.adapters.aws import BedrockRerankModelFactory
 from aws_graphrag.core import get_logger
 from aws_graphrag.models import Config, FusionMethod, RetrievalResult
 from aws_graphrag.utils import compute_hash

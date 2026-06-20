@@ -13,7 +13,7 @@ from langchain_core.messages.utils import get_buffer_string
 from langchain_core.output_parsers import CommaSeparatedListOutputParser
 from pydantic import Field
 
-from aws_graphrag.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.core import get_config, get_logger
 from aws_graphrag.models import Config, ConversationContext, MessageRole
 from aws_graphrag.prompts import EntityExtractionPrompt

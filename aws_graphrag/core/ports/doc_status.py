@@ -6,7 +6,7 @@ content hash, processing status, and which graph artifacts (entities,
 relationships, text units, communities) they produced — so a re-run can compute
 a delta (new / changed / deleted) and merge instead of re-indexing everything.
 
-The production adapter (M2) will be DynamoDB (``aws_graphrag.aws.dynamodb``);
+The production adapter (M2) will be DynamoDB (``aws_graphrag.adapters.aws.dynamodb``);
 today only the in-memory fake (``tests/fixtures/fakes``) exists. Both conform to
 this Protocol structurally.
 """

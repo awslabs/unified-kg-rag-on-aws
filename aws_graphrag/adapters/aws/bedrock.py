@@ -12,7 +12,7 @@ from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
 from langchain_core.documents import Document
 from pydantic import BaseModel, Field, PrivateAttr
 
-from aws_graphrag.aws.token_counter import BedrockTokenCounter
+from aws_graphrag.adapters.aws.token_counter import BedrockTokenCounter
 from aws_graphrag.core import (
     AWSServiceError,
     EmbeddingModelError,
