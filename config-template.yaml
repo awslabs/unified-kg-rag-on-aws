@@ -10,6 +10,13 @@ aws:
     region_name: "ap-northeast-2"
     assumed_role_arn: null
     enable_global_profile: true
+    # Amazon Bedrock Guardrails (WAF security pillar). Disabled unless an
+    # identifier is set; when set, every LLM call enforces the guardrail's
+    # content/PII/grounding policies on prompts and completions.
+    guardrail:
+      identifier: null # Guardrail ID or ARN, e.g. "abcd1234efgh"
+      version: "DRAFT" # "DRAFT" or a published version number
+      trace: false # Emit guardrail trace for auditing/observability
 
   # Neptune Configuration
   neptune:

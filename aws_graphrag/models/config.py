@@ -98,6 +98,33 @@ class RerankModelId(str, Enum):
     # NOTE: add new models here
 
 
+class GuardrailConfig(BaseModel):
+    """Amazon Bedrock Guardrails applied to every model invocation.
+
+    Disabled by default; set ``identifier`` (and optionally ``version``) to
+    enforce content/PII/grounding policies on prompts and completions — the
+    WAF security-pillar control for a user-facing LLM RAG application.
+    """
+
+    identifier: str | None = Field(
+        default=None,
+        description="Bedrock guardrail identifier (ID or ARN). Enables guardrails when set.",
+    )
+    version: str = Field(
+        default="DRAFT",
+        min_length=1,
+        description="Guardrail version to apply (e.g. 'DRAFT' or a published version number)",
+    )
+    trace: bool = Field(
+        default=False,
+        description="Emit guardrail trace details for observability/auditing",
+    )
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.identifier)
+
+
 class BedrockConfig(BaseModel):
     region_name: str = Field(
         default="us-west-2", min_length=1, description="AWS Bedrock service region"
@@ -107,6 +134,10 @@ class BedrockConfig(BaseModel):
     )
     enable_global_profile: bool = Field(
         default=True, description="Enable global profile for Bedrock service"
+    )
+    guardrail: GuardrailConfig = Field(
+        default_factory=GuardrailConfig,
+        description="Amazon Bedrock Guardrails configuration (disabled unless identifier set)",
     )
 
 

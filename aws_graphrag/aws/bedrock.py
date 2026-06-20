@@ -601,6 +601,31 @@ class BedrockLanguageModelFactory(
             else:
                 config.setdefault("model_kwargs", {}).update(think_config)
             logger.debug("Applied thinking mode (budget_tokens=%d)", budget)
+        self._apply_guardrail(config, is_cross_region)
+
+    def _apply_guardrail(self, config: dict[str, Any], is_cross_region: bool) -> None:
+        """Attach Bedrock Guardrails to the model when configured.
+
+        ChatBedrockConverse exposes ``guardrail_config`` (Converse-API shape);
+        ChatBedrock exposes ``guardrails`` (InvokeModel shape). When no guardrail
+        identifier is set the model is created without guardrails (no-op).
+        """
+        guardrail = self.config.aws.bedrock.guardrail
+        if not guardrail.enabled:
+            return
+        if is_cross_region:
+            config["guardrail_config"] = {
+                "guardrailIdentifier": guardrail.identifier,
+                "guardrailVersion": guardrail.version,
+                "trace": "enabled" if guardrail.trace else "disabled",
+            }
+        else:
+            config["guardrails"] = {
+                "guardrailIdentifier": guardrail.identifier,
+                "guardrailVersion": guardrail.version,
+                "trace": "enabled" if guardrail.trace else "disabled",
+            }
+        logger.debug("Applied Bedrock guardrail '%s'", guardrail.identifier)
 
     @staticmethod
     def _validate_max_tokens(
