@@ -197,67 +197,23 @@ class OpenSearchIndexer(VectorIndexer):
         self.opensearch_client.create_search_pipeline(pipeline_name, body)
 
     def index_text_units(self, text_units: list[TextUnit]) -> IndexingStats:
-        def get_embedding_text(unit: TextUnit) -> str:
-            if hasattr(unit, "translated_texts") and unit.translated_texts:
-                return unit.translated_texts.get(self.target_language) or unit.text
-            return unit.text
-
-        def prepare_doc(
-            unit: TextUnit, embeddings: tuple[list[float], ...]
-        ) -> dict[str, Any]:
-            doc = {
-                **self._prepare_common_doc_properties(unit),
-                "text": unit.text or "",
-                "text_embedding": embeddings[0],
-                "n_tokens": unit.n_tokens or 0,
-            }
-
-            if unit.community_ids:
-                doc["community_ids"] = (
-                    list(unit.community_ids)
-                    if isinstance(unit.community_ids, (list | tuple | set))
-                    else unit.community_ids
-                )
-
-            if hasattr(unit, "translated_texts") and unit.translated_texts:
-                if translated := unit.translated_texts.get(self.target_language):
-                    doc[f"translated_text_{self.target_language}"] = translated
-
-            return doc
-
         return self._index_item_type(
             items=text_units,
             item_type_name="text units",
             alias_prefix=self.opensearch_config.text_units_index_prefix,
             mapping_func=self._get_text_units_mapping,
-            embedding_field_extractors=[get_embedding_text],
-            prepare_doc_func=prepare_doc,
+            embedding_field_extractors=[self._text_unit_embedding_text],
+            prepare_doc_func=self._prepare_text_unit_doc,
         )
 
     def index_entities(self, entities: list[Entity]) -> IndexingStats:
-        def prepare_doc(
-            entity: Entity, embeddings: tuple[list[float], ...]
-        ) -> dict[str, Any]:
-            return {
-                **self._prepare_common_doc_properties(entity),
-                "name": entity.name or "",
-                "name_embedding": embeddings[0],
-                "description": entity.description or "",
-                "description_embedding": embeddings[1],
-                "type": entity.type or "",
-                "rank": entity.rank or 1.0,
-                "confidence": (
-                    entity.confidence if entity.confidence is not None else 1.0
-                ),
-            }
-
         return self._index_item_type(
             items=entities,
             item_type_name="entities",
             alias_prefix=self.opensearch_config.entities_index_prefix,
             mapping_func=self._get_entities_mapping,
             embedding_field_extractors=[lambda e: e.name, lambda e: e.description],
-            prepare_doc_func=prepare_doc,
+            prepare_doc_func=self._prepare_entity_doc,
         )
 
     def index_community_reports(self, reports: list[CommunityReport]) -> IndexingStats:
@@ -286,6 +242,45 @@ class OpenSearchIndexer(VectorIndexer):
             ],
             prepare_doc_func=prepare_doc,
         )
+
+    def _text_unit_embedding_text(self, unit: TextUnit) -> str:
+        if hasattr(unit, "translated_texts") and unit.translated_texts:
+            return unit.translated_texts.get(self.target_language) or unit.text
+        return unit.text
+
+    def _prepare_text_unit_doc(
+        self, unit: TextUnit, embeddings: tuple[list[float], ...]
+    ) -> dict[str, Any]:
+        doc = {
+            **self._prepare_common_doc_properties(unit),
+            "text": unit.text or "",
+            "text_embedding": embeddings[0],
+            "n_tokens": unit.n_tokens or 0,
+        }
+        if unit.community_ids:
+            doc["community_ids"] = (
+                list(unit.community_ids)
+                if isinstance(unit.community_ids, (list | tuple | set))
+                else unit.community_ids
+            )
+        if hasattr(unit, "translated_texts") and unit.translated_texts:
+            if translated := unit.translated_texts.get(self.target_language):
+                doc[f"translated_text_{self.target_language}"] = translated
+        return doc
+
+    def _prepare_entity_doc(
+        self, entity: Entity, embeddings: tuple[list[float], ...]
+    ) -> dict[str, Any]:
+        return {
+            **self._prepare_common_doc_properties(entity),
+            "name": entity.name or "",
+            "name_embedding": embeddings[0],
+            "description": entity.description or "",
+            "description_embedding": embeddings[1],
+            "type": entity.type or "",
+            "rank": entity.rank or 1.0,
+            "confidence": (entity.confidence if entity.confidence is not None else 1.0),
+        }
 
     @staticmethod
     def _prepare_relationship_doc(
@@ -374,67 +369,24 @@ class OpenSearchIndexer(VectorIndexer):
 
     def upsert_text_units(self, text_units: list[TextUnit]) -> IndexingStats:
         """Upsert text units by id into the live index (delta semantics)."""
-
-        def get_embedding_text(unit: TextUnit) -> str:
-            if hasattr(unit, "translated_texts") and unit.translated_texts:
-                return unit.translated_texts.get(self.target_language) or unit.text
-            return unit.text
-
-        def prepare_doc(
-            unit: TextUnit, embeddings: tuple[list[float], ...]
-        ) -> dict[str, Any]:
-            doc = {
-                **self._prepare_common_doc_properties(unit),
-                "text": unit.text or "",
-                "text_embedding": embeddings[0],
-                "n_tokens": unit.n_tokens or 0,
-            }
-            if unit.community_ids:
-                doc["community_ids"] = (
-                    list(unit.community_ids)
-                    if isinstance(unit.community_ids, (list | tuple | set))
-                    else unit.community_ids
-                )
-            if hasattr(unit, "translated_texts") and unit.translated_texts:
-                if translated := unit.translated_texts.get(self.target_language):
-                    doc[f"translated_text_{self.target_language}"] = translated
-            return doc
-
         return self._upsert_item_type(
             items=text_units,
             item_type_name="text units",
             alias_prefix=self.opensearch_config.text_units_index_prefix,
             mapping_func=self._get_text_units_mapping,
-            embedding_field_extractors=[get_embedding_text],
-            prepare_doc_func=prepare_doc,
+            embedding_field_extractors=[self._text_unit_embedding_text],
+            prepare_doc_func=self._prepare_text_unit_doc,
         )
 
     def upsert_entities(self, entities: list[Entity]) -> IndexingStats:
         """Upsert entities by id into the live index (delta semantics)."""
-
-        def prepare_doc(
-            entity: Entity, embeddings: tuple[list[float], ...]
-        ) -> dict[str, Any]:
-            return {
-                **self._prepare_common_doc_properties(entity),
-                "name": entity.name or "",
-                "name_embedding": embeddings[0],
-                "description": entity.description or "",
-                "description_embedding": embeddings[1],
-                "type": entity.type or "",
-                "rank": entity.rank or 1.0,
-                "confidence": (
-                    entity.confidence if entity.confidence is not None else 1.0
-                ),
-            }
-
         return self._upsert_item_type(
             items=entities,
             item_type_name="entities",
             alias_prefix=self.opensearch_config.entities_index_prefix,
             mapping_func=self._get_entities_mapping,
             embedding_field_extractors=[lambda e: e.name, lambda e: e.description],
-            prepare_doc_func=prepare_doc,
+            prepare_doc_func=self._prepare_entity_doc,
         )
 
     def delete_by_id(
