@@ -13,7 +13,7 @@ Built from the ground up based on Microsoft's "From Local to Global: A Graph RAG
 > - **Incremental indexing.** Enable the DynamoDB document-status registry (`aws.dynamodb`) to diff a corpus by content hash and re-index only new/changed documents, merging into the live graph (idempotent upserts; deletions remove a document's exclusive artifacts).
 > - **Prompt tuning.** `run-prompt-tuning` profiles a corpus (domain/language/persona/entity-types) and emits domain-adapted `custom_prompts`.
 > - **Standalone visualization & graph-aware evaluation.** `run-visualization` renders from exported graph data without re-ingesting; the `graph_aware` evaluator scores entity/relationship coverage.
-> - **Hexagonal architecture.** Ports & adapters (`core/ports/`) + registries make storage backends, retrieval strategies, evaluators, and renderers pluggable. See `CLAUDE.md`.
+> - **Hexagonal architecture.** Ports & adapters (`domain/ports/adapters/application` layers) + registries make storage backends, retrieval strategies, evaluators, and renderers pluggable. See `docs/architecture.md`.
 
 ## 📋 Table of Contents
 

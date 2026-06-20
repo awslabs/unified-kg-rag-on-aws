@@ -1,6 +1,6 @@
 # AWS Native Graph RAG
 
-🇬🇧 **[English README](./README.md)** · 🛠 **[기술 문서 (상세)](./docs/tech-doc.md)** · 🤝 **[기여 가이드](./CONTRIBUTING.md)** · 🧭 **[프로젝트 가이드](./CLAUDE.md)**
+🇬🇧 **[English README](./README.md)** · 🤝 **[기여 가이드](./CONTRIBUTING.md)**
 
 ![Knowledge Graph](./assets/interactive_graph.jpg)
 
