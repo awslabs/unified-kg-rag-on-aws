@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.aws.bedrock import BedrockLanguageModelFactory
-from aws_graphrag.models import Config
+from aws_graphrag.adapters.aws.bedrock import BedrockLanguageModelFactory
+from aws_graphrag.domain.models import Config
 
 pytestmark = pytest.mark.unit
 

@@ -8,8 +8,9 @@ from typing import Any
 
 from langchain_core.runnables import Runnable
 
-from aws_graphrag.core import EvaluationException, get_logger
-from aws_graphrag.models import (
+from aws_graphrag.adapters.evaluators.langchain_evaluator import LangChainEvaluator
+from aws_graphrag.adapters.evaluators.ragas_evaluator import RagasEvaluator
+from aws_graphrag.domain.models import (
     Config,
     EvaluationGroundTruth,
     EvaluationQuery,
@@ -19,12 +20,11 @@ from aws_graphrag.models import (
     EvaluatorType,
 )
 from aws_graphrag.retrieval import RAGOutput
-from aws_graphrag.utils import BatchProcessor
+from aws_graphrag.shared import EvaluationException, get_logger
+from aws_graphrag.shared.utils import BatchProcessor
 
 from .base import BaseEvaluator
 from .graph_aware_evaluator import GraphAwareEvaluator
-from .langchain_evaluator import LangChainEvaluator
-from .ragas_evaluator import RagasEvaluator
 
 logger = get_logger(__name__)
 

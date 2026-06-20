@@ -66,11 +66,11 @@ dependencies = [
 ]
 
 [project.scripts]
-run-ingestion = "aws_graphrag.cli.run_ingestion_pipeline:main"
-run-rag = "aws_graphrag.cli.run_rag_chain:main"
-run-eval = "aws_graphrag.cli.run_evaluation:main"
-run-visualization = "aws_graphrag.cli.run_visualization:main"
-run-prompt-tuning = "aws_graphrag.cli.run_prompt_tuning:main"
+run-ingestion = "aws_graphrag.application.cli.run_ingestion_pipeline:main"
+run-rag = "aws_graphrag.application.cli.run_rag_chain:main"
+run-eval = "aws_graphrag.application.cli.run_evaluation:main"
+run-visualization = "aws_graphrag.application.cli.run_visualization:main"
+run-prompt-tuning = "aws_graphrag.application.cli.run_prompt_tuning:main"
 
 [project.optional-dependencies]
 dev = [

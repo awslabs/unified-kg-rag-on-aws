@@ -1,26 +1,42 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
-from .base import BaseContextBuilder, BaseGraphRAGRetriever, BaseSearchStrategy
-from .hybrid_scorer import HybridScorer
-from .memory_manager import (
+"""Public retrieval API (stable facade).
+
+The implementation now lives across the hexagonal layers — abstract bases and
+support in ``adapters.retrieval``, concrete backends in ``adapters.retrievers``/
+``adapters.search_strategies``, and the chain orchestration in
+``application.retrieval``. This module re-exports the public surface so callers
+keep a single import path.
+"""
+
+from aws_graphrag.adapters.retrieval.base import (
+    BaseContextBuilder,
+    BaseGraphRAGRetriever,
+    BaseSearchStrategy,
+)
+from aws_graphrag.adapters.retrieval.hybrid_scorer import HybridScorer
+from aws_graphrag.adapters.retrieval.memory_manager import (
     GraphRAGChatMessageHistory,
     GraphRAGConversationBufferMemory,
     MemoryManager,
 )
-from .rag_chain import (
+from aws_graphrag.adapters.retrieval.token_manager import (
+    OptimizedContext,
+    TokenManager,
+)
+from aws_graphrag.adapters.retrievers import NeptuneRetriever, OpenSearchRetriever
+from aws_graphrag.adapters.search_strategies import (
+    DriftSearchStrategy,
+    GlobalSearchStrategy,
+    LocalSearchStrategy,
+    SimpleSearchStrategy,
+)
+from aws_graphrag.application.retrieval.rag_chain import (
     ChainMode,
     GraphRAGChain,
     RAGInput,
     RAGOutput,
     create_rag_chain,
 )
-from .retrievers import NeptuneRetriever, OpenSearchRetriever
-from .search_strategies import (
-    DriftSearchStrategy,
-    GlobalSearchStrategy,
-    LocalSearchStrategy,
-    SimpleSearchStrategy,
-)
-from .token_manager import OptimizedContext, TokenManager
 
 __all__ = [
     "BaseContextBuilder",

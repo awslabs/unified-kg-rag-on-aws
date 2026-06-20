@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     Community,
     CommunityReport,
     Config,

@@ -6,28 +6,45 @@ for incremental-indexing state.
 
 ## Architecture (hexagonal / ports & adapters)
 
-The codebase is being migrated to a ports-and-adapters structure so the two RAG
+The package is laid out in explicit hexagonal layers so the two RAG
 methodologies (GraphRAG community-summary, LightRAG dual-level keyword) share
 one ingestion/indexing/caching/hybrid-search infrastructure and only differ at
-the algorithm layer.
+the algorithm layer. Dependencies point **inward**: `application → adapters →
+ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
 
-- **Ports** (`aws_graphrag/core/ports/`): abstract interfaces owned by the
-  domain — `GraphStorePort`, `VectorStorePort`, `DocStatusPort` (more to come:
-  LLM/Embedding/Rerank/Cache). Defined as `typing.Protocol` so existing classes
-  conform structurally without a base-class swap. Domain/algorithm code depends
-  on ports, never on a concrete backend.
-- **Adapters**: `aws/` (Bedrock, Neptune, OpenSearch, DynamoDB, S3), `storage/`
-  (indexers), `retrieval/retrievers/`. Migrated behind ports incrementally
-  (strangler) with behaviour held constant by the test suite.
+- **`domain/`**: technology-agnostic core — `models/` (Pydantic), pure
+  algorithms (`ingestion/` merge/delta/resolve/analyze, `retrieval/`
+  strategy registry + mixins), and `prompts/` templates. No boto3/LangChain/
+  backend imports (enforced by review; verifiable with grep).
+- **`ports/`**: the abstract interfaces the domain depends on — `DocStatusPort`
+  (`Protocol`) and the write-side indexer ABCs `BaseIndexer`/`GraphIndexer`/
+  `VectorIndexer` (+ `IndexingStats`). `ports/__init__` is the port catalog and
+  documents that the retrieval/evaluation abstract bases are *adapter bases*
+  (they construct infra in `__init__`) re-exported for discovery.
+- **`adapters/`**: concrete technology bindings — `aws/` (Bedrock, Neptune,
+  OpenSearch, DynamoDB, S3), `storage/` (indexers), `retrievers/`,
+  `search_strategies/`, `retrieval/` (base + hybrid scorer + token/memory
+  managers), `ingestion/` (LLM/IO-coupled chunker/extractor/loader/parser/
+  translator), `renderers/`, `evaluators/`.
+- **`application/`**: orchestration + entry points — `cli/` (pyproject scripts
+  resolve to `aws_graphrag.application.cli.*`), `ingestion/` (pipeline + stages),
+  `storage/indexing_manager`, `retrieval/rag_chain`.
+- **`shared/`**: cross-cutting kernel — config, logging, exceptions, metrics,
+  cache/pipeline managers, `utils/`.
+- **Facades**: `retrieval/`, `storage/`, `ingestion/`, `evaluation/`,
+  `visualization/` remain as thin `__init__` re-export shims so public import
+  paths stay stable across the layer split.
 - **Registries over hardcoded dispatch**: search strategies register via
-  `@register_strategy` (`retrieval/strategy_registry.py`). Follow this pattern —
-  and the declarative `ParserFactory._loader_configs` /
+  `@register_strategy` (`domain/retrieval/strategy_registry.py`). Follow this
+  pattern — and the declarative `ParserFactory._loader_configs` /
   `EvaluationManager.EVALUATOR_MAPPING` — instead of `if/elif` dispatch.
+
+See `docs/architecture.md` for the full layer map and dependency rule.
 
 ### Adding things
 - **New search strategy**: subclass `BaseSearchStrategy`, decorate with
-  `@register_strategy(SearchStrategy.X, required_retrievers=(...))`, export from
-  `retrieval/search_strategies/__init__.py`. No edits to `rag_chain` needed.
+  `@register_strategy(SearchStrategy.X, required_roles=(...))`, export from
+  `adapters/search_strategies/__init__.py`. No edits to `rag_chain` needed.
 - **New storage/LLM backend**: implement the relevant port; register it in the
   corresponding registry. Do not hardcode it into a manager's `__init__`.
 - **New config section**: add a Pydantic `BaseModel`, attach it to its parent
@@ -66,9 +83,9 @@ the algorithm layer.
 - **Packages**: `uv` (`uv sync --extra dev`), not pip.
 - **Logging**: `%`-formatting, not f-strings — `logger.info("did %s", x)`.
 - **LLM calls**: LangChain LCEL (`prompt | llm | parser`); prompts live in
-  `aws_graphrag/prompts/*.py` for version control, overridable via
+  `aws_graphrag/domain/prompts/*.py` for version control, overridable via
   `custom_prompts` config.
-- **Exceptions**: specific custom types from `core/exceptions.py`; fail fast at
+- **Exceptions**: specific custom types from `shared/exceptions.py`; fail fast at
   boundaries; degrade gracefully only where recovery is meaningful.
 
 ## Testing

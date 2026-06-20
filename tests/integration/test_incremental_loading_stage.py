@@ -7,10 +7,13 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from aws_graphrag.aws import DynamoDBDocStatusStore
-from aws_graphrag.ingestion.delta_detector import compute_content_hash, compute_doc_id
-from aws_graphrag.ingestion.pipeline_stages import DocumentLoadingStage
-from aws_graphrag.models import Config, DocStatusRecord, Document
+from aws_graphrag.adapters.aws import DynamoDBDocStatusStore
+from aws_graphrag.application.ingestion.pipeline_stages import DocumentLoadingStage
+from aws_graphrag.domain.ingestion.delta_detector import (
+    compute_content_hash,
+    compute_doc_id,
+)
+from aws_graphrag.domain.models import Config, DocStatusRecord, Document
 
 pytestmark = pytest.mark.integration
 

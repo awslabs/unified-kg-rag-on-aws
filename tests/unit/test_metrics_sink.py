@@ -9,7 +9,7 @@ import logging
 
 import pytest
 
-from aws_graphrag.core import CloudWatchEMFSink, MetricsSink, NullMetricsSink
+from aws_graphrag.shared import CloudWatchEMFSink, MetricsSink, NullMetricsSink
 
 pytestmark = pytest.mark.unit
 

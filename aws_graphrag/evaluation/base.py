@@ -7,14 +7,14 @@ from typing import Any
 
 from tqdm import tqdm
 
-from aws_graphrag.core import get_logger
-from aws_graphrag.models import (
+from aws_graphrag.domain.models import (
     Config,
     EvaluationQuery,
     EvaluationReport,
     EvaluationResult,
     EvaluatorType,
 )
+from aws_graphrag.shared import get_logger
 
 logger = get_logger(__name__)
 

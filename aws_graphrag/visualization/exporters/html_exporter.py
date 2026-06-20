@@ -3,8 +3,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from aws_graphrag.core import get_logger
 from aws_graphrag.ingestion import CentralityMetrics, CommunityMetrics, GraphStatistics
+from aws_graphrag.shared import get_logger
 
 logger = get_logger(__name__)
 

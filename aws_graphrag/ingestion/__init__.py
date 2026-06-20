@@ -1,7 +1,5 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
-from .base_processor import BaseProcessor
-from .base_resolver import BaseResolver, FuzzyMatcher
-from .chunker import (
+from aws_graphrag.adapters.ingestion.chunker import (
     ChunkerFactory,
     ChunkingStats,
     ChunkingStrategy,
@@ -10,28 +8,32 @@ from .chunker import (
     IntelligentTextChunker,
     SimpleTextChunker,
 )
-from .claim_extractor import ClaimExtractor
-from .community_detector import (
+from aws_graphrag.adapters.ingestion.claim_extractor import ClaimExtractor
+from aws_graphrag.adapters.ingestion.community_detector import (
     CommunityDetector,
-    CommunityMetrics,
     HierarchicalCommunity,
 )
-from .delta_detector import (
-    compute_content_hash,
-    compute_doc_id,
-    detect_delta,
-    filter_documents_to_process,
-    fingerprint_documents,
+from aws_graphrag.adapters.ingestion.gleaner import (
+    GleaningRound,
+    GleaningStats,
+    GraphGleaner,
 )
-from .gleaner import GleaningRound, GleaningStats, GraphGleaner
-from .graph_analyzer import CentralityMetrics, GraphAnalyzer, GraphStatistics
-from .graph_extractor import ExtractionStats, GraphExtractor
-from .graph_resolver import EntityResolver, GraphResolver, RelationshipResolver
-from .incremental import IncrementalIndexer
-from .loader import DirectoryLoader
-from .parser import BaseParser, ParserFactory, ParsingStats
-from .pipeline import DataIngestionPipeline
-from .pipeline_stages import (
+from aws_graphrag.adapters.ingestion.graph_extractor import (
+    ExtractionStats,
+    GraphExtractor,
+)
+from aws_graphrag.adapters.ingestion.loader import DirectoryLoader
+from aws_graphrag.adapters.ingestion.parser import (
+    BaseParser,
+    ParserFactory,
+    ParsingStats,
+)
+from aws_graphrag.adapters.ingestion.translator import (
+    TextUnitTranslator,
+    TranslationStats,
+)
+from aws_graphrag.application.ingestion.pipeline import DataIngestionPipeline
+from aws_graphrag.application.ingestion.pipeline_stages import (
     ClaimExtractionStage,
     ClaimResolutionStage,
     CommunityDetectionStage,
@@ -46,7 +48,27 @@ from .pipeline_stages import (
     TextChunkingStage,
     TranslationStage,
 )
-from .translator import TextUnitTranslator, TranslationStats
+from aws_graphrag.domain.ingestion.base_processor import BaseProcessor
+from aws_graphrag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
+from aws_graphrag.domain.ingestion.delta_detector import (
+    compute_content_hash,
+    compute_doc_id,
+    detect_delta,
+    filter_documents_to_process,
+    fingerprint_documents,
+)
+from aws_graphrag.domain.ingestion.graph_analyzer import (
+    CentralityMetrics,
+    GraphAnalyzer,
+    GraphStatistics,
+)
+from aws_graphrag.domain.ingestion.graph_resolver import (
+    EntityResolver,
+    GraphResolver,
+    RelationshipResolver,
+)
+from aws_graphrag.domain.ingestion.incremental import IncrementalIndexer
+from aws_graphrag.domain.models import CommunityMetrics
 
 __all__ = [
     "BaseParser",
