@@ -47,6 +47,75 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def build_document_lineage(
+    documents: list[Document],
+    text_units: list[TextUnit],
+    entities: list[Entity],
+    relationships: list[Relationship],
+    communities: list[Community],
+    claims: list[Claim],
+    suffix: str = "default",
+) -> list[DocumentLineage]:
+    """Attribute extracted artifacts to their source documents.
+
+    Walks the per-run ``document_id`` linkage (``TextUnit.document_ids`` and the
+    artifacts' ``text_unit_ids``) and keys the resulting lineage by the *stable*
+    ``doc_id`` so a later run can remove a document's exclusive artifacts. An
+    artifact shared across documents is attributed to each — the registry-level
+    exclusive-id computation later subtracts ids still referenced by survivors.
+    """
+    # Map per-run document_id -> stable doc_id.
+    docid_to_stable = {
+        doc.document_id: compute_doc_id(doc.file_path) for doc in documents
+    }
+    # Map text_unit id -> set of stable doc_ids it belongs to.
+    tu_to_docs: dict[str, set[str]] = {}
+    docs_by_stable: dict[str, set[str]] = defaultdict(set)
+    for tu in text_units:
+        stable_ids = {
+            docid_to_stable[d] for d in (tu.document_ids or []) if d in docid_to_stable
+        }
+        if stable_ids:
+            tu_to_docs[tu.id] = stable_ids
+            for s in stable_ids:
+                docs_by_stable[s].add(tu.id)
+
+    entity_ids: dict[str, set[str]] = defaultdict(set)
+    relationship_ids: dict[str, set[str]] = defaultdict(set)
+    claim_ids: dict[str, set[str]] = defaultdict(set)
+    community_ids: dict[str, set[str]] = defaultdict(set)
+
+    def _attribute(artifact_id: str, tu_ids: list[str] | None, bucket: dict) -> None:
+        for tu_id in tu_ids or []:
+            for stable in tu_to_docs.get(tu_id, ()):  # noqa: B007
+                bucket[stable].add(artifact_id)
+
+    for e in entities:
+        _attribute(e.id, e.text_unit_ids, entity_ids)
+    for r in relationships:
+        _attribute(r.id, r.text_unit_ids, relationship_ids)
+    for c in claims:
+        _attribute(c.id, c.text_unit_ids, claim_ids)
+    for comm in communities:
+        _attribute(comm.id, comm.text_unit_ids, community_ids)
+
+    lineages = []
+    for doc in documents:
+        stable = docid_to_stable[doc.document_id]
+        lineages.append(
+            DocumentLineage(
+                doc_id=stable,
+                suffix=suffix,
+                text_unit_ids=sorted(docs_by_stable.get(stable, set())),
+                entity_ids=sorted(entity_ids.get(stable, set())),
+                relationship_ids=sorted(relationship_ids.get(stable, set())),
+                claim_ids=sorted(claim_ids.get(stable, set())),
+                community_ids=sorted(community_ids.get(stable, set())),
+            )
+        )
+    return lineages
+
+
 class IncrementalIndexer:
     """Orchestrates an incremental indexing run against a document registry."""
 

@@ -22,12 +22,19 @@ from aws_graphrag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from aws_graphrag.domain.ingestion.graph_builder import GraphBuilder
 from aws_graphrag.domain.ingestion.graph_resolver import GraphResolver
 from aws_graphrag.domain.models import (
+    Claim,
+    Community,
+    CommunityReport,
     Config,
+    Constants,
     Document,
+    Entity,
     PipelineContext,
     PipelineStageResult,
     PipelineStageStatus,
     PipelineStageType,
+    Relationship,
+    TextUnit,
 )
 from aws_graphrag.shared import PipelineStageError, get_logger
 from aws_graphrag.storage import IndexingManager
@@ -232,10 +239,13 @@ class DocumentLoadingStage(PipelineStage):
         documents = [Document(**doc.model_dump()) for doc in result]
 
         # Incremental indexing: when the DynamoDB doc-status registry is enabled,
-        # diff against it and process only new/changed documents.
+        # diff against it, stash the delta/fingerprints for the IndexingStage, and
+        # process only new/changed documents.
         delta_skipped = 0
         if self.config.aws.dynamodb.enabled:
-            documents, delta_skipped = self._apply_incremental_filter(documents)
+            documents, delta_skipped = self._apply_incremental_filter(
+                documents, context
+            )
 
         context.documents = documents
         output_count = len(context.documents)
@@ -259,31 +269,38 @@ class DocumentLoadingStage(PipelineStage):
         return input_count, output_count, metrics
 
     def _apply_incremental_filter(
-        self, documents: list[Document]
+        self, documents: list[Document], context: PipelineContext
     ) -> tuple[list[Document], int]:
         """Keep only new/changed documents per the DynamoDB doc-status registry.
+
+        Also stashes the computed delta + fingerprints on the context so the
+        IndexingStage can prune stale artifacts, propagate deletions, and record
+        per-document lineage (the full incremental commit path).
 
         Degrades to processing everything (and logs) if the registry is
         unreachable, so an enabled-but-misconfigured registry never blocks a run.
         Imported lazily to avoid a hard dependency when the feature is off.
         """
         try:
-            from aws_graphrag.adapters.aws import DynamoDBDocStatusStore
             from aws_graphrag.domain.ingestion.delta_detector import (
                 detect_delta,
                 filter_documents_to_process,
             )
 
-            store = DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
-            delta, _ = detect_delta(documents, store)
+            store = self._build_doc_status_store()
+            delta, fingerprints = detect_delta(documents, store)
+            context.incremental_delta = delta
+            context.incremental_fingerprints = fingerprints
             if delta.is_empty:
                 logger.info("Incremental: no new/changed documents detected")
             to_process = filter_documents_to_process(documents, delta)
             skipped = len(documents) - len(to_process)
             logger.info(
-                "Incremental filter: %d to process, %d unchanged (skipped)",
+                "Incremental filter: %d to process, %d unchanged (skipped), "
+                "%d deleted",
                 len(to_process),
                 skipped,
+                len(delta.deleted),
             )
             return to_process, skipped
         except Exception as e:
@@ -291,6 +308,11 @@ class DocumentLoadingStage(PipelineStage):
                 "Incremental filter unavailable (%s); processing all documents", e
             )
             return documents, 0
+
+    def _build_doc_status_store(self):  # type: ignore[no-untyped-def]
+        from aws_graphrag.adapters.aws import DynamoDBDocStatusStore
+
+        return DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
 
 
 class DocumentParsingStage(PipelineStage):
@@ -954,14 +976,25 @@ class IndexingStage(PipelineStage):
             + len(claims)
         )
 
-        indexing_results = self.indexing_manager.index_all_data(
-            text_units=text_units,
-            entities=entities,
-            relationships=relationships,
-            communities=communities,
-            community_reports=community_reports,
-            claims=claims,
-        )
+        if context.incremental_delta is not None and not self.config.indexing.reset:
+            indexing_results = self._index_incremental(
+                context,
+                text_units,
+                entities,
+                relationships,
+                communities,
+                community_reports,
+                claims,
+            )
+        else:
+            indexing_results = self.indexing_manager.index_all_data(
+                text_units=text_units,
+                entities=entities,
+                relationships=relationships,
+                communities=communities,
+                community_reports=community_reports,
+                claims=claims,
+            )
 
         total_indexed = sum(
             stats.successful_items for stats in indexing_results.values()
@@ -990,6 +1023,74 @@ class IndexingStage(PipelineStage):
         logger.info("=" * 60)
 
         return input_count, total_indexed, metrics
+
+    def _index_incremental(
+        self,
+        context: PipelineContext,
+        text_units: list[TextUnit],
+        entities: list[Entity],
+        relationships: list[Relationship],
+        communities: list[Community],
+        community_reports: list[CommunityReport],
+        claims: list[Claim],
+    ) -> dict[str, Any]:
+        """Idempotent delta indexing + stale-artifact pruning + registry write-back.
+
+        Routed to when a doc-status delta is present (incremental mode). Stale
+        artifacts of changed/deleted documents are removed first, then the freshly
+        extracted delta is upserted and the registry updated with per-document
+        lineage so subsequent runs diff correctly.
+        """
+        from aws_graphrag.adapters.aws import DynamoDBDocStatusStore
+        from aws_graphrag.application.ingestion.incremental import (
+            IncrementalIndexer,
+            build_document_lineage,
+        )
+        from aws_graphrag.ports.indexer import BaseIndexer
+
+        delta = context.incremental_delta
+        if delta is None:  # defensive; caller already guards
+            return self.indexing_manager.index_all_data(
+                text_units=text_units,
+                entities=entities,
+                relationships=relationships,
+                communities=communities,
+                community_reports=community_reports,
+                claims=claims,
+            )
+        store = DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
+        # Artifacts carry their own index suffix (multi-tenant/version aware);
+        # derive the run's suffix from the text units the same way the indexers do.
+        suffix = (
+            BaseIndexer.get_suffix(text_units[0])
+            if text_units
+            else Constants.DEFAULT_SUFFIX.value
+        )
+        incremental = IncrementalIndexer(store, self.indexing_manager, suffix=suffix)
+
+        # Drop stale artifacts of changed docs (before re-upsert) and of deleted docs.
+        incremental.prune_changed(delta)
+        incremental.remove_deleted(delta)
+
+        lineages = build_document_lineage(
+            documents=context.documents,
+            text_units=text_units,
+            entities=entities,
+            relationships=relationships,
+            communities=communities,
+            claims=claims,
+            suffix=suffix,
+        )
+        return incremental.commit(
+            lineages=lineages,
+            fingerprints=context.incremental_fingerprints,
+            text_units=text_units,
+            entities=entities,
+            relationships=relationships,
+            communities=communities,
+            community_reports=community_reports,
+            claims=claims,
+        )
 
     def _validate_backend_success(self, indexing_results: dict[str, Any]) -> None:
         # 1) Per-index-type validation: fail if any individual index type completely failed

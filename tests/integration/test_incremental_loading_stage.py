@@ -18,6 +18,13 @@ from aws_graphrag.domain.models import Config, DocStatusRecord, Document
 pytestmark = pytest.mark.integration
 
 
+class _Ctx:
+    """Minimal stand-in for PipelineContext (only the incremental attrs are set)."""
+
+    incremental_delta = None
+    incremental_fingerprints: dict[str, str] = {}
+
+
 def _doc(path: str, text: str) -> Document:
     return Document(
         page_content=text,
@@ -55,10 +62,14 @@ def test_filter_skips_unchanged_documents() -> None:
         )
 
         stage = _stage(config, session)
-        kept, skipped = stage._apply_incremental_filter([a, _doc("/b.txt", "B")])
+        ctx = _Ctx()
+        kept, skipped = stage._apply_incremental_filter([a, _doc("/b.txt", "B")], ctx)
 
         assert [d.file_path for d in kept] == ["/b.txt"]
         assert skipped == 1
+        # The delta is stashed on the context for the IndexingStage.
+        assert ctx.incremental_delta is not None
+        assert compute_doc_id("/b.txt") in ctx.incremental_delta.new
 
 
 def test_filter_degrades_gracefully_on_error() -> None:
@@ -68,5 +79,5 @@ def test_filter_degrades_gracefully_on_error() -> None:
     config.aws.dynamodb.create_table_if_missing = False
     stage = _stage(config, boto3.Session(region_name="us-east-1"))
     docs = [_doc("/a.txt", "A")]
-    kept, skipped = stage._apply_incremental_filter(docs)
+    kept, skipped = stage._apply_incremental_filter(docs, _Ctx())
     assert kept == docs and skipped == 0
