@@ -16,10 +16,10 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
-from aws_graphrag.core import get_logger
 from aws_graphrag.domain.models import Document, DocumentDelta
 from aws_graphrag.ports import DocStatusPort
-from aws_graphrag.utils.common import compute_hash
+from aws_graphrag.shared import get_logger
+from aws_graphrag.shared.utils.common import compute_hash
 
 logger = get_logger(__name__)
 

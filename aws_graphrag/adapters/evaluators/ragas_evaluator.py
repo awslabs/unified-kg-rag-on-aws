@@ -24,7 +24,6 @@ from aws_graphrag.adapters.aws import (
 )
 from aws_graphrag.adapters.aws.bedrock import get_assumed_role_boto_session
 from aws_graphrag.adapters.aws.token_counter import BedrockTokenCounter
-from aws_graphrag.core import EvaluationException, get_logger
 from aws_graphrag.domain.models import (
     Config,
     EvaluationMetric,
@@ -35,6 +34,7 @@ from aws_graphrag.domain.models import (
     EvaluatorType,
 )
 from aws_graphrag.evaluation.base import BaseGraphRAGEvaluator
+from aws_graphrag.shared import EvaluationException, get_logger
 
 logger = get_logger(__name__)
 

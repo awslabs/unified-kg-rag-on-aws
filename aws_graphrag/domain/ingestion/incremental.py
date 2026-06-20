@@ -19,7 +19,6 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from aws_graphrag.core import get_logger
 from aws_graphrag.domain.ingestion.delta_detector import (
     compute_doc_id,
     detect_delta,
@@ -39,6 +38,7 @@ from aws_graphrag.domain.models import (
     TextUnit,
 )
 from aws_graphrag.ports import DocStatusPort
+from aws_graphrag.shared import get_logger
 
 if TYPE_CHECKING:
     from aws_graphrag.storage import IndexingManager, IndexingStats

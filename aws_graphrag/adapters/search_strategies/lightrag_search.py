@@ -22,7 +22,11 @@ from typing import Any
 
 import boto3
 
-from aws_graphrag.core import get_logger
+from aws_graphrag.adapters.retrieval.base import (
+    BaseContextBuilder,
+    BaseGraphRAGRetriever,
+    BaseSearchStrategy,
+)
 from aws_graphrag.domain.models import (
     Config,
     RetrievalResult,
@@ -32,11 +36,7 @@ from aws_graphrag.domain.models import (
     SearchType,
 )
 from aws_graphrag.domain.retrieval.strategy_registry import register_strategy
-from aws_graphrag.retrieval.base import (
-    BaseContextBuilder,
-    BaseGraphRAGRetriever,
-    BaseSearchStrategy,
-)
+from aws_graphrag.shared import get_logger
 
 logger = get_logger(__name__)
 

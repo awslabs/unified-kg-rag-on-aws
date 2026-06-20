@@ -8,10 +8,10 @@ from typing import Any
 from pydantic import BaseModel
 from tqdm import tqdm
 
-from aws_graphrag.core import get_logger
 from aws_graphrag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
 from aws_graphrag.domain.models import Claim, Config, Entity
-from aws_graphrag.utils import normalize_name
+from aws_graphrag.shared import get_logger
+from aws_graphrag.shared.utils import normalize_name
 
 logger = get_logger(__name__)
 

@@ -7,10 +7,10 @@ from typing import Any
 import boto3
 
 from aws_graphrag.adapters.aws import BedrockEmbeddingModelFactory, OpenSearchClient
-from aws_graphrag.core import get_logger
+from aws_graphrag.adapters.retrieval.base import BaseGraphRAGRetriever
+from aws_graphrag.adapters.retrieval.token_manager import SectionType
 from aws_graphrag.domain.models import Config, RetrievalResult, SearchQuery, SearchType
-from aws_graphrag.retrieval.base import BaseGraphRAGRetriever
-from aws_graphrag.retrieval.token_manager import SectionType
+from aws_graphrag.shared import get_logger
 
 logger = get_logger(__name__)
 

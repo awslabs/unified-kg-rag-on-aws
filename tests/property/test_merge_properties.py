@@ -7,8 +7,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from aws_graphrag.domain.ingestion.merge import merge_entities
 from aws_graphrag.domain.models import Entity
-from aws_graphrag.ingestion.merge import merge_entities
 
 pytestmark = pytest.mark.property
 

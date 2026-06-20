@@ -4,7 +4,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from aws_graphrag.core import get_logger
+from aws_graphrag.shared import get_logger
 
 logger = get_logger(__name__)
 

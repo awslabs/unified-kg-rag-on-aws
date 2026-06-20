@@ -10,7 +10,6 @@ from langchain_core.runnables import Runnable
 
 from aws_graphrag.adapters.evaluators.langchain_evaluator import LangChainEvaluator
 from aws_graphrag.adapters.evaluators.ragas_evaluator import RagasEvaluator
-from aws_graphrag.core import EvaluationException, get_logger
 from aws_graphrag.domain.models import (
     Config,
     EvaluationGroundTruth,
@@ -21,7 +20,8 @@ from aws_graphrag.domain.models import (
     EvaluatorType,
 )
 from aws_graphrag.retrieval import RAGOutput
-from aws_graphrag.utils import BatchProcessor
+from aws_graphrag.shared import EvaluationException, get_logger
+from aws_graphrag.shared.utils import BatchProcessor
 
 from .base import BaseEvaluator
 from .graph_aware_evaluator import GraphAwareEvaluator

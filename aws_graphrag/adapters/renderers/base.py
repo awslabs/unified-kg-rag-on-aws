@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from aws_graphrag.core import get_logger
+from aws_graphrag.shared import get_logger
 
 if TYPE_CHECKING:
     import networkx as nx

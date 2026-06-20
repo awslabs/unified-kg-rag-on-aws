@@ -1,8 +1,8 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 import networkx as nx
 
-from aws_graphrag.core import get_logger
 from aws_graphrag.domain.models import Claim, Entity, Relationship
+from aws_graphrag.shared import get_logger
 
 logger = get_logger(__name__)
 

@@ -35,15 +35,15 @@ def manager(mocker):
     neptune_indexer.delete_by_id.return_value = IndexingStats()
 
     mocker.patch(
-        "aws_graphrag.storage.indexing_manager.OpenSearchIndexer",
+        "aws_graphrag.application.storage.indexing_manager.OpenSearchIndexer",
         return_value=os_indexer,
     )
     mocker.patch(
-        "aws_graphrag.storage.indexing_manager.NeptuneIndexer",
+        "aws_graphrag.application.storage.indexing_manager.NeptuneIndexer",
         return_value=neptune_indexer,
     )
+    from aws_graphrag.application.storage.indexing_manager import IndexingManager
     from aws_graphrag.domain.models import Config
-    from aws_graphrag.storage.indexing_manager import IndexingManager
 
     mgr = IndexingManager(config=Config())
     return mgr, os_indexer, neptune_indexer

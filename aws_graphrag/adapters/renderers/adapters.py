@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aws_graphrag.core import get_logger
+from aws_graphrag.shared import get_logger
 
 from .base import BaseRenderer, RenderContext, register_renderer
 from .interactive import InteractiveRenderer

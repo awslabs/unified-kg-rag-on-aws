@@ -11,9 +11,9 @@ from aws_graphrag.adapters.renderers import (
     get_renderer_class,
     registered_renderers,
 )
-from aws_graphrag.core import get_logger
 from aws_graphrag.domain.models import Config
 from aws_graphrag.ingestion import CommunityDetector, GraphAnalyzer
+from aws_graphrag.shared import get_logger
 
 from .embeddings.dimensionality import DimensionalityReducer
 from .embeddings.node2vec import BedrockNodeEmbedder

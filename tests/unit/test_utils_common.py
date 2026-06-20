@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.utils.common import (
+from aws_graphrag.shared.utils.common import (
     compute_hash,
     ensure_list,
     generate_stable_id,

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
-from aws_graphrag.core import get_logger
+from aws_graphrag.shared import get_logger
 
 from .node2vec import NodeEmbeddings
 

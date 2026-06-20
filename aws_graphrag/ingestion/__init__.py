@@ -1,4 +1,54 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+from aws_graphrag.adapters.ingestion.chunker import (
+    ChunkerFactory,
+    ChunkingStats,
+    ChunkingStrategy,
+    ChunkProcessor,
+    ChunkQualityValidator,
+    IntelligentTextChunker,
+    SimpleTextChunker,
+)
+from aws_graphrag.adapters.ingestion.claim_extractor import ClaimExtractor
+from aws_graphrag.adapters.ingestion.community_detector import (
+    CommunityDetector,
+    CommunityMetrics,
+    HierarchicalCommunity,
+)
+from aws_graphrag.adapters.ingestion.gleaner import (
+    GleaningRound,
+    GleaningStats,
+    GraphGleaner,
+)
+from aws_graphrag.adapters.ingestion.graph_extractor import (
+    ExtractionStats,
+    GraphExtractor,
+)
+from aws_graphrag.adapters.ingestion.loader import DirectoryLoader
+from aws_graphrag.adapters.ingestion.parser import (
+    BaseParser,
+    ParserFactory,
+    ParsingStats,
+)
+from aws_graphrag.adapters.ingestion.translator import (
+    TextUnitTranslator,
+    TranslationStats,
+)
+from aws_graphrag.application.ingestion.pipeline import DataIngestionPipeline
+from aws_graphrag.application.ingestion.pipeline_stages import (
+    ClaimExtractionStage,
+    ClaimResolutionStage,
+    CommunityDetectionStage,
+    DocumentLoadingStage,
+    DocumentParsingStage,
+    GleaningStage,
+    GraphAnalysisStage,
+    GraphExtractionStage,
+    GraphResolutionStage,
+    IndexingStage,
+    PipelineStage,
+    TextChunkingStage,
+    TranslationStage,
+)
 from aws_graphrag.domain.ingestion.base_processor import BaseProcessor
 from aws_graphrag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
 from aws_graphrag.domain.ingestion.delta_detector import (
@@ -19,43 +69,6 @@ from aws_graphrag.domain.ingestion.graph_resolver import (
     RelationshipResolver,
 )
 from aws_graphrag.domain.ingestion.incremental import IncrementalIndexer
-
-from .chunker import (
-    ChunkerFactory,
-    ChunkingStats,
-    ChunkingStrategy,
-    ChunkProcessor,
-    ChunkQualityValidator,
-    IntelligentTextChunker,
-    SimpleTextChunker,
-)
-from .claim_extractor import ClaimExtractor
-from .community_detector import (
-    CommunityDetector,
-    CommunityMetrics,
-    HierarchicalCommunity,
-)
-from .gleaner import GleaningRound, GleaningStats, GraphGleaner
-from .graph_extractor import ExtractionStats, GraphExtractor
-from .loader import DirectoryLoader
-from .parser import BaseParser, ParserFactory, ParsingStats
-from .pipeline import DataIngestionPipeline
-from .pipeline_stages import (
-    ClaimExtractionStage,
-    ClaimResolutionStage,
-    CommunityDetectionStage,
-    DocumentLoadingStage,
-    DocumentParsingStage,
-    GleaningStage,
-    GraphAnalysisStage,
-    GraphExtractionStage,
-    GraphResolutionStage,
-    IndexingStage,
-    PipelineStage,
-    TextChunkingStage,
-    TranslationStage,
-)
-from .translator import TextUnitTranslator, TranslationStats
 
 __all__ = [
     "BaseParser",

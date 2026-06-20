@@ -17,11 +17,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeVar
 
-from aws_graphrag.core import get_logger
 from aws_graphrag.domain.models import RetrieverRole, SearchStrategy
+from aws_graphrag.shared import get_logger
 
 if TYPE_CHECKING:
-    from aws_graphrag.retrieval.base import BaseSearchStrategy
+    from aws_graphrag.adapters.retrieval.base import BaseSearchStrategy
 
 logger = get_logger(__name__)
 

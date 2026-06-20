@@ -7,7 +7,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from aws_graphrag.core import get_logger
 from aws_graphrag.domain.models import (
     Community,
     CommunityReport,
@@ -17,6 +16,7 @@ from aws_graphrag.domain.models import (
     Relationship,
     TextUnit,
 )
+from aws_graphrag.shared import get_logger
 
 logger = get_logger(__name__)
 

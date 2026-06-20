@@ -12,8 +12,8 @@ from gremlin_python.driver.driver_remote_connection import DriverRemoteConnectio
 from gremlin_python.process.anonymous_traversal import traversal
 from gremlin_python.process.graph_traversal import GraphTraversal, GraphTraversalSource
 
-from aws_graphrag.core import AWSServiceError, get_logger
 from aws_graphrag.domain.models import Config
+from aws_graphrag.shared import AWSServiceError, get_logger
 
 logger = get_logger(__name__)
 

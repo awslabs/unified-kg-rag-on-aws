@@ -15,7 +15,10 @@ from aws_graphrag.adapters.renderers import (
     register_renderer,
     registered_renderers,
 )
-from aws_graphrag.cli.run_visualization import load_render_context, run_visualization
+from aws_graphrag.application.cli.run_visualization import (
+    load_render_context,
+    run_visualization,
+)
 from aws_graphrag.domain.models import Config
 
 pytestmark = pytest.mark.unit

@@ -13,18 +13,18 @@ from langchain_core.documents import Document
 from pydantic import BaseModel, Field, PrivateAttr
 
 from aws_graphrag.adapters.aws.token_counter import BedrockTokenCounter
-from aws_graphrag.core import (
-    AWSServiceError,
-    EmbeddingModelError,
-    LanguageModelError,
-    RerankModelError,
-    get_logger,
-)
 from aws_graphrag.domain.models import (
     Config,
     EmbeddingModelId,
     LanguageModelId,
     RerankModelId,
+)
+from aws_graphrag.shared import (
+    AWSServiceError,
+    EmbeddingModelError,
+    LanguageModelError,
+    RerankModelError,
+    get_logger,
 )
 
 logger = get_logger(__name__)

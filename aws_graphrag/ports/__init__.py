@@ -16,7 +16,7 @@ Two further contracts are abstract *adapter bases* rather than pure ports —
 they construct infrastructure in ``__init__`` (HybridScorer/TokenManager, tqdm)
 — so they live beside their adapters but are re-exported here for discovery:
 - ``BaseGraphRAGRetriever`` / ``BaseSearchStrategy`` / ``BaseContextBuilder``
-  (``retrieval.base``; adapters: ``adapters.retrievers`` / ``adapters.search_strategies``).
+  (``adapters.retrieval.base``; adapters: ``adapters.retrievers`` / ``adapters.search_strategies``).
 - ``BaseGraphRAGEvaluator`` (``evaluation.base``; adapters: ``adapters.evaluators``).
 """
 

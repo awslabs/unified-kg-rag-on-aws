@@ -7,7 +7,6 @@ import boto3
 from opensearchpy.exceptions import NotFoundError
 
 from aws_graphrag.adapters.aws import BedrockEmbeddingModelFactory, OpenSearchClient
-from aws_graphrag.core import get_logger
 from aws_graphrag.domain.models import (
     Claim,
     CommunityReport,
@@ -18,7 +17,8 @@ from aws_graphrag.domain.models import (
     TextUnit,
 )
 from aws_graphrag.ports.indexer import IndexingStats, VectorIndexer
-from aws_graphrag.utils.common import compute_hash
+from aws_graphrag.shared import get_logger
+from aws_graphrag.shared.utils.common import compute_hash
 
 logger = get_logger(__name__)
 

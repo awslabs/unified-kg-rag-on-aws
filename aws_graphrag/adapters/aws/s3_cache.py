@@ -7,8 +7,8 @@ import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 from types_boto3_s3 import S3Client
 
-from aws_graphrag.core import get_logger
 from aws_graphrag.domain.models import Config, S3EncryptionType
+from aws_graphrag.shared import get_logger
 
 logger = get_logger(__name__)
 

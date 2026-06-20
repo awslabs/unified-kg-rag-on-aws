@@ -17,7 +17,6 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from aws_graphrag.core import get_logger
 from aws_graphrag.domain.models import (
     Config,
     EvaluationMetric,
@@ -27,6 +26,7 @@ from aws_graphrag.domain.models import (
     EvaluationResult,
     EvaluatorType,
 )
+from aws_graphrag.shared import get_logger
 
 from .base import BaseGraphRAGEvaluator
 
