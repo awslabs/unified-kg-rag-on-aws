@@ -13,8 +13,8 @@ from bokeh.palettes import Blues8
 from bokeh.plotting import figure, output_file, save
 from bokeh.transform import dodge
 
+from aws_graphrag.domain.ingestion.graph_analyzer import CentralityMetrics
 from aws_graphrag.domain.models import Community
-from aws_graphrag.ingestion import CentralityMetrics
 from aws_graphrag.shared import get_logger
 
 logger = get_logger(__name__)

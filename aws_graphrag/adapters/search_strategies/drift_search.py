@@ -10,6 +10,7 @@ from langchain_core.output_parsers import (
 )
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws.chain_factory import setup_chain
 from aws_graphrag.adapters.retrieval.base import (
     BaseContextBuilder,
     BaseGraphRAGRetriever,
@@ -29,7 +30,7 @@ from aws_graphrag.domain.prompts import (
 )
 from aws_graphrag.domain.retrieval.strategy_registry import register_strategy
 from aws_graphrag.shared import get_logger
-from aws_graphrag.shared.utils import compute_hash, safe_float_parse, setup_chain
+from aws_graphrag.shared.utils import compute_hash, safe_float_parse
 
 logger = get_logger(__name__)
 

@@ -7,15 +7,17 @@ import boto3
 from pydantic import BaseModel, Field
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws.chain_factory import (
+    create_robust_xml_output_parser,
+    setup_chain,
+)
 from aws_graphrag.domain.ingestion.base_processor import BaseProcessor
 from aws_graphrag.domain.models import Config, Entity, Relationship, TextUnit
 from aws_graphrag.domain.prompts import GraphExtractionPrompt
 from aws_graphrag.shared import get_logger
 from aws_graphrag.shared.utils import (
     BatchProcessor,
-    create_robust_xml_output_parser,
     ensure_list,
-    setup_chain,
 )
 
 logger = get_logger(__name__)

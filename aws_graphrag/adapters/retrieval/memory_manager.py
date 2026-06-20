@@ -14,10 +14,10 @@ from langchain_core.output_parsers import CommaSeparatedListOutputParser
 from pydantic import Field
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws.chain_factory import setup_chain
 from aws_graphrag.domain.models import Config, ConversationContext, MessageRole
 from aws_graphrag.domain.prompts import EntityExtractionPrompt
 from aws_graphrag.shared import get_config, get_logger
-from aws_graphrag.shared.utils import setup_chain
 
 logger = get_logger(__name__)
 

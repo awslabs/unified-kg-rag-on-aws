@@ -7,10 +7,11 @@ from langchain_core.output_parsers import StrOutputParser
 from pydantic import BaseModel, Field
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws.chain_factory import setup_chain
 from aws_graphrag.domain.models import Config, LanguageCode, TextUnit
 from aws_graphrag.domain.prompts import TextTranslationPrompt
 from aws_graphrag.shared import get_logger
-from aws_graphrag.shared.utils import BatchProcessor, setup_chain
+from aws_graphrag.shared.utils import BatchProcessor
 
 logger = get_logger(__name__)
 

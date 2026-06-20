@@ -41,7 +41,8 @@ from aws_graphrag.ports import DocStatusPort
 from aws_graphrag.shared import get_logger
 
 if TYPE_CHECKING:
-    from aws_graphrag.storage import IndexingManager, IndexingStats
+    from aws_graphrag.application.storage.indexing_manager import IndexingManager
+    from aws_graphrag.ports.indexer import IndexingStats
 
 logger = get_logger(__name__)
 

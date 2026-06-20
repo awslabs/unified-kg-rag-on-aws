@@ -17,15 +17,17 @@ from tqdm import tqdm
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.adapters.aws.bedrock import get_assumed_role_boto_session
+from aws_graphrag.adapters.aws.chain_factory import (
+    create_robust_xml_output_parser,
+    setup_chain,
+)
 from aws_graphrag.adapters.aws.token_counter import BedrockTokenCounter
 from aws_graphrag.domain.models import ChunkingStrategy, Config, Document, TextUnit
 from aws_graphrag.domain.prompts import TextChunkingPrompt
 from aws_graphrag.shared import DataProcessingError, get_logger
 from aws_graphrag.shared.utils import (
     BatchProcessor,
-    create_robust_xml_output_parser,
     generate_stable_id,
-    setup_chain,
 )
 
 logger = get_logger(__name__)

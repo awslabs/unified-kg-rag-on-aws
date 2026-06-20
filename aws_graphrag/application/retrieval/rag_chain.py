@@ -27,6 +27,7 @@ from aws_graphrag.adapters.aws import (
     NeptuneClient,
     OpenSearchClient,
 )
+from aws_graphrag.adapters.aws.chain_factory import setup_chain
 from aws_graphrag.adapters.retrieval.base import (
     BaseContextBuilder,
     BaseGraphRAGRetriever,
@@ -65,7 +66,6 @@ from aws_graphrag.domain.prompts import (
 )
 from aws_graphrag.domain.retrieval.strategy_registry import get_strategy_spec
 from aws_graphrag.shared import get_logger
-from aws_graphrag.shared.utils import setup_chain
 
 logger = get_logger(__name__)
 

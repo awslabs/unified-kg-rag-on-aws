@@ -12,6 +12,10 @@ from pydantic import BaseModel
 from tqdm import tqdm
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws.chain_factory import (
+    create_robust_xml_output_parser,
+    setup_chain,
+)
 from aws_graphrag.domain.ingestion.base_processor import (
     BaseProcessor,
     check_entity_relevance_task,
@@ -21,10 +25,8 @@ from aws_graphrag.domain.prompts import ClaimExtractionPrompt
 from aws_graphrag.shared import get_logger
 from aws_graphrag.shared.utils import (
     BatchProcessor,
-    create_robust_xml_output_parser,
     ensure_list,
     generate_stable_id,
-    setup_chain,
 )
 
 logger = get_logger(__name__)

@@ -6,7 +6,7 @@ import networkx as nx
 import numpy as np
 from pyvis.network import Network
 
-from aws_graphrag.ingestion import HierarchicalCommunity
+from aws_graphrag.adapters.ingestion.community_detector import HierarchicalCommunity
 from aws_graphrag.shared import get_logger
 
 logger = get_logger(__name__)

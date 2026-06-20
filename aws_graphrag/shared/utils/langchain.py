@@ -8,22 +8,18 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import tenacity
-from langchain.output_parsers import OutputFixingParser, XMLOutputParser
-from langchain_core.output_parsers import BaseOutputParser
-from langchain_core.runnables import Runnable, RunnableConfig
+from langchain.output_parsers import XMLOutputParser
+from langchain_core.runnables import RunnableConfig
 from lxml import etree
 from pydantic import BaseModel, Field
 from tenacity import RetryCallState
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
 
-from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
-from aws_graphrag.domain.models import LanguageModelId
-from aws_graphrag.domain.prompts import BasePrompt
-from aws_graphrag.shared import GraphRAGException, get_logger
+from aws_graphrag.shared import get_logger
 
 if TYPE_CHECKING:
-    from aws_graphrag.domain.models.config import CustomPromptConfig
+    pass
 
 logger = get_logger(__name__)
 
@@ -613,50 +609,7 @@ class RobustXMLOutputParser(XMLOutputParser):
         return None
 
 
-def create_robust_xml_output_parser(
-    factory: BedrockLanguageModelFactory,
-    enable_output_fixing: bool,
-    output_fixing_model_id: LanguageModelId,
-) -> BaseOutputParser:
-    base_parser = RobustXMLOutputParser()
-    if not enable_output_fixing:
-        return base_parser
-
-    try:
-        fixing_llm = factory.get_model(model_id=output_fixing_model_id)
-        logger.info(
-            f"Created OutputFixingParser with model: '{output_fixing_model_id.value}'"
-        )
-        return OutputFixingParser.from_llm(parser=base_parser, llm=fixing_llm)
-    except Exception as e:
-        logger.error(
-            f"Failed to create OutputFixingParser with model {output_fixing_model_id.value}: {e}"
-        )
-        raise GraphRAGException(f"Failed to create OutputFixingParser: {e}") from e
-
-
-def setup_chain(
-    factory: BedrockLanguageModelFactory,
-    model_id: LanguageModelId,
-    prompt_class: type[BasePrompt],
-    parser: BaseOutputParser,
-    custom_prompts: "CustomPromptConfig | None" = None,
-    **kwargs: Any,
-) -> Runnable:
-    try:
-        llm = factory.get_model(model_id=model_id, **kwargs)
-        model_info = factory.get_model_info(model_id)
-        enable_prompt_cache = (
-            model_info.supports_prompt_caching if model_info else False
-        )
-        prompt = prompt_class.get_prompt(
-            enable_prompt_cache=enable_prompt_cache, custom_prompts=custom_prompts
-        )
-        chain = prompt | llm | parser
-        logger.debug(f"Successfully created LLM chain with model: '{model_id.value}'")
-        return chain
-    except Exception as e:
-        logger.error(f"Failed to setup LLM chain with model '{model_id.value}': {e}")
-        raise GraphRAGException(
-            f"Failed to setup LLM chain with model '{model_id.value}': {e}"
-        ) from e
+# NOTE: the Bedrock-coupled chain builders (`setup_chain`,
+# `create_robust_xml_output_parser`) moved to
+# `aws_graphrag.adapters.aws.chain_factory` so this kernel module stays free of
+# any adapter dependency (hexagonal dependency rule). Import them from there.
