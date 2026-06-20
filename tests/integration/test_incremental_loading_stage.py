@@ -23,6 +23,30 @@ class _Ctx:
 
     incremental_delta = None
     incremental_fingerprints: dict[str, str] = {}
+    documents: list[Document] = []
+
+
+def test_deletion_only_run_allows_empty_output() -> None:
+    # Regression: a deletion-only / all-unchanged incremental delta yields zero
+    # documents to (re)extract. DOCUMENT_LOADING is critical + must-have-input,
+    # so without the incremental opt-out the run would crash before deletions
+    # are propagated. _allows_empty_output must permit it.
+    from aws_graphrag.domain.models import DocumentDelta
+
+    config = Config()
+    config.aws.dynamodb.enabled = True
+    stage = _stage(config, boto3.Session(region_name="us-east-1"))
+
+    ctx = _Ctx()
+    ctx.incremental_delta = DocumentDelta(deleted=["doc-removed"])
+    ctx.documents = []  # nothing survived the filter
+    assert stage._allows_empty_output(ctx) is True
+
+    # Non-incremental run with no documents must still fail the check.
+    plain = _Ctx()
+    plain.incremental_delta = None
+    plain.documents = []
+    assert stage._allows_empty_output(plain) is False
 
 
 def _doc(path: str, text: str) -> Document:

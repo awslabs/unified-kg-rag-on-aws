@@ -97,7 +97,8 @@ class PipelineStage(ABC):
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
 
-            self._validate_critical_stage_output(input_count, output_count)
+            if not self._allows_empty_output(context):
+                self._validate_critical_stage_output(input_count, output_count)
 
             logger.info(
                 f"Stage '{self.name}' completed successfully in "
@@ -127,6 +128,18 @@ class PipelineStage(ABC):
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
         pass
+
+    def _allows_empty_output(self, context: PipelineContext) -> bool:
+        """Stages may opt out of the zero-output critical check for valid cases.
+
+        In incremental mode the doc-status registry can legitimately filter the
+        corpus to zero documents to (re)extract — a deletion-only delta still
+        propagates deletions (handled at the loading stage) and an all-unchanged
+        delta is a no-op run. In that case every document-processing stage
+        receives empty input, which is valid rather than a failure, so the
+        must-have-input / critical-output checks are skipped pipeline-wide.
+        """
+        return context.incremental_delta is not None and not context.documents
 
     def _validate_critical_stage_output(
         self, input_count: int, output_count: int

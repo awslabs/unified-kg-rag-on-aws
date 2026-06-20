@@ -917,14 +917,18 @@ class FusionConfig(BaseModel):
             "lightrag_relationships": 1.0,
             "lightrag_chunks": 1.0,
             "opensearch_all": 1.0,
+            "opensearch_community_reports": 1.0,
+            "opensearch_candidate_community_reports": 1.0,
+            "opensearch_expanded_community_reports": 1.0,
+            "results": 1.0,
         },
         description=(
             "Per-source-bucket weights applied during weighted fusion "
             "(FusionMethod.WEIGHTED). Keys are the retrieval source buckets "
             "emitted by the search strategies (graph_entities, text_units, "
-            "lightrag_entities, lightrag_relationships, lightrag_chunks, "
-            "opensearch_all). A bucket without a key defaults to 1.0. Unused by "
-            "the default RRF fusion."
+            "lightrag_entities/relationships/chunks, opensearch_all, the "
+            "global-search community-report buckets, and drift's 'results'). A "
+            "bucket without a key defaults to 1.0. Unused by the default RRF fusion."
         ),
     )
 
