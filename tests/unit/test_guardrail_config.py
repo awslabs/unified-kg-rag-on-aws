@@ -51,8 +51,20 @@ def test_non_cross_region_uses_invoke_shape() -> None:
     config: dict = {}
     f._apply_guardrail(config, is_cross_region=False)
     assert config["guardrails"]["guardrailIdentifier"] == "gr-123"
-    assert config["guardrails"]["trace"] == "disabled"
+    # InvokeModel treats trace as a truthiness flag, so it must be a real bool
+    # (a string like "disabled" would wrongly enable tracing).
+    assert config["guardrails"]["trace"] is False
     assert "guardrail_config" not in config
+
+
+def test_invoke_model_trace_enabled_is_bool_true() -> None:
+    cfg = Config()
+    cfg.aws.bedrock.guardrail.identifier = "gr-123"
+    cfg.aws.bedrock.guardrail.trace = True
+    f = _factory_with(cfg)
+    config: dict = {}
+    f._apply_guardrail(config, is_cross_region=False)
+    assert config["guardrails"]["trace"] is True
 
 
 def test_enabled_property() -> None:

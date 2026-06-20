@@ -73,10 +73,11 @@ def test_delete_documents_routes_to_delete_by_id(manager) -> None:
     mgr.delete_documents({"default": ["e1", "r1", "t1"]})
 
     neptune_indexer.delete_by_id.assert_called_once_with(["e1", "r1", "t1"])
-    # OpenSearch delete is called per vector index prefix:
-    # text-units + entities + relationships (LightRAG relationship vectors must
-    # not be orphaned on document deletion).
-    assert os_indexer.delete_by_id.call_count == 3
+    # OpenSearch delete is called per vector index prefix: text-units +
+    # entities + relationships + claims (none of these artifacts — including
+    # LightRAG relationship vectors and claim vectors — may be orphaned on
+    # document deletion).
+    assert os_indexer.delete_by_id.call_count == 4
 
 
 def test_delete_documents_skips_empty(manager) -> None:

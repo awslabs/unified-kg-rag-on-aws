@@ -102,7 +102,13 @@ class PromptTuner:
         start, end = text.find("{"), text.rfind("}")
         if start != -1 and end != -1 and end > start:
             text = text[start : end + 1]
-        parsed = json.loads(text)
+        try:
+            parsed = json.loads(text)
+        except (json.JSONDecodeError, ValueError) as exc:
+            # A non-JSON or malformed LLM response degrades to the default
+            # profile rather than crashing the whole tuning run.
+            logger.warning("Corpus profile JSON parse failed; using default: %s", exc)
+            return {}
         return parsed if isinstance(parsed, dict) else {}
 
     async def generate_examples(self, profile: CorpusProfile, texts: list[str]) -> str:

@@ -152,6 +152,7 @@ class IncrementalIndexer:
                 + record.relationship_ids
                 + record.text_unit_ids
                 + record.community_ids
+                + record.claim_ids
             )
             if record.doc_id in target:
                 removing_by_suffix[record.suffix].update(ids)
@@ -181,6 +182,7 @@ class IncrementalIndexer:
                 relationship_ids=lineage.relationship_ids,
                 text_unit_ids=lineage.text_unit_ids,
                 community_ids=lineage.community_ids,
+                claim_ids=lineage.claim_ids,
             )
             self.doc_status.put(record)
 

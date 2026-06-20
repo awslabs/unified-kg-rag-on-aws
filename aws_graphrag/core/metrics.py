@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any, Protocol, runtime_checkable
 
 from aws_graphrag.core.logging import get_logger
@@ -78,14 +79,22 @@ class CloudWatchEMFSink:
         metrics: dict[str, float],
         dimensions: dict[str, str] | None = None,
     ) -> None:
-        numeric = {k: v for k, v in metrics.items() if isinstance(v, (int, float))}
+        # bool is a subclass of int; exclude it so flags are not emitted as
+        # 0/1 metrics.
+        numeric = {
+            k: v
+            for k, v in metrics.items()
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
+        }
         if not numeric:
             return
         dims = dimensions or {}
         emf: dict[str, Any] = {
             "_aws": {
-                # Timestamp is injected by the caller's runtime/CloudWatch agent;
-                # EMF accepts events without an explicit Timestamp (uses ingest time).
+                # Timestamp is a REQUIRED member of the EMF metadata object
+                # (epoch milliseconds); records missing it are not extracted as
+                # metrics by the CloudWatch Logs EMF parser.
+                "Timestamp": int(time.time() * 1000),
                 "CloudWatchMetrics": [
                     {
                         "Namespace": namespace,

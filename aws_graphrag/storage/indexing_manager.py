@@ -249,6 +249,7 @@ class IndexingManager:
                 self.opensearch_indexer.opensearch_config.text_units_index_prefix,
                 self.opensearch_indexer.opensearch_config.entities_index_prefix,
                 self.opensearch_indexer.opensearch_config.relationships_index_prefix,
+                self.opensearch_indexer.opensearch_config.claims_index_prefix,
             ):
                 key = f"opensearch_delete_{prefix}_{suffix}"
                 results[key] = self.opensearch_indexer.delete_by_id(ids, prefix, suffix)

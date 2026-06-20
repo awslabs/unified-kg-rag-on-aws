@@ -614,16 +614,21 @@ class BedrockLanguageModelFactory(
         if not guardrail.enabled:
             return
         if is_cross_region:
+            # ChatBedrockConverse passes guardrail_config straight to the
+            # Converse API, whose trace field is the literal "enabled"/"disabled".
             config["guardrail_config"] = {
                 "guardrailIdentifier": guardrail.identifier,
                 "guardrailVersion": guardrail.version,
                 "trace": "enabled" if guardrail.trace else "disabled",
             }
         else:
+            # ChatBedrock (InvokeModel) treats guardrails["trace"] as a
+            # truthiness flag (`if self.guardrails.get("trace")`), so a non-empty
+            # string like "disabled" would wrongly enable tracing — pass a bool.
             config["guardrails"] = {
                 "guardrailIdentifier": guardrail.identifier,
                 "guardrailVersion": guardrail.version,
-                "trace": "enabled" if guardrail.trace else "disabled",
+                "trace": guardrail.trace,
             }
         logger.debug("Applied Bedrock guardrail '%s'", guardrail.identifier)
 

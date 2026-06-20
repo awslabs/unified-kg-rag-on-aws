@@ -139,6 +139,34 @@ def test_deleted_document_removes_exclusive_artifacts(indexer) -> None:
     assert "ea" not in deleted_ids
 
 
+def test_deleted_document_removes_claim_artifacts(indexer) -> None:
+    # Claims are first-class indexed artifacts; their lineage must be tracked
+    # and removed on deletion like entities, or they leak as orphans.
+    inc, store, manager = indexer
+    a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
+    _, fps = inc.plan([a, b])
+    inc.commit(
+        [DocumentLineage(doc_id=compute_doc_id("/a.txt"), claim_ids=["ca"])],
+        fps,
+        entities=[Entity(id="ea", name="A")],
+    )
+    inc.commit(
+        [DocumentLineage(doc_id=compute_doc_id("/b.txt"), claim_ids=["cb"])],
+        fps,
+        entities=[Entity(id="eb", name="B")],
+    )
+
+    # The registry records claim ids per document.
+    rec_b = store.get(compute_doc_id("/b.txt"))
+    assert rec_b is not None and rec_b.claim_ids == ["cb"]
+
+    delta, _ = inc.plan([a])  # delete b
+    inc.remove_deleted(delta)
+    deleted_ids = manager.delete_calls[0]["default"]
+    assert "cb" in deleted_ids
+    assert "ca" not in deleted_ids
+
+
 def test_shared_artifacts_are_not_deleted(indexer) -> None:
     inc, store, manager = indexer
     a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")

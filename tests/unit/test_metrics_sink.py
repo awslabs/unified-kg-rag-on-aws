@@ -54,3 +54,34 @@ def test_emf_no_numeric_metrics_emits_nothing() -> None:
     lg, buf = _emf_logger()
     CloudWatchEMFSink(emf_logger=lg).emit("ns", {"only": "strings"})
     assert buf.getvalue() == ""
+
+
+def test_emf_record_has_epoch_millis_timestamp() -> None:
+    lg, buf = _emf_logger()
+    CloudWatchEMFSink(emf_logger=lg).emit("ns", {"x": 1})
+    ts = json.loads(buf.getvalue())["_aws"]["Timestamp"]
+    assert isinstance(ts, int)
+    # plausible epoch-millis (>= 2021-01-01), guards against epoch-seconds regress
+    assert ts > 1_600_000_000_000
+
+
+def test_emf_bool_values_not_emitted_as_numeric() -> None:
+    lg, buf = _emf_logger()
+    CloudWatchEMFSink(emf_logger=lg).emit("ns", {"flag": True, "count": 3})
+    out = json.loads(buf.getvalue())
+    names = {m["Name"] for m in out["_aws"]["CloudWatchMetrics"][0]["Metrics"]}
+    assert names == {"count"}
+    assert "flag" not in out
+
+
+def test_emf_no_dimensions_emits_empty_dimension_set() -> None:
+    lg, buf = _emf_logger()
+    CloudWatchEMFSink(emf_logger=lg).emit("ns", {"x": 1})
+    out = json.loads(buf.getvalue())
+    assert out["_aws"]["CloudWatchMetrics"][0]["Dimensions"] == [[]]
+
+
+def test_emf_default_logger_construction() -> None:
+    # The no-arg construction branch builds its own dedicated EMF logger.
+    sink = CloudWatchEMFSink()
+    assert isinstance(sink, MetricsSink)

@@ -83,6 +83,15 @@ class TestSampleAndParse:
     def test_parse_json_strips_prose(self, tuner: PromptTuner) -> None:
         assert PromptTuner._parse_json('result: {"domain": "x"} ok') == {"domain": "x"}
 
+    def test_parse_json_no_braces_returns_empty(self, tuner: PromptTuner) -> None:
+        assert PromptTuner._parse_json("I cannot help with that") == {}
+
+    def test_parse_json_malformed_returns_empty(self, tuner: PromptTuner) -> None:
+        assert PromptTuner._parse_json("{not: valid json}") == {}
+
+    def test_parse_json_non_dict_returns_empty(self, tuner: PromptTuner) -> None:
+        assert PromptTuner._parse_json("[1, 2, 3]") == {}
+
     async def test_profile_corpus_empty_returns_default(
         self, tuner: PromptTuner
     ) -> None:
@@ -110,3 +119,25 @@ class TestSampleAndParse:
         self, tuner: PromptTuner
     ) -> None:
         assert await tuner.generate_examples(CorpusProfile(), []) == ""
+
+    async def test_generate_examples_degrades_on_chain_error(
+        self, tuner: PromptTuner, mocker
+    ) -> None:
+        # The documented except branch: a failing chain returns "" rather than
+        # propagating, so tuning still completes without a few-shot example.
+        chain = mocker.MagicMock()
+        chain.ainvoke = mocker.AsyncMock(side_effect=RuntimeError("bedrock down"))
+        mocker.patch("aws_graphrag.prompts.tuner.setup_chain", return_value=chain)
+        result = await tuner.generate_examples(
+            CorpusProfile(domain="x"), ["non-empty text"]
+        )
+        assert result == ""
+
+    async def test_profile_corpus_degrades_on_unparseable_output(
+        self, tuner: PromptTuner, mocker
+    ) -> None:
+        chain = mocker.MagicMock()
+        chain.ainvoke = mocker.AsyncMock(return_value="sorry, no JSON here")
+        mocker.patch("aws_graphrag.prompts.tuner.setup_chain", return_value=chain)
+        profile = await tuner.profile_corpus(["some text"])
+        assert profile.domain == "general knowledge"

@@ -630,11 +630,12 @@ class OpenSearchIndexer(VectorIndexer):
     ) -> list[list[float] | None]:
         result: list[list[float] | None] = [None] * len(texts)
 
-        # Content-hash embedding cache: identical text is embedded once per
-        # process, avoiding re-embedding duplicate chunks within a run and
-        # unchanged chunks across incremental runs. Only cache-miss, de-duplicated
-        # texts hit Bedrock; the result is fanned back out to every index sharing
-        # that text.
+        # Content-hash embedding cache (in-process only): identical text is
+        # embedded once per process, avoiding re-embedding duplicate chunks
+        # within a run and across indices that share the same text in the same
+        # run. It does NOT persist across separate CLI invocations. Only
+        # cache-miss, de-duplicated texts hit Bedrock; the result is fanned back
+        # out to every index sharing that text.
         key_to_indices: dict[str, list[int]] = {}
         unique: list[tuple[str, str]] = []  # (content_hash, text) to embed
         seen_keys: set[str] = set()
