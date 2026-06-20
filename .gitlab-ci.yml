@@ -34,6 +34,9 @@ workflow:
 quality:
   stage: quality
   before_script:
+    # git is required by isort's skip detection (`git ls-files`); the slim uv
+    # image does not bundle it.
+    - apt-get update && apt-get install -y --no-install-recommends git
     - uv sync --extra dev
   script:
     - uv run ruff check aws_graphrag tests
@@ -65,6 +68,9 @@ security_scan:
   image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
   needs: []
   allow_failure: true
+  before_script:
+    # ASH is installed from a git ref via uvx; the slim uv image lacks git.
+    - apt-get update && apt-get install -y --no-install-recommends git
   script:
     - >-
       uvx git+https://github.com/awslabs/automated-security-helper.git@v3.1.2
