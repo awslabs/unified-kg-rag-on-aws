@@ -43,7 +43,9 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         start_time = time.time()
         logger.info(
-            f"Neptune retrieval started - query: '{query.query[:50]}...' ('{query.search_type.value}')"
+            "Neptune retrieval started - query: '%s...' ('%s')",
+            query.query[:50],
+            query.search_type.value,
         )
 
         try:
@@ -51,7 +53,7 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             seed_entities, seed_communities = await self._get_seed_nodes(g, query)
 
             if not seed_entities and not seed_communities:
-                logger.warning(f"No seed nodes found for query: '{query.query}'")
+                logger.warning("No seed nodes found for query: '%s'", query.query)
                 return []
 
             traversal_results = await self._traverse_from_seeds(
@@ -71,7 +73,7 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             return results
 
         except Exception as e:
-            logger.error(f"Neptune retrieval failed: {e}")
+            logger.error("Neptune retrieval failed: %s", e)
             self._record_metric("error_count", 1)
             return []
         finally:
@@ -139,7 +141,7 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         if query.entity_focus:
             traversal = traversal.has("name", P.within(query.entity_focus))
         else:
-            logger.warning(f"No entity focus provided. Using query: '{query.query}'")
+            logger.warning("No entity focus provided. Using query: '%s'", query.query)
             query_terms = re.findall(r"\b\w+\b", query.query.lower())
             if not query_terms:
                 return []
@@ -214,7 +216,10 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             self._neptune_config.entity_label_prefix.capitalize(), query.suffix
         )
         logger.info(
-            f"Traversing from entities with label: '{entity_label}', seed_count: {len(seed_ids)}, max_hops: {hops}"
+            "Traversing from entities with label: '%s', seed_count: %s, max_hops: %s",
+            entity_label,
+            len(seed_ids),
+            hops,
         )
 
         traversal = (
@@ -247,7 +252,10 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             self._neptune_config.entity_label_prefix.capitalize(), query.suffix
         )
         logger.info(
-            f"Traversing from communities with label: '{community_label}', seed_count: {len(seed_ids)}, max_hops: {hops}"
+            "Traversing from communities with label: '%s', seed_count: %s, max_hops: %s",
+            community_label,
+            len(seed_ids),
+            hops,
         )
 
         traversal = (
@@ -289,7 +297,7 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             result: list[Any] = traversal.to_list()
             return result
         except Exception as e:
-            logger.error(f"Gremlin traversal execution failed: {e}")
+            logger.error("Gremlin traversal execution failed: %s", e)
             return []
 
     @staticmethod

@@ -166,7 +166,7 @@ class LineBasedBoundaryProcessor:
             return sorted(set(valid_line_numbers))
 
         except Exception as e:
-            logger.debug(f"Failed to extract line numbers: {e}")
+            logger.debug("Failed to extract line numbers: %s", e)
             return []
 
     @staticmethod
@@ -203,7 +203,7 @@ class LineBasedBoundaryProcessor:
                         )
 
         except Exception as e:
-            logger.debug(f"Failed to extract line numbers from response: {e}")
+            logger.debug("Failed to extract line numbers from response: %s", e)
 
         return line_numbers
 
@@ -294,7 +294,7 @@ class LineBasedBoundaryProcessor:
             return sorted(set(chunk_indices)), missed_count
 
         except Exception as e:
-            logger.debug(f"Failed to convert line numbers to indices: {e}")
+            logger.debug("Failed to convert line numbers to indices: %s", e)
             return [], len(line_numbers)
 
     def validate_error_rate(self, missed_count: int, total_line_numbers: int) -> bool:
@@ -331,7 +331,7 @@ class ChunkProcessor:
             )
             return self._split_large_chunks(overlapped_chunks)
         except Exception as e:
-            logger.debug(f"Failed to extract chunks from indices: {e}")
+            logger.debug("Failed to extract chunks from indices: %s", e)
             return [text] if text.strip() else []
 
     def merge_small_chunks(self, chunks: list[str]) -> list[str]:
@@ -354,7 +354,7 @@ class ChunkProcessor:
                 i = j
             return self._merge_final_small_chunk_if_needed(merged_chunks)
         except Exception as e:
-            logger.debug(f"Failed to merge small chunks: {e}")
+            logger.debug("Failed to merge small chunks: %s", e)
             return chunks
 
     def _split_large_chunks(self, chunks: list[str]) -> list[str]:
@@ -370,7 +370,7 @@ class ChunkProcessor:
                     final_chunks.append(chunk)
             return final_chunks
         except Exception as e:
-            logger.debug(f"Failed to split large chunks: {e}")
+            logger.debug("Failed to split large chunks: %s", e)
             return chunks
 
     @staticmethod
@@ -398,7 +398,7 @@ class ChunkProcessor:
                 overlapped.append(overlap_text + chunks[i])
             return [c for c in overlapped if c.strip()]
         except Exception as e:
-            logger.debug(f"Failed to apply chunk overlap: {e}")
+            logger.debug("Failed to apply chunk overlap: %s", e)
             return chunks
 
     def _merge_final_small_chunk_if_needed(self, chunks: list[str]) -> list[str]:
@@ -466,7 +466,7 @@ class BaseChunker(ABC):
 
     def chunk_documents(self, documents: list[Document]) -> list[TextUnit]:
         try:
-            logger.info(f"Starting chunking process for {len(documents)} documents")
+            logger.info("Starting chunking process for %s documents", len(documents))
             self.stats = ChunkingStats(num_total_documents=len(documents))
             start_time = time.time()
             all_text_units: list[TextUnit] = []
@@ -484,7 +484,7 @@ class BaseChunker(ABC):
             self._log_completion_summary(time.time() - start_time)
             return all_text_units
         except Exception as e:
-            logger.error(f"Failed to chunk documents: {e}")
+            logger.error("Failed to chunk documents: %s", e)
             raise DataProcessingError(f"Failed to chunk documents: {e}") from e
 
     def _process_document_with_stats(
@@ -506,11 +506,11 @@ class BaseChunker(ABC):
                 for unit in text_units:
                     self.stats.add_num_chunk_chars(len(unit.text))
             else:
-                logger.warning(f"No chunks generated for document '{doc.file_name}'")
+                logger.warning("No chunks generated for document '%s'", doc.file_name)
                 self.stats.num_failed_documents += 1
         except DataProcessingError as e:
             logger.error(
-                f"Failed to chunk document '{doc.file_name}': {e}", exc_info=False
+                "Failed to chunk document '%s': %s", doc.file_name, e, exc_info=False
             )
             self.stats.num_failed_documents += 1
         finally:
@@ -540,7 +540,7 @@ class BaseChunker(ABC):
         )
         if self.stats.num_failed_documents > 0:
             logger.warning(
-                f"Failed to process {self.stats.num_failed_documents} documents"
+                "Failed to process %s documents", self.stats.num_failed_documents
             )
 
     def _create_text_unit(
@@ -614,7 +614,7 @@ class BaseChunker(ABC):
 
         except Exception as e:
             logger.warning(
-                f"Failed to extract document content from '{doc.file_name}': {e}"
+                "Failed to extract document content from '%s': %s", doc.file_name, e
             )
             return None
 
@@ -642,8 +642,9 @@ class SimpleTextChunker(BaseChunker):
             validation = self.quality_validator.validate_chunks(chunks)
             if not validation["is_valid"]:
                 logger.warning(
-                    f"Chunk quality issues for document '{doc.file_name}': "
-                    f"{validation['issues']}"
+                    "Chunk quality issues for document '%s': %s",
+                    doc.file_name,
+                    validation["issues"],
                 )
 
             return [
@@ -696,7 +697,8 @@ class IntelligentTextChunker(BaseChunker):
             max_line_miss_rate=self.chunking_config.max_marker_miss_rate,
         )
         logger.debug(
-            f"Initialized IntelligentTextChunker with model {self.chunking_config.chunking_model_id}"
+            "Initialized IntelligentTextChunker with model %s",
+            self.chunking_config.chunking_model_id,
         )
 
     def _chunk_single_document(self, doc: Document) -> list[TextUnit]:
@@ -707,7 +709,7 @@ class IntelligentTextChunker(BaseChunker):
 
             pre_chunks = self._create_pre_chunks(content)
             if not pre_chunks:
-                logger.warning(f"No pre-chunks created for document '{doc.file_name}'")
+                logger.warning("No pre-chunks created for document '%s'", doc.file_name)
                 return []
 
             final_chunks_info = self._process_pre_chunks(pre_chunks, doc.file_name)
@@ -717,8 +719,9 @@ class IntelligentTextChunker(BaseChunker):
             validation = self.quality_validator.validate_chunks(chunks)
             if not validation["is_valid"]:
                 logger.warning(
-                    f"Chunk quality issues for document '{doc.file_name}': "
-                    f"{validation['issues']}"
+                    "Chunk quality issues for document '%s': %s",
+                    doc.file_name,
+                    validation["issues"],
                 )
 
             return [
@@ -737,7 +740,7 @@ class IntelligentTextChunker(BaseChunker):
     ) -> list[tuple[str, str, int]]:
         try:
             logger.debug(
-                f"Processing {len(pre_chunks)} pre-chunks for document '{doc_name}'"
+                "Processing %s pre-chunks for document '%s'", len(pre_chunks), doc_name
             )
             self.stats.num_pre_chunks_processed = (
                 self.stats.num_pre_chunks_processed or 0
@@ -755,7 +758,7 @@ class IntelligentTextChunker(BaseChunker):
                     self._handle_llm_failure(pre_chunk, i, final_chunks)
             return final_chunks
         except Exception as e:
-            logger.error(f"Failed to process pre-chunks for '{doc_name}': {e}")
+            logger.error("Failed to process pre-chunks for '%s': %s", doc_name, e)
             return [("fallback", chunk, i + 1) for i, chunk in enumerate(pre_chunks)]
 
     def _get_boundary_results(
@@ -775,7 +778,7 @@ class IntelligentTextChunker(BaseChunker):
             if not self.ignore_errors:
                 raise
 
-            logger.error(f"Failed to get boundary results for '{doc_name}': {e}")
+            logger.error("Failed to get boundary results for '%s': %s", doc_name, e)
             return [None] * len(pre_chunks)
 
     def _get_chunks_from_response(
@@ -794,7 +797,7 @@ class IntelligentTextChunker(BaseChunker):
         final_chunks: list[tuple[str, str, int]],
     ) -> None:
         logger.debug(
-            f"LLM processing failed for pre-chunk {chunk_index + 1}, using fallback"
+            "LLM processing failed for pre-chunk %s, using fallback", chunk_index + 1
         )
         self.stats.llm_processing_failures = (
             self.stats.llm_processing_failures or 0
@@ -825,7 +828,7 @@ class IntelligentTextChunker(BaseChunker):
             return final_chunks
 
         except Exception as e:
-            logger.debug(f"Failed to split large line chunks: {e}")
+            logger.debug("Failed to split large line chunks: %s", e)
             return chunks
 
     def _chunk_with_llm_boundaries(
@@ -854,7 +857,9 @@ class IntelligentTextChunker(BaseChunker):
                 missed, len(line_numbers)
             ):
                 logger.debug(
-                    f"Line boundary error rate too high: {missed}/{len(line_numbers)}"
+                    "Line boundary error rate too high: %s/%s",
+                    missed,
+                    len(line_numbers),
                 )
                 return None
 
@@ -864,7 +869,7 @@ class IntelligentTextChunker(BaseChunker):
             return self._extract_chunks_from_line_indices(text, indices)
 
         except Exception as e:
-            logger.debug(f"Failed LLM line-based boundary chunking: {e}")
+            logger.debug("Failed LLM line-based boundary chunking: %s", e)
             return None
 
     def _extract_chunks_from_line_indices(
@@ -894,18 +899,18 @@ class IntelligentTextChunker(BaseChunker):
             return self._split_large_line_chunks(merged_chunks)
 
         except Exception as e:
-            logger.debug(f"Failed to extract chunks from line indices: {e}")
+            logger.debug("Failed to extract chunks from line indices: %s", e)
             return [text] if text.strip() else []
 
     def _create_pre_chunks(self, content: str) -> list[str]:
         try:
             content_type = self.config.processing.chunking.content_type
             if content_type in ["markdown", "html"]:
-                logger.debug(f"Creating structured pre-chunks for {content_type}")
+                logger.debug("Creating structured pre-chunks for %s", content_type)
                 return self._create_structured_pre_chunks(content, content_type)
             return self.pre_splitter.split_text(content)
         except Exception as e:
-            logger.warning(f"Failed to create pre-chunks: {e}")
+            logger.warning("Failed to create pre-chunks: %s", e)
             return [content] if content else []
 
     def _create_structured_pre_chunks(
@@ -916,7 +921,7 @@ class IntelligentTextChunker(BaseChunker):
             return self._merge_structured_chunks(splitter.split_text(content))
         except Exception as e:
             logger.warning(
-                f"Failed to create structured pre-chunks for {content_type}: {e}"
+                "Failed to create structured pre-chunks for %s: %s", content_type, e
             )
             return self.pre_splitter.split_text(content)
 
@@ -940,7 +945,7 @@ class IntelligentTextChunker(BaseChunker):
                 i += 1
             return final_pre_chunks
         except Exception as e:
-            logger.warning(f"Failed to merge structured chunks: {e}")
+            logger.warning("Failed to merge structured chunks: %s", e)
             return [chunk.page_content for chunk in structured_chunks]
 
     def _merge_small_structured_chunks(
@@ -968,7 +973,7 @@ class IntelligentTextChunker(BaseChunker):
             )
             return self.chunk_processor.merge_small_chunks(chunks)
         except Exception as e:
-            logger.debug(f"Failed to create fallback chunks: {e}")
+            logger.debug("Failed to create fallback chunks: %s", e)
             return [pre_chunk]
 
     def _create_chain_inputs(self, chunks: list[str]) -> list[dict[str, Any]]:
@@ -994,7 +999,7 @@ class IntelligentTextChunker(BaseChunker):
 
             return inputs
         except Exception as e:
-            logger.debug(f"Failed to create chain inputs: {e}")
+            logger.debug("Failed to create chain inputs: %s", e)
             return []
 
     @staticmethod
@@ -1033,7 +1038,7 @@ class ChunkerFactory:
         show_progress: bool = True,
         **kwargs: Any,
     ) -> BaseChunker:
-        logger.info(f"Creating chunker of type: '{chunker_type.value}'")
+        logger.info("Creating chunker of type: '%s'", chunker_type.value)
         if chunker_type == ChunkingStrategy.SIMPLE:
             return SimpleTextChunker(
                 config, show_progress, boto_session=boto_session, **kwargs

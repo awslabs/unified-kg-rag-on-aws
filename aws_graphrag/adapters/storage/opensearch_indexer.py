@@ -119,11 +119,11 @@ class OpenSearchIndexer(VectorIndexer):
                 self.opensearch_client.delete_indices(index_patterns_to_delete)
 
             time.sleep(1)
-            logger.info(f"Cleared OpenSearch indices for '{aliases_to_delete}'")
+            logger.info("Cleared OpenSearch indices for '%s'", aliases_to_delete)
             return True
         except Exception as e:
             logger.error(
-                f"Failed to clear OpenSearch indices for '{aliases_to_delete}': {e}"
+                "Failed to clear OpenSearch indices for '%s': %s", aliases_to_delete, e
             )
             return False
 
@@ -141,7 +141,7 @@ class OpenSearchIndexer(VectorIndexer):
         except NotFoundError:
             return 0
         except Exception as e:
-            logger.error(f"Failed to get entity count for '{alias_names}': {e}")
+            logger.error("Failed to get entity count for '%s': %s", alias_names, e)
             return 0
 
     def get_stats(self) -> dict[str, Any]:
@@ -161,7 +161,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "cluster_indices": self.opensearch_client.get_index_stats(patterns),
             }
         except Exception as e:
-            logger.error(f"Failed to retrieve stats: {e}")
+            logger.error("Failed to retrieve stats: %s", e)
             return {"error": str(e), "last_run": self.stats.to_dict()}
 
     def initialize(self) -> bool:
@@ -169,10 +169,10 @@ class OpenSearchIndexer(VectorIndexer):
             pipeline_name = self.opensearch_config.hybrid_search_pipeline_name
             if not self.opensearch_client.check_search_pipeline_exists(pipeline_name):
                 self._create_hybrid_search_pipeline(pipeline_name)
-                logger.info(f"Created hybrid search pipeline: '{pipeline_name}'")
+                logger.info("Created hybrid search pipeline: '%s'", pipeline_name)
             return True
         except Exception as e:
-            logger.error(f"Failed to initialize OpenSearch indexer: {e}")
+            logger.error("Failed to initialize OpenSearch indexer: %s", e)
             return False
 
     def _create_hybrid_search_pipeline(self, pipeline_name: str) -> None:
@@ -544,7 +544,7 @@ class OpenSearchIndexer(VectorIndexer):
         if not items:
             return IndexingStats()
 
-        logger.info(f"Indexing {len(items)} {item_type_name}")
+        logger.info("Indexing %s %s", len(items), item_type_name)
         total_stats = IndexingStats()
 
         for suffix, chunk_items in self._group_items_by_suffix(items).items():
@@ -597,7 +597,9 @@ class OpenSearchIndexer(VectorIndexer):
                     self.opensearch_client.delete_indices(indices_to_clean)
 
             except Exception as e:
-                logger.error(f"Failed to index {item_type_name} (suffix={suffix}): {e}")
+                logger.error(
+                    "Failed to index %s (suffix=%s): %s", item_type_name, suffix, e
+                )
                 total_stats.add_error(str(e), len(chunk_items))
                 try:
                     self.opensearch_client.delete_indices([index_name])
@@ -606,12 +608,16 @@ class OpenSearchIndexer(VectorIndexer):
 
         if total_stats.failed_items > 0:
             logger.warning(
-                f"Indexing {item_type_name} completed: {total_stats.successful_items} "
-                f"succeeded, {total_stats.failed_items} failed"
+                "Indexing %s completed: %s succeeded, %s failed",
+                item_type_name,
+                total_stats.successful_items,
+                total_stats.failed_items,
             )
         else:
             logger.info(
-                f"Successfully indexed {total_stats.successful_items} {item_type_name}"
+                "Successfully indexed %s %s",
+                total_stats.successful_items,
+                item_type_name,
             )
 
         return total_stats
@@ -667,15 +673,16 @@ class OpenSearchIndexer(VectorIndexer):
                     _store(key, emb)
             except Exception as e:
                 logger.warning(
-                    f"Batch embedding failed ({len(batch)} items), "
-                    f"retrying individually: {e}"
+                    "Batch embedding failed (%s items), retrying individually: %s",
+                    len(batch),
+                    e,
                 )
                 for key, text in batch:
                     try:
                         single_embs = self.embedding_model.embed_documents([text])
                         _store(key, single_embs[0] if single_embs else None)
                     except Exception as item_error:
-                        logger.error(f"Failed to embed text '{key}': {item_error}")
+                        logger.error("Failed to embed text '%s': %s", key, item_error)
                         _store(key, None)
 
         return result
@@ -689,7 +696,7 @@ class OpenSearchIndexer(VectorIndexer):
         for item, embedding_tuple in zip(items, embeddings, strict=True):
             if any(emb is None for emb in embedding_tuple):
                 logger.warning(
-                    f"Embedding generation failed for item ID: {item.id}. Skipping."
+                    "Embedding generation failed for item ID: %s. Skipping.", item.id
                 )
                 failed_ids.append(item.id)
                 continue
@@ -698,7 +705,7 @@ class OpenSearchIndexer(VectorIndexer):
                 docs.append(prepare_func(item, embedding_tuple))
             except Exception as e:
                 logger.error(
-                    f"Failed to prepare document for item ID: {item.id}. Error: {e}"
+                    "Failed to prepare document for item ID: %s. Error: %s", item.id, e
                 )
                 failed_ids.append(item.id)
 

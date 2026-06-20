@@ -31,14 +31,17 @@ class BaseProcessor:
             name = entity_data.get("name", "").strip()
             if not name:
                 logger.warning(
-                    f"Skipping entity with missing name in text unit '{text_unit.short_id}'"
+                    "Skipping entity with missing name in text unit '%s'",
+                    text_unit.short_id,
                 )
                 return None
 
             normalized_name = normalize_name(name)
             if not normalized_name:
                 logger.warning(
-                    f"Skipping entity with empty name after normalization (from '{name}') in text unit '{text_unit.short_id}'"
+                    "Skipping entity with empty name after normalization (from '%s') in text unit '%s'",
+                    name,
+                    text_unit.short_id,
                 )
                 return None
 
@@ -71,7 +74,10 @@ class BaseProcessor:
             )
         except Exception as e:
             logger.warning(
-                f"Failed to parse entity '{entity_data.get('name', 'unknown')}' in text unit '{text_unit.short_id}': {e}"
+                "Failed to parse entity '%s' in text unit '%s': %s",
+                entity_data.get("name", "unknown"),
+                text_unit.short_id,
+                e,
             )
             return None
 
@@ -118,9 +124,13 @@ class BaseProcessor:
 
             if not all((source_name, target_name, rel_type)):
                 logger.warning(
-                    f"Skipping relationship with missing data in text unit '{text_unit.short_id}': "
-                    f"source='{source_name}' (from '{raw_source_name}'), "
-                    f"target='{target_name}' (from '{raw_target_name}'), type='{rel_type}'"
+                    "Skipping relationship with missing data in text unit '%s': source='%s' (from '%s'), target='%s' (from '%s'), type='%s'",
+                    text_unit.short_id,
+                    source_name,
+                    raw_source_name,
+                    target_name,
+                    raw_target_name,
+                    rel_type,
                 )
                 return None
 
@@ -129,7 +139,10 @@ class BaseProcessor:
 
             if not (source_id and target_id):
                 logger.warning(
-                    f"Entity not found for relationship '{source_name}' -> '{target_name}' in text unit '{text_unit.short_id}'"
+                    "Entity not found for relationship '%s' -> '%s' in text unit '%s'",
+                    source_name,
+                    target_name,
+                    text_unit.short_id,
                 )
                 return None
 
@@ -138,8 +151,11 @@ class BaseProcessor:
             weight = self._parse_weight(rel_data)
 
             logger.debug(
-                f"Successfully parsed relationship: '{source_name}' -> '{target_name}' "
-                f"(type: '{rel_type}', id: '{rel_id[:8]}')"
+                "Successfully parsed relationship: '%s' -> '%s' (type: '%s', id: '%s')",
+                source_name,
+                target_name,
+                rel_type,
+                rel_id[:8],
             )
             return Relationship(
                 id=rel_id,
@@ -160,7 +176,11 @@ class BaseProcessor:
             )
         except Exception as e:
             logger.warning(
-                f"Failed to parse relationship '{raw_source_name}' -> '{raw_target_name}' in text unit '{text_unit.short_id}': {e}"
+                "Failed to parse relationship '%s' -> '%s' in text unit '%s': %s",
+                raw_source_name,
+                raw_target_name,
+                text_unit.short_id,
+                e,
             )
             return None
 
@@ -195,7 +215,7 @@ class BaseProcessor:
             return max(0.0, min(1.0, normalized))
         except (ValueError, TypeError):
             logger.warning(
-                f"Invalid confidence value '{value}', using default {default}"
+                "Invalid confidence value '%s', using default %s", value, default
             )
             return default
 
@@ -265,7 +285,11 @@ class BaseProcessor:
 
         if total_merges > 0:
             logger.info(
-                f"Merged {total_merges} duplicate {item_name.lower()}(s) from {len(items)} to {len(merged_items_map)}"
+                "Merged %s duplicate %s(s) from %s to %s",
+                total_merges,
+                item_name.lower(),
+                len(items),
+                len(merged_items_map),
             )
 
         return list(merged_items_map.values())

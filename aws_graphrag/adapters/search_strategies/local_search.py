@@ -42,14 +42,18 @@ class LocalSearchStrategy(BaseSearchStrategy):
     async def asearch(self, query: SearchQuery) -> SearchResult:
         start_time = time.time()
         logger.info(
-            f"Local search started - query: '{query.query[:50]}...' "
-            f"('{query.search_type.value}') with entities: '{', '.join(query.entity_focus)}'"
+            "Local search started - query: '%s...' ('%s') with entities: '%s'",
+            query.query[:50],
+            query.search_type.value,
+            ", ".join(query.entity_focus),
         )
 
         candidate_entity_ids = await self._find_candidate_entities(query)
         logger.debug(
-            f"Found {len(candidate_entity_ids)} candidate entities: "
-            f"'{', '.join(candidate_entity_ids[:5])}{'...' if len(candidate_entity_ids) > 5 else ''}'"
+            "Found %s candidate entities: '%s%s'",
+            len(candidate_entity_ids),
+            ", ".join(candidate_entity_ids[:5]),
+            "..." if len(candidate_entity_ids) > 5 else "",
         )
 
         expanded_entity_nodes = await self._expand_via_graph(
@@ -61,14 +65,18 @@ class LocalSearchStrategy(BaseSearchStrategy):
 
         expanded_entity_ids = self._get_ids(filtered_entity_nodes, "id")
         logger.debug(
-            f"Expanded to {len(expanded_entity_ids)} entities: "
-            f"'{', '.join(expanded_entity_ids[:5])}{'...' if len(expanded_entity_ids) > 5 else ''}'"
+            "Expanded to %s entities: '%s%s'",
+            len(expanded_entity_ids),
+            ", ".join(expanded_entity_ids[:5]),
+            "..." if len(expanded_entity_ids) > 5 else "",
         )
 
         text_unit_ids = self._get_ids(filtered_entity_nodes, "text_unit_ids")
         logger.debug(
-            f"Found {len(text_unit_ids)} text units: "
-            f"'{', '.join(text_unit_ids[:5])}{'...' if len(text_unit_ids) > 5 else ''}'"
+            "Found %s text units: '%s%s'",
+            len(text_unit_ids),
+            ", ".join(text_unit_ids[:5]),
+            "..." if len(text_unit_ids) > 5 else "",
         )
 
         text_units = await self._retrieve_documents(text_unit_ids, query.suffix)
@@ -123,7 +131,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
             results = await self.document_retriever.aretrieve(search_query)
             return [res.source for res in results if res.source]
         except Exception as e:
-            logger.error(f"Failed to find candidate entities: {e}")
+            logger.error("Failed to find candidate entities: %s", e)
             return []
 
     async def _expand_via_graph(
@@ -141,7 +149,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
         try:
             return await self.graph_retriever.aretrieve(search_query)
         except Exception as e:
-            logger.error(f"Neptune retrieval failed: {e}")
+            logger.error("Neptune retrieval failed: %s", e)
             return []
 
     @staticmethod
@@ -159,8 +167,9 @@ class LocalSearchStrategy(BaseSearchStrategy):
         filtered_count = len(filtered_nodes)
         if original_count != filtered_count:
             logger.debug(
-                f"Filtered {original_count - filtered_count} entities "
-                f"based on frequency threshold {frequency_threshold}"
+                "Filtered %s entities based on frequency threshold %s",
+                original_count - filtered_count,
+                frequency_threshold,
             )
 
         return filtered_nodes
@@ -184,7 +193,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
             results = await self.document_retriever.aretrieve(search_query)
             return {"text_units": results}
         except Exception as e:
-            logger.error(f"OpenSearch retrieval failed: {e}")
+            logger.error("OpenSearch retrieval failed: %s", e)
             return {}
 
     def _record_search_metrics(

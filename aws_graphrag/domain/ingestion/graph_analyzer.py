@@ -91,7 +91,8 @@ class GraphAnalyzer:
             return {}
 
         logger.info(
-            f"Starting centrality calculation for graph with {self._graph.number_of_nodes()} nodes"
+            "Starting centrality calculation for graph with %s nodes",
+            self._graph.number_of_nodes(),
         )
 
         centrality_data = {}
@@ -144,14 +145,14 @@ class GraphAnalyzer:
         enabled_methods = [
             name for name, (enabled, _, _) in centrality_methods.items() if enabled
         ]
-        logger.info(f"Enabled centrality methods: {enabled_methods}")
+        logger.info("Enabled centrality methods: %s", enabled_methods)
 
         for name, (enabled, func, kwargs) in centrality_methods.items():
             if enabled:
                 self._compute_and_cache_centrality(name, func, kwargs, centrality_data)
 
         logger.info(
-            f"Centrality calculation completed for {len(centrality_data)} nodes"
+            "Centrality calculation completed for %s nodes", len(centrality_data)
         )
         return centrality_data
 
@@ -163,15 +164,17 @@ class GraphAnalyzer:
         centrality_data: dict[str, CentralityMetrics],
     ) -> None:
         try:
-            logger.info(f"Calculating {metric_name} centrality...")
+            logger.info("Calculating %s centrality...", metric_name)
             result = computation_func(self._graph, **kwargs)
             self._update_centrality_results(centrality_data, metric_name, result)
             self._centrality_cache[metric_name] = result
         except (nx.PowerIterationFailedConvergence, nx.NetworkXError) as e:
-            logger.warning(f"Failed to calculate {metric_name} centrality: {e}")
+            logger.warning("Failed to calculate %s centrality: %s", metric_name, e)
         except Exception as e:
             logger.error(
-                f"An unexpected error occurred during {metric_name} calculation: {e}",
+                "An unexpected error occurred during %s calculation: %s",
+                metric_name,
+                e,
                 exc_info=True,
             )
 
@@ -194,7 +197,9 @@ class GraphAnalyzer:
             return {"nodes": [], "edges": [], "statistics": {}}
 
         logger.info(
-            f"Exporting graph data with {self._graph.number_of_nodes()} nodes and {self._graph.number_of_edges()} edges"
+            "Exporting graph data with %s nodes and %s edges",
+            self._graph.number_of_nodes(),
+            self._graph.number_of_edges(),
         )
 
         nodes_data = [
@@ -232,7 +237,8 @@ class GraphAnalyzer:
             return GraphStatistics(num_nodes=0, num_edges=0)
 
         logger.info(
-            f"Calculating graph statistics for graph with {self._graph.number_of_nodes()} nodes"
+            "Calculating graph statistics for graph with %s nodes",
+            self._graph.number_of_nodes(),
         )
 
         stats = GraphStatistics(
@@ -245,7 +251,8 @@ class GraphAnalyzer:
 
         self._statistics_cache = stats
         logger.info(
-            f"Graph statistics calculation completed: {stats.model_dump(exclude_none=True)}"
+            "Graph statistics calculation completed: %s",
+            stats.model_dump(exclude_none=True),
         )
         return stats
 
@@ -294,7 +301,7 @@ class GraphAnalyzer:
             result = computation_func(self._graph)
             on_success(result)
         except Exception as e:
-            logger.warning(f"Failed to calculate {metric_name}: {e}")
+            logger.warning("Failed to calculate %s: %s", metric_name, e)
 
     @staticmethod
     def _update_component_stats(result: list[set], stats: GraphStatistics) -> None:
@@ -319,7 +326,7 @@ class GraphAnalyzer:
         )[:top_k]
 
         logger.info(
-            f"Retrieved top {len(top_nodes)} nodes by {centrality_type} centrality"
+            "Retrieved top %s nodes by %s centrality", len(top_nodes), centrality_type
         )
         return [(str(node), val) for node, val in top_nodes]
 

@@ -41,7 +41,7 @@ class IndexingManager:
             logger.warning("No suffixes found to clear data")
             return True
 
-        logger.info(f"Clearing data for suffixes: '{suffixes}'")
+        logger.info("Clearing data for suffixes: '%s'", suffixes)
         try:
             with ThreadPoolExecutor(max_workers=2) as executor:
                 os_future = executor.submit(self.opensearch_indexer.clear, suffixes)
@@ -52,11 +52,13 @@ class IndexingManager:
             success = opensearch_success and neptune_success
             if not success:
                 logger.error(
-                    f"Clear operation failed - OpenSearch: {opensearch_success}, Neptune: {neptune_success}"
+                    "Clear operation failed - OpenSearch: %s, Neptune: %s",
+                    opensearch_success,
+                    neptune_success,
                 )
             return success
         except Exception as e:
-            logger.error(f"Clear operation failed: {e}")
+            logger.error("Clear operation failed: %s", e)
             return False
 
     @staticmethod
@@ -73,7 +75,7 @@ class IndexingManager:
                 "timestamp": datetime.now().isoformat(),
             }
         except Exception as e:
-            logger.error(f"Failed to retrieve stats: {e}")
+            logger.error("Failed to retrieve stats: %s", e)
             return {"error": str(e), "timestamp": datetime.now().isoformat()}
 
     def initialize(self) -> bool:
@@ -87,7 +89,7 @@ class IndexingManager:
 
             return True
         except Exception as e:
-            logger.error(f"Indexer initialization failed: {e}")
+            logger.error("Indexer initialization failed: %s", e)
             return False
 
     def index_all_data(
@@ -266,7 +268,7 @@ class IndexingManager:
 
         total_items = sum(len(task.args[0]) for task in valid_tasks)
         logger.info(
-            f"Executing {len(valid_tasks)} tasks with {total_items} total items..."
+            "Executing %s tasks with %s total items...", len(valid_tasks), total_items
         )
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -279,7 +281,7 @@ class IndexingManager:
                 try:
                     phase_results[task_name] = future.result()
                 except Exception as e:
-                    logger.error(f"Task '{task_name}' failed: {e}")
+                    logger.error("Task '%s' failed: %s", task_name, e)
                     stats = IndexingStats()
                     stats.add_error(str(e))
                     phase_results[task_name] = stats
@@ -322,10 +324,10 @@ class IndexingManager:
         )
 
         if total_failed > 0:
-            logger.warning(f"Failed items: {total_failed}")
+            logger.warning("Failed items: %s", total_failed)
             for data_type, stats in results.items():
                 if stats and stats.errors:
-                    logger.warning(f"{data_type} errors: {stats.errors[:2]}")
+                    logger.warning("%s errors: %s", data_type, stats.errors[:2])
 
         for task_name, stats in results.items():
             if stats and stats.total_items > 0:
@@ -352,7 +354,9 @@ class IndexingManager:
 
             if not count_match:
                 logger.warning(
-                    f"Entity count mismatch: OpenSearch({os_entity_count}) vs Neptune({neptune_entity_count})"
+                    "Entity count mismatch: OpenSearch(%s) vs Neptune(%s)",
+                    os_entity_count,
+                    neptune_entity_count,
                 )
 
             return {
@@ -365,5 +369,5 @@ class IndexingManager:
                 "timestamp": datetime.now().isoformat(),
             }
         except Exception as e:
-            logger.error(f"Integrity validation failed: {e}")
+            logger.error("Integrity validation failed: %s", e)
             return {"error": str(e), "timestamp": datetime.now().isoformat()}

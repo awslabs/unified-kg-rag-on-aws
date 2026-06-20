@@ -109,11 +109,11 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             )
             self._initialize_metric_evaluators()
             logger.info(
-                f"LangChain evaluator initialized with {len(self.evaluators)} metrics"
+                "LangChain evaluator initialized with %s metrics", len(self.evaluators)
             )
         except Exception as e:
             logger.error(
-                f"Failed to initialize LangChain evaluator: {e}", exc_info=True
+                "Failed to initialize LangChain evaluator: %s", e, exc_info=True
             )
             raise EvaluationException(
                 f"Failed to initialize LangChain evaluator: {e}"
@@ -122,7 +122,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
     def _initialize_metric_evaluators(self) -> None:
         for metric_type in self.config.evaluation.langchain_metrics:
             if metric_type not in self.METRIC_MAPPING:
-                logger.warning(f"Unsupported metric '{metric_type}' will be skipped")
+                logger.warning("Unsupported metric '%s' will be skipped", metric_type)
                 continue
 
             metric_config = self.METRIC_MAPPING[metric_type]
@@ -179,7 +179,9 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             if match:
                 return float(match.group(1))
 
-        logger.warning(f"Could not parse score from evaluation result: '{eval_result}'")
+        logger.warning(
+            "Could not parse score from evaluation result: '%s'", eval_result
+        )
         return 0.0
 
     def _prepare_eval_args(
@@ -199,7 +201,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         metric_type: EvaluationMetricType, query_id: str, error: Exception
     ) -> EvaluationMetric:
         logger.error(
-            f"Evaluation failed for '{metric_type}' on query '{query_id}': {error}"
+            "Evaluation failed for '%s' on query '%s': %s", metric_type, query_id, error
         )
         return EvaluationMetric(
             metric_type=metric_type,
@@ -277,7 +279,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
                     explanation = data["reasoning"]
             except (json.JSONDecodeError, TypeError):
                 logger.warning(
-                    f"Could not parse reasoning as JSON: '{raw_explanation}'"
+                    "Could not parse reasoning as JSON: '%s'", raw_explanation
                 )
 
         return EvaluationMetric(
@@ -355,7 +357,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
                     explanation = data["reasoning"]
             except (json.JSONDecodeError, TypeError):
                 logger.warning(
-                    f"Could not parse reasoning as JSON: '{raw_explanation}'"
+                    "Could not parse reasoning as JSON: '%s'", raw_explanation
                 )
 
         return EvaluationMetric(
@@ -370,7 +372,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         )
         if unsupported:
             logger.error(
-                f"Unsupported LangChain metrics: {[m.value for m in unsupported]}"
+                "Unsupported LangChain metrics: %s", [m.value for m in unsupported]
             )
             return False
         return True

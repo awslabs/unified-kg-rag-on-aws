@@ -69,12 +69,14 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     async def asearch(self, query: SearchQuery) -> SearchResult:
         start_time = time.time()
         logger.info(
-            f"Global search started - query: '{query.query[:50]}...' ('{query.search_type.value}')"
+            "Global search started - query: '%s...' ('%s')",
+            query.query[:50],
+            query.search_type.value,
         )
 
         retrieved_communities = await self._retrieve_and_fuse_communities(query)
         if not retrieved_communities:
-            logger.warning(f"No results found for query: '{query.query[:50]}...'")
+            logger.warning("No results found for query: '%s...'", query.query[:50])
             return SearchResult(
                 query=query,
                 results=[],
@@ -86,7 +88,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
 
         community_ids = self._get_ids(retrieved_communities, "community_id")
         logger.debug(
-            f"Found {len(community_ids)} communities: '{', '.join(community_ids[:5])}{'...' if len(community_ids) > 5 else ''}'"
+            "Found %s communities: '%s%s'",
+            len(community_ids),
+            ", ".join(community_ids[:5]),
+            "..." if len(community_ids) > 5 else "",
         )
 
         selected_communities = await self._select_relevant_communities(
@@ -94,16 +99,24 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         )
         community_ids = self._get_ids(selected_communities, "id")
         logger.debug(
-            f"Selected {len(community_ids)} communities: '{', '.join(community_ids[:5])}{'...' if len(community_ids) > 5 else ''}'"
+            "Selected %s communities: '%s%s'",
+            len(community_ids),
+            ", ".join(community_ids[:5]),
+            "..." if len(community_ids) > 5 else "",
         )
 
         final_results = await self._augment_and_rerank_communities(
             selected_communities, retrieved_communities, query
         )
         logger.debug(
-            f"Augmented {len(final_results)} items: "
-            f"'{', '.join(str(item.metadata.get('community_id') or item.metadata.get('id')) for item in final_results[:5] if item.metadata)}"
-            f"{'...' if len(final_results) > 5 else ''}'"
+            "Augmented %s items: '%s%s'",
+            len(final_results),
+            ", ".join(
+                str(item.metadata.get("community_id") or item.metadata.get("id"))
+                for item in final_results[:5]
+                if item.metadata
+            ),
+            "..." if len(final_results) > 5 else "",
         )
 
         if self.global_search_config.enable_map_reduce:
@@ -150,9 +163,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             return candidate_community_reports
 
         logger.debug(
-            f"Found {len(candidate_community_ids)} candidate communities: "
-            f"'{', '.join(str(cid) for cid in candidate_community_ids[:5])}"
-            f"{'...' if len(candidate_community_ids) > 5 else ''}'"
+            "Found %s candidate communities: '%s%s'",
+            len(candidate_community_ids),
+            ", ".join(str(cid) for cid in candidate_community_ids[:5]),
+            "..." if len(candidate_community_ids) > 5 else "",
         )
 
         expanded_community_nodes = await self._retrieve_community_nodes(
@@ -169,9 +183,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             expanded_community_ids, query
         )
         logger.debug(
-            f"Expanded to {len(expanded_community_reports)} communities: "
-            f"'{', '.join(str(cid) for cid in expanded_community_ids[:5])}"
-            f"{'...' if len(expanded_community_ids) > 5 else ''}'"
+            "Expanded to %s communities: '%s%s'",
+            len(expanded_community_reports),
+            ", ".join(str(cid) for cid in expanded_community_ids[:5]),
+            "..." if len(expanded_community_ids) > 5 else "",
         )
 
         return self.hybrid_scorer.fuse_and_rerank_results(
@@ -210,7 +225,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             ]
             return await self._retrieve_documents(search_query, index_prefixes)
         except Exception as e:
-            logger.error(f"OpenSearch retrieval failed: {e}")
+            logger.error("OpenSearch retrieval failed: %s", e)
             return []
 
     async def _retrieve_documents(
@@ -224,7 +239,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             search_query.index_prefixes = index_prefixes
             return await self.document_retriever.aretrieve(search_query)
         except Exception as e:
-            logger.error(f"OpenSearch retrieval failed: {e}")
+            logger.error("OpenSearch retrieval failed: %s", e)
             return []
 
     async def _retrieve_community_nodes(
@@ -246,7 +261,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 self.graph_retriever.aretrieve(search_query), timeout=30.0
             )
         except Exception as e:
-            logger.error(f"Neptune community retrieval failed: {e}")
+            logger.error("Neptune community retrieval failed: %s", e)
             return []
 
     async def _select_relevant_communities(
@@ -275,7 +290,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 if not self.ignore_errors:
                     raise
 
-                logger.warning(f"Community scoring failed: {e}")
+                logger.warning("Community scoring failed: %s", e)
                 relevance_score = 0.0
 
             return item, relevance_score
@@ -289,7 +304,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         ]
         relevant_items.sort(key=lambda x: x.score or 0.0, reverse=True)
         logger.debug(
-            f"Filtered {len(evaluated_items) - len(relevant_items)} communities based on relevance threshold {relevance_threshold}"
+            "Filtered %s communities based on relevance threshold %s",
+            len(evaluated_items) - len(relevant_items),
+            relevance_threshold,
         )
 
         return relevant_items[:max_communities]
@@ -354,7 +371,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             if not self.ignore_errors:
                 raise
 
-            logger.error(f"Map-reduce synthesis failed: {e}")
+            logger.error("Map-reduce synthesis failed: %s", e)
             return results
 
     def _record_search_metrics(

@@ -60,8 +60,10 @@ class PipelineStateManager:
         original_status = context.status
         context.status = PipelineStageStatus.RUNNING
         logger.info(
-            f"Created context from metadata for pipeline '{context.pipeline_id}' "
-            f"(status: {original_status} -> {context.status.value})"
+            "Created context from metadata for pipeline '%s' (status: %s -> %s)",
+            context.pipeline_id,
+            original_status,
+            context.status.value,
         )
         return context
 
@@ -108,13 +110,13 @@ class PipelineStateManager:
             return metadata
 
         except json.JSONDecodeError as e:
-            logger.error(f"Corrupted metadata file, invalid JSON: '{metadata_path}'")
+            logger.error("Corrupted metadata file, invalid JSON: '%s'", metadata_path)
             raise PipelineStateError(
                 f"Corrupted metadata file, invalid JSON: '{metadata_path}'"
             ) from e
         except Exception as e:
             logger.error(
-                f"Failed to load pipeline metadata from '{metadata_path}': {e}"
+                "Failed to load pipeline metadata from '%s': %s", metadata_path, e
             )
             raise PipelineStateError(
                 f"Failed to load pipeline metadata from '{metadata_path}': {e}"
@@ -152,19 +154,21 @@ class PipelineStateManager:
                 raise PipelineStateError("Metadata verification failed after save")
 
             logger.info(
-                f"Pipeline metadata saved for '{context.pipeline_id}' (status: {context.status.value})"
+                "Pipeline metadata saved for '%s' (status: %s)",
+                context.pipeline_id,
+                context.status.value,
             )
 
         except Exception as e:
             logger.error(
-                f"Failed to save pipeline metadata for '{context.pipeline_id}': {e}"
+                "Failed to save pipeline metadata for '%s': %s", context.pipeline_id, e
             )
             if temp_path and temp_path.exists():
                 try:
                     temp_path.unlink(missing_ok=True)
                 except OSError as cleanup_error:
                     logger.warning(
-                        f"Failed to clean up temporary file: {cleanup_error}"
+                        "Failed to clean up temporary file: %s", cleanup_error
                     )
             raise PipelineStateError(
                 f"Critical error saving pipeline metadata: {e}"
@@ -187,8 +191,9 @@ class PipelineStateManager:
 
         if old_status != context.status:
             logger.info(
-                f"Pipeline status updated: '{old_status.value}' -> "
-                f"'{context.status.value}'"
+                "Pipeline status updated: '%s' -> '%s'",
+                old_status.value,
+                context.status.value,
             )
 
     @staticmethod
@@ -196,7 +201,7 @@ class PipelineStateManager:
         try:
             if not metadata_path.exists() or metadata_path.stat().st_size == 0:
                 logger.error(
-                    f"Metadata file is missing or empty after save: '{metadata_path}'"
+                    "Metadata file is missing or empty after save: '%s'", metadata_path
                 )
                 return False
 
@@ -205,12 +210,12 @@ class PipelineStateManager:
             return True
 
         except Exception as e:
-            logger.error(f"Metadata verification failed: {e}")
+            logger.error("Metadata verification failed: %s", e)
             return False
 
     def repair_pipeline_metadata(self, context: PipelineContext) -> bool:
         logger.info(
-            f"Attempting to repair metadata for pipeline: '{context.pipeline_id}'"
+            "Attempting to repair metadata for pipeline: '%s'", context.pipeline_id
         )
         try:
             self.save_pipeline_metadata(context)
@@ -218,18 +223,18 @@ class PipelineStateManager:
 
             if is_verified:
                 logger.info(
-                    f"Successfully repaired metadata for pipeline: "
-                    f"'{context.pipeline_id}'"
+                    "Successfully repaired metadata for pipeline: '%s'",
+                    context.pipeline_id,
                 )
             else:
                 logger.error(
-                    f"Failed to repair metadata for pipeline: '{context.pipeline_id}'"
+                    "Failed to repair metadata for pipeline: '%s'", context.pipeline_id
                 )
             return is_verified
 
         except Exception as e:
             logger.error(
-                f"Error during metadata repair for '{context.pipeline_id}': {e}"
+                "Error during metadata repair for '%s': %s", context.pipeline_id, e
             )
             return False
 
@@ -302,8 +307,9 @@ class PipelineResumeManager:
         self, pipeline_id: str, explicit_stage: str | None = None
     ) -> tuple[str, list[str]]:
         logger.info(
-            f"Determining resume strategy for pipeline '{pipeline_id}'"
-            f"{f' from stage: {explicit_stage}' if explicit_stage else ''}"
+            "Determining resume strategy for pipeline '%s'%s",
+            pipeline_id,
+            f" from stage: {explicit_stage}" if explicit_stage else "",
         )
 
         try:
@@ -318,14 +324,17 @@ class PipelineResumeManager:
                 result = self._handle_auto_resume(stage_results)
 
             logger.info(
-                f"Resume strategy determined - Start from: '{result[0]}', Load "
-                f"{len(result[1])} completed stages"
+                "Resume strategy determined - Start from: '%s', Load %s completed stages",
+                result[0],
+                len(result[1]),
             )
             return result
 
         except Exception as e:
             logger.error(
-                f"Failed to determine resume strategy for pipeline '{pipeline_id}': {e}"
+                "Failed to determine resume strategy for pipeline '%s': %s",
+                pipeline_id,
+                e,
             )
             raise PipelineResumeError(
                 f"Failed to determine resume strategy for pipeline '{pipeline_id}': {e}"
@@ -339,8 +348,8 @@ class PipelineResumeManager:
 
         if explicit_stage not in stage_names:
             logger.warning(
-                f"Stage '{explicit_stage}' not found in pipeline history. "
-                f"Starting from it directly."
+                "Stage '%s' not found in pipeline history. Starting from it directly.",
+                explicit_stage,
             )
             return explicit_stage, []
 
@@ -375,8 +384,9 @@ class PipelineResumeManager:
         self, pipeline_id: str, completed_stages: list[str]
     ) -> PipelineContext:
         logger.info(
-            f"Restoring pipeline context for '{pipeline_id}' with "
-            f"{len(completed_stages)} completed stages"
+            "Restoring pipeline context for '%s' with %s completed stages",
+            pipeline_id,
+            len(completed_stages),
         )
 
         try:
@@ -389,16 +399,22 @@ class PipelineResumeManager:
                     if self._load_stage_cache_data(pipeline_id, stage_name, context):
                         loaded_count += 1
                 except Exception as e:
-                    logger.error(f"Error loading cache for stage '{stage_name}': {e}")
+                    logger.error(
+                        "Error loading cache for stage '%s': %s", stage_name, e
+                    )
 
             logger.info(
-                f"Context restoration completed for '{pipeline_id}': "
-                f"{loaded_count}/{len(completed_stages)} stages loaded"
+                "Context restoration completed for '%s': %s/%s stages loaded",
+                pipeline_id,
+                loaded_count,
+                len(completed_stages),
             )
             return context
 
         except Exception as e:
-            logger.error(f"Failed to restore pipeline context for '{pipeline_id}': {e}")
+            logger.error(
+                "Failed to restore pipeline context for '%s': %s", pipeline_id, e
+            )
             raise PipelineResumeError(
                 f"Failed to restore pipeline context for '{pipeline_id}': {e}"
             ) from e
@@ -431,24 +447,28 @@ class PipelineResumeManager:
                     loaded_files_count += 1
                 else:
                     logger.warning(
-                        f"Cache data not found for stage '{stage_name}': '{context_attr}'"
+                        "Cache data not found for stage '%s': '%s'",
+                        stage_name,
+                        context_attr,
                     )
             except Exception as e:
                 logger.error(
-                    f"Failed to load cache data '{context_attr}' for stage "
-                    f"'{stage_name}': {e}"
+                    "Failed to load cache data '%s' for stage '%s': %s",
+                    context_attr,
+                    stage_name,
+                    e,
                 )
 
         return loaded_files_count > 0
 
     def validate_pipeline_integrity(self, pipeline_id: str) -> tuple[bool, list[str]]:
-        logger.info(f"Validating pipeline integrity for '{pipeline_id}'")
+        logger.info("Validating pipeline integrity for '%s'", pipeline_id)
         errors = []
 
         try:
             metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
         except PipelineStateError as e:
-            logger.error(f"Pipeline integrity validation failed: {e}")
+            logger.error("Pipeline integrity validation failed: %s", e)
             return False, [str(e)]
 
         for result in metadata.get("stage_results", []):
@@ -472,7 +492,9 @@ class PipelineResumeManager:
 
         is_valid = not errors
         logger.info(
-            f"Pipeline integrity validation {'passed' if is_valid else 'failed'} for '{pipeline_id}'"
-            f"{f' with {len(errors)} errors' if not is_valid else ''}"
+            "Pipeline integrity validation %s for '%s'%s",
+            "passed" if is_valid else "failed",
+            pipeline_id,
+            f" with {len(errors)} errors" if not is_valid else "",
         )
         return is_valid, errors

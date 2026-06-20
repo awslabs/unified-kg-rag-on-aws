@@ -22,12 +22,14 @@ class SimpleSearchStrategy(BaseSearchStrategy):
     async def asearch(self, query: SearchQuery) -> SearchResult:
         start_time = time.time()
         logger.info(
-            f"Simple search started - query: '{query.query[:50]}...' ('{query.search_type.value}')"
+            "Simple search started - query: '%s...' ('%s')",
+            query.query[:50],
+            query.search_type.value,
         )
 
         all_results = await self._retrieve_documents(query)
         if not all_results:
-            logger.warning(f"No results found for query: '{query.query[:50]}...'")
+            logger.warning("No results found for query: '%s...'", query.query[:50])
             return SearchResult(
                 query=query,
                 results=[],
@@ -70,7 +72,7 @@ class SimpleSearchStrategy(BaseSearchStrategy):
             results = await self.document_retriever.aretrieve(query)
             return {"opensearch_all": results} if results else {}
         except Exception as e:
-            logger.error(f"OpenSearch retrieval failed: {e}")
+            logger.error("OpenSearch retrieval failed: %s", e)
             return {}
 
     def _record_search_metrics(

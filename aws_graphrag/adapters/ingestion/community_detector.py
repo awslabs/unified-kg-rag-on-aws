@@ -97,7 +97,9 @@ class CommunityDetector(BaseProcessor):
     def __call__(self, graph: nx.Graph) -> "CommunityDetector":
         self.graph = graph
         logger.info(
-            f"Starting community detection on graph with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges"
+            "Starting community detection on graph with %s nodes and %s edges",
+            graph.number_of_nodes(),
+            graph.number_of_edges(),
         )
         self.detect_communities()
         return self
@@ -109,14 +111,14 @@ class CommunityDetector(BaseProcessor):
 
         self.analyze_hierarchy()
         logger.info(
-            f"Detected {len(self.all_communities)} communities across all levels."
+            "Detected %s communities across all levels.", len(self.all_communities)
         )
 
     def analyze_hierarchy(self) -> None:
         try:
             base_partition = self._get_base_partition()
         except ValueError as e:
-            logger.error(f"Failed to detect base communities: {e}")
+            logger.error("Failed to detect base communities: %s", e)
             return
 
         if not base_partition:
@@ -137,19 +139,23 @@ class CommunityDetector(BaseProcessor):
         current_partition = base_partition
 
         for level in range(1, max_levels):
-            logger.info(f"Creating level {level} communities...")
+            logger.info("Creating level %s communities...", level)
 
             try:
                 cluster_graph = self._create_cluster_graph(current_partition)
 
                 if cluster_graph.number_of_nodes() < 2:
                     logger.info(
-                        f"Cluster graph has only {cluster_graph.number_of_nodes()} nodes, stopping hierarchy at level {level-1}"
+                        "Cluster graph has only %s nodes, stopping hierarchy at level %s",
+                        cluster_graph.number_of_nodes(),
+                        level - 1,
                     )
                     break
 
                 logger.info(
-                    f"Created cluster graph with {cluster_graph.number_of_nodes()} nodes and {cluster_graph.number_of_edges()} edges"
+                    "Created cluster graph with %s nodes and %s edges",
+                    cluster_graph.number_of_nodes(),
+                    cluster_graph.number_of_edges(),
                 )
 
                 next_partition = self._get_base_partition(cluster_graph)
@@ -159,11 +165,14 @@ class CommunityDetector(BaseProcessor):
                     and 1 < len(next_partition) < cluster_graph.number_of_nodes()
                 ):
                     logger.info(
-                        f"Selected partition with {len(next_partition)} communities for level {level}"
+                        "Selected partition with %s communities for level %s",
+                        len(next_partition),
+                        level,
                     )
                 else:
                     logger.info(
-                        f"No meaningful partition found at level {level}, stopping hierarchy construction"
+                        "No meaningful partition found at level %s, stopping hierarchy construction",
+                        level,
                     )
                     break
 
@@ -171,10 +180,12 @@ class CommunityDetector(BaseProcessor):
                 current_partition = next_partition
 
             except Exception as e:
-                logger.error(f"Failed to create cluster graph for level {level}: {e}")
+                logger.error(
+                    "Failed to create cluster graph for level %s: %s", level, e
+                )
                 break
 
-        logger.info(f"Hierarchy construction completed with {len(partitions)} levels")
+        logger.info("Hierarchy construction completed with %s levels", len(partitions))
         self._process_hierarchical_partitions(partitions)
 
     def _get_base_partition(
@@ -222,7 +233,7 @@ class CommunityDetector(BaseProcessor):
             return list(communities.values())
 
         except Exception as e:
-            logger.error(f"Error during Leiden partitioning: {e}")
+            logger.error("Error during Leiden partitioning: %s", e)
             return None
 
     @staticmethod
@@ -264,7 +275,7 @@ class CommunityDetector(BaseProcessor):
                     best_resolution = resolution
 
             except Exception as e:
-                logger.debug(f"Resolution {resolution} failed: {e}")
+                logger.debug("Resolution %s failed: %s", resolution, e)
                 continue
 
         logger.info(
@@ -355,7 +366,7 @@ class CommunityDetector(BaseProcessor):
         self.all_communities.clear()
         self.node_to_community_l0.clear()
 
-        logger.info(f"Processing {len(partitions)} levels of partitions")
+        logger.info("Processing %s levels of partitions", len(partitions))
 
         l0_partition = partitions[0]
         # Keys are partition member identities, which Leiden may emit as ints
@@ -374,7 +385,7 @@ class CommunityDetector(BaseProcessor):
             self.all_communities[comm_id] = community
             level_0_communities[i] = comm_id
 
-        logger.info(f"Created {len(level_0_communities)} level 0 communities")
+        logger.info("Created %s level 0 communities", len(level_0_communities))
 
         previous_level_map = level_0_communities
 
@@ -408,17 +419,21 @@ class CommunityDetector(BaseProcessor):
                     self.all_communities[parent_comm_id] = parent_community
                     current_level_map[i] = parent_comm_id
 
-            logger.info(f"Created {len(current_level_map)} level {level} communities")
+            logger.info(
+                "Created %s level %s communities", len(current_level_map), level
+            )
             previous_level_map = current_level_map
 
             if not current_level_map:
                 logger.warning(
-                    f"No communities created at level {level}, stopping hierarchy"
+                    "No communities created at level %s, stopping hierarchy", level
                 )
                 break
 
         logger.info(
-            f"Final hierarchy: {len(self.all_communities)} total communities across {len(partitions)} levels"
+            "Final hierarchy: %s total communities across %s levels",
+            len(self.all_communities),
+            len(partitions),
         )
 
     def export_community_data(self) -> dict[str, Any]:
@@ -457,7 +472,7 @@ class CommunityDetector(BaseProcessor):
             for hier_comm in self.all_communities.values()
         ]
 
-        logger.info(f"Generated {len(communities)} community objects")
+        logger.info("Generated %s community objects", len(communities))
         return communities
 
     def get_community_metrics(self) -> CommunityMetrics | None:
@@ -561,7 +576,7 @@ class CommunityDetector(BaseProcessor):
             return []
 
         try:
-            logger.info(f"Generating reports for {len(communities)} communities.")
+            logger.info("Generating reports for %s communities.", len(communities))
             start_time = time.time()
             graph_attributes = self._extract_attributes_from_graph()
             report_inputs = [self._prepare_report_input(c) for c in communities]
@@ -591,7 +606,7 @@ class CommunityDetector(BaseProcessor):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.error(f"Error during community report generation: {e}")
+            logger.error("Error during community report generation: %s", e)
             return []
 
         return reports

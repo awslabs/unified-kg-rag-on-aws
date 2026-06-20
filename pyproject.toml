@@ -142,11 +142,18 @@ select = [
     "B",  # flake8-bugbear
     "C4", # flake8-comprehensions
     "UP", # pyupgrade
+    "G",  # flake8-logging-format (enforce %-style lazy logging, no f-strings)
 ]
 ignore = [
     "E501",  # line too long, handled by black
     "B008",  # do not perform function calls in argument defaults
     "UP042", # str+Enum is intentional (StrEnum changes str()/format semantics)
+    # ~507 logging calls were converted to %-style lazy logging; the ~45 G004 +
+    # 7 G201 that remain carry format specs (e.g. %.2f) or conversions that need
+    # case-by-case handling. Ignored for now so the rest of the G ruleset
+    # (G002/G010/G101/...) stays active and guards new code.
+    "G004",  # f-string in logging call
+    "G201",  # logging.error(..., exc_info=True) vs logging.exception()
 ]
 
 [tool.ruff.lint.per-file-ignores]

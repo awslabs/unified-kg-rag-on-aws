@@ -100,16 +100,16 @@ class DirectoryLoader(BaseLoader):
 
     def load(self) -> list[BaseDocument]:
         start_time = time.time()
-        logger.info(f"Starting document loading from: '{self.source_directory}'")
+        logger.info("Starting document loading from: '%s'", self.source_directory)
 
         self._validate_directory()
         discovered_files = self.discover_files()
 
         if not discovered_files:
-            logger.warning(f"No supported files found in '{self.source_directory}'.")
+            logger.warning("No supported files found in '%s'.", self.source_directory)
             return []
 
-        logger.info(f"Discovered {len(discovered_files)} files")
+        logger.info("Discovered %s files", len(discovered_files))
 
         docs, failed_paths = self._load_files_concurrently(discovered_files)
         self.failed_files = sorted(map(str, failed_paths))
@@ -131,7 +131,7 @@ class DirectoryLoader(BaseLoader):
         )
 
         if self.failed_files:
-            logger.warning(f"Failed to load {len(self.failed_files)} files")
+            logger.warning("Failed to load %s files", len(self.failed_files))
 
         # Document is a BaseDocument subclass; widen the invariant list type to
         # match the BaseLoader.load() supertype signature.
@@ -180,7 +180,7 @@ class DirectoryLoader(BaseLoader):
                     else:
                         failed_paths.append(path)
                 except Exception as e:
-                    logger.error(f"Error processing file '{path}': {e}")
+                    logger.error("Error processing file '%s': %s", path, e)
                     failed_paths.append(path)
 
         return documents, failed_paths
@@ -198,7 +198,7 @@ class DirectoryLoader(BaseLoader):
             )
             return doc
         except Exception as e:
-            logger.warning(f"Failed to load document '{file_path}': {e}")
+            logger.warning("Failed to load document '%s': %s", file_path, e)
             return None
 
     def load_single(self, file_path: Path) -> Document:
@@ -213,7 +213,7 @@ class DirectoryLoader(BaseLoader):
         if len(documents) < 2:
             return documents
 
-        logger.info(f"Starting deduplication for {len(documents)} documents")
+        logger.info("Starting deduplication for %s documents", len(documents))
 
         minhashes = self._compute_minhashes(documents)
         if not minhashes:
@@ -230,8 +230,9 @@ class DirectoryLoader(BaseLoader):
         ]
 
         logger.info(
-            f"Deduplication completed: removed {len(duplicate_indices)} duplicates, "
-            f"kept {len(unique_docs)} unique documents"
+            "Deduplication completed: removed %s duplicates, kept %s unique documents",
+            len(duplicate_indices),
+            len(unique_docs),
         )
 
         return unique_docs
@@ -257,10 +258,12 @@ class DirectoryLoader(BaseLoader):
                         minhashes[result[0]] = result[1]
                 except Exception as e:
                     logger.warning(
-                        f"MinHash computation failed for document {tasks[future]}: {e}"
+                        "MinHash computation failed for document %s: %s",
+                        tasks[future],
+                        e,
                     )
 
-        logger.debug(f"Computed MinHashes for {len(minhashes)} documents")
+        logger.debug("Computed MinHashes for %s documents", len(minhashes))
         return minhashes
 
     def _find_duplicate_indices(self, minhashes: dict[int, MinHash]) -> set[int]:
@@ -282,7 +285,7 @@ class DirectoryLoader(BaseLoader):
             return set()
 
         logger.debug(
-            f"Found {len(candidate_pairs)} candidate pairs for similarity check"
+            "Found %s candidate pairs for similarity check", len(candidate_pairs)
         )
 
         duplicate_indices = set()
@@ -301,7 +304,9 @@ class DirectoryLoader(BaseLoader):
                             duplicate_indices.add(j)
                 except Exception as e:
                     logger.warning(
-                        f"Similarity computation failed for pair {future_to_pair[future]}: {e}"
+                        "Similarity computation failed for pair %s: %s",
+                        future_to_pair[future],
+                        e,
                     )
 
         return duplicate_indices
@@ -320,9 +325,9 @@ class DirectoryLoader(BaseLoader):
                 )
                 file_info_parts.append(info)
             except Exception as e:
-                logger.warning(f"Could not stat file for hash '{file_path}': {e}")
+                logger.warning("Could not stat file for hash '%s': %s", file_path, e)
 
         content = "\n".join(file_info_parts)
         hash_value = compute_hash(content, algorithm="sha256", length=16)
-        logger.debug(f"Computed directory hash: '{hash_value}'")
+        logger.debug("Computed directory hash: '%s'", hash_value)
         return hash_value

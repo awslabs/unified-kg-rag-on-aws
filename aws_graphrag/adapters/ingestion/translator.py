@@ -99,20 +99,21 @@ class TextUnitTranslator:
         self.stats = TranslationStats(num_total_units=total_translation_tasks)
 
         logger.info(
-            f"Starting translation of {len(text_units)} text units to "
-            f"{len(self.all_target_languages)} language(s): "
-            f"{', '.join([lang.value for lang in self.all_target_languages])}"
+            "Starting translation of %s text units to %s language(s): %s",
+            len(text_units),
+            len(self.all_target_languages),
+            ", ".join([lang.value for lang in self.all_target_languages]),
         )
 
         try:
             for target_language in self.all_target_languages:
-                logger.info(f"Translating to '{target_language.value}'...")
+                logger.info("Translating to '%s'...", target_language.value)
                 self._translate_text_units_batch(text_units, target_language)
 
             self.stats.total_processing_time = time.time() - start_time
             self._log_completion_summary(self.stats)
         except Exception as e:
-            logger.error(f"Translation failed: {e}", exc_info=True)
+            logger.exception("Translation failed: %s", e)
 
         return text_units
 
@@ -135,7 +136,10 @@ class TextUnitTranslator:
             )
         except Exception as e:
             logger.error(
-                f"Translation to '{target_language.value}' failed: {e}", exc_info=True
+                "Translation to '%s' failed: %s",
+                target_language.value,
+                e,
+                exc_info=True,
             )
             return
 
@@ -151,7 +155,7 @@ class TextUnitTranslator:
                 {"text": text, "target_language": target_language} for text in texts
             ]
         except Exception as e:
-            logger.error(f"Failed to create translation inputs: {e}")
+            logger.error("Failed to create translation inputs: %s", e)
             return []
 
     def _apply_translation_result(
@@ -173,7 +177,7 @@ class TextUnitTranslator:
                 self.stats.num_successful_translations += 1
         except Exception as e:
             logger.error(
-                f"Failed to apply translation for text unit '{text_unit.id}': {e}"
+                "Failed to apply translation for text unit '%s': %s", text_unit.id, e
             )
             if self.stats:
                 self.stats.num_failed_translations += 1
@@ -191,5 +195,5 @@ class TextUnitTranslator:
 
         if stats.num_failed_translations > 0:
             logger.warning(
-                f"Translation issues: {stats.num_failed_translations} units failed"
+                "Translation issues: %s units failed", stats.num_failed_translations
             )

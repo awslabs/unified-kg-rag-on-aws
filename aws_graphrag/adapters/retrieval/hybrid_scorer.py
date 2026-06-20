@@ -46,7 +46,7 @@ class HybridScorer(MetricsMixin):
             )
 
         except Exception as e:
-            logger.warning(f"Reranking initialization failed: {e}")
+            logger.warning("Reranking initialization failed: %s", e)
             self.rerank_factory = None
             self.rerank_model = None
 
@@ -236,7 +236,7 @@ class HybridScorer(MetricsMixin):
         filtered_count = len(results) - len(selected)
         if filtered_count > 0:
             logger.debug(
-                f"Diversity filtering removed {filtered_count} similar results"
+                "Diversity filtering removed %s similar results", filtered_count
             )
 
         self._record_metric("diversity_filtered_count", filtered_count)
@@ -273,8 +273,10 @@ class HybridScorer(MetricsMixin):
 
             if adjusted_top_n != original_top_n:
                 logger.debug(
-                    f"Adjusting rerank 'top_n' from {original_top_n} to {adjusted_top_n} "
-                    f"to match document count ({len(documents)})"
+                    "Adjusting rerank 'top_n' from %s to %s to match document count (%s)",
+                    original_top_n,
+                    adjusted_top_n,
+                    len(documents),
                 )
                 self.rerank_model.top_n = adjusted_top_n
 
@@ -325,7 +327,7 @@ class HybridScorer(MetricsMixin):
             return reranked_results
 
         except Exception as e:
-            logger.error(f"Reranking failed: {e}")
+            logger.error("Reranking failed: %s", e)
             return results
 
     @staticmethod

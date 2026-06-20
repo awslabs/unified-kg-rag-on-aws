@@ -89,7 +89,7 @@ class PipelineStage(ABC):
         return self.stage_type.value
 
     def execute(self, context: PipelineContext) -> PipelineStageResult:
-        logger.info(f"Starting stage: '{self.name}'")
+        logger.info("Starting stage: '%s'", self.name)
         start_time = datetime.now()
 
         try:
@@ -115,7 +115,7 @@ class PipelineStage(ABC):
             )
 
         except Exception as e:
-            logger.error(f"Stage '{self.name}' failed: {e}", exc_info=True)
+            logger.exception("Stage '%s' failed: %s", self.name, e)
             end_time = datetime.now()
 
             return self._create_result(
@@ -143,7 +143,7 @@ class PipelineStage(ABC):
                 )
                 logger.error(error_msg)
                 raise PipelineStageError(error_msg)
-            logger.info(f"Stage '{self.name}' had no input to process")
+            logger.info("Stage '%s' had no input to process", self.name)
             return
 
         if is_critical and output_count == 0:
@@ -157,8 +157,9 @@ class PipelineStage(ABC):
 
         if output_count == 0:
             logger.warning(
-                f"Stage '{self.name}' processed {input_count} inputs but produced "
-                f"0 outputs"
+                "Stage '%s' processed %s inputs but produced 0 outputs",
+                self.name,
+                input_count,
             )
 
     def _should_validate_output(self) -> bool:
@@ -204,7 +205,7 @@ class PipelineStage(ABC):
         if hasattr(stats_obj, "__dict__"):
             return dict(stats_obj.__dict__)
         logger.warning(
-            f"Could not convert stats object of type {type(stats_obj)} to dict"
+            "Could not convert stats object of type %s to dict", type(stats_obj)
         )
         return {"stats": str(stats_obj)}
 
@@ -251,7 +252,7 @@ class DocumentLoadingStage(PipelineStage):
         output_count = len(context.documents)
 
         if self.loader.failed_files:
-            logger.warning(f"Failed to load {len(self.loader.failed_files)} files")
+            logger.warning("Failed to load %s files", len(self.loader.failed_files))
 
         metrics = {
             "file_count": input_count,
@@ -262,7 +263,7 @@ class DocumentLoadingStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            f"DOCUMENT LOADING STAGE - COMPLETED ({output_count} documents loaded)"
+            "DOCUMENT LOADING STAGE - COMPLETED (%s documents loaded)", output_count
         )
         logger.info("=" * 60)
 
@@ -339,10 +340,10 @@ class DocumentParsingStage(PipelineStage):
         input_count = len(files_to_parse)
 
         if not files_to_parse:
-            logger.warning(f"No supported files found in '{self.source_directory}'")
+            logger.warning("No supported files found in '%s'", self.source_directory)
             return 0, 0, {"parsed_files": [], "failed_files": []}
 
-        logger.info(f"Found {input_count} files to parse")
+        logger.info("Found %s files to parse", input_count)
 
         parsed_documents = []
         failed_files = []
@@ -359,7 +360,7 @@ class DocumentParsingStage(PipelineStage):
                     self._save_parsed_document(document, file_path)
 
             except Exception as e:
-                logger.error(f"Failed to parse '{file_path}': {e}")
+                logger.error("Failed to parse '%s': %s", file_path, e)
                 failed_files.append(str(file_path))
 
         context.documents = parsed_documents
@@ -376,7 +377,9 @@ class DocumentParsingStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            f"DOCUMENT PARSING STAGE - COMPLETED ({output_count}/{input_count} files parsed)"
+            "DOCUMENT PARSING STAGE - COMPLETED (%s/%s files parsed)",
+            output_count,
+            input_count,
         )
         logger.info("=" * 60)
 
@@ -419,9 +422,9 @@ class DocumentParsingStage(PipelineStage):
 
         try:
             document.to_json_file(output_path)
-            logger.debug(f"Saved parsed document: '{output_path}'")
+            logger.debug("Saved parsed document: '%s'", output_path)
         except Exception as e:
-            logger.error(f"Failed to save parsed document '{output_path}': {e}")
+            logger.error("Failed to save parsed document '%s': %s", output_path, e)
 
 
 class TextChunkingStage(PipelineStage):
@@ -465,7 +468,7 @@ class TextChunkingStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            f"TEXT CHUNKING STAGE - COMPLETED ({total_chunks} text units created)"
+            "TEXT CHUNKING STAGE - COMPLETED (%s text units created)", total_chunks
         )
         logger.info("=" * 60)
 
@@ -500,7 +503,7 @@ class TranslationStage(PipelineStage):
                 if stats is not None:
                     translation_stats = self._stats_to_dict(stats)
         except Exception as e:
-            logger.warning(f"Failed to get translation stats: {e}")
+            logger.warning("Failed to get translation stats: %s", e)
 
         units_translated_count = len(
             [
@@ -519,8 +522,8 @@ class TranslationStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            f"TRANSLATION STAGE - COMPLETED "
-            f"(Translated {units_translated_count} text units)"
+            "TRANSLATION STAGE - COMPLETED (Translated %s text units)",
+            units_translated_count,
         )
         logger.info("=" * 60)
 
@@ -563,8 +566,9 @@ class GraphExtractionStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            f"GRAPH EXTRACTION STAGE - COMPLETED "
-            f"({entities_count} entities, {relationships_count} relationships)"
+            "GRAPH EXTRACTION STAGE - COMPLETED (%s entities, %s relationships)",
+            entities_count,
+            relationships_count,
         )
         logger.info("=" * 60)
 
@@ -625,10 +629,11 @@ class GleaningStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            "GLEANING STAGE - COMPLETED "
-            f"({len(initial_entities)} -> {final_entities_count} entities, "
-            f"{len(initial_relationships)} -> {final_relationships_count} "
-            "relationships improved)"
+            "GLEANING STAGE - COMPLETED (%s -> %s entities, %s -> %s relationships improved)",
+            len(initial_entities),
+            final_entities_count,
+            len(initial_relationships),
+            final_relationships_count,
         )
         logger.info("=" * 60)
 
@@ -684,10 +689,11 @@ class GraphResolutionStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            "GRAPH RESOLUTION STAGE - COMPLETED "
-            f"({original_entities_count} -> {resolved_entities_count} entities, "
-            f"{original_relationships_count} -> {resolved_relationships_count} "
-            "relationships resolved)"
+            "GRAPH RESOLUTION STAGE - COMPLETED (%s -> %s entities, %s -> %s relationships resolved)",
+            original_entities_count,
+            resolved_entities_count,
+            original_relationships_count,
+            resolved_relationships_count,
         )
         logger.info("=" * 60)
 
@@ -726,7 +732,7 @@ class ClaimExtractionStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            f"CLAIM EXTRACTION STAGE - COMPLETED ({len(claims)} claims extracted)"
+            "CLAIM EXTRACTION STAGE - COMPLETED (%s claims extracted)", len(claims)
         )
         logger.info("=" * 60)
 
@@ -774,9 +780,10 @@ class ClaimResolutionStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            "CLAIM RESOLUTION STAGE - COMPLETED "
-            f"({original_claims_count} -> {resolved_count} claims resolved, "
-            f"{removed_count} claims removed)"
+            "CLAIM RESOLUTION STAGE - COMPLETED (%s -> %s claims resolved, %s claims removed)",
+            original_claims_count,
+            resolved_count,
+            removed_count,
         )
         logger.info("=" * 60)
 
@@ -830,8 +837,9 @@ class GraphAnalysisStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            "GRAPH ANALYSIS STAGE - COMPLETED "
-            f"({graph_stats.num_nodes} nodes, {graph_stats.num_edges} edges)"
+            "GRAPH ANALYSIS STAGE - COMPLETED (%s nodes, %s edges)",
+            graph_stats.num_nodes,
+            graph_stats.num_edges,
         )
         logger.info("=" * 60)
 
@@ -908,7 +916,7 @@ class CommunityDetectionStage(PipelineStage):
                 visualization_manager.run()
                 logger.info("Graph visualizations generated successfully")
             except Exception as e:
-                logger.warning(f"Visualization generation failed: {e}")
+                logger.warning("Visualization generation failed: %s", e)
 
         communities_count = len(context.communities)
         reports_count = len(context.community_reports)
@@ -925,8 +933,9 @@ class CommunityDetectionStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            "COMMUNITY DETECTION STAGE - COMPLETED "
-            f"({communities_count} communities, {reports_count} reports)"
+            "COMMUNITY DETECTION STAGE - COMPLETED (%s communities, %s reports)",
+            communities_count,
+            reports_count,
         )
         logger.info("=" * 60)
 
@@ -1017,8 +1026,9 @@ class IndexingStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            "INDEXING STAGE - COMPLETED "
-            f"({total_indexed} items indexed, {total_failed} failed)"
+            "INDEXING STAGE - COMPLETED (%s items indexed, %s failed)",
+            total_indexed,
+            total_failed,
         )
         logger.info("=" * 60)
 
@@ -1099,8 +1109,9 @@ class IndexingStage(PipelineStage):
             if stats and stats.total_items > 0 and stats.successful_items == 0:
                 failed_index_types.append(key)
                 logger.error(
-                    f"Index type '{key}' completely failed: "
-                    f"0/{stats.total_items} items indexed successfully"
+                    "Index type '%s' completely failed: 0/%s items indexed successfully",
+                    key,
+                    stats.total_items,
                 )
 
         if failed_index_types:
@@ -1141,8 +1152,9 @@ class IndexingStage(PipelineStage):
             if backend_total > 0 and backend_successful == 0:
                 failed_backends.append(backend_name)
                 logger.error(
-                    f"{backend_name} backend completely failed: "
-                    f"0/{backend_total} items indexed successfully"
+                    "%s backend completely failed: 0/%s items indexed successfully",
+                    backend_name,
+                    backend_total,
                 )
 
         if failed_backends:

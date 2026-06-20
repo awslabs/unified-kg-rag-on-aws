@@ -137,7 +137,7 @@ class BaseIndexer(ABC):
 
         if len(grouped) > 1:
             logger.info(
-                f"Grouped {len(items)} items into {len(grouped)} different suffixes"
+                "Grouped %s items into %s different suffixes", len(items), len(grouped)
             )
 
         return dict(grouped)

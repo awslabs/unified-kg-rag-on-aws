@@ -119,7 +119,7 @@ class GraphExtractor(BaseProcessor):
             return [], [], ExtractionStats()
 
         self.stats = ExtractionStats(num_total_units=len(text_units))
-        logger.info(f"Starting graph extraction from {len(text_units)} text units")
+        logger.info("Starting graph extraction from %s text units", len(text_units))
 
         try:
             extraction_results = self.batch_processor.execute_with_fallback(
@@ -134,7 +134,7 @@ class GraphExtractor(BaseProcessor):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.error(f"Error during graph extraction: {e}")
+            logger.error("Error during graph extraction: %s", e)
             return [], [], ExtractionStats()
 
         all_entities, all_relationships = self._process_extraction_results(
@@ -172,12 +172,14 @@ class GraphExtractor(BaseProcessor):
             except Exception as e:
                 failed_preparations += 1
                 logger.error(
-                    f"Failed to prepare input for text unit '{text_unit.id}': {str(e)}"
+                    "Failed to prepare input for text unit '%s': %s",
+                    text_unit.id,
+                    str(e),
                 )
 
         if failed_preparations > 0:
             logger.warning(
-                f"Failed to prepare inputs for {failed_preparations} text units"
+                "Failed to prepare inputs for %s text units", failed_preparations
             )
 
         return inputs
@@ -200,12 +202,13 @@ class GraphExtractor(BaseProcessor):
                 except Exception as e:
                     self.stats.num_failed_extractions += 1
                     logger.error(
-                        f"Failed to parse extraction result for text unit "
-                        f"'{text_unit.id}': {str(e)}"
+                        "Failed to parse extraction result for text unit '%s': %s",
+                        text_unit.id,
+                        str(e),
                     )
             else:
                 self.stats.num_failed_extractions += 1
-                logger.warning(f"No extraction result for text unit '{text_unit.id}'")
+                logger.warning("No extraction result for text unit '%s'", text_unit.id)
 
         original_entities_count = len(all_entities)
         original_relationships_count = len(all_relationships)
@@ -232,10 +235,12 @@ class GraphExtractor(BaseProcessor):
         )
 
         logger.info(
-            f"Entity and relationship processing completed - "
-            f"{original_entities_count} -> {len(all_entities)} entities "
-            f"(filtered: {self.stats.entities_filtered_by_confidence}), "
-            f"{original_relationships_count} -> {len(all_relationships)} relationships"
+            "Entity and relationship processing completed - %s -> %s entities (filtered: %s), %s -> %s relationships",
+            original_entities_count,
+            len(all_entities),
+            self.stats.entities_filtered_by_confidence,
+            original_relationships_count,
+            len(all_relationships),
         )
         return all_entities, all_relationships
 
@@ -251,7 +256,9 @@ class GraphExtractor(BaseProcessor):
             "entities" not in result or "relationships" not in result
         ):
             logger.warning(
-                f"Invalid result type for text unit '{text_unit.id}': '{type(result)}'"
+                "Invalid result type for text unit '%s': '%s'",
+                text_unit.id,
+                type(result),
             )
             return entities, relationships
 
@@ -347,8 +354,9 @@ class GraphExtractor(BaseProcessor):
 
         if removed_count > 0:
             logger.info(
-                f"Confidence filtering removed {removed_count} entities "
-                f"(threshold: {threshold})"
+                "Confidence filtering removed %s entities (threshold: %s)",
+                removed_count,
+                threshold,
             )
 
         return filtered_entities, removed_count
@@ -369,13 +377,15 @@ class GraphExtractor(BaseProcessor):
             else:
                 removed_count += 1
                 logger.debug(
-                    f"Filtered orphan relationship '{rel.source_name}' -> '{rel.target_name}'"
+                    "Filtered orphan relationship '%s' -> '%s'",
+                    rel.source_name,
+                    rel.target_name,
                 )
 
         if removed_count > 0:
             logger.info(
-                f"Filtered {removed_count} orphan relationships "
-                f"(referenced entities were filtered by confidence)"
+                "Filtered %s orphan relationships (referenced entities were filtered by confidence)",
+                removed_count,
             )
 
         return filtered_relationships, removed_count
@@ -405,5 +415,5 @@ class GraphExtractor(BaseProcessor):
 
         if stats.num_failed_extractions > 0:
             logger.warning(
-                f"Failed to extract from {stats.num_failed_extractions} text units"
+                "Failed to extract from %s text units", stats.num_failed_extractions
             )

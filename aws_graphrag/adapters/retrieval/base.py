@@ -61,7 +61,7 @@ class BaseGraphRAGRetriever(BaseRetriever, MetricsMixin, ABC):
 
             return documents
         except Exception as e:
-            logger.error(f"Document retrieval failed: {str(e)}")
+            logger.error("Document retrieval failed: %s", str(e))
             raise
 
     def retrieve(self, query: SearchQuery) -> list[RetrievalResult]:

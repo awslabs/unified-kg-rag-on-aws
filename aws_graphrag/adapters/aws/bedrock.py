@@ -227,7 +227,10 @@ class BaseBedrockWrapper:
                 final_text = truncated
                 original_count = self._token_counter.count_tokens(text)
                 logger.warning(
-                    f"{text_type.capitalize()} token count ({original_count}) exceeds maximum ({max_tokens}). Truncating."
+                    "%s token count (%s) exceeds maximum (%s). Truncating.",
+                    text_type.capitalize(),
+                    original_count,
+                    max_tokens,
                 )
 
         if max_chars and len(text) > max_chars:
@@ -235,7 +238,10 @@ class BaseBedrockWrapper:
             if len(char_truncated) < len(final_text):
                 final_text = char_truncated
                 logger.warning(
-                    f"{text_type.capitalize()} character count ({len(text)}) exceeds maximum ({max_chars}). Truncating."
+                    "%s character count (%s) exceeds maximum (%s). Truncating.",
+                    text_type.capitalize(),
+                    len(text),
+                    max_chars,
                 )
 
         return final_text
@@ -279,7 +285,7 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
             config=boto_config,
         )
         logger.debug(
-            f"Initialized {self.__class__.__name__} for region: '{self.region_name}'"
+            "Initialized %s for region: '%s'", self.__class__.__name__, self.region_name
         )
 
     @abstractmethod
@@ -459,7 +465,7 @@ class BedrockEmbeddingModelFactory(
             token_counter=token_counter,  # type: ignore[call-arg]
             **kwargs,
         )
-        logger.debug(f"Created embedding model: '{model_id.value}'")
+        logger.debug("Created embedding model: '%s'", model_id.value)
         return model
 
 
@@ -682,7 +688,10 @@ class BedrockRerankWrapper(BaseBedrockWrapper, BedrockRerank):
     ) -> list[Document]:
         if len(documents) > self.max_documents:
             logger.warning(
-                f"Document count ({len(documents)}) exceeds limit ({self.max_documents}). Using first {self.max_documents} documents."
+                "Document count (%s) exceeds limit (%s). Using first %s documents.",
+                len(documents),
+                self.max_documents,
+                self.max_documents,
             )
             documents = documents[: self.max_documents]
 
@@ -690,7 +699,9 @@ class BedrockRerankWrapper(BaseBedrockWrapper, BedrockRerank):
         if self.top_n is not None and len(documents) < self.top_n:
             self.top_n = len(documents)
             logger.info(
-                f"Adjusted top_n from {original_top_n} to {self.top_n} to match document count"
+                "Adjusted top_n from %s to %s to match document count",
+                original_top_n,
+                self.top_n,
             )
 
         truncated_query = self._truncate_text(
@@ -745,7 +756,9 @@ class BedrockRerankModelFactory(
         top_k = kwargs.pop("top_k", self.DEFAULT_TOP_K)
         if top_k > model_info.max_documents:
             logger.warning(
-                f"Requested 'top_k' ({top_k}) exceeds model's maximum ({model_info.max_documents}). Adjusting."
+                "Requested 'top_k' (%s) exceeds model's maximum (%s). Adjusting.",
+                top_k,
+                model_info.max_documents,
             )
             top_k = model_info.max_documents
 
@@ -776,7 +789,7 @@ class BedrockRerankModelFactory(
             token_counter=token_counter,  # type: ignore[call-arg]
             **kwargs,
         )
-        logger.debug(f"Created rerank model: '{model_id.value}'")
+        logger.debug("Created rerank model: '%s'", model_id.value)
         return model
 
 
@@ -814,9 +827,9 @@ def get_assumed_role_boto_session(
                             )
                             return boto_session
                 except Exception as e:
-                    logger.debug(f"Could not verify current role identity: {e}")
+                    logger.debug("Could not verify current role identity: %s", e)
     except Exception as e:
-        logger.debug(f"Could not check assumed role status: {e}")
+        logger.debug("Could not check assumed role status: %s", e)
 
     logger.info(
         "Using aws-assume-role-lib to assume role: '%s' with session name: '%s'",

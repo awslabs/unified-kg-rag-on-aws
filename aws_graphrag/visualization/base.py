@@ -56,7 +56,8 @@ class GraphVisualizationManager:
 
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
         logger.info(
-            f"Starting comprehensive visualization report creation in '{self.outputs_dir}'."
+            "Starting comprehensive visualization report creation in '%s'.",
+            self.outputs_dir,
         )
 
         self.analyzer.set_community_data(
@@ -132,7 +133,7 @@ class GraphVisualizationManager:
             logger.warning("No graph available for data export.")
             return
 
-        logger.info(f"Exporting visualization data to '{output_path}'...")
+        logger.info("Exporting visualization data to '%s'...", output_path)
         data = self.analyzer.export_graph_data()
         data["layout"] = self._generate_layout()
         data["communities"] = self.community_detector.export_community_data()
@@ -146,6 +147,6 @@ class GraphVisualizationManager:
         try:
             with open(output_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, default=str)
-            logger.info(f"Successfully exported visualization data to '{output_path}'")
+            logger.info("Successfully exported visualization data to '%s'", output_path)
         except Exception as e:
-            logger.error(f"Failed to export data to JSON: {e}", exc_info=True)
+            logger.exception("Failed to export data to JSON: %s", e)

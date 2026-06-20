@@ -45,12 +45,14 @@ class NeptuneIndexer(GraphIndexer):
 
         try:
             if labels_to_delete:
-                logger.info(f"Clearing Neptune data for labels: {labels_to_delete}")
+                logger.info("Clearing Neptune data for labels: %s", labels_to_delete)
                 for label in labels_to_delete:
                     self.neptune_client.delete_vertices_in_batches(label)
             return True
         except Exception as e:
-            logger.error(f"Failed to clear Neptune data for suffixes '{suffixes}': {e}")
+            logger.error(
+                "Failed to clear Neptune data for suffixes '%s': %s", suffixes, e
+            )
             return False
 
     def get_entity_count(self, suffixes: list[str]) -> int:
@@ -65,7 +67,7 @@ class NeptuneIndexer(GraphIndexer):
             result = g.V().hasLabel(*entity_labels).count().next()
             return int(result) if isinstance(result, (int | float)) else 0
         except Exception as e:
-            logger.error(f"Failed to get entity count for '{entity_labels}': {e}")
+            logger.error("Failed to get entity count for '%s': %s", entity_labels, e)
             return 0
 
     def get_stats(self) -> dict[str, Any]:
@@ -192,13 +194,15 @@ class NeptuneIndexer(GraphIndexer):
                     t = v_traversal
                 return cast(GraphTraversal, t)
 
-            logger.info(f"Indexing {len(comms)} communities for '{community_label}'...")
+            logger.info(
+                "Indexing %s communities for '%s'...", len(comms), community_label
+            )
             vertex_stats = self._execute_batch_traversal(
                 comms, community_vertex_builder, "Community vertex indexing"
             )
             stats.merge(vertex_stats)
 
-            logger.info(f"Indexing 'MemberOf' edges for {len(comms)} communities...")
+            logger.info("Indexing 'MemberOf' edges for %s communities...", len(comms))
             for comm in comms:
                 if not comm.entity_ids:
                     continue
@@ -216,8 +220,9 @@ class NeptuneIndexer(GraphIndexer):
                         )
                     except Exception as e:
                         logger.warning(
-                            f"Community edge indexing failed for community "
-                            f"'{comm.id}': {e}"
+                            "Community edge indexing failed for community '%s': %s",
+                            comm.id,
+                            e,
                         )
 
             stats.processing_time = time.time() - start_time
@@ -336,7 +341,7 @@ class NeptuneIndexer(GraphIndexer):
                 stats.add_success(len(id_batch))
             except Exception as e:
                 stats.add_error(str(e))
-                logger.warning(f"Failed to delete ids batch: {e}")
+                logger.warning("Failed to delete ids batch: %s", e)
 
         return stats
 
@@ -431,7 +436,7 @@ class NeptuneIndexer(GraphIndexer):
             start_time = time.time()
 
             logger.info(
-                f"Indexing {len(chunk)} {item_type_name.lower()}s for '{label}'..."
+                "Indexing %s %ss for '%s'...", len(chunk), item_type_name.lower(), label
             )
             final_kwargs = kwargs.copy()
             if "entity_label" in final_kwargs:
@@ -459,7 +464,7 @@ class NeptuneIndexer(GraphIndexer):
             if count > 0:
                 self.neptune_client.delete_vertices_in_batches(label)
         except Exception as e:
-            logger.error(f"Failed to clear data for label '{label}': {e}")
+            logger.error("Failed to clear data for label '%s': %s", label, e)
             raise
 
     def _execute_batch_traversal(
@@ -480,8 +485,10 @@ class NeptuneIndexer(GraphIndexer):
                 stats.add_success(len(batch))
             except Exception as batch_error:
                 logger.warning(
-                    f"Batch {operation_name} failed ({len(batch)} items), "
-                    f"falling back to individual indexing: {batch_error}"
+                    "Batch %s failed (%s items), falling back to individual indexing: %s",
+                    operation_name,
+                    len(batch),
+                    batch_error,
                 )
                 for item in batch:
                     try:
@@ -492,7 +499,7 @@ class NeptuneIndexer(GraphIndexer):
                     except Exception as item_error:
                         stats.add_error(str(item_error))
                         logger.warning(
-                            f"Individual {operation_name} failed: {item_error}"
+                            "Individual %s failed: %s", operation_name, item_error
                         )
 
         return stats
@@ -509,7 +516,10 @@ class NeptuneIndexer(GraphIndexer):
             except Exception as e:
                 if attempt == max_retries:
                     logger.error(
-                        f"Failed {operation_name} after {attempt + 1} attempts: {e}"
+                        "Failed %s after %s attempts: %s",
+                        operation_name,
+                        attempt + 1,
+                        e,
                     )
                     raise
                 # Exponential backoff with full jitter so concurrent workers do

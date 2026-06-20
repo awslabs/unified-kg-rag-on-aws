@@ -50,7 +50,7 @@ class EvaluationManager:
         for evaluator_type in self.config.evaluation.enabled_evaluators:
             evaluator_class = self.EVALUATOR_MAPPING.get(evaluator_type)
             if not evaluator_class:
-                logger.warning(f"Unknown evaluator type: '{evaluator_type}'")
+                logger.warning("Unknown evaluator type: '%s'", evaluator_type)
                 continue
 
             try:
@@ -62,17 +62,17 @@ class EvaluationManager:
                     enabled_count += 1
                 else:
                     logger.error(
-                        f"Invalid configuration for '{evaluator_type.value}' evaluator"
+                        "Invalid configuration for '%s' evaluator", evaluator_type.value
                     )
             except Exception as e:
                 logger.error(
-                    f"Failed to initialize '{evaluator_type.value}' evaluator: {e}"
+                    "Failed to initialize '%s' evaluator: %s", evaluator_type.value, e
                 )
 
         if enabled_count == 0:
             logger.warning("No evaluators were successfully initialized")
         else:
-            logger.info(f"Initialized {enabled_count} evaluators")
+            logger.info("Initialized %s evaluators", enabled_count)
 
     @staticmethod
     def load_data(
@@ -97,7 +97,7 @@ class EvaluationManager:
 
             for i, item in enumerate(data):
                 if not isinstance(item, dict) or "question" not in item:
-                    logger.warning(f"Skipping invalid item at index {i}: '{item}'")
+                    logger.warning("Skipping invalid item at index %s: '%s'", i, item)
                     continue
 
                 final_metadata = cleaned_base_metadata.copy()
@@ -131,18 +131,21 @@ class EvaluationManager:
                     ground_truths.append(gt)
 
             logger.info(
-                f"Loaded {len(queries)} queries and {len(ground_truths)} ground truths from '{eval_data_path}'."
+                "Loaded %s queries and %s ground truths from '%s'.",
+                len(queries),
+                len(ground_truths),
+                eval_data_path,
             )
             return queries, ground_truths
 
         except FileNotFoundError:
-            logger.error(f"Evaluation data file not found: '{eval_data_path}'")
+            logger.error("Evaluation data file not found: '%s'", eval_data_path)
             raise
         except json.JSONDecodeError as e:
-            logger.error(f"Error decoding JSON from '{eval_data_path}': {e}")
+            logger.error("Error decoding JSON from '%s': %s", eval_data_path, e)
             raise
         except Exception as e:
-            logger.error(f"Failed to load data from '{eval_data_path}': {e}")
+            logger.error("Failed to load data from '%s': %s", eval_data_path, e)
             raise
 
     async def evaluate_dataset(
@@ -152,7 +155,7 @@ class EvaluationManager:
         show_progress: bool = True,
     ) -> tuple[list[EvaluationResult], list[EvaluationReport], EvaluationSummary]:
         start_time = datetime.now()
-        logger.info(f"Starting evaluation for {len(queries)} queries")
+        logger.info("Starting evaluation for %s queries", len(queries))
 
         try:
             results = await self._generate_answers(queries, show_progress)
@@ -163,11 +166,13 @@ class EvaluationManager:
             )
 
             logger.info(
-                f"Evaluation completed: {summary.successful_evaluations}/{summary.total_queries} queries processed"
+                "Evaluation completed: %s/%s queries processed",
+                summary.successful_evaluations,
+                summary.total_queries,
             )
             return results, reports, summary
         except Exception as e:
-            logger.error(f"Dataset evaluation failed: {e}")
+            logger.error("Dataset evaluation failed: %s", e)
             raise EvaluationException(f"Dataset evaluation failed: {e}") from e
 
     async def _generate_answers(
@@ -211,7 +216,7 @@ class EvaluationManager:
                 )
             except Exception as e:
                 logger.error(
-                    f"Failed to process result for query '{query.query_id}': {e}"
+                    "Failed to process result for query '%s': %s", query.query_id, e
                 )
                 results.append(
                     EvaluationResult(
@@ -344,7 +349,9 @@ class EvaluationManager:
                 reports = await evaluator.aevaluate_batch(queries, results, gt_list)
                 all_reports.extend(reports)
             except Exception as e:
-                logger.error(f"Failed to run '{evaluator_type.value}' evaluation: {e}")
+                logger.error(
+                    "Failed to run '%s' evaluation: %s", evaluator_type.value, e
+                )
 
         return all_reports
 
@@ -421,7 +428,7 @@ class EvaluationManager:
         self._save_json(
             outputs_dir / f"evaluation_summary_{timestamp}.json", summary.model_dump()
         )
-        logger.info(f"Evaluation results saved to '{outputs_dir}'")
+        logger.info("Evaluation results saved to '%s'", outputs_dir)
 
     @staticmethod
     def _save_json(path: Path, data: Any) -> None:

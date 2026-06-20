@@ -39,12 +39,14 @@ def create_robust_xml_output_parser(
     try:
         fixing_llm = factory.get_model(model_id=output_fixing_model_id)
         logger.info(
-            f"Created OutputFixingParser with model: '{output_fixing_model_id.value}'"
+            "Created OutputFixingParser with model: '%s'", output_fixing_model_id.value
         )
         return OutputFixingParser.from_llm(parser=base_parser, llm=fixing_llm)
     except Exception as e:
         logger.error(
-            f"Failed to create OutputFixingParser with model {output_fixing_model_id.value}: {e}"
+            "Failed to create OutputFixingParser with model %s: %s",
+            output_fixing_model_id.value,
+            e,
         )
         raise GraphRAGException(f"Failed to create OutputFixingParser: {e}") from e
 
@@ -67,10 +69,10 @@ def setup_chain(
             enable_prompt_cache=enable_prompt_cache, custom_prompts=custom_prompts
         )
         chain = prompt | llm | parser
-        logger.debug(f"Successfully created LLM chain with model: '{model_id.value}'")
+        logger.debug("Successfully created LLM chain with model: '%s'", model_id.value)
         return chain
     except Exception as e:
-        logger.error(f"Failed to setup LLM chain with model '{model_id.value}': {e}")
+        logger.error("Failed to setup LLM chain with model '%s': %s", model_id.value, e)
         raise GraphRAGException(
             f"Failed to setup LLM chain with model '{model_id.value}': {e}"
         ) from e

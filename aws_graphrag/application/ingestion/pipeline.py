@@ -152,8 +152,9 @@ class DataIngestionPipeline:
         self.stages, self.name_to_type_map = self._initialize_stages()
 
         logger.info(
-            f"Successfully initialized pipeline with {len(self.stages)} stages: "
-            f"'{', '.join([stage.name for stage in self.stages])}'"
+            "Successfully initialized pipeline with %s stages: '%s'",
+            len(self.stages),
+            ", ".join([stage.name for stage in self.stages]),
         )
 
     def _initialize_managers(self) -> None:
@@ -224,7 +225,7 @@ class DataIngestionPipeline:
                 disabled_stages.append(stage_type.value)
 
         if disabled_stages:
-            logger.info(f"Disabled stages: {disabled_stages}")
+            logger.info("Disabled stages: %s", disabled_stages)
 
         return stages, name_to_type_map
 
@@ -237,8 +238,10 @@ class DataIngestionPipeline:
         try:
             source_path = Path(source_directory).resolve()
             logger.info(
-                f"Starting pipeline run - source: '{source_path}', "
-                f"pipeline_id: '{pipeline_id}', resume_from: '{resume_from_stage or 'auto-detect'}'"
+                "Starting pipeline run - source: '%s', pipeline_id: '%s', resume_from: '%s'",
+                source_path,
+                pipeline_id,
+                resume_from_stage or "auto-detect",
             )
 
             self._validate_source_directory(source_path)
@@ -248,7 +251,7 @@ class DataIngestionPipeline:
                 resume_from_stage or self.pipeline_config.resume_from_stage
             )
 
-            logger.info(f"Resolved pipeline ID: '{resolved_pipeline_id}'")
+            logger.info("Resolved pipeline ID: '%s'", resolved_pipeline_id)
 
             if self.pipeline_config.s3_sync_enabled:
                 self._sync_cache_with_s3(resolved_pipeline_id, "download")
@@ -257,14 +260,15 @@ class DataIngestionPipeline:
                 resolved_pipeline_id
             ):
                 logger.info(
-                    f"Resuming existing pipeline '{resolved_pipeline_id}' "
-                    f"from stage: '{resolved_resume_stage or 'auto-detect'}'"
+                    "Resuming existing pipeline '%s' from stage: '%s'",
+                    resolved_pipeline_id,
+                    resolved_resume_stage or "auto-detect",
                 )
                 context, start_stage_name = self._prepare_resume(
                     resolved_pipeline_id, resolved_resume_stage
                 )
             else:
-                logger.info(f"Starting new pipeline run: '{resolved_pipeline_id}'")
+                logger.info("Starting new pipeline run: '%s'", resolved_pipeline_id)
                 context, start_stage_name = self._prepare_new_run(
                     source_path, resolved_pipeline_id, resolved_resume_stage
                 )
@@ -272,19 +276,20 @@ class DataIngestionPipeline:
             self._execute_pipeline(context, start_stage_name)
 
             logger.info(
-                f"Pipeline execution completed successfully - ID: "
-                f"'{context.pipeline_id}', Status: '{context.status}'"
+                "Pipeline execution completed successfully - ID: '%s', Status: '%s'",
+                context.pipeline_id,
+                context.status,
             )
             return context
 
         except Exception as e:
-            logger.error(f"Pipeline execution failed: {e}", exc_info=True)
+            logger.exception("Pipeline execution failed: %s", e)
             raise PipelineExecutionError(f"Failed to run pipeline: {e}") from e
 
     @staticmethod
     def _validate_source_directory(source_directory: Path) -> None:
         if not source_directory.exists() or not source_directory.is_dir():
-            logger.error(f"Source directory validation failed: '{source_directory}'")
+            logger.error("Source directory validation failed: '%s'", source_directory)
             raise FileNotFoundError(
                 f"Source directory not found or not a directory: '{source_directory}'"
             )
@@ -329,12 +334,16 @@ class DataIngestionPipeline:
             else:
                 self.s3_cache_manager.sync_pipeline_from_s3(pipeline_id, cache_dir)
             logger.info(
-                f"S3 sync {direction} completed successfully for "
-                f"pipeline '{pipeline_id}'"
+                "S3 sync %s completed successfully for pipeline '%s'",
+                direction,
+                pipeline_id,
             )
         except Exception as e:
             logger.error(
-                f"Failed to sync cache {direction} S3 for pipeline '{pipeline_id}': {e}"
+                "Failed to sync cache %s S3 for pipeline '%s': %s",
+                direction,
+                pipeline_id,
+                e,
             )
             raise
 
@@ -342,8 +351,9 @@ class DataIngestionPipeline:
         self, pipeline_id: str, resume_from_stage: str | None
     ) -> tuple[PipelineContext, str | None]:
         logger.info(
-            f"Preparing pipeline resume for '{pipeline_id}' "
-            f"from stage: '{resume_from_stage or 'auto-detect'}'"
+            "Preparing pipeline resume for '%s' from stage: '%s'",
+            pipeline_id,
+            resume_from_stage or "auto-detect",
         )
 
         try:
@@ -360,12 +370,14 @@ class DataIngestionPipeline:
             self._prepare_context_for_resume(context, start_stage_name)
 
             logger.info(
-                f"Pipeline resume prepared successfully - "
-                f"will start from stage: '{start_stage_name}'"
+                "Pipeline resume prepared successfully - will start from stage: '%s'",
+                start_stage_name,
             )
             return context, start_stage_name
         except (PipelineResumeError, PipelineStateError) as e:
-            logger.error(f"Failed to prepare resume for pipeline '{pipeline_id}': {e}")
+            logger.error(
+                "Failed to prepare resume for pipeline '%s': %s", pipeline_id, e
+            )
             raise PipelineExecutionError(f"Pipeline resume failed: {e}") from e
 
     def _prepare_context_for_resume(
@@ -381,13 +393,14 @@ class DataIngestionPipeline:
             ]
             context.stage_results = valid_results
             logger.info(
-                f"Context prepared for resume from '{start_stage_name}' - "
-                f"keeping {len(valid_results)} previous stage results"
+                "Context prepared for resume from '%s' - keeping %s previous stage results",
+                start_stage_name,
+                len(valid_results),
             )
         except ValueError:
             logger.warning(
-                f"Start stage '{start_stage_name}' not found in stage list, "
-                f"starting from beginning"
+                "Start stage '%s' not found in stage list, starting from beginning",
+                start_stage_name,
             )
             context.stage_results = []
 
@@ -425,8 +438,8 @@ class DataIngestionPipeline:
                 start_index = stage_names.index(start_stage_name)
             except ValueError:
                 logger.warning(
-                    f"Start stage '{start_stage_name}' not found, "
-                    f"starting from beginning"
+                    "Start stage '%s' not found, starting from beginning",
+                    start_stage_name,
                 )
 
         completed_stage_names = {
@@ -437,26 +450,29 @@ class DataIngestionPipeline:
 
         if completed_stage_names:
             logger.info(
-                f"Found {len(completed_stage_names)} previously completed stages: "
-                f"'{', '.join(list(completed_stage_names))}'"
+                "Found %s previously completed stages: '%s'",
+                len(completed_stage_names),
+                ", ".join(list(completed_stage_names)),
             )
 
         stages_to_execute = self.stages[start_index:]
         logger.info(
-            f"Executing {len(stages_to_execute)} stages: "
-            f"'{', '.join([s.name for s in stages_to_execute])}'"
+            "Executing %s stages: '%s'",
+            len(stages_to_execute),
+            ", ".join([s.name for s in stages_to_execute]),
         )
 
         for stage in stages_to_execute:
             if stage.name in completed_stage_names:
-                logger.info(f"Skipping previously completed stage: '{stage.name}'")
+                logger.info("Skipping previously completed stage: '%s'", stage.name)
             else:
-                logger.info(f"Executing stage: '{stage.name}'")
+                logger.info("Executing stage: '%s'", stage.name)
                 result = self._execute_stage(stage, context)
 
                 if self._should_stop_pipeline(result):
                     logger.warning(
-                        f"Pipeline execution stopped due to stage failure: '{stage.name}'"
+                        "Pipeline execution stopped due to stage failure: '%s'",
+                        stage.name,
                     )
                     break
 
@@ -477,12 +493,12 @@ class DataIngestionPipeline:
             if result.status == PipelineStageStatus.COMPLETED:
                 self._save_stage_outputs_to_cache(context, stage.name)
             elif result.status == PipelineStageStatus.FAILED:
-                logger.error(f"Stage '{stage.name}' failed: {result.error_message}")
+                logger.error("Stage '%s' failed: %s", stage.name, result.error_message)
 
             return result
 
         except PipelineStageError as e:
-            logger.error(f"Stage '{stage.name}' validation failed: {e}")
+            logger.error("Stage '%s' validation failed: %s", stage.name, e)
             failed_result = PipelineStageResult(
                 stage_name=stage.name,
                 status=PipelineStageStatus.FAILED,
@@ -495,7 +511,7 @@ class DataIngestionPipeline:
 
         except Exception as e:
             logger.error(
-                f"Unexpected error in stage '{stage.name}': {e}", exc_info=True
+                "Unexpected error in stage '%s': %s", stage.name, e, exc_info=True
             )
             failed_result = PipelineStageResult(
                 stage_name=stage.name,
@@ -512,15 +528,15 @@ class DataIngestionPipeline:
     ) -> None:
         if not self.pipeline_config.cache_enabled:
             logger.info(
-                f"Cache disabled, skipping output save for stage: '{stage_name}'"
+                "Cache disabled, skipping output save for stage: '%s'", stage_name
             )
             return
 
         stage_type = self.name_to_type_map.get(stage_name)
         if not stage_type or stage_type not in self.STAGE_OUTPUT_MAPPING:
             logger.info(
-                f"No output mapping found for stage: '{stage_name}', "
-                f"skipping cache save"
+                "No output mapping found for stage: '%s', skipping cache save",
+                stage_name,
             )
             return
 
@@ -529,11 +545,15 @@ class DataIngestionPipeline:
             for _, (_, context_attr) in self.STAGE_OUTPUT_MAPPING[stage_type].items():
                 data_to_save = getattr(context, context_attr, None)
                 if not data_to_save:
-                    logger.debug(f"No data found for context attribute: {context_attr}")
+                    logger.debug(
+                        "No data found for context attribute: %s", context_attr
+                    )
                     continue
 
                 logger.info(
-                    f"Saving {len(data_to_save) if isinstance(data_to_save, list) else 1} {context_attr} to cache"
+                    "Saving %s %s to cache",
+                    len(data_to_save) if isinstance(data_to_save, list) else 1,
+                    context_attr,
                 )
 
                 cache_entry = self.cache_manager.save_stage_result(
@@ -561,31 +581,35 @@ class DataIngestionPipeline:
                         chunked_info = f" (chunked into {chunk_count} files)"
 
                     saved_outputs.append(f"{item_count} {context_attr}{chunked_info}")
-                    logger.info(f"Successfully cached {context_attr}")
+                    logger.info("Successfully cached %s", context_attr)
                 else:
-                    logger.warning(f"Cache manager returned None for {context_attr}")
+                    logger.warning("Cache manager returned None for %s", context_attr)
 
             if saved_outputs:
                 logger.info(
-                    f"Stage '{stage_name}' outputs cached: {', '.join(saved_outputs)}"
+                    "Stage '%s' outputs cached: %s",
+                    stage_name,
+                    ", ".join(saved_outputs),
                 )
         except Exception as e:
             logger.warning(
-                f"Failed to save outputs to cache for stage '{stage_name}': {e}"
+                "Failed to save outputs to cache for stage '%s': %s", stage_name, e
             )
 
     def _should_stop_pipeline(self, result: PipelineStageResult) -> bool:
         if result.status == PipelineStageStatus.FAILED:
             if self.pipeline_config.continue_on_error:
                 logger.warning(
-                    f"Stage '{result.stage_name}' failed but continuing due to "
-                    f"continue_on_error setting: {result.error_message}"
+                    "Stage '%s' failed but continuing due to continue_on_error setting: %s",
+                    result.stage_name,
+                    result.error_message,
                 )
                 return False
             else:
                 logger.error(
-                    f"Stopping pipeline due to failure in stage '{result.stage_name}': "
-                    f"{result.error_message}"
+                    "Stopping pipeline due to failure in stage '%s': %s",
+                    result.stage_name,
+                    result.error_message,
                 )
                 return True
         return False
@@ -593,7 +617,7 @@ class DataIngestionPipeline:
     def _finalize_pipeline_execution(
         self, context: PipelineContext, start_time: float
     ) -> None:
-        logger.info(f"Finalizing pipeline execution - ID: '{context.pipeline_id}'")
+        logger.info("Finalizing pipeline execution - ID: '%s'", context.pipeline_id)
 
         context.end_time = datetime.now()
         total_duration = time.time() - start_time
@@ -608,8 +632,9 @@ class DataIngestionPipeline:
         if failed_stages:
             context.status = PipelineStageStatus.FAILED
             logger.warning(
-                f"Pipeline completed with {len(failed_stages)} failed stages: "
-                f"{[r.stage_name for r in failed_stages]}"
+                "Pipeline completed with %s failed stages: %s",
+                len(failed_stages),
+                [r.stage_name for r in failed_stages],
             )
         else:
             context.status = PipelineStageStatus.COMPLETED
@@ -733,42 +758,44 @@ class DataIngestionPipeline:
 
     def repair_pipeline_metadata(self, context: PipelineContext) -> bool:
         logger.info(
-            f"Attempting to repair pipeline metadata for: {context.pipeline_id}"
+            "Attempting to repair pipeline metadata for: %s", context.pipeline_id
         )
 
         try:
             result = self.state_manager.repair_pipeline_metadata(context)
             if result:
                 logger.info(
-                    f"Pipeline metadata repair successful for: {context.pipeline_id}"
+                    "Pipeline metadata repair successful for: %s", context.pipeline_id
                 )
             else:
                 logger.warning(
-                    f"Pipeline metadata repair failed for: {context.pipeline_id}"
+                    "Pipeline metadata repair failed for: %s", context.pipeline_id
                 )
             return result
         except Exception as e:
             logger.error(
-                f"Error during pipeline metadata repair for {context.pipeline_id}: {e}"
+                "Error during pipeline metadata repair for %s: %s",
+                context.pipeline_id,
+                e,
             )
             return False
 
     def verify_pipeline_metadata(self, pipeline_id: str) -> bool:
-        logger.info(f"Verifying pipeline metadata for: {pipeline_id}")
+        logger.info("Verifying pipeline metadata for: %s", pipeline_id)
 
         try:
             result = self.state_manager.verify_pipeline_metadata(pipeline_id)
             if result:
                 logger.info(
-                    f"Pipeline metadata verification successful for: {pipeline_id}"
+                    "Pipeline metadata verification successful for: %s", pipeline_id
                 )
             else:
                 logger.warning(
-                    f"Pipeline metadata verification failed for: {pipeline_id}"
+                    "Pipeline metadata verification failed for: %s", pipeline_id
                 )
             return result
         except Exception as e:
             logger.error(
-                f"Error during pipeline metadata verification for {pipeline_id}: {e}"
+                "Error during pipeline metadata verification for %s: %s", pipeline_id, e
             )
             return False

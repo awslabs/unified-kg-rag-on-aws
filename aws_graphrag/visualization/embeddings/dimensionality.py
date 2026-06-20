@@ -58,7 +58,9 @@ class DimensionalityReducer:
             return {}
 
         logger.info(
-            f"Reducing dimensions of {len(embeddings.embeddings)} nodes using {method.upper()}..."
+            "Reducing dimensions of %s nodes using %s...",
+            len(embeddings.embeddings),
+            method.upper(),
         )
 
         nodes = embeddings.nodes
@@ -66,7 +68,8 @@ class DimensionalityReducer:
 
         if embedding_matrix.shape[0] < self.umap_config.n_components + 1:
             logger.warning(
-                f"Not enough data points ({embedding_matrix.shape[0]}) for dimensionality reduction, falling back to PCA."
+                "Not enough data points (%s) for dimensionality reduction, falling back to PCA.",
+                embedding_matrix.shape[0],
             )
             method = "pca"
 
@@ -93,7 +96,9 @@ class DimensionalityReducer:
 
         except Exception as e:
             logger.error(
-                f"Dimensionality reduction failed with method {method.upper()}: {e}",
+                "Dimensionality reduction failed with method %s: %s",
+                method.upper(),
+                e,
                 exc_info=True,
             )
             return self._generate_random_layout(nodes)
@@ -113,7 +118,7 @@ class DimensionalityReducer:
             logger.warning("UMAP is not installed. Falling back to PCA.")
             return self._apply_pca(embeddings)
         except Exception as e:
-            logger.warning(f"UMAP failed: {e}. Falling back to PCA.")
+            logger.warning("UMAP failed: %s. Falling back to PCA.", e)
             return self._apply_pca(embeddings)
 
     def _apply_tsne(self, embeddings: np.ndarray) -> np.ndarray:

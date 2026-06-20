@@ -109,7 +109,9 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
 
         except Exception as e:
             logger.warning(
-                f"Entity extraction failed for conversation '{self.conversation_id}': {e}"
+                "Entity extraction failed for conversation '%s': %s",
+                self.conversation_id,
+                e,
             )
 
     def get_context_summary(self) -> str:
@@ -280,7 +282,7 @@ class MemoryManager:
 
         if to_remove:
             logger.info(
-                f"Removed {len(to_remove)} oldest conversations to maintain capacity"
+                "Removed %s oldest conversations to maintain capacity", len(to_remove)
             )
 
 

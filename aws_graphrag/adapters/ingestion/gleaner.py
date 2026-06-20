@@ -240,7 +240,9 @@ class GraphGleaner(BaseProcessor):
         for round_num in range(1, self.gleaning_config.max_rounds + 1):
             round_start_time = time.time()
             logger.info(
-                f"Starting gleaning round {round_num}/{self.gleaning_config.max_rounds}"
+                "Starting gleaning round %s/%s",
+                round_num,
+                self.gleaning_config.max_rounds,
             )
 
             entities_before = len(current_entities)
@@ -317,7 +319,9 @@ class GraphGleaner(BaseProcessor):
         round_start_time: float,
     ) -> dict[str, Any]:
         logger.debug(
-            f"Round {round_num}: Starting LLM refinement for {len(text_units)} text units"
+            "Round %s: Starting LLM refinement for %s text units",
+            round_num,
+            len(text_units),
         )
 
         newly_discovered_entities, newly_discovered_relationships, quality_scores = (
@@ -327,8 +331,10 @@ class GraphGleaner(BaseProcessor):
         )
 
         logger.debug(
-            f"Round {round_num}: LLM refinement produced {len(newly_discovered_entities)} entities "
-            f"and {len(newly_discovered_relationships)} relationships"
+            "Round %s: LLM refinement produced %s entities and %s relationships",
+            round_num,
+            len(newly_discovered_entities),
+            len(newly_discovered_relationships),
         )
 
         combined_entities = current_entities + newly_discovered_entities
@@ -406,7 +412,7 @@ class GraphGleaner(BaseProcessor):
                     result = future.result()
                     prepared_inputs.append(result)
                 except Exception as e:
-                    logger.error(f"Error processing text unit: {e}")
+                    logger.error("Error processing text unit: %s", e)
 
         unit_to_input = {
             unit.id: input_data
@@ -435,7 +441,7 @@ class GraphGleaner(BaseProcessor):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.error(f"Error during graph refinement: {e}")
+            logger.error("Error during graph refinement: %s", e)
             return [], [], {}
 
         all_new_entities, all_new_relationships = [], []
@@ -456,13 +462,13 @@ class GraphGleaner(BaseProcessor):
 
         if all_new_entities:
             all_entity_details = [f"'{entity.name}'" for entity in all_new_entities]
-            logger.debug(f"All new entities: {all_entity_details}")
+            logger.debug("All new entities: %s", all_entity_details)
         if all_new_relationships:
             all_relationship_details = [
                 f"'{rel.source_name}' -> '{rel.target_name}' (type: '{rel.type}')"
                 for rel in all_new_relationships
             ]
-            logger.debug(f"All new relationships: {all_relationship_details}")
+            logger.debug("All new relationships: %s", all_relationship_details)
 
         avg_quality_scores = {
             "completeness": self._calculate_average(
@@ -504,7 +510,7 @@ class GraphGleaner(BaseProcessor):
         quality_scores: dict[str, float] = {}
 
         if not result_data:
-            logger.debug(f"No result data for text unit '{unit.id}'")
+            logger.debug("No result data for text unit '%s'", unit.id)
             return new_entities, new_relationships, quality_scores
 
         try:
@@ -517,8 +523,10 @@ class GraphGleaner(BaseProcessor):
 
             if not isinstance(plan, dict):
                 logger.warning(
-                    f"Could not extract a valid dictionary-based plan for unit '{unit.id}'. "
-                    f"Received data type: {type(result_data)}, Preview: {str(result_data)[:250]}"
+                    "Could not extract a valid dictionary-based plan for unit '%s'. Received data type: %s, Preview: %s",
+                    unit.id,
+                    type(result_data),
+                    str(result_data)[:250],
                 )
                 return new_entities, new_relationships, quality_scores
 
@@ -543,13 +551,17 @@ class GraphGleaner(BaseProcessor):
 
             if new_entities or new_relationships:
                 logger.debug(
-                    f"Parsed refinement output for unit '{unit.id}': "
-                    f"{len(new_entities)} entities, "
-                    f"{len(new_relationships)} relationships"
+                    "Parsed refinement output for unit '%s': %s entities, %s relationships",
+                    unit.id,
+                    len(new_entities),
+                    len(new_relationships),
                 )
         except Exception as e:
             logger.warning(
-                f"Failed to parse refinement output for unit {unit.id}: {e}. Input data: {str(result_data)[:250]}"
+                "Failed to parse refinement output for unit %s: %s. Input data: %s",
+                unit.id,
+                e,
+                str(result_data)[:250],
             )
 
         return new_entities, new_relationships, quality_scores
@@ -654,11 +666,13 @@ class GraphGleaner(BaseProcessor):
 
         if duplicates_merged > 0:
             logger.debug(
-                f"Merged {duplicates_merged} duplicate entities "
-                f"({len(entities)} -> {len(unique_entities)})"
+                "Merged %s duplicate entities (%s -> %s)",
+                duplicates_merged,
+                len(entities),
+                len(unique_entities),
             )
             for name in merged_names:
-                logger.debug(f"Merged duplicate entity: '{name}'")
+                logger.debug("Merged duplicate entity: '%s'", name)
 
         return unique_entities, id_remap
 
@@ -709,14 +723,17 @@ class GraphGleaner(BaseProcessor):
 
         if duplicates_merged > 0:
             logger.debug(
-                f"Merged {duplicates_merged} duplicate relationships "
-                f"({len(relationships)} -> {len(final_relationships)})"
+                "Merged %s duplicate relationships (%s -> %s)",
+                duplicates_merged,
+                len(relationships),
+                len(final_relationships),
             )
             for rel in merged_relationships:
                 logger.debug(
-                    f"Merged duplicate relationship: "
-                    f"'{rel.source_name}' -> '{rel.target_name}' "
-                    f"(type: '{rel.type}')"
+                    "Merged duplicate relationship: '%s' -> '%s' (type: '%s')",
+                    rel.source_name,
+                    rel.target_name,
+                    rel.type,
                 )
 
         return final_relationships
@@ -786,5 +803,5 @@ class GraphGleaner(BaseProcessor):
             logger.info("Gleaning process converged successfully")
         else:
             logger.warning(
-                f"Gleaning process did not converge after {stats.total_rounds} rounds"
+                "Gleaning process did not converge after %s rounds", stats.total_rounds
             )

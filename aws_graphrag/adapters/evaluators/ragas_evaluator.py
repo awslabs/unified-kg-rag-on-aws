@@ -93,7 +93,8 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         try:
             self._initialize_models()
             logger.info(
-                f"Ragas evaluator initialized with {len(self.config.evaluation.ragas_metrics)} metrics"
+                "Ragas evaluator initialized with %s metrics",
+                len(self.config.evaluation.ragas_metrics),
             )
         except Exception as e:
             raise EvaluationException(
@@ -227,7 +228,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             if self.ignore_errors:
                 raise
 
-            logger.error(f"Ragas async evaluation failed for batch: {e}")
+            logger.error("Ragas async evaluation failed for batch: %s", e)
             return [self._create_empty_report(q.query_id) for q in queries]
 
     async def aevaluate_single(
@@ -264,6 +265,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             self.METRIC_MAPPING
         )
         if unsupported_metrics:
-            logger.error(f"Unsupported Ragas metrics: '{unsupported_metrics}'")
+            logger.error("Unsupported Ragas metrics: '%s'", unsupported_metrics)
             return False
         return True

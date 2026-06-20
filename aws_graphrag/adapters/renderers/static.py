@@ -288,4 +288,4 @@ class StaticRenderer:
     def _save_plot(plot: figure, path: str, title: str) -> None:
         output_file(path, title=title)
         save(plot, title=title)
-        logger.info(f"Static plot '{title}' saved to {path}")
+        logger.info("Static plot '%s' saved to %s", title, path)
