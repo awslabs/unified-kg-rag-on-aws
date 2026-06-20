@@ -89,7 +89,7 @@ class EntityResolver(BaseResolver):
     def resolve(
         self, entities: list[Entity], *args: Any, **kwargs: Any
     ) -> tuple[list[Entity], dict[str, str], EntityResolutionStats]:
-        logger.info(f"Starting entity resolution for {len(entities)} entities")
+        logger.info("Starting entity resolution for %s entities", len(entities))
         return self._resolve_entities(entities)
 
     def _resolve_entities(
@@ -130,7 +130,9 @@ class EntityResolver(BaseResolver):
             return [[e] for e in entities]
 
         logger.info(
-            f"Grouping {len(entities)} entities using {self.config.processing.resolution_method.value} method"
+            "Grouping %s entities using %s method",
+            len(entities),
+            self.config.processing.resolution_method.value,
         )
 
         entity_map = {entity.name: entity for entity in entities}
@@ -165,7 +167,7 @@ class EntityResolver(BaseResolver):
                             adjacency_list[matched_name].add(original_name)
                 except Exception as e:
                     logger.warning(
-                        f"Failed to find matches for entity '{original_name}': {e}"
+                        "Failed to find matches for entity '%s': %s", original_name, e
                     )
 
         groups = []
@@ -186,7 +188,7 @@ class EntityResolver(BaseResolver):
                             q.append(v)
                 groups.append([entity_map[n] for n in current_group_names])
 
-        logger.info(f"Created {len(groups)} entity groups")
+        logger.info("Created %s entity groups", len(groups))
         return groups
 
     def _merge_entities(self, entities: list[Entity]) -> Entity:
@@ -243,7 +245,7 @@ class RelationshipResolver(BaseResolver):
         **kwargs: Any,
     ) -> tuple[list[Relationship], RelationshipResolutionStats]:
         logger.info(
-            f"Starting relationship resolution for {len(relationships)} relationships"
+            "Starting relationship resolution for %s relationships", len(relationships)
         )
         return self._resolve_relationships(relationships, entity_mapping)
 
@@ -275,7 +277,8 @@ class RelationshipResolver(BaseResolver):
 
         if stats.self_referencing_removed > 0:
             logger.info(
-                f"Removed {stats.self_referencing_removed} self-referencing relationships"
+                "Removed %s self-referencing relationships",
+                stats.self_referencing_removed,
             )
 
         relationship_groups = self._group_similar_relationships(updated_relationships)
@@ -364,8 +367,9 @@ class GraphResolver:
     ) -> tuple[dict[str, Any], GraphResolutionStats]:
         start_time = time.time()
         logger.info(
-            f"Starting graph resolution with {len(entities)} entities and "
-            f"{len(relationships)} relationships"
+            "Starting graph resolution with %s entities and %s relationships",
+            len(entities),
+            len(relationships),
         )
 
         (

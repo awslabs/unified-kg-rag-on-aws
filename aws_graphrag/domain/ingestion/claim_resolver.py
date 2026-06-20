@@ -59,9 +59,9 @@ def resolve_single_claim_task(
 
     if resolved_subject_name is None or resolved_object_name is None:
         if resolved_subject_name is None:
-            logger.warning(f"Failed to resolve subject: '{claim.subject_name}'")
+            logger.warning("Failed to resolve subject: '%s'", claim.subject_name)
         if resolved_object_name is None:
-            logger.warning(f"Failed to resolve object: '{claim.object_name}'")
+            logger.warning("Failed to resolve object: '%s'", claim.object_name)
         return None
 
     normalized_subject = normalize_name(resolved_subject_name)
@@ -114,8 +114,9 @@ class ClaimResolver(BaseResolver):
         self, claims: list[Claim], entities: list[Entity], *args: Any, **kwargs: Any
     ) -> tuple[list[Claim], ClaimResolutionStats]:
         logger.info(
-            f"Starting claim resolution for {len(claims)} claims against "
-            f"{len(entities)} entities"
+            "Starting claim resolution for %s claims against %s entities",
+            len(claims),
+            len(entities),
         )
         return self._resolve_claims(claims, entities)
 
@@ -128,7 +129,7 @@ class ClaimResolver(BaseResolver):
         stats = ClaimResolutionStats(original_claims=len(claims))
 
         method = self.config.processing.resolution_method.value
-        logger.info(f"Using resolution method: '{method}'")
+        logger.info("Using resolution method: '%s'", method)
 
         normalized_name_to_id: dict[str, str] = {}
         normalized_name_to_original_name: dict[str, str] = {}
@@ -140,7 +141,7 @@ class ClaimResolver(BaseResolver):
                 normalized_name_to_original_name[normalized_name] = entity.name
 
         logger.info(
-            f"Created normalized entity map with {len(normalized_name_to_id)} entries."
+            "Created normalized entity map with %s entries.", len(normalized_name_to_id)
         )
 
         entity_names = list(normalized_name_to_original_name.values())
@@ -156,7 +157,7 @@ class ClaimResolver(BaseResolver):
         claim_groups = self._group_similar_claims(resolved_claims)
         stats.claim_groups_created = len(claim_groups)
         logger.info(
-            f"Grouped {len(resolved_claims)} claims into {len(claim_groups)} groups"
+            "Grouped %s claims into %s groups", len(resolved_claims), len(claim_groups)
         )
 
         merged_claims = []
@@ -214,12 +215,14 @@ class ClaimResolver(BaseResolver):
                     else:
                         unresolved_count += 1
                 except Exception as e:
-                    logger.error(f"Error resolving claim '{original_claim.id}': {e}")
+                    logger.error("Error resolving claim '%s': %s", original_claim.id, e)
                     unresolved_count += 1
 
             if unresolved_count > 0:
                 logger.warning(
-                    f"Failed to resolve {unresolved_count} out of {len(claims)} claims"
+                    "Failed to resolve %s out of %s claims",
+                    unresolved_count,
+                    len(claims),
                 )
 
         return resolved_claims

@@ -199,12 +199,14 @@ indexing:
     embedding_model_id: "amazon.titan-embed-text-v2:0"
     embedding_dimension: null
     refresh_after_batch: true
-    text_units_index_alias: "graphrag-text-units"
-    entities_index_alias: "graphrag-entities"
-    community_reports_index_alias: "graphrag-community-reports"
+    text_units_index_prefix: "graphrag-text-units"
+    entities_index_prefix: "graphrag-entities"
+    community_reports_index_prefix: "graphrag-community-reports"
     # Relationship vector index — enables LightRAG high-level keyword retrieval
     # (mix/hybrid modes). Built automatically during indexing.
     relationships_index_prefix: "graphrag-relationships"
+    # Claim (covariate) vector index — makes extracted claims searchable.
+    claims_index_prefix: "graphrag-claims"
     # Text analyzer per language code (extend without code changes); unlisted
     # languages use default_analyzer.
     default_analyzer: "standard"
@@ -256,6 +258,7 @@ search:
   fusion:
     method: "rrf"
     rrf_k: 60
+    # MMR: 1.0 = pure relevance (filtering skipped), 0.0 = maximum diversity.
     diversity_lambda: 0.5
     fusion_weights:
       lexical: 0.5
@@ -332,6 +335,9 @@ evaluation:
   enabled_evaluators:
     - langchain
     - ragas
+    # - graph_aware  # deterministic, LLM-free entity/relationship coverage
+    #                (precision/recall/F1); requires `expected_entities` /
+    #                `expected_relationships` in the evaluation dataset.
   langchain_metrics:
     - correctness
     - partial_correctness
@@ -386,3 +392,14 @@ custom_prompts:
   # Strategy Selection Prompts
   strategy_selection_system: null
   strategy_selection_human: null
+
+  # Dual-level (high/low) Keyword Extraction Prompts (LightRAG mix/hybrid modes)
+  keywords_extraction_system: null
+  keywords_extraction_human: null
+
+  # Prompt-tuning Prompts (run-prompt-tuning): corpus profiling + few-shot
+  # extraction-example generation that produce domain-adapted custom_prompts.
+  corpus_profile_system: null
+  corpus_profile_human: null
+  extraction_examples_system: null
+  extraction_examples_human: null

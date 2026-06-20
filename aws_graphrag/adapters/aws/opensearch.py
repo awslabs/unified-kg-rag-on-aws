@@ -27,15 +27,15 @@ def _handle_opensearch_errors(func: Callable) -> Callable:
         try:
             return func(client_instance, *args, **kwargs)
         except NotFoundError as e:
-            logger.debug(f"Resource not found during '{func.__name__}': {e}")
+            logger.debug("Resource not found during '%s': %s", func.__name__, e)
             raise
         except TransportError as e:
             msg = f"Transport error in '{func.__name__}': status={e.status_code}, info={e.info}"
-            logger.error(msg, exc_info=True)
+            logger.exception(msg)
             raise AWSServiceError(msg) from e
         except Exception as e:
             msg = f"Unexpected error in '{func.__name__}': {e}"
-            logger.error(msg, exc_info=True)
+            logger.exception(msg)
             raise AWSServiceError(msg) from e
 
     return wrapper
@@ -49,15 +49,15 @@ def _handle_async_opensearch_errors(func: Callable) -> Callable:
         try:
             return await func(client_instance, *args, **kwargs)
         except NotFoundError as e:
-            logger.debug(f"Resource not found during async '{func.__name__}': {e}")
+            logger.debug("Resource not found during async '%s': %s", func.__name__, e)
             raise
         except TransportError as e:
             msg = f"Async transport error in '{func.__name__}': status={e.status_code}, info={e.info}"
-            logger.error(msg, exc_info=True)
+            logger.exception(msg)
             raise AWSServiceError(msg) from e
         except Exception as e:
             msg = f"Unexpected async error in '{func.__name__}': {e}"
-            logger.error(msg, exc_info=True)
+            logger.exception(msg)
             raise AWSServiceError(msg) from e
 
     return async_wrapper
@@ -123,10 +123,10 @@ class OpenSearchClient:
 
             info = client.info()
             cluster_name = info.get("cluster_name", "unknown")
-            logger.info(f"Connected to OpenSearch cluster: {cluster_name}")
+            logger.info("Connected to OpenSearch cluster: %s", cluster_name)
             return client
         except Exception as e:
-            logger.error(f"Failed to create OpenSearch client: {e}", exc_info=True)
+            logger.exception("Failed to create OpenSearch client: %s", e)
             raise AWSServiceError("Failed to connect to OpenSearch.") from e
 
     def _create_async_client(self) -> AsyncOpenSearch:
@@ -205,10 +205,12 @@ class OpenSearchClient:
 
         if errors:
             logger.warning(
-                f"Bulk index completed with {len(errors)} errors in '{index}'"
+                "Bulk index completed with %s errors in '%s'", len(errors), index
             )
         else:
-            logger.debug(f"Successfully indexed {success_count} documents to '{index}'")
+            logger.debug(
+                "Successfully indexed %s documents to '%s'", success_count, index
+            )
 
         if refresh and success_count > 0:
             self.client.indices.refresh(index=index)
@@ -259,7 +261,7 @@ class OpenSearchClient:
     def create_ingest_pipeline(self, pipeline_id: str, body: dict[str, Any]) -> None:
         if not self.check_ingest_pipeline_exists(pipeline_id):
             self.client.ingest.put_pipeline(id=pipeline_id, body=body)
-            logger.debug(f"Created ingest pipeline: '{pipeline_id}'")
+            logger.debug("Created ingest pipeline: '%s'", pipeline_id)
 
     @_handle_opensearch_errors
     def check_ingest_pipeline_exists(self, pipeline_id: str) -> bool:
@@ -273,13 +275,13 @@ class OpenSearchClient:
     def create_index(self, index: str, body: dict[str, Any]) -> None:
         if not self.client.indices.exists(index=index):
             self.client.indices.create(index=index, body=body)
-            logger.info(f"Created index: '{index}'")
+            logger.info("Created index: '%s'", index)
 
     @_handle_opensearch_errors
     def create_search_pipeline(self, pipeline_id: str, body: dict[str, Any]) -> None:
         if not self.check_search_pipeline_exists(pipeline_id):
             self.client.search_pipeline.put(id=pipeline_id, body=body)
-            logger.debug(f"Created search pipeline: '{pipeline_id}'")
+            logger.debug("Created search pipeline: '%s'", pipeline_id)
 
     @_handle_opensearch_errors
     def check_search_pipeline_exists(self, pipeline_id: str) -> bool:
@@ -301,7 +303,7 @@ class OpenSearchClient:
         if query:
             params["body"] = query
 
-        logger.debug(f"Executing count on indices '{final_indices}'")
+        logger.debug("Executing count on indices '%s'", final_indices)
         response = self.client.count(**params)
         return int(response.get("count", 0))
 
@@ -317,7 +319,7 @@ class OpenSearchClient:
         )
 
         logger.info(
-            f"Deleting alias(es) '{final_aliases}' from index(es) '{final_indices}'"
+            "Deleting alias(es) '%s' from index(es) '%s'", final_aliases, final_indices
         )
         self.client.indices.delete_alias(index=final_indices, name=final_aliases)
 
@@ -326,19 +328,19 @@ class OpenSearchClient:
         if index_names:
             indices_str = ",".join(index_names)
             self.client.indices.delete(index=indices_str)
-            logger.info(f"Deleted indices: {indices_str}")
+            logger.info("Deleted indices: %s", indices_str)
 
     @_handle_opensearch_errors
     def delete_ingest_pipeline(self, pipeline_id: str) -> None:
         if self.check_ingest_pipeline_exists(pipeline_id):
             self.client.ingest.delete_pipeline(id=pipeline_id)
-            logger.debug(f"Deleted ingest pipeline: '{pipeline_id}'")
+            logger.debug("Deleted ingest pipeline: '%s'", pipeline_id)
 
     @_handle_opensearch_errors
     def delete_search_pipeline(self, pipeline_id: str) -> None:
         if self.check_search_pipeline_exists(pipeline_id):
             self.client.search_pipeline.delete(id=pipeline_id)
-            logger.debug(f"Deleted search pipeline: '{pipeline_id}'")
+            logger.debug("Deleted search pipeline: '%s'", pipeline_id)
 
     @_handle_opensearch_errors
     def get_index_name_by_alias(self, alias_name: str) -> str | None:
@@ -399,4 +401,4 @@ class OpenSearchClient:
 
         body = {"actions": actions}
         self.client.indices.update_aliases(body=body)
-        logger.info(f"Updated alias '{alias_name}' to point to '{new_index_name}'")
+        logger.info("Updated alias '%s' to point to '%s'", alias_name, new_index_name)

@@ -110,8 +110,10 @@ class TokenManager(MetricsMixin):
 
         if available_tokens <= 0:
             logger.error(
-                f"Token budget exceeded - query: {query_tokens}, "
-                f"target: {target_tokens}, buffer: {max_context_tokens_buffer}"
+                "Token budget exceeded - query: %s, target: %s, buffer: %s",
+                query_tokens,
+                target_tokens,
+                max_context_tokens_buffer,
             )
             return OptimizedContext(
                 sections=[],

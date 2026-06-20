@@ -212,7 +212,7 @@ class RAGChainRunner:
             )
             console.print("[green]GraphRAG chain initialized successfully![/green]")
         except Exception as e:
-            logger.error(f"Failed to initialize RAG chain: {e}", exc_info=True)
+            logger.exception("Failed to initialize RAG chain: %s", e)
             console.print(f"[red]Error during initialization: {e}[/red]")
             sys.exit(1)
 
@@ -279,7 +279,7 @@ class RAGChainRunner:
             except Exception as e:
                 console.print(f"[red]Unexpected error: {e}[/red]")
                 logger.error(
-                    f"Unexpected error in interactive mode: {e}", exc_info=True
+                    "Unexpected error in interactive mode: %s", e, exc_info=True
                 )
 
     async def _run_query(self, rag_input: RAGInput) -> dict[str, Any]:
@@ -299,7 +299,7 @@ class RAGChainRunner:
                 return {"success": True, **result.model_dump()}
 
         except Exception as e:
-            logger.error(f"Error during query execution: {e}", exc_info=True)
+            logger.exception("Error during query execution: %s", e)
             console.print(f"\n[bold red]Error executing query: {e}[/bold red]")
             return {
                 "success": False,
@@ -346,7 +346,7 @@ class RAGChainRunner:
                 filters[key] = value
             else:
                 logger.warning(
-                    f"Invalid filter format skipped: '{item}'. Expected 'key:value'."
+                    "Invalid filter format skipped: '%s'. Expected 'key:value'.", item
                 )
         return filters
 

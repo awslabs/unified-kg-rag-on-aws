@@ -22,12 +22,19 @@ from aws_graphrag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from aws_graphrag.domain.ingestion.graph_builder import GraphBuilder
 from aws_graphrag.domain.ingestion.graph_resolver import GraphResolver
 from aws_graphrag.domain.models import (
+    Claim,
+    Community,
+    CommunityReport,
     Config,
+    Constants,
     Document,
+    Entity,
     PipelineContext,
     PipelineStageResult,
     PipelineStageStatus,
     PipelineStageType,
+    Relationship,
+    TextUnit,
 )
 from aws_graphrag.shared import PipelineStageError, get_logger
 from aws_graphrag.storage import IndexingManager
@@ -82,7 +89,7 @@ class PipelineStage(ABC):
         return self.stage_type.value
 
     def execute(self, context: PipelineContext) -> PipelineStageResult:
-        logger.info(f"Starting stage: '{self.name}'")
+        logger.info("Starting stage: '%s'", self.name)
         start_time = datetime.now()
 
         try:
@@ -90,7 +97,8 @@ class PipelineStage(ABC):
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
 
-            self._validate_critical_stage_output(input_count, output_count)
+            if not self._allows_empty_output(context):
+                self._validate_critical_stage_output(input_count, output_count)
 
             logger.info(
                 f"Stage '{self.name}' completed successfully in "
@@ -108,7 +116,7 @@ class PipelineStage(ABC):
             )
 
         except Exception as e:
-            logger.error(f"Stage '{self.name}' failed: {e}", exc_info=True)
+            logger.exception("Stage '%s' failed: %s", self.name, e)
             end_time = datetime.now()
 
             return self._create_result(
@@ -120,6 +128,18 @@ class PipelineStage(ABC):
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
         pass
+
+    def _allows_empty_output(self, context: PipelineContext) -> bool:
+        """Stages may opt out of the zero-output critical check for valid cases.
+
+        In incremental mode the doc-status registry can legitimately filter the
+        corpus to zero documents to (re)extract — a deletion-only delta still
+        propagates deletions (handled at the loading stage) and an all-unchanged
+        delta is a no-op run. In that case every document-processing stage
+        receives empty input, which is valid rather than a failure, so the
+        must-have-input / critical-output checks are skipped pipeline-wide.
+        """
+        return context.incremental_delta is not None and not context.documents
 
     def _validate_critical_stage_output(
         self, input_count: int, output_count: int
@@ -136,7 +156,7 @@ class PipelineStage(ABC):
                 )
                 logger.error(error_msg)
                 raise PipelineStageError(error_msg)
-            logger.info(f"Stage '{self.name}' had no input to process")
+            logger.info("Stage '%s' had no input to process", self.name)
             return
 
         if is_critical and output_count == 0:
@@ -150,8 +170,9 @@ class PipelineStage(ABC):
 
         if output_count == 0:
             logger.warning(
-                f"Stage '{self.name}' processed {input_count} inputs but produced "
-                f"0 outputs"
+                "Stage '%s' processed %s inputs but produced 0 outputs",
+                self.name,
+                input_count,
             )
 
     def _should_validate_output(self) -> bool:
@@ -197,7 +218,7 @@ class PipelineStage(ABC):
         if hasattr(stats_obj, "__dict__"):
             return dict(stats_obj.__dict__)
         logger.warning(
-            f"Could not convert stats object of type {type(stats_obj)} to dict"
+            "Could not convert stats object of type %s to dict", type(stats_obj)
         )
         return {"stats": str(stats_obj)}
 
@@ -232,16 +253,19 @@ class DocumentLoadingStage(PipelineStage):
         documents = [Document(**doc.model_dump()) for doc in result]
 
         # Incremental indexing: when the DynamoDB doc-status registry is enabled,
-        # diff against it and process only new/changed documents.
+        # diff against it, stash the delta/fingerprints for the IndexingStage, and
+        # process only new/changed documents.
         delta_skipped = 0
         if self.config.aws.dynamodb.enabled:
-            documents, delta_skipped = self._apply_incremental_filter(documents)
+            documents, delta_skipped = self._apply_incremental_filter(
+                documents, context
+            )
 
         context.documents = documents
         output_count = len(context.documents)
 
         if self.loader.failed_files:
-            logger.warning(f"Failed to load {len(self.loader.failed_files)} files")
+            logger.warning("Failed to load %s files", len(self.loader.failed_files))
 
         metrics = {
             "file_count": input_count,
@@ -252,38 +276,45 @@ class DocumentLoadingStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            f"DOCUMENT LOADING STAGE - COMPLETED ({output_count} documents loaded)"
+            "DOCUMENT LOADING STAGE - COMPLETED (%s documents loaded)", output_count
         )
         logger.info("=" * 60)
 
         return input_count, output_count, metrics
 
     def _apply_incremental_filter(
-        self, documents: list[Document]
+        self, documents: list[Document], context: PipelineContext
     ) -> tuple[list[Document], int]:
         """Keep only new/changed documents per the DynamoDB doc-status registry.
+
+        Also stashes the computed delta + fingerprints on the context so the
+        IndexingStage can prune stale artifacts, propagate deletions, and record
+        per-document lineage (the full incremental commit path).
 
         Degrades to processing everything (and logs) if the registry is
         unreachable, so an enabled-but-misconfigured registry never blocks a run.
         Imported lazily to avoid a hard dependency when the feature is off.
         """
         try:
-            from aws_graphrag.adapters.aws import DynamoDBDocStatusStore
             from aws_graphrag.domain.ingestion.delta_detector import (
                 detect_delta,
                 filter_documents_to_process,
             )
 
-            store = DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
-            delta, _ = detect_delta(documents, store)
+            store = self._build_doc_status_store()
+            delta, fingerprints = detect_delta(documents, store)
+            context.incremental_delta = delta
+            context.incremental_fingerprints = fingerprints
             if delta.is_empty:
                 logger.info("Incremental: no new/changed documents detected")
             to_process = filter_documents_to_process(documents, delta)
             skipped = len(documents) - len(to_process)
             logger.info(
-                "Incremental filter: %d to process, %d unchanged (skipped)",
+                "Incremental filter: %d to process, %d unchanged (skipped), "
+                "%d deleted",
                 len(to_process),
                 skipped,
+                len(delta.deleted),
             )
             return to_process, skipped
         except Exception as e:
@@ -291,6 +322,11 @@ class DocumentLoadingStage(PipelineStage):
                 "Incremental filter unavailable (%s); processing all documents", e
             )
             return documents, 0
+
+    def _build_doc_status_store(self):  # type: ignore[no-untyped-def]
+        from aws_graphrag.adapters.aws import DynamoDBDocStatusStore
+
+        return DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
 
 
 class DocumentParsingStage(PipelineStage):
@@ -317,10 +353,10 @@ class DocumentParsingStage(PipelineStage):
         input_count = len(files_to_parse)
 
         if not files_to_parse:
-            logger.warning(f"No supported files found in '{self.source_directory}'")
+            logger.warning("No supported files found in '%s'", self.source_directory)
             return 0, 0, {"parsed_files": [], "failed_files": []}
 
-        logger.info(f"Found {input_count} files to parse")
+        logger.info("Found %s files to parse", input_count)
 
         parsed_documents = []
         failed_files = []
@@ -337,7 +373,7 @@ class DocumentParsingStage(PipelineStage):
                     self._save_parsed_document(document, file_path)
 
             except Exception as e:
-                logger.error(f"Failed to parse '{file_path}': {e}")
+                logger.error("Failed to parse '%s': %s", file_path, e)
                 failed_files.append(str(file_path))
 
         context.documents = parsed_documents
@@ -354,7 +390,9 @@ class DocumentParsingStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            f"DOCUMENT PARSING STAGE - COMPLETED ({output_count}/{input_count} files parsed)"
+            "DOCUMENT PARSING STAGE - COMPLETED (%s/%s files parsed)",
+            output_count,
+            input_count,
         )
         logger.info("=" * 60)
 
@@ -397,9 +435,9 @@ class DocumentParsingStage(PipelineStage):
 
         try:
             document.to_json_file(output_path)
-            logger.debug(f"Saved parsed document: '{output_path}'")
+            logger.debug("Saved parsed document: '%s'", output_path)
         except Exception as e:
-            logger.error(f"Failed to save parsed document '{output_path}': {e}")
+            logger.error("Failed to save parsed document '%s': %s", output_path, e)
 
 
 class TextChunkingStage(PipelineStage):
@@ -443,7 +481,7 @@ class TextChunkingStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            f"TEXT CHUNKING STAGE - COMPLETED ({total_chunks} text units created)"
+            "TEXT CHUNKING STAGE - COMPLETED (%s text units created)", total_chunks
         )
         logger.info("=" * 60)
 
@@ -478,7 +516,7 @@ class TranslationStage(PipelineStage):
                 if stats is not None:
                     translation_stats = self._stats_to_dict(stats)
         except Exception as e:
-            logger.warning(f"Failed to get translation stats: {e}")
+            logger.warning("Failed to get translation stats: %s", e)
 
         units_translated_count = len(
             [
@@ -497,8 +535,8 @@ class TranslationStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            f"TRANSLATION STAGE - COMPLETED "
-            f"(Translated {units_translated_count} text units)"
+            "TRANSLATION STAGE - COMPLETED (Translated %s text units)",
+            units_translated_count,
         )
         logger.info("=" * 60)
 
@@ -541,8 +579,9 @@ class GraphExtractionStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            f"GRAPH EXTRACTION STAGE - COMPLETED "
-            f"({entities_count} entities, {relationships_count} relationships)"
+            "GRAPH EXTRACTION STAGE - COMPLETED (%s entities, %s relationships)",
+            entities_count,
+            relationships_count,
         )
         logger.info("=" * 60)
 
@@ -603,10 +642,11 @@ class GleaningStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            "GLEANING STAGE - COMPLETED "
-            f"({len(initial_entities)} -> {final_entities_count} entities, "
-            f"{len(initial_relationships)} -> {final_relationships_count} "
-            "relationships improved)"
+            "GLEANING STAGE - COMPLETED (%s -> %s entities, %s -> %s relationships improved)",
+            len(initial_entities),
+            final_entities_count,
+            len(initial_relationships),
+            final_relationships_count,
         )
         logger.info("=" * 60)
 
@@ -662,10 +702,11 @@ class GraphResolutionStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            "GRAPH RESOLUTION STAGE - COMPLETED "
-            f"({original_entities_count} -> {resolved_entities_count} entities, "
-            f"{original_relationships_count} -> {resolved_relationships_count} "
-            "relationships resolved)"
+            "GRAPH RESOLUTION STAGE - COMPLETED (%s -> %s entities, %s -> %s relationships resolved)",
+            original_entities_count,
+            resolved_entities_count,
+            original_relationships_count,
+            resolved_relationships_count,
         )
         logger.info("=" * 60)
 
@@ -704,7 +745,7 @@ class ClaimExtractionStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            f"CLAIM EXTRACTION STAGE - COMPLETED ({len(claims)} claims extracted)"
+            "CLAIM EXTRACTION STAGE - COMPLETED (%s claims extracted)", len(claims)
         )
         logger.info("=" * 60)
 
@@ -752,9 +793,10 @@ class ClaimResolutionStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            "CLAIM RESOLUTION STAGE - COMPLETED "
-            f"({original_claims_count} -> {resolved_count} claims resolved, "
-            f"{removed_count} claims removed)"
+            "CLAIM RESOLUTION STAGE - COMPLETED (%s -> %s claims resolved, %s claims removed)",
+            original_claims_count,
+            resolved_count,
+            removed_count,
         )
         logger.info("=" * 60)
 
@@ -808,8 +850,9 @@ class GraphAnalysisStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            "GRAPH ANALYSIS STAGE - COMPLETED "
-            f"({graph_stats.num_nodes} nodes, {graph_stats.num_edges} edges)"
+            "GRAPH ANALYSIS STAGE - COMPLETED (%s nodes, %s edges)",
+            graph_stats.num_nodes,
+            graph_stats.num_edges,
         )
         logger.info("=" * 60)
 
@@ -886,7 +929,7 @@ class CommunityDetectionStage(PipelineStage):
                 visualization_manager.run()
                 logger.info("Graph visualizations generated successfully")
             except Exception as e:
-                logger.warning(f"Visualization generation failed: {e}")
+                logger.warning("Visualization generation failed: %s", e)
 
         communities_count = len(context.communities)
         reports_count = len(context.community_reports)
@@ -903,8 +946,9 @@ class CommunityDetectionStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            "COMMUNITY DETECTION STAGE - COMPLETED "
-            f"({communities_count} communities, {reports_count} reports)"
+            "COMMUNITY DETECTION STAGE - COMPLETED (%s communities, %s reports)",
+            communities_count,
+            reports_count,
         )
         logger.info("=" * 60)
 
@@ -954,14 +998,25 @@ class IndexingStage(PipelineStage):
             + len(claims)
         )
 
-        indexing_results = self.indexing_manager.index_all_data(
-            text_units=text_units,
-            entities=entities,
-            relationships=relationships,
-            communities=communities,
-            community_reports=community_reports,
-            claims=claims,
-        )
+        if context.incremental_delta is not None and not self.config.indexing.reset:
+            indexing_results = self._index_incremental(
+                context,
+                text_units,
+                entities,
+                relationships,
+                communities,
+                community_reports,
+                claims,
+            )
+        else:
+            indexing_results = self.indexing_manager.index_all_data(
+                text_units=text_units,
+                entities=entities,
+                relationships=relationships,
+                communities=communities,
+                community_reports=community_reports,
+                claims=claims,
+            )
 
         total_indexed = sum(
             stats.successful_items for stats in indexing_results.values()
@@ -984,12 +1039,81 @@ class IndexingStage(PipelineStage):
 
         logger.info("=" * 60)
         logger.info(
-            "INDEXING STAGE - COMPLETED "
-            f"({total_indexed} items indexed, {total_failed} failed)"
+            "INDEXING STAGE - COMPLETED (%s items indexed, %s failed)",
+            total_indexed,
+            total_failed,
         )
         logger.info("=" * 60)
 
         return input_count, total_indexed, metrics
+
+    def _index_incremental(
+        self,
+        context: PipelineContext,
+        text_units: list[TextUnit],
+        entities: list[Entity],
+        relationships: list[Relationship],
+        communities: list[Community],
+        community_reports: list[CommunityReport],
+        claims: list[Claim],
+    ) -> dict[str, Any]:
+        """Idempotent delta indexing + stale-artifact pruning + registry write-back.
+
+        Routed to when a doc-status delta is present (incremental mode). Stale
+        artifacts of changed/deleted documents are removed first, then the freshly
+        extracted delta is upserted and the registry updated with per-document
+        lineage so subsequent runs diff correctly.
+        """
+        from aws_graphrag.adapters.aws import DynamoDBDocStatusStore
+        from aws_graphrag.application.ingestion.incremental import (
+            IncrementalIndexer,
+            build_document_lineage,
+        )
+        from aws_graphrag.ports.indexer import BaseIndexer
+
+        delta = context.incremental_delta
+        if delta is None:  # defensive; caller already guards
+            return self.indexing_manager.index_all_data(
+                text_units=text_units,
+                entities=entities,
+                relationships=relationships,
+                communities=communities,
+                community_reports=community_reports,
+                claims=claims,
+            )
+        store = DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
+        # Artifacts carry their own index suffix (multi-tenant/version aware);
+        # derive the run's suffix from the text units the same way the indexers do.
+        suffix = (
+            BaseIndexer.get_suffix(text_units[0])
+            if text_units
+            else Constants.DEFAULT_SUFFIX.value
+        )
+        incremental = IncrementalIndexer(store, self.indexing_manager, suffix=suffix)
+
+        # Drop stale artifacts of changed docs (before re-upsert) and of deleted docs.
+        incremental.prune_changed(delta)
+        incremental.remove_deleted(delta)
+
+        lineages = build_document_lineage(
+            documents=context.documents,
+            text_units=text_units,
+            entities=entities,
+            relationships=relationships,
+            communities=communities,
+            claims=claims,
+            suffix=suffix,
+        )
+        return incremental.commit(
+            lineages=lineages,
+            fingerprints=context.incremental_fingerprints,
+            text_units=text_units,
+            entities=entities,
+            relationships=relationships,
+            communities=communities,
+            community_reports=community_reports,
+            claims=claims,
+        )
 
     def _validate_backend_success(self, indexing_results: dict[str, Any]) -> None:
         # 1) Per-index-type validation: fail if any individual index type completely failed
@@ -998,8 +1122,9 @@ class IndexingStage(PipelineStage):
             if stats and stats.total_items > 0 and stats.successful_items == 0:
                 failed_index_types.append(key)
                 logger.error(
-                    f"Index type '{key}' completely failed: "
-                    f"0/{stats.total_items} items indexed successfully"
+                    "Index type '%s' completely failed: 0/%s items indexed successfully",
+                    key,
+                    stats.total_items,
                 )
 
         if failed_index_types:
@@ -1040,8 +1165,9 @@ class IndexingStage(PipelineStage):
             if backend_total > 0 and backend_successful == 0:
                 failed_backends.append(backend_name)
                 logger.error(
-                    f"{backend_name} backend completely failed: "
-                    f"0/{backend_total} items indexed successfully"
+                    "%s backend completely failed: 0/%s items indexed successfully",
+                    backend_name,
+                    backend_total,
                 )
 
         if failed_backends:

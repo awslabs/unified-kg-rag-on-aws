@@ -70,8 +70,10 @@ class FuzzyMatcher:
         self.include_partial_matching = include_partial_matching
 
         logger.debug(
-            f"Initializing FuzzyMatcher with {len(self.candidates)} candidates, "
-            f"method: {resolution_method}, threshold: {similarity_threshold}"
+            "Initializing FuzzyMatcher with %s candidates, method: %s, threshold: %s",
+            len(self.candidates),
+            resolution_method,
+            similarity_threshold,
         )
 
         self._build_indices()
@@ -88,9 +90,10 @@ class FuzzyMatcher:
                     self.abbreviation_index[abbrev] = name
 
         logger.debug(
-            f"Built indices: {len(self.exact_index)} exact, "
-            f"{len(self.normalized_index)} normalized, "
-            f"{len(self.abbreviation_index)} abbreviations"
+            "Built indices: %s exact, %s normalized, %s abbreviations",
+            len(self.exact_index),
+            len(self.normalized_index),
+            len(self.abbreviation_index),
         )
 
     def _build_minhash_lsh(self) -> None:
@@ -103,7 +106,7 @@ class FuzzyMatcher:
             self.minhashes[name] = minhash
             self.lsh.insert(name, minhash)
 
-        logger.debug(f"Built MinHash LSH with {len(self.minhashes)} candidates")
+        logger.debug("Built MinHash LSH with %s candidates", len(self.minhashes))
 
     @classmethod
     def _create_minhash(
@@ -237,18 +240,21 @@ class FuzzyMatcher:
             return None
 
         if match := self.exact_index.get(query):
-            logger.debug(f"Found exact match for '{query}': {match}")
+            logger.debug("Found exact match for '%s': %s", query, match)
             return match, 1.0
 
         normalized_query = normalize_name(query)
         if match := self.normalized_index.get(normalized_query):
-            logger.debug(f"Found normalized match for '{query}': {match}")
+            logger.debug("Found normalized match for '%s': %s", query, match)
             return match, 0.95
 
         for abbrev in self._generate_abbreviations(query):
             if match := self.abbreviation_index.get(abbrev):
                 logger.debug(
-                    f"Found abbreviation match for '{query}': {match} (via '{abbrev}')"
+                    "Found abbreviation match for '%s': %s (via '%s')",
+                    query,
+                    match,
+                    abbrev,
                 )
                 return match, 0.90
 
@@ -258,7 +264,7 @@ class FuzzyMatcher:
                 f"Found fuzzy match for '{query}': {result[0]} (score: {result[1]:.3f})"
             )
         else:
-            logger.debug(f"No match found for '{query}'")
+            logger.debug("No match found for '%s'", query)
 
         return result
 
@@ -392,8 +398,9 @@ class BaseResolver(ABC):
         self.show_progress = show_progress
 
         logger.info(
-            f"Resolver initialized with {self.max_workers} workers, "
-            f"process pool: {use_process_pool}"
+            "Resolver initialized with %s workers, process pool: %s",
+            self.max_workers,
+            use_process_pool,
         )
 
     @abstractmethod
@@ -404,9 +411,10 @@ class BaseResolver(ABC):
         self, candidate_texts: list[str], **kwargs: Any
     ) -> FuzzyMatcher:
         logger.debug(
-            f"Creating FuzzyMatcher with {len(candidate_texts)} candidates, "
-            f"method: '{self.config.processing.resolution_method.value}', "
-            f"threshold: {self.config.processing.similarity_threshold}"
+            "Creating FuzzyMatcher with %s candidates, method: '%s', threshold: %s",
+            len(candidate_texts),
+            self.config.processing.resolution_method.value,
+            self.config.processing.similarity_threshold,
         )
         return FuzzyMatcher(
             candidate_texts,

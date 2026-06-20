@@ -1,4 +1,4 @@
-# Pre-commit hooks mirroring the CI quality gate (.github/workflows/quality.yaml).
+# Pre-commit hooks mirroring the CI quality gate (.gitlab-ci.yml).
 # Install with: pre-commit install
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -17,12 +17,17 @@ repos:
     hooks:
       - id: black
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.14.1
+  # mypy runs against the project's own venv (not an isolated pre-commit env) so
+  # it sees the same dependencies/stubs as CI and reproduces `uv run mypy`.
+  # Requires `uv sync --extra dev` first.
+  - repo: local
     hooks:
       - id: mypy
-        files: ^aws_graphrag/
-        additional_dependencies: [pydantic>=2.11.7]
+        name: mypy
+        entry: uv run mypy aws_graphrag
+        language: system
+        types: [python]
+        pass_filenames: false
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0

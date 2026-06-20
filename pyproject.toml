@@ -27,10 +27,8 @@ classifiers = [
 dependencies = [
     "asyncio-throttle>=1.0.2",
     "aws-assume-role-lib>=2.10.0",
-    "black>=25.9.0",
     "bokeh>=3.7.3",
     "boto3>=1.38.45",
-    "boto3-stubs~=1.42.62",
     "datasets>=2.14.0,<4.0.0",
     "datasketch>=1.6.5",
     "future>=1.0.0",
@@ -43,6 +41,7 @@ dependencies = [
     "langchain-text-splitters>=0.3.9",
     "llvmlite>=0.43.0",
     "lxml>=6.0.0",
+    "nest-asyncio>=1.6.0",
     "networkx>=3.4",
     "numpy>=1.26.4",
     "opensearch-py>=3.0.0",
@@ -61,7 +60,6 @@ dependencies = [
     "structlog>=25.4.0",
     "tenacity>=9.1.2",
     "tqdm>=4.67.1",
-    "types-boto3[full]>=1.39.4",
     "umap-learn>=0.5.6",
 ]
 
@@ -85,6 +83,10 @@ dev = [
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.12.0",
     "ruff>=0.3.0",
+    # boto3 type stubs (mypy only): boto3-stubs covers the top-level boto3
+    # package; types-boto3 covers the per-service clients used under TYPE_CHECKING.
+    "boto3-stubs~=1.42.62",
+    "types-boto3[full]>=1.39.4",
 ]
 docs = [
     "mkdocs>=1.5.0",
@@ -93,7 +95,7 @@ docs = [
 ]
 
 [project.urls]
-Repository = "https://codecatalyst.aws/spaces/secc-dev/projects/secc-aiml/source-repositories/aws-graphrag"
+Repository = "https://code.aws.dev/personal_projects/alias_y/youngmki/aws-graphrag"
 
 [tool.hatch.version]
 path = "aws_graphrag/__init__.py"
@@ -140,11 +142,18 @@ select = [
     "B",  # flake8-bugbear
     "C4", # flake8-comprehensions
     "UP", # pyupgrade
+    "G",  # flake8-logging-format (enforce %-style lazy logging, no f-strings)
 ]
 ignore = [
     "E501",  # line too long, handled by black
     "B008",  # do not perform function calls in argument defaults
     "UP042", # str+Enum is intentional (StrEnum changes str()/format semantics)
+    # ~507 logging calls were converted to %-style lazy logging; the ~45 G004 +
+    # 7 G201 that remain carry format specs (e.g. %.2f) or conversions that need
+    # case-by-case handling. Ignored for now so the rest of the G ruleset
+    # (G002/G010/G101/...) stays active and guards new code.
+    "G004",  # f-string in logging call
+    "G201",  # logging.error(..., exc_info=True) vs logging.exception()
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -239,4 +248,8 @@ dev = [
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.12.0",
     "ruff>=0.3.0",
+    # boto3 type stubs (mypy only): boto3-stubs covers the top-level boto3
+    # package; types-boto3 covers the per-service clients used under TYPE_CHECKING.
+    "boto3-stubs~=1.42.62",
+    "types-boto3[full]>=1.39.4",
 ]

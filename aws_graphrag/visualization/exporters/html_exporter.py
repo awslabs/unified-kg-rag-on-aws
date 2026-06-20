@@ -11,16 +11,16 @@ logger = get_logger(__name__)
 
 class HTMLExporter:
     def create_report(self, outputs_dir: Path, data: dict[str, Any]) -> None:
-        logger.info(f"Creating HTML report in {outputs_dir}")
+        logger.info("Creating HTML report in %s", outputs_dir)
         report_path = outputs_dir / "graph_analysis_report.html"
 
         try:
             html_content = self._generate_html(data)
             with report_path.open("w", encoding="utf-8") as f:
                 f.write(html_content)
-            logger.info(f"HTML report created successfully: {report_path}")
+            logger.info("HTML report created successfully: %s", report_path)
         except Exception as e:
-            logger.error(f"Failed to create HTML report: {e}", exc_info=True)
+            logger.exception("Failed to create HTML report: %s", e)
 
     def _generate_html(self, data: dict[str, Any]) -> str:
         head = self._generate_head()

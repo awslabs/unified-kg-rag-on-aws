@@ -10,6 +10,7 @@ from langchain_core.output_parsers import (
 )
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws.chain_factory import setup_chain
 from aws_graphrag.adapters.retrieval.base import (
     BaseContextBuilder,
     BaseGraphRAGRetriever,
@@ -29,7 +30,7 @@ from aws_graphrag.domain.prompts import (
 )
 from aws_graphrag.domain.retrieval.strategy_registry import register_strategy
 from aws_graphrag.shared import get_logger
-from aws_graphrag.shared.utils import compute_hash, safe_float_parse, setup_chain
+from aws_graphrag.shared.utils import compute_hash, safe_float_parse
 
 logger = get_logger(__name__)
 
@@ -79,7 +80,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
     async def asearch(self, query: SearchQuery) -> SearchResult:
         start_time = time.time()
         logger.info(
-            f"Drift search started - query: '{query.query[:50]}...' ('{query.search_type.value}')"
+            "Drift search started - query: '%s...' ('%s')",
+            query.query[:50],
+            query.search_type.value,
         )
 
         candidate_communities = await self._find_candidate_communities(query)
@@ -88,8 +91,10 @@ class DriftSearchStrategy(BaseSearchStrategy):
 
         community_ids = self._get_ids(candidate_communities, "community_id")
         logger.debug(
-            f"Found {len(community_ids)} candidate communities: '{', '.join(community_ids[:5])}"
-            f"{'...' if len(community_ids) > 5 else ''}'"
+            "Found %s candidate communities: '%s%s'",
+            len(community_ids),
+            ", ".join(community_ids[:5]),
+            "..." if len(community_ids) > 5 else "",
         )
 
         current_query = query.model_copy(deep=True)
@@ -102,15 +107,17 @@ class DriftSearchStrategy(BaseSearchStrategy):
 
         for iteration in range(self.drift_config.max_iterations):
             if await self._should_stop(iteration, metrics, query.query):
-                logger.info(f"Convergence achieved at iteration {iteration}")
+                logger.info("Convergence achieved at iteration %s", iteration)
                 break
 
             current_query = await self._evolve_query(
                 current_query, query.query, all_results, iteration
             )
             logger.info(
-                f"Iteration {iteration}: evolved query='{current_query.query}', "
-                f"optional keywords='{', '.join(current_query.optional_keywords)}'"
+                "Iteration %s: evolved query='%s', optional keywords='%s'",
+                iteration,
+                current_query.query,
+                ", ".join(current_query.optional_keywords),
             )
 
             iteration_results = await self._execute_search_iteration(current_query)
@@ -179,7 +186,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         try:
             return await self.document_retriever.aretrieve(search_query)
         except Exception as e:
-            logger.error(f"Failed to find candidate communities: {e}")
+            logger.error("Failed to find candidate communities: %s", e)
             return []
 
     @staticmethod
@@ -229,7 +236,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
             if not self.ignore_errors:
                 raise
 
-            logger.error(f"Convergence assessment failed: {e}")
+            logger.error("Convergence assessment failed: %s", e)
             return False
 
     async def _evolve_query(
@@ -298,7 +305,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
             if not self.ignore_errors:
                 raise
 
-            logger.error(f"Query evolution failed: {e}")
+            logger.error("Query evolution failed: %s", e)
 
         return evolved_query
 
@@ -370,7 +377,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 if result.metadata or result.source
             ]
         except Exception as e:
-            logger.error(f"Failed to find candidate entities: {e}")
+            logger.error("Failed to find candidate entities: %s", e)
             return []
 
     @staticmethod

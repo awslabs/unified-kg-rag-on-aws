@@ -18,6 +18,37 @@ from aws_graphrag.domain.models import Config, DocStatusRecord, Document
 pytestmark = pytest.mark.integration
 
 
+class _Ctx:
+    """Minimal stand-in for PipelineContext (only the incremental attrs are set)."""
+
+    incremental_delta = None
+    incremental_fingerprints: dict[str, str] = {}
+    documents: list[Document] = []
+
+
+def test_deletion_only_run_allows_empty_output() -> None:
+    # Regression: a deletion-only / all-unchanged incremental delta yields zero
+    # documents to (re)extract. DOCUMENT_LOADING is critical + must-have-input,
+    # so without the incremental opt-out the run would crash before deletions
+    # are propagated. _allows_empty_output must permit it.
+    from aws_graphrag.domain.models import DocumentDelta
+
+    config = Config()
+    config.aws.dynamodb.enabled = True
+    stage = _stage(config, boto3.Session(region_name="us-east-1"))
+
+    ctx = _Ctx()
+    ctx.incremental_delta = DocumentDelta(deleted=["doc-removed"])
+    ctx.documents = []  # nothing survived the filter
+    assert stage._allows_empty_output(ctx) is True
+
+    # Non-incremental run with no documents must still fail the check.
+    plain = _Ctx()
+    plain.incremental_delta = None
+    plain.documents = []
+    assert stage._allows_empty_output(plain) is False
+
+
 def _doc(path: str, text: str) -> Document:
     return Document(
         page_content=text,
@@ -55,10 +86,14 @@ def test_filter_skips_unchanged_documents() -> None:
         )
 
         stage = _stage(config, session)
-        kept, skipped = stage._apply_incremental_filter([a, _doc("/b.txt", "B")])
+        ctx = _Ctx()
+        kept, skipped = stage._apply_incremental_filter([a, _doc("/b.txt", "B")], ctx)
 
         assert [d.file_path for d in kept] == ["/b.txt"]
         assert skipped == 1
+        # The delta is stashed on the context for the IndexingStage.
+        assert ctx.incremental_delta is not None
+        assert compute_doc_id("/b.txt") in ctx.incremental_delta.new
 
 
 def test_filter_degrades_gracefully_on_error() -> None:
@@ -68,5 +103,5 @@ def test_filter_degrades_gracefully_on_error() -> None:
     config.aws.dynamodb.create_table_if_missing = False
     stage = _stage(config, boto3.Session(region_name="us-east-1"))
     docs = [_doc("/a.txt", "A")]
-    kept, skipped = stage._apply_incremental_filter(docs)
+    kept, skipped = stage._apply_incremental_filter(docs, _Ctx())
     assert kept == docs and skipped == 0

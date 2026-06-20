@@ -11,7 +11,7 @@ from .community import Community
 from .community_report import CommunityReport
 from .config import PipelineConfig
 from .covariate import Claim
-from .document import Document
+from .document import Document, DocumentDelta
 from .entity import Entity
 from .relationship import Relationship
 from .text_unit import TextUnit
@@ -179,6 +179,16 @@ class PipelineContext(BaseModel):
     global_metrics: PipelineMetrics | None = Field(
         default=None,
         description="Global metrics and statistics for the entire pipeline run.",
+    )
+    incremental_delta: DocumentDelta | None = Field(
+        default=None,
+        description="Corpus delta (new/changed/unchanged/deleted) when incremental "
+        "indexing is active; drives delta upsert + stale-artifact pruning.",
+    )
+    incremental_fingerprints: dict[str, str] = Field(
+        default_factory=dict,
+        description="doc_id -> content hash for the current corpus, recorded to the "
+        "doc-status registry after a successful incremental commit.",
     )
 
     class Config:

@@ -137,7 +137,7 @@ class BaseIndexer(ABC):
 
         if len(grouped) > 1:
             logger.info(
-                f"Grouped {len(items)} items into {len(grouped)} different suffixes"
+                "Grouped %s items into %s different suffixes", len(items), len(grouped)
             )
 
         return dict(grouped)
@@ -148,7 +148,7 @@ class GraphIndexer(BaseIndexer):
 
     This ABC is the single write-side contract for graph stores: the full-run
     ``index_*`` methods plus the incremental ``upsert_*``/``delete_by_id`` surface
-    used by :class:`~aws_graphrag.domain.ingestion.incremental.IncrementalIndexer`.
+    used by :class:`~aws_graphrag.application.ingestion.incremental.IncrementalIndexer`.
     Adapters (e.g. NeptuneIndexer) implement it; nothing depends on a concrete
     backend.
     """

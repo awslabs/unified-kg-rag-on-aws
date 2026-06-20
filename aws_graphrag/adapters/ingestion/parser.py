@@ -56,10 +56,10 @@ class BaseParser(ABC):
                 documents.append(doc)
                 self.stats.num_successful_files += 1
             except Exception as e:
-                logger.error(f"Failed to parse '{file_path}': {e}")
+                logger.error("Failed to parse '%s': %s", file_path, e)
                 self.stats.num_failed_files += 1
 
-        logger.info(f"Parsing completed - Success rate: {self.stats.success_rate:.2f}%")
+        logger.info("Parsing completed - Success rate: %.2f%%", self.stats.success_rate)
         return documents
 
 

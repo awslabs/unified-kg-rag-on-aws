@@ -27,6 +27,7 @@ from aws_graphrag.adapters.aws import (
     NeptuneClient,
     OpenSearchClient,
 )
+from aws_graphrag.adapters.aws.chain_factory import setup_chain
 from aws_graphrag.adapters.retrieval.base import (
     BaseContextBuilder,
     BaseGraphRAGRetriever,
@@ -41,6 +42,7 @@ from aws_graphrag.adapters.retrievers import NeptuneRetriever, OpenSearchRetriev
 from aws_graphrag.adapters.search_strategies import (  # noqa: F401
     DriftSearchStrategy,
     GlobalSearchStrategy,
+    LightRAGSearchStrategy,
     LocalSearchStrategy,
     SimpleSearchStrategy,
 )
@@ -65,7 +67,6 @@ from aws_graphrag.domain.prompts import (
 )
 from aws_graphrag.domain.retrieval.strategy_registry import get_strategy_spec
 from aws_graphrag.shared import get_logger
-from aws_graphrag.shared.utils import setup_chain
 
 logger = get_logger(__name__)
 
@@ -244,7 +245,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             if not self.ignore_errors:
                 raise
             logger.warning(
-                f"Strategy auto-selection failed, using DRIFT as fallback: {e}"
+                "Strategy auto-selection failed, using DRIFT as fallback: %s", e
             )
             strategy = SearchStrategy.DRIFT
 
@@ -322,7 +323,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             if not isinstance(translated_query, str):
                 if isinstance(translated_query, Exception):
                     if self.ignore_errors:
-                        logger.warning(f"Query translation failed: {translated_query}")
+                        logger.warning("Query translation failed: %s", translated_query)
                     else:
                         raise translated_query
                 translated_query = None
@@ -331,7 +332,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             if not isinstance(entity_data, list):
                 if isinstance(entity_data, Exception):
                     if self.ignore_errors:
-                        logger.warning(f"Entity extraction failed: {entity_data}")
+                        logger.warning("Entity extraction failed: %s", entity_data)
                     else:
                         raise entity_data
                 entity_data = []
@@ -355,7 +356,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.warning(f"Query processing failed: {e}")
+            logger.warning("Query processing failed: %s", e)
             return ProcessedQuery(
                 original_query=original_query, final_query=original_query, entities=[]
             )
@@ -387,7 +388,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.warning(f"Dual-keyword extraction failed: {e}")
+            logger.warning("Dual-keyword extraction failed: %s", e)
             return [], []
 
     @staticmethod
@@ -542,7 +543,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.warning(f"Context building failed: {e}", exc_info=True)
+            logger.warning("Context building failed: %s", e, exc_info=True)
             return ""
 
     def _answer_generation_step(self, state: dict[str, Any]) -> Runnable:
@@ -626,7 +627,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 raise
 
             logger.error(
-                f"RAG chain execution failed for query '{rag_input.query}': {e}"
+                "RAG chain execution failed for query '%s': %s", rag_input.query, e
             )
             processing_time = time.time() - input_dict["start_time"]
 
@@ -687,7 +688,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             )
         except Exception as e:
             logger.error(
-                f"Failed to save conversation memory for conversation '{output.conversation_id}': {e}"
+                "Failed to save conversation memory for conversation '%s': %s",
+                output.conversation_id,
+                e,
             )
 
     def stream(
@@ -706,7 +709,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         try:
             yield from answer_chain.stream(input_dict, config, **kwargs)
         except Exception as e:
-            logger.error(f"RAG stream failed: {e}")
+            logger.error("RAG stream failed: %s", e)
             raise
 
     async def astream(
@@ -726,7 +729,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             async for chunk in answer_chain.astream(input_dict, config, **kwargs):
                 yield chunk
         except Exception as e:
-            logger.error(f"Async RAG stream failed: {e}")
+            logger.error("Async RAG stream failed: %s", e)
             raise
 
 

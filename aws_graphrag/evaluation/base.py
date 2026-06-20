@@ -96,7 +96,7 @@ class BaseEvaluator(ABC):
             query_id = queries[original_index].query_id
 
             if error:
-                logger.error(f"Failed to evaluate query '{query_id}': {error}")
+                logger.error("Failed to evaluate query '%s': %s", query_id, error)
                 final_reports[original_index] = self._create_empty_report(query_id)
             else:
                 final_reports[original_index] = report

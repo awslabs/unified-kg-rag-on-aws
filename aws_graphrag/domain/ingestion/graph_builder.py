@@ -22,8 +22,10 @@ class GraphBuilder:
 
     def build(self) -> nx.Graph:
         logger.info(
-            f"Building knowledge graph with {len(self.entities)} entities, "
-            f"{len(self.relationships)} relationships, and {len(self.claims)} claims"
+            "Building knowledge graph with %s entities, %s relationships, and %s claims",
+            len(self.entities),
+            len(self.relationships),
+            len(self.claims),
         )
 
         self._add_entity_nodes()
@@ -33,8 +35,9 @@ class GraphBuilder:
             self._add_claims()
 
         logger.info(
-            f"Knowledge graph built successfully: {self.graph.number_of_nodes()} nodes, "
-            f"{self.graph.number_of_edges()} edges"
+            "Knowledge graph built successfully: %s nodes, %s edges",
+            self.graph.number_of_nodes(),
+            self.graph.number_of_edges(),
         )
         return self.graph
 
@@ -61,7 +64,7 @@ class GraphBuilder:
 
         if skipped_count > 0:
             logger.warning(
-                f"Skipped {skipped_count} relationships due to missing entity nodes"
+                "Skipped %s relationships due to missing entity nodes", skipped_count
             )
 
     def _both_nodes_exist(self, source_id: str, target_id: str) -> bool:
@@ -137,5 +140,5 @@ class GraphBuilder:
         disconnected_count = total_claims - total_connected
         if disconnected_count > 0:
             logger.warning(
-                f"{disconnected_count} claims could not be connected to any entities"
+                "%s claims could not be connected to any entities", disconnected_count
             )

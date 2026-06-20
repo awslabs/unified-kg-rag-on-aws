@@ -137,10 +137,12 @@ def merge_relationships(
         existing.text_unit_ids = _dedupe_preserve_order(
             (existing.text_unit_ids or []) + (rel.text_unit_ids or [])
         )
-        # Average the weights of the merged edges.
+        # Sum supporting weights (MS GraphRAG semantics). Additive merge is
+        # order-independent and associative, unlike a running pairwise mean
+        # which depends on merge order and is non-deterministic across runs.
         old_weight = existing.weight if existing.weight is not None else 1.0
         new_weight = rel.weight if rel.weight is not None else 1.0
-        existing.weight = (old_weight + new_weight) / 2.0
+        existing.weight = old_weight + new_weight
 
     merged = list(by_key.values())
     logger.info(
@@ -157,14 +159,21 @@ def merge_communities(old: list[Community], delta: list[Community]) -> list[Comm
 
     Incremental runs do not re-cluster globally; delta communities whose ids
     collide with existing ones are kept distinct by suffixing the delta id.
+    Re-merging the same delta is idempotent: a delta whose (already-suffixed) id
+    is present is skipped rather than re-suffixed into ``id-delta-delta``.
     """
     existing_ids = {community.id for community in old}
     merged = [community.model_copy(deep=True) for community in old]
 
     for community in delta:
+        if community.id in existing_ids and community.id.endswith("-delta"):
+            # Already-merged delta item re-presented; skip (idempotent).
+            continue
         new_community = community.model_copy(deep=True)
         if new_community.id in existing_ids:
             new_community.id = f"{new_community.id}-delta"
+            if new_community.id in existing_ids:
+                continue
         existing_ids.add(new_community.id)
         merged.append(new_community)
 
@@ -185,9 +194,13 @@ def merge_community_reports(
     merged = [report.model_copy(deep=True) for report in old]
 
     for report in delta:
+        if report.id in existing_ids and report.id.endswith("-delta"):
+            continue
         new_report = report.model_copy(deep=True)
         if new_report.id in existing_ids:
             new_report.id = f"{new_report.id}-delta"
+            if new_report.id in existing_ids:
+                continue
         existing_ids.add(new_report.id)
         merged.append(new_report)
 

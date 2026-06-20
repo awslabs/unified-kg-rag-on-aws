@@ -18,12 +18,11 @@ from .display import (
     display_stage_results,
 )
 from .document_converter import convert_langchain_to_document
-from .langchain import (
-    BatchProcessor,
-    RobustXMLOutputParser,
-    create_robust_xml_output_parser,
-    setup_chain,
-)
+from .langchain import BatchProcessor, RobustXMLOutputParser
+
+# NOTE: `setup_chain` / `create_robust_xml_output_parser` are Bedrock-coupled and
+# now live in `aws_graphrag.adapters.aws.chain_factory` (the shared kernel must
+# not depend on adapters). Import them from there.
 
 __all__ = [
     "BatchProcessor",
@@ -31,7 +30,6 @@ __all__ = [
     "compute_hash",
     "console",
     "convert_langchain_to_document",
-    "create_robust_xml_output_parser",
     "display_ascii_art",
     "display_communities",
     "display_pipeline_results",
@@ -44,5 +42,4 @@ __all__ = [
     "generate_stable_id",
     "normalize_name",
     "safe_float_parse",
-    "setup_chain",
 ]

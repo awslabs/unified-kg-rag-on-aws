@@ -256,10 +256,8 @@ source = { editable = "." }
 dependencies = [
     { name = "asyncio-throttle" },
     { name = "aws-assume-role-lib" },
-    { name = "black" },
     { name = "bokeh" },
     { name = "boto3" },
-    { name = "boto3-stubs" },
     { name = "datasets" },
     { name = "datasketch" },
     { name = "future" },
@@ -272,6 +270,7 @@ dependencies = [
     { name = "langchain-text-splitters" },
     { name = "llvmlite" },
     { name = "lxml" },
+    { name = "nest-asyncio" },
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "numpy" },
@@ -293,13 +292,13 @@ dependencies = [
     { name = "structlog" },
     { name = "tenacity" },
     { name = "tqdm" },
-    { name = "types-boto3", extra = ["full"] },
     { name = "umap-learn" },
 ]
 
 [package.optional-dependencies]
 dev = [
     { name = "black" },
+    { name = "boto3-stubs" },
     { name = "hypothesis" },
     { name = "isort" },
     { name = "moto", extra = ["dynamodb", "s3"] },
@@ -310,6 +309,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-mock" },
     { name = "ruff" },
+    { name = "types-boto3", extra = ["full"] },
 ]
 docs = [
     { name = "mkdocs" },
@@ -320,6 +320,7 @@ docs = [
 [package.dev-dependencies]
 dev = [
     { name = "black" },
+    { name = "boto3-stubs" },
     { name = "hypothesis" },
     { name = "isort" },
     { name = "moto", extra = ["dynamodb", "s3"] },
@@ -330,17 +331,17 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-mock" },
     { name = "ruff" },
+    { name = "types-boto3", extra = ["full"] },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "asyncio-throttle", specifier = ">=1.0.2" },
     { name = "aws-assume-role-lib", specifier = ">=2.10.0" },
-    { name = "black", specifier = ">=25.9.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=25.9.0" },
     { name = "bokeh", specifier = ">=3.7.3" },
     { name = "boto3", specifier = ">=1.38.45" },
-    { name = "boto3-stubs", specifier = "~=1.42.62" },
+    { name = "boto3-stubs", marker = "extra == 'dev'", specifier = "~=1.42.62" },
     { name = "datasets", specifier = ">=2.14.0,<4.0.0" },
     { name = "datasketch", specifier = ">=1.6.5" },
     { name = "future", specifier = ">=1.0.0" },
@@ -360,6 +361,7 @@ requires-dist = [
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.24.0" },
     { name = "moto", extras = ["dynamodb", "s3"], marker = "extra == 'dev'", specifier = ">=5.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.7.0" },
+    { name = "nest-asyncio", specifier = ">=1.6.0" },
     { name = "networkx", specifier = ">=3.4" },
     { name = "numpy", specifier = ">=1.26.4" },
     { name = "opensearch-py", specifier = ">=3.0.0" },
@@ -384,7 +386,7 @@ requires-dist = [
     { name = "structlog", specifier = ">=25.4.0" },
     { name = "tenacity", specifier = ">=9.1.2" },
     { name = "tqdm", specifier = ">=4.67.1" },
-    { name = "types-boto3", extras = ["full"], specifier = ">=1.39.4" },
+    { name = "types-boto3", extras = ["full"], marker = "extra == 'dev'", specifier = ">=1.39.4" },
     { name = "umap-learn", specifier = ">=0.5.6" },
 ]
 provides-extras = ["dev", "docs"]
@@ -392,6 +394,7 @@ provides-extras = ["dev", "docs"]
 [package.metadata.requires-dev]
 dev = [
     { name = "black", specifier = ">=25.9.0" },
+    { name = "boto3-stubs", specifier = "~=1.42.62" },
     { name = "hypothesis", specifier = ">=6.100.0" },
     { name = "isort", specifier = ">=5.12.0" },
     { name = "moto", extras = ["dynamodb", "s3"], specifier = ">=5.0.0" },
@@ -402,6 +405,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=4.1.0" },
     { name = "pytest-mock", specifier = ">=3.12.0" },
     { name = "ruff", specifier = ">=0.3.0" },
+    { name = "types-boto3", extras = ["full"], specifier = ">=1.39.4" },
 ]
 
 [[package]]

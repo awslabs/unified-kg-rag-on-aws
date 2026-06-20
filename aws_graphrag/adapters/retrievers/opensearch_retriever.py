@@ -82,7 +82,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         start_time = time.time()
         query_preview = query.query[:50] if query.query else "(empty)"
         logger.info(
-            f"OpenSearch retrieval started - query: '{query_preview}...' ('{query.search_type.value}')"
+            "OpenSearch retrieval started - query: '%s...' ('%s')",
+            query_preview,
+            query.search_type.value,
         )
 
         search_type = query.search_type or SearchType.HYBRID
@@ -113,7 +115,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
                 if not search_tasks:
                     logger.warning(
-                        f"No searchable indices available for query: {query_preview}"
+                        "No searchable indices available for query: %s", query_preview
                     )
                     return []
 
@@ -133,7 +135,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return final_results
 
         except Exception as e:
-            logger.error(f"Retrieval failed: {e}")
+            logger.error("Retrieval failed: %s", e)
             return []
 
     def _create_search_tasks(
@@ -351,9 +353,13 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         final_size = max(min_batch_size, min(safe_size, self._terms_batch_size))
 
         logger.debug(
-            f"Batch size calculation: {list_filter_count} list filters, "
-            f"total_terms={total_terms}, available_clauses={available_clauses}, "
-            f"safe_size={safe_size}, min_batch_size={min_batch_size}, final_size={final_size}"
+            "Batch size calculation: %s list filters, total_terms=%s, available_clauses=%s, safe_size=%s, min_batch_size=%s, final_size=%s",
+            list_filter_count,
+            total_terms,
+            available_clauses,
+            safe_size,
+            min_batch_size,
+            final_size,
         )
 
         return final_size
@@ -392,9 +398,11 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         max_batches = max(len(batches) for batches in filter_batches.values())
 
         logger.info(
-            f"Executing multi-batched retrieval: {len(large_filters)} large filters, "
-            f"{max_batches} batches, batch_size={batch_size} "
-            f"(filter sizes: {', '.join(f'{k}={len(v)}' for k, v in large_filters.items())})"
+            "Executing multi-batched retrieval: %s large filters, %s batches, batch_size=%s (filter sizes: %s)",
+            len(large_filters),
+            max_batches,
+            batch_size,
+            ", ".join(f"{k}={len(v)}" for k, v in large_filters.items()),
         )
 
         for batch_idx in range(max_batches):
@@ -417,7 +425,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                             all_results.append(result)
 
         logger.debug(
-            f"Multi-batched retrieval completed: {len(all_results)} unique results from {max_batches} batches"
+            "Multi-batched retrieval completed: %s unique results from %s batches",
+            len(all_results),
+            max_batches,
         )
         return all_results
 
@@ -434,7 +444,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             hits = response.get("hits", {}).get("hits", [])
             return [self._parse_hit(hit) for hit in hits]
         except Exception as e:
-            logger.error(f"Search failed on indices {aliases}: {e}")
+            logger.error("Search failed on indices %s: %s", aliases, e)
             return []
 
     def _parse_hit(self, hit: dict[str, Any]) -> RetrievalResult:

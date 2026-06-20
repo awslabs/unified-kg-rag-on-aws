@@ -6,7 +6,7 @@ import networkx as nx
 import numpy as np
 from pyvis.network import Network
 
-from aws_graphrag.ingestion import HierarchicalCommunity
+from aws_graphrag.adapters.ingestion.community_detector import HierarchicalCommunity
 from aws_graphrag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -37,7 +37,8 @@ class InteractiveRenderer:
             return
 
         logger.info(
-            f"Creating interactive visualization for {graph.number_of_nodes()} nodes..."
+            "Creating interactive visualization for %s nodes...",
+            graph.number_of_nodes(),
         )
         net = self._init_network(directed=isinstance(graph, nx.DiGraph))
 
@@ -51,7 +52,7 @@ class InteractiveRenderer:
         self._add_edges(net, graph)
 
         net.save_graph(outputs_path)
-        logger.info(f"Interactive visualization saved to {outputs_path}")
+        logger.info("Interactive visualization saved to %s", outputs_path)
 
     def _init_network(self, directed: bool = False) -> Network:
         return Network(
@@ -245,7 +246,8 @@ class InteractiveRenderer:
             return
 
         logger.info(
-            f"Creating community hierarchy visualization for {len(communities)} communities."
+            "Creating community hierarchy visualization for %s communities.",
+            len(communities),
         )
         net = self._init_network(directed=True)
         net.set_options(json.dumps(self._get_hierarchy_options()))
@@ -303,7 +305,7 @@ class InteractiveRenderer:
                 )
 
         net.save_graph(outputs_path)
-        logger.info(f"Community hierarchy visualization saved to {outputs_path}")
+        logger.info("Community hierarchy visualization saved to %s", outputs_path)
 
     def _get_hierarchy_options(self) -> dict[str, Any]:
         return {

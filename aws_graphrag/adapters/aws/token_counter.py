@@ -47,8 +47,9 @@ class BedrockTokenCounter:
             return self._cached_count(text)
         except Exception as e:
             logger.debug(
-                f"Bedrock count_tokens failed for model '{self.model_id}': {e}. "
-                "Degrading to whitespace word count."
+                "Bedrock count_tokens failed for model '%s': %s. Degrading to whitespace word count.",
+                self.model_id,
+                e,
             )
             return len(text.split())
 

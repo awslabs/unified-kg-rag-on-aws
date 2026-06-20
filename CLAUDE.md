@@ -99,8 +99,8 @@ Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
 - `pytest-asyncio` is in `asyncio_mode = "auto"` — `async def test_*` just works.
 - Property tests (`hypothesis`) cover invariants: hashing determinism, diff
   partition completeness, merge laws, fusion monotonicity.
-- Coverage gate ratchets up per milestone toward 80% (currently `--cov-fail-under=15`
-  in CI; ~35% actual). Run: `uv run pytest -m "not aws" --cov=aws_graphrag`.
+- Coverage gate ratchets up per milestone toward 80% (currently `--cov-fail-under=35`
+  in CI; 37% actual). Run: `uv run pytest -m "not aws" --cov=aws_graphrag`.
 
 ## Quality gate
 

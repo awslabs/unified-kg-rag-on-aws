@@ -60,7 +60,9 @@ class BedrockNodeEmbedder:
             model_id=embedding_model_id, dimensions=self.dimensions
         )
         logger.info(
-            f"Initialized BedrockNodeEmbedder with model '{embedding_model_id.value}' and dimension {self.dimensions}"
+            "Initialized BedrockNodeEmbedder with model '%s' and dimension %s",
+            embedding_model_id.value,
+            self.dimensions,
         )
 
     def generate_embeddings(self, graph: nx.Graph) -> NodeEmbeddings:
@@ -69,7 +71,7 @@ class BedrockNodeEmbedder:
             return NodeEmbeddings(nodes=[], embeddings={})
 
         logger.info(
-            f"Generating Bedrock embeddings for {graph.number_of_nodes()} nodes..."
+            "Generating Bedrock embeddings for %s nodes...", graph.number_of_nodes()
         )
         start_time = time.time()
 
@@ -97,7 +99,8 @@ class BedrockNodeEmbedder:
 
             if len(embeddings_dict) != len(nodes):
                 logger.warning(
-                    f"Failed to generate embeddings for {len(nodes) - len(embeddings_dict)} nodes."
+                    "Failed to generate embeddings for %s nodes.",
+                    len(nodes) - len(embeddings_dict),
                 )
 
             logger.info(
@@ -109,7 +112,8 @@ class BedrockNodeEmbedder:
 
         except Exception as e:
             logger.error(
-                f"Failed to generate Bedrock embeddings: {e}. Falling back to random embeddings.",
+                "Failed to generate Bedrock embeddings: %s. Falling back to random embeddings.",
+                e,
                 exc_info=True,
             )
             return self._generate_random_embeddings(graph)

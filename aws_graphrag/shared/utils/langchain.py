@@ -8,22 +8,18 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import tenacity
-from langchain.output_parsers import OutputFixingParser, XMLOutputParser
-from langchain_core.output_parsers import BaseOutputParser
-from langchain_core.runnables import Runnable, RunnableConfig
+from langchain.output_parsers import XMLOutputParser
+from langchain_core.runnables import RunnableConfig
 from lxml import etree
 from pydantic import BaseModel, Field
 from tenacity import RetryCallState
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
 
-from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
-from aws_graphrag.domain.models import LanguageModelId
-from aws_graphrag.domain.prompts import BasePrompt
-from aws_graphrag.shared import GraphRAGException, get_logger
+from aws_graphrag.shared import get_logger
 
 if TYPE_CHECKING:
-    from aws_graphrag.domain.models.config import CustomPromptConfig
+    pass
 
 logger = get_logger(__name__)
 
@@ -84,8 +80,11 @@ class BatchProcessor(BaseModel):
         num_chunks = math.ceil(num_items / self.batch_size)
 
         logger.info(
-            f"Starting processing for '{task_name}': {num_items} items in {num_chunks} chunks "
-            f"(batch size: {self.batch_size})"
+            "Starting processing for '%s': %s items in %s chunks (batch size: %s)",
+            task_name,
+            num_items,
+            num_chunks,
+            self.batch_size,
         )
 
         for i in tqdm(
@@ -97,25 +96,29 @@ class BatchProcessor(BaseModel):
             chunk_num = (i // self.batch_size) + 1
 
             logger.debug(
-                f"Processing chunk {chunk_num}/{num_chunks} ({len(chunk_items)} items)"
+                "Processing chunk %s/%s (%s items)",
+                chunk_num,
+                num_chunks,
+                len(chunk_items),
             )
 
             chunk_inputs = prepare_inputs_func(chunk_items)
             if not chunk_inputs:
                 logger.warning(
-                    f"No valid inputs prepared for chunk {chunk_num}, skipping"
+                    "No valid inputs prepared for chunk %s, skipping", chunk_num
                 )
                 continue
 
             try:
-                logger.debug(f"Attempting batch processing for chunk {chunk_num}")
+                logger.debug("Attempting batch processing for chunk %s", chunk_num)
                 chunk_results = prepared_batch_func(chunk_inputs)
                 all_results.extend(chunk_results)
-                logger.debug(f"Chunk {chunk_num} processed successfully in batch mode")
+                logger.debug("Chunk %s processed successfully in batch mode", chunk_num)
             except Exception as e:
                 logger.warning(
-                    f"Batch processing failed for chunk {chunk_num}: {e}. "
-                    f"Falling back to sequential processing"
+                    "Batch processing failed for chunk %s: %s. Falling back to sequential processing",
+                    chunk_num,
+                    e,
                 )
                 chunk_results = self._process_sequentially_with_fallback(
                     chunk_inputs,
@@ -125,7 +128,7 @@ class BatchProcessor(BaseModel):
                 )
                 all_results.extend(chunk_results)
 
-        logger.info(f"Completed '{task_name}': processed {len(all_results)} results")
+        logger.info("Completed '%s': processed %s results", task_name, len(all_results))
         return all_results
 
     def _create_batch_func(self, batch_func: Callable[..., list[Any]]) -> Callable:
@@ -166,7 +169,7 @@ class BatchProcessor(BaseModel):
         task_name: str,
         show_progress: bool = True,
     ) -> list[Any]:
-        logger.info(f"Processing {len(inputs)} items sequentially for '{task_name}'")
+        logger.info("Processing %s items sequentially for '%s'", len(inputs), task_name)
 
         results = []
         progress_desc = f"Sequential Processing: '{task_name}'"
@@ -179,7 +182,9 @@ class BatchProcessor(BaseModel):
                 successful_count += 1
             except Exception as e:
                 logger.error(
-                    f"Sequential processing failed for single item in '{task_name}': {e}"
+                    "Sequential processing failed for single item in '%s': %s",
+                    task_name,
+                    e,
                 )
                 # Note.
                 # If not processed, add an empty dict
@@ -188,7 +193,10 @@ class BatchProcessor(BaseModel):
                 continue
 
         logger.info(
-            f"Sequential processing completed for '{task_name}': {successful_count}/{len(inputs)} items processed successfully"
+            "Sequential processing completed for '%s': %s/%s items processed successfully",
+            task_name,
+            successful_count,
+            len(inputs),
         )
         return results
 
@@ -221,8 +229,11 @@ class BatchProcessor(BaseModel):
         num_chunks = math.ceil(num_items / self.batch_size)
 
         logger.info(
-            f"Starting async processing for '{task_name}': {num_items} items in {num_chunks} chunks "
-            f"(batch size: {self.batch_size})"
+            "Starting async processing for '%s': %s items in %s chunks (batch size: %s)",
+            task_name,
+            num_items,
+            num_chunks,
+            self.batch_size,
         )
 
         chunk_iterator = async_tqdm(
@@ -235,13 +246,16 @@ class BatchProcessor(BaseModel):
             chunk_items = items_to_process[i : i + self.batch_size]
             chunk_num = (i // self.batch_size) + 1
             logger.debug(
-                f"Processing chunk {chunk_num}/{num_chunks} ({len(chunk_items)} items)"
+                "Processing chunk %s/%s (%s items)",
+                chunk_num,
+                num_chunks,
+                len(chunk_items),
             )
 
             chunk_inputs = prepare_inputs_func(chunk_items)
             if not chunk_inputs:
                 logger.warning(
-                    f"No valid inputs prepared for chunk {chunk_num}, skipping"
+                    "No valid inputs prepared for chunk %s, skipping", chunk_num
                 )
                 continue
 
@@ -250,8 +264,9 @@ class BatchProcessor(BaseModel):
                 all_results.extend(chunk_results)
             except Exception as e:
                 logger.warning(
-                    f"Async batch processing failed for chunk {chunk_num}: {e}. "
-                    f"Falling back to concurrent sequential processing"
+                    "Async batch processing failed for chunk %s: %s. Falling back to concurrent sequential processing",
+                    chunk_num,
+                    e,
                 )
                 chunk_results = await self._aprocess_sequentially_with_fallback(
                     chunk_inputs,
@@ -261,7 +276,7 @@ class BatchProcessor(BaseModel):
                 )
                 all_results.extend(chunk_results)
 
-        logger.info(f"Completed '{task_name}': processed {len(all_results)} results")
+        logger.info("Completed '%s': processed %s results", task_name, len(all_results))
         return all_results
 
     def _create_async_batch_func(self, batch_func: Callable[..., Any]) -> Callable:
@@ -280,7 +295,7 @@ class BatchProcessor(BaseModel):
         task_name: str,
         show_progress: bool = True,
     ) -> list[Any]:
-        logger.info(f"Processing {len(inputs)} items concurrently for '{task_name}'")
+        logger.info("Processing %s items concurrently for '%s'", len(inputs), task_name)
         semaphore = asyncio.Semaphore(self.max_concurrency)
 
         async def _process_one(single_input: dict[str, Any]) -> Any:
@@ -289,7 +304,9 @@ class BatchProcessor(BaseModel):
                     return await sequential_func(single_input)
                 except Exception as e:
                     logger.error(
-                        f"Concurrent sequential processing failed for item in '{task_name}': {e}"
+                        "Concurrent sequential processing failed for item in '%s': %s",
+                        task_name,
+                        e,
                     )
                     return None
 
@@ -302,7 +319,10 @@ class BatchProcessor(BaseModel):
 
         successful_results = [res for res in results if res is not None]
         logger.info(
-            f"Concurrent sequential processing completed for '{task_name}': {len(successful_results)}/{len(inputs)} items processed successfully"
+            "Concurrent sequential processing completed for '%s': %s/%s items processed successfully",
+            task_name,
+            len(successful_results),
+            len(inputs),
         )
         return successful_results
 
@@ -318,7 +338,9 @@ class RobustXMLOutputParser(XMLOutputParser):
             raise ValueError("Missing sections in parsed result")
         except Exception as e:
             logger.debug(
-                f"Standard XML parsing failed: {type(e).__name__}: {e}. Trying lxml recovery..."
+                "Standard XML parsing failed: %s: %s. Trying lxml recovery...",
+                type(e).__name__,
+                e,
             )
 
         try:
@@ -329,7 +351,9 @@ class RobustXMLOutputParser(XMLOutputParser):
             raise ValueError("Missing sections in lxml result")
         except Exception as e:
             logger.debug(
-                f"LXML recovery parsing failed: {type(e).__name__}: {e}. Trying sanitization..."
+                "LXML recovery parsing failed: %s: %s. Trying sanitization...",
+                type(e).__name__,
+                e,
             )
 
         try:
@@ -340,7 +364,9 @@ class RobustXMLOutputParser(XMLOutputParser):
             raise ValueError("Missing sections in sanitized result")
         except Exception as e:
             logger.debug(
-                f"Sanitized XML parsing failed: {type(e).__name__}: {e}. Trying aggressive cleaning..."
+                "Sanitized XML parsing failed: %s: %s. Trying aggressive cleaning...",
+                type(e).__name__,
+                e,
             )
 
         try:
@@ -351,7 +377,9 @@ class RobustXMLOutputParser(XMLOutputParser):
             raise ValueError("Missing sections in aggressive result")
         except Exception as e:
             logger.debug(
-                f"Aggressive cleaning parsing failed: {type(e).__name__}: {e}. Trying XML fallback..."
+                "Aggressive cleaning parsing failed: %s: %s. Trying XML fallback...",
+                type(e).__name__,
+                e,
             )
 
         try:
@@ -360,7 +388,9 @@ class RobustXMLOutputParser(XMLOutputParser):
                 return fallback_result
         except Exception as e:
             logger.debug(
-                f"XML fallback extraction failed: {type(e).__name__}: {e}. Trying tags fallback..."
+                "XML fallback extraction failed: %s: %s. Trying tags fallback...",
+                type(e).__name__,
+                e,
             )
 
         try:
@@ -369,7 +399,9 @@ class RobustXMLOutputParser(XMLOutputParser):
                 return fallback_result
         except Exception as e:
             logger.debug(
-                f"Tags fallback extraction failed: {type(e).__name__}: {e}. Trying list fallback..."
+                "Tags fallback extraction failed: %s: %s. Trying list fallback...",
+                type(e).__name__,
+                e,
             )
 
         try:
@@ -378,7 +410,9 @@ class RobustXMLOutputParser(XMLOutputParser):
                 return fallback_result
         except Exception as e:
             logger.debug(
-                f"List fallback extraction failed: {type(e).__name__}: {e}. All methods exhausted."
+                "List fallback extraction failed: %s: %s. All methods exhausted.",
+                type(e).__name__,
+                e,
             )
 
         logger.error("All XML parsing attempts failed for content: '%s...'", text[:200])
@@ -613,50 +647,7 @@ class RobustXMLOutputParser(XMLOutputParser):
         return None
 
 
-def create_robust_xml_output_parser(
-    factory: BedrockLanguageModelFactory,
-    enable_output_fixing: bool,
-    output_fixing_model_id: LanguageModelId,
-) -> BaseOutputParser:
-    base_parser = RobustXMLOutputParser()
-    if not enable_output_fixing:
-        return base_parser
-
-    try:
-        fixing_llm = factory.get_model(model_id=output_fixing_model_id)
-        logger.info(
-            f"Created OutputFixingParser with model: '{output_fixing_model_id.value}'"
-        )
-        return OutputFixingParser.from_llm(parser=base_parser, llm=fixing_llm)
-    except Exception as e:
-        logger.error(
-            f"Failed to create OutputFixingParser with model {output_fixing_model_id.value}: {e}"
-        )
-        raise GraphRAGException(f"Failed to create OutputFixingParser: {e}") from e
-
-
-def setup_chain(
-    factory: BedrockLanguageModelFactory,
-    model_id: LanguageModelId,
-    prompt_class: type[BasePrompt],
-    parser: BaseOutputParser,
-    custom_prompts: "CustomPromptConfig | None" = None,
-    **kwargs: Any,
-) -> Runnable:
-    try:
-        llm = factory.get_model(model_id=model_id, **kwargs)
-        model_info = factory.get_model_info(model_id)
-        enable_prompt_cache = (
-            model_info.supports_prompt_caching if model_info else False
-        )
-        prompt = prompt_class.get_prompt(
-            enable_prompt_cache=enable_prompt_cache, custom_prompts=custom_prompts
-        )
-        chain = prompt | llm | parser
-        logger.debug(f"Successfully created LLM chain with model: '{model_id.value}'")
-        return chain
-    except Exception as e:
-        logger.error(f"Failed to setup LLM chain with model '{model_id.value}': {e}")
-        raise GraphRAGException(
-            f"Failed to setup LLM chain with model '{model_id.value}': {e}"
-        ) from e
+# NOTE: the Bedrock-coupled chain builders (`setup_chain`,
+# `create_robust_xml_output_parser`) moved to
+# `aws_graphrag.adapters.aws.chain_factory` so this kernel module stays free of
+# any adapter dependency (hexagonal dependency rule). Import them from there.

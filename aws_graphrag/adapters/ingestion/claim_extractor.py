@@ -12,6 +12,10 @@ from pydantic import BaseModel
 from tqdm import tqdm
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws.chain_factory import (
+    create_robust_xml_output_parser,
+    setup_chain,
+)
 from aws_graphrag.domain.ingestion.base_processor import (
     BaseProcessor,
     check_entity_relevance_task,
@@ -21,10 +25,8 @@ from aws_graphrag.domain.prompts import ClaimExtractionPrompt
 from aws_graphrag.shared import get_logger
 from aws_graphrag.shared.utils import (
     BatchProcessor,
-    create_robust_xml_output_parser,
     ensure_list,
     generate_stable_id,
-    setup_chain,
 )
 
 logger = get_logger(__name__)
@@ -139,8 +141,9 @@ class ClaimExtractor(BaseProcessor):
 
         self.stats: ClaimExtractionStats = ClaimExtractionStats()
         logger.info(
-            f"ClaimExtractor initialized with {self.max_workers} workers, "
-            f"process pool: {self.use_process_pool}"
+            "ClaimExtractor initialized with %s workers, process pool: %s",
+            self.max_workers,
+            self.use_process_pool,
         )
 
     def extract_from_text_units(
@@ -152,8 +155,9 @@ class ClaimExtractor(BaseProcessor):
 
         all_entities = entities or []
         logger.info(
-            f"Starting claim extraction from {len(text_units)} text units "
-            f"with {len(all_entities)} entities for relevance filtering"
+            "Starting claim extraction from %s text units with %s entities for relevance filtering",
+            len(text_units),
+            len(all_entities),
         )
 
         self.stats = ClaimExtractionStats(num_total_units=len(text_units))
@@ -187,7 +191,7 @@ class ClaimExtractor(BaseProcessor):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.error(f"Error during claim extraction: {e}")
+            logger.error("Error during claim extraction: %s", e)
             return [], ClaimExtractionStats()
 
         all_claims = self._process_extraction_results(text_units, extraction_results)
@@ -198,8 +202,9 @@ class ClaimExtractor(BaseProcessor):
         self.stats.total_processing_time = time.time() - start_time
 
         logger.info(
-            f"Claim extraction completed: extracted {initial_claim_count} claims, "
-            f"merged to {len(merged_claims)} unique claims"
+            "Claim extraction completed: extracted %s claims, merged to %s unique claims",
+            initial_claim_count,
+            len(merged_claims),
         )
         self._log_completion_summary(self.stats)
 
@@ -239,7 +244,7 @@ class ClaimExtractor(BaseProcessor):
                     result = future.result()
                     inputs.append(result)
                 except Exception as e:
-                    logger.error(f"Error preparing input for text unit: {e}")
+                    logger.error("Error preparing input for text unit: %s", e)
 
         return inputs
 
@@ -250,8 +255,9 @@ class ClaimExtractor(BaseProcessor):
 
         if len(text_units) != len(extraction_results):
             logger.warning(
-                f"Mismatch in text units ({len(text_units)}) and extraction results ({len(extraction_results)}). "
-                f"Some results may have been lost during processing. Proceeding with available results."
+                "Mismatch in text units (%s) and extraction results (%s). Some results may have been lost during processing. Proceeding with available results.",
+                len(text_units),
+                len(extraction_results),
             )
 
         for text_unit, result in zip(text_units, extraction_results, strict=False):
@@ -263,7 +269,9 @@ class ClaimExtractor(BaseProcessor):
                 except Exception as e:
                     self.stats.num_failed_extractions += 1
                     logger.warning(
-                        f"Failed to parse extraction result for text unit '{text_unit.id}': {e}"
+                        "Failed to parse extraction result for text unit '%s': %s",
+                        text_unit.id,
+                        e,
                     )
             else:
                 self.stats.num_failed_extractions += 1
@@ -331,7 +339,7 @@ class ClaimExtractor(BaseProcessor):
             )
         except Exception as e:
             logger.warning(
-                f"Error creating claim object from text unit '{text_unit.id}': {e}"
+                "Error creating claim object from text unit '%s': %s", text_unit.id, e
             )
             return None
 
@@ -375,5 +383,5 @@ class ClaimExtractor(BaseProcessor):
 
         if stats.num_failed_extractions > 0:
             logger.warning(
-                f"{stats.num_failed_extractions} text units failed during extraction"
+                "%s text units failed during extraction", stats.num_failed_extractions
             )

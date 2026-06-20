@@ -32,6 +32,7 @@ from aws_graphrag.adapters.ingestion.translator import (
     TextUnitTranslator,
     TranslationStats,
 )
+from aws_graphrag.application.ingestion.incremental import IncrementalIndexer
 from aws_graphrag.application.ingestion.pipeline import DataIngestionPipeline
 from aws_graphrag.application.ingestion.pipeline_stages import (
     ClaimExtractionStage,
@@ -67,7 +68,6 @@ from aws_graphrag.domain.ingestion.graph_resolver import (
     GraphResolver,
     RelationshipResolver,
 )
-from aws_graphrag.domain.ingestion.incremental import IncrementalIndexer
 from aws_graphrag.domain.models import CommunityMetrics
 
 __all__ = [

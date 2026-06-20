@@ -37,7 +37,7 @@ class S3CacheManager:
         self._s3_client: S3Client | None = None
 
         logger.info(
-            f"Initialized S3CacheManager for 's3://{self.bucket_name}/{self.prefix}'"
+            "Initialized S3CacheManager for 's3://%s/%s'", self.bucket_name, self.prefix
         )
 
     @property
@@ -54,10 +54,10 @@ class S3CacheManager:
             except ClientError as e:
                 error_code = e.response.get("Error", {}).get("Code", "Unknown")
                 if error_code in ["404", "NoSuchBucket"]:
-                    logger.error(f"S3 bucket not found: {self.bucket_name}")
+                    logger.error("S3 bucket not found: %s", self.bucket_name)
                 else:
                     logger.error(
-                        f"Failed to connect to S3 bucket '{self.bucket_name}': {e}"
+                        "Failed to connect to S3 bucket '%s': %s", self.bucket_name, e
                     )
                 raise
         return self._s3_client
@@ -65,7 +65,7 @@ class S3CacheManager:
     def sync_pipeline_from_s3(
         self, pipeline_id: str, local_cache_dir: Path
     ) -> dict[str, bool]:
-        logger.info(f"Syncing pipeline '{pipeline_id}' from S3")
+        logger.info("Syncing pipeline '%s' from S3", pipeline_id)
         results = {}
         base_prefix = self._get_base_prefix(pipeline_id)
         s3_prefix = f"{base_prefix}/"
@@ -105,22 +105,26 @@ class S3CacheManager:
             success_count = sum(results.values())
             if total_files > 0:
                 logger.info(
-                    f"Download completed: {success_count}/{len(results)} stages, "
-                    f"{total_files} files from 's3://{self.bucket_name}/{s3_prefix}'"
+                    "Download completed: %s/%s stages, %s files from 's3://%s/%s'",
+                    success_count,
+                    len(results),
+                    total_files,
+                    self.bucket_name,
+                    s3_prefix,
                 )
             else:
-                logger.info(f"No cache files found for pipeline '{pipeline_id}' in S3")
+                logger.info("No cache files found for pipeline '%s' in S3", pipeline_id)
         except Exception as e:
-            logger.error(f"Failed to sync pipeline '{pipeline_id}' from S3: {e}")
+            logger.error("Failed to sync pipeline '%s' from S3: %s", pipeline_id, e)
 
         return results
 
     def sync_pipeline_to_s3(
         self, pipeline_id: str, local_cache_dir: Path
     ) -> dict[str, bool]:
-        logger.info(f"Syncing pipeline '{pipeline_id}' to S3")
+        logger.info("Syncing pipeline '%s' to S3", pipeline_id)
         if not local_cache_dir.is_dir():
-            logger.warning(f"Local cache directory not found: '{local_cache_dir}'")
+            logger.warning("Local cache directory not found: '%s'", local_cache_dir)
             return {}
 
         base_prefix = self._get_base_prefix(pipeline_id)
@@ -148,17 +152,21 @@ class S3CacheManager:
 
             if total_files > 0:
                 logger.info(
-                    f"Upload completed: {success_count}/{len(results)} stages, "
-                    f"{total_files} files to 's3://{self.bucket_name}/{base_prefix}'"
+                    "Upload completed: %s/%s stages, %s files to 's3://%s/%s'",
+                    success_count,
+                    len(results),
+                    total_files,
+                    self.bucket_name,
+                    base_prefix,
                 )
             else:
                 logger.info(
-                    f"No cache files found for pipeline '{pipeline_id}' locally"
+                    "No cache files found for pipeline '%s' locally", pipeline_id
                 )
 
             return results
         except Exception as e:
-            logger.error(f"Failed to sync pipeline '{pipeline_id}' to S3: {e}")
+            logger.error("Failed to sync pipeline '%s' to S3: %s", pipeline_id, e)
             return dict.fromkeys(stage_results, False)
 
     def _get_base_prefix(self, pipeline_id: str) -> str:
@@ -170,7 +178,7 @@ class S3CacheManager:
             return True
         except ClientError as e:
             logger.warning(
-                f"Failed to download 's3://{self.bucket_name}/{s3_key}': {e}"
+                "Failed to download 's3://%s/%s': %s", self.bucket_name, s3_key, e
             )
             return False
 
@@ -192,7 +200,10 @@ class S3CacheManager:
             return True
         except (ClientError, FileNotFoundError) as e:
             logger.warning(
-                f"Failed to upload '{local_path}' to "
-                f"'s3://{self.bucket_name}/{s3_key}': {e}"
+                "Failed to upload '%s' to 's3://%s/%s': %s",
+                local_path,
+                self.bucket_name,
+                s3_key,
+                e,
             )
             return False

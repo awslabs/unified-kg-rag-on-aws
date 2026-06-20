@@ -14,10 +14,10 @@ from langchain_core.output_parsers import CommaSeparatedListOutputParser
 from pydantic import Field
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
+from aws_graphrag.adapters.aws.chain_factory import setup_chain
 from aws_graphrag.domain.models import Config, ConversationContext, MessageRole
 from aws_graphrag.domain.prompts import EntityExtractionPrompt
 from aws_graphrag.shared import get_config, get_logger
-from aws_graphrag.shared.utils import setup_chain
 
 logger = get_logger(__name__)
 
@@ -109,7 +109,9 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
 
         except Exception as e:
             logger.warning(
-                f"Entity extraction failed for conversation '{self.conversation_id}': {e}"
+                "Entity extraction failed for conversation '%s': %s",
+                self.conversation_id,
+                e,
             )
 
     def get_context_summary(self) -> str:
@@ -280,7 +282,7 @@ class MemoryManager:
 
         if to_remove:
             logger.info(
-                f"Removed {len(to_remove)} oldest conversations to maintain capacity"
+                "Removed %s oldest conversations to maintain capacity", len(to_remove)
             )
 
 

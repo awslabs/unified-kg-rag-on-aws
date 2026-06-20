@@ -79,7 +79,8 @@ class NeptuneClient:
             g = traversal().withRemote(remote_connection)
             g.V().limit(1).toList()
             logger.info(
-                f"Successfully connected to Neptune at '{self.neptune_config.endpoint}'"
+                "Successfully connected to Neptune at '%s'",
+                self.neptune_config.endpoint,
             )
             return remote_connection
         except Exception as e:
@@ -111,20 +112,25 @@ class NeptuneClient:
         self, label: str, batch_size: int = 500, delay: float = 0.5
     ) -> None:
         logger.info(
-            f"Starting batch deletion for label '{label}' with batch size {batch_size}."
+            "Starting batch deletion for label '%s' with batch size %s.",
+            label,
+            batch_size,
         )
         while True:
             remaining_count = self.g.V().hasLabel(label).count().next()
             if remaining_count == 0:
-                logger.info(f"No more vertices with label '{label}' to delete.")
+                logger.info("No more vertices with label '%s' to delete.", label)
                 break
 
             logger.info(
-                f"Deleting batch of {min(remaining_count, batch_size)} from {remaining_count} vertices with label '{label}'..."
+                "Deleting batch of %s from %s vertices with label '%s'...",
+                min(remaining_count, batch_size),
+                remaining_count,
+                label,
             )
             self.g.V().hasLabel(label).limit(batch_size).drop().iterate()
             time.sleep(delay)
-        logger.info(f"Finished batch deletion for label '{label}'.")
+        logger.info("Finished batch deletion for label '%s'.", label)
 
     @_handle_neptune_errors
     def clear_graph(self) -> None:
@@ -134,7 +140,7 @@ class NeptuneClient:
             logger.info("Graph is already empty.")
             return
 
-        logger.info(f"Found vertex labels to clear: {all_labels}")
+        logger.info("Found vertex labels to clear: %s", all_labels)
         for label in all_labels:
             self.delete_vertices_in_batches(label)
         logger.info("Successfully cleared Neptune graph.")
@@ -148,7 +154,7 @@ class NeptuneClient:
                     self._g = None
                     logger.info("Closed Neptune connection")
                 except Exception as e:
-                    logger.error(f"Error closing Neptune connection: {e}")
+                    logger.error("Error closing Neptune connection: %s", e)
 
     def __enter__(self) -> "NeptuneClient":
         return self
@@ -171,7 +177,9 @@ class NeptuneClient:
             "edge_labels": self.g.E().label().dedup().toList(),
         }
         logger.info(
-            f"Graph stats: {stats['vertex_count']} vertices, {stats['edge_count']} edges"
+            "Graph stats: %s vertices, %s edges",
+            stats["vertex_count"],
+            stats["edge_count"],
         )
         return stats
 
@@ -189,5 +197,5 @@ class NeptuneClient:
                 else traversal_query.to_list()
             )
         except Exception as e:
-            logger.error(f"Failed to execute traversal: {e}", exc_info=True)
+            logger.exception("Failed to execute traversal: %s", e)
             raise AWSServiceError(f"Traversal execution failed: {e}") from e

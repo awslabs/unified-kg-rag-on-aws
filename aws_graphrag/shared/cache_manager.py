@@ -45,10 +45,13 @@ class CacheManager:
 
         ttl_display = f"{ttl_seconds}s" if ttl_seconds else "none"
         logger.info(
-            f"Initialized Cache Manager at '{self.cache_directory}' with "
-            f"strategy='{strategy.value}', TTL={ttl_display}, "
-            f"chunk_size={chunk_size}, max_file_size={max_file_size_mb}MB, "
-            f"chunking_enabled={enable_chunking}"
+            "Initialized Cache Manager at '%s' with strategy='%s', TTL=%s, chunk_size=%s, max_file_size=%sMB, chunking_enabled=%s",
+            self.cache_directory,
+            strategy.value,
+            ttl_display,
+            chunk_size,
+            max_file_size_mb,
+            enable_chunking,
         )
 
     def cache_exists(self, cache_key: str, pipeline_id: str) -> bool:
@@ -72,7 +75,7 @@ class CacheManager:
         for i in range(chunk_count):
             chunk_file = cache_dir / f"{entry.key}_chunk_{i:04d}.json"
             if not chunk_file.exists():
-                logger.debug(f"Missing chunk file: {chunk_file}")
+                logger.debug("Missing chunk file: %s", chunk_file)
                 return False
 
         return not entry.is_expired
@@ -92,8 +95,9 @@ class CacheManager:
             return CacheIndex.model_validate(data)
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(
-                f"Failed to load cache index '{index_path}', creating a new one. "
-                f"Error: {e}"
+                "Failed to load cache index '%s', creating a new one. Error: %s",
+                index_path,
+                e,
             )
             return CacheIndex(
                 pipeline_id=pipeline_id,
@@ -139,7 +143,7 @@ class CacheManager:
                     if self.strategy == CacheStrategy.FORCE_REFRESH
                     else "entry expired"
                 )
-                logger.debug(f"Cache miss for key '{cache_key}' due to {log_msg}")
+                logger.debug("Cache miss for key '%s' due to %s", cache_key, log_msg)
                 self.stats.record_miss(cache_key)
                 return None
 
@@ -152,11 +156,11 @@ class CacheManager:
 
             if data is not None:
                 self.stats.record_hit(cache_key)
-                logger.debug(f"Cache hit for key '{cache_key}'")
+                logger.debug("Cache hit for key '%s'", cache_key)
 
             return data
         except (OSError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to load cache entry '{cache_key}': {e}")
+            logger.error("Failed to load cache entry '%s': %s", cache_key, e)
             self.stats.record_miss(cache_key)
             return None
 
@@ -197,7 +201,7 @@ class CacheManager:
 
             chunk_file = chunks_dir / chunk_file_pattern.format(i)
             if not chunk_file.exists():
-                logger.warning(f"Missing chunk file: {chunk_file}")
+                logger.warning("Missing chunk file: %s", chunk_file)
                 continue
 
             try:
@@ -217,11 +221,11 @@ class CacheManager:
                 all_data.extend(chunk_data)
                 items_loaded += len(chunk_data)
             except Exception as e:
-                logger.error(f"Failed to load chunk {i}: {e}")
+                logger.error("Failed to load chunk %s: %s", i, e)
                 continue
 
         if chunk_count > 1:
-            logger.debug(f"Loaded {items_loaded} items from {chunk_count} chunks")
+            logger.debug("Loaded %s items from %s chunks", items_loaded, chunk_count)
 
         return all_data
 
@@ -236,8 +240,9 @@ class CacheManager:
                 return data_type.model_validate(data)
         except Exception as e:
             logger.warning(
-                f"Could not deserialize data into '{data_type.__name__}', returning "
-                f"raw data. Error: {e}"
+                "Could not deserialize data into '%s', returning raw data. Error: %s",
+                data_type.__name__,
+                e,
             )
 
         return data
@@ -263,7 +268,7 @@ class CacheManager:
                     data, cache_key, stage_name, pipeline_id, metadata
                 )
         except (OSError, TypeError) as e:
-            logger.error(f"Failed to save cache entry '{cache_key}': {e}")
+            logger.error("Failed to save cache entry '%s': %s", cache_key, e)
             return None
 
     def _should_chunk_data(self, data: Any) -> bool:
@@ -276,8 +281,9 @@ class CacheManager:
 
         if data_length > self.chunk_size:
             logger.debug(
-                f"Data size ({data_length}) exceeds chunk size ({self.chunk_size}), "
-                f"will chunk"
+                "Data size (%s) exceeds chunk size (%s), will chunk",
+                data_length,
+                self.chunk_size,
             )
             return True
 
@@ -295,7 +301,7 @@ class CacheManager:
                 )
                 return True
         except Exception as e:
-            logger.warning(f"Failed to estimate data size: {e}")
+            logger.warning("Failed to estimate data size: %s", e)
 
         return False
 
@@ -338,7 +344,9 @@ class CacheManager:
 
         self._update_cache_index(entry)
         logger.info(
-            f"Cached single file for key '{cache_key}' (size: {entry.file_size} bytes)"
+            "Cached single file for key '%s' (size: %s bytes)",
+            cache_key,
+            entry.file_size,
         )
         return entry
 
@@ -408,8 +416,11 @@ class CacheManager:
 
         self._update_cache_index(entry)
         logger.info(
-            f"Cached chunked data for key '{cache_key}' "
-            f"({chunk_count} chunks, {total_size} bytes total, {len(data)} records)"
+            "Cached chunked data for key '%s' (%s chunks, %s bytes total, %s records)",
+            cache_key,
+            chunk_count,
+            total_size,
+            len(data),
         )
         return entry
 
@@ -480,14 +491,14 @@ class CacheManager:
         entry = index.get_entry(cache_key)
 
         if entry is None or not entry.metadata.get("is_chunked", False):
-            logger.warning(f"Cache key '{cache_key}' is not chunked")
+            logger.warning("Cache key '%s' is not chunked", cache_key)
             return None
 
         cache_dir = self.get_pipeline_cache_dir(pipeline_id) / entry.stage_name
         chunk_file = cache_dir / f"{entry.key}_chunk_{chunk_id:04d}.json"
 
         if not chunk_file.exists():
-            logger.warning(f"Chunk file does not exist: {chunk_file}")
+            logger.warning("Chunk file does not exist: %s", chunk_file)
             return None
 
         try:
@@ -501,7 +512,7 @@ class CacheManager:
 
             return preview_data
         except Exception as e:
-            logger.error(f"Failed to load chunk preview: {e}")
+            logger.error("Failed to load chunk preview: %s", e)
             return None
 
     def serialize_data(self, data: Any, indent: int | None = 2) -> str:
@@ -527,4 +538,4 @@ class CacheManager:
                 f.write(index.model_dump_json(indent=2))
             temp_path.replace(index_path)
         except OSError as e:
-            logger.error(f"Failed to save cache index to '{index_path}': {e}")
+            logger.error("Failed to save cache index to '%s': %s", index_path, e)

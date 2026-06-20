@@ -48,7 +48,11 @@ def export_json(tmp_path: Path) -> Path:
                 }
             ],
         },
-        "centrality": {"degree": {"e1": 1}},
+        # Export shape: node_id -> CentralityMetrics dict.
+        "centrality": {
+            "e1": {"node_id": "e1", "node_name": "Alice", "degree": 1.0},
+            "e2": {"node_id": "e2", "node_name": "Bob", "degree": 0.5},
+        },
     }
     path = tmp_path / "viz.json"
     path.write_text(json.dumps(data), encoding="utf-8")
@@ -62,6 +66,14 @@ class TestLoadRenderContext:
         assert ctx.graph.number_of_edges() == 1
         assert ctx.graph.nodes["e1"]["name"] == "Alice"
         assert ctx.layout == {"e1": [0.0, 0.0], "e2": [1.0, 1.0]}
+
+    def test_rehydrates_typed_centrality(self, export_json: Path) -> None:
+        # Centrality must round-trip into CentralityMetrics so the standalone
+        # static renderer can draw the centrality comparison plot.
+        ctx = load_render_context(export_json)
+        assert set(ctx.centrality) == {"e1", "e2"}
+        assert ctx.centrality["e1"].node_name == "Alice"
+        assert ctx.centrality["e1"].degree == 1.0
 
     def test_rehydrates_typed_communities(self, export_json: Path) -> None:
         ctx = load_render_context(export_json)
