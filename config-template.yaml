@@ -258,6 +258,7 @@ search:
   fusion:
     method: "rrf"
     rrf_k: 60
+    # MMR: 1.0 = pure relevance (filtering skipped), 0.0 = maximum diversity.
     diversity_lambda: 0.5
     fusion_weights:
       lexical: 0.5

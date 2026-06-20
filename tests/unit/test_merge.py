@@ -68,7 +68,9 @@ class TestMergeRelationships:
         merged = merge_relationships(old, delta)
         assert len(merged) == 2
 
-    def test_same_endpoints_merge_and_average_weight(self) -> None:
+    def test_same_endpoints_merge_and_sum_weight(self) -> None:
+        # Weights are summed (MS GraphRAG semantics): order-independent and
+        # associative, unlike a running pairwise mean.
         old = [
             Relationship(
                 id="r1",
@@ -89,7 +91,7 @@ class TestMergeRelationships:
         ]
         merged = merge_relationships(old, delta)
         assert len(merged) == 1
-        assert merged[0].weight == 2.0
+        assert merged[0].weight == 4.0
         assert set(merged[0].text_unit_ids) == {"t1", "t2"}
 
     def test_endpoints_remapped_via_entity_remap(self) -> None:
@@ -112,8 +114,19 @@ class TestMergeCommunities:
         ids = [c.id for c in merged]
         assert ids == ["c1", "c1-delta", "c2"]
 
+    def test_remerging_same_delta_is_idempotent(self) -> None:
+        # Re-applying a delta must not grow `c1-delta` into `c1-delta-delta`.
+        old = [Community(id="c1", name="A", level="0", parent="", children=[])]
+        delta = [Community(id="c1", name="B", level="0", parent="", children=[])]
+        once = merge_communities(old, delta)
+        twice = merge_communities(once, delta)
+        assert [c.id for c in twice] == ["c1", "c1-delta"]
+
     def test_reports_appended(self) -> None:
         old = [CommunityReport(id="cr1", community_id="c1", name="R1")]
         delta = [CommunityReport(id="cr1", community_id="c1", name="R2")]
         merged = merge_community_reports(old, delta)
         assert [r.id for r in merged] == ["cr1", "cr1-delta"]
+        # Idempotent on re-merge.
+        twice = merge_community_reports(merged, delta)
+        assert [r.id for r in twice] == ["cr1", "cr1-delta"]

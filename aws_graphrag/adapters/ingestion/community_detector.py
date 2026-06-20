@@ -238,7 +238,9 @@ class CommunityDetector(BaseProcessor):
         best_resolution = self.community_detection_config.resolution
         best_modularity = -1.0
 
-        resolution_candidates = [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0]
+        resolution_candidates = (
+            self.community_detection_config.auto_resolution_candidates
+        )
 
         for resolution in resolution_candidates:
             try:

@@ -622,6 +622,11 @@ class CommunityDetectionConfig(BaseModel):
         default=True,
         description="Automatically find optimal resolution via modularity maximization",
     )
+    auto_resolution_candidates: list[float] = Field(
+        default_factory=lambda: [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0],
+        description="Resolution values swept when auto_resolution is enabled; the "
+        "one maximizing modularity is chosen.",
+    )
     report_generation: ReportGenerationConfig = Field(
         default_factory=ReportGenerationConfig,
         description="Community report generation configuration",
@@ -897,11 +902,30 @@ class FusionConfig(BaseModel):
         default=0.5,
         ge=0.0,
         le=1.0,
-        description="Lambda parameter controlling diversity in result filtering (0.0=no diversity, 1.0=maximum diversity)",
+        description=(
+            "MMR lambda for diversity filtering: score = lambda*relevance - "
+            "(1-lambda)*max_similarity. 1.0 = pure relevance (no diversity), "
+            "0.0 = maximum diversity. Lower values penalize redundant results "
+            "more strongly. Filtering is skipped at 1.0 (no diversity benefit)."
+        ),
     )
     fusion_weights: dict[str, float] = Field(
-        default_factory=lambda: {"lexical": 0.5, "vector": 0.5},
-        description="Weights assigned to different search methods during fusion",
+        default_factory=lambda: {
+            "graph_entities": 1.0,
+            "text_units": 1.0,
+            "lightrag_entities": 1.0,
+            "lightrag_relationships": 1.0,
+            "lightrag_chunks": 1.0,
+            "opensearch_all": 1.0,
+        },
+        description=(
+            "Per-source-bucket weights applied during weighted fusion "
+            "(FusionMethod.WEIGHTED). Keys are the retrieval source buckets "
+            "emitted by the search strategies (graph_entities, text_units, "
+            "lightrag_entities, lightrag_relationships, lightrag_chunks, "
+            "opensearch_all). A bucket without a key defaults to 1.0. Unused by "
+            "the default RRF fusion."
+        ),
     )
 
 

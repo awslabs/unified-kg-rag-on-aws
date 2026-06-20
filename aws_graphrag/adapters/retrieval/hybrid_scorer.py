@@ -79,7 +79,7 @@ class HybridScorer(MetricsMixin):
 
         combined_results = fusion_func(normalized_map)
 
-        if self.fusion_config.diversity_lambda > 0.0:
+        if self.fusion_config.diversity_lambda < 1.0:
             combined_results = self._apply_diversity_filtering(
                 combined_results, top_k=top_k, retrieval_multiplier=retrieval_multiplier
             )
@@ -159,6 +159,14 @@ class HybridScorer(MetricsMixin):
         weights = self.fusion_config.fusion_weights
 
         for name, results in result_map.items():
+            if name not in weights:
+                logger.warning(
+                    "Weighted fusion: source bucket '%s' has no configured weight "
+                    "in fusion_weights (%s); defaulting to 1.0. Configure a weight "
+                    "for this bucket or use RRF fusion to avoid silent equal weighting.",
+                    name,
+                    sorted(weights),
+                )
             weight = weights.get(name, 1.0)
             for result in results:
                 key = self._get_result_key(result)
@@ -184,7 +192,9 @@ class HybridScorer(MetricsMixin):
         retrieval_multiplier: int = 1,
     ) -> list[RetrievalResult]:
         lambda_val = self.fusion_config.diversity_lambda
-        if not results or lambda_val <= 0 or len(results) < 2:
+        # MMR penalty term (1 - lambda) is only active when lambda < 1.0; at 1.0
+        # the result degenerates to pure relevance ordering, so skip the work.
+        if not results or lambda_val >= 1.0 or len(results) < 2:
             return results
 
         target_count = top_k * retrieval_multiplier
