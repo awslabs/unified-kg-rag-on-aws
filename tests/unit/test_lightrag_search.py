@@ -141,3 +141,36 @@ async def test_long_empty_keyword_query_does_not_fall_back(config: Config) -> No
     # No fallback -> no graph retrieval for a long keyword-less query.
     assert os_r.calls == []
     assert neptune_r.calls == []
+
+
+class FailingRetriever:
+    """Always raises — exercises the per-source degradation branches."""
+
+    def __init__(self, tag: str) -> None:
+        self.tag = tag
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        raise RuntimeError(f"{self.tag} backend down")
+
+
+async def test_per_source_failure_degrades_to_empty_not_crash(config: Config) -> None:
+    # If the document retriever raises, each _retrieve_* swallows it and returns
+    # {}; the strategy still produces a SearchResult rather than propagating.
+    spec = get_strategy_spec(SearchStrategy.HYBRID)
+    strategy = spec.strategy_class(
+        config=config,
+        retrievers={
+            RetrieverRole.DOCUMENT.value: FailingRetriever("document"),
+            RetrieverRole.GRAPH.value: FailingRetriever("graph"),
+        },
+    )
+    strategy.hybrid_scorer.fuse_and_rerank_results = (  # type: ignore[method-assign]
+        lambda results_dict, top_k, retrieval_multiplier=1, query=None: [
+            r for results in results_dict.values() for r in results
+        ]
+    )
+    result = await strategy.asearch(
+        _query(SearchStrategy.HYBRID, ll_keywords=["a"], hl_keywords=["b"])
+    )
+    # Degrades gracefully: no results, no exception.
+    assert result.results == []

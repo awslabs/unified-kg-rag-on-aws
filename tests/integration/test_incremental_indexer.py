@@ -121,6 +121,32 @@ def test_changed_document_prunes_stale_artifacts(indexer) -> None:
     assert "e1" in pruned and "e2" in pruned  # all old artifacts of the changed doc
 
 
+def test_changed_document_does_not_prune_entity_shared_with_survivor(indexer) -> None:
+    # A changed doc and a surviving doc both reference 'shared'; pruning the
+    # changed doc's stale artifacts must NOT drop the shared entity (still
+    # referenced by the survivor), or the survivor's graph loses a reference.
+    inc, store, manager = indexer
+    a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
+    _, fps = inc.plan([a, b])
+    inc.commit(
+        [_lineage("/a.txt", ["shared", "only_a"])],
+        fps,
+        entities=[Entity(id="shared", name="S"), Entity(id="only_a", name="A")],
+    )
+    inc.commit(
+        [_lineage("/b.txt", ["shared"])], fps, entities=[Entity(id="shared", name="S")]
+    )
+
+    # Edit /a.txt -> prune its stale artifacts before re-extraction.
+    edited = [_doc("/a.txt", "EDITED"), b]
+    delta, _ = inc.plan(edited)
+    inc.prune_changed(delta)
+
+    pruned = [i for call in manager.delete_calls for ids in call.values() for i in ids]
+    assert "only_a" in pruned  # exclusive to the changed doc -> pruned
+    assert "shared" not in pruned  # still referenced by surviving /b.txt -> kept
+
+
 def test_deleted_document_removes_exclusive_artifacts(indexer) -> None:
     inc, store, manager = indexer
     a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
@@ -181,7 +207,15 @@ def test_shared_artifacts_are_not_deleted(indexer) -> None:
 
     delta, _ = inc.plan([a])  # delete b
     inc.remove_deleted(delta)
-    # Shared entity is still referenced by a -> must not be deleted.
-    if manager.delete_calls:
-        for ids in manager.delete_calls[0].values():
-            assert "shared" not in ids
+    # Shared entity is still referenced by a -> must never be deleted. The
+    # assertion must hold whether or not a delete batch was emitted: collect all
+    # ids ever passed to delete_documents and require "shared" is absent.
+    all_deleted_ids = [
+        artifact_id
+        for call in manager.delete_calls
+        for ids in call.values()
+        for artifact_id in ids
+    ]
+    assert "shared" not in all_deleted_ids
+    # b's registry record is still removed even though its only artifact survives.
+    assert {r.doc_id for r in store.list_all()} == {compute_doc_id("/a.txt")}
