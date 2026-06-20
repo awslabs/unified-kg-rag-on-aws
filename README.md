@@ -118,7 +118,13 @@ The framework implements a sophisticated indexing and retrieval pipeline:
 
 #### Multi-Strategy Architecture
 
-The framework employs four distinct search strategies, automatically selecting the optimal approach based on query analysis:
+The framework offers two retrieval methodologies — GraphRAG community-summary
+and LightRAG dual-level keyword — sharing one ingestion/indexing/caching/
+hybrid-search infrastructure and selectable per query via
+`RAGInput.search_strategy`. The GraphRAG `auto` strategy automatically selects
+the optimal approach based on query analysis.
+
+##### GraphRAG strategies
 
 **Simple Strategy**: Direct OpenSearch retrieval for basic queries
 - Vector and keyword search without graph traversal
@@ -142,6 +148,17 @@ The framework employs four distinct search strategies, automatically selecting t
 - Expands context through multiple search rounds
 - Convergence detection prevents infinite loops
 - Excellent for complex, multi-faceted questions requiring exploration
+
+##### LightRAG strategies (dual-level keyword)
+
+**Mix / Hybrid Strategy**: Extracts high-level and low-level keywords
+(`KeywordsExtractionPrompt`), then queries the relationship vector index
+(high-level) + entity index (low-level) with Neptune neighbourhood expansion.
+`mix` additionally blends naive vector chunk retrieval. Both run through the
+same `HybridScorer` (lexical + semantic + graph, RRF + Bedrock rerank).
+
+**Naive Strategy**: Pure vector chunk retrieval — the LightRAG baseline, useful
+as a fast lexical/semantic fallback and for comparison evaluation.
 
 #### Component Architecture
 
@@ -233,6 +250,12 @@ aws:
 
   bedrock:
     region_name: "us-west-2"  # Bedrock service region
+    # Optional Amazon Bedrock Guardrails — applied to every LLM call (content/
+    # PII/grounding policies). Disabled unless an identifier is set.
+    guardrail:
+      identifier: null        # Guardrail ID or ARN; enables guardrails when set
+      version: "DRAFT"        # "DRAFT" or a published version number
+      trace: false            # Emit guardrail trace for auditing
 
   neptune:
     endpoint: "your-neptune-cluster.cluster-xyz.us-east-1.neptune.amazonaws.com"  # Required: Neptune cluster endpoint
@@ -451,6 +474,10 @@ run-ingestion --source-directory ./documents --config-path config.yaml --force-r
 
 # Resume from specific stage
 run-ingestion --source-directory ./documents --config-path config.yaml --pipeline-id <id> --resume-from-stage graph_extraction
+
+# Emit pipeline metrics as CloudWatch EMF (auto-extracted by CloudWatch Logs;
+# default is `none`, a no-op sink with zero AWS dependency)
+run-ingestion --source-directory ./documents --config-path config.yaml --metrics-sink cloudwatch
 ```
 
 #### 2. Query the Knowledge Graph
@@ -535,8 +562,8 @@ Create an evaluation dataset file (e.g., `my_eval_data.json`) with the following
 ```python
 import nest_asyncio
 
-from aws_graphrag.core import get_config
-from aws_graphrag.models import PipelineConfig, SearchStrategy, SearchType
+from aws_graphrag.shared import get_config
+from aws_graphrag.domain.models import PipelineConfig, SearchStrategy, SearchType
 from aws_graphrag.retrieval import RAGInput, create_rag_chain
 from aws_graphrag.ingestion import DataIngestionPipeline
 

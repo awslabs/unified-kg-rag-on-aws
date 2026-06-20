@@ -42,10 +42,10 @@ most extensions need **no edits to existing dispatch code**. See `CLAUDE.md` for
 the full guide. In short:
 
 - **New search strategy** — subclass `BaseSearchStrategy`, decorate with
-  `@register_strategy(SearchStrategy.X, required_retrievers=(...))`, export from
-  `retrieval/search_strategies/__init__.py`.
+  `@register_strategy(SearchStrategy.X, required_roles=(...))`, export from
+  `adapters/search_strategies/__init__.py`.
 - **New storage / LLM backend** — implement the relevant port in
-  `core/ports/` and register it; do not hardcode it into a manager's `__init__`.
+  `ports/` and register it; do not hardcode it into a manager's `__init__`.
 - **New evaluator** — subclass `BaseGraphRAGEvaluator`, add an
   `EVALUATOR_MAPPING` entry and an `EvaluatorType` enum value.
 - **New visualization renderer** — subclass `BaseRenderer`, decorate with

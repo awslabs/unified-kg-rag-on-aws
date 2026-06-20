@@ -39,13 +39,13 @@
 
 | 포트 | 위치 | 어댑터 | 비고 |
 |---|---|---|---|
-| `DocStatusPort` | `core/ports/doc_status.py` | `aws/dynamodb.py` (`DynamoDBDocStatusStore`), 테스트용 `FakeDocStatusStore` | 증분 인덱싱 문서 상태/계보 영속 |
-| `GraphIndexer` (쓰기측) | `storage/base.py` | `storage/neptune_indexer.py` | full + delta(`upsert_*`/`delete_by_id`) 단일 계약 |
-| `VectorIndexer` (쓰기측) | `storage/base.py` | `storage/opensearch_indexer.py` | 동일 |
-| `BaseGraphRAGRetriever` (읽기측) | `retrieval/base.py` | `retrieval/retrievers/{neptune,opensearch}_retriever.py` | 검색 어댑터 |
-| LLM/Embedding/Rerank 팩토리 | `aws/bedrock.py` | Bedrock 구현 | 향후 LLMPort 추출 대상(아래 §15) |
+| `DocStatusPort` | `ports/doc_status.py` | `adapters/aws/dynamodb.py` (`DynamoDBDocStatusStore`), 테스트용 `FakeDocStatusStore` | 증분 인덱싱 문서 상태/계보 영속 |
+| `GraphIndexer` (쓰기측) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py` | full + delta(`upsert_*`/`delete_by_id`) 단일 계약 |
+| `VectorIndexer` (쓰기측) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` | 동일 |
+| `BaseGraphRAGRetriever` (읽기측) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch}_retriever.py` | 검색 어댑터 |
+| LLM/Embedding/Rerank 팩토리 | `adapters/aws/bedrock.py` | Bedrock 구현 | 향후 LLMPort 추출 대상(아래 §15) |
 
-> 설계 노트: 쓰기측 포트는 `storage/`의 ABC, 읽기측 포트는 `retrieval/base.py`에 두어 어댑터와 가까이 배치합니다(중복 Protocol 정의를 두지 않음). `DocStatusPort`만 도메인이 직접 소유하는 `core/ports/`에 있습니다.
+> 설계 노트: 순수 포트(`DocStatusPort`, 쓰기측 indexer ABC)는 `ports/`에 모읍니다. 읽기측 추상 베이스(`BaseGraphRAGRetriever`/`BaseSearchStrategy`)는 `__init__`에서 인프라(HybridScorer/TokenManager)를 생성하는 "어댑터 베이스"라 `adapters/retrieval/base.py`에 두고 `ports/__init__`에서 발견용으로 re-export합니다(중복 Protocol 정의를 두지 않음).
 
 ### 2.2 역할 기반 검색 주입
 
@@ -57,16 +57,16 @@
 전략은 `self.graph_retriever` / `self.document_retriever`(베이스 클래스 프로퍼티)로만 접근하고, `rag_chain`의 역할→어댑터 빌더 맵이 실제 구현을 바인딩합니다. 따라서 그래프 백엔드를 교체해도 전략 코드는 수정하지 않습니다.
 
 ```python
-# retrieval/strategy_registry.py
+# domain/retrieval/strategy_registry.py
 @register_strategy(SearchStrategy.LOCAL, required_roles=(RetrieverRole.DOCUMENT, RetrieverRole.GRAPH))
 class LocalSearchStrategy(BaseSearchStrategy): ...
 ```
 
 ### 2.3 레지스트리
 
-- **검색 전략**: `retrieval/strategy_registry.py` — `@register_strategy(...)`로 `SearchStrategy` enum에 클래스와 필요한 역할을 등록.
+- **검색 전략**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)`로 `SearchStrategy` enum에 클래스와 필요한 역할을 등록.
 - **평가자**: `EvaluationManager.EVALUATOR_MAPPING` — `EvaluatorType` → 평가자 클래스.
-- **렌더러**: `visualization/renderers/base.py` — `@register_renderer("name")`.
+- **렌더러**: `adapters/renderers/base.py` — `@register_renderer("name")`.
 
 이 패턴은 기존의 `ParserFactory._loader_configs`(선언적 파서 등록)와 동일한 철학입니다.
 
@@ -74,7 +74,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 ## 3. 도메인 모델
 
-`models/` 패키지는 인프라 의존이 없는 순수 Pydantic 모델입니다.
+`domain/models/` 패키지는 인프라 의존이 없는 순수 Pydantic 모델입니다.
 
 - `Entity`(`name`, `description`, `type`, `text_unit_ids`, `community_ids`, `rank`, `frequency`, `confidence`, 임베딩 필드)
 - `Relationship`(`source_id`/`target_id`, `description`, `weight`, `text_unit_ids`, `description_embedding`)
@@ -88,7 +88,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 ## 4. 인제스천 파이프라인
 
-`ingestion/pipeline.py`의 `DataIngestionPipeline`이 12개 스테이지를 순서대로 실행합니다(`ingestion/pipeline_stages.py`).
+`application/ingestion/pipeline.py`의 `DataIngestionPipeline`이 12개 스테이지를 순서대로 실행합니다(`application/ingestion/pipeline_stages.py`).
 
 | # | 스테이지 | 모듈 | 비고 |
 |---|---|---|---|
@@ -103,9 +103,9 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 | 9 | Claim 해석 (선택) | `claim_resolver.py` | |
 | 10 | 그래프 분석 | `graph_analyzer.py` | 중심성(degree/betweenness/PageRank/eigenvector), 통계 |
 | 11 | 커뮤니티 탐지 | `community_detector.py` | 계층적 Leiden, 커뮤니티 리포트 생성 |
-| 12 | 인덱싱 | `storage/indexing_manager.py` | OpenSearch + Neptune |
+| 12 | 인덱싱 | `application/storage/indexing_manager.py` | OpenSearch + Neptune |
 
-**파이프라인 인프라**: 스테이지 체크포인트 기반 재개(`core/pipeline_manager.py`), S3 캐시 동기화(`aws/s3_cache.py`), `continue_on_error` 토글, 스테이지별 캐시(`core/cache_manager.py`). LLM 출력 파싱은 `FixingConfig` 기반 output-fixing 파서를 일관되게 사용합니다.
+**파이프라인 인프라**: 스테이지 체크포인트 기반 재개(`shared/pipeline_manager.py`), S3 캐시 동기화(`adapters/aws/s3_cache.py`), `continue_on_error` 토글, 스테이지별 캐시(`shared/cache_manager.py`). LLM 출력 파싱은 `FixingConfig` 기반 output-fixing 파서를 일관되게 사용합니다.
 
 **일반화 적용 사례**:
 - 관련성 게이트(claim/gleaning에서 어떤 엔티티를 프롬프트에 넣을지)는 토큰-Jaccard 정규표현식 휴리스틱이 아니라 `text_unit_ids` 계보 멤버십으로 판정 → 정확·언어 무관.
@@ -117,13 +117,13 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 문서 추가/변경/삭제 시 전체 재인덱싱 대신 델타만 처리합니다.
 
-1. **델타 감지** (`ingestion/delta_detector.py`): 경로 정규화 기반 안정적 `doc_id` + 콘텐츠 SHA-256 해시로 `{doc_id: content_hash}`를 만들고, `DocStatusPort.diff()`가 new/changed/unchanged/deleted로 분류.
+1. **델타 감지** (`domain/ingestion/delta_detector.py`): 경로 정규화 기반 안정적 `doc_id` + 콘텐츠 SHA-256 해시로 `{doc_id: content_hash}`를 만들고, `DocStatusPort.diff()`가 new/changed/unchanged/deleted로 분류.
 2. **stale 정리** (`IncrementalIndexer.prune_changed`): 변경 문서의 기존 아티팩트 중 *공유되지 않은* 것을 먼저 제거(재추출 후 사라진 엔티티가 그래프에 잔존하지 않도록).
 3. **델타 upsert** (`IndexingManager.index_delta`): Neptune은 Gremlin `coalesce(unfold, addV)` 멱등 upsert, OpenSearch는 live alias 인덱스에 id 기준 upsert. 관계 벡터 인덱스도 동일하게 갱신.
 4. **삭제 전파** (`remove_deleted`): 삭제 문서의 *독점* 아티팩트만 `delete_by_id`로 제거(공유 엔티티 보존). 텍스트 단위·엔티티·관계 인덱스 모두 대상.
 5. **레지스트리 갱신**: 처리한 문서를 `DocumentLineage`(문서별 아티팩트 id + suffix)로 `DocStatusRecord`에 기록.
 
-**병합 의미론**(`ingestion/merge/merger.py`, MS GraphRAG `update/*` 이식): 엔티티는 정규화된 이름 기준 병합(설명 결합, `text_unit_ids` union, `frequency` 재계산, 기존 id 보존+remap), 관계는 (source,target) 기준 병합(weight 평균), 커뮤니티는 id-offset append.
+**병합 의미론**(`domain/ingestion/merge/merger.py`, MS GraphRAG `update/*` 이식): 엔티티는 정규화된 이름 기준 병합(설명 결합, `text_unit_ids` union, `frequency` 재계산, 기존 id 보존+remap), 관계는 (source,target) 기준 병합(weight 평균), 커뮤니티는 id-offset append.
 
 활성화: `config.aws.dynamodb.enabled = true`.
 
@@ -131,9 +131,9 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 ## 6. 검색: 두 방법론
 
-`retrieval/rag_chain.py`의 `GraphRAGChain`(LCEL Runnable)이 전략 해석 → 질의 처리(번역·엔티티/키워드 추출) → 메모리 → 검색 → (RAG) 컨텍스트 빌드+답변 생성을 수행합니다. `RAGInput.search_strategy`로 방법론을 선택합니다.
+`application/retrieval/rag_chain.py`의 `GraphRAGChain`(LCEL Runnable)이 전략 해석 → 질의 처리(번역·엔티티/키워드 추출) → 메모리 → 검색 → (RAG) 컨텍스트 빌드+답변 생성을 수행합니다. `RAGInput.search_strategy`로 방법론을 선택합니다.
 
-### 6.1 GraphRAG 방법론 (`retrieval/search_strategies/`)
+### 6.1 GraphRAG 방법론 (`adapters/search_strategies/`)
 
 - **simple**: OpenSearch 전용 벡터/렉시컬, 그래프 없음.
 - **local**: 엔티티 중심 — 후보 엔티티 → Neptune 그래프 확장 → 빈도 필터 → 텍스트 단위 결합.
@@ -158,9 +158,9 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 ## 7. 하이브리드 스코어링과 토큰 관리
 
-- **HybridScorer** (`retrieval/hybrid_scorer.py`): 소스별 결과를 RRF(`rrf_k`) 또는 가중 융합, 다양성 필터링(`diversity_lambda`), Bedrock 리랭킹으로 결합. 가중치·방법은 `config.search.fusion`/`hybrid`.
-- **TokenManager** (`retrieval/token_manager.py`): 모델 한도 내 컨텍스트 최적화. 섹션 우선순위(TEXT/ENTITY/RELATIONSHIP/COMMUNITY) 기반 선택.
-- **토큰 카운팅** (`aws/token_counter.py`): Bedrock `count_tokens` API가 단일 진실 소스. 실패 시에만 공백 단어 수로 degrade(서드파티 토크나이저 미사용). 절단은 char 비율로 후보를 잡고 API로 검증하는 수렴 루프.
+- **HybridScorer** (`adapters/retrieval/hybrid_scorer.py`): 소스별 결과를 RRF(`rrf_k`) 또는 가중 융합, 다양성 필터링(`diversity_lambda`), Bedrock 리랭킹으로 결합. 가중치·방법은 `config.search.fusion`/`hybrid`.
+- **TokenManager** (`adapters/retrieval/token_manager.py`): 모델 한도 내 컨텍스트 최적화. 섹션 우선순위(TEXT/ENTITY/RELATIONSHIP/COMMUNITY) 기반 선택.
+- **토큰 카운팅** (`adapters/aws/token_counter.py`): Bedrock `count_tokens` API가 단일 진실 소스. 실패 시에만 공백 단어 수로 degrade(서드파티 토크나이저 미사용). 절단은 char 비율로 후보를 잡고 API로 검증하는 수렴 루프.
 
 ---
 
@@ -168,11 +168,11 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 | 서비스 | 모듈 | 용도 |
 |---|---|---|
-| **Bedrock** | `aws/bedrock.py` | LLM/임베딩/리랭킹. cross-region inference profile 자동 해석, thinking 모드, 1M 컨텍스트, prompt 캐싱, capability 테이블 |
-| **Neptune** | `aws/neptune.py` | Gremlin over `wss://`, SigV4 IAM, 배치 upsert/삭제 |
-| **OpenSearch** | `aws/opensearch.py` | 벡터(kNN/HNSW) + BM25, sync/async 클라이언트, alias 관리, bulk upsert/delete |
-| **S3** | `aws/s3_cache.py` | 파이프라인 캐시 동기화(AES256/KMS 암호화) |
-| **DynamoDB** | `aws/dynamodb.py` | 증분 인덱싱 문서-상태 레지스트리 |
+| **Bedrock** | `adapters/aws/bedrock.py` | LLM/임베딩/리랭킹. cross-region inference profile 자동 해석, thinking 모드, 1M 컨텍스트, prompt 캐싱, capability 테이블 |
+| **Neptune** | `adapters/aws/neptune.py` | Gremlin over `wss://`, SigV4 IAM, 배치 upsert/삭제 |
+| **OpenSearch** | `adapters/aws/opensearch.py` | 벡터(kNN/HNSW) + BM25, sync/async 클라이언트, alias 관리, bulk upsert/delete |
+| **S3** | `adapters/aws/s3_cache.py` | 파이프라인 캐시 동기화(AES256/KMS 암호화) |
+| **DynamoDB** | `adapters/aws/dynamodb.py` | 증분 인덱싱 문서-상태 레지스트리 |
 
 모든 어댑터는 `boto_session`을 주입받을 수 있어(기본은 `config.aws.profile_name`으로 생성) 테스트 시 fake/moto 세션을 주입할 수 있습니다.
 
@@ -196,20 +196,20 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 - `InteractiveRenderer`(pyvis 네트워크 + 커뮤니티 계층), `StaticRenderer`(Bokeh degree/centrality/community-size)
 - 레이아웃: Bedrock Node2Vec 임베딩 + UMAP 차원 축소(실패 시 spring layout)
-- **독립 실행** (`cli/run_visualization.py`): 인제스천 없이 내보낸 그래프 JSON(`export_visualization_data` 출력 포맷: `nodes`/`edges`/`layout`/`communities.hierarchy`)을 읽어 타입 객체로 rehydrate 후 등록된 렌더러로 렌더.
+- **독립 실행** (`application/cli/run_visualization.py`): 인제스천 없이 내보낸 그래프 JSON(`export_visualization_data` 출력 포맷: `nodes`/`edges`/`layout`/`communities.hierarchy`)을 읽어 타입 객체로 rehydrate 후 등록된 렌더러로 렌더.
 
 ---
 
 ## 11. 프롬프트와 프롬프트 튜닝
 
 - **프롬프트**(`prompts/`): `BasePrompt`(frozen dataclass) 기반 클래스. 시스템/휴먼 템플릿을 `.py`로 버전 관리. `CustomPromptConfig`로 모든 프롬프트를 설정에서 오버라이드(의료/법률/금융 도메인 등).
-- **프롬프트 튜닝**(`prompts/tuner.py`, MS `prompt_tune` 이식): 코퍼스 샘플 → Bedrock LLM으로 도메인/언어/persona/entity-types 프로파일(`CorpusProfilePrompt`) → 도메인 적응 `custom_prompts` YAML 조각 생성. CLI `run-prompt-tuning`. 런타임 자동 적용이 아니라 사용자가 검토 후 config에 반영하는 명시적 단계.
+- **프롬프트 튜닝**(`application/prompts/tuner.py`, MS `prompt_tune` 이식): 코퍼스 샘플 → Bedrock LLM으로 도메인/언어/persona/entity-types 프로파일(`CorpusProfilePrompt`) → 도메인 적응 `custom_prompts` YAML 조각 생성. CLI `run-prompt-tuning`. 런타임 자동 적용이 아니라 사용자가 검토 후 config에 반영하는 명시적 단계.
 
 ---
 
 ## 12. 설정 시스템
 
-`models/config.py`의 중첩 Pydantic 트리(루트 `Config`), 로딩은 `core/config.py`(`get_config`), 스키마 예시는 `config-template.yaml`.
+`domain/models/config.py`의 중첩 Pydantic 트리(루트 `Config`), 로딩은 `shared/config.py`(`get_config`), 스키마 예시는 `config-template.yaml`.
 
 - 섹션: `aws`(bedrock/neptune/opensearch/s3/dynamodb), `fixing`, `processing`(chunking/translation/graph_extraction/gleaning/claim_extraction), `graph`(analysis/community_detection/visualization), `indexing`(opensearch/neptune), `search`(hybrid/fusion/reranking/global_search/drift_search/lightrag_search/token_manager), `memory`, `cache`, `logging`, `evaluation`, `custom_prompts`.
 - **설정 기반 일반화**: 언어→분석기 매핑(`language_analyzers`), OpenSearch clause budget(`max_total_clauses` 등), LightRAG 폴백 길이, gleaning 스케일 상수, eigenvector 수렴 파라미터 모두 설정 노출.
@@ -242,14 +242,14 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 대부분의 확장은 레지스트리 등록만으로 가능하며 디스패치 코드를 수정하지 않습니다(자세한 내용 `CONTRIBUTING.md`/`CLAUDE.md`).
 
-- **새 검색 전략**: `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...))` + `search_strategies/__init__.py` export.
+- **새 검색 전략**: `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...))` + `adapters/search_strategies/__init__.py` export.
 - **새 스토리지/LLM 백엔드**: 해당 포트(ABC) 구현 후 레지스트리/빌더에 바인딩. 매니저 `__init__`에 하드코딩 금지.
 - **새 평가자**: `BaseGraphRAGEvaluator` 상속 + `EVALUATOR_MAPPING` + `EvaluatorType` enum 추가.
 - **새 렌더러**: `BaseRenderer` 상속 + `@register_renderer("name")`.
 
 ### 알려진 향후 작업 (정직한 갭)
 
-- **LLMPort/EmbeddingPort 미도입**: 현재 ~18개 도메인 모듈이 `aws/bedrock.py` 팩토리를 직접 import합니다. LangChain 호환 객체를 반환하므로 호출 측은 공급자 무관하지만, *생성* 측이 Bedrock에 결합돼 있습니다. 비-Bedrock 공급자 교체를 지원하려면 LLM/Embedding 포트 추출이 가장 높은 ROI의 다음 단계입니다.
+- **LLMPort/EmbeddingPort 미도입**: 현재 ~18개 도메인 모듈이 `adapters/aws/bedrock.py` 팩토리를 직접 import합니다. LangChain 호환 객체를 반환하므로 호출 측은 공급자 무관하지만, *생성* 측이 Bedrock에 결합돼 있습니다. 비-Bedrock 공급자 교체를 지원하려면 LLM/Embedding 포트 추출이 가장 높은 ROI의 다음 단계입니다.
 - **`SearchQuery.label_prefixes`/`index_prefixes`**: 어댑터 어휘가 도메인 질의 모델에 남아 있습니다. `Collection` enum(이미 정의됨)으로 어댑터에 완전 위임하는 추가 리팩터가 가능합니다.
 - **CachePort**: 캐시(로컬/S3)는 현재 구체 클래스로 접근합니다. 제3의 캐시 백엔드가 필요해질 때 포트화하면 됩니다.
 - **증분 인덱싱 write-back 미연결(표준 CLI 경로)**: `DocumentLoadingStage._apply_incremental_filter`는 DynamoDB 레지스트리를 *읽어* 미변경 문서를 걸러내지만, 표준 `run-ingestion` 파이프라인은 처리 완료된 문서를 레지스트리에 *기록*하지 않습니다(기록은 `IncrementalIndexer._record_processed` 경로에만 존재). 따라서 `aws.dynamodb.enabled=true`로 표준 인제스천을 반복 실행하면 레지스트리가 비어 있어 매번 전 문서가 `NEW`로 분류되고 필터가 무력화됩니다. 증분 동작을 표준 CLI에서 실제로 활성화하려면 인덱싱 성공 후 lineage를 구성해 `doc_status.put`으로 write-back하는 종단 스테이지가 필요합니다. (현재 `IncrementalIndexer` 오케스트레이션 경로는 통합 테스트로 검증돼 있으나 표준 CLI에는 미배선)
