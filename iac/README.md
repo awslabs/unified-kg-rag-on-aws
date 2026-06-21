@@ -33,11 +33,37 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `vpc_id` | _(none)_ | **reuse** an existing VPC instead of creating one |
 | `max_azs` | `2` | AZs for a newly-created VPC |
 | `cache_bucket_name` | _(none)_ | **reuse** an existing S3 cache bucket instead of creating one |
-| `neptune_instance` | `db.r5.large` | Neptune instance class |
-| `opensearch_instance` | `r6g.large.search` | OpenSearch data node type |
-| `opensearch_count` | `2` | OpenSearch data node count |
+| `neptune_instance` | `db.r6g.large` | Neptune instance class (Graviton) |
+| `neptune_instances` | `1` | Neptune instances; `>=2` ⇒ Multi-AZ HA |
+| `opensearch_instance` | `r6g.large.search` | OpenSearch data node type (Graviton) |
+| `opensearch_count` | `2` | OpenSearch data node count (`>1` ⇒ dedicated masters + zone awareness) |
+| `backup_retention_days` | `7` | Neptune automated backup retention |
 | `guardrail_identifier` | _(none)_ | **reuse** an existing Bedrock guardrail |
+| `use_cmk` | `false` | customer-managed KMS key for at-rest encryption (S3/Neptune/OpenSearch/SNS/DDB) |
+| `vpc_flow_logs` | `false` | enable VPC flow logs (created VPC only) |
+| `deletion_protection` | `false` | protect Neptune/OpenSearch from deletion |
+| `bedrock_model_arns` | _(none)_ | scope Bedrock IAM to specific model ARNs (list) |
+| `alarm_email` | _(none)_ | subscribe an email to the pipeline alarm topic |
+| `enable_cdk_nag` | `false` | run cdk-nag AwsSolutions (Well-Architected) checks at synth |
 | `removal_destroy` | `true` | `DESTROY` (dev) vs `RETAIN` (prod) on stack deletion |
+
+### Well-Architected
+
+The stacks apply WAF defaults out of the box — least-privilege IAM (Bedrock
+scoped to model/inference-profile ARNs, `neptune-db:connect`, domain-scoped
+`es:ESHttp*`), encryption in transit + at rest, Graviton instances, S3 cache
+lifecycle + access logs, Step Functions X-Ray tracing + execution logging,
+CloudWatch dashboard + failure alarm, and an SSL-only alarm topic. Production
+hardening is opt-in via the flags above. Validate with:
+
+```bash
+cdk synth -c enable_cdk_nag=true                       # dev
+cdk synth -c enable_cdk_nag=true -c use_cmk=true \
+  -c vpc_flow_logs=true -c neptune_instances=2 \
+  -c deletion_protection=true -c removal_destroy=false  # prod-hardened
+```
+Both report zero AwsSolutions findings (accepted findings are documented in
+`iac/nag_suppressions.py`).
 
 ## Usage
 

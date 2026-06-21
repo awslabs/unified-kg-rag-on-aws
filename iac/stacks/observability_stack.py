@@ -44,9 +44,7 @@ class ObservabilityStack(Stack):
             comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
             alarm_description="aws-graphrag ingestion pipeline had a failed execution",
         )
-        failed_alarm.add_alarm_action(
-            cw_actions.SnsAction(orchestration.alarm_topic)
-        )
+        failed_alarm.add_alarm_action(cw_actions.SnsAction(orchestration.alarm_topic))
 
         # Dashboard: execution health + a couple of EMF pipeline metrics.
         dashboard = cw.Dashboard(

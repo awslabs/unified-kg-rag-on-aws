@@ -41,7 +41,12 @@ def stack_id(name: str) -> str:
 security = SecurityStack(app, stack_id("security"), config=config, env=env)
 networking = NetworkingStack(app, stack_id("networking"), config=config, env=env)
 storage = StorageStack(
-    app, stack_id("storage"), config=config, networking=networking, env=env
+    app,
+    stack_id("storage"),
+    config=config,
+    networking=networking,
+    kms_key=security.kms_key,
+    env=env,
 )
 compute = ComputeStack(
     app,
@@ -49,6 +54,7 @@ compute = ComputeStack(
     config=config,
     networking=networking,
     storage=storage,
+    kms_key=security.kms_key,
     env=env,
 )
 orchestration = OrchestrationStack(
@@ -57,6 +63,7 @@ orchestration = OrchestrationStack(
     config=config,
     networking=networking,
     compute=compute,
+    kms_key=security.kms_key,
     env=env,
 )
 ObservabilityStack(
@@ -70,5 +77,22 @@ ObservabilityStack(
 # Tag everything for cost allocation / ownership.
 cdk.Tags.of(app).add("project", "aws-graphrag")
 cdk.Tags.of(app).add("env", config.env_name)
+
+# Well-Architected checks at synth time (opt-in: -c enable_cdk_nag=true).
+if config.enable_cdk_nag:
+    from cdk_nag import AwsSolutionsChecks
+
+    from iac import nag_suppressions
+
+    nag_suppressions.apply(
+        {
+            "networking": networking,
+            "storage": storage,
+            "compute": compute,
+            "orchestration": orchestration,
+        },
+        config,
+    )
+    cdk.Aspects.of(app).add(AwsSolutionsChecks(verbose=True))
 
 app.synth()

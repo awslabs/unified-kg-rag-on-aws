@@ -19,9 +19,12 @@ incremental path simply enables aws.dynamodb via config; the same phases run).
 
 from __future__ import annotations
 
-from aws_cdk import Duration, Stack
+from aws_cdk import CfnOutput, Duration, Stack
 from aws_cdk import aws_ecs as ecs  # noqa: F401  (FargatePlatformVersion)
+from aws_cdk import aws_iam as iam
+from aws_cdk import aws_logs as logs
 from aws_cdk import aws_sns as sns
+from aws_cdk import aws_sns_subscriptions as subscriptions
 from aws_cdk import aws_stepfunctions as sfn
 from aws_cdk import aws_stepfunctions_tasks as tasks
 from constructs import Construct
@@ -42,8 +45,13 @@ PHASES: list[tuple[str, str, list[str]]] = [
     (
         "GraphBuild",
         "graph_extraction",
-        ["graph_extraction", "gleaning", "graph_resolution",
-         "claim_extraction", "claim_resolution"],
+        [
+            "graph_extraction",
+            "gleaning",
+            "graph_resolution",
+            "claim_extraction",
+            "claim_resolution",
+        ],
     ),
     ("Analysis", "graph_analysis", ["graph_analysis", "community_detection"]),
     ("Index", "indexing", ["indexing"]),
@@ -58,6 +66,7 @@ class OrchestrationStack(Stack):
         config: DeploymentConfig,
         networking: NetworkingStack,
         compute: ComputeStack,
+        kms_key=None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -66,7 +75,32 @@ class OrchestrationStack(Stack):
         self.compute = compute
 
         self.alarm_topic = sns.Topic(
-            self, "PipelineAlarms", topic_name=f"{config.prefix}-pipeline-alarms"
+            self,
+            "PipelineAlarms",
+            topic_name=f"{config.prefix}-pipeline-alarms",
+            master_key=kms_key,  # SSE for the topic when a CMK is provided
+        )
+        # Require TLS for all publishers (defense in depth).
+        self.alarm_topic.add_to_resource_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.DENY,
+                principals=[iam.AnyPrincipal()],
+                actions=["sns:Publish"],
+                resources=[self.alarm_topic.topic_arn],
+                conditions={"Bool": {"aws:SecureTransport": "false"}},
+            )
+        )
+        if config.alarm_email:
+            self.alarm_topic.add_subscription(
+                subscriptions.EmailSubscription(config.alarm_email)
+            )
+
+        # Execution logging for audit/debug (operational excellence).
+        self.log_group = logs.LogGroup(
+            self,
+            "PipelineLogs",
+            log_group_name=f"/aws-graphrag/{config.env_name}/pipeline",
+            retention=logs.RetentionDays.ONE_MONTH,
         )
 
         definition = self._build_definition()
@@ -76,7 +110,10 @@ class OrchestrationStack(Stack):
             state_machine_name=f"{config.prefix}-ingestion",
             definition_body=sfn.DefinitionBody.from_chainable(definition),
             timeout=Duration.hours(6),
+            tracing_enabled=True,  # X-Ray
+            logs=sfn.LogOptions(destination=self.log_group, level=sfn.LogLevel.ALL),
         )
+        CfnOutput(self, "StateMachineArn", value=self.state_machine.state_machine_arn)
 
     # --------------------------------------------------------- phase task
     def _phase_task(
@@ -156,7 +193,5 @@ class OrchestrationStack(Stack):
         cursor = phase_tasks[0]
         for nxt in phase_tasks[1:]:
             cursor = cursor.next(nxt)  # type: ignore[union-attr]
-        phase_tasks[-1].next(
-            sfn.Succeed(self, "PipelineComplete")
-        )
+        phase_tasks[-1].next(sfn.Succeed(self, "PipelineComplete"))
         return chain
