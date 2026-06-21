@@ -1,0 +1,20 @@
+{
+  "app": "python app.py",
+  "watch": { "include": ["**"], "exclude": ["README.md", "cdk*.json", "**/__pycache__"] },
+  "context": {
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:validateSnapshotRemovalPolicy": true,
+
+    "env_name": "dev",
+    "network_mode": "private",
+    "max_azs": 2,
+    "neptune_instance": "db.r5.large",
+    "opensearch_instance": "r6g.large.search",
+    "opensearch_count": 2,
+    "removal_destroy": true,
+
+    "_doc": "Override with -c key=value. Reuse infra: -c vpc_id=vpc-xxx -c cache_bucket_name=my-bucket. Public egress: -c network_mode=public. Existing guardrail: -c guardrail_identifier=gr-xxx."
+  }
+}

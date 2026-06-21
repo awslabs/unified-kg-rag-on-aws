@@ -1,5 +1,6 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 import argparse
+import os
 import sys
 from datetime import datetime
 from importlib.metadata import version
@@ -53,8 +54,9 @@ class CommandLineInterface:
         parser.add_argument(
             "--source-directory",
             type=str,
-            required=True,
-            help="Path to directory containing source documents to be processed",
+            default=os.getenv("GRAPHRAG_SOURCE_DIRECTORY"),
+            help="Path to directory containing source documents to be processed "
+            "(falls back to the GRAPHRAG_SOURCE_DIRECTORY env var)",
         )
         parser.add_argument(
             "--target-directory",
@@ -90,7 +92,9 @@ class CommandLineInterface:
         parser.add_argument(
             "--pipeline-id",
             type=str,
-            help="Unique identifier of an existing pipeline run to resume or inspect",
+            default=os.getenv("GRAPHRAG_PIPELINE_ID"),
+            help="Unique identifier of an existing pipeline run to resume or inspect "
+            "(falls back to the GRAPHRAG_PIPELINE_ID env var)",
         )
         parser.add_argument(
             "--resume-from-stage",
