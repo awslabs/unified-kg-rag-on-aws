@@ -37,14 +37,16 @@ env = cdk.Environment(account=account, region=deploy_region)
 bedrock_env = cdk.Environment(
     account=account, region=config.bedrock_region or deploy_region
 )
-prefix = config.prefix
+stack_prefix = config.stack_prefix
 
 
 def stack_id(name: str) -> str:
-    return f"{prefix}-{name}"
+    # PascalCase stack ids (GraphRagNetwork, ...) to match the account's other
+    # assets (NaviWikiGraph, AnchorNetwork) — no env prefix.
+    return f"{stack_prefix}{name}"
 
 
-security = SecurityStack(app, stack_id("security"), config=config, env=env)
+security = SecurityStack(app, stack_id("Security"), config=config, env=env)
 # The guardrail is region-pinned to bedrock_region in its own stack. We avoid a
 # cross-region CloudFormation reference (those rewrite SSM/export plumbing across
 # every stack and cause export-in-use churn on the deploy-region stacks).
@@ -52,11 +54,11 @@ security = SecurityStack(app, stack_id("security"), config=config, env=env)
 # context value: deploy the guardrail stack first, then pass its id with
 # `-c guardrail_identifier=<id>` on subsequent deploys. When unset, compute
 # simply injects no guardrail env var (guardrails disabled).
-GuardrailStack(app, stack_id("guardrail"), config=config, env=bedrock_env)
-networking = NetworkingStack(app, stack_id("networking"), config=config, env=env)
+GuardrailStack(app, stack_id("Guardrail"), config=config, env=bedrock_env)
+networking = NetworkingStack(app, stack_id("Network"), config=config, env=env)
 storage = StorageStack(
     app,
-    stack_id("storage"),
+    stack_id("Storage"),
     config=config,
     networking=networking,
     kms_key=security.kms_key,
@@ -64,7 +66,7 @@ storage = StorageStack(
 )
 compute = ComputeStack(
     app,
-    stack_id("compute"),
+    stack_id("Compute"),
     config=config,
     networking=networking,
     storage=storage,
@@ -74,7 +76,7 @@ compute = ComputeStack(
 )
 orchestration = OrchestrationStack(
     app,
-    stack_id("orchestration"),
+    stack_id("Orchestration"),
     config=config,
     networking=networking,
     compute=compute,
@@ -84,7 +86,7 @@ orchestration = OrchestrationStack(
 )
 ObservabilityStack(
     app,
-    stack_id("observability"),
+    stack_id("Observability"),
     config=config,
     orchestration=orchestration,
     env=env,

@@ -101,7 +101,7 @@ class OrchestrationStack(Stack):
         self.log_group = logs.LogGroup(
             self,
             "PipelineLogs",
-            log_group_name=f"/aws-graphrag/{config.env_name}/pipeline",
+            log_group_name="/aws-graphrag/pipeline",
             retention=logs.RetentionDays.ONE_MONTH,
         )
 

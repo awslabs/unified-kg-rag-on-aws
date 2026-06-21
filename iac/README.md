@@ -7,14 +7,36 @@ Bedrock Guardrail.
 
 ## Stacks
 
+Stack ids are PascalCase with a `GraphRag` prefix and no env segment, matching
+the account's convention (e.g. `NaviWikiGraph`, `AnchorNetwork`); environments
+are separated by account/region and tracked via the `env` tag.
+
 | Stack | Resources |
 |---|---|
-| `…-networking` | VPC (reuse or create), subnets, security group, VPC endpoints (Bedrock/S3/DDB/ECR/CW/SFN/…) |
-| `…-storage` | Neptune cluster (IAM auth), OpenSearch domain (VPC, encrypted), DynamoDB doc-status table, S3 cache bucket |
-| `…-compute` | ECR repo, ECS cluster, Fargate task definition + least-privilege task role |
-| `…-orchestration` | Step Functions state machine — 4 resumable phases on Fargate + retries + SNS alarms |
-| `…-observability` | CloudWatch dashboard + failure alarm over the pipeline & EMF metrics |
-| `…-security` | Bedrock Guardrail (reuse or create a baseline PII/prompt-attack guardrail) |
+| `GraphRagNetwork` | VPC (reuse or create), subnets, security group, VPC endpoints (Bedrock/S3/DDB/ECR/CW/SFN/…) |
+| `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (VPC, encrypted), DynamoDB doc-status table, S3 cache bucket |
+| `GraphRagCompute` | ECR repo, ECS cluster, Fargate task definition + least-privilege task role |
+| `GraphRagOrchestration` | Step Functions state machine — 4 resumable phases on Fargate + retries + SNS alarms |
+| `GraphRagObservability` | CloudWatch dashboard + failure alarm over the pipeline & EMF metrics |
+| `GraphRagSecurity` | Shared customer-managed KMS key (optional, `use_cmk`) |
+| `GraphRagGuardrail` | Bedrock Guardrail, **pinned to `bedrock_region`** (reuse or create a baseline PII/prompt-attack guardrail) |
+
+> **Guardrail is region-pinned.** A guardrail must live in the Bedrock *runtime*
+> region (`bedrock_region`), which can differ from the deploy region that hosts
+> Neptune/OpenSearch. It is therefore its own stack. Because it lives in another
+> region, the two-step flow avoids cross-region CloudFormation references
+> (which churn every deploy-region stack's exports):
+>
+> ```bash
+> # 1) create the guardrail in bedrock_region, note its id from the output
+> cdk deploy GraphRagGuardrail -c bedrock_region=us-west-2 …
+> # 2) pass that id so compute injects BEDROCK_GUARDRAIL_IDENTIFIER
+> cdk deploy --all -c guardrail_identifier=<id> -c bedrock_region=us-west-2 …
+> ```
+>
+> Always pass `-c key=value` flags as **individual arguments** — collapsing them
+> into one shell variable corrupts context parsing (vpc_id is silently dropped →
+> `Vpc.from_lookup` falls back to a dummy VPC).
 
 The orchestration runs the ingestion CLI as four phases sharing one
 `--pipeline-id` (the app's S3 stage checkpoints hand off between phases):

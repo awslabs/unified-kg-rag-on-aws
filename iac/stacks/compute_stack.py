@@ -57,7 +57,7 @@ class ComputeStack(Stack):
         self.log_group = logs.LogGroup(
             self,
             "TaskLogs",
-            log_group_name=f"/aws-graphrag/{config.env_name}/tasks",
+            log_group_name="/aws-graphrag/tasks",
             retention=logs.RetentionDays.ONE_MONTH,
         )
 

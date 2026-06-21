@@ -94,8 +94,17 @@ class DeploymentConfig:
     removal_destroy: bool
 
     @property
+    def stack_prefix(self) -> str:
+        # PascalCase project name for CloudFormation stack ids — matches the
+        # account's convention (NaviWikiGraph, AnchorNetwork) which carries no
+        # env prefix (environments are separated by account/region).
+        return "GraphRag"
+
+    @property
     def prefix(self) -> str:
-        return f"{self.env_name}-graphrag"
+        # Lowercase prefix for *physical resource* names (S3/ECR require
+        # lowercase). No env segment, to match the account's naming convention.
+        return "graphrag"
 
     @property
     def is_private(self) -> bool:
@@ -140,7 +149,7 @@ class DeploymentConfig:
             opensearch_instance=str(ctx("opensearch_instance", "r6g.large.search")),
             opensearch_count=int(ctx("opensearch_count", 2)),
             doc_status_table=str(
-                ctx("doc_status_table", f"{env_name}-graphrag-doc-status")
+                ctx("doc_status_table", "graphrag-doc-status")
             ),
             backup_retention_days=int(ctx("backup_retention_days", 7)),
             fargate_cpu=int(ctx("fargate_cpu", 2048)),
