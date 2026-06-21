@@ -199,3 +199,7 @@ reference/
 references/
 
 config.yaml
+
+# CDK synth artifacts (synthesized from iac/)
+cdk.out/
+cdk.context.json
