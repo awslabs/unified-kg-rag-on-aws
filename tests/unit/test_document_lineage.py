@@ -74,3 +74,24 @@ def test_lineage_uses_stable_doc_id_not_runtime_document_id() -> None:
     text_units = [TextUnit(id="t1", text="...", document_ids=["run-specific-uuid"])]
     lineages = build_document_lineage(docs, text_units, [], [], [], [])
     assert lineages[0].doc_id == compute_doc_id("/a.txt")
+
+
+def test_community_report_attributed_via_its_community() -> None:
+    # A community report attaches to a document through its community's member
+    # text units, so deleting the document can prune the report.
+    from aws_graphrag.domain.models import Community, CommunityReport
+
+    docs = [_doc("d1", "/a.txt")]
+    text_units = [TextUnit(id="t1", text="...", document_ids=["d1"])]
+    community = Community(
+        id="comm1", name="C", level="0", parent="", children=[], text_unit_ids=["t1"]
+    )
+    report = CommunityReport(id="rep1", community_id="comm1", name="R")
+
+    lineages = build_document_lineage(
+        docs, text_units, [], [], [community], [], community_reports=[report]
+    )
+    a = compute_doc_id("/a.txt")
+    by_doc = {ln.doc_id: ln for ln in lineages}
+    assert by_doc[a].community_ids == ["comm1"]
+    assert by_doc[a].community_report_ids == ["rep1"]

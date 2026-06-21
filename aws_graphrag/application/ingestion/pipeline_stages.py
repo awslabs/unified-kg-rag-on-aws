@@ -1102,6 +1102,7 @@ class IndexingStage(PipelineStage):
             relationships=relationships,
             communities=communities,
             claims=claims,
+            community_reports=community_reports,
             suffix=suffix,
         )
         return incremental.commit(

@@ -214,6 +214,10 @@ class DocStatusRecord(BaseModel):
     claim_ids: list[str] = Field(
         default_factory=list, description="Claim ids produced by this document"
     )
+    community_report_ids: list[str] = Field(
+        default_factory=list,
+        description="Community-report ids this document contributed to",
+    )
     error_info: str | None = Field(
         default=None, description="Error detail if status is FAILED"
     )
@@ -244,6 +248,7 @@ class DocumentLineage(BaseModel):
     text_unit_ids: list[str] = Field(default_factory=list)
     community_ids: list[str] = Field(default_factory=list)
     claim_ids: list[str] = Field(default_factory=list)
+    community_report_ids: list[str] = Field(default_factory=list)
 
 
 class DocumentDelta(BaseModel):
