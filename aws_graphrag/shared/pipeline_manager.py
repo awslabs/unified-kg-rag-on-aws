@@ -347,11 +347,23 @@ class PipelineResumeManager:
         stage_names = [result["stage_name"] for result in stage_results]
 
         if explicit_stage not in stage_names:
+            # The resume target hasn't run yet — typical of phased execution where
+            # an earlier phase (separate task) recorded only the stages it ran and
+            # this phase resumes at the next one. Every recorded *completed* stage
+            # is by construction upstream of the resume target, so load them all
+            # to restore the upstream outputs (e.g. translated text units).
+            completed_stages = [
+                result["stage_name"]
+                for result in stage_results
+                if result["status"] == "completed"
+            ]
             logger.warning(
-                "Stage '%s' not found in pipeline history. Starting from it directly.",
+                "Stage '%s' not in pipeline history (phased resume); restoring %d "
+                "completed upstream stage(s) and starting from it.",
                 explicit_stage,
+                len(completed_stages),
             )
-            return explicit_stage, []
+            return explicit_stage, completed_stages
 
         explicit_index = stage_names.index(explicit_stage)
         completed_stages = [

@@ -113,6 +113,15 @@ class ComputeStack(Stack):
                 resources=["*"],
             )
         )
+        # Applying a Bedrock Guardrail on Converse/InvokeModel needs its own
+        # action, scoped to guardrails in this account (the guardrail lives in
+        # the Bedrock runtime region, which may differ from the deploy region).
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["bedrock:ApplyGuardrail"],
+                resources=[f"arn:aws:bedrock:*:{self.account}:guardrail/*"],
+            )
+        )
         # Neptune data-plane IAM auth: only the connect action is needed (the
         # Gremlin read/write verbs are authorized within the connection).
         role.add_to_policy(
