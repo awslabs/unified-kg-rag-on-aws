@@ -45,14 +45,14 @@ def stack_id(name: str) -> str:
 
 
 security = SecurityStack(app, stack_id("security"), config=config, env=env)
-# Region-pinned to bedrock_region; compute reads its id via cross-region refs.
-guardrail = GuardrailStack(
-    app,
-    stack_id("guardrail"),
-    config=config,
-    env=bedrock_env,
-    cross_region_references=True,
-)
+# The guardrail is region-pinned to bedrock_region in its own stack. We avoid a
+# cross-region CloudFormation reference (those rewrite SSM/export plumbing across
+# every stack and cause export-in-use churn on the deploy-region stacks).
+# Instead the guardrail id flows to compute via the `guardrail_identifier`
+# context value: deploy the guardrail stack first, then pass its id with
+# `-c guardrail_identifier=<id>` on subsequent deploys. When unset, compute
+# simply injects no guardrail env var (guardrails disabled).
+GuardrailStack(app, stack_id("guardrail"), config=config, env=bedrock_env)
 networking = NetworkingStack(app, stack_id("networking"), config=config, env=env)
 storage = StorageStack(
     app,
@@ -69,9 +69,7 @@ compute = ComputeStack(
     networking=networking,
     storage=storage,
     kms_key=security.kms_key,
-    guardrail_identifier=guardrail.guardrail_identifier,
-    # Needed to import the guardrail id from the bedrock-region stack.
-    cross_region_references=True,
+    guardrail_identifier=config.guardrail_identifier,
     env=env,
 )
 orchestration = OrchestrationStack(
