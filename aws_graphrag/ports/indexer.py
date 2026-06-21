@@ -173,6 +173,20 @@ class GraphIndexer(BaseIndexer):
     def upsert_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Idempotently merge relationships into the live graph (delta)."""
 
+    def read_entities(self, ids: list[str]) -> list[Entity]:
+        """Read existing entities by id for cross-run merge (read-merge-write).
+
+        Default returns ``[]`` (no read-back) so an adapter that cannot or does
+        not support reads simply falls back to overwrite-on-upsert. Adapters that
+        can read existing state (Neptune; the test fakes) override this.
+        """
+        return []
+
+    def read_relationships(self, ids: list[str]) -> list[Relationship]:
+        """Read existing relationships by id for cross-run merge. See
+        :meth:`read_entities`."""
+        return []
+
     @abstractmethod
     def delete_by_id(self, ids: list[str]) -> IndexingStats:
         """Delete vertices/edges by id (for removed/changed documents)."""

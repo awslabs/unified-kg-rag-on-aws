@@ -193,6 +193,10 @@ graph:
 indexing:
   reset: false
   additional_suffix: null
+  # On incremental (delta) runs, union the delta with existing graph state
+  # (description/text_unit_ids/frequency/weight) before upsert instead of
+  # overwriting. Requires a graph adapter that supports read-back. Off by default.
+  cross_run_merge: false
 
   # OpenSearch Indexing
   opensearch:

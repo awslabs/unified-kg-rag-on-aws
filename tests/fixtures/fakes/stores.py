@@ -77,6 +77,14 @@ class FakeGraphStore(_Recorder):
     def get_entity_count(self, suffixes: list[str]) -> int:
         return len(self.data.get("entities", {}))
 
+    def read_entities(self, ids: list[str]) -> list[Any]:
+        bucket = self.data.get("entities", {})
+        return [bucket[i] for i in ids if i in bucket]
+
+    def read_relationships(self, ids: list[str]) -> list[Any]:
+        bucket = self.data.get("relationships", {})
+        return [bucket[i] for i in ids if i in bucket]
+
 
 class FakeVectorStore(_Recorder):
     """In-memory stand-in for the OpenSearch vector indexer."""
