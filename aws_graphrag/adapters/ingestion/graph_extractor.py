@@ -216,6 +216,14 @@ class GraphExtractor(BaseProcessor):
         all_entities = self._merge_entities(all_entities)
         all_relationships = self._merge_relationships(all_relationships)
 
+        # Materialize entities referenced only by a relationship endpoint (the
+        # LLM mentioned them in a relation but did not list them as an entity),
+        # so those relationships are not later skipped as orphans. MS GraphRAG
+        # likewise lets relationships introduce entities.
+        all_entities = self._materialize_relationship_endpoints(
+            all_entities, all_relationships
+        )
+
         all_entities, filtered_count = self._filter_entities_by_confidence(all_entities)
         self.stats.entities_filtered_by_confidence = filtered_count
 
@@ -360,6 +368,40 @@ class GraphExtractor(BaseProcessor):
             )
 
         return filtered_entities, removed_count
+
+    def _materialize_relationship_endpoints(
+        self,
+        entities: list[Entity],
+        relationships: list[Relationship],
+    ) -> list[Entity]:
+        """Create stub entities for relationship endpoints not already extracted.
+
+        Endpoint ids are name-derived, so when the LLM references an entity only
+        inside a relationship (or it was extracted in another chunk) we add a
+        minimal entity for it rather than letting graph_builder drop the edge.
+        """
+        existing_ids = {e.id for e in entities}
+        stubs: dict[str, Entity] = {}
+        for rel in relationships:
+            for ent_id, name in (
+                (rel.source_id, rel.source_name),
+                (rel.target_id, rel.target_name),
+            ):
+                if not ent_id or ent_id in existing_ids or ent_id in stubs or not name:
+                    continue
+                stubs[ent_id] = Entity.model_validate(
+                    {
+                        "id": ent_id,
+                        "name": name,
+                        "text_unit_ids": list(rel.text_unit_ids or []),
+                    }
+                )
+        if stubs:
+            logger.info(
+                "Materialized %s entities referenced only by relationships",
+                len(stubs),
+            )
+        return entities + list(stubs.values())
 
     def _filter_orphan_relationships(
         self,

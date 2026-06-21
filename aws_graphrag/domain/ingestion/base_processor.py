@@ -134,17 +134,19 @@ class BaseProcessor:
                 )
                 return None
 
-            source_id = entity_name_to_id.get(source_name)
-            target_id = entity_name_to_id.get(target_name)
-
-            if not (source_id and target_id):
-                logger.warning(
-                    "Entity not found for relationship '%s' -> '%s' in text unit '%s'",
-                    source_name,
-                    target_name,
-                    text_unit.short_id,
-                )
-                return None
+            # Entity ids are deterministic from the normalized name, so an
+            # endpoint id is recoverable even when the entity was not listed in
+            # THIS chunk's entity block (the LLM commonly omits it, or it was
+            # extracted in another chunk). Prefer the locally-extracted id, but
+            # fall back to deriving it from the name rather than dropping a valid
+            # relationship (the global merge + orphan filter still guard
+            # integrity; missing endpoints are materialized as stub entities).
+            source_id = entity_name_to_id.get(source_name) or self._generate_entity_id(
+                source_name
+            )
+            target_id = entity_name_to_id.get(target_name) or self._generate_entity_id(
+                target_name
+            )
 
             rel_id = self._generate_relationship_id(source_name, target_name, rel_type)
             attributes = self._parse_attributes(rel_data.get("attributes"), text_unit)
