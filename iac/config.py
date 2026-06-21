@@ -42,6 +42,15 @@ Context keys (all optional; sensible defaults shown):
   alarm_email         None             subscribe an email to the alarm topic
   enable_cdk_nag      False            run cdk-nag AwsSolutions checks at synth
 
+  # --- Compute sizing (Fargate) ---
+  fargate_cpu         2048             task vCPU units (in-task ProcessPool
+                                       extractors scale with vCPU count)
+  fargate_memory      8192             task memory (MiB)
+
+  # --- Governance (propagated as cost-allocation / ownership tags) ---
+  owner               "aws-proserve"   `owner` tag on every resource
+  cost_center         "aws-graphrag"   `cost-center` tag on every resource
+
   # --- Lifecycle ---
   removal_destroy     True (dev)       DESTROY vs RETAIN on stack deletion
 """
@@ -68,6 +77,8 @@ class DeploymentConfig:
     opensearch_count: int
     doc_status_table: str
     backup_retention_days: int
+    fargate_cpu: int
+    fargate_memory: int
     # security
     guardrail_identifier: str | None
     use_cmk: bool
@@ -76,6 +87,9 @@ class DeploymentConfig:
     bedrock_model_arns: list[str] | None
     alarm_email: str | None
     enable_cdk_nag: bool
+    # governance (propagated as cost-allocation / ownership tags)
+    owner: str
+    cost_center: str
     # lifecycle
     removal_destroy: bool
 
@@ -129,6 +143,8 @@ class DeploymentConfig:
                 ctx("doc_status_table", f"{env_name}-graphrag-doc-status")
             ),
             backup_retention_days=int(ctx("backup_retention_days", 7)),
+            fargate_cpu=int(ctx("fargate_cpu", 2048)),
+            fargate_memory=int(ctx("fargate_memory", 8192)),
             guardrail_identifier=ctx("guardrail_identifier"),
             use_cmk=as_bool(ctx("use_cmk"), default=False),
             vpc_flow_logs=as_bool(ctx("vpc_flow_logs"), default=False),
@@ -136,5 +152,7 @@ class DeploymentConfig:
             bedrock_model_arns=ctx("bedrock_model_arns"),
             alarm_email=ctx("alarm_email"),
             enable_cdk_nag=as_bool(ctx("enable_cdk_nag"), default=False),
+            owner=str(ctx("owner", "aws-proserve")),
+            cost_center=str(ctx("cost_center", "aws-graphrag")),
             removal_destroy=as_bool(ctx("removal_destroy"), default=True),
         )

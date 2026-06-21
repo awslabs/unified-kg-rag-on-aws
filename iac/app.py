@@ -55,6 +55,7 @@ compute = ComputeStack(
     networking=networking,
     storage=storage,
     kms_key=security.kms_key,
+    guardrail_identifier=security.guardrail_identifier,
     env=env,
 )
 orchestration = OrchestrationStack(
@@ -63,6 +64,7 @@ orchestration = OrchestrationStack(
     config=config,
     networking=networking,
     compute=compute,
+    cache_bucket_name=storage.cache_bucket.bucket_name,
     kms_key=security.kms_key,
     env=env,
 )
@@ -74,9 +76,17 @@ ObservabilityStack(
     env=env,
 )
 
-# Tag everything for cost allocation / ownership.
-cdk.Tags.of(app).add("project", "aws-graphrag")
-cdk.Tags.of(app).add("env", config.env_name)
+# Tag everything for cost allocation / ownership / governance. These propagate
+# to every taggable resource in every stack (cost-allocation reports group on
+# `project` + `env` + `cost-center`).
+for tag_key, tag_value in {
+    "project": "aws-graphrag",
+    "env": config.env_name,
+    "managed-by": "cdk",
+    "owner": config.owner,
+    "cost-center": config.cost_center,
+}.items():
+    cdk.Tags.of(app).add(tag_key, tag_value)
 
 # Well-Architected checks at synth time (opt-in: -c enable_cdk_nag=true).
 if config.enable_cdk_nag:

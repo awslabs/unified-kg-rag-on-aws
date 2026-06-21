@@ -63,6 +63,12 @@ class ConfigLoader:
             "OPENSEARCH_USERNAME": ("aws", "opensearch", "username"),
             "OPENSEARCH_PASSWORD": ("aws", "opensearch", "password"),
             "BEDROCK_REGION": ("aws", "bedrock", "region_name"),
+            "BEDROCK_GUARDRAIL_IDENTIFIER": (
+                "aws",
+                "bedrock",
+                "guardrail",
+                "identifier",
+            ),
             "S3_BUCKET_NAME": ("aws", "s3", "bucket_name"),
         }
 

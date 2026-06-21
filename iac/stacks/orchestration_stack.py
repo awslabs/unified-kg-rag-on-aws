@@ -66,6 +66,7 @@ class OrchestrationStack(Stack):
         config: DeploymentConfig,
         networking: NetworkingStack,
         compute: ComputeStack,
+        cache_bucket_name: str,
         kms_key=None,
         **kwargs,
     ) -> None:
@@ -73,6 +74,7 @@ class OrchestrationStack(Stack):
         self.config = config
         self.networking = networking
         self.compute = compute
+        self.cache_bucket_name = cache_bucket_name
 
         self.alarm_topic = sns.Topic(
             self,
@@ -152,6 +154,12 @@ class OrchestrationStack(Stack):
                         ",".join(stages),
                         "--metrics-sink",
                         "cloudwatch",
+                        # Each phase is a separate Fargate task with its own local
+                        # disk, so the stage checkpoints/cache must round-trip
+                        # through S3 for the resume handoff between phases to work.
+                        "--s3-sync",
+                        "--s3-bucket-name",
+                        self.cache_bucket_name,
                     ],
                     environment=[
                         tasks.TaskEnvironmentVariable(

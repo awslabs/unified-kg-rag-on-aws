@@ -72,3 +72,14 @@ def test_enabled_property() -> None:
     assert cfg.aws.bedrock.guardrail.enabled is False
     cfg.aws.bedrock.guardrail.identifier = "gr-x"
     assert cfg.aws.bedrock.guardrail.enabled is True
+
+
+def test_guardrail_identifier_from_env(monkeypatch) -> None:
+    # IaC injects the deployed guardrail id via this env var (4-level nested
+    # config path); verify the override lands and enables guardrails.
+    monkeypatch.setenv("BEDROCK_GUARDRAIL_IDENTIFIER", "gr-from-env")
+    from aws_graphrag.shared.config import ConfigLoader
+
+    cfg = ConfigLoader().load_config()
+    assert cfg.aws.bedrock.guardrail.identifier == "gr-from-env"
+    assert cfg.aws.bedrock.guardrail.enabled is True

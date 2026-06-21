@@ -31,11 +31,13 @@ class ComputeStack(Stack):
         networking: NetworkingStack,
         storage: StorageStack,
         kms_key=None,
+        guardrail_identifier: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
         self.config = config
         self.kms_key = kms_key
+        self.guardrail_identifier = guardrail_identifier
 
         self.repository = ecr.Repository(
             self,
@@ -120,30 +122,35 @@ class ComputeStack(Stack):
     def _build_task_definition(
         self, networking: NetworkingStack, storage: StorageStack
     ) -> ecs.FargateTaskDefinition:
+        # CPU/memory are config-driven: the in-task ProcessPool extractors scale
+        # with vCPU count, so a larger corpus benefits from more CPU.
         task_def = ecs.FargateTaskDefinition(
             self,
             "IngestionTask",
-            cpu=2048,
-            memory_limit_mib=8192,
+            cpu=self.config.fargate_cpu,
+            memory_limit_mib=self.config.fargate_memory,
             task_role=self.task_role,
             ephemeral_storage_gib=40,
         )
+        environment = {
+            "AWS_REGION": self.region,
+            "BEDROCK_REGION": self.config.bedrock_region or self.region,
+            "NEPTUNE_ENDPOINT": storage.neptune_cluster.cluster_endpoint.hostname,
+            "OPENSEARCH_ENDPOINT": (
+                f"https://{storage.opensearch_domain.domain_endpoint}"
+            ),
+            "S3_BUCKET_NAME": storage.cache_bucket.bucket_name,
+            "GRAPHRAG_DOC_STATUS_TABLE": self.config.doc_status_table,
+            "LOG_FORMAT": "json",
+        }
+        if self.guardrail_identifier:
+            environment["BEDROCK_GUARDRAIL_IDENTIFIER"] = self.guardrail_identifier
         task_def.add_container(
             "app",
             image=ecs.ContainerImage.from_ecr_repository(self.repository, "latest"),
             logging=ecs.LogDriver.aws_logs(
                 stream_prefix="app", log_group=self.log_group
             ),
-            environment={
-                "AWS_REGION": self.region,
-                "BEDROCK_REGION": self.config.bedrock_region or self.region,
-                "NEPTUNE_ENDPOINT": storage.neptune_cluster.cluster_endpoint.hostname,
-                "OPENSEARCH_ENDPOINT": (
-                    f"https://{storage.opensearch_domain.domain_endpoint}"
-                ),
-                "S3_BUCKET_NAME": storage.cache_bucket.bucket_name,
-                "GRAPHRAG_DOC_STATUS_TABLE": self.config.doc_status_table,
-                "LOG_FORMAT": "json",
-            },
+            environment=environment,
         )
         return task_def
