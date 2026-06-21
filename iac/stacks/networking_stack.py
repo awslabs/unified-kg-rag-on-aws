@@ -33,6 +33,8 @@ class NetworkingStack(Stack):
         self.service_sg = self._build_service_security_group()
         if config.create_vpc:
             self._add_vpc_endpoints()
+            if config.vpc_flow_logs:
+                self._enable_flow_logs()
 
     # ------------------------------------------------------------------ VPC
     def _resolve_vpc(self) -> ec2.IVpc:
@@ -82,6 +84,14 @@ class NetworkingStack(Stack):
         sg.add_ingress_rule(sg, ec2.Port.tcp(8182), "Neptune Gremlin (intra-SG)")
         sg.add_ingress_rule(sg, ec2.Port.tcp(443), "OpenSearch HTTPS (intra-SG)")
         return sg
+
+    # --------------------------------------------------------- flow logs
+    def _enable_flow_logs(self) -> None:
+        self.vpc.add_flow_log(
+            "FlowLogs",
+            destination=ec2.FlowLogDestination.to_cloud_watch_logs(),
+            traffic_type=ec2.FlowLogTrafficType.ALL,
+        )
 
     # ------------------------------------------------------- VPC endpoints
     def _add_vpc_endpoints(self) -> None:

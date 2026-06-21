@@ -1,19 +1,19 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
-"""Security: an optional Amazon Bedrock Guardrail for the data plane.
+"""Security: shared CMK (optional) + Bedrock Guardrail.
 
-If config.guardrail_identifier is set, an existing guardrail is reused (the app
-attaches it via aws.bedrock.guardrail.identifier). Otherwise this stack creates
-a baseline guardrail (PII + prompt-attack filters) and exposes its identifier so
-the app config / Fargate env can reference it.
-
-IAM is otherwise least-privilege and lives with the resources that need it (the
-Fargate task role in compute_stack); this stack centralizes only the guardrail.
+- KMS: when config.use_cmk, a single customer-managed key encrypts at-rest data
+  across the deployment (S3 cache, Neptune, OpenSearch, SNS, DynamoDB). Key
+  rotation is enabled. When use_cmk is False, services use AWS-managed keys
+  (cheaper; fine for dev). Exposed as ``self.kms_key`` (None if disabled).
+- Guardrail: reuse config.guardrail_identifier, else create a baseline guardrail
+  (PII anonymization + prompt-attack filter).
 """
 
 from __future__ import annotations
 
-from aws_cdk import CfnOutput, Stack
+from aws_cdk import CfnOutput, RemovalPolicy, Stack
 from aws_cdk import aws_bedrock as bedrock
+from aws_cdk import aws_kms as kms
 from constructs import Construct
 
 from iac.config import DeploymentConfig
@@ -26,18 +26,38 @@ class SecurityStack(Stack):
         super().__init__(scope, construct_id, **kwargs)
         self.config = config
 
-        if config.guardrail_identifier:
-            # Reuse an existing guardrail; nothing to create.
-            self.guardrail_identifier = config.guardrail_identifier
-            CfnOutput(
-                self, "GuardrailIdentifier", value=config.guardrail_identifier
-            )
-            return
+        self.kms_key = self._build_kms_key()
+        self.guardrail_identifier = self._build_guardrail()
+        CfnOutput(self, "GuardrailIdentifier", value=self.guardrail_identifier)
+        if self.kms_key is not None:
+            CfnOutput(self, "KmsKeyArn", value=self.kms_key.key_arn)
+
+    # --------------------------------------------------------------- KMS
+    def _build_kms_key(self) -> kms.Key | None:
+        if not self.config.use_cmk:
+            return None
+        return kms.Key(
+            self,
+            "DataKey",
+            alias=f"alias/{self.config.prefix}-data",
+            description="aws-graphrag at-rest encryption key (S3/Neptune/OpenSearch/SNS/DDB)",
+            enable_key_rotation=True,
+            removal_policy=(
+                RemovalPolicy.DESTROY
+                if self.config.removal_destroy
+                else RemovalPolicy.RETAIN
+            ),
+        )
+
+    # --------------------------------------------------------- Guardrail
+    def _build_guardrail(self) -> str:
+        if self.config.guardrail_identifier:
+            return self.config.guardrail_identifier
 
         guardrail = bedrock.CfnGuardrail(
             self,
             "Guardrail",
-            name=f"{config.prefix}-guardrail",
+            name=f"{self.config.prefix}-guardrail",
             blocked_input_messaging="This request was blocked by content policy.",
             blocked_outputs_messaging="This response was blocked by content policy.",
             description="Baseline guardrail for aws-graphrag (PII + prompt attack).",
@@ -63,5 +83,4 @@ class SecurityStack(Stack):
                 )
             ),
         )
-        self.guardrail_identifier = guardrail.attr_guardrail_id
-        CfnOutput(self, "GuardrailIdentifier", value=guardrail.attr_guardrail_id)
+        return guardrail.attr_guardrail_id

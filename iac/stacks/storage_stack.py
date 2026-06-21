@@ -11,13 +11,16 @@
 
 from __future__ import annotations
 
-from aws_cdk import RemovalPolicy, Stack
+from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_dynamodb as dynamodb
+from aws_cdk import aws_iam as iam
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_neptune_alpha as neptune
 from aws_cdk import aws_opensearchservice as opensearch
 from aws_cdk import aws_s3 as s3
 from constructs import Construct
+
+from aws_cdk import aws_kms as kms
 
 from iac.config import DeploymentConfig
 from iac.stacks.networking_stack import NetworkingStack
@@ -30,6 +33,7 @@ class StorageStack(Stack):
         construct_id: str,
         config: DeploymentConfig,
         networking: NetworkingStack,
+        kms_key: kms.IKey | None = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -37,6 +41,7 @@ class StorageStack(Stack):
         self.vpc = networking.vpc
         self.service_sg = networking.service_sg
         self.app_subnets = networking.app_subnets
+        self.kms_key = kms_key  # shared CMK when config.use_cmk, else None
 
         self.removal_policy = (
             RemovalPolicy.DESTROY if config.removal_destroy else RemovalPolicy.RETAIN
@@ -46,6 +51,24 @@ class StorageStack(Stack):
         self.doc_status_table = self._build_doc_status_table()
         self.neptune_cluster = self._build_neptune()
         self.opensearch_domain = self._build_opensearch()
+        self._export_outputs()
+
+    # ------------------------------------------------------------ outputs
+    def _export_outputs(self) -> None:
+        CfnOutput(
+            self,
+            "NeptuneEndpoint",
+            value=self.neptune_cluster.cluster_endpoint.hostname,
+            description="Set as NEPTUNE_ENDPOINT for the app",
+        )
+        CfnOutput(
+            self,
+            "OpenSearchEndpoint",
+            value=f"https://{self.opensearch_domain.domain_endpoint}",
+            description="Set as OPENSEARCH_ENDPOINT for the app",
+        )
+        CfnOutput(self, "CacheBucketName", value=self.cache_bucket.bucket_name)
+        CfnOutput(self, "DocStatusTableName", value=self.doc_status_table.table_name)
 
     # ------------------------------------------------------------- S3 cache
     def _resolve_cache_bucket(self) -> s3.IBucket:
@@ -53,14 +76,40 @@ class StorageStack(Stack):
             return s3.Bucket.from_bucket_name(
                 self, "CacheBucket", self.config.cache_bucket_name
             )
+        access_logs = s3.Bucket(
+            self,
+            "CacheAccessLogs",
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            enforce_ssl=True,
+            removal_policy=self.removal_policy,
+            auto_delete_objects=self.config.removal_destroy,
+            lifecycle_rules=[s3.LifecycleRule(expiration=Duration.days(90))],
+        )
         return s3.Bucket(
             self,
             "CacheBucket",
             bucket_name=f"{self.config.prefix}-cache-{self.account}-{self.region}",
-            encryption=s3.BucketEncryption.S3_MANAGED,
+            encryption=(
+                s3.BucketEncryption.KMS
+                if self.kms_key
+                else s3.BucketEncryption.S3_MANAGED
+            ),
+            encryption_key=self.kms_key,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             enforce_ssl=True,
+            server_access_logs_bucket=access_logs,
+            server_access_logs_prefix="cache-access/",
             versioned=False,
+            # Cost/sustainability: expire stale pipeline cache + clean up
+            # incomplete multipart uploads.
+            lifecycle_rules=[
+                s3.LifecycleRule(
+                    id="expire-cache",
+                    expiration=Duration.days(30),
+                    abort_incomplete_multipart_upload_after=Duration.days(7),
+                )
+            ],
             removal_policy=self.removal_policy,
             auto_delete_objects=self.config.removal_destroy,
         )
@@ -80,6 +129,12 @@ class StorageStack(Stack):
                     point_in_time_recovery_enabled=True
                 )
             ),
+            encryption=(
+                dynamodb.TableEncryption.CUSTOMER_MANAGED
+                if self.kms_key
+                else dynamodb.TableEncryption.AWS_MANAGED
+            ),
+            encryption_key=self.kms_key,
             removal_policy=self.removal_policy,
         )
 
@@ -99,10 +154,15 @@ class StorageStack(Stack):
             vpc_subnets=self.app_subnets,
             subnet_group=subnet_group,
             instance_type=neptune.InstanceType.of(self.config.neptune_instance),
-            instances=1,
+            # >=2 instances => a reader in another AZ for HA failover.
+            instances=max(1, self.config.neptune_instances),
             security_groups=[self.service_sg],
             iam_authentication=True,  # matches NeptuneConfig.use_iam = True
             storage_encrypted=True,
+            kms_key=self.kms_key,
+            backup_retention=Duration.days(self.config.backup_retention_days),
+            deletion_protection=self.config.deletion_protection,
+            auto_minor_version_upgrade=True,
             removal_policy=self.removal_policy,
         )
 
@@ -118,16 +178,43 @@ class StorageStack(Stack):
             capacity=opensearch.CapacityConfig(
                 data_node_instance_type=self.config.opensearch_instance,
                 data_nodes=self.config.opensearch_count,
+                # Dedicated master nodes stabilize the cluster under load; enable
+                # for HA (Multi-node) deployments.
+                master_nodes=3 if self.config.opensearch_count > 1 else 0,
+                master_node_instance_type=(
+                    self.config.opensearch_instance
+                    if self.config.opensearch_count > 1
+                    else None
+                ),
             ),
             zone_awareness=opensearch.ZoneAwarenessConfig(
                 enabled=self.config.opensearch_count > 1,
                 availability_zone_count=min(self.config.opensearch_count, 2),
             ),
+            logging=opensearch.LoggingOptions(
+                slow_search_log_enabled=True,
+                slow_index_log_enabled=True,
+                app_log_enabled=True,
+            ),
             ebs=opensearch.EbsOptions(
                 volume_size=50, volume_type=ec2.EbsDeviceVolumeType.GP3
             ),
             node_to_node_encryption=True,
-            encryption_at_rest=opensearch.EncryptionAtRestOptions(enabled=True),
+            encryption_at_rest=opensearch.EncryptionAtRestOptions(
+                enabled=True, kms_key=self.kms_key
+            ),
             enforce_https=True,
+            tls_security_policy=opensearch.TLSSecurityPolicy.TLS_1_2,
+            # Network access is already restricted to the VPC + service SG;
+            # require IAM-signed requests so callers also need es:ESHttp* (the
+            # Fargate task role has it). VPC domains can't be public anyway.
+            access_policies=[
+                iam.PolicyStatement(
+                    effect=iam.Effect.ALLOW,
+                    principals=[iam.AccountRootPrincipal()],
+                    actions=["es:ESHttp*"],
+                    resources=["*"],
+                )
+            ],
             removal_policy=self.removal_policy,
         )

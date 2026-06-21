@@ -23,13 +23,26 @@ Context keys (all optional; sensible defaults shown):
   # --- Storage: reuse vs create ---
   cache_bucket_name   None             reuse an existing S3 cache bucket (else
                                        create one, KMS-encrypted)
-  neptune_instance    "db.r5.large"    Neptune instance class
-  opensearch_instance "r6g.large.search"  OpenSearch data node type
+  neptune_instance    "db.r6g.large"   Neptune instance class (Graviton)
+  neptune_instances   1                Neptune instances (>=2 => Multi-AZ HA)
+  opensearch_instance "r6g.large.search"  OpenSearch data node type (Graviton)
   opensearch_count    2                OpenSearch data node count
   doc_status_table    "<env>-graphrag-doc-status"  DynamoDB table name
+  backup_retention_days 7              Neptune automated backup retention
 
   # --- Security ---
   guardrail_identifier None            attach an existing Bedrock guardrail
+  use_cmk             False            customer-managed KMS key for at-rest
+                                       encryption (S3/Neptune/OpenSearch/SNS/DDB)
+  vpc_flow_logs       False            enable VPC flow logs (created VPC only)
+  deletion_protection False            protect Neptune/OpenSearch from deletion
+  bedrock_model_arns  None             scope Bedrock IAM to specific model ARNs
+                                       (list); None => account/region foundation
+                                       + inference-profile ARNs
+  alarm_email         None             subscribe an email to the alarm topic
+  enable_cdk_nag      False            run cdk-nag AwsSolutions checks at synth
+
+  # --- Lifecycle ---
   removal_destroy     True (dev)       DESTROY vs RETAIN on stack deletion
 """
 
@@ -50,11 +63,20 @@ class DeploymentConfig:
     # storage
     cache_bucket_name: str | None
     neptune_instance: str
+    neptune_instances: int
     opensearch_instance: str
     opensearch_count: int
     doc_status_table: str
-    # security / lifecycle
+    backup_retention_days: int
+    # security
     guardrail_identifier: str | None
+    use_cmk: bool
+    vpc_flow_logs: bool
+    deletion_protection: bool
+    bedrock_model_arns: list[str] | None
+    alarm_email: str | None
+    enable_cdk_nag: bool
+    # lifecycle
     removal_destroy: bool
 
     @property
@@ -99,12 +121,20 @@ class DeploymentConfig:
             network_mode=network_mode,
             max_azs=int(ctx("max_azs", 2)),
             cache_bucket_name=ctx("cache_bucket_name"),
-            neptune_instance=str(ctx("neptune_instance", "db.r5.large")),
+            neptune_instance=str(ctx("neptune_instance", "db.r6g.large")),
+            neptune_instances=int(ctx("neptune_instances", 1)),
             opensearch_instance=str(ctx("opensearch_instance", "r6g.large.search")),
             opensearch_count=int(ctx("opensearch_count", 2)),
             doc_status_table=str(
                 ctx("doc_status_table", f"{env_name}-graphrag-doc-status")
             ),
+            backup_retention_days=int(ctx("backup_retention_days", 7)),
             guardrail_identifier=ctx("guardrail_identifier"),
+            use_cmk=as_bool(ctx("use_cmk"), default=False),
+            vpc_flow_logs=as_bool(ctx("vpc_flow_logs"), default=False),
+            deletion_protection=as_bool(ctx("deletion_protection"), default=False),
+            bedrock_model_arns=ctx("bedrock_model_arns"),
+            alarm_email=ctx("alarm_email"),
+            enable_cdk_nag=as_bool(ctx("enable_cdk_nag"), default=False),
             removal_destroy=as_bool(ctx("removal_destroy"), default=True),
         )

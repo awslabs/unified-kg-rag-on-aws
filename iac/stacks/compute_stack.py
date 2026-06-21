@@ -30,10 +30,12 @@ class ComputeStack(Stack):
         config: DeploymentConfig,
         networking: NetworkingStack,
         storage: StorageStack,
+        kms_key=None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
         self.config = config
+        self.kms_key = kms_key
 
         self.repository = ecr.Repository(
             self,
@@ -62,6 +64,11 @@ class ComputeStack(Stack):
         self.security_groups = [networking.service_sg]
         self.subnets = networking.app_subnets
 
+        # Let the task role use the shared CMK for the resources encrypted with
+        # it (S3 cache, DynamoDB), so reads/writes can decrypt.
+        if self.kms_key is not None:
+            self.kms_key.grant_encrypt_decrypt(self.task_role)
+
     # ------------------------------------------------------------ IAM role
     def _build_task_role(self, storage: StorageStack) -> iam.Role:
         role = iam.Role(
@@ -70,20 +77,27 @@ class ComputeStack(Stack):
             assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
             description="aws-graphrag Fargate task role (least privilege)",
         )
-        # Bedrock model invocation (LLM/embedding/rerank).
+        # Bedrock model invocation (LLM/embedding/rerank), scoped to foundation
+        # models + inference profiles in this region (or explicit ARNs if given).
+        bedrock_region = self.config.bedrock_region or self.region
+        bedrock_resources = self.config.bedrock_model_arns or [
+            f"arn:aws:bedrock:{bedrock_region}::foundation-model/*",
+            f"arn:aws:bedrock:{bedrock_region}:{self.account}:inference-profile/*",
+        ]
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=[
                     "bedrock:InvokeModel",
                     "bedrock:InvokeModelWithResponseStream",
                 ],
-                resources=["*"],  # model ARNs are account/region scoped at call time
+                resources=bedrock_resources,
             )
         )
-        # Neptune data-plane IAM auth.
+        # Neptune data-plane IAM auth: only the connect action is needed (the
+        # Gremlin read/write verbs are authorized within the connection).
         role.add_to_policy(
             iam.PolicyStatement(
-                actions=["neptune-db:*"],
+                actions=["neptune-db:connect"],
                 resources=[
                     f"arn:aws:neptune-db:{self.region}:{self.account}:"
                     f"{storage.neptune_cluster.cluster_resource_identifier}/*"
