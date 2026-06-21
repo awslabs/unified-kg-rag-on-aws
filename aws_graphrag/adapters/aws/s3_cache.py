@@ -1,14 +1,18 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+from __future__ import annotations
+
 from collections import defaultdict
 from pathlib import Path
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
-from types_boto3_s3 import S3Client
 
 from aws_graphrag.domain.models import Config, S3EncryptionType
 from aws_graphrag.shared import get_logger
+
+if TYPE_CHECKING:
+    from types_boto3_s3 import S3Client
 
 logger = get_logger(__name__)
 

@@ -1,18 +1,19 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
-"""Security: shared CMK (optional) + Bedrock Guardrail.
+"""Security: shared CMK (optional).
 
-- KMS: when config.use_cmk, a single customer-managed key encrypts at-rest data
-  across the deployment (S3 cache, Neptune, OpenSearch, SNS, DynamoDB). Key
-  rotation is enabled. When use_cmk is False, services use AWS-managed keys
-  (cheaper; fine for dev). Exposed as ``self.kms_key`` (None if disabled).
-- Guardrail: reuse config.guardrail_identifier, else create a baseline guardrail
-  (PII anonymization + prompt-attack filter).
+KMS: when config.use_cmk, a single customer-managed key encrypts at-rest data
+across the deployment (S3 cache, Neptune, OpenSearch, SNS, DynamoDB). Key
+rotation is enabled. When use_cmk is False, services use AWS-managed keys
+(cheaper; fine for dev). Exposed as ``self.kms_key`` (None if disabled).
+
+The Bedrock Guardrail lives in its own ``GuardrailStack`` because it must be
+created in the Bedrock runtime region (``bedrock_region``), which can differ
+from the deploy region that hosts Neptune/OpenSearch/KMS.
 """
 
 from __future__ import annotations
 
 from aws_cdk import CfnOutput, RemovalPolicy, Stack
-from aws_cdk import aws_bedrock as bedrock
 from aws_cdk import aws_kms as kms
 from constructs import Construct
 
@@ -27,8 +28,6 @@ class SecurityStack(Stack):
         self.config = config
 
         self.kms_key = self._build_kms_key()
-        self.guardrail_identifier = self._build_guardrail()
-        CfnOutput(self, "GuardrailIdentifier", value=self.guardrail_identifier)
         if self.kms_key is not None:
             CfnOutput(self, "KmsKeyArn", value=self.kms_key.key_arn)
 
@@ -48,39 +47,3 @@ class SecurityStack(Stack):
                 else RemovalPolicy.RETAIN
             ),
         )
-
-    # --------------------------------------------------------- Guardrail
-    def _build_guardrail(self) -> str:
-        if self.config.guardrail_identifier:
-            return self.config.guardrail_identifier
-
-        guardrail = bedrock.CfnGuardrail(
-            self,
-            "Guardrail",
-            name=f"{self.config.prefix}-guardrail",
-            blocked_input_messaging="This request was blocked by content policy.",
-            blocked_outputs_messaging="This response was blocked by content policy.",
-            description="Baseline guardrail for aws-graphrag (PII + prompt attack).",
-            sensitive_information_policy_config=(
-                bedrock.CfnGuardrail.SensitiveInformationPolicyConfigProperty(
-                    pii_entities_config=[
-                        bedrock.CfnGuardrail.PiiEntityConfigProperty(
-                            type=t, action="ANONYMIZE"
-                        )
-                        for t in ("EMAIL", "PHONE", "NAME", "CREDIT_DEBIT_CARD_NUMBER")
-                    ]
-                )
-            ),
-            content_policy_config=(
-                bedrock.CfnGuardrail.ContentPolicyConfigProperty(
-                    filters_config=[
-                        bedrock.CfnGuardrail.ContentFilterConfigProperty(
-                            type="PROMPT_ATTACK",
-                            input_strength="HIGH",
-                            output_strength="NONE",
-                        )
-                    ]
-                )
-            ),
-        )
-        return guardrail.attr_guardrail_id

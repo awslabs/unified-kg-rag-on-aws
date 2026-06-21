@@ -94,8 +94,10 @@ def apply(stacks: dict[str, object], config: DeploymentConfig) -> None:
                 "id": "AwsSolutions-IAM5",
                 "reason": "Bedrock model invocation is scoped to foundation-model "
                 "+ inference-profile ARNs (a model wildcard is required to call "
-                "any approved model); Neptune/OpenSearch use resource '/*' under "
-                "the specific cluster/domain ARN.",
+                "any approved model); the bedrock:List/GetInferenceProfile read "
+                "actions used by the cross-region resolver have no resource-level "
+                "scoping and so use '*'; Neptune/OpenSearch use resource '/*' "
+                "under the specific cluster/domain ARN.",
             },
         ],
     )

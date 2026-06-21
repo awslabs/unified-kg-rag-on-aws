@@ -16,6 +16,7 @@ import aws_cdk as cdk
 
 from iac.config import DeploymentConfig
 from iac.stacks.compute_stack import ComputeStack
+from iac.stacks.guardrail_stack import GuardrailStack
 from iac.stacks.networking_stack import NetworkingStack
 from iac.stacks.observability_stack import ObservabilityStack
 from iac.stacks.orchestration_stack import OrchestrationStack
@@ -27,9 +28,14 @@ config = DeploymentConfig.from_context(app)
 
 # An explicit account/region is required because the VPC import + AZ-aware
 # resources (Neptune/OpenSearch) do environment-specific lookups.
-env = cdk.Environment(
-    account=os.getenv("CDK_DEFAULT_ACCOUNT"),
-    region=os.getenv("CDK_DEFAULT_REGION"),
+account = os.getenv("CDK_DEFAULT_ACCOUNT")
+deploy_region = os.getenv("CDK_DEFAULT_REGION")
+env = cdk.Environment(account=account, region=deploy_region)
+# The guardrail must be created in the Bedrock runtime region, which may differ
+# from the deploy region (cross-region inference). Falls back to the deploy
+# region when bedrock_region is unset.
+bedrock_env = cdk.Environment(
+    account=account, region=config.bedrock_region or deploy_region
 )
 prefix = config.prefix
 
@@ -39,6 +45,14 @@ def stack_id(name: str) -> str:
 
 
 security = SecurityStack(app, stack_id("security"), config=config, env=env)
+# Region-pinned to bedrock_region; compute reads its id via cross-region refs.
+guardrail = GuardrailStack(
+    app,
+    stack_id("guardrail"),
+    config=config,
+    env=bedrock_env,
+    cross_region_references=True,
+)
 networking = NetworkingStack(app, stack_id("networking"), config=config, env=env)
 storage = StorageStack(
     app,
@@ -55,7 +69,9 @@ compute = ComputeStack(
     networking=networking,
     storage=storage,
     kms_key=security.kms_key,
-    guardrail_identifier=security.guardrail_identifier,
+    guardrail_identifier=guardrail.guardrail_identifier,
+    # Needed to import the guardrail id from the bedrock-region stack.
+    cross_region_references=True,
     env=env,
 )
 orchestration = OrchestrationStack(

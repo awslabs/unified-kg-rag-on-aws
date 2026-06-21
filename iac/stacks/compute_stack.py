@@ -79,12 +79,18 @@ class ComputeStack(Stack):
             assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
             description="aws-graphrag Fargate task role (least privilege)",
         )
-        # Bedrock model invocation (LLM/embedding/rerank), scoped to foundation
-        # models + inference profiles in this region (or explicit ARNs if given).
-        bedrock_region = self.config.bedrock_region or self.region
+        # Bedrock model invocation (LLM/embedding/rerank). Cross-region and
+        # global inference profiles fan a single InvokeModel out to foundation
+        # models in *several* regions, so the foundation-model resource must span
+        # regions (`:*:`) for the call to authorize. Inference-profile ARNs come
+        # in two shapes: account-scoped application profiles
+        # (`:<account>:inference-profile/*`) and account-less system-defined
+        # profiles (`::inference-profile/global.*`), so allow both. Explicit ARNs
+        # override this when provided.
         bedrock_resources = self.config.bedrock_model_arns or [
-            f"arn:aws:bedrock:{bedrock_region}::foundation-model/*",
-            f"arn:aws:bedrock:{bedrock_region}:{self.account}:inference-profile/*",
+            "arn:aws:bedrock:*::foundation-model/*",
+            f"arn:aws:bedrock:*:{self.account}:inference-profile/*",
+            "arn:aws:bedrock:*::inference-profile/*",
         ]
         role.add_to_policy(
             iam.PolicyStatement(
@@ -93,6 +99,18 @@ class ComputeStack(Stack):
                     "bedrock:InvokeModelWithResponseStream",
                 ],
                 resources=bedrock_resources,
+            )
+        )
+        # The cross-region model resolver lists/inspects inference profiles to
+        # pick the right global/regional profile id at runtime; these are
+        # account-level read actions (no resource scoping available).
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "bedrock:ListInferenceProfiles",
+                    "bedrock:GetInferenceProfile",
+                ],
+                resources=["*"],
             )
         )
         # Neptune data-plane IAM auth: only the connect action is needed (the
@@ -141,7 +159,9 @@ class ComputeStack(Stack):
             ),
             "S3_BUCKET_NAME": storage.cache_bucket.bucket_name,
             "GRAPHRAG_DOC_STATUS_TABLE": self.config.doc_status_table,
-            "LOG_FORMAT": "json",
+            # "structured" => JSON-structured logs (CloudWatch-friendly); the
+            # config model only accepts "structured" | "plain".
+            "LOG_FORMAT": "structured",
         }
         if self.guardrail_identifier:
             environment["BEDROCK_GUARDRAIL_IDENTIFIER"] = self.guardrail_identifier
