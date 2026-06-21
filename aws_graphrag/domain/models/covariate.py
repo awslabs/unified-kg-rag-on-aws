@@ -17,8 +17,16 @@ class Covariate(Identified):
 
 
 class Claim(Covariate):
-    object_id: str = Field(..., description="The object ID")
-    object_name: str = Field(..., description="The object name")
+    object_id: str | None = Field(
+        None,
+        description="The object entity ID, or None when the object is a literal "
+        "value (e.g. a date, amount, or status) rather than an extracted entity",
+    )
+    object_name: str = Field(
+        ...,
+        description="The object: an entity name, or a literal value when object_id "
+        "is None",
+    )
     type: str = Field(..., description="The claim type")
     status: str | None = Field(
         None, description="The claim status (e.g., TRUE, FALSE, DISPUTED, UNKNOWN)"

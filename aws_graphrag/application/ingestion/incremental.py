@@ -54,6 +54,7 @@ def build_document_lineage(
     relationships: list[Relationship],
     communities: list[Community],
     claims: list[Claim],
+    community_reports: list[CommunityReport] | None = None,
     suffix: str = "default",
 ) -> list[DocumentLineage]:
     """Attribute extracted artifacts to their source documents.
@@ -84,6 +85,7 @@ def build_document_lineage(
     relationship_ids: dict[str, set[str]] = defaultdict(set)
     claim_ids: dict[str, set[str]] = defaultdict(set)
     community_ids: dict[str, set[str]] = defaultdict(set)
+    community_report_ids: dict[str, set[str]] = defaultdict(set)
 
     def _attribute(artifact_id: str, tu_ids: list[str] | None, bucket: dict) -> None:
         for tu_id in tu_ids or []:
@@ -96,8 +98,20 @@ def build_document_lineage(
         _attribute(r.id, r.text_unit_ids, relationship_ids)
     for c in claims:
         _attribute(c.id, c.text_unit_ids, claim_ids)
+
+    # Communities (and the reports that summarize them) attach to documents
+    # through the community's member text units.
+    community_docs: dict[str, set[str]] = {}
     for comm in communities:
         _attribute(comm.id, comm.text_unit_ids, community_ids)
+        community_docs[comm.id] = {
+            stable
+            for tu_id in (comm.text_unit_ids or [])
+            for stable in tu_to_docs.get(tu_id, ())
+        }
+    for report in community_reports or []:
+        for stable in community_docs.get(report.community_id, ()):  # noqa: B007
+            community_report_ids[stable].add(report.id)
 
     lineages = []
     for doc in documents:
@@ -111,6 +125,7 @@ def build_document_lineage(
                 relationship_ids=sorted(relationship_ids.get(stable, set())),
                 claim_ids=sorted(claim_ids.get(stable, set())),
                 community_ids=sorted(community_ids.get(stable, set())),
+                community_report_ids=sorted(community_report_ids.get(stable, set())),
             )
         )
     return lineages
@@ -223,6 +238,7 @@ class IncrementalIndexer:
                 + record.text_unit_ids
                 + record.community_ids
                 + record.claim_ids
+                + record.community_report_ids
             )
             if record.doc_id in target:
                 removing_by_suffix[record.suffix].update(ids)
@@ -253,6 +269,7 @@ class IncrementalIndexer:
                 text_unit_ids=lineage.text_unit_ids,
                 community_ids=lineage.community_ids,
                 claim_ids=lineage.claim_ids,
+                community_report_ids=lineage.community_report_ids,
             )
             self.doc_status.put(record)
 

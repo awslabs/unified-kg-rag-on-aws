@@ -8,6 +8,7 @@ from typing import Any, NamedTuple
 
 from aws_graphrag.adapters.storage.neptune_indexer import NeptuneIndexer
 from aws_graphrag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+from aws_graphrag.domain.ingestion.merge import merge_entities, merge_relationships
 from aws_graphrag.domain.models import (
     Claim,
     Community,
@@ -31,6 +32,7 @@ class IndexingTask(NamedTuple):
 
 class IndexingManager:
     def __init__(self, config: Config, max_workers: int | None = None) -> None:
+        self.config = config
         self.opensearch_indexer = OpenSearchIndexer(config=config)
         self.neptune_indexer = NeptuneIndexer(config=config)
         self.max_workers = max_workers or max(1, int(cpu_count() * 0.8))
@@ -179,6 +181,11 @@ class IndexingManager:
         start_time = time.time()
         results: dict[str, IndexingStats] = {}
 
+        if self.config.indexing.cross_run_merge:
+            entities, relationships = self._merge_with_existing_graph(
+                entities, relationships
+            )
+
         self._enrich_text_units(text_units, communities)
 
         phase1_tasks = [
@@ -233,6 +240,33 @@ class IndexingManager:
         self._log_completion_summary(results, elapsed_time)
         return results
 
+    def _merge_with_existing_graph(
+        self,
+        entities: list[Entity] | None,
+        relationships: list[Relationship] | None,
+    ) -> tuple[list[Entity] | None, list[Relationship] | None]:
+        """Union delta artifacts with existing graph state before upsert.
+
+        Reads the existing entities/relationships the delta touches back from the
+        graph store and merges (description/text_unit_ids union, frequency/weight
+        recompute) via the pure merge functions, so a cross-run upsert accumulates
+        rather than overwriting. If the adapter does not support read-back it
+        returns ``[]`` and this degenerates to the existing overwrite behaviour.
+        """
+        merged_entities = entities
+        if entities:
+            existing = self.neptune_indexer.read_entities([e.id for e in entities])
+            if existing:
+                merged_entities, _ = merge_entities(existing, entities)
+        merged_relationships = relationships
+        if relationships:
+            existing_rels = self.neptune_indexer.read_relationships(
+                [r.id for r in relationships]
+            )
+            if existing_rels:
+                merged_relationships = merge_relationships(existing_rels, relationships)
+        return merged_entities, merged_relationships
+
     def delete_documents(
         self, ids_by_suffix: dict[str, list[str]]
     ) -> dict[str, IndexingStats]:
@@ -251,6 +285,7 @@ class IndexingManager:
                 self.opensearch_indexer.opensearch_config.entities_index_prefix,
                 self.opensearch_indexer.opensearch_config.relationships_index_prefix,
                 self.opensearch_indexer.opensearch_config.claims_index_prefix,
+                self.opensearch_indexer.opensearch_config.community_reports_index_prefix,
             ):
                 key = f"opensearch_delete_{prefix}_{suffix}"
                 results[key] = self.opensearch_indexer.delete_by_id(ids, prefix, suffix)

@@ -856,6 +856,13 @@ class IndexingConfig(BaseModel):
         max_length=100,
         description="Optional additional suffix to append to index names for isolation",
     )
+    cross_run_merge: bool = Field(
+        default=False,
+        description="On incremental (delta) runs, read existing graph entities/"
+        "relationships and union them with the delta (description/text_unit_ids/"
+        "frequency/weight) before upsert, instead of overwriting. Requires a graph "
+        "adapter that supports read-back; off by default.",
+    )
     neptune: NeptuneIndexingConfig = Field(
         default_factory=NeptuneIndexingConfig,
         description="Configuration settings for Neptune graph database indexing",

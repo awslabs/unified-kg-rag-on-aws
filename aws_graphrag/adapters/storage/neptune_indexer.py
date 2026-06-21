@@ -76,6 +76,107 @@ class NeptuneIndexer(GraphIndexer):
             return {}
         return stats
 
+    def read_entities(self, ids: list[str]) -> list[Entity]:
+        """Read existing entities by id for cross-run merge (best-effort).
+
+        Returns ``[]`` on any error so cross-run merge degrades to overwrite
+        rather than failing the run. Reconstructs only the fields the merge needs
+        (id/name/description/text_unit_ids/frequency/type). Requires real
+        Neptune; validated under the ``aws`` test marker.
+        """
+        if not ids:
+            return []
+        try:
+            g = self.neptune_client.g
+            rows = g.V().has("id", P.within(ids)).valueMap(True).toList()
+            entities = []
+            for row in rows:
+                props = self._flatten_value_map(row)
+                if "id" not in props or "name" not in props:
+                    continue
+                entities.append(
+                    Entity.model_validate(
+                        {
+                            "id": str(props["id"]),
+                            "name": str(props["name"]),
+                            "type": props.get("type"),
+                            "description": props.get("description"),
+                            "text_unit_ids": self._as_list(props.get("text_unit_ids")),
+                            "frequency": props.get("frequency"),
+                        }
+                    )
+                )
+            return entities
+        except Exception as e:  # noqa: BLE001 - degrade to overwrite
+            logger.warning("read_entities failed (%s); cross-run merge disabled", e)
+            return []
+
+    def read_relationships(self, ids: list[str]) -> list[Relationship]:
+        """Read existing relationships by id for cross-run merge (best-effort)."""
+        if not ids:
+            return []
+        try:
+            g = self.neptune_client.g
+            # source_id/target_id are edge TOPOLOGY (endpoint vertex ids), not
+            # edge properties, so valueMap() does not contain them. Project the
+            # edge's own properties alongside the endpoint vertex ids.
+            rows = (
+                g.E()
+                .has("id", P.within(ids))
+                .project("props", "source_id", "target_id")
+                .by(__.valueMap(True))
+                .by(__.outV().values("id"))
+                .by(__.inV().values("id"))
+                .toList()
+            )
+            rels = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                props = self._flatten_value_map(row.get("props"))
+                if "id" not in props:
+                    continue
+                rels.append(
+                    Relationship.model_validate(
+                        {
+                            "id": str(props["id"]),
+                            "source_id": str(row.get("source_id")),
+                            "target_id": str(row.get("target_id")),
+                            "description": props.get("description"),
+                            "weight": props.get("weight"),
+                            "text_unit_ids": self._as_list(props.get("text_unit_ids")),
+                        }
+                    )
+                )
+            return rels
+        except Exception as e:  # noqa: BLE001 - degrade to overwrite
+            logger.warning(
+                "read_relationships failed (%s); cross-run merge disabled", e
+            )
+            return []
+
+    @staticmethod
+    def _flatten_value_map(row: Any) -> dict[str, Any]:
+        """Gremlin valueMap returns {key: [value]}; flatten single-element lists."""
+        if not isinstance(row, dict):
+            return {}
+        flat: dict[str, Any] = {}
+        for key, value in row.items():
+            k = str(key)
+            if isinstance(value, list):
+                flat[k] = value[0] if len(value) == 1 else value
+            else:
+                flat[k] = value
+        return flat
+
+    @staticmethod
+    def _as_list(value: Any) -> list[str] | None:
+        if value is None:
+            return None
+        if isinstance(value, list):
+            return [str(v) for v in value]
+        return [str(value)]
+
     def initialize(self) -> bool:
         return True
 

@@ -11,6 +11,10 @@ Catalog:
 - ``BaseIndexer`` / ``GraphIndexer`` / ``VectorIndexer`` — write-side store
   contracts (adapters: ``adapters.storage``). ``IndexingStats`` is the shared
   result record.
+- ``ModelFactoryPort`` (+ ``LLMFactoryPort`` / ``EmbeddingFactoryPort`` /
+  ``RerankFactoryPort`` aliases) — the LLM/Embedding/Rerank provider boundary
+  (``Protocol``; the Bedrock factories in ``adapters.aws.bedrock`` conform
+  structurally). Annotate against these for provider-agnostic call sites.
 
 Two further contracts are abstract *adapter bases* rather than pure ports —
 they construct infrastructure in ``__init__`` (HybridScorer/TokenManager, tqdm)
@@ -27,11 +31,21 @@ from aws_graphrag.ports.indexer import (
     IndexingStats,
     VectorIndexer,
 )
+from aws_graphrag.ports.model_factory import (
+    EmbeddingFactoryPort,
+    LLMFactoryPort,
+    ModelFactoryPort,
+    RerankFactoryPort,
+)
 
 __all__ = [
     "BaseIndexer",
     "DocStatusPort",
+    "EmbeddingFactoryPort",
     "GraphIndexer",
     "IndexingStats",
+    "LLMFactoryPort",
+    "ModelFactoryPort",
+    "RerankFactoryPort",
     "VectorIndexer",
 ]

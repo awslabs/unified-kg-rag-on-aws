@@ -57,28 +57,35 @@ def resolve_single_claim_task(
         fuzzy_matcher,
     )
 
-    if resolved_subject_name is None or resolved_object_name is None:
-        if resolved_subject_name is None:
-            logger.warning("Failed to resolve subject: '%s'", claim.subject_name)
-        if resolved_object_name is None:
-            logger.warning("Failed to resolve object: '%s'", claim.object_name)
+    # A claim is anchored to its SUBJECT entity. The object may legitimately be a
+    # literal value (a date, amount, status, ...) rather than an extracted
+    # entity — claim types like PERFORMANCE/ATTRIBUTE/FINANCIAL/TEMPORAL routinely
+    # have non-entity objects. Dropping such claims discards most of the
+    # extraction. So we only require the subject to resolve; if the object does
+    # not resolve to an entity we keep the claim with object_id=None and the
+    # original object text preserved as a literal value.
+    if resolved_subject_name is None:
+        logger.debug("Dropping claim: subject not an entity: '%s'", claim.subject_name)
         return None
 
-    normalized_subject = normalize_name(resolved_subject_name)
-    normalized_object = normalize_name(resolved_object_name)
-
-    subject_id = normalized_name_to_id.get(normalized_subject)
-    object_id = normalized_name_to_id.get(normalized_object)
-
-    if subject_id is None or object_id is None:
+    subject_id = normalized_name_to_id.get(normalize_name(resolved_subject_name))
+    if subject_id is None:
         return None
+
+    if resolved_object_name is not None:
+        object_id = normalized_name_to_id.get(normalize_name(resolved_object_name))
+        object_name = resolved_object_name
+    else:
+        # Object is a literal value: preserve the original text, no entity id.
+        object_id = None
+        object_name = claim.object_name
 
     return claim.model_copy(
         update={
             "subject_id": subject_id,
             "subject_name": resolved_subject_name,
             "object_id": object_id,
-            "object_name": resolved_object_name,
+            "object_name": object_name,
         }
     )
 
