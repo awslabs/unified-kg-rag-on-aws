@@ -13,14 +13,13 @@ from __future__ import annotations
 
 from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_dynamodb as dynamodb
-from aws_cdk import aws_iam as iam
 from aws_cdk import aws_ec2 as ec2
+from aws_cdk import aws_iam as iam
+from aws_cdk import aws_kms as kms
 from aws_cdk import aws_neptune_alpha as neptune
 from aws_cdk import aws_opensearchservice as opensearch
 from aws_cdk import aws_s3 as s3
 from constructs import Construct
-
-from aws_cdk import aws_kms as kms
 
 from iac.config import DeploymentConfig
 from iac.stacks.networking_stack import NetworkingStack
