@@ -67,11 +67,39 @@ def test_opensearch_connectivity(live_config) -> None:
 
 
 def test_neptune_connectivity(live_config) -> None:
-    """The Neptune indexer initializes against the live endpoint."""
+    """A real Gremlin round-trip against the live Neptune endpoint.
+
+    NeptuneIndexer.initialize() is a no-op (returns True without touching the
+    cluster), so issue an actual traversal to verify connectivity.
+    """
     from aws_graphrag.adapters.storage.neptune_indexer import NeptuneIndexer
 
     indexer = NeptuneIndexer(config=live_config)
-    assert indexer.initialize() is True
+    # A trivial count traversal exercises the wss:// connection + SigV4 auth.
+    count = indexer.neptune_client.g.V().limit(1).count().next()
+    assert isinstance(count, int)
+
+
+def test_neptune_relationship_read_roundtrips(live_config) -> None:
+    """Regression for cross-run merge: read_relationships must reconstruct
+    source_id/target_id from edge topology (not edge properties), so the
+    relationship half of cross_run_merge actually accumulates."""
+    from aws_graphrag.adapters.storage.neptune_indexer import NeptuneIndexer
+    from aws_graphrag.domain.models import Entity, Relationship
+
+    indexer = NeptuneIndexer(config=live_config)
+    a = Entity(id="_t_e_a", name="_T_A")
+    b = Entity(id="_t_e_b", name="_T_B")
+    rel = Relationship(id="_t_r_ab", source_id="_t_e_a", target_id="_t_e_b")
+    indexer.upsert_entities([a, b])
+    indexer.upsert_relationships([rel])
+    try:
+        read = indexer.read_relationships(["_t_r_ab"])
+        assert len(read) == 1
+        assert read[0].source_id == "_t_e_a"
+        assert read[0].target_id == "_t_e_b"
+    finally:
+        indexer.delete_by_id(["_t_e_a", "_t_e_b", "_t_r_ab"])
 
 
 @pytest.mark.skipif(

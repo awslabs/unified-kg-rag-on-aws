@@ -117,3 +117,15 @@ def test_delete_documents_removes_by_id_from_both_stores(manager) -> None:
     assert "e-acme" not in graph.ids("entities")
     # e-alice survives.
     assert "e-alice" in vector.ids("entities")
+
+    # Deletion is fanned out per OpenSearch index prefix (text_units, entities,
+    # relationships, claims, community_reports) — verify the routing contract.
+    deleted_prefixes = {p for p, _ in vector.delete_calls}
+    os_cfg = mgr.config.indexing.opensearch
+    assert deleted_prefixes == {
+        os_cfg.text_units_index_prefix,
+        os_cfg.entities_index_prefix,
+        os_cfg.relationships_index_prefix,
+        os_cfg.claims_index_prefix,
+        os_cfg.community_reports_index_prefix,
+    }

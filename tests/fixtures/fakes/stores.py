@@ -93,6 +93,9 @@ class FakeVectorStore(_Recorder):
         super().__init__()
         # IndexingManager.delete_documents reads index prefixes off this.
         self.opensearch_config = opensearch_config
+        # Records (prefix, suffix) of each delete_by_id call so tests can assert
+        # per-index routing (delete is fanned out once per index prefix).
+        self.delete_calls: list[tuple[str | None, str | None]] = []
 
     def clear(self, suffixes: list[str]) -> bool:
         self.data.clear()
@@ -134,4 +137,5 @@ class FakeVectorStore(_Recorder):
     def delete_by_id(
         self, ids: list[str], prefix: str | None = None, suffix: str | None = None
     ) -> IndexingStats:
+        self.delete_calls.append((prefix, suffix))
         return self.delete(ids)

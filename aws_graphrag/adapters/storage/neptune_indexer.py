@@ -117,18 +117,31 @@ class NeptuneIndexer(GraphIndexer):
             return []
         try:
             g = self.neptune_client.g
-            rows = g.E().has("id", P.within(ids)).valueMap(True).toList()
+            # source_id/target_id are edge TOPOLOGY (endpoint vertex ids), not
+            # edge properties, so valueMap() does not contain them. Project the
+            # edge's own properties alongside the endpoint vertex ids.
+            rows = (
+                g.E()
+                .has("id", P.within(ids))
+                .project("props", "source_id", "target_id")
+                .by(__.valueMap(True))
+                .by(__.outV().values("id"))
+                .by(__.inV().values("id"))
+                .toList()
+            )
             rels = []
             for row in rows:
-                props = self._flatten_value_map(row)
-                if not {"id", "source_id", "target_id"} <= set(props):
+                if not isinstance(row, dict):
+                    continue
+                props = self._flatten_value_map(row.get("props"))
+                if "id" not in props:
                     continue
                 rels.append(
                     Relationship.model_validate(
                         {
                             "id": str(props["id"]),
-                            "source_id": str(props["source_id"]),
-                            "target_id": str(props["target_id"]),
+                            "source_id": str(row.get("source_id")),
+                            "target_id": str(row.get("target_id")),
                             "description": props.get("description"),
                             "weight": props.get("weight"),
                             "text_unit_ids": self._as_list(props.get("text_unit_ids")),
