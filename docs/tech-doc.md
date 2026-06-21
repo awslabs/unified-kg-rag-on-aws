@@ -249,7 +249,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 ### 알려진 향후 작업 (정직한 갭)
 
-- **LLMPort/EmbeddingPort 미도입**: 현재 ~18개 도메인 모듈이 `adapters/aws/bedrock.py` 팩토리를 직접 import합니다. LangChain 호환 객체를 반환하므로 호출 측은 공급자 무관하지만, *생성* 측이 Bedrock에 결합돼 있습니다. 비-Bedrock 공급자 교체를 지원하려면 LLM/Embedding 포트 추출이 가장 높은 ROI의 다음 단계입니다.
+- **LLM/Embedding/Rerank 포트 — 정의됨, 호출부 미이행(부분)**: `ports/model_factory.py`에 `ModelFactoryPort`(+`LLMFactoryPort`/`EmbeddingFactoryPort`/`RerankFactoryPort` 별칭) Protocol을 정의했고 Bedrock 팩토리들이 구조적으로 conform합니다(테스트로 검증). 다만 ~19개 어댑터/애플리케이션 모듈은 아직 구체 `Bedrock*ModelFactory`를 직접 생성합니다. 이들은 모두 adapters/application 계층이라 **의존성 규칙 위반은 아니며**(도메인은 팩토리를 import하지 않음), 호출 측은 이미 LangChain 호환 객체를 받아 공급자 무관합니다. 비-Bedrock 공급자를 추가하려면 conforming 팩토리 어댑터를 작성하고 생성 지점에 주입하면 됩니다(포트 타입은 준비됨).
 - **`SearchQuery.label_prefixes`/`index_prefixes`**: 어댑터 어휘가 도메인 질의 모델에 남아 있습니다. `Collection` enum(이미 정의됨)으로 어댑터에 완전 위임하는 추가 리팩터가 가능합니다.
 - **CachePort**: 캐시(로컬/S3)는 현재 구체 클래스로 접근합니다. 제3의 캐시 백엔드가 필요해질 때 포트화하면 됩니다.
 - ~~**라이브 그래프 cross-run merge**~~ (구현, 옵트인): `indexing.cross_run_merge=true`면 `IndexingManager.index_delta`가 upsert 전에 그래프에서 기존 엔티티/관계를 읽어(`GraphIndexer.read_entities`/`read_relationships`) 델타와 `merge_entities`/`merge_relationships`로 union(description·`text_unit_ids` 합집합, frequency/weight 재계산)합니다. 인메모리 fake로 동작 검증(`test_cross_run_merge.py`), 실제 Neptune read-back(valueMap→모델 복원)은 `aws` 마커 테스트로 검증 대상이며 실패 시 `[]` 반환으로 기존 overwrite로 안전하게 degrade합니다. 기본값 off(덮어쓰기) — 검증된 기존 동작 보존.
