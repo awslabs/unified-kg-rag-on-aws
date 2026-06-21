@@ -163,9 +163,9 @@ class ComputeStack(Stack):
             "AWS_REGION": self.region,
             "BEDROCK_REGION": self.config.bedrock_region or self.region,
             "NEPTUNE_ENDPOINT": storage.neptune_cluster.cluster_endpoint.hostname,
-            "OPENSEARCH_ENDPOINT": (
-                f"https://{storage.opensearch_domain.domain_endpoint}"
-            ),
+            # Bare hostname — the OpenSearch adapter prepends the scheme itself
+            # via use_ssl; passing https:// here yields https://[https://…].
+            "OPENSEARCH_ENDPOINT": storage.opensearch_domain.domain_endpoint,
             "S3_BUCKET_NAME": storage.cache_bucket.bucket_name,
             "GRAPHRAG_DOC_STATUS_TABLE": self.config.doc_status_table,
             # "structured" => JSON-structured logs (CloudWatch-friendly); the
