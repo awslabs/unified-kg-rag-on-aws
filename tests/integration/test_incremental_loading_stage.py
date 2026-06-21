@@ -64,6 +64,8 @@ def _stage(config: Config, session: boto3.Session) -> DocumentLoadingStage:
     stage = DocumentLoadingStage.__new__(DocumentLoadingStage)
     stage.config = config  # type: ignore[attr-defined]
     stage.boto_session = session  # type: ignore[attr-defined]
+    # No injected port -> the stage builds the default DynamoDB adapter itself.
+    stage._doc_status = None  # type: ignore[attr-defined]
     return stage
 
 

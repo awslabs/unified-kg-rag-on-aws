@@ -87,6 +87,14 @@ class DataIngestionPipeline:
         PipelineStageType.TRANSLATION,
     }
 
+    # Stages that consume the document-status registry (incremental indexing).
+    # The DocStatusPort adapter is built ONCE at this orchestration layer and
+    # injected, rather than each stage constructing its own.
+    DOC_STATUS_STAGES = {
+        PipelineStageType.DOCUMENT_LOADING,
+        PipelineStageType.INDEXING,
+    }
+
     STAGE_OUTPUT_MAPPING: dict[
         PipelineStageType, dict[str, tuple[type[BaseModel], str]]
     ] = {
@@ -182,6 +190,22 @@ class DataIngestionPipeline:
                 prefix=self.pipeline_config.s3_prefix,
             )
 
+    def _build_doc_status_store(self) -> Any:
+        """Build the document-status registry adapter once (incremental mode).
+
+        Returns None when the registry is disabled or unreachable, so stages
+        fall back to processing everything rather than failing the build.
+        """
+        if not self.config.aws.dynamodb.enabled:
+            return None
+        try:
+            from aws_graphrag.adapters.aws import DynamoDBDocStatusStore
+
+            return DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
+        except Exception as e:  # noqa: BLE001 - degrade gracefully
+            logger.warning("Doc-status registry unavailable (%s); incremental off", e)
+            return None
+
     def _initialize_stages(
         self,
     ) -> tuple[list[PipelineStage], dict[str, PipelineStageType]]:
@@ -189,6 +213,10 @@ class DataIngestionPipeline:
         name_to_type_map = {}
         enabled_stages = []
         disabled_stages = []
+
+        # Build the doc-status adapter once (incremental mode) and inject it into
+        # the stages that need it, instead of each stage constructing its own.
+        doc_status = self._build_doc_status_store()
 
         for stage_type, stage_class in self.STAGE_CLASSES.items():
             stage_enabled = self.pipeline_config.stages_enabled.get(stage_type, True)
@@ -214,6 +242,8 @@ class DataIngestionPipeline:
                     kwargs["boto_session"] = self.boto_session
                 if stage_type == PipelineStageType.DOCUMENT_PARSING:
                     kwargs["target_directory"] = self.target_directory
+                if stage_type in self.DOC_STATUS_STAGES and doc_status is not None:
+                    kwargs["doc_status"] = doc_status
 
                 kwargs["config"] = self.config
 

@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import boto3
 
@@ -38,6 +38,9 @@ from aws_graphrag.domain.models import (
 )
 from aws_graphrag.shared import PipelineStageError, get_logger
 from aws_graphrag.storage import IndexingManager
+
+if TYPE_CHECKING:
+    from aws_graphrag.ports import DocStatusPort
 
 logger = get_logger(__name__)
 
@@ -230,6 +233,7 @@ class DocumentLoadingStage(PipelineStage):
         source_directory: Path,
         boto_session: boto3.Session | None = None,
         parse_files: bool = False,
+        doc_status: "DocStatusPort | None" = None,
     ):
         super().__init__(PipelineStageType.DOCUMENT_LOADING, config, boto_session)
         self.loader = DirectoryLoader(
@@ -238,6 +242,9 @@ class DocumentLoadingStage(PipelineStage):
             deduplicate=self.config.processing.deduplicate,
             parse_files=parse_files,
         )
+        # Injected by the pipeline (built once at the orchestration layer) when
+        # incremental indexing is enabled; built lazily otherwise.
+        self._doc_status = doc_status
 
     def _execute_core(
         self, context: PipelineContext
@@ -323,7 +330,11 @@ class DocumentLoadingStage(PipelineStage):
             )
             return documents, 0
 
-    def _build_doc_status_store(self):  # type: ignore[no-untyped-def]
+    def _build_doc_status_store(self) -> "DocStatusPort":
+        if self._doc_status is not None:
+            return self._doc_status
+        # Fallback: construct the default DynamoDB adapter (e.g. when the stage
+        # is used standalone in tests without injection).
         from aws_graphrag.adapters.aws import DynamoDBDocStatusStore
 
         return DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
@@ -962,9 +973,19 @@ class IndexingStage(PipelineStage):
         self,
         config: Config,
         boto_session: boto3.Session | None = None,
+        doc_status: "DocStatusPort | None" = None,
     ):
         super().__init__(PipelineStageType.INDEXING, config, boto_session)
         self.indexing_manager = IndexingManager(config=self.config)
+        # Injected by the pipeline for the incremental commit/registry write-back.
+        self._doc_status = doc_status
+
+    def _build_doc_status_store(self) -> "DocStatusPort":
+        if self._doc_status is not None:
+            return self._doc_status
+        from aws_graphrag.adapters.aws import DynamoDBDocStatusStore
+
+        return DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
 
     def _execute_core(
         self, context: PipelineContext
@@ -1064,7 +1085,6 @@ class IndexingStage(PipelineStage):
         extracted delta is upserted and the registry updated with per-document
         lineage so subsequent runs diff correctly.
         """
-        from aws_graphrag.adapters.aws import DynamoDBDocStatusStore
         from aws_graphrag.application.ingestion.incremental import (
             IncrementalIndexer,
             build_document_lineage,
@@ -1081,7 +1101,7 @@ class IndexingStage(PipelineStage):
                 community_reports=community_reports,
                 claims=claims,
             )
-        store = DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
+        store = self._build_doc_status_store()
         # Artifacts carry their own index suffix (multi-tenant/version aware);
         # derive the run's suffix from the text units the same way the indexers do.
         suffix = (
