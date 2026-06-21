@@ -168,29 +168,41 @@ class StorageStack(Stack):
 
     # ---------------------------------------------------------- OpenSearch
     def _build_opensearch(self) -> opensearch.Domain:
+        multi_node = self.config.opensearch_count > 1
+        # Zone awareness requires availabilityZoneCount of 2 or 3 and is only
+        # valid for multi-node domains; omit it entirely for a single node.
+        zone_awareness = (
+            opensearch.ZoneAwarenessConfig(
+                enabled=True,
+                availability_zone_count=min(self.config.opensearch_count, 2),
+            )
+            if multi_node
+            else None
+        )
+        # OpenSearch needs exactly as many subnets as AZs it spans: 1 for a
+        # single node, 2 for a zone-aware multi-node domain.
+        selected = self.vpc.select_subnets(
+            subnet_type=self.app_subnets.subnet_type
+        ).subnets
+        os_subnets = ec2.SubnetSelection(subnets=selected[: (2 if multi_node else 1)])
         return opensearch.Domain(
             self,
             "OpenSearch",
             version=opensearch.EngineVersion.OPENSEARCH_2_13,
             vpc=self.vpc,
-            vpc_subnets=[self.app_subnets],
+            vpc_subnets=[os_subnets],
             security_groups=[self.service_sg],
             capacity=opensearch.CapacityConfig(
                 data_node_instance_type=self.config.opensearch_instance,
                 data_nodes=self.config.opensearch_count,
                 # Dedicated master nodes stabilize the cluster under load; enable
-                # for HA (Multi-node) deployments.
-                master_nodes=3 if self.config.opensearch_count > 1 else 0,
+                # for HA (multi-node) deployments only.
+                master_nodes=3 if multi_node else 0,
                 master_node_instance_type=(
-                    self.config.opensearch_instance
-                    if self.config.opensearch_count > 1
-                    else None
+                    self.config.opensearch_instance if multi_node else None
                 ),
             ),
-            zone_awareness=opensearch.ZoneAwarenessConfig(
-                enabled=self.config.opensearch_count > 1,
-                availability_zone_count=min(self.config.opensearch_count, 2),
-            ),
+            zone_awareness=zone_awareness,
             logging=opensearch.LoggingOptions(
                 slow_search_log_enabled=True,
                 slow_index_log_enabled=True,
