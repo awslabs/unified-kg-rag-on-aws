@@ -263,9 +263,15 @@ Implement [solution] using [AWS services/approach].
 
 ### Reporting Security Issues
 - **Do not** create public issues for security vulnerabilities
-- **Report** security concerns through GitHub's private vulnerability reporting feature
+- **Report** security concerns privately to the maintainers
 - **Include** detailed description and reproduction steps
 - **Allow** reasonable time for response before disclosure
+
+### Dependency / SAST scan findings
+How GitLab Dependency-Scanning and SAST findings are assessed (reachability,
+disposition, and how to dismiss accepted ones) is recorded in
+[`docs/security-triage.md`](docs/security-triage.md). Update it whenever a new
+finding appears or a pinned version changes.
 
 ## 📦 Release Process
 
