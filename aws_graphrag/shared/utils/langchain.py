@@ -1,5 +1,6 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 import asyncio
+import concurrent.futures
 import html
 import math
 import re
@@ -50,6 +51,37 @@ class BatchProcessor(BaseModel):
         ge=1,
         description="Size of each mini-batch when processing items in chunks for better memory management and performance",
     )
+    call_timeout_seconds: int = Field(
+        default=300,
+        ge=0,
+        description="Wall-clock timeout for a single batch/sequential LLM call. "
+        "botocore's read_timeout only measures the gap between bytes, so a server "
+        "that dribbles keep-alive data can hang a call indefinitely; this hard "
+        "ceiling forces such a call to abort (and fall back / retry). 0 disables.",
+    )
+
+    @staticmethod
+    def _run_with_timeout(
+        func: Callable[[], Any], timeout_seconds: int, label: str
+    ) -> Any:
+        """Run ``func`` under a wall-clock timeout.
+
+        A hung Bedrock call (no completion despite an open socket) would otherwise
+        block the only worker for the full mini-batch; this bounds it so the
+        caller can fall back to per-item retries. ``timeout_seconds <= 0`` runs
+        ``func`` directly with no timeout.
+        """
+        if timeout_seconds <= 0:
+            return func()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(func)
+            try:
+                return future.result(timeout=timeout_seconds)
+            except concurrent.futures.TimeoutError as exc:
+                # Don't wait on the doomed thread; let the daemon pool drop it.
+                raise TimeoutError(
+                    f"'{label}' exceeded the {timeout_seconds}s call timeout"
+                ) from exc
 
     def execute_with_fallback(
         self,
@@ -71,8 +103,18 @@ class BatchProcessor(BaseModel):
             self.batch_size = run_config.get("batch_size", self.batch_size)
 
         prepared_batch_func = self._create_batch_func(batch_func)
+
+        # Bound each single-item call by the same wall-clock ceiling so a hung
+        # item aborts and is retried by the decorator instead of blocking.
+        def timed_sequential_func(single_input: dict[str, Any]) -> Any:
+            return self._run_with_timeout(
+                lambda: sequential_func(single_input),
+                self.call_timeout_seconds,
+                f"{task_name} item",
+            )
+
         retrying_sequential_func = self._create_retry_decorator(task_name)(
-            sequential_func
+            timed_sequential_func
         )
 
         all_results = []
@@ -111,7 +153,14 @@ class BatchProcessor(BaseModel):
 
             try:
                 logger.debug("Attempting batch processing for chunk %s", chunk_num)
-                chunk_results = prepared_batch_func(chunk_inputs)
+                def run_batch(inputs: list[dict[str, Any]] = chunk_inputs) -> Any:
+                    return prepared_batch_func(inputs)
+
+                chunk_results = self._run_with_timeout(
+                    run_batch,
+                    self.call_timeout_seconds,
+                    f"{task_name} batch chunk {chunk_num}",
+                )
                 all_results.extend(chunk_results)
                 logger.debug("Chunk %s processed successfully in batch mode", chunk_num)
             except Exception as e:
