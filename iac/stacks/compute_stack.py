@@ -122,11 +122,21 @@ class ComputeStack(Stack):
                 resources=[f"arn:aws:bedrock:*:{self.account}:guardrail/*"],
             )
         )
-        # Neptune data-plane IAM auth: only the connect action is needed (the
-        # Gremlin read/write verbs are authorized within the connection).
+        # Neptune data-plane IAM auth. `connect` alone authorizes opening the
+        # WebSocket but NOT running Gremlin traversals — reads/writes need the
+        # explicit data-access actions, else queries return HTTP 403. Scoped to
+        # this cluster's resource id.
         role.add_to_policy(
             iam.PolicyStatement(
-                actions=["neptune-db:connect"],
+                actions=[
+                    "neptune-db:connect",
+                    "neptune-db:ReadDataViaQuery",
+                    "neptune-db:WriteDataViaQuery",
+                    "neptune-db:DeleteDataViaQuery",
+                    "neptune-db:GetEngineStatus",
+                    "neptune-db:GetQueryStatus",
+                    "neptune-db:CancelQuery",
+                ],
                 resources=[
                     f"arn:aws:neptune-db:{self.region}:{self.account}:"
                     f"{storage.neptune_cluster.cluster_resource_identifier}/*"
