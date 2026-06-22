@@ -248,7 +248,13 @@ class BaseBedrockWrapper:
 
 
 class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
-    BOTO_READ_TIMEOUT: ClassVar[int] = 900
+    # Per-request socket read timeout. A single LLM/embedding response completes
+    # in well under this; the cap exists so a stalled Converse call (no bytes
+    # from the server) fails fast and is retried, instead of blocking a worker
+    # for many minutes. Kept generous enough for long generations (community
+    # reports, extended thinking) but short enough that a hung socket doesn't
+    # freeze a whole ProcessPool-parallel stage (e.g. claim extraction).
+    BOTO_READ_TIMEOUT: ClassVar[int] = 300
     BOTO_MAX_ATTEMPTS: ClassVar[int] = 5
     # "adaptive" adds client-side rate limiting on top of retries, which is
     # materially better for throttling-heavy Bedrock workloads than "standard".
