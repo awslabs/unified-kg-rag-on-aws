@@ -21,6 +21,28 @@ are separated by account/region and tracked via the `env` tag.
 | `GraphRagSecurity` | Shared customer-managed KMS key (optional, `use_cmk`) |
 | `GraphRagGuardrail` | Bedrock Guardrail, **pinned to `bedrock_region`** (reuse or create a baseline PII/prompt-attack guardrail) |
 
+### Resource naming
+
+Physical resources share a single lowercase `graphrag-<purpose>` scheme (no env
+segment — environments are separated by account/region), matching the account's
+convention (`example-alb-logs-…`, `example-state-…`):
+
+| Resource | Name |
+|---|---|
+| S3 cache bucket | `graphrag-cache-<account>-<region>` |
+| DynamoDB doc-status | `graphrag-doc-status` |
+| ECR repository | `graphrag-app` |
+| ECS cluster | `graphrag-cluster` |
+| Step Functions | `graphrag-ingestion` |
+| SNS alarm topic | `graphrag-pipeline-alarms` |
+| CloudWatch dashboard | `graphrag-dashboard` |
+| KMS alias | `alias/graphrag-data` |
+| Bedrock guardrail | `graphrag-guardrail-<region>` |
+| Log groups | `/graphrag/tasks`, `/graphrag/pipeline` |
+
+Neptune/OpenSearch/ECS task-def names are CloudFormation-generated (stack-id
+derived) to avoid replace-on-rename conflicts.
+
 > **Guardrail is region-pinned.** A guardrail must live in the Bedrock *runtime*
 > region (`bedrock_region`), which can differ from the deploy region that hosts
 > Neptune/OpenSearch. It is therefore its own stack. Because it lives in another

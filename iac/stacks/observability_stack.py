@@ -48,7 +48,7 @@ class ObservabilityStack(Stack):
 
         # Dashboard: execution health + a couple of EMF pipeline metrics.
         dashboard = cw.Dashboard(
-            self, "Dashboard", dashboard_name=f"{config.prefix}-pipeline"
+            self, "Dashboard", dashboard_name=f"{config.prefix}-dashboard"
         )
         dashboard.add_widgets(
             cw.GraphWidget(

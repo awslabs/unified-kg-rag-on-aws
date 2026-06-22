@@ -42,7 +42,7 @@ class ComputeStack(Stack):
         self.repository = ecr.Repository(
             self,
             "Repo",
-            repository_name=f"{config.prefix}",
+            repository_name=f"{config.prefix}-app",
             image_scan_on_push=True,
             lifecycle_rules=[ecr.LifecycleRule(max_image_count=10)],
         )
@@ -50,6 +50,7 @@ class ComputeStack(Stack):
         self.cluster = ecs.Cluster(
             self,
             "Cluster",
+            cluster_name=f"{config.prefix}-cluster",
             vpc=networking.vpc,
             container_insights_v2=ecs.ContainerInsights.ENABLED,
         )
@@ -57,7 +58,7 @@ class ComputeStack(Stack):
         self.log_group = logs.LogGroup(
             self,
             "TaskLogs",
-            log_group_name="/aws-graphrag/tasks",
+            log_group_name=f"/{config.prefix}/tasks",
             retention=logs.RetentionDays.ONE_MONTH,
         )
 
