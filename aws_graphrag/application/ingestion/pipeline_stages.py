@@ -1046,6 +1046,14 @@ class IndexingStage(PipelineStage):
             stats.successful_items for stats in indexing_results.values()
         )
         total_failed = sum(stats.failed_items for stats in indexing_results.values())
+        # Relationships indexed (graph backend), surfaced as a top-level metric so
+        # the silent-drop failure mode (relationships extracted but 0 indexed) is
+        # observable/alarmable rather than hidden inside per-backend results.
+        relationships_indexed = sum(
+            stats.successful_items
+            for key, stats in indexing_results.items()
+            if "relationship" in key
+        )
 
         # Validate that no backend has completely failed
         self._validate_backend_success(indexing_results)
@@ -1054,6 +1062,7 @@ class IndexingStage(PipelineStage):
             "indexing_results": {k: v.to_dict() for k, v in indexing_results.items()},
             "total_indexed": total_indexed,
             "total_failed": total_failed,
+            "relationships_indexed": relationships_indexed,
             "success_rate": (
                 total_indexed / (total_indexed + total_failed)
                 if (total_indexed + total_failed) > 0

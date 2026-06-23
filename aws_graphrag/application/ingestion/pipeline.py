@@ -717,6 +717,15 @@ class DataIngestionPipeline:
             "community_modularity_score": self._get_stage_metric(
                 context, "community_detection", "modularity_score"
             ),
+            "total_items_indexed": int(
+                self._get_stage_metric(context, "indexing", "total_indexed")
+            ),
+            "total_items_index_failed": int(
+                self._get_stage_metric(context, "indexing", "total_failed")
+            ),
+            "relationships_indexed": int(
+                self._get_stage_metric(context, "indexing", "relationships_indexed")
+            ),
             "cache_hit_rate": cache_stats.hit_rate,
             "cache_size_mb": cache_stats.total_size_mb,
             "stage_durations": stage_durations,
@@ -727,11 +736,18 @@ class DataIngestionPipeline:
     def _emit_metrics(self, metrics: PipelineMetrics, pipeline_id: str) -> None:
         """Forward scalar pipeline metrics to the configured sink (best-effort)."""
         try:
+            dumped = metrics.model_dump()
             scalars = {
                 k: v
-                for k, v in metrics.model_dump().items()
+                for k, v in dumped.items()
                 if isinstance(v, (int, float)) and not isinstance(v, bool)
             }
+            # Flatten the per-stage duration map into individual scalar metrics so
+            # they actually reach the sink (the dict member is otherwise dropped
+            # by the scalar filter, leaving only total_duration_seconds emitted).
+            for stage_name, duration in (metrics.stage_durations or {}).items():
+                if isinstance(duration, (int, float)):
+                    scalars[f"duration_{stage_name}_seconds"] = duration
             self.metrics_sink.emit(
                 namespace="aws_graphrag/ingestion",
                 metrics=scalars,

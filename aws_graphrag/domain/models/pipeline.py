@@ -53,6 +53,19 @@ class PipelineMetrics(BaseModel):
     total_community_reports_generated: int = Field(
         description="Total number of community reports generated"
     )
+    total_items_indexed: int = Field(
+        default=0,
+        description="Total artifacts successfully written to the stores (indexing stage)",
+    )
+    total_items_index_failed: int = Field(
+        default=0,
+        description="Total artifacts that failed to index across all backends",
+    )
+    relationships_indexed: int = Field(
+        default=0,
+        description="Relationships successfully indexed (0 while extracted>0 signals "
+        "the silent-drop failure mode)",
+    )
     gleaning_improvement_rate: float = Field(
         default=0.0, description="Improvement rate from gleaning process"
     )
