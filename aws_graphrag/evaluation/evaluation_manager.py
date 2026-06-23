@@ -339,8 +339,12 @@ class EvaluationManager:
             # GraphAwareEvaluator can score entity/relationship coverage without
             # changing the evaluator signature.
             if gt := gt_obj_map.get(result.query_id):
-                result.metadata["expected_entities"] = gt.expected_entities
-                result.metadata["expected_relationships"] = gt.expected_relationships
+                # Copy so a downstream in-place mutation of result.metadata does
+                # not corrupt the shared ground-truth lists.
+                result.metadata["expected_entities"] = list(gt.expected_entities)
+                result.metadata["expected_relationships"] = list(
+                    gt.expected_relationships
+                )
 
         gt_list = [res.ground_truth for res in results]
 

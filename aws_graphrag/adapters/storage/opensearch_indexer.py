@@ -86,6 +86,9 @@ class OpenSearchIndexer(VectorIndexer):
         if not suffixes:
             return True
 
+        # Initialized before the try so the except's log message cannot raise
+        # UnboundLocalError if building the alias list itself fails.
+        aliases_to_delete: list[str] = []
         try:
             prefixes = [
                 self.opensearch_config.text_units_index_prefix,
@@ -407,6 +410,9 @@ class OpenSearchIndexer(VectorIndexer):
             response = self.opensearch_client.bulk_delete(
                 index_name, ids, refresh=self.opensearch_config.refresh_after_batch
             )
+            # bulk_delete returns {"errors", "items"} where items is ONLY the
+            # error results (not-found deletes are counted as success), so
+            # failed + success == len(ids) == total_items exactly.
             failed = len(response.get("items", []))
             stats.add_success(len(ids) - failed)
             if failed:

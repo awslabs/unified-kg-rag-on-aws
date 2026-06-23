@@ -395,8 +395,13 @@ class IndexingManager:
             count_diff = abs(os_entity_count - neptune_entity_count)
 
             if not count_match:
-                logger.warning(
-                    "Entity count mismatch: OpenSearch(%s) vs Neptune(%s)",
+                # Not necessarily an error: Neptune can hold relationship-endpoint
+                # entities that were never embedded into OpenSearch (e.g. an
+                # embedding call was skipped/failed), so the two stores can
+                # legitimately differ. Informational, not a failure signal.
+                logger.info(
+                    "Entity count differs across stores: OpenSearch(%s) vs "
+                    "Neptune(%s) — expected when graph holds non-embedded endpoints",
                     os_entity_count,
                     neptune_entity_count,
                 )

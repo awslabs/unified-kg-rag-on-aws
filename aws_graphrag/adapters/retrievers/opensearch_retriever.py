@@ -123,7 +123,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 for results in await asyncio.gather(*search_tasks):
                     all_results.extend(results)
 
-            all_results.sort(key=lambda x: x.score, reverse=True)
+            all_results.sort(key=lambda x: x.score or 0.0, reverse=True)
             final_results = all_results[: query.top_k * query.retrieval_multiplier]
 
             processing_time = time.time() - start_time
