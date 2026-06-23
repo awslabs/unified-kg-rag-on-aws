@@ -52,7 +52,6 @@ from .pipeline import (
 )
 from .relationship import Relationship
 from .retrieval import (
-    ContextBuilderResult,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -74,7 +73,6 @@ __all__ = [
     "CommunityReport",
     "Config",
     "Constants",
-    "ContextBuilderResult",
     "Covariate",
     "ConversationContext",
     "DocStatus",

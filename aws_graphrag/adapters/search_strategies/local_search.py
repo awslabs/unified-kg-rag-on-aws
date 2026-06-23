@@ -5,7 +5,6 @@ from typing import Any
 import boto3
 
 from aws_graphrag.adapters.retrieval.base import (
-    BaseContextBuilder,
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
@@ -29,12 +28,11 @@ class LocalSearchStrategy(BaseSearchStrategy):
         self,
         config: Config,
         retrievers: dict[str, BaseGraphRAGRetriever],
-        context_builder: BaseContextBuilder | None = None,
         boto_session: boto3.Session | None = None,
         entity_focus_multiplier: int = 2,
         **kwargs: Any,
     ):
-        super().__init__(config, retrievers, context_builder, boto_session, **kwargs)
+        super().__init__(config, retrievers, boto_session, **kwargs)
         self.entity_focus_multiplier = entity_focus_multiplier
 
     async def asearch(self, query: SearchQuery) -> SearchResult:

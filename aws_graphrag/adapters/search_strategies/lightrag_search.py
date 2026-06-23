@@ -23,7 +23,6 @@ from typing import Any
 import boto3
 
 from aws_graphrag.adapters.retrieval.base import (
-    BaseContextBuilder,
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
@@ -63,11 +62,10 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         self,
         config: Config,
         retrievers: dict[str, BaseGraphRAGRetriever],
-        context_builder: BaseContextBuilder | None = None,
         boto_session: boto3.Session | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(config, retrievers, context_builder, boto_session, **kwargs)
+        super().__init__(config, retrievers, boto_session, **kwargs)
         self._os_config = config.indexing.opensearch
 
     def _mode(self, query: SearchQuery) -> str:

@@ -9,7 +9,6 @@ keep a single import path.
 """
 
 from aws_graphrag.adapters.retrieval.base import (
-    BaseContextBuilder,
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
@@ -39,7 +38,6 @@ from aws_graphrag.application.retrieval.rag_chain import (
 )
 
 __all__ = [
-    "BaseContextBuilder",
     "BaseGraphRAGRetriever",
     "BaseSearchStrategy",
     "ChainMode",

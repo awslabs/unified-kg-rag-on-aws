@@ -14,7 +14,6 @@ from aws_graphrag.adapters.retrieval.token_manager import TokenManager
 from aws_graphrag.domain.models import (
     Config,
     Constants,
-    ContextBuilderResult,
     RetrievalResult,
     SearchQuery,
     SearchResult,
@@ -86,34 +85,11 @@ class BaseGraphRAGRetriever(BaseRetriever, MetricsMixin, ABC):
         return f"{base}-{final_suffix}"
 
 
-class BaseContextBuilder(MetricsMixin, ABC):
-    def __init__(self, config: Config, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.config = config
-
-    @abstractmethod
-    def build_context(
-        self,
-        query: SearchQuery,
-        retrieval_results: list[RetrievalResult],
-    ) -> ContextBuilderResult:
-        pass
-
-    @abstractmethod
-    async def abuild_context(
-        self,
-        query: SearchQuery,
-        retrieval_results: list[RetrievalResult],
-    ) -> ContextBuilderResult:
-        pass
-
-
 class BaseSearchStrategy(MetricsMixin, ABC):
     def __init__(
         self,
         config: Config,
         retrievers: dict[str, BaseGraphRAGRetriever],
-        context_builder: BaseContextBuilder | None = None,
         boto_session: boto3.Session | None = None,
         optimization_threshold_factor: int = 2,
         default_max_tokens: int = 4096,
@@ -124,7 +100,6 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         # Retrievers are keyed by RetrieverRole value ("graph" / "document"),
         # not by concrete backend, so strategies stay backend-agnostic.
         self.retrievers = retrievers
-        self.context_builder = context_builder
         self.boto_session = boto_session or boto3.Session(
             profile_name=self.config.aws.profile_name
         )

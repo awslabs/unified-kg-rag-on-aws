@@ -10,7 +10,6 @@ from langchain_core.runnables import Runnable
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.adapters.aws.chain_factory import setup_chain
 from aws_graphrag.adapters.retrieval.base import (
-    BaseContextBuilder,
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
@@ -36,11 +35,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         self,
         config: Config,
         retrievers: dict[str, BaseGraphRAGRetriever],
-        context_builder: BaseContextBuilder | None = None,
         boto_session: boto3.Session | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(config, retrievers, context_builder, boto_session, **kwargs)
+        super().__init__(config, retrievers, boto_session, **kwargs)
         self.global_search_config = config.search.global_search
         self.ignore_errors = config.processing.ignore_errors
 

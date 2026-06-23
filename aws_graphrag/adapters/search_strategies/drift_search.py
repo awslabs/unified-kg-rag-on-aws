@@ -12,7 +12,6 @@ from langchain_core.output_parsers import (
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.adapters.aws.chain_factory import setup_chain
 from aws_graphrag.adapters.retrieval.base import (
-    BaseContextBuilder,
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
@@ -41,12 +40,11 @@ class DriftSearchStrategy(BaseSearchStrategy):
         self,
         config: Config,
         retrievers: dict[str, BaseGraphRAGRetriever],
-        context_builder: BaseContextBuilder | None = None,
         boto_session: boto3.Session | None = None,
         entity_focus_multiplier: int = 2,
         **kwargs: Any,
     ):
-        super().__init__(config, retrievers, context_builder, boto_session, **kwargs)
+        super().__init__(config, retrievers, boto_session, **kwargs)
         self.drift_config = self.config.search.drift_search
         self.entity_focus_multiplier = entity_focus_multiplier
         self.ignore_errors = config.processing.ignore_errors

@@ -29,7 +29,6 @@ from aws_graphrag.adapters.aws import (
 )
 from aws_graphrag.adapters.aws.chain_factory import setup_chain
 from aws_graphrag.adapters.retrieval.base import (
-    BaseContextBuilder,
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
@@ -489,10 +488,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             role.value: self._get_retriever(role) for role in spec.required_roles
         }
 
-        context_builder: BaseContextBuilder | None = None
-        return spec.strategy_class(
-            config=self.config, retrievers=retrievers, context_builder=context_builder
-        )
+        return spec.strategy_class(config=self.config, retrievers=retrievers)
 
     def _build_graph_retriever(self) -> BaseGraphRAGRetriever:
         neptune_client = NeptuneClient(

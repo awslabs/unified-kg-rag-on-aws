@@ -43,20 +43,6 @@ class SearchType(str, Enum):
     VECTOR = "vector"
 
 
-class ContextBuilderResult(BaseModel):
-    context_text: str = Field(description="Built context string ready for use")
-    sections: list[dict[str, Any]] = Field(description="Context sections with metadata")
-    total_tokens: int = Field(description="Total token count of built context")
-    sections_included: int = Field(description="Number of sections included in context")
-    optimization_applied: bool = Field(
-        description="Whether context optimization was applied"
-    )
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional context builder metadata",
-    )
-
-
 class RetrievalResult(BaseModel):
     content: str = Field(description="Retrieved content text")
     score: float = Field(description="Relevance score (0-1)")
