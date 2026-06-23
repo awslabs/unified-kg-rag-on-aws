@@ -413,26 +413,36 @@ class DataIngestionPipeline:
     def _prepare_context_for_resume(
         self, context: PipelineContext, start_stage_name: str
     ) -> None:
-        stage_names = [stage.name for stage in self.stages]
+        # Order by the canonical pipeline sequence (STAGE_CLASSES), NOT the
+        # enabled-stage subset: phased execution narrows self.stages to one
+        # phase's window (e.g. just ["indexing"]), so judging "is this an
+        # upstream result?" against that subset would wrongly discard every
+        # earlier phase's results — silently dropping resolved_relationships /
+        # resolved_claims before indexing. The full order keeps them.
+        canonical_order = [st.value for st in self.STAGE_CLASSES]
         try:
-            start_index = stage_names.index(start_stage_name)
-            valid_results = [
-                res
-                for res in context.stage_results
-                if stage_names.index(res.stage_name) < start_index
-            ]
-            context.stage_results = valid_results
-            logger.info(
-                "Context prepared for resume from '%s' - keeping %s previous stage results",
-                start_stage_name,
-                len(valid_results),
-            )
+            start_index = canonical_order.index(start_stage_name)
         except ValueError:
             logger.warning(
-                "Start stage '%s' not found in stage list, starting from beginning",
+                "Start stage '%s' not in canonical pipeline order; "
+                "keeping all %s previous stage results",
                 start_stage_name,
+                len(context.stage_results),
             )
-            context.stage_results = []
+            return
+
+        valid_results = [
+            res
+            for res in context.stage_results
+            if res.stage_name in canonical_order
+            and canonical_order.index(res.stage_name) < start_index
+        ]
+        context.stage_results = valid_results
+        logger.info(
+            "Context prepared for resume from '%s' - keeping %s previous stage results",
+            start_stage_name,
+            len(valid_results),
+        )
 
     def _prepare_new_run(
         self, source_directory: Path, pipeline_id: str, resume_from_stage: str | None

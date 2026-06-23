@@ -29,6 +29,25 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+# Canonical ingestion stage order (mirrors DataIngestionPipeline.STAGE_CLASSES).
+# Used to keep stage_results sorted when merging across phased executions so the
+# accumulated history reads in pipeline order regardless of which phase wrote it.
+_CANONICAL_STAGE_ORDER: tuple[str, ...] = (
+    "document_parsing",
+    "document_loading",
+    "text_chunking",
+    "translation",
+    "graph_extraction",
+    "gleaning",
+    "graph_resolution",
+    "claim_extraction",
+    "claim_resolution",
+    "graph_analysis",
+    "community_detection",
+    "indexing",
+)
+
+
 class PipelineStateManager:
     PIPELINE_METADATA_FILE = "pipeline_metadata.json"
     EXCLUDED_DATA_FIELDS = {
@@ -131,6 +150,14 @@ class PipelineStateManager:
 
         try:
             metadata_directory.mkdir(parents=True, exist_ok=True)
+            # Phased executions (each a separate task sharing one pipeline_id via
+            # S3) run a stage window and would otherwise overwrite the on-disk
+            # metadata with only their own stage_results, dropping the upstream
+            # phases' history. Merge the existing results in first so the resume
+            # of a later phase can see — and restore the cache of — every
+            # completed upstream stage (e.g. graph_resolution's relationships,
+            # claim_resolution's claims), not just the immediately prior phase.
+            self._merge_persisted_stage_results(context, metadata_path)
             self._update_context_status(context)
 
             if context.status in {
@@ -173,6 +200,53 @@ class PipelineStateManager:
             raise PipelineStateError(
                 f"Critical error saving pipeline metadata: {e}"
             ) from e
+
+    def _merge_persisted_stage_results(
+        self, context: PipelineContext, metadata_path: Path
+    ) -> None:
+        """Union the context's stage_results with any already on disk.
+
+        Keyed by stage_name: the in-memory result (this phase's fresh run) wins
+        over a previously persisted one for the same stage; stages only present
+        on disk (earlier phases) are preserved. The merged list is sorted into
+        canonical pipeline order so downstream resume logic sees a coherent,
+        cumulative history across phases.
+        """
+        if not metadata_path.exists() or metadata_path.stat().st_size == 0:
+            return
+
+        try:
+            with open(metadata_path, encoding="utf-8") as f:
+                persisted = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(
+                "Could not read existing metadata to merge stage results "
+                "(treating as fresh): %s",
+                e,
+            )
+            return
+
+        merged: dict[str, PipelineStageResult] = {}
+        for raw in persisted.get("stage_results", []):
+            try:
+                result = PipelineStageResult.model_validate(raw)
+            except Exception as e:  # noqa: BLE001 - skip unparseable legacy entries
+                logger.warning("Skipping unparseable persisted stage result: %s", e)
+                continue
+            merged[result.stage_name] = result
+
+        # This phase's in-memory results take precedence for the same stage.
+        for result in context.stage_results:
+            merged[result.stage_name] = result
+
+        context.stage_results = sorted(
+            merged.values(),
+            key=lambda r: (
+                _CANONICAL_STAGE_ORDER.index(r.stage_name)
+                if r.stage_name in _CANONICAL_STAGE_ORDER
+                else len(_CANONICAL_STAGE_ORDER)
+            ),
+        )
 
     @staticmethod
     def _update_context_status(context: PipelineContext) -> None:
