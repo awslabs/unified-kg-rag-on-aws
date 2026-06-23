@@ -59,6 +59,14 @@ class TestCoverage:
         # "Acme" should match despite surrounding punctuation.
         assert evaluator._coverage(["Acme"], "owned by Acme, Inc.")[1] == 1
 
+    def test_cjk_coverage_via_substring(self, evaluator: GraphAwareEvaluator) -> None:
+        # Space-less scripts have no word tokens; coverage falls back to a
+        # substring check so CJK answers aren't always scored 0.
+        cov, matched = evaluator._coverage(["東京電力"], "本契約は東京電力と締結された")
+        assert matched == 1 and cov == 1.0
+        # A CJK entity absent from the answer still scores 0.
+        assert evaluator._coverage(["大阪ガス"], "本契約は東京電力と締結された")[1] == 0
+
 
 class TestEvaluateSingle:
     def _result(self, answer: str, **md) -> EvaluationResult:

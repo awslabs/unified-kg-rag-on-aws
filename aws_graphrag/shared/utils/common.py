@@ -1,10 +1,17 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 import hashlib
 import re
+import unicodedata
 import uuid
 from typing import Any
 
-RE_INVALID_CHARS = re.compile(r"[^a-z0-9\s]")
+# Strip punctuation/symbols but KEEP letters, marks and digits of ANY script
+# (\w is Unicode-aware in Python 3). The previous [^a-z0-9\s] deleted all
+# non-ASCII text, which collapsed every CJK/Cyrillic/accented entity name to ""
+# — and since entity ids are hashes of the normalized name, that zeroed out the
+# graph for non-English corpora (a core multilingual-support bug). Underscore is
+# treated as a separator (handled before this runs).
+RE_INVALID_CHARS = re.compile(r"[^\w\s]", re.UNICODE)
 RE_EXTRA_SPACES = re.compile(r"\s+")
 
 
@@ -38,16 +45,25 @@ def generate_stable_id(content: str, namespace_key: str = "aws-graphrag") -> str
 
 
 def normalize_name(name: str | None) -> str:
+    """Normalize an entity/relationship name for id-hashing and matching.
+
+    Unicode-aware: casefold + NFKC normalization, treat _/- as separators, drop
+    punctuation/symbols but keep letters/marks/digits of any script. If the
+    cleaned result is empty (e.g. a name made only of punctuation/emoji) fall
+    back to the casefolded original so a non-empty input never collapses to ""
+    (which would merge unrelated entities under the same id).
+    """
     if not name:
         return ""
 
-    normalized = name.lower()
-
+    # NFKC unifies compatibility forms (full-width, ligatures); casefold is the
+    # Unicode-correct lowercasing (handles ß, Turkish İ, Greek, etc.).
+    normalized = unicodedata.normalize("NFKC", name).casefold()
     normalized = normalized.replace("_", " ").replace("-", " ")
     normalized = RE_INVALID_CHARS.sub(" ", normalized)
-    normalized = RE_EXTRA_SPACES.sub(" ", normalized)
+    normalized = RE_EXTRA_SPACES.sub(" ", normalized).strip()
 
-    return normalized.strip()
+    return normalized or unicodedata.normalize("NFKC", name).casefold().strip()
 
 
 def safe_float_parse(value: Any, default_value: float | None = None) -> float | None:

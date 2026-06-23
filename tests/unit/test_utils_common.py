@@ -66,6 +66,31 @@ class TestNormalizeName:
     def test_normalization(self, value: str | None, expected: str) -> None:
         assert normalize_name(value) == expected
 
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            # Non-Latin scripts MUST be preserved (entity ids hash this; the old
+            # ASCII-only regex collapsed these to "" and zeroed the graph).
+            ("東京電力", "東京電力"),
+            ("서울특별시", "서울특별시"),
+            ("Müller", "müller"),
+            # NFKC normalization unifies full-width forms.
+            ("Ａ１２３", "a123"),
+        ],
+    )
+    def test_normalization_preserves_non_latin(self, value: str, expected: str) -> None:
+        assert normalize_name(value) == expected
+
+    def test_non_empty_input_never_collapses_to_empty(self) -> None:
+        # A name of only punctuation/symbols falls back rather than vanishing
+        # (an empty id would merge unrelated entities).
+        assert normalize_name("...") != ""
+        assert normalize_name("中文") != ""
+
+    def test_distinct_scripts_do_not_collide(self) -> None:
+        # Two different CJK names must map to different normalized forms.
+        assert normalize_name("東京") != normalize_name("大阪")
+
 
 class TestSafeFloatParse:
     @pytest.mark.parametrize(

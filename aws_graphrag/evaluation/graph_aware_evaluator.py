@@ -60,9 +60,36 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
                 tokens.append(token)
         return tokens
 
+    @staticmethod
+    def _is_spaceless_script(text: str) -> bool:
+        """True if the text has CJK characters and no internal whitespace.
+
+        Such scripts are not whitespace-tokenizable, so contiguous word-token
+        matching would always miss; coverage must use a substring check instead.
+        """
+        if any(ch.isspace() for ch in text.strip()):
+            return False
+        return any(
+            "぀" <= ch <= "鿿"  # Hiragana, Katakana, CJK ideographs
+            or "가" <= ch <= "힣"  # Hangul syllables
+            for ch in text
+        )
+
     @classmethod
-    def _phrase_in_tokens(cls, phrase: str, answer_tokens: list[str]) -> bool:
-        """True if the phrase's word sequence appears contiguously in the answer."""
+    def _phrase_in_tokens(
+        cls, phrase: str, answer_tokens: list[str], answer_text: str
+    ) -> bool:
+        """True if the expected phrase appears in the answer.
+
+        Latin/space-delimited scripts use contiguous word-token matching (so
+        "AI" does not match inside "airport"). Space-less scripts (CJK) are not
+        whitespace-tokenizable, so word matching would make coverage always 0 —
+        for those, fall back to a normalized substring check on the raw text.
+        """
+        if cls._is_spaceless_script(phrase):
+            cleaned = phrase.strip().lower()
+            return bool(cleaned) and cleaned in answer_text.lower()
+
         phrase_tokens = cls._tokenize(phrase)
         if not phrase_tokens:
             return False
@@ -94,7 +121,7 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         matched = sum(
             1
             for item in expected
-            if item and cls._phrase_in_tokens(item, answer_tokens)
+            if item and cls._phrase_in_tokens(item, answer_tokens, answer)
         )
         return matched / len(expected), matched
 
