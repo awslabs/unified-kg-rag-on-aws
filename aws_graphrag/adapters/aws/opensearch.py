@@ -6,7 +6,7 @@ from typing import Any
 
 import boto3
 from opensearchpy import (
-    AIOHttpConnection,
+    AsyncHttpConnection,
     AsyncOpenSearch,
     AWSV4SignerAsyncAuth,
     AWSV4SignerAuth,
@@ -132,7 +132,11 @@ class OpenSearchClient:
 
     def _create_async_client(self) -> AsyncOpenSearch:
         params = self._get_base_connection_params(async_mode=True)
-        params["connection_class"] = AIOHttpConnection
+        # AsyncHttpConnection (NOT AIOHttpConnection): the latter unconditionally
+        # treats http_auth as a basic-auth credential and calls .encode() on it,
+        # so an AWSV4SignerAsyncAuth still breaks. AsyncHttpConnection invokes a
+        # callable http_auth as a per-request SigV4 signer instead.
+        params["connection_class"] = AsyncHttpConnection
         return AsyncOpenSearch(**params)
 
     def _get_base_connection_params(self, async_mode: bool) -> dict[str, Any]:

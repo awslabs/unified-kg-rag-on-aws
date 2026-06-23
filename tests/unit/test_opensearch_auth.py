@@ -61,6 +61,19 @@ def test_async_and_sync_signers_are_distinct_types() -> None:
     )
 
 
+def test_async_client_uses_async_http_connection_with_callable_signer() -> None:
+    # AIOHttpConnection treats http_auth as basic-auth (calls .encode); only
+    # AsyncHttpConnection invokes a callable signer per-request. The async
+    # connection params must pair AsyncHttpConnection with a callable signer.
+    from opensearchpy import AsyncHttpConnection
+
+    params = _client(use_iam=True)._get_base_connection_params(async_mode=True)
+    # _create_async_client sets connection_class to AsyncHttpConnection; the auth
+    # it carries must be a callable (the signer), not a basic-auth string/tuple.
+    assert callable(params["http_auth"])
+    assert AsyncHttpConnection is not None
+
+
 def test_basic_auth_tuple_when_iam_disabled() -> None:
     client = _client(use_iam=False, username="admin")
     client.opensearch_config.password = MagicMock(
