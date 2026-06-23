@@ -206,7 +206,10 @@ class BatchProcessor(BaseModel):
         def log_retry(retry_state: RetryCallState) -> None:
             wait_time = retry_state.next_action.sleep if retry_state.next_action else 0
             logger.warning(
-                f"Retrying '{operation_name}' (attempt {retry_state.attempt_number} failed). Waiting {wait_time:.1f}s"
+                "Retrying '%s' (attempt %s failed). Waiting %.1fs",
+                operation_name,
+                retry_state.attempt_number,
+                wait_time,
             )
 
         return log_retry

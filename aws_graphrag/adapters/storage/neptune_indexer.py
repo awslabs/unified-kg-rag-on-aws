@@ -725,8 +725,11 @@ class NeptuneIndexer(GraphIndexer):
                 backoff = delay * (2**attempt)
                 sleep_for = random.uniform(0, backoff)
                 logger.warning(
-                    f"{operation_name} attempt {attempt + 1} failed, retrying in "
-                    f"{sleep_for:.2f}s: {e}"
+                    "%s attempt %s failed, retrying in %.2fs: %s",
+                    operation_name,
+                    attempt + 1,
+                    sleep_for,
+                    e,
                 )
                 time.sleep(sleep_for)
 
@@ -738,11 +741,17 @@ class NeptuneIndexer(GraphIndexer):
     def _log_indexing_summary(self, item_type_name: str, stats: IndexingStats) -> None:
         if stats.failed_items > 0:
             logger.warning(
-                f"Indexed {stats.successful_items}/{stats.total_items} {item_type_name} "
-                f"({stats.failed_items} failed) in {stats.processing_time:.2f}s."
+                "Indexed %s/%s %s (%s failed) in %.2fs.",
+                stats.successful_items,
+                stats.total_items,
+                item_type_name,
+                stats.failed_items,
+                stats.processing_time,
             )
         else:
             logger.info(
-                f"Successfully indexed {stats.successful_items} {item_type_name} "
-                f"in {stats.processing_time:.2f}s."
+                "Successfully indexed %s %s in %.2fs.",
+                stats.successful_items,
+                item_type_name,
+                stats.processing_time,
             )

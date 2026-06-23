@@ -133,7 +133,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         )
 
         logger.info(
-            f"Search completed - retrieved: {len(final_results)} results ({processing_time:.3f}s)"
+            "Search completed - retrieved: %s results (%.3fs)",
+            len(final_results),
+            processing_time,
         )
 
         return SearchResult(

@@ -104,9 +104,12 @@ class PipelineStage(ABC):
                 self._validate_critical_stage_output(input_count, output_count)
 
             logger.info(
-                f"Stage '{self.name}' completed successfully in "
-                f"{duration:.2f} seconds. "
-                f"Inputs: {input_count}, Outputs: {output_count}"
+                "Stage '%s' completed successfully in %.2f seconds. "
+                "Inputs: %s, Outputs: %s",
+                self.name,
+                duration,
+                input_count,
+                output_count,
             )
 
             return self._create_result(

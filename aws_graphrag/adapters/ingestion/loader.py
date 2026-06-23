@@ -126,8 +126,11 @@ class DirectoryLoader(BaseLoader):
         elapsed_time = time.time() - start_time
 
         logger.info(
-            f"Document loading completed in {elapsed_time:.2f}s. "
-            f"Success: {len(docs)}/{len(discovered_files)} ({success_rate:.1f}%)"
+            "Document loading completed in %.2fs. Success: %s/%s (%.1f%%)",
+            elapsed_time,
+            len(docs),
+            len(discovered_files),
+            success_rate,
         )
 
         if self.failed_files:

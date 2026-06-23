@@ -104,7 +104,9 @@ class BedrockNodeEmbedder:
                 )
 
             logger.info(
-                f"Generated embeddings for {len(embeddings_dict)} nodes in {time.time() - start_time:.2f}s."
+                "Generated embeddings for %s nodes in %.2fs.",
+                len(embeddings_dict),
+                time.time() - start_time,
             )
             return NodeEmbeddings(
                 nodes=list(embeddings_dict.keys()), embeddings=embeddings_dict

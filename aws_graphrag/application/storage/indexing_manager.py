@@ -355,7 +355,11 @@ class IndexingManager:
 
         success_rate = (total_successful / total_items * 100) if total_items > 0 else 0
         logger.info(
-            f"Indexing completed in {elapsed_time:.2f}s: {total_successful}/{total_items} items ({success_rate:.1f}%)"
+            "Indexing completed in %.2fs: %s/%s items (%.1f%%)",
+            elapsed_time,
+            total_successful,
+            total_items,
+            success_rate,
         )
 
         if total_failed > 0:
@@ -369,8 +373,11 @@ class IndexingManager:
                 failure_rate = stats.failed_items / stats.total_items
                 if failure_rate > 0.5:
                     logger.warning(
-                        f"High failure rate for '{task_name}': "
-                        f"{stats.failed_items}/{stats.total_items} ({failure_rate:.1%})"
+                        "High failure rate for '%s': %s/%s (%.1f%%)",
+                        task_name,
+                        stats.failed_items,
+                        stats.total_items,
+                        failure_rate * 100,
                     )
 
     def validate_indexing_integrity(self, text_units: list[TextUnit]) -> dict[str, Any]:

@@ -376,9 +376,13 @@ class ClaimExtractor(BaseProcessor):
             return
 
         logger.info(
-            f"Processing completed in {stats.total_processing_time:.2f}s - "
-            f"Success rate: {stats.success_rate:.1f}% "
-            f"({stats.num_successful_extractions}/{stats.num_total_units} units processed)"
+            "Processing completed in %.2fs - "
+            "Success rate: %.1f%% "
+            "(%s/%s units processed)",
+            stats.total_processing_time,
+            stats.success_rate,
+            stats.num_successful_extractions,
+            stats.num_total_units,
         )
 
         if stats.num_failed_extractions > 0:

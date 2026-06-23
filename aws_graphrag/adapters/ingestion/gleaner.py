@@ -228,10 +228,14 @@ class GraphGleaner(BaseProcessor):
         stats = GleaningStats(initial_quality_score=initial_quality)
 
         logger.info(
-            f"Starting graph gleaning from {len(text_units)} text units, "
-            f"{len(current_entities)} entities, "
-            f"{len(current_relationships)} relationships "
-            f"(initial quality: {initial_quality:.3f})"
+            "Starting graph gleaning from %s text units, "
+            "%s entities, "
+            "%s relationships "
+            "(initial quality: %.3f)",
+            len(text_units),
+            len(current_entities),
+            len(current_relationships),
+            initial_quality,
         )
 
         current_quality = initial_quality
@@ -270,12 +274,18 @@ class GraphGleaner(BaseProcessor):
             ].relationships_added
 
             logger.info(
-                f"Round {round_num} completed: "
-                f"+{round_stats['round_info'].entities_added} entities, "
-                f"+{round_stats['round_info'].relationships_added} relationships, "
-                f"quality: {current_quality:.3f} "
-                f"({round_stats['round_info'].quality_improvement:+.3f}), "
-                f"convergence: {round_stats['round_info'].convergence_score:.3f}"
+                "Round %s completed: "
+                "+%s entities, "
+                "+%s relationships, "
+                "quality: %.3f "
+                "(%+.3f), "
+                "convergence: %.3f",
+                round_num,
+                round_stats["round_info"].entities_added,
+                round_stats["round_info"].relationships_added,
+                current_quality,
+                round_stats["round_info"].quality_improvement,
+                round_stats["round_info"].convergence_score,
             )
 
             if self._should_stop_gleaning(
@@ -759,23 +769,25 @@ class GraphGleaner(BaseProcessor):
     ) -> bool:
         if convergence_score >= self.gleaning_config.convergence_threshold:
             logger.info(
-                f"Convergence achieved: score {convergence_score:.3f} >= "
-                f"threshold {self.gleaning_config.convergence_threshold:.3f}"
+                "Convergence achieved: score %.3f >= threshold %.3f",
+                convergence_score,
+                self.gleaning_config.convergence_threshold,
             )
             return True
 
         if abs(quality_improvement) < self.gleaning_config.min_improvement_threshold:
             logger.info(
-                f"Quality improvement below threshold: "
-                f"{quality_improvement:.3f} < "
-                f"{self.gleaning_config.min_improvement_threshold:.3f}"
+                "Quality improvement below threshold: %.3f < %.3f",
+                quality_improvement,
+                self.gleaning_config.min_improvement_threshold,
             )
             return True
 
         if current_quality >= self.gleaning_config.quality_threshold:
             logger.info(
-                f"Quality target reached: {current_quality:.3f} >= "
-                f"{self.gleaning_config.quality_threshold:.3f}"
+                "Quality target reached: %.3f >= %.3f",
+                current_quality,
+                self.gleaning_config.quality_threshold,
             )
             return True
 
@@ -784,19 +796,29 @@ class GraphGleaner(BaseProcessor):
     @staticmethod
     def _log_completion_summary(stats: GleaningStats) -> None:
         logger.info(
-            f"Graph gleaning completed: {stats.total_rounds} rounds, "
-            f"{stats.total_entities_added} entities added, "
-            f"{stats.total_relationships_added} relationships added, "
-            f"quality improved from {stats.initial_quality_score:.3f} to "
-            f"{stats.final_quality_score:.3f} "
-            f"({stats.quality_improvement:+.3f}) in {stats.total_processing_time:.2f}s"
+            "Graph gleaning completed: %s rounds, "
+            "%s entities added, "
+            "%s relationships added, "
+            "quality improved from %.3f to "
+            "%.3f "
+            "(%+.3f) in %.2fs",
+            stats.total_rounds,
+            stats.total_entities_added,
+            stats.total_relationships_added,
+            stats.initial_quality_score,
+            stats.final_quality_score,
+            stats.quality_improvement,
+            stats.total_processing_time,
         )
 
         if stats.total_rounds > 0:
             logger.info(
-                f"Average per round: {stats.entities_per_round:.1f} entities, "
-                f"{stats.relationships_per_round:.1f} relationships, "
-                f"{stats.average_round_time:.2f}s processing time"
+                "Average per round: %.1f entities, "
+                "%.1f relationships, "
+                "%.2fs processing time",
+                stats.entities_per_round,
+                stats.relationships_per_round,
+                stats.average_round_time,
             )
 
         if stats.convergence_achieved:

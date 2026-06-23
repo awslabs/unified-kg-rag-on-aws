@@ -130,7 +130,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             self._record_timing("retrieval_time", processing_time)
 
             logger.info(
-                f"OpenSearch retrieval completed - retrieved: {len(final_results)} results ({processing_time:.2f}s)"
+                "OpenSearch retrieval completed - retrieved: %s results (%.2fs)",
+                len(final_results),
+                processing_time,
             )
             return final_results
 

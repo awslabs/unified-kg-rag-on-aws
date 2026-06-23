@@ -133,8 +133,10 @@ class GraphBuilder:
         total_connected_rate = (total_connected / total_claims) * 100
 
         logger.info(
-            f"Claims integration: {total_connected}/{total_claims} "
-            f"({total_connected_rate:.1f}%) claims connected to entities"
+            "Claims integration: %s/%s (%.1f%%) claims connected to entities",
+            total_connected,
+            total_claims,
+            total_connected_rate,
         )
 
         disconnected_count = total_claims - total_connected

@@ -52,8 +52,12 @@ class BaseProcessor:
             confidence = self._parse_confidence(entity_data)
 
             logger.debug(
-                f"Successfully parsed entity: '{normalized_name}' "
-                f"(from: '{name}', id: {entity_id[:8]}, confidence: {confidence:.2f})"
+                "Successfully parsed entity: '%s' "
+                "(from: '%s', id: %s, confidence: %.2f)",
+                normalized_name,
+                name,
+                entity_id[:8],
+                confidence,
             )
             return Entity(
                 id=entity_id,

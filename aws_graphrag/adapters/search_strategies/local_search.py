@@ -98,7 +98,9 @@ class LocalSearchStrategy(BaseSearchStrategy):
         )
 
         logger.info(
-            f"Search completed - retrieved: {len(final_results)} results in {processing_time:.3f}s"
+            "Search completed - retrieved: %s results in %.3fs",
+            len(final_results),
+            processing_time,
         )
 
         return SearchResult(

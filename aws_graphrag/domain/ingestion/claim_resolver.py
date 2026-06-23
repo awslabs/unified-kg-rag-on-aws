@@ -285,9 +285,13 @@ class ClaimResolver(BaseResolver):
     @staticmethod
     def _log_completion_summary(stats: ClaimResolutionStats) -> None:
         logger.info(
-            f"Claim resolution completed - Processing time: {stats.processing_time:.2f}s"
+            "Claim resolution completed - Processing time: %.2fs",
+            stats.processing_time,
         )
         logger.info(
-            f"Results: {stats.original_claims} -> {stats.resolved_claims} claims "
-            f"({stats.reduction_rate:.2f}% reduction, {stats.claim_groups_created} groups)"
+            "Results: %s -> %s claims (%.2f%% reduction, %s groups)",
+            stats.original_claims,
+            stats.resolved_claims,
+            stats.reduction_rate,
+            stats.claim_groups_created,
         )

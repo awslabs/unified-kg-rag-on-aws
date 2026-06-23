@@ -67,7 +67,9 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
 
             processing_time = time.time() - start_time
             logger.info(
-                f"Neptune retrieval completed - retrieved: {len(results)} results ({processing_time:.2f}s)"
+                "Neptune retrieval completed - retrieved: %s results (%.2fs)",
+                len(results),
+                processing_time,
             )
 
             return results

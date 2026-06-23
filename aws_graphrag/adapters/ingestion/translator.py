@@ -188,9 +188,13 @@ class TextUnitTranslator:
             return
 
         logger.info(
-            f"Translation completed - Total time: {stats.total_processing_time:.2f}s, "
-            f"Success rate: {stats.success_rate:.2f}% "
-            f"({stats.num_successful_translations}/{stats.num_total_units})"
+            "Translation completed - Total time: %.2fs, "
+            "Success rate: %.2f%% "
+            "(%s/%s)",
+            stats.total_processing_time,
+            stats.success_rate,
+            stats.num_successful_translations,
+            stats.num_total_units,
         )
 
         if stats.num_failed_translations > 0:

@@ -120,9 +120,13 @@ class EntityResolver(BaseResolver):
     @staticmethod
     def _log_completion_summary(stats: EntityResolutionStats) -> None:
         logger.info(
-            f"Entity resolution completed: {stats.original_entities} -> "
-            f"{stats.resolved_entities} entities "
-            f"({stats.reduction_rate:.2f}% reduction) in {stats.processing_time:.2f}s"
+            "Entity resolution completed: %s -> "
+            "%s entities "
+            "(%.2f%% reduction) in %.2fs",
+            stats.original_entities,
+            stats.resolved_entities,
+            stats.reduction_rate,
+            stats.processing_time,
         )
 
     def _group_similar_entities(self, entities: list[Entity]) -> list[list[Entity]]:
@@ -301,9 +305,13 @@ class RelationshipResolver(BaseResolver):
         stats: RelationshipResolutionStats,
     ) -> None:
         logger.info(
-            f"Relationship resolution completed: "
-            f"{stats.original_relationships} -> {stats.resolved_relationships} relationships "
-            f"({stats.reduction_rate:.2f}% reduction) in {stats.processing_time:.2f}s"
+            "Relationship resolution completed: "
+            "%s -> %s relationships "
+            "(%.2f%% reduction) in %.2fs",
+            stats.original_relationships,
+            stats.resolved_relationships,
+            stats.reduction_rate,
+            stats.processing_time,
         )
 
     @staticmethod
@@ -400,7 +408,11 @@ class GraphResolver:
     @staticmethod
     def _log_completion_summary(stats: GraphResolutionStats) -> None:
         logger.info(
-            f"Graph resolution completed in {stats.total_processing_time:.2f}s: "
-            f"{stats.total_original_items} -> {stats.total_resolved_items} items "
-            f"({stats.overall_reduction_rate:.2f}% reduction)"
+            "Graph resolution completed in %.2fs: "
+            "%s -> %s items "
+            "(%.2f%% reduction)",
+            stats.total_processing_time,
+            stats.total_original_items,
+            stats.total_resolved_items,
+            stats.overall_reduction_rate,
         )

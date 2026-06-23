@@ -530,13 +530,18 @@ class BaseChunker(ABC):
             return
         chunk_stats = self.stats.chunk_stats
         logger.info(
-            f"Chunking completed - Total time: {total_time:.2f}s, Success rate: "
-            f"{self.stats.success_rate:.2f}% "
-            f"({self.stats.num_successful_documents}/{self.stats.num_total_documents})"
+            "Chunking completed - Total time: %.2fs, Success rate: %.2f%% (%s/%s)",
+            total_time,
+            self.stats.success_rate,
+            self.stats.num_successful_documents,
+            self.stats.num_total_documents,
         )
         logger.info(
-            f"Total chunks: {self.stats.total_chunks_created}, Chars (Min/Avg/Max): "
-            f"{chunk_stats['min']}/{chunk_stats['avg']:.0f}/{chunk_stats['max']}"
+            "Total chunks: %s, Chars (Min/Avg/Max): %s/%.0f/%s",
+            self.stats.total_chunks_created,
+            chunk_stats["min"],
+            chunk_stats["avg"],
+            chunk_stats["max"],
         )
         if self.stats.num_failed_documents > 0:
             logger.warning(
@@ -1024,8 +1029,9 @@ class IntelligentTextChunker(BaseChunker):
         super()._log_completion_summary(total_time)
         if self.stats and (self.stats.llm_processing_failures or 0) > 0:
             logger.info(
-                f"LLM fallback rate: {self.stats.llm_failure_rate:.2f}%, "
-                f"Fallback chunks: {self.stats.fallback_chunks_used}"
+                "LLM fallback rate: %.2f%%, Fallback chunks: %s",
+                self.stats.llm_failure_rate,
+                self.stats.fallback_chunks_used,
             )
 
 

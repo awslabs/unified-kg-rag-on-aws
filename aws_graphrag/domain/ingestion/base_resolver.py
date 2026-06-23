@@ -261,7 +261,10 @@ class FuzzyMatcher:
         result = self._find_best_fuzzy_match(query, normalized_query)
         if result:
             logger.debug(
-                f"Found fuzzy match for '{query}': {result[0]} (score: {result[1]:.3f})"
+                "Found fuzzy match for '%s': %s (score: %.3f)",
+                query,
+                result[0],
+                result[1],
             )
         else:
             logger.debug("No match found for '%s'", query)

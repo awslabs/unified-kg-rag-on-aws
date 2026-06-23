@@ -296,8 +296,9 @@ class CacheManager:
 
             if estimated_size > self.max_file_size_bytes:
                 logger.debug(
-                    f"Estimated file size ({estimated_size_mb:.2f} MB) exceeds limit "
-                    f"({self.max_file_size_bytes / 1024 / 1024:.2f} MB), will chunk"
+                    "Estimated file size (%.2f MB) exceeds limit (%.2f MB), will chunk",
+                    estimated_size_mb,
+                    self.max_file_size_bytes / 1024 / 1024,
                 )
                 return True
         except Exception as e:

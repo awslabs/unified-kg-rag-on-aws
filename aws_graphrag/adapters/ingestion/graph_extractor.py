@@ -356,8 +356,10 @@ class GraphExtractor(BaseProcessor):
             else:
                 removed_count += 1
                 logger.debug(
-                    f"Filtered entity '{entity.name}' with confidence {confidence:.2f} "
-                    f"(threshold: {threshold})"
+                    "Filtered entity '%s' with confidence %.2f (threshold: %s)",
+                    entity.name,
+                    confidence,
+                    threshold,
                 )
 
         if removed_count > 0:
@@ -438,21 +440,31 @@ class GraphExtractor(BaseProcessor):
             return
 
         logger.info(
-            f"Graph extraction completed - "
-            f"Time: {stats.total_processing_time:.2f}s, "
-            f"Success rate: {stats.success_rate:.1f}% "
-            f"({stats.num_successful_extractions}/{stats.num_total_units}), "
-            f"Entities: {stats.total_entities_extracted}, "
-            f"Relationships: {stats.total_relationships_extracted}"
+            "Graph extraction completed - "
+            "Time: %.2fs, "
+            "Success rate: %.1f%% "
+            "(%s/%s), "
+            "Entities: %s, "
+            "Relationships: %s",
+            stats.total_processing_time,
+            stats.success_rate,
+            stats.num_successful_extractions,
+            stats.num_total_units,
+            stats.total_entities_extracted,
+            stats.total_relationships_extracted,
         )
 
         if stats.entities_filtered_by_confidence > 0:
             logger.info(
-                f"Confidence filtering - "
-                f"Threshold: {stats.confidence_threshold_applied:.2f}, "
-                f"Entities filtered: {stats.entities_filtered_by_confidence}, "
-                f"Relationships filtered: {stats.relationships_filtered_by_confidence}, "
-                f"Average confidence: {stats.average_entity_confidence:.2f}"
+                "Confidence filtering - "
+                "Threshold: %.2f, "
+                "Entities filtered: %s, "
+                "Relationships filtered: %s, "
+                "Average confidence: %.2f",
+                stats.confidence_threshold_applied,
+                stats.entities_filtered_by_confidence,
+                stats.relationships_filtered_by_confidence,
+                stats.average_entity_confidence,
             )
 
         if stats.num_failed_extractions > 0:

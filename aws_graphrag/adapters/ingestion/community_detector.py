@@ -130,7 +130,9 @@ class CommunityDetector(BaseProcessor):
         self.base_modularity = nx.community.modularity(self.graph, base_partition)
 
         logger.info(
-            f"Base partition found with {len(base_partition)} communities and modularity {self.base_modularity:.4f}"
+            "Base partition found with %s communities and modularity %.4f",
+            len(base_partition),
+            self.base_modularity,
         )
 
         partitions = [base_partition]
@@ -279,7 +281,9 @@ class CommunityDetector(BaseProcessor):
                 continue
 
         logger.info(
-            f"Auto-selected resolution {best_resolution} with modularity {best_modularity:.4f}"
+            "Auto-selected resolution %s with modularity %.4f",
+            best_resolution,
+            best_modularity,
         )
         return best_resolution
 
@@ -600,7 +604,9 @@ class CommunityDetector(BaseProcessor):
                     reports.append(report)
 
             logger.info(
-                f"Generated {len(reports)} reports in {time.time() - start_time:.2f}s."
+                "Generated %s reports in %.2fs.",
+                len(reports),
+                time.time() - start_time,
             )
 
         except Exception as e:
