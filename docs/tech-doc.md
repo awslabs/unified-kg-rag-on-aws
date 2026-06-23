@@ -35,6 +35,48 @@
 
 ## 2. 헥사고날 아키텍처 (포트 & 어댑터)
 
+### 2.0 의존성 규칙과 레이어 맵
+
+import는 **안쪽을 향합니다**(왼쪽이 오른쪽을 import, 역방향 금지). `shared/`는 어느 레이어나 쓸 수 있는 cross-cutting 커널입니다. 두 RAG 방법론(GraphRAG 커뮤니티 요약, LightRAG dual-level 키워드)은 하나의 인제스천/인덱싱/캐싱/하이브리드 검색 인프라를 공유하고 알고리즘 레이어에서만 갈립니다.
+
+```
+application  ──►  adapters  ──►  ports  ──►  domain
+        └──────────────┴────────────┴──────────►  shared (cross-cutting kernel)
+```
+
+```
+aws_graphrag/
+├─ domain/              # 기술 무관 코어 (boto3/LangChain/백엔드 import 없음)
+│  ├─ models/           #   Pydantic 도메인 모델
+│  ├─ ingestion/        #   순수 알고리즘: delta_detector, incremental,
+│  │  └─ merge/         #   graph_analyzer/builder/resolver, claim_resolver, merge
+│  ├─ retrieval/        #   strategy_registry, MetricsMixin
+│  └─ prompts/          #   버전 관리되는 프롬프트 템플릿
+├─ ports/               # 도메인이 의존하는 추상 인터페이스 (DocStatusPort,
+│                       #   BaseIndexer/GraphIndexer/VectorIndexer, 모델 팩토리 포트)
+├─ adapters/            # 구체 기술 바인딩
+│  ├─ aws/              #   Bedrock, Neptune, OpenSearch, DynamoDB, S3 클라이언트
+│  ├─ storage/          #   Neptune/OpenSearch 인덱서 (쓰기측 포트 구현)
+│  ├─ retrievers/       #   Neptune/OpenSearch 리트리버
+│  ├─ search_strategies/#   simple/local/global/drift + lightrag(mix/hybrid/naive)
+│  ├─ retrieval/        #   추상 리트리버/전략 베이스, hybrid scorer, 토큰/메모리 매니저
+│  ├─ ingestion/        #   LLM/IO 결합: chunker, *_extractor, loader, parser,
+│  │                    #   translator, gleaner, community_detector
+│  ├─ renderers/        #   그래프 시각화 렌더러
+│  └─ evaluators/       #   langchain/ragas 평가자 (순수 graph_aware_evaluator는
+│                       #   evaluation/ 파사드에 co-locate)
+├─ application/         # 오케스트레이션 + 엔트리포인트
+│  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning
+│  ├─ ingestion/        #   DataIngestionPipeline + pipeline_stages
+│  ├─ storage/          #   IndexingManager (인덱서 fan-out)
+│  ├─ retrieval/        #   rag_chain (GraphRAGChain, RAGInput/Output)
+│  └─ prompts/          #   PromptTuner (LLM 기반 코퍼스 프로파일링)
+├─ shared/              # cross-cutting 커널 (config, logging, exceptions, metrics,
+│                       #   cache/pipeline manager, utils)
+└─ (facades)            # 공개 import 경로 안정용 thin re-export shim:
+   retrieval/ storage/ ingestion/ evaluation/ visualization/
+```
+
 ### 2.1 포트(추상 인터페이스)
 
 | 포트 | 위치 | 어댑터 | 비고 |
@@ -70,6 +112,12 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 이 패턴은 기존의 `ParserFactory._loader_configs`(선언적 파서 등록)와 동일한 철학입니다.
 
+### 2.4 의존성 규칙 검증 상태
+
+grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import하지 않고, `ports/`도 그렇습니다. 컴파일 타임 한정 예외 하나가 남아 있습니다 — `domain/retrieval/strategy_registry.py`가 `TYPE_CHECKING` 하에서 `adapters.retrieval.base.BaseSearchStrategy`를 참조합니다(레지스트리가 전략 서브클래스를 저장하므로). 순수 전략/리트리버 포트를 추출하면 이 타입 수준 참조도 제거되며, §15의 향후 작업으로 추적합니다.
+
+레거시 최상위 패키지(`retrieval/`, `storage/`, `ingestion/`, `evaluation/`, `visualization/`)는 레이어 분리 후에도 공개 import 경로/API를 안정적으로 유지하기 위한 thin 파사드 `__init__` 모듈로 의도적으로 보존됩니다.
+
 ---
 
 ## 3. 도메인 모델
@@ -80,9 +128,11 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 - `Relationship`(`source_id`/`target_id`, `description`, `weight`, `text_unit_ids`, `description_embedding`)
 - `Community` / `CommunityReport`, `TextUnit`, `Covariate`(claim)
 - `DocStatus`(상태 머신: PENDING→PARSING→PROCESSING→PROCESSED|FAILED), `DocStatusRecord`(콘텐츠 해시 + 아티팩트 계보 + suffix), `DocumentDelta`(new/changed/unchanged/deleted), `DocumentLineage`(문서별 아티팩트 귀속)
-- `SearchQuery`/`SearchResult`/`RetrievalResult`, `SearchStrategy`/`SearchType`/`RetrieverRole`/`Collection`
+- `SearchQuery`/`SearchResult`/`RetrievalResult`, `SearchStrategy`/`SearchType`/`RetrieverRole`
 
 **계보(lineage)가 핵심 데이터**입니다. 엔티티/관계는 추출 시 자신이 등장한 `text_unit_ids`를 기록하며, 이 권위 데이터가 (구) 토큰 중첩 휴리스틱을 대체하여 "이 엔티티가 이 텍스트 단위와 관련 있는가?"를 정확하고 언어 무관하게 판정합니다.
+
+**엔티티 ID와 다국어**: 엔티티/관계 ID는 정규화된 이름의 해시입니다. `normalize_name`(`shared/utils/common.py`)은 NFKC + casefold 후 **모든 스크립트의 문자/숫자를 보존**(`\w`, `re.UNICODE`)하고 구두점만 제거합니다. 따라서 한국어·CJK·악센트 이름도 고유 ID를 가집니다(ASCII 전용 정규화는 비라틴 이름을 빈 문자열로 만들어 그래프를 붕괴시킵니다). 비어 있지 않은 입력은 절대 빈 ID로 collapse되지 않습니다.
 
 ---
 
@@ -184,7 +234,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 - **LangChain 평가자**: correctness / partial_correctness (LLM 기반 루브릭)
 - **RAGAS 평가자**: answer_correctness/relevancy, context_precision/recall, faithfulness
-- **그래프 인식 평가자** (`graph_aware_evaluator.py`): 정답의 `expected_entities`/`expected_relationships`가 생성 답변에 단어 경계 기준으로 등장하는지로 엔티티/관계 coverage precision/recall/F1 계산. 결정적·LLM 불필요. 매니저가 기대치를 `result.metadata`로 주입하므로 추상 시그니처 변경이 없습니다. 기대치가 없는 차원은 전체 점수 평균에서 제외됩니다.
+- **그래프 인식 평가자** (`graph_aware_evaluator.py`): 정답의 `expected_entities`/`expected_relationships`가 생성 답변에 등장하는 비율(= coverage = recall)을 `ENTITY_COVERAGE`/`RELATIONSHIP_COVERAGE`로 계산. 결정적·LLM 불필요. precision/F1은 답변 내 엔티티를 열거해야 하므로(자유 텍스트에서 불가) 산출하지 않습니다 — recall의 복제로 신호를 과장하지 않기 위함. 라틴 문자는 단어 경계 기준 연속 토큰 매칭("AI"가 "airport" 안에서 매칭되지 않음), 공백이 없는 CJK는 부분 문자열 매칭으로 폴백. 매니저가 기대치를 `result.metadata`로 주입하므로 추상 시그니처 변경이 없습니다.
 
 CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
@@ -250,7 +300,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 ### 알려진 향후 작업 (정직한 갭)
 
 - **LLM/Embedding/Rerank 포트 — 정의됨, 호출부 미이행(부분)**: `ports/model_factory.py`에 `ModelFactoryPort`(+`LLMFactoryPort`/`EmbeddingFactoryPort`/`RerankFactoryPort` 별칭) Protocol을 정의했고 Bedrock 팩토리들이 구조적으로 conform합니다(테스트로 검증). 다만 ~19개 어댑터/애플리케이션 모듈은 아직 구체 `Bedrock*ModelFactory`를 직접 생성합니다. 이들은 모두 adapters/application 계층이라 **의존성 규칙 위반은 아니며**(도메인은 팩토리를 import하지 않음), 호출 측은 이미 LangChain 호환 객체를 받아 공급자 무관합니다. 비-Bedrock 공급자를 추가하려면 conforming 팩토리 어댑터를 작성하고 생성 지점에 주입하면 됩니다(포트 타입은 준비됨).
-- **`SearchQuery.label_prefixes`/`index_prefixes`**: 어댑터 어휘가 도메인 질의 모델에 남아 있습니다. `Collection` enum(이미 정의됨)으로 어댑터에 완전 위임하는 추가 리팩터가 가능합니다.
+- **`SearchQuery.label_prefixes`/`index_prefixes`**: 어댑터 어휘가 도메인 질의 모델에 남아 있습니다. 백엔드 중립 추상화로 어댑터에 완전 위임하는 추가 리팩터가 가능합니다.
 - **CachePort**: 캐시(로컬/S3)는 현재 구체 클래스로 접근합니다. 제3의 캐시 백엔드가 필요해질 때 포트화하면 됩니다.
 - ~~**라이브 그래프 cross-run merge**~~ (구현, 옵트인): `indexing.cross_run_merge=true`면 `IndexingManager.index_delta`가 upsert 전에 그래프에서 기존 엔티티/관계를 읽어(`GraphIndexer.read_entities`/`read_relationships`) 델타와 `merge_entities`/`merge_relationships`로 union(description·`text_unit_ids` 합집합, frequency/weight 재계산)합니다. 인메모리 fake로 동작 검증(`test_cross_run_merge.py`), 실제 Neptune read-back(valueMap→모델 복원)은 `aws` 마커 테스트로 검증 대상이며 실패 시 `[]` 반환으로 기존 overwrite로 안전하게 degrade합니다. 기본값 off(덮어쓰기) — 검증된 기존 동작 보존.
 - ~~**`DocStatusPort` 주입 vs 인-라인 생성**~~ (해결): `DataIngestionPipeline`이 증분 모드일 때 `DocStatusPort` 어댑터를 오케스트레이션 레이어에서 **한 번** 생성해 `DocumentLoadingStage`/`IndexingStage`에 주입합니다(`DOC_STATUS_STAGES`). 스테이지는 주입된 포트를 사용하고, 미주입 시에만 기본 DynamoDB 어댑터로 폴백합니다.
