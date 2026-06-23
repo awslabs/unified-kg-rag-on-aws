@@ -1,18 +1,31 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+"""Backend-agnostic prompt definitions (domain layer).
+
+``BasePrompt`` holds only template strings, variable contracts, and custom-prompt
+resolution — NO LangChain/backend imports (the domain dependency rule). The
+adapter layer (``adapters/aws/chain_factory.py``) turns a resolved
+``ResolvedPrompt`` into a LangChain ``ChatPromptTemplate``.
+"""
 from abc import ABC
-from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from langchain_core.messages import BaseMessage, SystemMessage
-from langchain_core.prompts import (
-    ChatPromptTemplate,
-    HumanMessagePromptTemplate,
-    SystemMessagePromptTemplate,
-)
-
 if TYPE_CHECKING:
     from aws_graphrag.domain.models.config import CustomPromptConfig
+
+
+@dataclass(frozen=True)
+class ResolvedPrompt:
+    """A prompt with custom overrides applied, ready for backend assembly.
+
+    Pure data: the adapter layer consumes this to build the concrete (LangChain)
+    chat-prompt messages, keeping the domain free of backend imports.
+    """
+
+    system_prompt_template: str
+    human_prompt_template: str
+    input_variables: list[str]
+    output_variables: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -43,11 +56,16 @@ class BasePrompt(ABC):
                     )
 
     @classmethod
-    def get_prompt(
+    def resolve(
         cls,
-        enable_prompt_cache: bool = False,
         custom_prompts: "CustomPromptConfig | None" = None,
-    ) -> ChatPromptTemplate:
+    ) -> ResolvedPrompt:
+        """Apply any custom overrides and return a backend-agnostic prompt.
+
+        Replaces the former ``get_prompt`` (which built a LangChain
+        ``ChatPromptTemplate`` here, violating the domain dependency rule). The
+        adapter now consumes the returned :class:`ResolvedPrompt`.
+        """
         # Concrete prompt subclasses define these dataclass fields as class-level
         # attributes, so class access is valid at runtime.
         system_template = cls.system_prompt_template  # type: ignore[misc]
@@ -60,54 +78,19 @@ class BasePrompt(ABC):
             if custom_human:
                 human_template = custom_human
 
+        # Run field validation via a throwaway instance.
         instance = cls(
             input_variables=cls.input_variables,  # type: ignore[misc]
             output_variables=cls.output_variables,
             system_prompt_template=system_template,
             human_prompt_template=human_template,
         )
-
-        if enable_prompt_cache:
-            messages = cls._create_cached_messages(instance)
-        else:
-            messages = cls._create_standard_messages(instance)
-
-        return ChatPromptTemplate.from_messages(messages)
-
-    @classmethod
-    def _create_cached_messages(
-        cls, instance: "BasePrompt"
-    ) -> Sequence[
-        BaseMessage | HumanMessagePromptTemplate | SystemMessagePromptTemplate
-    ]:
-        system_msg = SystemMessage(
-            content=[
-                {
-                    "type": "text",
-                    "text": instance.system_prompt_template,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ]
+        return ResolvedPrompt(
+            system_prompt_template=instance.system_prompt_template,
+            human_prompt_template=instance.human_prompt_template,
+            input_variables=instance.input_variables,
+            output_variables=instance.output_variables,
         )
-
-        human_msg_template = HumanMessagePromptTemplate.from_template(
-            template=instance.human_prompt_template
-        )
-
-        return [system_msg, human_msg_template]
-
-    @classmethod
-    def _create_standard_messages(
-        cls, instance: "BasePrompt"
-    ) -> Sequence[HumanMessagePromptTemplate | SystemMessagePromptTemplate]:
-        return [
-            SystemMessagePromptTemplate.from_template(
-                template=instance.system_prompt_template,
-            ),
-            HumanMessagePromptTemplate.from_template(
-                template=instance.human_prompt_template,
-            ),
-        ]
 
     @classmethod
     def _get_custom_prompts(

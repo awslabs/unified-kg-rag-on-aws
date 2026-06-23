@@ -4,6 +4,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, TypeVar
 
+# NOTE (domain dependency rule): Document subclasses LangChain's BaseDocument so
+# it interoperates directly with LangChain document loaders (it exposes
+# page_content / metadata, consumed by document_converter and delta_detector).
+# This is the one deliberate exception to the "domain has no LangChain import"
+# rule — decoupling it would require a backend-agnostic page_content shim
+# threaded through delta detection and the loaders. Tracked as a known carve-out
+# rather than removed. BasePrompt (the other former offender) is now LangChain-free.
 from langchain_core.documents import Document as BaseDocument
 from pydantic import BaseModel, Field, field_validator, model_validator
 

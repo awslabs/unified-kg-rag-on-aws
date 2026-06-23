@@ -12,12 +12,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from langchain.output_parsers import OutputFixingParser
+from langchain_core.messages import SystemMessage
 from langchain_core.output_parsers import BaseOutputParser
+from langchain_core.prompts import (
+    ChatPromptTemplate,
+    HumanMessagePromptTemplate,
+    SystemMessagePromptTemplate,
+)
 from langchain_core.runnables import Runnable
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.domain.models import LanguageModelId
-from aws_graphrag.domain.prompts import BasePrompt
+from aws_graphrag.domain.prompts import BasePrompt, ResolvedPrompt
 from aws_graphrag.shared import GraphRAGException, get_logger
 from aws_graphrag.shared.utils.langchain import RobustXMLOutputParser
 
@@ -25,6 +31,38 @@ if TYPE_CHECKING:
     from aws_graphrag.domain.models.config import CustomPromptConfig
 
 logger = get_logger(__name__)
+
+
+def _build_chat_prompt(
+    resolved: ResolvedPrompt, enable_prompt_cache: bool
+) -> ChatPromptTemplate:
+    """Assemble a LangChain ChatPromptTemplate from a backend-agnostic prompt.
+
+    Lives in the adapter layer: turning the domain's ResolvedPrompt into
+    LangChain message templates is a backend concern. When prompt caching is
+    enabled, the system message carries an ephemeral cache_control marker.
+    """
+    messages: list[Any]
+    if enable_prompt_cache:
+        system_msg = SystemMessage(
+            content=[
+                {
+                    "type": "text",
+                    "text": resolved.system_prompt_template,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+        )
+        messages = [
+            system_msg,
+            HumanMessagePromptTemplate.from_template(resolved.human_prompt_template),
+        ]
+    else:
+        messages = [
+            SystemMessagePromptTemplate.from_template(resolved.system_prompt_template),
+            HumanMessagePromptTemplate.from_template(resolved.human_prompt_template),
+        ]
+    return ChatPromptTemplate.from_messages(messages)
 
 
 def create_robust_xml_output_parser(
@@ -65,9 +103,8 @@ def setup_chain(
         enable_prompt_cache = (
             model_info.supports_prompt_caching if model_info else False
         )
-        prompt = prompt_class.get_prompt(
-            enable_prompt_cache=enable_prompt_cache, custom_prompts=custom_prompts
-        )
+        resolved = prompt_class.resolve(custom_prompts=custom_prompts)
+        prompt = _build_chat_prompt(resolved, enable_prompt_cache)
         chain = prompt | llm | parser
         logger.debug("Successfully created LLM chain with model: '%s'", model_id.value)
         return chain

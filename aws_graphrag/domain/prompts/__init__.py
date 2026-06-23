@@ -1,4 +1,5 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+from .base import ResolvedPrompt
 from .data_processing import TextChunkingPrompt, TextTranslationPrompt
 from .graph_extraction import (
     BasePrompt,
@@ -39,6 +40,7 @@ __all__ = [
     "KeywordsExtractionPrompt",
     "MapReduceSummaryPrompt",
     "QueryRefinementPrompt",
+    "ResolvedPrompt",
     "StrategySelectionPrompt",
     "TextChunkingPrompt",
     "TextTranslationPrompt",
