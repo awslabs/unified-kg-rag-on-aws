@@ -309,9 +309,6 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
     def get_model_info(self, model_id: ModelIdT) -> ModelInfoT | None:
         return self._get_model_info_dict().get(model_id)
 
-    def get_supported_models(self) -> list[ModelIdT]:
-        return list(self._get_model_info_dict().keys())
-
 
 class BedrockCrossRegionModelHelper:
     @staticmethod

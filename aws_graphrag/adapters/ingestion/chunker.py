@@ -316,24 +316,6 @@ class ChunkProcessor:
         self.max_chunk_size = max_chunk_size
         self.fallback_splitter = fallback_splitter
 
-    def extract_chunks_from_indices(
-        self, text: str, boundaries: list[int]
-    ) -> list[str]:
-        try:
-            chunks = self._split_by_boundaries(text, boundaries)
-            chunks = [c for c in chunks if c.strip()]
-            merged_chunks = self.merge_small_chunks(chunks)
-
-            overlapped_chunks = (
-                self._apply_chunk_overlap(merged_chunks)
-                if self.chunk_overlap > 0 and len(merged_chunks) > 1
-                else merged_chunks
-            )
-            return self._split_large_chunks(overlapped_chunks)
-        except Exception as e:
-            logger.debug("Failed to extract chunks from indices: %s", e)
-            return [text] if text.strip() else []
-
     def merge_small_chunks(self, chunks: list[str]) -> list[str]:
         if not chunks:
             return []
@@ -355,50 +337,6 @@ class ChunkProcessor:
             return self._merge_final_small_chunk_if_needed(merged_chunks)
         except Exception as e:
             logger.debug("Failed to merge small chunks: %s", e)
-            return chunks
-
-    def _split_large_chunks(self, chunks: list[str]) -> list[str]:
-        if not self.fallback_splitter:
-            return chunks
-
-        try:
-            final_chunks = []
-            for chunk in chunks:
-                if len(chunk) > self.max_chunk_size:
-                    final_chunks.extend(self.fallback_splitter.split_text(chunk))
-                else:
-                    final_chunks.append(chunk)
-            return final_chunks
-        except Exception as e:
-            logger.debug("Failed to split large chunks: %s", e)
-            return chunks
-
-    @staticmethod
-    def _split_by_boundaries(text: str, boundaries: list[int]) -> list[str]:
-        if not boundaries:
-            return [text] if text.strip() else []
-
-        chunks, start_pos = [], 0
-        for end_pos in sorted(set(boundaries)):
-            if end_pos > start_pos:
-                chunks.append(text[start_pos:end_pos])
-            start_pos = end_pos
-        if start_pos < len(text):
-            chunks.append(text[start_pos:])
-        return chunks
-
-    def _apply_chunk_overlap(self, chunks: list[str]) -> list[str]:
-        if not chunks:
-            return []
-
-        try:
-            overlapped = [chunks[0]]
-            for i in range(1, len(chunks)):
-                overlap_text = chunks[i - 1][-self.chunk_overlap :]
-                overlapped.append(overlap_text + chunks[i])
-            return [c for c in overlapped if c.strip()]
-        except Exception as e:
-            logger.debug("Failed to apply chunk overlap: %s", e)
             return chunks
 
     def _merge_final_small_chunk_if_needed(self, chunks: list[str]) -> list[str]:

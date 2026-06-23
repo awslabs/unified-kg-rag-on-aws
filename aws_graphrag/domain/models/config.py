@@ -1146,14 +1146,6 @@ class MemoryConfig(BaseModel):
         ge=1,
         description="Maximum age of a conversation in hours before being eligible for cleanup",
     )
-    cleanup_interval_hours: int = Field(
-        default=24,
-        ge=1,
-        description="Interval in hours for running the cleanup process",
-    )
-    auto_cleanup: bool = Field(
-        default=True, description="Enable automatic cleanup of old conversations"
-    )
 
 
 class CacheChunkingConfig(BaseModel):

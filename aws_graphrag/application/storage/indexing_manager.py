@@ -2,7 +2,6 @@
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
 from multiprocessing import cpu_count
 from typing import Any, NamedTuple
 
@@ -68,17 +67,6 @@ class IndexingManager:
         if not items:
             return []
         return list({BaseIndexer.get_suffix(item) for item in items})
-
-    def get_comprehensive_stats(self) -> dict[str, Any]:
-        try:
-            return {
-                "opensearch": self.opensearch_indexer.get_stats(),
-                "neptune": self.neptune_indexer.get_stats(),
-                "timestamp": datetime.now().isoformat(),
-            }
-        except Exception as e:
-            logger.error("Failed to retrieve stats: %s", e)
-            return {"error": str(e), "timestamp": datetime.now().isoformat()}
 
     def initialize(self) -> bool:
         try:
@@ -386,42 +374,3 @@ class IndexingManager:
                         stats.total_items,
                         failure_rate * 100,
                     )
-
-    def validate_indexing_integrity(self, text_units: list[TextUnit]) -> dict[str, Any]:
-        suffixes = self._discover_suffixes(text_units)
-        if not suffixes:
-            return {
-                "error": "No suffixes to validate",
-                "timestamp": datetime.now().isoformat(),
-            }
-
-        try:
-            os_entity_count = self.opensearch_indexer.get_entity_count(suffixes)
-            neptune_entity_count = self.neptune_indexer.get_entity_count(suffixes)
-            count_match = os_entity_count == neptune_entity_count
-            count_diff = abs(os_entity_count - neptune_entity_count)
-
-            if not count_match:
-                # Not necessarily an error: Neptune can hold relationship-endpoint
-                # entities that were never embedded into OpenSearch (e.g. an
-                # embedding call was skipped/failed), so the two stores can
-                # legitimately differ. Informational, not a failure signal.
-                logger.info(
-                    "Entity count differs across stores: OpenSearch(%s) vs "
-                    "Neptune(%s) — expected when graph holds non-embedded endpoints",
-                    os_entity_count,
-                    neptune_entity_count,
-                )
-
-            return {
-                "consistency_checks": {
-                    "entity_count_match": count_match,
-                    "opensearch_entity_count": os_entity_count,
-                    "neptune_entity_count": neptune_entity_count,
-                    "entity_count_difference": count_diff,
-                },
-                "timestamp": datetime.now().isoformat(),
-            }
-        except Exception as e:
-            logger.error("Integrity validation failed: %s", e)
-            return {"error": str(e), "timestamp": datetime.now().isoformat()}

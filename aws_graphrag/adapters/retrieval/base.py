@@ -71,15 +71,6 @@ class BaseGraphRAGRetriever(BaseRetriever, MetricsMixin, ABC):
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         pass
 
-    def batch_retrieve(self, queries: list[SearchQuery]) -> list[list[RetrievalResult]]:
-        return [self.retrieve(query) for query in queries]
-
-    async def abatch_retrieve(
-        self, queries: list[SearchQuery]
-    ) -> list[list[RetrievalResult]]:
-        tasks = [self.aretrieve(query) for query in queries]
-        return await asyncio.gather(*tasks)
-
     def _get_name(
         self, base: str, suffix: str | None, add_timestamp: bool = False
     ) -> str:
@@ -162,13 +153,6 @@ class BaseSearchStrategy(MetricsMixin, ABC):
     @abstractmethod
     async def asearch(self, query: SearchQuery) -> SearchResult:
         pass
-
-    def batch_search(self, queries: list[SearchQuery]) -> list[SearchResult]:
-        return [self.search(query) for query in queries]
-
-    async def abatch_search(self, queries: list[SearchQuery]) -> list[SearchResult]:
-        tasks = [self.asearch(query) for query in queries]
-        return await asyncio.gather(*tasks)
 
     @staticmethod
     def _get_ids(results: list[RetrievalResult], key: str) -> list[str]:

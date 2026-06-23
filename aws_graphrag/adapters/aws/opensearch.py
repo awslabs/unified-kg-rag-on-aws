@@ -181,11 +181,6 @@ class OpenSearchClient:
         raise AWSServiceError("No OpenSearch auth method configured (IAM or basic).")
 
     @_handle_opensearch_errors
-    def alias_exists(self, alias_name: str) -> bool:
-        result = self.client.indices.exists_alias(name=alias_name)
-        return bool(result)
-
-    @_handle_opensearch_errors
     def bulk_index(
         self, index: str, documents: list[dict[str, Any]], refresh: bool = True
     ) -> dict[str, Any]:
@@ -266,20 +261,6 @@ class OpenSearchClient:
         return {"errors": bool(errors), "items": errors}
 
     @_handle_opensearch_errors
-    def create_ingest_pipeline(self, pipeline_id: str, body: dict[str, Any]) -> None:
-        if not self.check_ingest_pipeline_exists(pipeline_id):
-            self.client.ingest.put_pipeline(id=pipeline_id, body=body)
-            logger.debug("Created ingest pipeline: '%s'", pipeline_id)
-
-    @_handle_opensearch_errors
-    def check_ingest_pipeline_exists(self, pipeline_id: str) -> bool:
-        try:
-            self.client.ingest.get_pipeline(id=pipeline_id)
-            return True
-        except NotFoundError:
-            return False
-
-    @_handle_opensearch_errors
     def create_index(self, index: str, body: dict[str, Any]) -> None:
         if not self.client.indices.exists(index=index):
             self.client.indices.create(index=index, body=body)
@@ -337,18 +318,6 @@ class OpenSearchClient:
             indices_str = ",".join(index_names)
             self.client.indices.delete(index=indices_str)
             logger.info("Deleted indices: %s", indices_str)
-
-    @_handle_opensearch_errors
-    def delete_ingest_pipeline(self, pipeline_id: str) -> None:
-        if self.check_ingest_pipeline_exists(pipeline_id):
-            self.client.ingest.delete_pipeline(id=pipeline_id)
-            logger.debug("Deleted ingest pipeline: '%s'", pipeline_id)
-
-    @_handle_opensearch_errors
-    def delete_search_pipeline(self, pipeline_id: str) -> None:
-        if self.check_search_pipeline_exists(pipeline_id):
-            self.client.search_pipeline.delete(id=pipeline_id)
-            logger.debug("Deleted search pipeline: '%s'", pipeline_id)
 
     @_handle_opensearch_errors
     def get_index_name_by_alias(self, alias_name: str) -> str | None:

@@ -10,9 +10,6 @@ class MetricsMixin:
     def get_metrics(self) -> dict[str, Any]:
         return self._metrics.copy()
 
-    def reset_metrics(self) -> None:
-        self._metrics = {"timings": {}, "metrics": {}}
-
     def _record_metric(self, key: str, value: Any) -> None:
         self._metrics["metrics"][key] = value
 

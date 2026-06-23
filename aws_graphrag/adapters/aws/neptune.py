@@ -144,19 +144,6 @@ class NeptuneClient:
             time.sleep(delay)
         logger.info("Finished batch deletion for label '%s'.", label)
 
-    @_handle_neptune_errors
-    def clear_graph(self) -> None:
-        logger.info("Starting to clear entire Neptune graph database...")
-        all_labels: list[str] = self.g.V().label().dedup().toList()
-        if not all_labels:
-            logger.info("Graph is already empty.")
-            return
-
-        logger.info("Found vertex labels to clear: %s", all_labels)
-        for label in all_labels:
-            self.delete_vertices_in_batches(label)
-        logger.info("Successfully cleared Neptune graph.")
-
     def close(self) -> None:
         with self._lock:
             if self._connection and not self._connection.is_closed():

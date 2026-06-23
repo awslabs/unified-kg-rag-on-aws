@@ -212,9 +212,3 @@ class PipelineContext(BaseModel):
             r for r in self.stage_results if r.stage_name != result.stage_name
         ]
         self.stage_results.append(result)
-
-    def get_stage_result(self, stage_name: str) -> PipelineStageResult | None:
-        for result in self.stage_results:
-            if result.stage_name == stage_name:
-                return result
-        return None

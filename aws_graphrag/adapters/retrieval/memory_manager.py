@@ -70,9 +70,6 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
         self._context = ConversationContext()
         self.updated_at = datetime.now()
 
-    def is_expired(self) -> bool:
-        return datetime.now() > self.updated_at + self.ttl
-
     # LangChain's BaseChatMessageHistory types `messages` as a writeable
     # attribute; we expose it read-only and mutate via _messages.
     @property
@@ -220,7 +217,6 @@ class MemoryManager:
         self.config = config
         self._memories: dict[str, GraphRAGChatMessageHistory] = {}
         self._lock = asyncio.Lock()
-        self._last_cleanup = datetime.now()
 
     async def get_or_create_memory(self, conv_id: str) -> GraphRAGChatMessageHistory:
         async with self._lock:
@@ -256,19 +252,6 @@ class MemoryManager:
 
         async with self._lock:
             memory.add_message(message)
-
-    async def clear_conversation(self, conv_id: str) -> bool:
-        async with self._lock:
-            if conv_id in self._memories:
-                del self._memories[conv_id]
-                return True
-            return False
-
-    async def _cleanup_expired_unsafe(self) -> int:
-        to_remove = [cid for cid, mem in self._memories.items() if mem.is_expired()]
-        for cid in to_remove:
-            del self._memories[cid]
-        return len(to_remove)
 
     async def _cleanup_oldest_unsafe(self, count: int) -> None:
         if count <= 0:

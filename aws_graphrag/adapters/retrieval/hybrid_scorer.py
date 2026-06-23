@@ -344,15 +344,3 @@ class HybridScorer(MetricsMixin):
         """Jaccard similarity of two word sets (shared by MMR diversity)."""
         union = len(words1 | words2)
         return len(words1 & words2) / union if union > 0 else 0.0
-
-    def score_and_sort_results(
-        self, results: list[RetrievalResult]
-    ) -> list[RetrievalResult]:
-        if not results:
-            return []
-
-        normalized = self._normalize_scores(results)
-        normalized.sort(key=lambda x: x.score or 0.0, reverse=True)
-        self._record_metric("last_scored_results_count", len(normalized))
-
-        return normalized

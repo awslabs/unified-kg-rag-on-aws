@@ -86,13 +86,6 @@ class PipelineStateManager:
         )
         return context
 
-    def get_pipeline_status(self, pipeline_id: str) -> PipelineStageStatus | None:
-        try:
-            metadata = self.load_pipeline_metadata(pipeline_id)
-            return PipelineStageStatus(metadata["status"])
-        except PipelineStateError:
-            return None
-
     def pipeline_exists(self, pipeline_id: str) -> bool:
         metadata_path = (
             self.cache_manager.get_pipeline_cache_dir(pipeline_id)

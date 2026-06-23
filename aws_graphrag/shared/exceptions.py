@@ -7,10 +7,6 @@ class AWSServiceError(GraphRAGException):
     pass
 
 
-class ConfigurationError(GraphRAGException):
-    pass
-
-
 class DataProcessingError(GraphRAGException):
     pass
 
@@ -52,12 +48,4 @@ class PipelineStateError(GraphRAGException):
 
 
 class RerankModelError(ModelError):
-    pass
-
-
-class RetrievalError(GraphRAGException):
-    pass
-
-
-class StorageError(GraphRAGException):
     pass

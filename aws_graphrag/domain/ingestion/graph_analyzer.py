@@ -6,7 +6,7 @@ import networkx as nx
 from pydantic import BaseModel, Field
 
 from aws_graphrag.domain.models import CommunityMetrics, Config
-from aws_graphrag.shared import GraphError, get_logger
+from aws_graphrag.shared import get_logger
 
 logger = get_logger(__name__)
 
@@ -308,27 +308,6 @@ class GraphAnalyzer:
         stats.num_connected_components = len(result)
         if result:
             stats.largest_component_size = len(max(result, key=len))
-
-    def get_top_nodes_by_centrality(
-        self, centrality_type: str, top_k: int = 10
-    ) -> list[tuple[str, float]]:
-        if centrality_type not in self._centrality_cache:
-            available = list(self._centrality_cache.keys())
-            msg = (
-                f"Centrality type '{centrality_type}' not found. Available: {available}"
-            )
-            logger.error(msg)
-            raise GraphError(msg)
-
-        centrality_values = self._centrality_cache[centrality_type]
-        top_nodes = sorted(
-            centrality_values.items(), key=lambda item: item[1], reverse=True
-        )[:top_k]
-
-        logger.info(
-            "Retrieved top %s nodes by %s centrality", len(top_nodes), centrality_type
-        )
-        return [(str(node), val) for node, val in top_nodes]
 
     @property
     def centrality_cache(self) -> dict[str, dict[str, float]]:

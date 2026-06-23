@@ -342,8 +342,6 @@ memory:
   max_conversations: 100
   max_messages_per_conversation: 20
   max_conversation_age_hours: 168
-  cleanup_interval_hours: 24
-  auto_cleanup: true
 
 # Cache Configuration
 cache:

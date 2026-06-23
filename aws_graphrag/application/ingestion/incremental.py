@@ -272,8 +272,3 @@ class IncrementalIndexer:
                 community_report_ids=lineage.community_report_ids,
             )
             self.doc_status.put(record)
-
-    @staticmethod
-    def doc_id_for(document: Document) -> str:
-        """Expose the stable doc-id derivation for callers/tests."""
-        return compute_doc_id(document.file_path)
