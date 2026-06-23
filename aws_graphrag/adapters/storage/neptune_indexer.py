@@ -217,7 +217,11 @@ class NeptuneIndexer(GraphIndexer):
             def builder(
                 g: GraphTraversalSource, batch: list[Relationship]
             ) -> GraphTraversal:
-                t = g
+                # Each addE() traversal terminates on the created edge, so the
+                # next edge must start from the source again (not from the prior
+                # edge's traversal — that raised "'GraphTraversal' object is not
+                # callable"). Fan each addE out via sideEffect from one root.
+                t: GraphTraversal = g.inject(1)
                 for rel in batch:
                     props = self._build_vertex_properties(
                         rel,
@@ -230,16 +234,16 @@ class NeptuneIndexer(GraphIndexer):
                             "text_unit_ids": rel.text_unit_ids,
                         },
                     )
-                    e_traversal = (
-                        t.V()
+                    add_edge = (
+                        __.V()
                         .hasLabel(entity_label)
                         .has("id", rel.source_id)
                         .addE(rel.type or "RELATED_TO")
                         .to(__.V().hasLabel(entity_label).has("id", rel.target_id))
                         .property("id", rel.id)
                     )
-                    self._add_properties_to_traversal(e_traversal, props)
-                    t = e_traversal
+                    self._set_edge_properties_on_traversal(add_edge, props)
+                    t = t.sideEffect(add_edge)
                 return cast(GraphTraversal, t)
 
             return builder
@@ -390,7 +394,17 @@ class NeptuneIndexer(GraphIndexer):
             def builder(
                 g: GraphTraversalSource, batch: list[Relationship]
             ) -> GraphTraversal:
-                t = g
+                # Drop any pre-existing edges for this batch's ids in one
+                # statement, then build a single chained add-edge traversal.
+                # Each edge MUST start from g.V() (the source), not from the
+                # previous edge's traversal: an addE() traversal ends on the
+                # created edge, so chaining `.V()`/`.E()` off it raised
+                # "'GraphTraversal' object is not callable". sideEffect lets us
+                # fan each addE out from the same source within one traversal.
+                rel_ids = [rel.id for rel in batch]
+                g.E().has("id", P.within(rel_ids)).drop().iterate()
+
+                t: GraphTraversal = g.inject(1)
                 for rel in batch:
                     props = self._build_vertex_properties(
                         rel,
@@ -403,18 +417,16 @@ class NeptuneIndexer(GraphIndexer):
                             "text_unit_ids": rel.text_unit_ids,
                         },
                     )
-                    # Remove any prior edge with this id to avoid duplicates.
-                    t.E().has("id", rel.id).drop().iterate()
-                    e_traversal = (
-                        t.V()
+                    add_edge = (
+                        __.V()
                         .hasLabel(entity_label)
                         .has("id", rel.source_id)
                         .addE(rel.type or "RELATED_TO")
                         .to(__.V().hasLabel(entity_label).has("id", rel.target_id))
                         .property("id", rel.id)
                     )
-                    self._set_properties_on_traversal(e_traversal, props)
-                    t = e_traversal
+                    self._set_edge_properties_on_traversal(add_edge, props)
+                    t = t.sideEffect(add_edge)
                 return cast(GraphTraversal, t)
 
             return builder
@@ -481,6 +493,37 @@ class NeptuneIndexer(GraphIndexer):
                         traversal.property(Cardinality.set_, key, item)
             else:
                 traversal.property(Cardinality.single, key, value)
+
+    def _set_edge_properties_on_traversal(
+        self, traversal: GraphTraversal, props: dict[str, Any]
+    ) -> None:
+        """Set properties on an EDGE traversal.
+
+        Neptune edge properties differ from vertex properties in two ways that
+        make the vertex helpers (:meth:`_add_properties_to_traversal` /
+        :meth:`_set_properties_on_traversal`) unsafe here:
+
+        1. Cardinality (``single``/``set``) may NOT be specified for edge
+           properties — doing so raises ``UnsupportedOperationException``
+           ("Cardinality specification may not be used with Edge properties").
+        2. Edges cannot hold multi-valued properties at all, so a list (e.g.
+           ``text_unit_ids``) must be serialized to a single JSON string rather
+           than emitted as repeated ``property(key, item)`` calls (which on a
+           vertex create a multi-property but on an edge silently keep only the
+           last value).
+
+        Edge ``id`` is always single-valued and is set positionally; re-running
+        an upsert overwrites a scalar in place, so no explicit cardinality is
+        needed for idempotency.
+        """
+        for key, value in props.items():
+            if value is None:
+                continue
+            if isinstance(value, list):
+                serialized = self._truncate(json.dumps(value))
+                traversal.property(key, serialized)
+            else:
+                traversal.property(key, value)
 
     def _build_vertex_properties(
         self, item: Any, base_props: dict[str, Any]

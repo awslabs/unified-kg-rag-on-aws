@@ -111,6 +111,56 @@ def test_upsert_relationship_drops_edge_by_id_before_readd(indexer) -> None:
     indexer.upsert_relationships(
         [Relationship(id="r1", source_id="e1", target_id="e2")]
     )
-    # Existing edge with this id is dropped before the new addE.
+    # Existing edges are dropped first, then each addE is fanned out from a
+    # single root via sideEffect (the addE lives inside the anonymous __ spawn
+    # passed to sideEffect, so it is not a call on the root recorder).
     assert "drop" in calls
-    assert "addE" in calls
+    assert "sideEffect" in calls
+    # The root chain must NOT re-enter V()/E() between edges (the old chaining
+    # bug): after the initial drop, only inject + sideEffect drive the root.
+    assert calls.count("sideEffect") == 1
+
+
+def test_edge_properties_never_use_cardinality(indexer) -> None:
+    # Regression: Neptune raises "Cardinality specification may not be used with
+    # Edge properties". _set_edge_properties_on_traversal must emit plain
+    # property(key, value) calls with NO Cardinality positional argument.
+    recorded: list[tuple] = []
+
+    class ArgRecordingTraversal:
+        def property(self, *args, **kwargs):
+            recorded.append(args)
+            return self
+
+        def __getattr__(self, name):
+            return lambda *a, **k: self
+
+    indexer._set_edge_properties_on_traversal(
+        ArgRecordingTraversal(),
+        {"weight": 0.5, "text_unit_ids": ["t1", "t2"], "description": "x"},
+    )
+    assert recorded, "expected property() calls"
+    for args in recorded:
+        # Each call is (key, value): exactly two positional args, key is a str
+        # (a Cardinality arg would make the first positional a Cardinality enum).
+        assert len(args) == 2, f"edge property got cardinality arg: {args}"
+        assert isinstance(args[0], str)
+
+
+def test_edge_list_property_serialized_to_json_string(indexer) -> None:
+    # Edges cannot hold multi-valued properties, so a list must become a single
+    # JSON string (one property call), not repeated property() calls.
+    recorded: list[tuple] = []
+
+    class ArgRecordingTraversal:
+        def property(self, *args, **kwargs):
+            recorded.append(args)
+            return self
+
+    indexer._set_edge_properties_on_traversal(
+        ArgRecordingTraversal(), {"text_unit_ids": ["t1", "t2"]}
+    )
+    assert len(recorded) == 1
+    key, value = recorded[0]
+    assert key == "text_unit_ids"
+    assert value == '["t1", "t2"]'
