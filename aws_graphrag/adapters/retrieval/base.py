@@ -174,7 +174,14 @@ class BaseSearchStrategy(MetricsMixin, ABC):
     def _get_ids(results: list[RetrievalResult], key: str) -> list[str]:
         ids_set: set[str] = set()
         for result in results:
-            if ids := result.metadata.get(key):
+            ids = result.metadata.get(key)
+            # OpenSearch hits carry the canonical id in `source` and only echo
+            # metadata[key] when the indexed _source happens to include that
+            # field; fall back to `source` so graph expansion still gets seeds
+            # (matching local/drift candidate-entity resolution).
+            if not ids and key == "id" and result.source:
+                ids = result.source
+            if ids:
                 if isinstance(ids, list):
                     ids_set.update(str(id_val) for id_val in ids)
                 else:

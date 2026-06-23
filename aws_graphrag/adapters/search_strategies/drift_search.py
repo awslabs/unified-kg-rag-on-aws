@@ -141,8 +141,10 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 and improvement_ratio < self.drift_config.improvement_threshold
             ):
                 logger.info(
-                    f"Early stop at iteration {iteration}: "
-                    f"improvement ratio {improvement_ratio:.2f} below threshold"
+                    "Early stop at iteration %s: "
+                    "improvement ratio %.2f below threshold",
+                    iteration,
+                    improvement_ratio,
                 )
                 break
 
@@ -156,7 +158,10 @@ class DriftSearchStrategy(BaseSearchStrategy):
         self._record_search_metrics(processing_time, len(all_results), len(metrics))
 
         logger.info(
-            f"Search completed: {len(metrics)} iterations, {len(final_results)} results in {processing_time:.3f}s"
+            "Search completed: %s iterations, %s results in %.3fs",
+            len(metrics),
+            len(final_results),
+            processing_time,
         )
 
         return SearchResult(
@@ -199,9 +204,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
     async def _should_stop(
         self, iteration: int, metrics: list[dict[str, Any]], original_query: str
     ) -> bool:
-        if iteration >= self.drift_config.max_iterations:
-            return True
-
+        # The caller loops over range(max_iterations), so the hard cap is already
+        # enforced there; this method only decides EARLY convergence.
         if iteration > 1:
             recent_gains = [m["unique_new"] for m in metrics[-2:]]
             if all(gain < 2 for gain in recent_gains):

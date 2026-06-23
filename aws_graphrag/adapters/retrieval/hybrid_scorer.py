@@ -60,11 +60,6 @@ class HybridScorer(MetricsMixin):
         start_time = time.time()
         method = self.fusion_config.method
 
-        normalized_map = {
-            name: self._normalize_scores(res_list)
-            for name, res_list in results_dict.items()
-        }
-
         fusion_methods: dict[
             FusionMethod,
             Callable[[dict[str, list[RetrievalResult]]], list[RetrievalResult]],
@@ -77,7 +72,18 @@ class HybridScorer(MetricsMixin):
         if not fusion_func:
             raise ValueError(f"Unknown fusion method: '{method}'")
 
-        combined_results = fusion_func(normalized_map)
+        # RRF uses only rank order and overwrites scores, so per-bucket min-max
+        # normalization is wasted work (and would be discarded) there; only the
+        # weighted fusion consumes the normalized scores.
+        if method == FusionMethod.WEIGHTED:
+            fusion_input = {
+                name: self._normalize_scores(res_list)
+                for name, res_list in results_dict.items()
+            }
+        else:
+            fusion_input = results_dict
+
+        combined_results = fusion_func(fusion_input)
 
         if self.fusion_config.diversity_lambda < 1.0:
             combined_results = self._apply_diversity_filtering(
@@ -96,8 +102,10 @@ class HybridScorer(MetricsMixin):
         self._record_metric("final_fused_count", len(final_results))
 
         logger.info(
-            f"Fusion completed: {len(combined_results)} -> {len(final_results)} "
-            f"results in {processing_time:.3f}s"
+            "Fusion completed: %s -> %s results in %.3fs",
+            len(combined_results),
+            len(final_results),
+            processing_time,
         )
 
         return final_results
@@ -214,15 +222,14 @@ class HybridScorer(MetricsMixin):
             candidate = results[candidate_idx]
             relevance = candidate.score or 0.0
 
-            max_similarity = 0.0
             candidate_words = word_sets[candidate_idx]
-
-            for selected_idx in selected_indices:
-                selected_words = word_sets[selected_idx]
-                intersection = len(candidate_words.intersection(selected_words))
-                union = len(candidate_words.union(selected_words))
-                similarity = intersection / union if union > 0 else 0.0
-                max_similarity = max(max_similarity, similarity)
+            max_similarity = max(
+                (
+                    self._jaccard(candidate_words, word_sets[selected_idx])
+                    for selected_idx in selected_indices
+                ),
+                default=0.0,
+            )
 
             return lambda_val * relevance - (1 - lambda_val) * max_similarity
 
@@ -320,8 +327,10 @@ class HybridScorer(MetricsMixin):
             self._record_metric("reranked_count", len(reranked_results))
 
             logger.info(
-                f"Reranking completed: {len(results)} -> {len(reranked_results)} "
-                f"results in {processing_time:.3f}s"
+                "Reranking completed: %s -> %s results in %.3fs",
+                len(results),
+                len(reranked_results),
+                processing_time,
             )
 
             return reranked_results
@@ -331,18 +340,10 @@ class HybridScorer(MetricsMixin):
             return results
 
     @staticmethod
-    def _calculate_jaccard_similarity(
-        r1: RetrievalResult, r2: RetrievalResult
-    ) -> float:
-        if not r1.content or not r2.content:
-            return 0.0
-
-        words1 = set(r1.content.lower().split())
-        words2 = set(r2.content.lower().split())
-        intersection = len(words1.intersection(words2))
-        union = len(words1.union(words2))
-
-        return intersection / union if union > 0 else 0.0
+    def _jaccard(words1: set[str], words2: set[str]) -> float:
+        """Jaccard similarity of two word sets (shared by MMR diversity)."""
+        union = len(words1 | words2)
+        return len(words1 & words2) / union if union > 0 else 0.0
 
     def score_and_sort_results(
         self, results: list[RetrievalResult]

@@ -116,11 +116,23 @@ class NeptuneClient:
             label,
             batch_size,
         )
+        previous_count: int | None = None
         while True:
             remaining_count = self.g.V().hasLabel(label).count().next()
             if remaining_count == 0:
                 logger.info("No more vertices with label '%s' to delete.", label)
                 break
+
+            # Guard against an infinite loop: if a drop pass does not reduce the
+            # count (e.g. undeletable vertices, or a stale count), stop rather
+            # than spin forever sleeping `delay` each pass.
+            if previous_count is not None and remaining_count >= previous_count:
+                raise AWSServiceError(
+                    f"Batch deletion for label '{label}' made no progress "
+                    f"({remaining_count} vertices remain); aborting to avoid an "
+                    "infinite loop."
+                )
+            previous_count = remaining_count
 
             logger.info(
                 "Deleting batch of %s from %s vertices with label '%s'...",

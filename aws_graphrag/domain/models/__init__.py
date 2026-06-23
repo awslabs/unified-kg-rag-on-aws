@@ -52,7 +52,6 @@ from .pipeline import (
 )
 from .relationship import Relationship
 from .retrieval import (
-    Collection,
     ContextBuilderResult,
     RetrievalResult,
     RetrieverRole,
@@ -70,7 +69,6 @@ __all__ = [
     "CacheStrategy",
     "ChunkingStrategy",
     "Claim",
-    "Collection",
     "Community",
     "CommunityMetrics",
     "CommunityReport",

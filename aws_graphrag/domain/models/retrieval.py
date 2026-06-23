@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field
 
 
 class FusionMethod(str, Enum):
-    HYBRID = "hybrid"
     RRF = "rrf"
     WEIGHTED = "weighted"
 
@@ -23,20 +22,6 @@ class RetrieverRole(str, Enum):
 
     GRAPH = "graph"
     DOCUMENT = "document"
-
-
-class Collection(str, Enum):
-    """Logical artifact collections a strategy can target.
-
-    Backend-neutral retrieval intent: the adapter maps a collection to its own
-    physical name (OpenSearch alias prefix or graph node label), so strategies
-    never reference Neptune labels or OpenSearch index prefixes directly.
-    """
-
-    ENTITIES = "entities"
-    RELATIONSHIPS = "relationships"
-    TEXT_UNITS = "text_units"
-    COMMUNITY_REPORTS = "community_reports"
 
 
 class SearchStrategy(str, Enum):
