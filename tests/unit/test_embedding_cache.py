@@ -60,3 +60,11 @@ def test_cross_call_cache_reuse(indexer) -> None:
 def test_cache_persists_in_dict(indexer) -> None:
     indexer._batch_embed(["alpha", "beta"])
     assert len(indexer._embedding_cache) == 2
+
+
+def test_cache_hit_rate_tracked(indexer) -> None:
+    indexer._batch_embed(["a", "b"])  # 2 misses
+    assert indexer.embedding_cache_hit_rate == 0.0
+    indexer._batch_embed(["a", "b"])  # 2 hits
+    # 2 hits / 4 total lookups = 0.5
+    assert indexer.embedding_cache_hit_rate == 0.5

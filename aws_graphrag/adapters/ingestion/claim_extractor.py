@@ -276,6 +276,9 @@ class ClaimExtractor(BaseProcessor):
                     )
             else:
                 self.stats.num_failed_extractions += 1
+                logger.debug(
+                    "No claim extraction result for text unit '%s'", text_unit.id
+                )
         return all_claims
 
     def _parse_extraction_result(

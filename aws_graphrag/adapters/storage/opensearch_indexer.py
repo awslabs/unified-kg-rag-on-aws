@@ -1,6 +1,7 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import boto3
@@ -53,6 +54,14 @@ class OpenSearchIndexer(VectorIndexer):
         # Per-process content-hash -> embedding cache (avoids re-embedding
         # duplicate/unchanged text within and across incremental runs).
         self._embedding_cache: dict[str, list[float]] = {}
+        self._embedding_cache_hits = 0
+        self._embedding_cache_misses = 0
+
+    @property
+    def embedding_cache_hit_rate(self) -> float:
+        """Fraction of embedding lookups served from cache (observability)."""
+        total = self._embedding_cache_hits + self._embedding_cache_misses
+        return self._embedding_cache_hits / total if total else 0.0
 
     def _resolve_embedding_dimension(self) -> int:
         model_info = self.embedding_factory.get_model_info(
@@ -611,9 +620,12 @@ class OpenSearchIndexer(VectorIndexer):
             cached = self._embedding_cache.get(key)
             if cached is not None:
                 result[i] = cached
-            elif key not in seen_keys:
-                seen_keys.add(key)
-                unique.append((key, text))
+                self._embedding_cache_hits += 1
+            else:
+                self._embedding_cache_misses += 1
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    unique.append((key, text))
 
         def _store(key: str, emb: list[float] | None) -> None:
             if emb is not None:
@@ -621,27 +633,43 @@ class OpenSearchIndexer(VectorIndexer):
             for idx in key_to_indices[key]:
                 result[idx] = emb
 
-        for batch_start in range(0, len(unique), batch_size):
-            batch = unique[batch_start : batch_start + batch_size]
+        def _embed_batch(
+            batch: list[tuple[str, str]],
+        ) -> list[tuple[str, list[float] | None]]:
             keys = [k for k, _ in batch]
             batch_texts = [t for _, t in batch]
             try:
                 embeddings = self.embedding_model.embed_documents(batch_texts)
-                for key, emb in zip(keys, embeddings, strict=True):
-                    _store(key, emb)
+                return list(zip(keys, embeddings, strict=True))
             except Exception as e:
                 logger.warning(
                     "Batch embedding failed (%s items), retrying individually: %s",
                     len(batch),
                     e,
                 )
+                out: list[tuple[str, list[float] | None]] = []
                 for key, text in batch:
                     try:
                         single_embs = self.embedding_model.embed_documents([text])
-                        _store(key, single_embs[0] if single_embs else None)
+                        out.append((key, single_embs[0] if single_embs else None))
                     except Exception as item_error:
                         logger.error("Failed to embed text '%s': %s", key, item_error)
-                        _store(key, None)
+                        out.append((key, None))
+                return out
+
+        # Embedding is IO-bound (Bedrock InvokeModel); fan the batches out across
+        # threads instead of issuing them strictly serially. Results are stored
+        # back on the calling thread to avoid races on result/_embedding_cache.
+        batches = [
+            unique[start : start + batch_size]
+            for start in range(0, len(unique), batch_size)
+        ]
+        if batches:
+            max_workers = min(8, len(batches))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                for pairs in executor.map(_embed_batch, batches):
+                    for key, emb in pairs:
+                        _store(key, emb)
 
         return result
 

@@ -596,13 +596,26 @@ class CommunityDetector(BaseProcessor):
             )
 
             reports = []
+            failed = 0
             for community, result in zip(communities, report_results, strict=True):
                 if result:
                     report = self._create_community_report(
                         community, result, graph_attributes
                     )
                     reports.append(report)
+                else:
+                    # Empty LLM result: count and log rather than silently
+                    # producing fewer reports while the run still 'succeeds'.
+                    failed += 1
+                    logger.warning(
+                        "No report generated for community '%s' (empty LLM result)",
+                        community.id,
+                    )
 
+            if failed:
+                logger.warning(
+                    "%s of %s community reports had no result", failed, len(communities)
+                )
             logger.info(
                 "Generated %s reports in %.2fs.",
                 len(reports),
