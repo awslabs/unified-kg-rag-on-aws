@@ -15,12 +15,13 @@ class EvaluationMetricType(str, Enum):
     FAITHFULNESS = "faithfulness"
     PARTIAL_CORRECTNESS = "partial_correctness"
     # Graph-aware retrieval metrics (use EvaluationGroundTruth.expected_*).
-    ENTITY_PRECISION = "entity_precision"
-    ENTITY_RECALL = "entity_recall"
-    ENTITY_F1 = "entity_f1"
-    RELATIONSHIP_PRECISION = "relationship_precision"
-    RELATIONSHIP_RECALL = "relationship_recall"
-    RELATIONSHIP_F1 = "relationship_f1"
+    # Coverage = fraction of expected graph artifacts surfaced in the answer
+    # (i.e. recall). We deliberately do NOT emit precision/F1: precision would
+    # require enumerating the answer's own entities/relationships, which we
+    # cannot do from free text without a separate extractor — emitting it as a
+    # copy of recall (the previous behaviour) overstated the signal.
+    ENTITY_COVERAGE = "entity_coverage"
+    RELATIONSHIP_COVERAGE = "relationship_coverage"
 
 
 class EvaluatorType(str, Enum):

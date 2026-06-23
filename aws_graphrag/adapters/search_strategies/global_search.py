@@ -274,17 +274,20 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             return all_communities[:max_communities]
 
         async def score_item(item: RetrievalResult) -> tuple[RetrievalResult, float]:
+            # Return the relevance on a 0-1 scale so it is comparable to
+            # relevance_threshold (config-constrained to [0.0, 1.0]). The LLM
+            # emits a 0-10 score; normalizing here was previously only done for
+            # the blended item.score, leaving the threshold filter (line below)
+            # comparing a 0-1 threshold against a 0-10 score -> a near no-op.
             try:
                 llm_output = await self.community_relevance_scorer.ainvoke(
                     {"community_summary": item.content, "query": query.query}
                 )
                 parsed_score = safe_float_parse(llm_output, default_value=5.0)
-                relevance_score = parsed_score or 0.0
+                relevance_score = (parsed_score / 10.0) if parsed_score is not None else 0.0
 
                 if parsed_score is not None:
-                    item.score = ((item.score or 0.5) * 0.4) + (
-                        (relevance_score / 10.0) * 0.6
-                    )
+                    item.score = ((item.score or 0.5) * 0.4) + (relevance_score * 0.6)
 
             except Exception as e:
                 if not self.ignore_errors:

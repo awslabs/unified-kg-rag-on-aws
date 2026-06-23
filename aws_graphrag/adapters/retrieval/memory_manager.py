@@ -90,15 +90,17 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
                     "target_language": self.config.processing.translation.target_language,
                 }
             )
-            entities = result.get("entities", []) if isinstance(result, dict) else []
-
-            if not entities:
-                return
+            # CommaSeparatedListOutputParser yields a list[str]; the previous
+            # result.get("entities") (dict access) always returned [], so
+            # conversation entities were never populated. Accept the list shape
+            # (and tolerate a dict {"entities": [...]} just in case).
+            if isinstance(result, dict):
+                raw_entities = result.get("entities", [])
+            else:
+                raw_entities = result or []
 
             entity_names = [
-                entity.get("name", "").strip()
-                for entity in entities
-                if isinstance(entity, dict) and entity.get("name", "").strip()
+                str(entity).strip() for entity in raw_entities if str(entity).strip()
             ]
 
             if entity_names:

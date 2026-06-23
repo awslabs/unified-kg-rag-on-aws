@@ -73,53 +73,30 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         return False
 
     @classmethod
-    def _coverage(
-        cls, expected: list[str], answer: str
-    ) -> tuple[float | None, float | None, float | None, int]:
-        """Return (precision, recall, f1, num_matched) for expected-in-answer.
+    def _coverage(cls, expected: list[str], answer: str) -> tuple[float | None, int]:
+        """Return (coverage, num_matched) for expected-artifacts-in-answer.
 
-        Matching is word-boundary aware (contiguous token-sequence match), so an
-        expected entity is credited only when its full word sequence appears as
-        words in the answer — avoiding false substring hits (e.g. "AI" inside
-        "airport"). Recall = matched / expected; precision is set equal (we
-        cannot enumerate retrieved graph artifacts from free text), so F1
-        collapses to the same value; all three are emitted for comparability.
+        Coverage = matched / expected (i.e. recall): the fraction of expected
+        graph artifacts whose full word sequence appears, word-boundary aware,
+        in the answer (so "AI" does not match inside "airport"). We intentionally
+        report ONLY coverage — not precision/F1 — because precision would require
+        enumerating the answer's own entities/relationships, which we cannot do
+        from free text; emitting precision as a copy of recall (the previous
+        behaviour) overstated the signal.
 
-        Returns ``None`` scores when nothing is expected for the dimension, so a
-        query with (say) only expected entities is not penalized for having no
-        expected relationships when the overall score is averaged.
+        Returns ``None`` when nothing is expected for the dimension, so a query
+        with (say) only expected entities is not penalized for having no expected
+        relationships when the overall score is averaged.
         """
         if not expected:
-            return None, None, None, 0
+            return None, 0
         answer_tokens = cls._tokenize(answer)
         matched = sum(
             1
             for item in expected
             if item and cls._phrase_in_tokens(item, answer_tokens)
         )
-        recall = matched / len(expected)
-        precision = recall
-        f1 = (
-            2 * precision * recall / (precision + recall)
-            if (precision + recall) > 0
-            else 0.0
-        )
-        return precision, recall, f1, matched
-
-    @staticmethod
-    def _metrics_for(
-        precision: float | None,
-        recall: float | None,
-        f1: float | None,
-        precision_type: EvaluationMetricType,
-        recall_type: EvaluationMetricType,
-        f1_type: EvaluationMetricType,
-    ) -> list[EvaluationMetric]:
-        return [
-            EvaluationMetric(metric_type=precision_type, value=precision or 0.0),
-            EvaluationMetric(metric_type=recall_type, value=recall or 0.0),
-            EvaluationMetric(metric_type=f1_type, value=f1 or 0.0),
-        ]
+        return matched / len(expected), matched
 
     def _build_metrics(
         self, result: EvaluationResult
@@ -128,29 +105,23 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         expected_entities = result.metadata.get("expected_entities", []) or []
         expected_relationships = result.metadata.get("expected_relationships", []) or []
 
-        e_p, e_r, e_f1, e_matched = self._coverage(expected_entities, answer)
-        r_p, r_r, r_f1, r_matched = self._coverage(expected_relationships, answer)
+        e_cov, e_matched = self._coverage(expected_entities, answer)
+        r_cov, r_matched = self._coverage(expected_relationships, answer)
 
         # Only emit metrics for dimensions that actually have expectations, so a
         # missing dimension does not dilute the averaged overall score.
         metrics: list[EvaluationMetric] = []
-        if expected_entities and e_p is not None:
-            metrics += self._metrics_for(
-                e_p,
-                e_r,
-                e_f1,
-                EvaluationMetricType.ENTITY_PRECISION,
-                EvaluationMetricType.ENTITY_RECALL,
-                EvaluationMetricType.ENTITY_F1,
+        if expected_entities and e_cov is not None:
+            metrics.append(
+                EvaluationMetric(
+                    metric_type=EvaluationMetricType.ENTITY_COVERAGE, value=e_cov
+                )
             )
-        if expected_relationships and r_p is not None:
-            metrics += self._metrics_for(
-                r_p,
-                r_r,
-                r_f1,
-                EvaluationMetricType.RELATIONSHIP_PRECISION,
-                EvaluationMetricType.RELATIONSHIP_RECALL,
-                EvaluationMetricType.RELATIONSHIP_F1,
+        if expected_relationships and r_cov is not None:
+            metrics.append(
+                EvaluationMetric(
+                    metric_type=EvaluationMetricType.RELATIONSHIP_COVERAGE, value=r_cov
+                )
             )
         metadata = {
             **self._extract_search_metadata(result),
