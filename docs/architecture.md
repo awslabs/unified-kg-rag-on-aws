@@ -40,7 +40,9 @@ aws_graphrag/
 │  ├─ ingestion/        #   LLM/IO-coupled: chunker, *_extractor, loader, parser,
 │  │                    #   translator, gleaner, community_detector
 │  ├─ renderers/        #   graph visualization renderers
-│  └─ evaluators/       #   langchain / ragas evaluator wrappers
+│  └─ evaluators/       #   langchain / ragas evaluator wrappers (the pure,
+│                       #   deterministic graph_aware_evaluator is co-located in
+│                       #   the evaluation/ facade, not here)
 │
 ├─ application/         # orchestration + entry points
 │  ├─ cli/              #   run-ingestion / run-rag / run-eval / run-visualization
