@@ -240,17 +240,49 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             )
             query = state.get("query", "")
             selected_strategy_str = await router.ainvoke({"query": query})
-            strategy = SearchStrategy(selected_strategy_str.strip().lower())
+            strategy = self._parse_routed_strategy(selected_strategy_str)
         except Exception as e:
             if not self.ignore_errors:
                 raise
             logger.warning(
-                "Strategy auto-selection failed, using DRIFT as fallback: %s", e
+                "Strategy auto-selection failed, using LOCAL as fallback: %s", e
             )
-            strategy = SearchStrategy.DRIFT
+            strategy = SearchStrategy.LOCAL
 
         state["resolved_strategy"] = strategy
         return state
+
+    # AUTO routes within the GraphRAG strategies (the LightRAG mix/hybrid/naive
+    # modes are a separate methodology the caller selects explicitly).
+    _ROUTABLE_STRATEGIES = (
+        SearchStrategy.SIMPLE,
+        SearchStrategy.LOCAL,
+        SearchStrategy.GLOBAL,
+        SearchStrategy.DRIFT,
+    )
+
+    @classmethod
+    def _parse_routed_strategy(cls, raw: str) -> SearchStrategy:
+        """Map a router LLM response to a strategy, tolerating extra text.
+
+        The router is asked for a bare word, but LLMs add punctuation/prose
+        ("Local search.", "I'd use local"). Match a known strategy name as a
+        substring instead of requiring an exact enum value (which raised
+        ValueError and dropped to the expensive fallback). Defaults to LOCAL —
+        a sensible general-purpose graph strategy — NOT DRIFT (the costliest).
+        """
+        text = (raw or "").strip().lower()
+        # Exact match first, then substring (whole-word-ish) over routable names.
+        for strat in cls._ROUTABLE_STRATEGIES:
+            if text == strat.value:
+                return strat
+        for strat in cls._ROUTABLE_STRATEGIES:
+            if strat.value in text:
+                return strat
+        logger.warning(
+            "Router returned unrecognized strategy '%s'; defaulting to LOCAL", raw
+        )
+        return SearchStrategy.LOCAL
 
     def _get_chain_for_prompt(
         self,

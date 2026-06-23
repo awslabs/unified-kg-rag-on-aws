@@ -494,17 +494,46 @@ class NeptuneIndexer(GraphIndexer):
             entity_label=self.neptune_config.entity_label_prefix.capitalize(),
         )
 
-    def delete_by_id(self, ids: list[str]) -> IndexingStats:
-        """Delete vertices and edges by their ``id`` property (delta removals)."""
+    def delete_by_id(
+        self, ids: list[str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Delete vertices and edges by their ``id`` property (delta removals).
+
+        When ``suffix`` is given, the drop is scoped to that suffix's entity and
+        community labels. Entity ids are content-hash derived, so the SAME id can
+        exist under another suffix (another tenant/version); an unscoped
+        ``V().has('id', ...)`` would delete that other tenant's vertex too.
+        Scoping by label prevents cross-suffix data loss. ``suffix=None`` keeps
+        the legacy unscoped behaviour (single-tenant).
+        """
         stats = IndexingStats(total_items=len(ids))
         if not ids:
             return stats
 
+        entity_label = community_label = None
+        if suffix is not None:
+            entity_label = self._get_name(
+                self.neptune_config.entity_label_prefix.capitalize(), suffix
+            )
+            community_label = self._get_name(
+                self.neptune_config.community_label_prefix.capitalize(), suffix
+            )
+
         for id_batch in self._batch_iterator(ids):
             try:
-                # Drop matching edges and vertices in one traversal per batch.
-                self.neptune_client.g.E().has("id", P.within(id_batch)).drop().iterate()
-                self.neptune_client.g.V().has("id", P.within(id_batch)).drop().iterate()
+                g = self.neptune_client.g
+                if entity_label and community_label:
+                    # Edges live between entity-label vertices; scope the edge and
+                    # vertex drops to this suffix's labels only.
+                    g.E().hasLabel(entity_label).has(
+                        "id", P.within(id_batch)
+                    ).drop().iterate()
+                    g.V().hasLabel(entity_label, community_label).has(
+                        "id", P.within(id_batch)
+                    ).drop().iterate()
+                else:
+                    g.E().has("id", P.within(id_batch)).drop().iterate()
+                    g.V().has("id", P.within(id_batch)).drop().iterate()
                 stats.add_success(len(id_batch))
             except Exception as e:
                 stats.add_error(str(e))

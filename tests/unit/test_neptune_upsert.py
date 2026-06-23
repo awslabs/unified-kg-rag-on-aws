@@ -164,3 +164,41 @@ def test_edge_list_property_serialized_to_json_string(indexer) -> None:
     key, value = recorded[0]
     assert key == "text_unit_ids"
     assert value == '["t1", "t2"]'
+
+
+def test_delete_by_id_scopes_by_label_when_suffix_given(indexer) -> None:
+    # Cross-tenant safety: with a suffix, the drop must scope to that suffix's
+    # entity/community labels (hasLabel), not match raw id across all tenants.
+    labels: list[tuple] = []
+
+    class LabelRecorder:
+        def hasLabel(self, *args):  # noqa: N802
+            labels.append(args)
+            return self
+
+        def __getattr__(self, name):
+            return lambda *a, **k: self
+
+    indexer.neptune_client.g = LabelRecorder()
+    indexer.delete_by_id(["id1", "id2"], suffix="default")
+    # Both the edge drop and vertex drop carried a hasLabel scope.
+    assert labels, "expected hasLabel scoping when suffix is provided"
+    assert any("Entity-default" in a for a in labels)
+    assert any("Community-default" in a for a in labels)
+
+
+def test_delete_by_id_unscoped_without_suffix(indexer) -> None:
+    # Legacy single-tenant path: no suffix -> no hasLabel scoping.
+    labels: list[tuple] = []
+
+    class LabelRecorder:
+        def hasLabel(self, *args):  # noqa: N802
+            labels.append(args)
+            return self
+
+        def __getattr__(self, name):
+            return lambda *a, **k: self
+
+    indexer.neptune_client.g = LabelRecorder()
+    indexer.delete_by_id(["id1"])
+    assert labels == [], "unscoped delete must not call hasLabel"

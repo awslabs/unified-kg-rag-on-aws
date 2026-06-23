@@ -60,17 +60,26 @@ class ObservabilityStack(Stack):
                 left=[sm.metric_time()],
             ),
         )
+        # Metric names must match what pipeline._emit_metrics actually emits
+        # (the PipelineMetrics scalar field names), or the widgets render empty.
+        extracted_metrics = [
+            cw.Metric(namespace=EMF_NAMESPACE, metric_name=name, statistic="Sum")
+            for name in (
+                "total_entities_extracted",
+                "total_relationships_extracted",
+                "total_claims_extracted",
+            )
+        ]
+        indexed_metrics = [
+            cw.Metric(namespace=EMF_NAMESPACE, metric_name=name, statistic="Sum")
+            for name in (
+                "total_items_indexed",
+                "relationships_indexed",
+                "total_items_index_failed",
+            )
+        ]
         dashboard.add_widgets(
-            cw.GraphWidget(
-                title="Indexed artifacts (EMF)",
-                left=[
-                    cw.Metric(
-                        namespace=EMF_NAMESPACE,
-                        metric_name=name,
-                        statistic="Sum",
-                    )
-                    for name in ("entities", "relationships", "claims")
-                ],
-            ),
+            cw.GraphWidget(title="Extracted artifacts (EMF)", left=extracted_metrics),
+            cw.GraphWidget(title="Indexed artifacts (EMF)", left=indexed_metrics),
         )
         self.dashboard = dashboard

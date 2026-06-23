@@ -279,7 +279,9 @@ class IndexingManager:
         for suffix, ids in ids_by_suffix.items():
             if not ids:
                 continue
-            results[f"neptune_delete_{suffix}"] = self.neptune_indexer.delete_by_id(ids)
+            results[f"neptune_delete_{suffix}"] = self.neptune_indexer.delete_by_id(
+                ids, suffix=suffix
+            )
             for prefix in (
                 self.opensearch_indexer.opensearch_config.text_units_index_prefix,
                 self.opensearch_indexer.opensearch_config.entities_index_prefix,

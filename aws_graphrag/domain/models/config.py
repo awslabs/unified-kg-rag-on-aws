@@ -424,6 +424,15 @@ class GleaningConfig(BaseModel):
 
 
 class ClaimExtractionConfig(BaseModel):
+    enabled: bool = Field(
+        default=False,
+        description="Enable claim (covariate) extraction. OFF by default: claims "
+        "are extracted and indexed but NOT yet consumed by any retrieval strategy "
+        "(subject/object are not linked into the entity graph), so enabling it "
+        "incurs an LLM call per text unit for no answer contribution today. Turn "
+        "on only if you consume the claims index directly. The pipeline honors "
+        "this flag (DataIngestionPipeline._initialize_stages).",
+    )
     extraction_model_id: LanguageModelId = Field(
         default=LanguageModelId.CLAUDE_V4_5_SONNET,
         description="Language model for claim extraction",

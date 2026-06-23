@@ -198,8 +198,14 @@ class GraphIndexer(BaseIndexer):
         return []
 
     @abstractmethod
-    def delete_by_id(self, ids: list[str]) -> IndexingStats:
-        """Delete vertices/edges by id (for removed/changed documents)."""
+    def delete_by_id(
+        self, ids: list[str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Delete vertices/edges by id (for removed/changed documents).
+
+        ``suffix`` scopes the deletion to one tenant/version's labels so a
+        content-hash id shared across suffixes does not delete another tenant's
+        data; ``None`` is unscoped (single-tenant)."""
 
     @abstractmethod
     def get_entity_count(self, suffixes: list[str]) -> int:

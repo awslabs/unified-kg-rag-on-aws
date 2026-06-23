@@ -119,6 +119,10 @@ processing:
 
   # Claim Extraction
   claim_extraction:
+    # OFF by default: claims are extracted + indexed but NOT consumed by any
+    # retrieval strategy yet (subject/object aren't linked into the graph), so
+    # enabling costs an LLM call per text unit for no answer benefit today.
+    enabled: false
     extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
     max_entities_per_prompt: 200
 

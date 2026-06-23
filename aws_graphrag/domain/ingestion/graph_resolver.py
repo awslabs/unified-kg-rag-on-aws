@@ -139,7 +139,13 @@ class EntityResolver(BaseResolver):
             self.config.processing.resolution_method.value,
         )
 
-        entity_map = {entity.name: entity for entity in entities}
+        # Map name -> ALL entities with that name (not last-writer-wins): two
+        # distinct entities sharing a surface name (e.g. "Mercury" the planet vs
+        # the element) must both survive grouping. Collapsing to one silently
+        # dropped the others' type/description/text_unit_ids.
+        entity_map: dict[str, list[Entity]] = defaultdict(list)
+        for entity in entities:
+            entity_map[entity.name].append(entity)
         entity_names = list(entity_map.keys())
 
         fuzzy_matcher = self._create_fuzzy_matcher(candidate_texts=entity_names)
@@ -190,7 +196,9 @@ class EntityResolver(BaseResolver):
                         if v not in visited:
                             visited.add(v)
                             q.append(v)
-                groups.append([entity_map[n] for n in current_group_names])
+                groups.append(
+                    [e for n in current_group_names for e in entity_map[n]]
+                )
 
         logger.info("Created %s entity groups", len(groups))
         return groups

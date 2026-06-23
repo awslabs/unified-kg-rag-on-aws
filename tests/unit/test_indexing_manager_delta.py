@@ -72,7 +72,11 @@ def test_delete_documents_routes_to_delete_by_id(manager) -> None:
 
     mgr.delete_documents({"default": ["e1", "r1", "t1"]})
 
-    neptune_indexer.delete_by_id.assert_called_once_with(["e1", "r1", "t1"])
+    # Suffix is threaded through so the Neptune drop scopes to this suffix's
+    # labels (cross-tenant safety: content-hash ids can collide across suffixes).
+    neptune_indexer.delete_by_id.assert_called_once_with(
+        ["e1", "r1", "t1"], suffix="default"
+    )
     # OpenSearch delete is called per vector index prefix: text-units +
     # entities + relationships + claims + community-reports (none of these
     # artifacts — including LightRAG relationship vectors and claim vectors —
