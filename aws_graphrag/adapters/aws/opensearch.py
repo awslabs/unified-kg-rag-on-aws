@@ -8,12 +8,13 @@ import boto3
 from opensearchpy import (
     AIOHttpConnection,
     AsyncOpenSearch,
+    AWSV4SignerAsyncAuth,
+    AWSV4SignerAuth,
     OpenSearch,
     RequestsHttpConnection,
 )
 from opensearchpy.exceptions import NotFoundError, TransportError
 from opensearchpy.helpers import streaming_bulk
-from requests_aws4auth import AWS4Auth
 
 from aws_graphrag.domain.models import Config
 from aws_graphrag.shared import AWSServiceError, get_logger
@@ -106,7 +107,7 @@ class OpenSearchClient:
             return None
 
     def _create_client(self) -> OpenSearch:
-        params = self._get_base_connection_params()
+        params = self._get_base_connection_params(async_mode=False)
         params.update(
             {
                 "connection_class": RequestsHttpConnection,
@@ -130,11 +131,11 @@ class OpenSearchClient:
             raise AWSServiceError("Failed to connect to OpenSearch.") from e
 
     def _create_async_client(self) -> AsyncOpenSearch:
-        params = self._get_base_connection_params()
+        params = self._get_base_connection_params(async_mode=True)
         params["connection_class"] = AIOHttpConnection
         return AsyncOpenSearch(**params)
 
-    def _get_base_connection_params(self) -> dict[str, Any]:
+    def _get_base_connection_params(self, async_mode: bool) -> dict[str, Any]:
         if not self.opensearch_config.endpoint:
             raise AWSServiceError("OpenSearch endpoint is not configured.")
 
@@ -145,24 +146,27 @@ class OpenSearchClient:
                     "port": self.opensearch_config.port,
                 }
             ],
-            "http_auth": self._get_auth(),
+            "http_auth": self._get_auth(async_mode=async_mode),
             "use_ssl": self.opensearch_config.use_ssl,
             "verify_certs": self.opensearch_config.verify_certs,
             "timeout": 180,
         }
 
-    def _get_auth(self) -> AWS4Auth | tuple[str, str]:
+    def _get_auth(
+        self, async_mode: bool
+    ) -> AWSV4SignerAuth | AWSV4SignerAsyncAuth | tuple[str, str]:
         if self.opensearch_config.use_iam:
             creds = self.boto_session.get_credentials()
             if not creds:
                 raise AWSServiceError("Cannot get AWS credentials for OpenSearch IAM.")
-            return AWS4Auth(
-                creds.access_key,
-                creds.secret_key,
-                self.config.aws.region_name,
-                "es",
-                session_token=creds.token,
-            )
+            # opensearch-py's own SigV4 signers must be used, NOT
+            # requests_aws4auth.AWS4Auth: the sync RequestsHttpConnection tolerates
+            # AWS4Auth, but AIOHttpConnection treats http_auth as a basic-auth
+            # credential and calls .encode() on it -> "'AWS4Auth' object has no
+            # attribute 'encode'", silently returning zero search hits. The async
+            # connection needs AWSV4SignerAsyncAuth; the sync one AWSV4SignerAuth.
+            signer = AWSV4SignerAsyncAuth if async_mode else AWSV4SignerAuth
+            return signer(creds, self.config.aws.region_name, "es")
 
         if self.opensearch_config.username and self.opensearch_config.password:
             return (

@@ -53,7 +53,6 @@ dependencies = [
     "pyyaml>=6.0.2",
     "ragas>=0.3.0",
     "rapidfuzz>=3.13.0",
-    "requests-aws4auth>=1.3.1",
     "rich>=14.0.0",
     "scikit-learn>=1.7.1",
     "structlog>=25.4.0",
@@ -191,7 +190,6 @@ module = [
     "tqdm.*",
     "yaml.*",
     "bokeh.*",
-    "requests_aws4auth.*",
 ]
 ignore_missing_imports = true
 
