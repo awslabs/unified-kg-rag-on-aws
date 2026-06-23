@@ -54,7 +54,12 @@ fixing:
 
 # Data Processing Configuration
 processing:
-  max_concurrency: 5
+  # LLM stages are Bedrock-I/O-bound (CPU/memory near-idle during them), so
+  # concurrency can be well above the CPU count. max_concurrency = concurrent
+  # LLM calls within a batch; chunk_concurrency = how many mini-batch chunks run
+  # at once (overlaps their network waits instead of serial chunk-by-chunk).
+  max_concurrency: 20
+  chunk_concurrency: 4
   batch_size: 10
   max_retries: 3
   ignore_errors: false

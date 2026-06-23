@@ -437,9 +437,18 @@ class ClaimExtractionConfig(BaseModel):
 
 class ProcessingConfig(BaseModel):
     max_concurrency: int = Field(
-        default=5,
+        default=20,
         ge=1,
-        description="Maximum number of concurrent operations during batch processing",
+        description="Maximum number of concurrent LLM operations within a batch. "
+        "These stages are Bedrock-I/O-bound (CPU/memory near-idle), so this can be "
+        "well above the CPU count.",
+    )
+    chunk_concurrency: int = Field(
+        default=4,
+        ge=1,
+        description="How many mini-batch chunks to run concurrently. Overlaps "
+        "chunks' Bedrock network waits instead of processing them serially; 1 = "
+        "legacy strictly-serial behaviour.",
     )
     batch_size: int = Field(
         default=10,

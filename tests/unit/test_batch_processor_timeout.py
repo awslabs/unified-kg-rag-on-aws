@@ -51,3 +51,63 @@ def test_batch_timeout_falls_back_to_sequential() -> None:
         show_progress=False,
     )
     assert results == [{"echo": 1}, {"echo": 2}]
+
+
+def test_chunk_results_preserve_order_when_concurrent() -> None:
+    # With chunk_concurrency > 1 chunks run on a thread pool and complete out of
+    # order; results must still be reassembled in input order.
+    bp = BatchProcessor(batch_size=1, chunk_concurrency=4, call_timeout_seconds=0)
+
+    def batch(inputs, config=None):  # noqa: ANN001, ARG001
+        # Later items return faster, so completion order != submission order.
+        v = inputs[0]["v"]
+        time.sleep((10 - v) * 0.02)
+        return [{"echo": v}]
+
+    results = bp.execute_with_fallback(
+        items_to_process=list(range(6)),
+        prepare_inputs_func=lambda items: [{"v": i} for i in items],
+        batch_func=batch,
+        sequential_func=lambda item: {"echo": item["v"]},
+        task_name="t",
+        show_progress=False,
+    )
+    assert results == [{"echo": i} for i in range(6)]
+
+
+def test_chunks_run_concurrently() -> None:
+    # 4 chunks that each sleep 0.3s should finish in well under 4*0.3s when run
+    # with chunk_concurrency=4 (overlapping), proving they are not serial.
+    bp = BatchProcessor(batch_size=1, chunk_concurrency=4, call_timeout_seconds=0)
+
+    def batch(inputs, config=None):  # noqa: ANN001, ARG001
+        time.sleep(0.3)
+        return [{"echo": inputs[0]["v"]}]
+
+    start = time.monotonic()
+    results = bp.execute_with_fallback(
+        items_to_process=[1, 2, 3, 4],
+        prepare_inputs_func=lambda items: [{"v": i} for i in items],
+        batch_func=batch,
+        sequential_func=lambda item: {"echo": item["v"]},
+        task_name="t",
+        show_progress=False,
+    )
+    elapsed = time.monotonic() - start
+    assert len(results) == 4
+    # Serial would be ~1.2s; concurrent should be ~0.3-0.5s.
+    assert elapsed < 0.8, f"chunks did not overlap (took {elapsed:.2f}s)"
+
+
+def test_chunk_concurrency_one_is_serial() -> None:
+    # chunk_concurrency=1 keeps the legacy strictly-serial path.
+    bp = BatchProcessor(batch_size=1, chunk_concurrency=1, call_timeout_seconds=0)
+    results = bp.execute_with_fallback(
+        items_to_process=[1, 2, 3],
+        prepare_inputs_func=lambda items: [{"v": i} for i in items],
+        batch_func=lambda inputs, config=None: [{"echo": inputs[0]["v"]}],
+        sequential_func=lambda item: {"echo": item["v"]},
+        task_name="t",
+        show_progress=False,
+    )
+    assert results == [{"echo": 1}, {"echo": 2}, {"echo": 3}]

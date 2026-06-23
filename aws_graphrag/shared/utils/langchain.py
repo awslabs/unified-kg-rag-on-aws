@@ -51,6 +51,13 @@ class BatchProcessor(BaseModel):
         ge=1,
         description="Size of each mini-batch when processing items in chunks for better memory management and performance",
     )
+    chunk_concurrency: int = Field(
+        default=4,
+        ge=1,
+        description="How many mini-batch chunks to run concurrently. These stages "
+        "are Bedrock-I/O-bound (CPU/memory near-idle), so overlapping chunks' "
+        "network waits cuts wall-clock time. 1 = strictly serial (legacy).",
+    )
     call_timeout_seconds: int = Field(
         default=300,
         ge=0,
@@ -101,6 +108,9 @@ class BatchProcessor(BaseModel):
                 "max_concurrency", self.max_concurrency
             )
             self.batch_size = run_config.get("batch_size", self.batch_size)
+            self.chunk_concurrency = run_config.get(
+                "chunk_concurrency", self.chunk_concurrency
+            )
 
         prepared_batch_func = self._create_batch_func(batch_func)
 
@@ -117,65 +127,86 @@ class BatchProcessor(BaseModel):
             timed_sequential_func
         )
 
-        all_results = []
         num_items = len(items_to_process)
         num_chunks = math.ceil(num_items / self.batch_size)
 
         logger.info(
-            "Starting processing for '%s': %s items in %s chunks (batch size: %s)",
+            "Starting processing for '%s': %s items in %s chunks (batch size: %s, "
+            "chunk concurrency: %s)",
             task_name,
             num_items,
             num_chunks,
             self.batch_size,
+            self.chunk_concurrency,
         )
 
-        for i in tqdm(
-            range(0, num_items, self.batch_size),
-            desc=f"Processing: {task_name}",
-            disable=not show_progress,
-        ):
-            chunk_items = items_to_process[i : i + self.batch_size]
-            chunk_num = (i // self.batch_size) + 1
+        chunk_specs = [
+            (idx + 1, items_to_process[i : i + self.batch_size])
+            for idx, i in enumerate(range(0, num_items, self.batch_size))
+        ]
 
-            logger.debug(
-                "Processing chunk %s/%s (%s items)",
-                chunk_num,
-                num_chunks,
-                len(chunk_items),
-            )
-
+        def process_chunk(chunk_num: int, chunk_items: list[Any]) -> list[Any]:
             chunk_inputs = prepare_inputs_func(chunk_items)
             if not chunk_inputs:
                 logger.warning(
                     "No valid inputs prepared for chunk %s, skipping", chunk_num
                 )
-                continue
-
+                return []
             try:
-                logger.debug("Attempting batch processing for chunk %s", chunk_num)
                 def run_batch(inputs: list[dict[str, Any]] = chunk_inputs) -> Any:
                     return prepared_batch_func(inputs)
 
-                chunk_results = self._run_with_timeout(
+                results: list[Any] = self._run_with_timeout(
                     run_batch,
                     self.call_timeout_seconds,
                     f"{task_name} batch chunk {chunk_num}",
                 )
-                all_results.extend(chunk_results)
                 logger.debug("Chunk %s processed successfully in batch mode", chunk_num)
+                return list(results)
             except Exception as e:
                 logger.warning(
-                    "Batch processing failed for chunk %s: %s. Falling back to sequential processing",
+                    "Batch processing failed for chunk %s: %s. Falling back to "
+                    "sequential processing",
                     chunk_num,
                     e,
                 )
-                chunk_results = self._process_sequentially_with_fallback(
+                return self._process_sequentially_with_fallback(
                     chunk_inputs,
                     retrying_sequential_func,
                     f"{task_name} (chunk {chunk_num})",
                     show_progress=show_progress,
                 )
-                all_results.extend(chunk_results)
+
+        # Chunks are independent Bedrock-bound batches; run them concurrently so
+        # chunk N+1's LLM calls overlap chunk N's network wait instead of
+        # blocking on it (CPU/memory are near-idle during these stages). Results
+        # are reassembled in chunk order. chunk_concurrency=1 restores the old
+        # strictly-serial behaviour.
+        chunk_results_by_idx: dict[int, list[Any]] = {}
+        if self.chunk_concurrency <= 1 or len(chunk_specs) <= 1:
+            for chunk_num, chunk_items in tqdm(
+                chunk_specs, desc=f"Processing: {task_name}", disable=not show_progress
+            ):
+                chunk_results_by_idx[chunk_num] = process_chunk(chunk_num, chunk_items)
+        else:
+            workers = min(self.chunk_concurrency, len(chunk_specs))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                future_to_num = {
+                    executor.submit(process_chunk, num, items): num
+                    for num, items in chunk_specs
+                }
+                for future in tqdm(
+                    concurrent.futures.as_completed(future_to_num),
+                    total=len(future_to_num),
+                    desc=f"Processing: {task_name}",
+                    disable=not show_progress,
+                ):
+                    num = future_to_num[future]
+                    chunk_results_by_idx[num] = future.result()
+
+        all_results: list[Any] = []
+        for chunk_num, _ in chunk_specs:
+            all_results.extend(chunk_results_by_idx.get(chunk_num, []))
 
         logger.info("Completed '%s': processed %s results", task_name, len(all_results))
         return all_results
