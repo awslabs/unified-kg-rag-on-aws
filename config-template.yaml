@@ -156,7 +156,7 @@ graph:
       enabled: true
       report_generation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
       max_entities_per_report: 50
-      summary_length: "medium"
+      content_length: "medium"
       include_statistics: true
       include_key_entities: true
 
@@ -167,27 +167,30 @@ graph:
     embedding_method: "node2vec"
     layout_method: "umap"
 
-    # Interactive visualization settings
-    interactive:
-      node_size_range: [10, 50]
-      edge_width_range: [1, 5]
-      color_scheme: "community"
-      show_labels: true
-      physics_enabled: true
+    # Node-embedding hyperparameters, keyed by method (only the active
+    # embedding_method's block is used).
+    embeddings:
+      node2vec:
+        dimensions: 128
+        num_walks: 10
+        walk_length: 80
 
-    # Static visualization settings
-    static:
-      figure_size: [12, 8]
-      dpi: 300
-      node_size: 100
-      edge_width: 1.0
-
-    # Layout settings
+    # Dimensionality-reduction layout hyperparameters, keyed by method.
     layout:
-      dimensions: 2
-      n_neighbors: 15
-      min_dist: 0.1
-      spread: 1.0
+      umap:
+        n_neighbors: 15
+        min_dist: 0.1
+      tsne: {}
+      pca: {}
+
+    # Interactive (pyvis) renderer settings.
+    interactive:
+      physics_enabled: false
+
+    # Static (Bokeh) renderer settings.
+    static:
+      figure_width: 900
+      figure_height: 600
 
 # Indexing Configuration
 indexing:
@@ -240,10 +243,16 @@ indexing:
 
   # Neptune Indexing
   neptune:
-    batch_size: 20
+    entity_label_prefix: "Entity"
+    community_label_prefix: "Community"
+    batch_size: 100
     max_retries: 3
     retry_delay_seconds: 2
     property_max_length: 1000
+    # Graph-traversal tuning for retrieval (neighbor expansion).
+    max_hops: 2
+    max_results_per_hop: 50
+    min_entity_importance: 0.0
 
 # Search Configuration
 search:
@@ -264,9 +273,20 @@ search:
     rrf_k: 60
     # MMR: 1.0 = pure relevance (filtering skipped), 0.0 = maximum diversity.
     diversity_lambda: 0.5
+    # Per-source-bucket weights, only applied when method is "weighted" (the
+    # default "rrf" ignores them). Keys are the retrieval source buckets the
+    # strategies emit; a bucket without a key defaults to 1.0.
     fusion_weights:
-      lexical: 0.5
-      vector: 0.5
+      graph_entities: 1.0
+      text_units: 1.0
+      lightrag_entities: 1.0
+      lightrag_relationships: 1.0
+      lightrag_chunks: 1.0
+      opensearch_all: 1.0
+      opensearch_community_reports: 1.0
+      opensearch_candidate_community_reports: 1.0
+      opensearch_expanded_community_reports: 1.0
+      results: 1.0
 
   # Reranking Configuration
   reranking:

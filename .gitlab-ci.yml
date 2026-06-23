@@ -53,7 +53,7 @@ quality:
       uv run pytest -m "not aws"
       --cov=aws_graphrag --cov-report=term-missing
       --cov-report=xml:coverage.xml --junitxml=report.xml
-      --cov-fail-under=35
+      --cov-fail-under=40
   coverage: '/^TOTAL.+?(\d+\%)$/'
   artifacts:
     when: always
