@@ -1,4 +1,5 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+import importlib.util
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -18,6 +19,13 @@ from aws_graphrag.shared import DataProcessingError, get_logger
 from aws_graphrag.shared.utils import convert_langchain_to_document
 
 logger = get_logger(__name__)
+
+# UnstructuredHTMLLoader / UnstructuredMarkdownLoader import fine but raise at
+# .load() time if the heavy optional `unstructured` package is absent (it is not
+# a runtime dependency). Detect it once so .md/.html/.htm are only advertised as
+# supported when they can actually be parsed — instead of failing mid-ingestion
+# with "No module named 'unstructured'".
+_UNSTRUCTURED_AVAILABLE = importlib.util.find_spec("unstructured") is not None
 
 
 class ParsingStats(BaseModel):
@@ -105,23 +113,39 @@ class FileParser(BaseParser):
 
 
 class ParserFactory:
+    # Loaders with no heavy optional deps — always available.
     _loader_configs: dict[str, tuple[type[BaseLoader], dict, str]] = {
         ".csv": (CSVLoader, {}, "CSV"),
-        ".htm": (UnstructuredHTMLLoader, {}, "HTML"),
-        ".html": (UnstructuredHTMLLoader, {}, "HTML"),
         ".json": (JSONLoader, {"jq_schema": "."}, "JSON"),
-        ".markdown": (UnstructuredMarkdownLoader, {}, "Markdown"),
-        ".md": (UnstructuredMarkdownLoader, {}, "Markdown"),
         ".pdf": (PyPDFLoader, {}, "PDF"),
         ".txt": (TextLoader, {}, "Text"),
     }
+    # Markdown/HTML need the optional `unstructured` package; register them only
+    # when it is importable so the supported-format list matches runtime reality.
+    if _UNSTRUCTURED_AVAILABLE:
+        _loader_configs.update(
+            {
+                ".htm": (UnstructuredHTMLLoader, {}, "HTML"),
+                ".html": (UnstructuredHTMLLoader, {}, "HTML"),
+                ".markdown": (UnstructuredMarkdownLoader, {}, "Markdown"),
+                ".md": (UnstructuredMarkdownLoader, {}, "Markdown"),
+            }
+        )
 
     @classmethod
     def create_parser(cls, file_path: str | Path, config: Config) -> BaseParser:
         extension = Path(file_path).suffix.lower()
 
         if extension not in cls._loader_configs:
-            raise DataProcessingError(f"Unsupported file type: '{extension}'")
+            hint = ""
+            if extension in {".md", ".markdown", ".htm", ".html"}:
+                hint = (
+                    " (.md/.html require the optional 'unstructured' package, which "
+                    "is not installed)"
+                )
+            raise DataProcessingError(
+                f"Unsupported file type: '{extension}'{hint}"
+            )
 
         loader_class, loader_kwargs, file_type_name = cls._loader_configs[extension]
         return FileParser(config, loader_class, loader_kwargs, file_type_name)

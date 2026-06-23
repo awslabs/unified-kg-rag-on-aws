@@ -61,8 +61,9 @@ caching, multilingual, and hybrid-scoring stack — only the retrieval algorithm
 ### 🎯 **Comprehensive Evaluation Framework**
 - **LangChain-based Evaluation**: RAG performance measurement through built-in evaluators
 - **RAGAS Metrics**: Answer faithfulness, relevancy, and context accuracy
-- **Graph-aware Evaluation**: entity/relationship coverage precision/recall/F1 against
-  ground-truth expectations (deterministic, LLM-free, word-boundary matching)
+- **Graph-aware Evaluation**: entity/relationship coverage (recall of expected
+  graph artifacts surfaced in the answer) against ground-truth expectations
+  (deterministic, LLM-free, word-boundary matching)
 
 ### 🔧 **User Support**
 - **Domain-specific Prompts**: customizable per-prompt overrides via config
@@ -104,6 +105,8 @@ The framework implements a sophisticated indexing and retrieval pipeline:
 - **Translation**: Multi-language support with automatic language detection
 - **Gleaning**: Iterative graph refinement for improved accuracy
 - **Claim Extraction/Resolution**: Factual assertions extraction and validation
+  (opt-in: `processing.claim_extraction.enabled`, off by default — claims are
+  indexed but not yet consumed by retrieval)
 
 #### Key Features:
 - **Incremental Indexing**: content-hash delta detection + merge (DynamoDB registry)

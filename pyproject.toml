@@ -91,6 +91,12 @@ docs = [
     "mkdocs-material>=9.0.0",
     "mkdocstrings[python]>=0.24.0",
 ]
+# Optional: enables .md/.markdown/.html/.htm source parsing (heavy transitive
+# deps, so not installed by default). The ParserFactory registers those formats
+# only when this is importable; .txt/.csv/.json/.pdf work without it.
+unstructured = [
+    "unstructured>=0.14.0",
+]
 
 [project.urls]
 Repository = "https://code.aws.dev/personal_projects/alias_y/youngmki/aws-graphrag"
