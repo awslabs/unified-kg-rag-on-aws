@@ -228,7 +228,7 @@ class IndexingManager:
                 "neptune_relationships",
             ),
             IndexingTask(
-                self.neptune_indexer.index_communities,
+                self.neptune_indexer.upsert_communities,
                 [communities],
                 "neptune_communities",
             ),

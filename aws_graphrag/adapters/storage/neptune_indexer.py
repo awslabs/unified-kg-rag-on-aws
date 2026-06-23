@@ -217,6 +217,14 @@ class NeptuneIndexer(GraphIndexer):
             def builder(
                 g: GraphTraversalSource, batch: list[Relationship]
             ) -> GraphTraversal:
+                # Drop any pre-existing edges for this batch's ids first so a
+                # re-run (or overlap with a prior partial run) does not create
+                # duplicate parallel edges with the same id. Edges are not
+                # cleared by the entity label-clear, so without this the full
+                # index path is not idempotent (unlike upsert_relationships).
+                rel_ids = [rel.id for rel in batch]
+                g.E().has("id", P.within(rel_ids)).drop().iterate()
+
                 # Each addE() traversal terminates on the created edge, so the
                 # next edge must start from the source again (not from the prior
                 # edge's traversal — that raised "'GraphTraversal' object is not
@@ -258,6 +266,22 @@ class NeptuneIndexer(GraphIndexer):
         )
 
     def index_communities(self, communities: list[Community]) -> IndexingStats:
+        return self._index_communities(communities, upsert=False)
+
+    def upsert_communities(self, communities: list[Community]) -> IndexingStats:
+        """Idempotently merge communities into the live graph (delta semantics).
+
+        Unlike :meth:`index_communities`, this does NOT clear the community label
+        first — a label-wide clear on an incremental run would wipe communities
+        belonging to documents outside the delta. Community vertices are upserted
+        by id (fold/coalesce) and their MemberOf edges are dropped-by-target then
+        re-added so re-runs do not duplicate membership edges.
+        """
+        return self._index_communities(communities, upsert=True)
+
+    def _index_communities(
+        self, communities: list[Community], *, upsert: bool
+    ) -> IndexingStats:
         if not communities:
             return IndexingStats()
 
@@ -274,12 +298,14 @@ class NeptuneIndexer(GraphIndexer):
                 self.neptune_config.entity_label_prefix.capitalize(), suffix
             )
 
-            self._clear_existing_data_by_label(community_label)
+            if not upsert:
+                self._clear_existing_data_by_label(community_label)
 
             def community_vertex_builder(
                 g: GraphTraversalSource,
                 batch: list[Community],
                 community_label: str = community_label,
+                upsert: bool = upsert,
             ) -> GraphTraversal:
                 t = g
                 for comm in batch:
@@ -294,8 +320,22 @@ class NeptuneIndexer(GraphIndexer):
                             "children": comm.children,
                         },
                     )
-                    v_traversal = t.add_v(community_label).property("id", comm.id)
-                    self._add_properties_to_traversal(v_traversal, props)
+                    if upsert:
+                        # Create-or-match by id so an incremental re-run updates
+                        # in place instead of adding a duplicate community vertex.
+                        v_traversal = (
+                            t.V()
+                            .has(community_label, "id", comm.id)
+                            .fold()
+                            .coalesce(
+                                __.unfold(),
+                                __.add_v(community_label).property("id", comm.id),
+                            )
+                        )
+                        self._set_properties_on_traversal(v_traversal, props)
+                    else:
+                        v_traversal = t.add_v(community_label).property("id", comm.id)
+                        self._add_properties_to_traversal(v_traversal, props)
                     t = v_traversal
                 return cast(GraphTraversal, t)
 
@@ -311,6 +351,19 @@ class NeptuneIndexer(GraphIndexer):
             for comm in comms:
                 if not comm.entity_ids:
                     continue
+                if upsert:
+                    # Drop this community's existing membership edges so re-adding
+                    # does not create duplicate MemberOf edges on an incremental run.
+                    try:
+                        self.neptune_client.g.V().hasLabel(community_label).has(
+                            "id", comm.id
+                        ).inE("MemberOf").drop().iterate()
+                    except Exception as e:
+                        logger.warning(
+                            "Failed clearing MemberOf edges for community '%s': %s",
+                            comm.id,
+                            e,
+                        )
                 for entity_id_batch in self._batch_iterator(comm.entity_ids):
                     try:
                         edge_traversal = (
@@ -324,6 +377,7 @@ class NeptuneIndexer(GraphIndexer):
                             edge_traversal, "Community edge indexing"
                         )
                     except Exception as e:
+                        stats.add_error(str(e))
                         logger.warning(
                             "Community edge indexing failed for community '%s': %s",
                             comm.id,

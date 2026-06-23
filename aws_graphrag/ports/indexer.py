@@ -173,6 +173,16 @@ class GraphIndexer(BaseIndexer):
     def upsert_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Idempotently merge relationships into the live graph (delta)."""
 
+    def upsert_communities(self, communities: list[Community]) -> IndexingStats:
+        """Idempotently merge communities into the live graph (delta semantics).
+
+        Default delegates to :meth:`index_communities`; adapters whose
+        ``index_communities`` clears the community label (and would therefore wipe
+        out-of-delta communities on an incremental run) MUST override this with a
+        non-clearing upsert.
+        """
+        return self.index_communities(communities)
+
     def read_entities(self, ids: list[str]) -> list[Entity]:
         """Read existing entities by id for cross-run merge (read-merge-write).
 

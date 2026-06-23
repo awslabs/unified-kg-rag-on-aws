@@ -71,6 +71,9 @@ class FakeGraphStore(_Recorder):
     def upsert_relationships(self, rels: list[Any] | None = None) -> IndexingStats:
         return self._put("relationships", rels)
 
+    def upsert_communities(self, comms: list[Any] | None = None) -> IndexingStats:
+        return self._put("communities", comms)
+
     def delete_by_id(self, ids: list[str]) -> IndexingStats:
         return self.delete(ids)
 
