@@ -2,7 +2,6 @@
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from multiprocessing import cpu_count
 from typing import Any, NamedTuple
 
 from aws_graphrag.adapters.storage.neptune_indexer import NeptuneIndexer
@@ -19,6 +18,7 @@ from aws_graphrag.domain.models import (
 )
 from aws_graphrag.ports.indexer import BaseIndexer, IndexingStats
 from aws_graphrag.shared import get_logger
+from aws_graphrag.shared.utils import default_max_workers
 
 logger = get_logger(__name__)
 
@@ -34,7 +34,7 @@ class IndexingManager:
         self.config = config
         self.opensearch_indexer = OpenSearchIndexer(config=config)
         self.neptune_indexer = NeptuneIndexer(config=config)
-        self.max_workers = max_workers or max(1, int(cpu_count() * 0.8))
+        self.max_workers = max_workers or default_max_workers()
 
     def clear_all_data(self, text_units: list[TextUnit]) -> bool:
         suffixes = self._discover_suffixes(text_units)

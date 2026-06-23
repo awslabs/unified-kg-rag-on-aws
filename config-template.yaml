@@ -317,6 +317,15 @@ search:
     relevance_threshold: 0.5
     use_dynamic_selection: true
     enable_map_reduce: true
+    # Upper bound on text units pulled into the global-search context.
+    max_text_units: 100
+    # Minimum community results before map-reduce synthesis kicks in.
+    map_reduce_min_results: 3
+
+  local_search:
+    # Drop graph-expanded entities appearing in more than this many text units
+    # (too generic to be discriminative for local search).
+    entity_frequency_threshold: 20
 
   # Drift Search Configuration
   drift_search:

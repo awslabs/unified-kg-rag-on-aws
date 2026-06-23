@@ -3,7 +3,6 @@ import fnmatch
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from functools import partial
-from multiprocessing import cpu_count
 from pathlib import Path
 
 from datasketch import MinHash, MinHashLSH
@@ -13,7 +12,7 @@ from langchain_core.documents import Document as BaseDocument
 from aws_graphrag.adapters.ingestion.parser import ParserFactory
 from aws_graphrag.domain.models import Config, Document
 from aws_graphrag.shared import get_logger
-from aws_graphrag.shared.utils import compute_hash
+from aws_graphrag.shared.utils import compute_hash, default_max_workers
 
 logger = get_logger(__name__)
 
@@ -85,7 +84,7 @@ class DirectoryLoader(BaseLoader):
         self.similarity_threshold = similarity_threshold
         self.minhash_permutations = minhash_permutations
         self.n_grams_size = n_grams_size
-        self.max_workers = max_workers or max(1, int(cpu_count() * 0.8))
+        self.max_workers = max_workers or default_max_workers()
         self.compute_dir_hash = compute_dir_hash
         self.parse_files = parse_files
 

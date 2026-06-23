@@ -4,7 +4,6 @@ from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import datetime
 from functools import partial
-from multiprocessing import cpu_count
 from typing import Any
 
 import boto3
@@ -25,6 +24,7 @@ from aws_graphrag.domain.prompts import ClaimExtractionPrompt
 from aws_graphrag.shared import get_logger
 from aws_graphrag.shared.utils import (
     BatchProcessor,
+    default_max_workers,
     ensure_list,
     generate_stable_id,
 )
@@ -115,7 +115,7 @@ class ClaimExtractor(BaseProcessor):
         )
         self.claim_extraction_config = self.config.processing.claim_extraction
         self.ignore_errors = self.config.processing.ignore_errors
-        self.max_workers = max_workers or max(1, int(cpu_count() * 0.8))
+        self.max_workers = max_workers or default_max_workers()
         self.use_process_pool = use_process_pool
         self.show_progress = show_progress
         self.batch_processor = BatchProcessor()

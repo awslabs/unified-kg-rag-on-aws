@@ -3,7 +3,21 @@ import hashlib
 import re
 import unicodedata
 import uuid
+from multiprocessing import cpu_count
 from typing import Any
+
+# Fraction of CPUs to use for the default process/thread-pool worker count.
+_DEFAULT_WORKER_CPU_FRACTION = 0.8
+
+
+def default_max_workers() -> int:
+    """Default pool size for the ingestion stages' executors.
+
+    Single source of truth for the ``int(cpu_count() * 0.8)`` heuristic that was
+    duplicated across the loader/gleaner/claim-extractor/resolver/indexing
+    manager. Always at least 1.
+    """
+    return max(1, int(cpu_count() * _DEFAULT_WORKER_CPU_FRACTION))
 
 # Strip punctuation/symbols but KEEP letters, marks and digits of ANY script
 # (\w is Unicode-aware in Python 3). The previous [^a-z0-9\s] deleted all

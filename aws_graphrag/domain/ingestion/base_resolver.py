@@ -4,14 +4,13 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Sequence
 from difflib import SequenceMatcher
-from multiprocessing import cpu_count
 from typing import Any, ClassVar, TypeAlias
 
 from datasketch import MinHash, MinHashLSH
 
 from aws_graphrag.domain.models import Config, ResolutionMethod
 from aws_graphrag.shared import get_logger
-from aws_graphrag.shared.utils import normalize_name
+from aws_graphrag.shared.utils import default_max_workers, normalize_name
 
 logger = get_logger(__name__)
 
@@ -396,7 +395,7 @@ class BaseResolver(ABC):
         show_progress: bool = True,
     ) -> None:
         self.config = config
-        self.max_workers = max_workers or max(1, int(cpu_count() * 0.8))
+        self.max_workers = max_workers or default_max_workers()
         self.use_process_pool = use_process_pool
         self.show_progress = show_progress
 

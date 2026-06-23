@@ -1,7 +1,7 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 import asyncio
 import time
-from typing import Any, ClassVar
+from typing import Any
 
 import boto3
 from langchain_core.output_parsers import StrOutputParser
@@ -32,8 +32,6 @@ logger = get_logger(__name__)
 
 @register_strategy(SearchStrategy.GLOBAL)
 class GlobalSearchStrategy(BaseSearchStrategy):
-    MAX_TEXT_UNITS: ClassVar[int] = 100
-
     def __init__(
         self,
         config: Config,
@@ -348,7 +346,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             **(query.filters or {}),
             "community_ids": list(community_ids),
         }
-        search_query.top_k = min(query.top_k, self.MAX_TEXT_UNITS)
+        search_query.top_k = min(query.top_k, self.global_search_config.max_text_units)
         index_prefixes = [self.config.indexing.opensearch.text_units_index_prefix]
 
         return await self._retrieve_documents(search_query, index_prefixes)
@@ -356,7 +354,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     async def _apply_map_reduce(
         self, results: list[RetrievalResult], query: SearchQuery
     ) -> list[RetrievalResult]:
-        if len(results) < 3:
+        if len(results) < self.global_search_config.map_reduce_min_results:
             return results
 
         try:

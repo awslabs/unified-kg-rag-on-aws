@@ -1002,6 +1002,27 @@ class GlobalSearchConfig(BaseModel):
         default=True,
         description="Enable map-reduce processing for large-scale summarization",
     )
+    max_text_units: int = Field(
+        default=100,
+        ge=1,
+        description="Upper bound on text units pulled into the global-search "
+        "context (caps context size regardless of top_k).",
+    )
+    map_reduce_min_results: int = Field(
+        default=3,
+        ge=1,
+        description="Minimum community results before map-reduce synthesis is "
+        "applied; below this the results are returned directly.",
+    )
+
+
+class LocalSearchConfig(BaseModel):
+    entity_frequency_threshold: int = Field(
+        default=20,
+        ge=1,
+        description="Drop graph-expanded entities appearing in more than this "
+        "many text units (too generic to be discriminative for local search).",
+    )
 
 
 class DriftSearchConfig(BaseModel):
@@ -1117,6 +1138,9 @@ class SearchConfig(BaseModel):
     )
     global_search: GlobalSearchConfig = Field(
         default_factory=GlobalSearchConfig, description="Global search configuration"
+    )
+    local_search: LocalSearchConfig = Field(
+        default_factory=LocalSearchConfig, description="Local search configuration"
     )
     drift_search: DriftSearchConfig = Field(
         default_factory=DriftSearchConfig, description="Drift search configuration"

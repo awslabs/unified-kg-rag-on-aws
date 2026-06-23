@@ -1,6 +1,7 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 from .common import (
     compute_hash,
+    default_max_workers,
     ensure_list,
     generate_stable_id,
     normalize_name,
@@ -30,6 +31,7 @@ __all__ = [
     "compute_hash",
     "console",
     "convert_langchain_to_document",
+    "default_max_workers",
     "display_ascii_art",
     "display_communities",
     "display_pipeline_results",

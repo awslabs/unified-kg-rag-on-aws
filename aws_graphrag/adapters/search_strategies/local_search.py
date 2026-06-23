@@ -1,6 +1,6 @@
 # Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
 import time
-from typing import Any, ClassVar
+from typing import Any
 
 import boto3
 
@@ -25,8 +25,6 @@ logger = get_logger(__name__)
 
 @register_strategy(SearchStrategy.LOCAL)
 class LocalSearchStrategy(BaseSearchStrategy):
-    ENTITY_FREQUENCY_THRESHOLD: ClassVar[int] = 20
-
     def __init__(
         self,
         config: Config,
@@ -60,7 +58,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
             query, candidate_entity_ids
         )
         filtered_entity_nodes = self._filter_entities(
-            expanded_entity_nodes, frequency_threshold=self.ENTITY_FREQUENCY_THRESHOLD
+            expanded_entity_nodes,
+            frequency_threshold=self.config.search.local_search.entity_frequency_threshold,
         )
 
         expanded_entity_ids = self._get_ids(filtered_entity_nodes, "id")
