@@ -636,8 +636,12 @@ class CommunityDetector(BaseProcessor):
 
         relationships = [
             {
-                "source": u,
-                "target": v,
+                # Use entity NAMES, not raw node ids (hashes): the report LLM
+                # otherwise sees relationships between unintelligible ids,
+                # degrading report quality. Fall back to the id only if a node
+                # has no name.
+                "source": self.graph.nodes[u].get("name", u),
+                "target": self.graph.nodes[v].get("name", v),
                 "type": data.get("type", "related"),
                 "description": data.get("description", ""),
             }

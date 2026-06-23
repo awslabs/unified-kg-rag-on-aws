@@ -357,8 +357,13 @@ class GraphGleaner(BaseProcessor):
             combined_relationships, {e.id for e in merged_entities}, entity_id_map
         )
 
-        entities_added = len(merged_entities) - entities_before
-        relationships_added = len(merged_relationships) - relationships_before
+        # Clamp to >= 0: a round that only discovers entities/relationships which
+        # merge into existing ones (or whose edges are dropped as orphaned) can
+        # make the post-merge count <= the prior count. A negative "added" value
+        # would corrupt the convergence score (negative change_rate inflates
+        # convergence toward 1.0 -> premature stop).
+        entities_added = max(0, len(merged_entities) - entities_before)
+        relationships_added = max(0, len(merged_relationships) - relationships_before)
         current_quality = self._calculate_graph_quality(quality_scores)
         quality_improvement = current_quality - previous_quality
         convergence_score = self._calculate_convergence_score(
@@ -402,11 +407,15 @@ class GraphGleaner(BaseProcessor):
             config=config_for_task,
         )
 
-        prepared_inputs = []
         executor_class = (
             ProcessPoolExecutor if self.use_process_pool else ThreadPoolExecutor
         )
 
+        # Key results by their OWNING unit, not by completion order: as_completed
+        # yields futures out of order, so appending to a list and zipping it
+        # positionally against text_units would mismatch inputs to the wrong unit
+        # (and crash under strict=True when a failed unit is skipped).
+        unit_to_input: dict[str, Any] = {}
         with executor_class(max_workers=self.max_workers) as executor:
             future_to_unit = {
                 executor.submit(task_with_args, unit): unit for unit in text_units
@@ -418,16 +427,11 @@ class GraphGleaner(BaseProcessor):
                 desc="Preparing Gleaning Inputs",
                 disable=not self.show_progress,
             ):
+                unit = future_to_unit[future]
                 try:
-                    result = future.result()
-                    prepared_inputs.append(result)
+                    unit_to_input[unit.id] = future.result()
                 except Exception as e:
-                    logger.error("Error processing text unit: %s", e)
-
-        unit_to_input = {
-            unit.id: input_data
-            for unit, input_data in zip(text_units, prepared_inputs, strict=True)
-        }
+                    logger.error("Error preparing gleaning input for unit '%s': %s", unit.id, e)
 
         def prepare_inputs_for_chunk(
             chunk_items: list[TextUnit],
@@ -692,8 +696,8 @@ class GraphGleaner(BaseProcessor):
         unique_entity_ids: set[str],
         id_remap: dict[str, str],
     ) -> list[Relationship]:
-        relationships_map = {}
-        merged_relationships = []
+        relationships_map: dict[tuple, Relationship] = {}
+        dropped = 0
 
         for rel in relationships:
             source_id = id_remap.get(rel.source_id, rel.source_id)
@@ -726,25 +730,24 @@ class GraphGleaner(BaseProcessor):
                     existing_rel.weight = (existing_rel.weight or 1.0) + (
                         rel.weight or 1.0
                     )
-                    merged_relationships.append(rel)
+            else:
+                # Endpoint merged away / not resolved, or a self-loop after
+                # remap: the relationship cannot be kept. Count it so dropped
+                # edges are visible rather than silently vanishing.
+                dropped += 1
 
         final_relationships = list(relationships_map.values())
-        duplicates_merged = len(relationships) - len(final_relationships)
+        duplicates_merged = len(relationships) - len(final_relationships) - dropped
 
-        if duplicates_merged > 0:
+        if duplicates_merged > 0 or dropped > 0:
             logger.debug(
-                "Merged %s duplicate relationships (%s -> %s)",
-                duplicates_merged,
+                "Relationship post-merge: %s in -> %s out (%s merged, %s dropped "
+                "as orphaned/self-loop)",
                 len(relationships),
                 len(final_relationships),
+                duplicates_merged,
+                dropped,
             )
-            for rel in merged_relationships:
-                logger.debug(
-                    "Merged duplicate relationship: '%s' -> '%s' (type: '%s')",
-                    rel.source_name,
-                    rel.target_name,
-                    rel.type,
-                )
 
         return final_relationships
 

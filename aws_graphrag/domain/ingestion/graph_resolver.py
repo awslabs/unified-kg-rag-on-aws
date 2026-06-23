@@ -204,8 +204,14 @@ class EntityResolver(BaseResolver):
             (e for e in entities if e.name == canonical_name), entities[0]
         )
 
+        # Max, not mean: confidence is monotonic in evidence (consistent with the
+        # extractor merge); averaging dilutes a well-supported entity.
         confidences = [e.confidence for e in entities if e.confidence is not None]
-        merged_confidence = sum(confidences) / len(confidences) if confidences else 1.0
+        merged_confidence = max(confidences) if confidences else 1.0
+
+        merged_text_unit_ids = self._merge_lists(
+            [e.text_unit_ids for e in entities if e.text_unit_ids]
+        )
 
         return Entity(
             id=primary_entity.id,
@@ -217,17 +223,14 @@ class EntityResolver(BaseResolver):
                 [e.description for e in entities if e.description]
             ),
             description_embedding=primary_entity.description_embedding,
-            text_unit_ids=self._merge_lists(
-                [e.text_unit_ids for e in entities if e.text_unit_ids]
-            ),
+            text_unit_ids=merged_text_unit_ids,
             community_ids=self._merge_lists(
                 [e.community_ids for e in entities if e.community_ids]
             ),
             rank=max((e.rank for e in entities if e.rank is not None), default=1),
-            frequency=max(
-                (e.frequency for e in entities if e.frequency is not None),
-                default=None,
-            ),
+            # Recompute from text-unit support (pre-existing frequencies are
+            # typically None in a full build), so frequency is a real signal.
+            frequency=len(merged_text_unit_ids),
             confidence=merged_confidence,
             attributes=self._merge_attributes(
                 [e.attributes for e in entities if e.attributes]
@@ -322,7 +325,11 @@ class RelationshipResolver(BaseResolver):
             return []
         groups_dict = defaultdict(list)
         for rel in relationships:
-            key = (rel.source_id, rel.target_id, rel.type)
+            # Normalize the type so case/whitespace variants of the same relation
+            # ("WORKS_FOR" vs "works_for") merge instead of staying split
+            # (consistent with the gleaner and incremental merge_relationships).
+            rel_type = (rel.type or "").strip().lower()
+            key = (rel.source_id, rel.target_id, rel_type)
             groups_dict[key].append(rel)
         return list(groups_dict.values())
 

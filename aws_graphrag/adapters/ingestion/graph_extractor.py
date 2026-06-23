@@ -296,20 +296,28 @@ class GraphExtractor(BaseProcessor):
                     + (new if isinstance(new, list) else [])
                 )
             ),
-            "confidence": lambda current, new: (
-                ((current or 1.0) + (new or 1.0)) / 2.0
-                if current is not None and new is not None
-                else (current or new or 1.0)
+            # Confidence should be monotonic in evidence: an entity extracted
+            # confidently many times should be reinforced, not diluted toward a
+            # running mean (and made order-dependent). Take the max.
+            "confidence": lambda current, new: max(
+                current if current is not None else 0.0,
+                new if new is not None else 0.0,
             ),
         }
 
-        return self._merge_items(
+        merged = self._merge_items(
             items=entities,
             item_name="Entity",
             field_mergers=field_mergers,
             frequency_fields=["type"],
             log_message_formatter=lambda e: f"Entity '{e.name}' merged {{count}} instances",
         )
+        # Set frequency from text-unit support so full-build entities carry a
+        # ranking signal (previously only the incremental merger set frequency,
+        # leaving it None for full runs and degrading report/search ranking).
+        for entity in merged:
+            entity.frequency = len(entity.text_unit_ids or [])
+        return merged
 
     def _merge_relationships(
         self, relationships: list[Relationship]

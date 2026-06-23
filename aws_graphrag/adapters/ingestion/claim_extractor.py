@@ -163,11 +163,7 @@ class ClaimExtractor(BaseProcessor):
         self.stats = ClaimExtractionStats(num_total_units=len(text_units))
         start_time = time.time()
 
-        prepared_inputs = self._prepare_extraction_inputs(text_units, all_entities)
-        unit_to_input = {
-            unit.id: input_data
-            for unit, input_data in zip(text_units, prepared_inputs, strict=True)
-        }
+        unit_to_input = self._prepare_extraction_inputs(text_units, all_entities)
 
         def prepare_inputs_for_chunk(
             chunk_items: list[TextUnit],
@@ -212,7 +208,7 @@ class ClaimExtractor(BaseProcessor):
 
     def _prepare_extraction_inputs(
         self, text_units: list[TextUnit], all_entities: list[Entity]
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, dict[str, Any]]:
         config_for_task = {
             "max_entities_per_prompt": self.claim_extraction_config.max_entities_per_prompt,
             "target_language": self.config.processing.translation.target_language.value,
@@ -224,11 +220,14 @@ class ClaimExtractor(BaseProcessor):
             config=config_for_task,
         )
 
-        inputs = []
         executor_class = (
             ProcessPoolExecutor if self.use_process_pool else ThreadPoolExecutor
         )
 
+        # Key by owning unit, not completion order: as_completed is unordered, so
+        # appending to a list and zipping positionally against text_units would
+        # mismatch inputs to the wrong unit (and crash under strict=True on skip).
+        unit_to_input: dict[str, dict[str, Any]] = {}
         with executor_class(max_workers=self.max_workers) as executor:
             future_to_unit = {
                 executor.submit(task_with_args, unit): unit for unit in text_units
@@ -240,13 +239,15 @@ class ClaimExtractor(BaseProcessor):
                 desc="Preparing Claim Inputs",
                 disable=not self.show_progress,
             ):
+                unit = future_to_unit[future]
                 try:
-                    result = future.result()
-                    inputs.append(result)
+                    unit_to_input[unit.id] = future.result()
                 except Exception as e:
-                    logger.error("Error preparing input for text unit: %s", e)
+                    logger.error(
+                        "Error preparing claim input for unit '%s': %s", unit.id, e
+                    )
 
-        return inputs
+        return unit_to_input
 
     def _process_extraction_results(
         self, text_units: list[TextUnit], extraction_results: list[Any]
