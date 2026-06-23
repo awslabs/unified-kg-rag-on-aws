@@ -306,7 +306,12 @@ class IndexingManager:
             "Executing %s tasks with %s total items...", len(valid_tasks), total_items
         )
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+        # Indexing tasks are IO-bound (OpenSearch/Neptune network writes), so size
+        # the pool by the number of independent tasks rather than CPU count — a
+        # cpu*0.8 cap (~1-2 on a 2-vCPU Fargate task) would needlessly serialize
+        # the independent per-backend writes. Cap at 8 as a safety bound.
+        pool_size = min(len(valid_tasks), 8)
+        with ThreadPoolExecutor(max_workers=pool_size) as executor:
             futures_map = {
                 executor.submit(task.fn, *task.args): task.key for task in valid_tasks
             }

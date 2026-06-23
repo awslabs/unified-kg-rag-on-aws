@@ -298,33 +298,45 @@ class CommunityDetector(BaseProcessor):
             for node in nodes:
                 node_to_comm[node] = comm_id
 
-        small_comms = [
-            cid for cid, nodes in communities.items() if len(nodes) < min_size
-        ]
+        # Iterate to convergence: a small community can merge into another small
+        # one (or one already processed), so a single pass can leave communities
+        # still below min_size. Repeat until no merge happens (or no small
+        # community has an eligible neighbor — isolated ones can't be merged).
+        while True:
+            small_comms = [
+                cid for cid, nodes in communities.items() if len(nodes) < min_size
+            ]
+            merged_any = False
 
-        for small_comm_id in small_comms:
-            if small_comm_id not in communities:
-                continue
+            for small_comm_id in small_comms:
+                if small_comm_id not in communities:
+                    continue
 
-            nodes = communities[small_comm_id]
+                nodes = communities[small_comm_id]
 
-            neighbor_counts: dict[int, int] = defaultdict(int)
-            for node in nodes:
-                for neighbor in graph.neighbors(node):
-                    if neighbor in node_to_comm:
-                        neighbor_comm = node_to_comm[neighbor]
-                        if (
-                            neighbor_comm != small_comm_id
-                            and neighbor_comm in communities
-                        ):
-                            neighbor_counts[neighbor_comm] += 1
-
-            if neighbor_counts:
-                target_comm = max(neighbor_counts, key=lambda x: neighbor_counts[x])
-                communities[target_comm].update(nodes)
+                neighbor_counts: dict[int, int] = defaultdict(int)
                 for node in nodes:
-                    node_to_comm[node] = target_comm
-                del communities[small_comm_id]
+                    for neighbor in graph.neighbors(node):
+                        if neighbor in node_to_comm:
+                            neighbor_comm = node_to_comm[neighbor]
+                            if (
+                                neighbor_comm != small_comm_id
+                                and neighbor_comm in communities
+                            ):
+                                neighbor_counts[neighbor_comm] += 1
+
+                if neighbor_counts:
+                    target_comm = max(
+                        neighbor_counts, key=lambda x: neighbor_counts[x]
+                    )
+                    communities[target_comm].update(nodes)
+                    for node in nodes:
+                        node_to_comm[node] = target_comm
+                    del communities[small_comm_id]
+                    merged_any = True
+
+            if not merged_any:
+                break
 
         return communities
 
