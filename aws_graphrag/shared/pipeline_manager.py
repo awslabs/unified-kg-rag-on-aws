@@ -24,7 +24,7 @@ from .exceptions import PipelineResumeError, PipelineStateError
 from .logging import get_logger
 
 if TYPE_CHECKING:
-    from .cache_manager import CacheManager
+    from aws_graphrag.ports.cache import CachePort
 
 
 logger = get_logger(__name__)
@@ -69,7 +69,7 @@ class PipelineStateManager:
         "translated_units",
     }
 
-    def __init__(self, cache_manager: "CacheManager") -> None:
+    def __init__(self, cache_manager: "CachePort") -> None:
         self.cache_manager = cache_manager
 
     def create_context_from_metadata(self, metadata: dict) -> PipelineContext:

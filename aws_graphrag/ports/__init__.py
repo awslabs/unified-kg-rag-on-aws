@@ -16,6 +16,8 @@ Catalog:
   ``RerankFactoryPort`` aliases) — the LLM/Embedding/Rerank provider boundary
   (``Protocol``; the Bedrock factories in ``adapters.aws.bedrock`` conform
   structurally). Annotate against these for provider-agnostic call sites.
+- ``CachePort`` — the stage-result persistence boundary (``Protocol``; the
+  filesystem ``CacheManager`` in ``shared.cache_manager`` conforms structurally).
 
 Two further contracts are abstract *adapter bases* rather than pure ports —
 they construct infrastructure in ``__init__`` (HybridScorer/TokenManager, tqdm)
@@ -25,6 +27,7 @@ they construct infrastructure in ``__init__`` (HybridScorer/TokenManager, tqdm)
 - ``BaseGraphRAGEvaluator`` (``evaluation.base``; adapters: ``adapters.evaluators``).
 """
 
+from aws_graphrag.ports.cache import CachePort
 from aws_graphrag.ports.doc_status import DocStatusPort
 from aws_graphrag.ports.indexer import (
     BaseIndexer,
@@ -41,6 +44,7 @@ from aws_graphrag.ports.model_factory import (
 
 __all__ = [
     "BaseIndexer",
+    "CachePort",
     "DocStatusPort",
     "EmbeddingFactoryPort",
     "GraphIndexer",
