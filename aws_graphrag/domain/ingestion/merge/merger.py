@@ -163,27 +163,67 @@ def merge_relationships(
     return merged
 
 
+def _community_content_key(community: Community) -> tuple:
+    """Identity signature for a community (excludes the id, which we reassign)."""
+    return (
+        community.name,
+        str(community.level),
+        community.parent,
+        tuple(sorted(community.entity_ids or [])),
+    )
+
+
+def _report_content_key(report: CommunityReport) -> tuple:
+    """Identity signature for a community report (excludes the id)."""
+    return (report.name, report.community_id, report.summary)
+
+
+def _placed_id(
+    base_id: str, content_key: tuple, existing: dict[str, tuple]
+) -> str | None:
+    """Resolve where a colliding delta item should go, or ``None`` to skip.
+
+    Walks ``base_id``, ``base_id-delta``, ``base_id-delta-2``, … :
+    - if a candidate id is free, return it (disambiguated, never dropped);
+    - if a candidate id is taken by an item with the SAME content, return
+      ``None`` — this delta was already merged (re-application is idempotent);
+    - if taken by DIFFERENT content, advance to the next candidate.
+    """
+    if base_id not in existing:
+        return base_id
+    if existing[base_id] == content_key:
+        return None
+    candidate = f"{base_id}-delta"
+    counter = 2
+    while candidate in existing:
+        if existing[candidate] == content_key:
+            return None
+        candidate = f"{base_id}-delta-{counter}"
+        counter += 1
+    return candidate
+
+
 def merge_communities(old: list[Community], delta: list[Community]) -> list[Community]:
     """Append delta communities to old ones (MS-style id-offset append).
 
-    Incremental runs do not re-cluster globally; delta communities whose ids
-    collide with existing ones are kept distinct by suffixing the delta id.
-    Re-merging the same delta is idempotent: a delta whose (already-suffixed) id
-    is present is skipped rather than re-suffixed into ``id-delta-delta``.
+    Incremental runs do not re-cluster globally; a delta community whose id
+    collides with an existing one is kept distinct by a unique
+    ``-delta``/``-delta-N`` suffix (never silently dropped). Re-merging the same
+    delta is idempotent: a collision whose content matches an already-merged
+    community is skipped rather than re-appended (matched by content, not by a
+    fragile id-suffix string).
     """
-    existing_ids = {community.id for community in old}
+    existing: dict[str, tuple] = {c.id: _community_content_key(c) for c in old}
     merged = [community.model_copy(deep=True) for community in old]
 
     for community in delta:
-        if community.id in existing_ids and community.id.endswith("-delta"):
-            # Already-merged delta item re-presented; skip (idempotent).
-            continue
+        key = _community_content_key(community)
+        placed = _placed_id(community.id, key, existing)
+        if placed is None:
+            continue  # already merged (idempotent re-application)
         new_community = community.model_copy(deep=True)
-        if new_community.id in existing_ids:
-            new_community.id = f"{new_community.id}-delta"
-            if new_community.id in existing_ids:
-                continue
-        existing_ids.add(new_community.id)
+        new_community.id = placed
+        existing[placed] = key
         merged.append(new_community)
 
     logger.info(
@@ -199,18 +239,17 @@ def merge_community_reports(
     old: list[CommunityReport], delta: list[CommunityReport]
 ) -> list[CommunityReport]:
     """Append delta community reports (mirrors :func:`merge_communities`)."""
-    existing_ids = {report.id for report in old}
+    existing: dict[str, tuple] = {r.id: _report_content_key(r) for r in old}
     merged = [report.model_copy(deep=True) for report in old]
 
     for report in delta:
-        if report.id in existing_ids and report.id.endswith("-delta"):
+        key = _report_content_key(report)
+        placed = _placed_id(report.id, key, existing)
+        if placed is None:
             continue
         new_report = report.model_copy(deep=True)
-        if new_report.id in existing_ids:
-            new_report.id = f"{new_report.id}-delta"
-            if new_report.id in existing_ids:
-                continue
-        existing_ids.add(new_report.id)
+        new_report.id = placed
+        existing[placed] = key
         merged.append(new_report)
 
     return merged

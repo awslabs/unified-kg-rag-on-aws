@@ -72,11 +72,31 @@ class SimpleSearchStrategy(BaseSearchStrategy):
             return {}
 
         try:
-            results = await self.document_retriever.aretrieve(query)
+            results = await self.document_retriever.aretrieve(
+                self._apply_claim_gate(query)
+            )
             return {"opensearch_all": results} if results else {}
         except Exception as e:
             logger.error("OpenSearch retrieval failed: %s", e)
             return {}
+
+    def _apply_claim_gate(self, query: SearchQuery) -> SearchQuery:
+        # Simple search sweeps every index by default (index_prefixes=None ->
+        # all mappings, which includes the claims index). Keep claims inclusion
+        # consistently gated on the enabled flag: when the caller hasn't pinned
+        # index_prefixes and claim extraction is off, restrict the sweep to the
+        # non-claims indexes so a claims-off run never queries that index.
+        opensearch = self.config.indexing.opensearch
+        if query.index_prefixes or self.config.processing.claim_extraction.enabled:
+            return query
+
+        non_claims_prefixes = [
+            opensearch.text_units_index_prefix,
+            opensearch.entities_index_prefix,
+            opensearch.relationships_index_prefix,
+            opensearch.community_reports_index_prefix,
+        ]
+        return query.model_copy(update={"index_prefixes": non_claims_prefixes})
 
     def _record_search_metrics(
         self, processing_time: float, retrieved_count: int

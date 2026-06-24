@@ -123,6 +123,22 @@ class TestPriorityOrdering:
         assert section.section_type == SectionType.GENERAL
         assert section.priority == pytest.approx(0.4)
 
+    def test_claim_section_type_has_weight(self, mocker) -> None:
+        # Claims are evidentiary; weighted alongside relationships (1.1).
+        assert SectionType.CLAIM in TokenManager.PRIORITY_MULTIPLIERS
+        assert TokenManager.PRIORITY_MULTIPLIERS[SectionType.CLAIM] == pytest.approx(
+            1.1
+        )
+
+    def test_claim_retriever_type_maps_to_claim_section(self, mocker) -> None:
+        mgr = _make_manager(mocker)
+        section = mgr._create_context_section(
+            _r("a claim", 0.5, "claim", "c1"), index=0
+        )
+        # CLAIM multiplier is 1.1: 0.5 * 1.1 = 0.55.
+        assert section.section_type == SectionType.CLAIM
+        assert section.priority == pytest.approx(0.55)
+
     def test_missing_score_defaults_to_half(self, mocker) -> None:
         mgr = _make_manager(mocker)
         result = RetrievalResult(

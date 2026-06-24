@@ -500,6 +500,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return SectionType.ENTITY
         if index_name.startswith(opensearch_config.relationships_index_prefix):
             return SectionType.RELATIONSHIP
+        if index_name.startswith(opensearch_config.claims_index_prefix):
+            return SectionType.CLAIM
         if index_name.startswith(opensearch_config.community_reports_index_prefix):
             return SectionType.COMMUNITY
 

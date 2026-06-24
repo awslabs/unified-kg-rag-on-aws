@@ -150,9 +150,11 @@ processing:
 
   # Claim Extraction
   claim_extraction:
-    # OFF by default: claims are extracted + indexed but NOT consumed by any
-    # retrieval strategy yet (subject/object aren't linked into the graph), so
-    # enabling costs an LLM call per text unit for no answer benefit today.
+    # OFF by default: enabling costs an LLM call per text unit. When ON, local
+    # search retrieves matching claims from the claims index and injects them
+    # into its context (MS GraphRAG covariates), and simple search includes the
+    # claims index in its sweep. Claims subject/object are still not linked into
+    # the entity graph.
     enabled: false
     extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
     max_entities_per_prompt: 200

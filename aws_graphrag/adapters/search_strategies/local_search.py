@@ -80,6 +80,13 @@ class LocalSearchStrategy(BaseSearchStrategy):
         text_units = await self._retrieve_documents(text_unit_ids, query.suffix)
         all_results = {"graph_entities": expanded_entity_nodes, **text_units}
 
+        # MS GraphRAG injects covariates (claims) into local-search context.
+        # Gated strictly on claim extraction being enabled so the default path
+        # (claims off) is unchanged: no extra retrieval is issued.
+        claims = await self._retrieve_claims(query)
+        if claims:
+            all_results["claims"] = claims
+
         final_results = self.hybrid_scorer.fuse_and_rerank_results(
             all_results,
             top_k=query.top_k,
@@ -132,6 +139,37 @@ class LocalSearchStrategy(BaseSearchStrategy):
             return [res.source for res in results if res.source]
         except Exception as e:
             logger.error("Failed to find candidate entities: %s", e)
+            return []
+
+    async def _retrieve_claims(self, query: SearchQuery) -> list[RetrievalResult]:
+        # Only consume the claims (covariate) index when extraction is enabled;
+        # otherwise the index is empty/absent and querying it is pure overhead.
+        if (
+            not self.document_retriever
+            or not self.config.processing.claim_extraction.enabled
+        ):
+            return []
+
+        # Mirror _find_candidate_entities: search the claims index with the
+        # entity focus when present, falling back to the raw query text.
+        claim_query = (
+            " ".join(query.entity_focus) if query.entity_focus else query.query
+        )
+        if not claim_query:
+            return []
+
+        search_query = SearchQuery(
+            query=claim_query,
+            search_type=query.search_type,
+            top_k=query.top_k,
+            index_prefixes=[self.config.indexing.opensearch.claims_index_prefix],
+            suffix=query.suffix,
+        )
+
+        try:
+            return await self.document_retriever.aretrieve(search_query)
+        except Exception as e:
+            logger.error("Failed to retrieve claims: %s", e)
             return []
 
     async def _expand_via_graph(

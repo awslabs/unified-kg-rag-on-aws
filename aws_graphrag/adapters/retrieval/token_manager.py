@@ -17,6 +17,7 @@ logger = get_logger(__name__)
 
 
 class SectionType(str, Enum):
+    CLAIM = "claim"
     COMMUNITY = "community"
     ENTITY = "entity"
     GENERAL = "general"
@@ -62,6 +63,9 @@ class TokenManager(MetricsMixin):
         SectionType.TEXT: 1.3,
         SectionType.ENTITY: 1.2,
         SectionType.RELATIONSHIP: 1.1,
+        # Claims are evidentiary (subject/predicate/object assertions about an
+        # entity); weight them alongside relationships.
+        SectionType.CLAIM: 1.1,
         SectionType.COMMUNITY: 1.0,
         SectionType.GENERAL: 0.8,
     }
