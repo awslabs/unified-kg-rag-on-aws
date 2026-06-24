@@ -13,7 +13,6 @@ from aws_graphrag.adapters.ingestion.community_detector import (
     CommunityDetector,
     CommunityMetrics,
 )
-from aws_graphrag.adapters.ingestion.description_summarizer import DescriptionSummarizer
 from aws_graphrag.adapters.ingestion.gleaner import GraphGleaner
 from aws_graphrag.adapters.ingestion.graph_extractor import GraphExtractor
 from aws_graphrag.adapters.ingestion.loader import DirectoryLoader
@@ -511,9 +510,30 @@ class TranslationStage(PipelineStage):
         boto_session: boto3.Session | None = None,
     ):
         super().__init__(PipelineStageType.TRANSLATION, config, boto_session)
-        target_language = self.config.processing.translation.target_language.value
-        self.translator = TextUnitTranslator(config, boto_session=self.boto_session)
-        self.target_language = target_language
+        self.translation_config = self.config.processing.translation
+        self.target_language = self.translation_config.target_language.value
+        # Build the Bedrock-backed translator lazily so a disabled / no-op stage
+        # costs nothing (no LLM client, no calls).
+        self._translator: TextUnitTranslator | None = None
+
+    @property
+    def translator(self) -> TextUnitTranslator:
+        if self._translator is None:
+            self._translator = TextUnitTranslator(
+                self.config, boto_session=self.boto_session
+            )
+        return self._translator
+
+    def _should_skip(self) -> str | None:
+        """Return a reason to skip translation, or None to run it."""
+        if not self.translation_config.enabled:
+            return "translation disabled in config"
+        if self.translation_config.is_noop:
+            return (
+                f"source and target language are both "
+                f"'{self.target_language}' with no additional targets"
+            )
+        return None
 
     def _execute_core(
         self, context: PipelineContext
@@ -521,6 +541,22 @@ class TranslationStage(PipelineStage):
         logger.info("=" * 60)
         logger.info("TRANSLATION STAGE - STARTED")
         logger.info("=" * 60)
+
+        skip_reason = self._should_skip()
+        if skip_reason is not None:
+            logger.info("TRANSLATION STAGE - SKIPPED (%s)", skip_reason)
+            # Leave translated_units empty; downstream stages fall back to
+            # context.text_units, so this is a true no-op.
+            context.translated_units = []
+            metrics = {
+                "target_language": self.target_language,
+                "units_processed": len(context.text_units),
+                "units_translated": 0,
+                "skipped": True,
+                "skip_reason": skip_reason,
+            }
+            logger.info("=" * 60)
+            return len(context.text_units), len(context.text_units), metrics
 
         translated_units = self.translator.translate_text_units(context.text_units)
         context.translated_units = translated_units
@@ -674,14 +710,9 @@ class GleaningStage(PipelineStage):
 
 
 class GraphResolutionStage(PipelineStage):
-    def __init__(self, config: Config, boto_session: boto3.Session | None = None):
-        super().__init__(PipelineStageType.GRAPH_RESOLUTION, config, boto_session)
+    def __init__(self, config: Config):
+        super().__init__(PipelineStageType.GRAPH_RESOLUTION, config)
         self.resolver = GraphResolver(config)
-        # Post-merge LLM pass that re-summarizes over-long descriptions produced
-        # by resolution's concatenating merge (MS GraphRAG / LightRAG parity).
-        self.description_summarizer = DescriptionSummarizer(
-            self.config, boto_session=self.boto_session
-        )
 
     def _execute_core(
         self, context: PipelineContext
@@ -697,17 +728,8 @@ class GraphResolutionStage(PipelineStage):
         original_entities_count = len(context.entities)
         original_relationships_count = len(context.relationships)
 
-        # Re-summarize descriptions that the concatenating merge let grow past
-        # the token budget. Runs in place; below-threshold items are untouched
-        # and never reach the LLM, and an LLM failure keeps the concatenation.
-        context.resolved_entities = self.description_summarizer.summarize_entities(
-            resolution_result["entities"]
-        )
-        context.resolved_relationships = (
-            self.description_summarizer.summarize_relationships(
-                resolution_result["relationships"]
-            )
-        )
+        context.resolved_entities = resolution_result["entities"]
+        context.resolved_relationships = resolution_result["relationships"]
 
         resolved_entities_count = len(context.resolved_entities)
         resolved_relationships_count = len(context.resolved_relationships)

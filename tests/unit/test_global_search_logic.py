@@ -87,8 +87,12 @@ def _bare_strategy(
         map_reduce_min_results=map_reduce_min_results,
         max_text_units=10,
         graph_timeout_seconds=5.0,
+        map_batch_size=2,
+        map_relevance_threshold=0,
+        max_map_reduce_tokens=8000,
     )
     strat.ignore_errors = ignore_errors
+    strat.target_language = "en"
     strat.retrievers = retrievers or {}
     strat.config = SimpleNamespace(
         indexing=SimpleNamespace(
@@ -188,32 +192,14 @@ async def test_apply_map_reduce_below_min_returns_unchanged() -> None:
     assert out is results
 
 
-async def test_apply_map_reduce_prepends_synthesized_summary() -> None:
-    strat = _bare_strategy(map_reduce_min_results=2)
-    strat.map_reducer = _AScorer("THE SUMMARY")
-    results = _communities(3)
-    query = SearchQuery(query="q")
-    out = await strat._apply_map_reduce(results, query)
-    assert len(out) == 4
-    assert out[0].source == "synthesized_summary"
-    assert out[0].content == "THE SUMMARY"
-    assert out[0].metadata["source_results_count"] == 3
-    assert [c.source for c in out[1:]] == ["c0", "c1", "c2"]
-
-
-async def test_apply_map_reduce_error_ignored_returns_results() -> None:
-    strat = _bare_strategy(map_reduce_min_results=1, ignore_errors=True)
-    strat.map_reducer = _RaisingScorer()
+async def test_apply_map_reduce_below_min_results_returns_unchanged() -> None:
+    # Below map_reduce_min_results, the map-reduce pipeline is skipped and the
+    # results pass through untouched. (The full map→filter→rank→reduce pipeline
+    # is covered in test_global_search_map_reduce.py.)
+    strat = _bare_strategy(map_reduce_min_results=5)
     results = _communities(3)
     out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
     assert out is results
-
-
-async def test_apply_map_reduce_error_propagates_when_not_ignored() -> None:
-    strat = _bare_strategy(map_reduce_min_results=1, ignore_errors=False)
-    strat.map_reducer = _RaisingScorer()
-    with pytest.raises(RuntimeError):
-        await strat._apply_map_reduce(_communities(3), SearchQuery(query="q"))
 
 
 # --------------------------------------------------------------------------- #

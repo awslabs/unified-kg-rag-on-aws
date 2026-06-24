@@ -334,9 +334,23 @@ class ChunkingConfig(BaseModel):
 
 
 class TranslationConfig(BaseModel):
+    enabled: bool = Field(
+        default=True,
+        description="Run the translation pipeline stage. Defaults to True to "
+        "preserve existing behavior. Even when enabled, translation is skipped "
+        "as a no-op when source_language equals target_language and there are no "
+        "additional_target_languages (e.g. an English-only corpus with an English "
+        "target pays no LLM cost).",
+    )
     translation_model_id: LanguageModelId = Field(
         default=LanguageModelId.CLAUDE_V4_5_HAIKU,
         description="Language model for text translation",
+    )
+    source_language: LanguageCode = Field(
+        default=LanguageCode.EN,
+        description="Predominant source language of the corpus. Used only for the "
+        "same-language no-op skip; translation is content-driven so this need not "
+        "be exact for mixed corpora.",
     )
     target_language: LanguageCode = Field(
         default=LanguageCode.EN, description="Target language code for translation"
@@ -344,6 +358,14 @@ class TranslationConfig(BaseModel):
     additional_target_languages: list[LanguageCode] | None = Field(
         default=None, description="Additional target languages for translation"
     )
+
+    @property
+    def is_noop(self) -> bool:
+        """True when translation would do nothing useful (same-language skip)."""
+        return (
+            self.source_language == self.target_language
+            and not self.additional_target_languages
+        )
 
 
 class DescriptionSummarizationConfig(BaseModel):
@@ -666,6 +688,15 @@ class ReportGenerationConfig(BaseModel):
     )
     max_entities_per_report: int = Field(
         default=50, ge=1, description="Maximum entities per community report"
+    )
+    max_report_context_tokens: int = Field(
+        default=4000,
+        ge=1,
+        description="Token budget for the entity/relationship context packed "
+        "into a community report prompt. Entities are degree-sorted (most "
+        "connected first) and packed up to this budget, so truncation drops "
+        "the least-important entities first. max_entities_per_report remains an "
+        "additional upper bound on entity count.",
     )
     content_length: str = Field(
         default="medium",
@@ -1112,6 +1143,32 @@ class GlobalSearchConfig(BaseModel):
         description="Timeout (seconds) for the Neptune community-graph retrieval "
         "in global search; raise for very large graphs or slow clusters.",
     )
+    map_model_id: LanguageModelId = Field(
+        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
+        description="Language model used for the map step of MS GraphRAG "
+        "map-reduce (rates community-report key points 0-100). Rating is cheap, "
+        "so a fast/cheap model (e.g. Haiku) is the sensible default.",
+    )
+    map_batch_size: int = Field(
+        default=2,
+        ge=1,
+        description="Number of community reports packed into one map-step LLM "
+        "call; map calls are fanned over batches concurrently via BatchProcessor.",
+    )
+    map_relevance_threshold: int = Field(
+        default=0,
+        ge=0,
+        le=100,
+        description="Drop map-step key points whose 0-100 relevance score is at "
+        "or below this threshold before ranking (0 keeps any positive score).",
+    )
+    max_map_reduce_tokens: int = Field(
+        default=8000,
+        ge=128,
+        description="Token budget for the ranked key points packed into the "
+        "reduce step; the highest-scored points are taken until this budget is "
+        "reached, so the reduce LLM synthesizes from focused, ranked evidence.",
+    )
 
 
 class LocalSearchConfig(BaseModel):
@@ -1430,6 +1487,16 @@ class CustomPromptConfig(BaseModel):
     strategy_selection_human: str | None = Field(
         default=None,
         description="Custom human prompt for selecting search strategy based on user query",
+    )
+    global_map_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for the global-search map step "
+        "(rate community-report key points 0-100 for relevance)",
+    )
+    global_map_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for the global-search map step "
+        "(rate community-report key points 0-100 for relevance)",
     )
 
 

@@ -92,7 +92,13 @@ processing:
 
   # Translation
   translation:
+    # Run the translation stage. Even when true, translation is skipped as a
+    # no-op when source_language == target_language and there are no
+    # additional_target_languages (e.g. an English-only corpus pays no LLM cost).
+    enabled: true
     translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    # Predominant source language of the corpus (used only for the no-op skip).
+    source_language: "en"
     target_language: "en"
     additional_target_languages: null
 
@@ -198,6 +204,10 @@ graph:
       enabled: true
       report_generation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
       max_entities_per_report: 50
+      # Token budget for the entity/relationship context packed into a report
+      # prompt. Entities are degree-sorted (most-connected first) and packed up
+      # to this budget; truncation drops the least-important entities first.
+      max_report_context_tokens: 4000
       content_length: "medium"
       include_statistics: true
       include_key_entities: true
@@ -363,8 +373,21 @@ search:
     enable_map_reduce: true
     # Upper bound on text units pulled into the global-search context.
     max_text_units: 100
-    # Minimum community results before map-reduce synthesis kicks in.
+    # Minimum community results before map-reduce synthesis kicks in; below
+    # this the results are returned directly (the non-map-reduce path).
     map_reduce_min_results: 3
+    # MS GraphRAG map-reduce knobs. MAP rates community-report key points
+    # (0-100) for the query, FILTER+RANK drops low-scored points, PACK fits the
+    # ranked points into a token budget, REDUCE synthesizes the answer from them.
+    # Map model is cheap by default (rating is cheap).
+    map_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    # Community reports packed into one map LLM call (calls run concurrently).
+    map_batch_size: 2
+    # Drop map key points whose 0-100 score is at or below this (0 keeps any
+    # positive score).
+    map_relevance_threshold: 0
+    # Token budget for the ranked key points fed to the reduce step.
+    max_map_reduce_tokens: 8000
 
   local_search:
     # Drop graph-expanded entities appearing in more than this many text units

@@ -3,6 +3,7 @@
 import importlib.util
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any
 
 from langchain_community.document_loaders import (
     CSVLoader,
@@ -85,13 +86,60 @@ class FileParser(BaseParser):
         self.loader_kwargs = loader_kwargs or {}
         self.file_type_name = file_type_name
 
+    def _detect_encoding(self, file_path: str | Path) -> str | None:
+        """Detect a text file's encoding with charset-normalizer.
+
+        Returns the detected encoding name (logged at debug), or None if
+        detection fails so the caller can fall back to latin-1.
+        """
+        from charset_normalizer import from_path
+
+        best = from_path(file_path).best()
+        if best is None:
+            return None
+        logger.debug("Detected encoding '%s' for '%s'", best.encoding, file_path)
+        return best.encoding
+
+    def _load_with_encoding(
+        self, file_path: str | Path, encoding: str | None
+    ) -> list[Any]:
+        loader_kwargs = {**self.loader_kwargs, "file_path": str(file_path)}
+        if encoding is not None and issubclass(
+            self.loader_class, _ENCODING_AWARE_LOADERS
+        ):
+            loader_kwargs["encoding"] = encoding
+        loader = self.loader_class(**loader_kwargs)
+        return loader.load()
+
+    @staticmethod
+    def _is_decode_error(exc: BaseException) -> bool:
+        # TextLoader/CSVLoader wrap a UnicodeDecodeError in a RuntimeError
+        # ("Error loading <path>"), so inspect the exception and its cause chain.
+        seen: set[int] = set()
+        cur: BaseException | None = exc
+        while cur is not None and id(cur) not in seen:
+            if isinstance(cur, UnicodeDecodeError):
+                return True
+            seen.add(id(cur))
+            cur = cur.__cause__ or cur.__context__
+        return False
+
     def parse_file(
         self, file_path: str | Path, index_value: str | None = None
     ) -> Document:
         try:
-            loader_kwargs = {**self.loader_kwargs, "file_path": str(file_path)}
-            loader = self.loader_class(**loader_kwargs)
-            langchain_docs = loader.load()
+            try:
+                langchain_docs = self._load_with_encoding(file_path, None)
+            except Exception as exc:
+                # Non-UTF-8 file: detect and retry instead of dropping it. A
+                # whole non-UTF-8 corpus would otherwise fail 100% silently.
+                if not (
+                    issubclass(self.loader_class, _ENCODING_AWARE_LOADERS)
+                    and self._is_decode_error(exc)
+                ):
+                    raise
+                detected = self._detect_encoding(file_path) or "latin-1"
+                langchain_docs = self._load_with_encoding(file_path, detected)
             document = convert_langchain_to_document(
                 langchain_docs, file_path, index_value=index_value
             )
@@ -111,6 +159,16 @@ class FileParser(BaseParser):
             raise DataProcessingError(
                 f"Failed to parse '{self.file_type_name}' '{file_path}': {e}"
             ) from e
+
+
+# Text-based loaders accept an ``encoding`` kwarg. When a non-UTF-8 file
+# (e.g. cp949, latin-1) raises UnicodeDecodeError, FileParser re-detects the
+# encoding with charset-normalizer and retries with an explicit ``encoding=``.
+# We deliberately do NOT use LangChain's ``autodetect_encoding=True`` because it
+# imports ``chardet`` (an extra dependency); charset-normalizer is already
+# vendored (it ships with requests) and is reused here and in
+# ``Document._read_text_autodetect`` for one consistent detection path.
+_ENCODING_AWARE_LOADERS = (CSVLoader, TextLoader)
 
 
 class ParserFactory:

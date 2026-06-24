@@ -92,6 +92,7 @@ def _bare_strategy(
     )
     strat.entity_focus_multiplier = entity_focus_multiplier
     strat.ignore_errors = ignore_errors
+    strat.target_language = "en"
     strat.retrievers = retrievers or {}
     strat.config = SimpleNamespace(
         indexing=SimpleNamespace(

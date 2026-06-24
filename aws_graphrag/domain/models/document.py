@@ -18,6 +18,38 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 T = TypeVar("T", bound=BaseModel)
 
 
+def _read_text_autodetect(path: Path) -> str:
+    """Read a file as text, falling back to encoding detection.
+
+    Heterogeneous corpora often contain non-UTF-8 files (e.g. cp949, latin-1).
+    Attempt UTF-8 first (the common case), then fall back to charset-normalizer
+    detection so such files are recovered rather than dropped. We do not silently
+    mojibake: the detected encoding is logged at debug level.
+
+    ``get_logger`` is imported lazily (function-local) to avoid a module-load
+    circular import: ``shared`` pulls in ``domain.models`` at import time.
+    """
+    from aws_graphrag.shared.logging import get_logger
+
+    logger = get_logger(__name__)
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        from charset_normalizer import from_bytes
+
+        raw = path.read_bytes()
+        best = from_bytes(raw).best()
+        if best is None:
+            # Last resort: decode as latin-1, which never raises, so a file is
+            # never lost outright (better degraded text than a dropped document).
+            logger.debug(
+                "Encoding detection failed for '%s'; falling back to latin-1", path
+            )
+            return raw.decode("latin-1")
+        logger.debug("Detected encoding '%s' for '%s'", best.encoding, path)
+        return str(best)
+
+
 class ElementContent(BaseModel):
     text: str | None = Field(
         default=None, description="Plain text content of the element"
@@ -405,7 +437,7 @@ class Document(BaseDocument):
         if not path.is_file():
             raise FileNotFoundError(f"JSON file not found at '{path}'")
 
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(_read_text_autodetect(path))
         data["page_content"] = data.get("content", {}).get("text", "")
         return cls.model_validate(data)
 

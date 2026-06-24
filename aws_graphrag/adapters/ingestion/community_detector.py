@@ -15,6 +15,7 @@ from aws_graphrag.adapters.aws.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
+from aws_graphrag.adapters.aws.token_counter import estimate_token_count
 from aws_graphrag.domain.ingestion.base_processor import BaseProcessor
 from aws_graphrag.domain.models import (
     Community,
@@ -560,7 +561,7 @@ class CommunityDetector(BaseProcessor):
         return Community(
             id=hier_comm.community_id,
             short_id=hier_comm.community_id,
-            name=f"Level {hier_comm.level} Community {hier_comm.community_id.split('_C', 1)[-1]}",
+            name=f"Level {hier_comm.level} Community {hier_comm.community_id.split('_C')[1]}",
             name_embedding=None,
             level=str(hier_comm.level),
             parent=hier_comm.parent_id or "",
@@ -641,25 +642,71 @@ class CommunityDetector(BaseProcessor):
 
         return reports
 
+    def _select_report_entities(self, community: Community) -> list[str]:
+        """Pick the community's entity ids most worth putting in its report.
+
+        MS GraphRAG builds report context most-connected-first so a large
+        community's report leads with its central, defining entities rather
+        than whatever happened to appear first in list order. We mirror that:
+        rank the community's in-graph entities by graph degree (descending),
+        then cap at ``max_entities_per_report``. The token-budget pack in
+        ``_prepare_report_input`` may keep fewer; degree-sort guarantees that
+        whatever is dropped is the least-connected (least-important) entity.
+        Ties break on a stable id sort so selection is deterministic.
+        """
+        max_entities = (
+            self.community_detection_config.report_generation.max_entities_per_report
+        )
+        present = [eid for eid in (community.entity_ids or []) if eid in self.graph]
+        present.sort(key=lambda eid: (-self.graph.degree(eid), str(eid)))
+        return present[:max_entities]
+
     def _prepare_report_input(self, community: Community) -> dict[str, Any]:
         report_config = self.community_detection_config.report_generation
-        entity_ids = (community.entity_ids or [])[
-            : report_config.max_entities_per_report
-        ]
+        token_budget = report_config.max_report_context_tokens
 
-        entities = [
-            {
+        # Degree-sorted candidates (most-connected first), capped at the entity
+        # upper bound. We then pack into the token budget so a huge community
+        # neither overflows the prompt nor gets arbitrarily truncated by list
+        # order — truncation drops the least-connected entities first.
+        candidate_ids = self._select_report_entities(community)
+
+        entities: list[dict[str, Any]] = []
+        selected_ids: list[str] = []
+        used_tokens = 0
+        for eid in candidate_ids:
+            node = self.graph.nodes[eid]
+            entity = {
                 "id": eid,
-                "name": self.graph.nodes[eid].get("name", eid),
-                "type": self.graph.nodes[eid].get("type", "unknown"),
-                "description": self.graph.nodes[eid].get("description", ""),
+                "name": node.get("name", eid),
+                "type": node.get("type", "unknown"),
+                "description": node.get("description", ""),
             }
-            for eid in entity_ids
-            if eid in self.graph
-        ]
+            cost = estimate_token_count(self._format_entity_line(entity))
+            # Always admit the first (highest-degree) entity even if it alone
+            # exceeds the budget, so a report is never left with no context.
+            if entities and used_tokens + cost > token_budget:
+                break
+            entities.append(entity)
+            selected_ids.append(eid)
+            used_tokens += cost
 
-        relationships = [
-            {
+        # Relationships only among the selected entities, ordered by combined
+        # endpoint degree (most-connected pair first, edge weight as tiebreak)
+        # so the most salient connections survive the same token budget.
+        selected_set = set(selected_ids)
+        edges = sorted(
+            self.graph.subgraph(selected_ids).edges(data=True),
+            key=lambda e: (
+                -(self.graph.degree(e[0]) + self.graph.degree(e[1])),
+                -float(e[2].get("weight", 1.0)),
+            ),
+        )
+        relationships: list[dict[str, Any]] = []
+        for u, v, data in edges:
+            if u not in selected_set or v not in selected_set:
+                continue
+            rel = {
                 # Use entity NAMES, not raw node ids (hashes): the report LLM
                 # otherwise sees relationships between unintelligible ids,
                 # degrading report quality. Fall back to the id only if a node
@@ -669,8 +716,11 @@ class CommunityDetector(BaseProcessor):
                 "type": data.get("type", "related"),
                 "description": data.get("description", ""),
             }
-            for u, v, data in self.graph.subgraph(entity_ids).edges(data=True)
-        ]
+            cost = estimate_token_count(self._format_relationship_line(rel))
+            if used_tokens + cost > token_budget:
+                break
+            relationships.append(rel)
+            used_tokens += cost
 
         return {
             "community_id": community.id,
@@ -682,19 +732,29 @@ class CommunityDetector(BaseProcessor):
         }
 
     @staticmethod
+    def _format_entity_line(entity: dict[str, Any]) -> str:
+        return f"- {entity['name']} ({entity['type']}): {entity['description']}"
+
+    @staticmethod
+    def _format_relationship_line(rel: dict[str, Any]) -> str:
+        return (
+            f"- {rel['source']} -> {rel['target']} "
+            f"({rel['type']}): {rel['description']}"
+        )
+
+    @classmethod
     def _create_report_chain_inputs(
+        cls,
         report_inputs: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         return [
             {
                 "community_id": r["community_id"],
                 "entities": "\n".join(
-                    f"- {e['name']} ({e['type']}): {e['description']}"
-                    for e in r["entities"]
+                    cls._format_entity_line(e) for e in r["entities"]
                 ),
                 "relationships": "\n".join(
-                    f"- {rel['source']} -> {rel['target']} ({rel['type']}): {rel['description']}"
-                    for rel in r["relationships"]
+                    cls._format_relationship_line(rel) for rel in r["relationships"]
                 ),
                 "content_length": r["content_length"],
                 "include_statistics": str(r["include_statistics"]),

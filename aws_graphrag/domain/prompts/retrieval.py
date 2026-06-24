@@ -335,6 +335,60 @@ Extract key entities for knowledge graph search (comma-separated list only):"""
 
 
 @dataclass(frozen=True)
+class GlobalMapPrompt(BasePrompt):
+    prompt_key = "global_map"
+    """Map step of MS GraphRAG global search "map-reduce".
+
+    For a batch of community reports, asks the LLM to extract the key points
+    relevant to the query, each with an integer relevance/importance score
+    (0-100). The adapter then filters (drops score<=threshold), ranks by score,
+    and packs the points into a token budget before the reduce step synthesizes
+    the final answer. Ported from MS GraphRAG ``global_search_map_system_prompt``
+    and language-parameterized for aws-graphrag's multilingual parity.
+    """
+
+    input_variables = ["query", "reports", "target_language"]
+    output_variables = ["points"]
+
+    system_prompt_template = """You are a helpful assistant responding to questions about data in the
+community reports provided. Your task is to extract the KEY POINTS from the reports that help answer
+the user's question, and to score how important each point is.
+
+GOAL:
+Generate a list of key points that respond to the user's question, summarizing all relevant
+information found in the input community reports.
+
+RULES:
+- Use ONLY the data in the community reports below as context. Do not invent facts.
+- If the reports do not contain enough information to answer, return an empty list of points
+  (or a single point with score 0). Never make anything up.
+- Preserve the original meaning and any modal verbs ("shall", "may", "will").
+
+Each key point MUST have:
+- "description": a comprehensive, self-contained description of the point.
+- "score": an INTEGER between 0 and 100 indicating how important this point is for answering the
+  user's question. An "I don't know" / irrelevant point MUST have a score of 0.
+
+OUTPUT FORMAT — respond with a single valid JSON object and NOTHING else (no markdown fences, no
+prose before or after). The first character MUST be {{ and the last MUST be }}:
+{{
+    "points": [
+        {{"description": "Description of point 1", "score": 90}},
+        {{"description": "Description of point 2", "score": 40}}
+    ]
+}}
+
+All point descriptions MUST be written in {target_language}."""
+
+    human_prompt_template = """User Question: "{query}"
+
+Community Reports:
+{reports}
+
+Extract the key points (with 0-100 integer scores) as a single JSON object (in {target_language}):"""
+
+
+@dataclass(frozen=True)
 class KeywordsExtractionPrompt(BasePrompt):
     prompt_key = "keywords_extraction"
     """Dual-level keyword extractor for LightRAG-style retrieval.
@@ -382,7 +436,7 @@ Extract the dual-level keywords as a single JSON object (in {target_language}):"
 @dataclass(frozen=True)
 class KeywordExpansionPrompt(BasePrompt):
     prompt_key = "keyword_expansion"
-    input_variables = ["query", "entities", "topics", "max_keywords"]
+    input_variables = ["query", "entities", "topics", "max_keywords", "target_language"]
 
     system_prompt_template = """You are a strategic keyword expansion specialist for comprehensive knowledge graph
 search. Generate targeted keyword expansions that will discover hidden connections, ensure complete topic coverage, and
@@ -431,13 +485,18 @@ Maximum {max_keywords} keywords to ensure focus and precision.
 
 EXAMPLE OUTPUT: "API integration, cloud computing, microservices architecture, deployment automation, scalability"
 
-CRITICAL: Return exclusively the comma-separated keyword list with maximum {max_keywords} keywords."""
+LANGUAGE REQUIREMENT:
+- Produce all expanded keywords in {target_language}.
+- Proper nouns, brand names, acronyms, and API names keep their original form.
+
+CRITICAL: Return exclusively the comma-separated keyword list with maximum {max_keywords} keywords in {target_language}."""
 
     human_prompt_template = """Query: "{query}"
 Extracted Entities: {entities}
 Identified Topics: {topics}
 
-Generate comprehensive keyword expansions for enhanced knowledge graph search (comma-separated list only):"""
+Generate comprehensive keyword expansions for enhanced knowledge graph search \
+(comma-separated list only, in {target_language}):"""
 
 
 @dataclass(frozen=True)
@@ -494,7 +553,12 @@ Create a comprehensive, well-structured synthesis that directly and completely a
 @dataclass(frozen=True)
 class QueryRefinementPrompt(BasePrompt):
     prompt_key = "query_refinement"
-    input_variables = ["original_query", "results_summary", "iteration"]
+    input_variables = [
+        "original_query",
+        "results_summary",
+        "iteration",
+        "target_language",
+    ]
 
     system_prompt_template = """You are an expert query refinement specialist for iterative knowledge graph exploration.
 Your task is to analyze current search results and create an improved query that will discover new, valuable information
@@ -518,7 +582,12 @@ QUALITY GUIDELINES:
 - Be specific enough to yield targeted, relevant results
 - Avoid repeating information already gathered
 - Ensure the refined query will lead to actionable insights
-- Maintain focus while expanding understanding"""
+- Maintain focus while expanding understanding
+
+LANGUAGE REQUIREMENT:
+- Write the refined query in {target_language} so it matches the
+  language-analyzed search index. Proper nouns and technical terms keep their
+  original form."""
 
     human_prompt_template = """ORIGINAL QUERY: "{original_query}"
 
@@ -533,7 +602,7 @@ Based on the information above, create ONE refined query that:
 3. Will likely yield new valuable insights
 4. Focuses on practical, actionable information
 
-Return only the refined query, nothing else:"""
+Return only the refined query in {target_language}, nothing else:"""
 
 
 @dataclass(frozen=True)

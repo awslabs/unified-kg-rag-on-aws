@@ -1,12 +1,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import json
 import time
 from typing import Any
 
 import boto3
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import Runnable
+from langchain_core.runnables import Runnable, RunnableConfig
 
 from aws_graphrag.adapters.aws import BedrockLanguageModelFactory
 from aws_graphrag.adapters.aws.chain_factory import setup_chain
@@ -22,12 +23,30 @@ from aws_graphrag.domain.models import (
     SearchResult,
     SearchStrategy,
 )
-from aws_graphrag.domain.prompts import CommunityRelevancePrompt, MapReduceSummaryPrompt
+from aws_graphrag.domain.prompts import (
+    CommunityRelevancePrompt,
+    GlobalMapPrompt,
+    MapReduceSummaryPrompt,
+)
 from aws_graphrag.domain.retrieval.strategy_registry import register_strategy
 from aws_graphrag.shared import get_logger
-from aws_graphrag.shared.utils import safe_float_parse
+from aws_graphrag.shared.utils import BatchProcessor, safe_float_parse
 
 logger = get_logger(__name__)
+
+
+class _MapPoint:
+    """A scored key point produced by the global-search map step.
+
+    Lightweight value object (not a Pydantic model) so the map/filter/rank/pack
+    plumbing stays internal to this adapter.
+    """
+
+    __slots__ = ("description", "score")
+
+    def __init__(self, description: str, score: int) -> None:
+        self.description = description
+        self.score = score
 
 
 @register_strategy(SearchStrategy.GLOBAL)
@@ -42,6 +61,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         super().__init__(config, retrievers, boto_session, **kwargs)
         self.global_search_config = config.search.global_search
         self.ignore_errors = config.processing.ignore_errors
+        self.target_language = config.processing.translation.target_language
 
         factory = BedrockLanguageModelFactory(
             config=config,
@@ -56,11 +76,28 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             prompt_class=CommunityRelevancePrompt,
             parser=str_output_parser,
         )
+        # MAP step: rate community-report key points (0-100) for the query. Cheap
+        # model by default since rating is cheap. StrOutputParser + a robust JSON
+        # parse below keeps map output handling fault-tolerant.
+        self.map_rater: Runnable = setup_chain(
+            factory=factory,
+            model_id=self.global_search_config.map_model_id,
+            prompt_class=GlobalMapPrompt,
+            parser=str_output_parser,
+            custom_prompts=config.custom_prompts,
+        )
+        # REDUCE step: synthesize the final answer from the ranked key points.
         self.map_reducer: Runnable = setup_chain(
             factory=factory,
             model_id=self.global_search_config.map_reduce_model_id,
             prompt_class=MapReduceSummaryPrompt,
             parser=str_output_parser,
+        )
+        # One prepared input per map LLM call (each input already packs
+        # ``map_batch_size`` reports), so BatchProcessor's own batch_size is 1;
+        # max_concurrency fans the map calls out over the report batches.
+        self.batch_processor = BatchProcessor(
+            batch_size=1, max_concurrency=config.processing.max_concurrency
         )
 
     async def asearch(self, query: SearchQuery) -> SearchResult:
@@ -356,9 +393,205 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     async def _apply_map_reduce(
         self, results: list[RetrievalResult], query: SearchQuery
     ) -> list[RetrievalResult]:
+        """MS GraphRAG global-search map-reduce.
+
+        MAP — rate the key points in each batch of community reports (0-100).
+        FILTER+RANK — drop low-scored points, sort by score descending.
+        PACK — take ranked points up to ``max_map_reduce_tokens``.
+        REDUCE — synthesize the answer from the ranked, packed points.
+
+        Below ``map_reduce_min_results`` the results pass through unchanged (the
+        existing direct path). If the map phase yields no usable scored points
+        (e.g. every map call failed to parse), it degrades to the legacy
+        concat-and-reduce path so global search never hard-fails.
+        """
         if len(results) < self.global_search_config.map_reduce_min_results:
             return results
 
+        try:
+            map_points = await self._run_map_phase(results, query)
+        except Exception as e:
+            if not self.ignore_errors:
+                raise
+            logger.error("Map phase failed: %s", e)
+            map_points = []
+
+        if not map_points:
+            logger.warning(
+                "Map phase produced no usable key points; degrading to "
+                "concat-and-reduce synthesis."
+            )
+            return await self._concat_reduce(results, query)
+
+        ranked_points = self._filter_and_rank_points(map_points)
+        if not ranked_points:
+            logger.warning(
+                "All %s map key points were filtered out by threshold %s; "
+                "degrading to concat-and-reduce synthesis.",
+                len(map_points),
+                self.global_search_config.map_relevance_threshold,
+            )
+            return await self._concat_reduce(results, query)
+
+        packed_points = self._pack_points_within_budget(ranked_points)
+        return await self._reduce_from_points(packed_points, results, query)
+
+    async def _run_map_phase(
+        self, results: list[RetrievalResult], query: SearchQuery
+    ) -> list[_MapPoint]:
+        """Fan map calls over batches of reports and parse the scored points.
+
+        Each batch of ``map_batch_size`` reports becomes one map LLM call;
+        BatchProcessor runs them concurrently with graceful per-item fallback.
+        """
+        batch_size = self.global_search_config.map_batch_size
+        report_batches = [
+            results[i : i + batch_size] for i in range(0, len(results), batch_size)
+        ]
+
+        def prepare_inputs(
+            batches: list[list[RetrievalResult]],
+        ) -> list[dict[str, Any]]:
+            return [
+                {
+                    "query": query.query,
+                    "reports": self._format_reports(batch),
+                    "target_language": self.target_language,
+                }
+                for batch in batches
+            ]
+
+        def batch_func(
+            inputs: list[dict[str, Any]], config: RunnableConfig | None = None
+        ) -> list[str]:
+            return list(self.map_rater.batch(inputs, config=config))
+
+        def sequential_func(single_input: dict[str, Any]) -> str:
+            return str(self.map_rater.invoke(single_input))
+
+        raw_outputs = await asyncio.to_thread(
+            self.batch_processor.execute_with_fallback,
+            items_to_process=report_batches,
+            prepare_inputs_func=prepare_inputs,
+            batch_func=batch_func,
+            sequential_func=sequential_func,
+            task_name="global_search_map",
+            show_progress=False,
+        )
+
+        points: list[_MapPoint] = []
+        for raw in raw_outputs:
+            if not isinstance(raw, str) or not raw:
+                # Sequential fallback inserts {} for a failed item.
+                continue
+            points.extend(self._parse_map_points(raw))
+        return points
+
+    @staticmethod
+    def _format_reports(reports: list[RetrievalResult]) -> str:
+        parts = []
+        for report in reports:
+            rid = (report.metadata or {}).get("community_id") or report.source or "?"
+            parts.append(f"--- Report (id: {rid}) ---\n{report.content}")
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _parse_map_points(raw: str) -> list[_MapPoint]:
+        """Robustly parse a map JSON payload into scored key points.
+
+        Tolerates the LLM wrapping the JSON in prose or code fences. Returns an
+        empty list on any parse failure (the caller degrades gracefully) so a
+        single bad map response never aborts global search.
+        """
+        try:
+            text = raw.strip()
+            if text.startswith("```"):
+                text = text.split("```", 2)[1] if "```" in text[3:] else text[3:]
+                if text.lstrip().lower().startswith("json"):
+                    text = text.lstrip()[4:]
+            start, end = text.find("{"), text.rfind("}")
+            if start == -1 or end == -1 or end <= start:
+                return []
+            payload = json.loads(text[start : end + 1])
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            logger.warning("Failed to parse map key points: %s", e)
+            return []
+
+        if not isinstance(payload, dict):
+            return []
+
+        points: list[_MapPoint] = []
+        for item in payload.get("points", []) or []:
+            if not isinstance(item, dict):
+                continue
+            description = str(item.get("description", "")).strip()
+            if not description:
+                continue
+            score = safe_float_parse(str(item.get("score", 0)), default_value=0.0)
+            score_int = int(score) if score is not None else 0
+            score_int = max(0, min(100, score_int))
+            points.append(_MapPoint(description=description, score=score_int))
+        return points
+
+    def _filter_and_rank_points(self, points: list[_MapPoint]) -> list[_MapPoint]:
+        threshold = self.global_search_config.map_relevance_threshold
+        kept = [p for p in points if p.score > threshold]
+        kept.sort(key=lambda p: p.score, reverse=True)
+        return kept
+
+    def _pack_points_within_budget(self, points: list[_MapPoint]) -> list[_MapPoint]:
+        budget = self.global_search_config.max_map_reduce_tokens
+        packed: list[_MapPoint] = []
+        used = 0
+        for point in points:
+            cost = self.token_manager.count_tokens(point.description)
+            if packed and used + cost > budget:
+                break
+            packed.append(point)
+            used += cost
+        logger.debug(
+            "Packed %s/%s ranked key points into the %s-token reduce budget",
+            len(packed),
+            len(points),
+            budget,
+        )
+        return packed
+
+    async def _reduce_from_points(
+        self,
+        points: list[_MapPoint],
+        results: list[RetrievalResult],
+        query: SearchQuery,
+    ) -> list[RetrievalResult]:
+        synthesis_input = "\n\n".join(
+            f"- (relevance {p.score}) {p.description}" for p in points
+        )
+        try:
+            summary = await self.map_reducer.ainvoke(
+                {"summaries": synthesis_input, "query": query.query}
+            )
+        except Exception as e:
+            if not self.ignore_errors:
+                raise
+            logger.error("Map-reduce synthesis failed: %s", e)
+            return results
+
+        summary_result = RetrievalResult(
+            content=summary,
+            score=1.0,
+            source="synthesized_summary",
+            retriever_type=SectionType.GENERAL.value,
+            metadata={
+                "source_results_count": len(results),
+                "ranked_key_points": len(points),
+            },
+        )
+        return [summary_result] + results
+
+    async def _concat_reduce(
+        self, results: list[RetrievalResult], query: SearchQuery
+    ) -> list[RetrievalResult]:
+        """Legacy direct concat-and-reduce path (map-reduce degradation target)."""
         try:
             context = "\n\n---\n\n".join([r.content for r in results])
             summary = await self.map_reducer.ainvoke(

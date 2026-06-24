@@ -432,6 +432,86 @@ class TestReportInputShaping:
         assert chain_in["include_key_entities"] == "False"
 
 
+def _star_graph(n_leaves: int) -> nx.Graph:
+    """A hub 'hub' connected to n leaves -> hub has the highest degree."""
+    g = nx.Graph()
+    g.add_node("hub", name="Hub", type="ORG", description="central node")
+    for i in range(n_leaves):
+        lid = f"leaf{i}"
+        g.add_node(lid, name=f"Leaf{i}", type="PERSON", description="x")
+        g.add_edge("hub", lid, type="rel", description="connects")
+    return g
+
+
+class TestReportContextFidelity:
+    """Degree-sorted selection + token budgeting for report-input assembly."""
+
+    def test_degree_sort_puts_high_degree_entities_first(self) -> None:
+        cd = _detector()
+        # hub (degree 3) plus three leaves (degree 1 each). Feed entity_ids in
+        # an order that does NOT lead with the hub, to prove it is reordered.
+        cd.graph = _star_graph(3)
+        community = _community(["leaf2", "leaf0", "hub", "leaf1"])
+        selected = cd._select_report_entities(community)
+        # The hub (highest degree) must come first regardless of input order.
+        assert selected[0] == "hub"
+
+    def test_degree_sort_drops_low_degree_under_small_cap(self) -> None:
+        cd = _detector()
+        cd.community_detection_config.report_generation.max_entities_per_report = 2
+        cd.graph = _star_graph(4)
+        community = _community(["leaf0", "leaf1", "hub", "leaf2", "leaf3"])
+        report_input = cd._prepare_report_input(community)
+        ids = [e["id"] for e in report_input["entities"]]
+        # Cap of 2 keeps the hub (highest degree) + exactly one leaf; the rest
+        # (all degree 1) are dropped.
+        assert len(ids) == 2
+        assert "hub" in ids
+
+    def test_token_budget_caps_context(self) -> None:
+        cd = _detector()
+        # Generous entity cap, but a tiny token budget should still truncate.
+        cd.community_detection_config.report_generation.max_entities_per_report = 100
+        cd.community_detection_config.report_generation.max_report_context_tokens = 4
+        cd.graph = _star_graph(10)
+        community = _community(["hub", *[f"leaf{i}" for i in range(10)]])
+        report_input = cd._prepare_report_input(community)
+        # The budget is far below what 11 entities cost, so far fewer survive.
+        assert len(report_input["entities"]) < 11
+        # The single highest-degree entity is always admitted (never empty).
+        assert len(report_input["entities"]) >= 1
+        assert report_input["entities"][0]["id"] == "hub"
+
+    def test_relationships_among_selected_entities_included(self) -> None:
+        cd = _detector()
+        cd.graph = _star_graph(3)
+        community = _community(["hub", "leaf0", "leaf1", "leaf2"])
+        report_input = cd._prepare_report_input(community)
+        # Every relationship endpoint must be one of the selected entities.
+        selected_names = {e["name"] for e in report_input["entities"]}
+        for rel in report_input["relationships"]:
+            assert rel["source"] in selected_names
+            assert rel["target"] in selected_names
+        # The hub-leaf edges are present (3 of them).
+        assert len(report_input["relationships"]) == 3
+
+    def test_relationships_dropped_when_endpoint_truncated(self) -> None:
+        # With only the hub selected (cap 1), no relationship can survive since
+        # both endpoints must be in the selected set.
+        cd = _detector()
+        cd.community_detection_config.report_generation.max_entities_per_report = 1
+        cd.graph = _star_graph(3)
+        community = _community(["hub", "leaf0", "leaf1", "leaf2"])
+        report_input = cd._prepare_report_input(community)
+        assert [e["id"] for e in report_input["entities"]] == ["hub"]
+        assert report_input["relationships"] == []
+
+    def test_config_default_present(self) -> None:
+        cfg = Config()
+        report_cfg = cfg.graph.community_detection.report_generation
+        assert report_cfg.max_report_context_tokens == 4000
+
+
 class TestExtractTextFromResult:
     def test_passthrough_string(self) -> None:
         assert CommunityDetector._extract_text_from_result("hello") == "hello"

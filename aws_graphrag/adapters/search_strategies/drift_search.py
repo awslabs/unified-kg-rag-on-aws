@@ -49,6 +49,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
         self.drift_config = self.config.search.drift_search
         self.entity_focus_multiplier = entity_focus_multiplier
         self.ignore_errors = config.processing.ignore_errors
+        # Keyword expansion / query refinement must produce terms in the corpus
+        # language so they hit the language-analyzed index (not English-biased).
+        self.target_language = config.processing.translation.target_language.value
 
         factory = BedrockLanguageModelFactory(
             config=config,
@@ -260,6 +263,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                     "original_query": original_query,
                     "results_summary": summary,
                     "iteration": iteration,
+                    "target_language": self.target_language,
                 }
             )
 
@@ -275,6 +279,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                     "entities": entities,
                     "topics": [],
                     "max_keywords": max_keywords,
+                    "target_language": self.target_language,
                 }
             )
 
