@@ -2,7 +2,7 @@
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import boto3
 from opensearchpy.exceptions import NotFoundError
@@ -20,6 +20,9 @@ from aws_graphrag.domain.models import (
 from aws_graphrag.ports.indexer import IndexingStats, VectorIndexer
 from aws_graphrag.shared import get_logger
 from aws_graphrag.shared.utils.common import compute_hash
+
+if TYPE_CHECKING:
+    from aws_graphrag.adapters.aws.embedding_cache import S3EmbeddingCache
 
 logger = get_logger(__name__)
 
@@ -56,12 +59,37 @@ class OpenSearchIndexer(VectorIndexer):
         self._embedding_cache: dict[str, list[float]] = {}
         self._embedding_cache_hits = 0
         self._embedding_cache_misses = 0
+        # Optional S3-persisted cache so unchanged text is not re-embedded across
+        # separate runs/phases (each Fargate phase is a fresh process). Loaded
+        # lazily on first embed; best-effort (S3 errors degrade to in-process).
+        self._s3_embedding_cache = self._build_s3_embedding_cache()
 
     @property
     def embedding_cache_hit_rate(self) -> float:
         """Fraction of embedding lookups served from cache (observability)."""
         total = self._embedding_cache_hits + self._embedding_cache_misses
         return self._embedding_cache_hits / total if total else 0.0
+
+    def _build_s3_embedding_cache(self) -> "S3EmbeddingCache | None":
+        """Construct the optional S3-persisted embedding cache, if enabled."""
+        if not self.opensearch_config.persist_embedding_cache:
+            return None
+        bucket = self.config.aws.s3.bucket_name
+        if not bucket:
+            logger.warning(
+                "persist_embedding_cache is on but aws.s3.bucket_name is unset; "
+                "embedding cache will be in-process only."
+            )
+            return None
+        from aws_graphrag.adapters.aws.embedding_cache import S3EmbeddingCache
+
+        return S3EmbeddingCache(
+            bucket_name=bucket,
+            key=self.opensearch_config.embedding_cache_s3_key,
+            model_id=self.opensearch_config.embedding_model_id.value,
+            dimension=self._embedding_dimension,
+            boto_session=self.boto_session,
+        )
 
     def _resolve_embedding_dimension(self) -> int:
         model_info = self.embedding_factory.get_model_info(
@@ -603,12 +631,15 @@ class OpenSearchIndexer(VectorIndexer):
     ) -> list[list[float] | None]:
         result: list[list[float] | None] = [None] * len(texts)
 
-        # Content-hash embedding cache (in-process only): identical text is
-        # embedded once per process, avoiding re-embedding duplicate chunks
-        # within a run and across indices that share the same text in the same
-        # run. It does NOT persist across separate CLI invocations. Only
-        # cache-miss, de-duplicated texts hit Bedrock; the result is fanned back
-        # out to every index sharing that text.
+        # Content-hash embedding cache: identical text is embedded once,
+        # de-duplicated within a run and across indices sharing the same text.
+        # The in-process dict is the fast tier; the optional S3 tier (loaded
+        # once, lazily) persists across separate runs/phases so unchanged text
+        # is not re-embedded. Only cache-miss, de-duplicated texts hit Bedrock;
+        # the result is fanned back out to every index sharing that text.
+        if self._s3_embedding_cache is not None:
+            self._s3_embedding_cache.load()
+
         key_to_indices: dict[str, list[int]] = {}
         unique: list[tuple[str, str]] = []  # (content_hash, text) to embed
         seen_keys: set[str] = set()
@@ -618,6 +649,11 @@ class OpenSearchIndexer(VectorIndexer):
             key = compute_hash(text, length=32)
             key_to_indices.setdefault(key, []).append(i)
             cached = self._embedding_cache.get(key)
+            if cached is None and self._s3_embedding_cache is not None:
+                # Promote an S3-tier hit into the in-process tier.
+                cached = self._s3_embedding_cache.get(key)
+                if cached is not None:
+                    self._embedding_cache[key] = cached
             if cached is not None:
                 result[i] = cached
                 self._embedding_cache_hits += 1
@@ -630,6 +666,8 @@ class OpenSearchIndexer(VectorIndexer):
         def _store(key: str, emb: list[float] | None) -> None:
             if emb is not None:
                 self._embedding_cache[key] = emb
+                if self._s3_embedding_cache is not None:
+                    self._s3_embedding_cache.put(key, emb)
             for idx in key_to_indices[key]:
                 result[idx] = emb
 
@@ -670,6 +708,10 @@ class OpenSearchIndexer(VectorIndexer):
                 for pairs in executor.map(_embed_batch, batches):
                     for key, emb in pairs:
                         _store(key, emb)
+
+        # Persist any newly-computed vectors so the next run/phase reuses them.
+        if self._s3_embedding_cache is not None:
+            self._s3_embedding_cache.flush()
 
         return result
 

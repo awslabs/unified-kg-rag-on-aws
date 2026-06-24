@@ -823,6 +823,17 @@ class OpenSearchIndexingConfig(BaseModel):
         default=True,
         description="Whether to refresh OpenSearch indices after each batch operation for immediate visibility",
     )
+    persist_embedding_cache: bool = Field(
+        default=False,
+        description="Persist the content-hash embedding cache to S3 so unchanged "
+        "text is not re-embedded across separate runs/phases (each Fargate phase "
+        "is a fresh process). Requires aws.s3.bucket_name. Off by default.",
+    )
+    embedding_cache_s3_key: str = Field(
+        default="embedding-cache/cache.json",
+        description="S3 key (under the cache bucket) for the persisted embedding "
+        "cache when persist_embedding_cache is enabled.",
+    )
     max_query_size: int = Field(
         default=100,
         ge=1,

@@ -215,6 +215,11 @@ indexing:
     embedding_model_id: "amazon.titan-embed-text-v2:0"
     embedding_dimension: null
     refresh_after_batch: true
+    # Persist the content-hash embedding cache to S3 so unchanged text is not
+    # re-embedded across separate runs/phases (each Fargate phase is a fresh
+    # process). Requires aws.s3.bucket_name. Off by default.
+    persist_embedding_cache: false
+    embedding_cache_s3_key: "embedding-cache/cache.json"
     text_units_index_prefix: "graphrag-text-units"
     entities_index_prefix: "graphrag-entities"
     community_reports_index_prefix: "graphrag-community-reports"
