@@ -1,7 +1,11 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 from .base import ResolvedPrompt
-from .data_processing import TextChunkingPrompt, TextTranslationPrompt
+from .data_processing import (
+    DescriptionSummarizationPrompt,
+    TextChunkingPrompt,
+    TextTranslationPrompt,
+)
 from .graph_extraction import (
     BasePrompt,
     ClaimExtractionPrompt,
@@ -33,6 +37,7 @@ __all__ = [
     "ContextBuildingPrompt",
     "ConvergenceAssessmentPrompt",
     "CorpusProfilePrompt",
+    "DescriptionSummarizationPrompt",
     "EntityExtractionPrompt",
     "ExtractionExamplesPrompt",
     "GraphExtractionPrompt",

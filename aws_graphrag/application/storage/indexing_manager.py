@@ -5,6 +5,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, NamedTuple
 
+from aws_graphrag.adapters.ingestion.description_summarizer import DescriptionSummarizer
 from aws_graphrag.adapters.storage.neptune_indexer import NeptuneIndexer
 from aws_graphrag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from aws_graphrag.domain.ingestion.merge import merge_entities, merge_relationships
@@ -34,6 +35,15 @@ class IndexingManager:
         self.config = config
         self.opensearch_indexer = OpenSearchIndexer(config=config)
         self.neptune_indexer = NeptuneIndexer(config=config)
+        # Built lazily on first cross-run merge so a manager only used for
+        # indexing (no incremental read-back) never constructs a Bedrock client.
+        self._description_summarizer: DescriptionSummarizer | None = None
+
+    @property
+    def description_summarizer(self) -> DescriptionSummarizer:
+        if self._description_summarizer is None:
+            self._description_summarizer = DescriptionSummarizer(self.config)
+        return self._description_summarizer
 
     def clear_all_data(self, text_units: list[TextUnit]) -> bool:
         suffixes = self._discover_suffixes(text_units)
@@ -245,6 +255,12 @@ class IndexingManager:
             existing = self.neptune_indexer.read_entities([e.id for e in entities])
             if existing:
                 merged_entities, _ = merge_entities(existing, entities)
+                # The cross-run merge concatenates descriptions, so an entity
+                # seen across many runs can grow unbounded — re-summarize the
+                # over-threshold ones (no-op below the threshold / when disabled).
+                merged_entities = self.description_summarizer.summarize_entities(
+                    merged_entities or []
+                )
         merged_relationships = relationships
         if relationships:
             existing_rels = self.neptune_indexer.read_relationships(
@@ -252,6 +268,11 @@ class IndexingManager:
             )
             if existing_rels:
                 merged_relationships = merge_relationships(existing_rels, relationships)
+                merged_relationships = (
+                    self.description_summarizer.summarize_relationships(
+                        merged_relationships or []
+                    )
+                )
         return merged_entities, merged_relationships
 
     def delete_documents(

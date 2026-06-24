@@ -85,6 +85,9 @@ class DataIngestionPipeline:
         PipelineStageType.GLEANING,
         PipelineStageType.GRAPH_ANALYSIS,
         PipelineStageType.GRAPH_EXTRACTION,
+        # Graph resolution merges descriptions and then re-summarizes the
+        # over-long ones with an LLM (DescriptionSummarizer), so it needs Bedrock.
+        PipelineStageType.GRAPH_RESOLUTION,
         PipelineStageType.TEXT_CHUNKING,
         PipelineStageType.TRANSLATION,
     }

@@ -116,6 +116,20 @@ processing:
       - "OBJECT: Documents, tools, products, systems, technologies"
       - "EVENT: Meetings, projects, activities, processes, incidents"
       - "TEMPORAL: Dates, time periods, schedules, deadlines"
+    # Re-summarize over-long merged descriptions with an LLM (parity with MS
+    # GraphRAG summarize_descriptions / LightRAG _handle_entity_relation_summary).
+    # Merging an entity seen in many chunks concatenates one fragment per chunk,
+    # so a popular entity's description grows unbounded; this collapses any
+    # description over the token threshold into one coherent summary. Cheap
+    # (below-threshold) entities never reach the LLM.
+    description_summarization:
+      enabled: true
+      # Summarization is mechanical, so a cheap/fast model is the default.
+      summary_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+      # Only re-summarize when the merged description exceeds this many tokens.
+      force_summary_threshold_tokens: 600
+      # Target length (tokens) of the produced summary.
+      max_summary_tokens: 256
 
   # Gleaning (Iterative Information Extraction)
   gleaning:
@@ -424,6 +438,10 @@ custom_prompts:
   # Graph Extraction Prompts
   graph_extraction_system: null
   graph_extraction_human: null
+
+  # Description Summarization Prompts (over-long merged descriptions)
+  description_summarization_system: null
+  description_summarization_human: null
 
   # Claim Extraction Prompts
   claim_extraction_system: null

@@ -346,6 +346,44 @@ class TranslationConfig(BaseModel):
     )
 
 
+class DescriptionSummarizationConfig(BaseModel):
+    """LLM re-summarization of merged entity/relationship descriptions.
+
+    Without this, merging an entity that appears in many chunks simply
+    concatenates every chunk's description, so a popular entity's description
+    grows unbounded — bloating prompts/embeddings and degrading quality. This
+    mirrors MS GraphRAG ``summarize_descriptions`` and LightRAG
+    ``_handle_entity_relation_summary``: after merge, any description over the
+    token budget is re-summarized by a cheap LLM into one coherent, deduplicated
+    text. Cheap items (below the threshold) skip the LLM entirely.
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description="Re-summarize over-long merged descriptions with an LLM "
+        "(parity with MS GraphRAG/LightRAG). When disabled, descriptions are only "
+        "concatenated and may grow unbounded for frequently-mentioned entities.",
+    )
+    summary_model_id: LanguageModelId = Field(
+        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
+        description="Language model for description summarization. Summarization "
+        "is mechanical, so a cheap/fast model is the default.",
+    )
+    force_summary_threshold_tokens: int = Field(
+        default=600,
+        ge=1,
+        description="Re-summarize a merged description only when its estimated "
+        "token count exceeds this threshold. Descriptions at or below it are left "
+        "as-is, so cheap entities never incur an LLM call.",
+    )
+    max_summary_tokens: int = Field(
+        default=256,
+        ge=1,
+        description="Target length (in tokens) of the produced summary; injected "
+        "into the summarization prompt as the budget.",
+    )
+
+
 class GraphExtractionConfig(BaseModel):
     extraction_model_id: LanguageModelId = Field(
         default=LanguageModelId.CLAUDE_V4_5_SONNET,
@@ -384,6 +422,10 @@ class GraphExtractionConfig(BaseModel):
         "to a domain (e.g. ['GENE: ...', 'DISEASE: ...']) WITHOUT rewriting the "
         "whole prompt. Each item is 'LABEL: short description' (description "
         "optional). Empty list lets the model choose any relevant types.",
+    )
+    description_summarization: DescriptionSummarizationConfig = Field(
+        default_factory=DescriptionSummarizationConfig,
+        description="LLM re-summarization of over-long merged descriptions",
     )
 
 
@@ -711,11 +753,11 @@ class VisualizationConfig(BaseModel):
         description="Configuration parameters for layout algorithms.",
     )
     interactive: dict[str, Any] = Field(
-        default_factory=lambda: {"physics_enabled": False},
+        default={"physics_enabled": False},
         description="Configuration for interactive visualization rendering.",
     )
     static: dict[str, Any] = Field(
-        default_factory=lambda: {"figure_width": 900, "figure_height": 600},
+        default={"figure_width": 900, "figure_height": 600},
         description="Configuration for static visualization rendering.",
     )
 
@@ -1292,6 +1334,14 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for extracting claims and assertions from documents",
     )
+    description_summarization_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for re-summarizing over-long merged entity/relationship descriptions",
+    )
+    description_summarization_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for re-summarizing over-long merged entity/relationship descriptions",
+    )
     graph_refinement_system: str | None = Field(
         default=None,
         description="Custom system prompt for improving and refining extracted graph entities and relationships",
@@ -1396,14 +1446,8 @@ class EvaluationConfig(BaseModel):
         description="Language model identifier used for evaluation",
     )
     enabled_evaluators: list[EvaluatorType] = Field(
-        default_factory=lambda: [
-            EvaluatorType.LANGCHAIN,
-            EvaluatorType.RAGAS,
-            EvaluatorType.GRAPH_AWARE,
-        ],
-        description="List of evaluator types to enable for this evaluation run. "
-        "GRAPH_AWARE is deterministic and LLM-free (entity/relationship coverage), "
-        "so it is enabled by default alongside the LLM-based evaluators.",
+        default=[EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS],
+        description="List of evaluator types to enable for this evaluation run.",
     )
     langchain_metrics: list[EvaluationMetricType] = Field(
         default=[

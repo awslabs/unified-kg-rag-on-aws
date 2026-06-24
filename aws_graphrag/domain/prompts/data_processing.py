@@ -125,6 +125,66 @@ Provide ONLY the XML output with no additional text or explanations.
 
 
 @dataclass(frozen=True)
+class DescriptionSummarizationPrompt(BasePrompt):
+    """Re-summarize the merged descriptions of one entity/relationship.
+
+    Parity with MS GraphRAG ``summarize_descriptions`` and LightRAG
+    ``_handle_entity_relation_summary``: a frequently-mentioned node accumulates
+    one concatenated description per supporting chunk, which the adapter layer
+    feeds here to collapse into a single coherent, deduplicated summary within a
+    token budget — preserving every distinct fact.
+    """
+
+    prompt_key = "description_summarization"
+
+    input_variables = [
+        "entity_name",
+        "descriptions",
+        "max_summary_tokens",
+        "language",
+        "target_language",
+    ]
+
+    system_prompt_template = """You are an expert knowledge-graph editor. Your task is to consolidate multiple
+descriptions of the SAME entity or relationship — gathered from different source passages — into ONE coherent,
+comprehensive summary.
+
+CORE OBJECTIVE:
+Produce a single description that faithfully preserves EVERY distinct fact from the input while removing redundancy,
+so the knowledge graph stays accurate without letting a frequently-mentioned entity's description grow without bound.
+
+SUMMARIZATION RULES:
+1. **COMPLETENESS**: Retain all distinct facts, attributes, roles, dates, and relationships present in the inputs.
+   Never drop information that is unique to one of the descriptions.
+2. **DEDUPLICATION**: Merge overlapping or repeated statements into a single clear statement. Do not state the same
+   fact more than once in different words.
+3. **COHERENCE**: Write a single well-structured description in natural prose (not a bulleted list of the inputs),
+   resolving trivial wording differences into one consistent account.
+4. **NEUTRALITY**: Do not invent, infer, or embellish facts that are not supported by the inputs.
+5. **CONCISENESS**: Stay within the requested token budget. If the inputs genuinely contain more distinct facts than
+   fit, prioritize the most salient and specific ones, but never fabricate.
+6. **LANGUAGE**: Write the summary in {target_language}.
+
+STRICT OUTPUT REQUIREMENT:
+Output ONLY the consolidated description text. Do not add headings, labels, the entity name, quotation marks, or any
+commentary about the summarization process."""
+
+    human_prompt_template = """Consolidate the following descriptions of '{entity_name}' into ONE coherent,
+deduplicated, comprehensive description.
+
+DESCRIPTIONS (source language: {language}):
+{descriptions}
+
+REQUIREMENTS:
+- Preserve every distinct fact; remove only redundancy.
+- Target length: at most {max_summary_tokens} tokens.
+- Write the summary in {target_language}.
+- Output ONLY the description text, with no labels, name prefix, or commentary.
+
+CONSOLIDATED DESCRIPTION:"""
+
+
+@dataclass(frozen=True)
 class TextTranslationPrompt(BasePrompt):
     input_variables = ["text", "target_language"]
 
