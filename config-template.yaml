@@ -23,6 +23,10 @@ aws:
     endpoint: # Add endpoint here
     port: 8182
     use_iam: true
+    # Gremlin connection pool size (max concurrent in-flight requests over the
+    # websocket). Set >= indexing.neptune.index_concurrency so concurrent write
+    # batches are not serialized on a single connection.
+    pool_size: 4
 
   # OpenSearch Configuration
   opensearch:
@@ -273,6 +277,11 @@ indexing:
     entity_label_prefix: "Entity"
     community_label_prefix: "Community"
     batch_size: 100
+    # Concurrent write batches submitted to Neptune. 1 (default) = sequential
+    # indexing; >1 fans batches over a thread pool, multiplexed across the
+    # Gremlin connection pool (size aws.neptune.pool_size to match). Each batch
+    # accumulates its own stats, merged on completion.
+    index_concurrency: 1
     max_retries: 3
     retry_delay_seconds: 2
     property_max_length: 1000

@@ -3,6 +3,7 @@ import json
 import random
 import time
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, cast
 
 from gremlin_python.process.graph_traversal import (
@@ -702,31 +703,82 @@ class NeptuneIndexer(GraphIndexer):
         if not items:
             return stats
 
-        for batch in self._batch_iterator(items):
-            try:
-                g = self.neptune_client.g
-                traversal = traversal_builder(g, batch)
-                self._execute_with_retries(traversal, operation_name)
-                stats.add_success(len(batch))
-            except Exception as batch_error:
-                logger.warning(
-                    "Batch %s failed (%s items), falling back to individual indexing: %s",
-                    operation_name,
-                    len(batch),
-                    batch_error,
-                )
-                for item in batch:
-                    try:
-                        g = self.neptune_client.g
-                        traversal = traversal_builder(g, [item])
-                        self._execute_with_retries(traversal, operation_name)
-                        stats.add_success(1)
-                    except Exception as item_error:
-                        stats.add_error(str(item_error))
-                        logger.warning(
-                            "Individual %s failed: %s", operation_name, item_error
-                        )
+        batches = list(self._batch_iterator(items))
+        concurrency = min(self.neptune_config.index_concurrency, len(batches))
 
+        if concurrency <= 1:
+            # Sequential path (default). Each batch mutates the shared `stats`
+            # directly; no cross-thread access so this is safe.
+            for batch in batches:
+                self._execute_single_batch(
+                    batch, traversal_builder, operation_name, stats
+                )
+            return stats
+
+        # Concurrent path: each batch accumulates into its OWN IndexingStats so
+        # there is no shared-mutable state across worker threads; results are
+        # merged on the main thread. Traversals are built off the shared
+        # GraphTraversalSource (each step spawns independent bytecode, never
+        # mutating `g`) and submitted over the Gremlin connection pool
+        # (aws.neptune.pool_size). Order does not matter for upserts.
+        logger.info(
+            "Indexing %s in %s batches across %s concurrent workers.",
+            operation_name,
+            len(batches),
+            concurrency,
+        )
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            futures = [
+                executor.submit(
+                    self._execute_single_batch,
+                    batch,
+                    traversal_builder,
+                    operation_name,
+                    IndexingStats(),
+                )
+                for batch in batches
+            ]
+            for future in as_completed(futures):
+                stats.merge(future.result())
+
+        return stats
+
+    def _execute_single_batch(
+        self,
+        batch: list[Any],
+        traversal_builder: Callable[[GraphTraversalSource, list[Any]], GraphTraversal],
+        operation_name: str,
+        stats: IndexingStats,
+    ) -> IndexingStats:
+        """Execute one batch, falling back to per-item indexing on batch failure.
+
+        Accumulates into the supplied ``stats`` and returns it, so the caller can
+        either share one stats object (sequential) or merge per-batch objects
+        (concurrent) without any locking.
+        """
+        try:
+            g = self.neptune_client.g
+            traversal = traversal_builder(g, batch)
+            self._execute_with_retries(traversal, operation_name)
+            stats.add_success(len(batch))
+        except Exception as batch_error:
+            logger.warning(
+                "Batch %s failed (%s items), falling back to individual indexing: %s",
+                operation_name,
+                len(batch),
+                batch_error,
+            )
+            for item in batch:
+                try:
+                    g = self.neptune_client.g
+                    traversal = traversal_builder(g, [item])
+                    self._execute_with_retries(traversal, operation_name)
+                    stats.add_success(1)
+                except Exception as item_error:
+                    stats.add_error(str(item_error))
+                    logger.warning(
+                        "Individual %s failed: %s", operation_name, item_error
+                    )
         return stats
 
     def _execute_with_retries(

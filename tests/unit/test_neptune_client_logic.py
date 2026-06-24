@@ -91,10 +91,19 @@ def test_create_connection_builds_url_and_iam_headers(mocker) -> None:
     captured: dict[str, Any] = {}
 
     class _FakeConn:
-        def __init__(self, url: str, traversal_source: str, headers: dict) -> None:
+        def __init__(
+            self,
+            url: str,
+            traversal_source: str,
+            headers: dict,
+            pool_size: int | None = None,
+            max_workers: int | None = None,
+        ) -> None:
             captured["url"] = url
             captured["traversal_source"] = traversal_source
             captured["headers"] = headers
+            captured["pool_size"] = pool_size
+            captured["max_workers"] = max_workers
 
     # Patch the connection + the traversal builder so no socket opens.
     mocker.patch.object(neptune_mod, "DriverRemoteConnection", _FakeConn)
@@ -112,6 +121,9 @@ def test_create_connection_builds_url_and_iam_headers(mocker) -> None:
     assert captured["traversal_source"] == "g"
     # IAM enabled -> signed headers present.
     assert "Authorization" in captured["headers"]
+    # pool_size/max_workers wired from config (default 4) for concurrent writes.
+    assert captured["pool_size"] == 4
+    assert captured["max_workers"] == 4
 
 
 def test_create_connection_no_iam_empty_headers(mocker) -> None:
@@ -120,7 +132,14 @@ def test_create_connection_no_iam_empty_headers(mocker) -> None:
     captured: dict[str, Any] = {}
 
     class _FakeConn:
-        def __init__(self, url: str, traversal_source: str, headers: dict) -> None:
+        def __init__(
+            self,
+            url: str,
+            traversal_source: str,
+            headers: dict,
+            pool_size: int | None = None,
+            max_workers: int | None = None,
+        ) -> None:
             captured["headers"] = headers
 
     mocker.patch.object(neptune_mod, "DriverRemoteConnection", _FakeConn)

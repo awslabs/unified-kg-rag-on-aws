@@ -151,6 +151,16 @@ class NeptuneConfig(BaseModel):
     use_iam: bool = Field(
         default=True, description="Enable IAM authentication for Neptune"
     )
+    pool_size: int = Field(
+        default=4,
+        ge=1,
+        description=(
+            "Gremlin DriverRemoteConnection pool size (max concurrent in-flight "
+            "requests over the websocket). Set >= indexing.neptune."
+            "index_concurrency so concurrent write batches are not serialized on "
+            "a single connection."
+        ),
+    )
 
 
 class OpenSearchConfig(BaseModel):
@@ -740,6 +750,17 @@ class NeptuneIndexingConfig(BaseModel):
         default=100,
         ge=1,
         description="Number of items to process per batch in Neptune operations",
+    )
+    index_concurrency: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Number of Neptune write batches to submit concurrently. 1 (default) "
+            "preserves sequential indexing; >1 fans batches over a thread pool, "
+            "multiplexed across the Gremlin connection pool (size aws.neptune."
+            "pool_size to match). Each batch accumulates its own stats, merged "
+            "on completion."
+        ),
     )
     max_retries: int = Field(
         default=3,

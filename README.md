@@ -264,6 +264,7 @@ aws:
     endpoint: "your-neptune-cluster.cluster-xyz.us-east-1.neptune.amazonaws.com"  # Required: Neptune cluster endpoint
     port: 8182
     use_iam: true
+    pool_size: 4              # Gremlin connection pool; raise with indexing.neptune.index_concurrency
 
   opensearch:
     endpoint: "https://your-opensearch-domain.us-east-1.es.amazonaws.com"  # Required: OpenSearch domain endpoint

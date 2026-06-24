@@ -407,3 +407,91 @@ def test_set_edge_properties_truncates_serialized_list(indexer, mocker) -> None:
     key, value = recorded[0]
     assert key == "text_unit_ids"
     assert len(value) == 5  # truncated
+
+
+# --------------------------------------------------------------------------- #
+# _execute_batch_traversal — sequential vs concurrent fan-out
+# --------------------------------------------------------------------------- #
+
+
+def _no_op_builder(g, batch):
+    """Builder whose product is irrelevant; success is decided by the patched
+    _execute_with_retries, so we just return a sentinel traversal."""
+    return ("traversal", tuple(batch))
+
+
+def test_execute_batch_empty_short_circuits(indexer) -> None:
+    stats = indexer._execute_batch_traversal([], _no_op_builder, "op")
+    assert stats.total_items == 0
+    assert stats.successful_items == 0
+
+
+def test_execute_batch_sequential_counts_all_successes(indexer, mocker) -> None:
+    mocker.patch.object(indexer.neptune_config, "batch_size", 2)
+    mocker.patch.object(indexer.neptune_config, "index_concurrency", 1)
+    mocker.patch.object(indexer, "_execute_with_retries")  # never raises
+    items = list(range(5))  # 3 batches: [0,1],[2,3],[4]
+    stats = indexer._execute_batch_traversal(items, _no_op_builder, "op")
+    assert stats.total_items == 5
+    assert stats.successful_items == 5
+    assert stats.failed_items == 0
+
+
+def test_execute_batch_concurrent_matches_sequential_totals(indexer, mocker) -> None:
+    # With per-batch isolated stats merged on the main thread, the concurrent
+    # path must produce identical totals to the sequential path (no lost
+    # updates from shared mutation).
+    mocker.patch.object(indexer.neptune_config, "batch_size", 1)
+    mocker.patch.object(indexer.neptune_config, "index_concurrency", 4)
+    mocker.patch.object(indexer, "_execute_with_retries")
+    items = list(range(50))  # 50 single-item batches across 4 workers
+    stats = indexer._execute_batch_traversal(items, _no_op_builder, "op")
+    assert stats.total_items == 50
+    assert stats.successful_items == 50
+    assert stats.failed_items == 0
+
+
+def test_execute_batch_concurrency_clamped_to_batch_count(indexer, mocker) -> None:
+    # index_concurrency > number of batches must not spawn idle workers nor
+    # change correctness; one batch -> sequential-equivalent.
+    mocker.patch.object(indexer.neptune_config, "batch_size", 100)
+    mocker.patch.object(indexer.neptune_config, "index_concurrency", 8)
+    mocker.patch.object(indexer, "_execute_with_retries")
+    stats = indexer._execute_batch_traversal([1, 2, 3], _no_op_builder, "op")
+    assert stats.total_items == 3
+    assert stats.successful_items == 3
+
+
+def test_execute_batch_falls_back_to_per_item_on_batch_failure(indexer, mocker) -> None:
+    # First (batch) call raises; the per-item retries then succeed. The batch
+    # had 3 items, so 1 failed batch attempt -> 3 individual successes.
+    mocker.patch.object(indexer.neptune_config, "batch_size", 3)
+    mocker.patch.object(indexer.neptune_config, "index_concurrency", 1)
+    calls = {"n": 0}
+
+    def flaky(traversal, op):
+        calls["n"] += 1
+        # The very first call is the whole-batch attempt -> fail it.
+        if calls["n"] == 1:
+            raise RuntimeError("batch boom")
+
+    mocker.patch.object(indexer, "_execute_with_retries", side_effect=flaky)
+    stats = indexer._execute_batch_traversal([1, 2, 3], _no_op_builder, "op")
+    assert stats.total_items == 3
+    assert stats.successful_items == 3  # all recovered individually
+    assert stats.failed_items == 0
+
+
+def test_execute_batch_records_individual_failures(indexer, mocker) -> None:
+    mocker.patch.object(indexer.neptune_config, "batch_size", 2)
+    mocker.patch.object(indexer.neptune_config, "index_concurrency", 1)
+
+    def always_fail(traversal, op):
+        raise RuntimeError("nope")
+
+    mocker.patch.object(indexer, "_execute_with_retries", side_effect=always_fail)
+    stats = indexer._execute_batch_traversal([1, 2], _no_op_builder, "op")
+    # Batch fails, both items fail individually too.
+    assert stats.failed_items == 2
+    assert stats.successful_items == 0
+    assert stats.errors  # error messages captured
