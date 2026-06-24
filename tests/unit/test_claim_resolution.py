@@ -66,3 +66,27 @@ def test_unresolvable_subject_drops_claim() -> None:
         _claim("nonexistent-person-xyz", "acme"), name_to_id, name_to_orig, matcher
     )
     assert resolved is None
+
+
+class TestAbbreviationLocaleGuard:
+    """Acronym/caps abbreviation generation is a Latin/cased-script notion;
+    non-Latin (CJK, etc.) input must not yield garbage acronyms."""
+
+    def test_latin_multiword_yields_acronym(self) -> None:
+        abbrevs = FuzzyMatcher._generate_abbreviations("Amazon Web Services")
+        assert "AWS" in abbrevs
+
+    def test_latin_caps_extracted(self) -> None:
+        abbrevs = FuzzyMatcher._generate_abbreviations("eXtensible Markup Language")
+        # caps-extraction picks up embedded capitals
+        assert any(a.isupper() and len(a) > 1 for a in abbrevs)
+
+    def test_cjk_input_yields_no_abbreviations(self) -> None:
+        # Korean multi-"word" name: no ASCII letters -> no acronym noise.
+        assert FuzzyMatcher._generate_abbreviations("아마존 웹 서비스") == set()
+        assert FuzzyMatcher._generate_abbreviations("한국어 엔티티 이름") == set()
+
+    def test_mixed_script_still_uses_latin_letters(self) -> None:
+        # Mixed input has ASCII letters -> guard lets it through.
+        abbrevs = FuzzyMatcher._generate_abbreviations("AWS 클라우드")
+        assert "AWS" in abbrevs

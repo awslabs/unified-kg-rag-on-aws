@@ -90,11 +90,13 @@ def test_embedding_get_model_info_dimensions() -> None:
     assert titan_v2 is not None and titan_v2.dimensions == [256, 512, 1024]
 
 
-def test_get_model_info_returns_none_for_unmapped_model() -> None:
-    # CLAUDE_V3_SONNET is a valid enum member but has no _LANGUAGE_MODEL_INFO
-    # entry, so capability lookup degrades to None (callers raise on this).
+def test_every_language_model_enum_has_info() -> None:
+    # Regression: CLAUDE_V3_SONNET / CLAUDE_V3_OPUS were selectable enum members
+    # with no _LANGUAGE_MODEL_INFO entry, so get_model_info returned None and
+    # get_model raised. Every advertised model id must resolve to capabilities.
     factory = _lang_factory()
-    assert factory.get_model_info(LanguageModelId.CLAUDE_V3_SONNET) is None
+    for model_id in LanguageModelId:
+        assert factory.get_model_info(model_id) is not None, model_id
 
 
 def test_get_model_info_resolves_for_every_known_embedding_model() -> None:

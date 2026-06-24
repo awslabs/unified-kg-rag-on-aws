@@ -194,19 +194,36 @@ class TestConvergenceScore:
 # --------------------------------------------------------------------------- #
 class TestShouldStop:
     def test_stops_on_convergence_threshold(self, gleaner) -> None:
-        # default convergence_threshold = 0.8
-        assert gleaner._should_stop_gleaning(0.9, 0.5, 0.1) is True
+        # Primary MEASURED signal: convergence_score >= 0.8 (default) -> stop,
+        # at any round.
+        assert gleaner._should_stop_gleaning(0.9, 0.5, 0.1, round_num=1) is True
 
-    def test_stops_on_low_improvement(self, gleaner) -> None:
-        # min_improvement_threshold = 0.05; |0.01| < that -> stop
-        assert gleaner._should_stop_gleaning(0.1, 0.01, 0.1) is True
+    def test_stops_on_low_improvement_only_from_round_2(self, gleaner) -> None:
+        # min_improvement_threshold = 0.05; improvement 0.01 < that.
+        # Round 1: the LLM-quality delta is on a different scale than the
+        # count-based seed, so the check is suppressed -> does NOT stop.
+        assert gleaner._should_stop_gleaning(0.1, 0.01, 0.1, round_num=1) is False
+        # Round 2+: the advisory quality-improvement check applies -> stop.
+        assert gleaner._should_stop_gleaning(0.1, 0.01, 0.1, round_num=2) is True
+
+    def test_quality_regression_does_not_trigger_improvement_stop(
+        self, gleaner
+    ) -> None:
+        # A quality DROP (negative improvement) is below the threshold but must
+        # not be treated as "converged" via abs(); it is one-sided now. With a
+        # mid convergence score and sub-threshold quality, round 2 stops because
+        # improvement < threshold (a drop is still "not improving") — but the
+        # point is abs() no longer flips a large positive regression magnitude.
+        # Big negative improvement at round 2 -> stop (not improving).
+        assert gleaner._should_stop_gleaning(0.1, -0.5, 0.1, round_num=2) is True
 
     def test_stops_on_quality_target(self, gleaner) -> None:
-        # quality_threshold = 0.9
-        assert gleaner._should_stop_gleaning(0.1, 0.5, 0.95) is True
+        # quality_threshold = 0.9, applies at any round.
+        assert gleaner._should_stop_gleaning(0.1, 0.5, 0.95, round_num=1) is True
 
     def test_continues_otherwise(self, gleaner) -> None:
-        assert gleaner._should_stop_gleaning(0.1, 0.5, 0.1) is False
+        # Low convergence, healthy improvement, below quality target -> continue.
+        assert gleaner._should_stop_gleaning(0.1, 0.5, 0.1, round_num=2) is False
 
 
 # --------------------------------------------------------------------------- #

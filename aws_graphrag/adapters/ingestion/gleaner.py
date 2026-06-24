@@ -292,6 +292,7 @@ class GraphGleaner(BaseProcessor):
                 round_stats["round_info"].convergence_score,
                 round_stats["round_info"].quality_improvement,
                 current_quality,
+                round_num,
             ):
                 stats.convergence_achieved = True
                 break
@@ -771,7 +772,11 @@ class GraphGleaner(BaseProcessor):
         convergence_score: float,
         quality_improvement: float,
         current_quality: float,
+        round_num: int,
     ) -> bool:
+        # Primary signal is MEASURED: convergence_score is derived from how many
+        # entities/relationships the round actually added (see
+        # _calculate_convergence_score), so this is the reliable stop condition.
         if convergence_score >= self.gleaning_config.convergence_threshold:
             logger.info(
                 "Convergence achieved: score %.3f >= threshold %.3f",
@@ -780,7 +785,18 @@ class GraphGleaner(BaseProcessor):
             )
             return True
 
-        if abs(quality_improvement) < self.gleaning_config.min_improvement_threshold:
+        # Secondary (advisory) signal from the LLM's self-reported quality.
+        # Only applied from round 2 onward: on round 1 previous_quality is the
+        # count-based initial seed while current_quality is the LLM 0-1 score —
+        # different scales, so their delta is meaningless and would trip a
+        # spurious early stop. Use a one-sided check (improvement BELOW the
+        # threshold), not abs(): a quality *drop* means the round didn't help, so
+        # stopping is fine; abs() previously also stopped on big regressions for
+        # the wrong reason.
+        if (
+            round_num >= 2
+            and quality_improvement < self.gleaning_config.min_improvement_threshold
+        ):
             logger.info(
                 "Quality improvement below threshold: %.3f < %.3f",
                 quality_improvement,

@@ -150,6 +150,14 @@ class FuzzyMatcher:
         if not text:
             return abbrevs
 
+        # Acronyms (first-letter-of-each-word) and caps-extraction are Latin/
+        # cased-script notions; for scripts without case or word spacing (CJK,
+        # etc.) they produce noise, so only generate them when the text actually
+        # contains ASCII letters. Non-Latin names rely on normalized + token /
+        # sequence similarity instead.
+        if not any("a" <= c.lower() <= "z" for c in text):
+            return abbrevs
+
         words = [w for w in cls._RE_WORD_BOUNDARY.findall(text.lower()) if w]
         if len(words) > 1:
             acronym = "".join(w[0] for w in words).upper()
