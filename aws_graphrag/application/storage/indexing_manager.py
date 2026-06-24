@@ -18,7 +18,6 @@ from aws_graphrag.domain.models import (
 )
 from aws_graphrag.ports.indexer import BaseIndexer, IndexingStats
 from aws_graphrag.shared import get_logger
-from aws_graphrag.shared.utils import default_max_workers
 
 logger = get_logger(__name__)
 
@@ -30,11 +29,10 @@ class IndexingTask(NamedTuple):
 
 
 class IndexingManager:
-    def __init__(self, config: Config, max_workers: int | None = None) -> None:
+    def __init__(self, config: Config) -> None:
         self.config = config
         self.opensearch_indexer = OpenSearchIndexer(config=config)
         self.neptune_indexer = NeptuneIndexer(config=config)
-        self.max_workers = max_workers or default_max_workers()
 
     def clear_all_data(self, text_units: list[TextUnit]) -> bool:
         suffixes = self._discover_suffixes(text_units)

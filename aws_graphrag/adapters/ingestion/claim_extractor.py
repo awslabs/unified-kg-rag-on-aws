@@ -165,18 +165,21 @@ class ClaimExtractor(BaseProcessor):
 
         unit_to_input = self._prepare_extraction_inputs(text_units, all_entities)
 
+        # Process ONLY units that have a prepared input, and align the batch
+        # input list 1:1 with this filtered list. Otherwise prepare_inputs_func
+        # would silently drop input-less units within a chunk, shrinking the
+        # results list and misaligning the positional zip in
+        # _process_extraction_results (claims attributed to the wrong unit).
+        units_to_process = [u for u in text_units if u.id in unit_to_input]
+
         def prepare_inputs_for_chunk(
             chunk_items: list[TextUnit],
         ) -> list[dict[str, Any]]:
-            return [
-                unit_to_input[unit.id]
-                for unit in chunk_items
-                if unit.id in unit_to_input
-            ]
+            return [unit_to_input[unit.id] for unit in chunk_items]
 
         try:
             extraction_results = self.batch_processor.execute_with_fallback(
-                items_to_process=text_units,
+                items_to_process=units_to_process,
                 prepare_inputs_func=prepare_inputs_for_chunk,
                 batch_func=self.claim_extractor.batch,
                 sequential_func=self.claim_extractor.invoke,
@@ -190,7 +193,9 @@ class ClaimExtractor(BaseProcessor):
             logger.error("Error during claim extraction: %s", e)
             return [], ClaimExtractionStats()
 
-        all_claims = self._process_extraction_results(text_units, extraction_results)
+        all_claims = self._process_extraction_results(
+            units_to_process, extraction_results
+        )
         initial_claim_count = len(all_claims)
         merged_claims = self._merge_claims(all_claims)
 

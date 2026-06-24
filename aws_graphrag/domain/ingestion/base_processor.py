@@ -271,7 +271,10 @@ class BaseProcessor:
                         setattr(existing_item, field, merger(current_value, new_value))
 
             for field in frequency_fields:
-                value = getattr(item, field, "").lower()
+                # `or ""` guards an explicit None field value (e.g. model-default
+                # Relationship.type / Claim.status): getattr's "" default only
+                # applies when the attribute is missing, not when it is None.
+                value = (getattr(item, field, "") or "").lower()
                 frequency_counts[field][item_id][value] += 1
 
         for item_id, item in merged_items_map.items():

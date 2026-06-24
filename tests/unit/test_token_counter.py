@@ -5,9 +5,40 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.adapters.aws.token_counter import BedrockTokenCounter
+from aws_graphrag.adapters.aws.token_counter import (
+    BedrockTokenCounter,
+    estimate_token_count,
+)
 
 pytestmark = pytest.mark.unit
+
+
+class TestEstimateTokenCount:
+    def test_empty_is_zero(self) -> None:
+        assert estimate_token_count("") == 0
+
+    def test_english_uses_word_count(self) -> None:
+        # 5 short words; char/4 (~5) and word count (5) are comparable.
+        assert estimate_token_count("the quick brown fox jumps") >= 5
+
+    def test_spaceless_cjk_not_undercounted(self) -> None:
+        # Whitespace split would yield 1; the char-based floor must dominate so
+        # a long space-less CJK string is not counted as a single token.
+        text = "한국어문장입니다이것은긴문장이다"  # 16 chars, 0 spaces
+        assert estimate_token_count(text) == len(text) // 4
+        assert estimate_token_count(text) > len(text.split())
+
+    def test_never_zero_for_nonempty(self) -> None:
+        assert estimate_token_count("가") == 1
+
+
+def test_count_tokens_degrades_to_script_aware_estimate(mocker) -> None:
+    # When the Bedrock API raises, count_tokens must fall back to the
+    # script-aware estimate (not whitespace split) for a space-less string.
+    counter = BedrockTokenCounter("model", object())
+    mocker.patch.object(counter, "_cached_count", side_effect=RuntimeError("api down"))
+    text = "한국어문장입니다이것은긴문장이다"
+    assert counter.count_tokens(text) == estimate_token_count(text)
 
 
 class FakeBedrockClient:

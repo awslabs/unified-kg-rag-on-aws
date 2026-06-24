@@ -4,8 +4,11 @@
 Consumes the previously-unused ``EvaluationGroundTruth.expected_entities`` and
 ``expected_relationships`` fields. For each query it measures how many of the
 expected graph artifacts the generated answer actually surfaces (case-insensitive
-substring match), reporting precision/recall/F1 — a deterministic,
-LLM-free signal complementing the LangChain/RAGAS text-similarity scores.
+substring match), reporting coverage (= recall) — a deterministic, LLM-free
+signal complementing the LangChain/RAGAS text-similarity scores. Precision/F1 are
+deliberately NOT reported: they would require enumerating every entity in a
+free-text answer (not reliably possible), so emitting them would only duplicate
+the recall signal under another name.
 
 Expected artifacts are threaded onto ``EvaluationResult.metadata`` by the
 manager (keys ``expected_entities`` / ``expected_relationships``), so this

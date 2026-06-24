@@ -126,24 +126,6 @@ class FuzzyMatcher:
             minhash.update(shingle.encode("utf8"))
         return minhash
 
-    def calculate_similarity(self, text1: str, text2: str) -> float:
-        if not text1 or not text2:
-            return 0.0
-        if text1 == text2:
-            return 1.0
-
-        normalized1 = normalize_name(text1)
-        normalized2 = normalize_name(text2)
-        if normalized1 == normalized2:
-            return 0.95
-
-        abbrevs1 = self._generate_abbreviations(text1)
-        abbrevs2 = self._generate_abbreviations(text2)
-        if abbrevs1.intersection(abbrevs2):
-            return 0.90
-
-        return self._calculate_fuzzy_similarity(text1, text2)
-
     @classmethod
     def _generate_abbreviations(cls, text: str) -> set[str]:
         abbrevs: set[str] = set()
@@ -169,39 +151,6 @@ class FuzzyMatcher:
             abbrevs.add(caps)
 
         return abbrevs
-
-    def _calculate_fuzzy_similarity(self, text1: str, text2: str) -> float:
-        normalized1 = normalize_name(text1)
-        normalized2 = normalize_name(text2)
-        scores = []
-
-        tokens1 = self._extract_tokens(text1, meaningful_only=False)
-        tokens2 = self._extract_tokens(text2, meaningful_only=False)
-        if tokens1 and tokens2:
-            intersection = len(tokens1.intersection(tokens2))
-            union = len(tokens1.union(tokens2))
-            jaccard_score = intersection / union if union > 0 else 0.0
-            scores.append(jaccard_score * 0.9)
-
-        meaningful_tokens1 = self._extract_tokens(text1, meaningful_only=True)
-        meaningful_tokens2 = self._extract_tokens(text2, meaningful_only=True)
-        if meaningful_tokens1 and meaningful_tokens2:
-            intersection = len(meaningful_tokens1.intersection(meaningful_tokens2))
-            union = len(meaningful_tokens1.union(meaningful_tokens2))
-            meaningful_jaccard = intersection / union if union > 0 else 0.0
-            scores.append(meaningful_jaccard * 0.85)
-
-        if self.resolution_method != ResolutionMethod.MINHASH:
-            string_similarity = SequenceMatcher(None, normalized1, normalized2).ratio()
-            scores.append(string_similarity * 0.75)
-
-        if self.resolution_method == ResolutionMethod.MINHASH:
-            minhash1 = self._create_minhash(text1, self.minhash_permutations)
-            minhash2 = self._create_minhash(text2, self.minhash_permutations)
-            minhash_similarity = minhash1.jaccard(minhash2)
-            scores.append(minhash_similarity * 0.75)
-
-        return max(scores) if scores else 0.0
 
     def find_all_matches(self, query: str) -> list[tuple[str, float]]:
         if self.resolution_method == ResolutionMethod.MINHASH:

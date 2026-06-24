@@ -68,8 +68,9 @@ See `docs/tech-doc.md` §2 for the full layer map and dependency rule.
   `run-visualization` (render from exported graph data, no ingestion),
   `run-prompt-tuning` (profile a corpus → domain-adapted `custom_prompts` YAML).
 - **Evaluation**: `langchain` + `ragas` (text similarity) plus `graph_aware`
-  (entity/relationship coverage precision/recall/F1 from ground-truth
-  `expected_entities`/`expected_relationships`). Add an evaluator by subclassing
+  (entity/relationship coverage = recall, from ground-truth
+  `expected_entities`/`expected_relationships`; precision/F1 intentionally not
+  emitted — see the evaluator docstring). Add an evaluator by subclassing
   `BaseGraphRAGEvaluator` + an `EVALUATOR_MAPPING` entry.
 - **Visualization**: renderers register via `@register_renderer`
   (`visualization/renderers/`); the manager and the standalone CLI drive them

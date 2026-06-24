@@ -49,6 +49,7 @@ from aws_graphrag.shared import (
     get_cache_manager,
     get_logger,
 )
+from aws_graphrag.shared.cache_manager import CacheStrategy
 from aws_graphrag.shared.metrics import MetricsSink, NullMetricsSink
 from aws_graphrag.shared.utils import compute_hash
 
@@ -170,9 +171,17 @@ class DataIngestionPipeline:
         chunking_config = cache_config.chunking
 
         cache_manager_class = get_cache_manager()
+        # force_rebuild ignores existing cached stage outputs: FORCE_REFRESH makes
+        # the cache treat every entry as a miss so stages actually re-execute.
+        cache_strategy = (
+            CacheStrategy.FORCE_REFRESH
+            if self.pipeline_config.force_rebuild
+            else CacheStrategy.CONTENT_HASH
+        )
         self.cache_manager = cache_manager_class(
             config=self.config,
             cache_directory=self.pipeline_config.local_directory,
+            strategy=cache_strategy,
             ttl_seconds=cache_config.ttl_seconds,
             chunk_size=chunking_config.chunk_size,
             max_file_size_mb=chunking_config.max_file_size_mb,
@@ -286,9 +295,16 @@ class DataIngestionPipeline:
             if self.pipeline_config.s3_sync_enabled:
                 self._sync_cache_with_s3(resolved_pipeline_id, "download")
 
-            if resolved_pipeline_id and self.state_manager.pipeline_exists(
+            # force_rebuild must ignore ALL existing cache: skip the resume path
+            # entirely so the run re-executes from the beginning even when a
+            # prior metadata file exists (FORCE_REFRESH alone only bypasses
+            # per-stage cache reads, not the resume decision).
+            can_resume = (
                 resolved_pipeline_id
-            ):
+                and not self.pipeline_config.force_rebuild
+                and self.state_manager.pipeline_exists(resolved_pipeline_id)
+            )
+            if can_resume:
                 logger.info(
                     "Resuming existing pipeline '%s' from stage: '%s'",
                     resolved_pipeline_id,
@@ -298,6 +314,11 @@ class DataIngestionPipeline:
                     resolved_pipeline_id, resolved_resume_stage
                 )
             else:
+                if self.pipeline_config.force_rebuild:
+                    logger.info(
+                        "Force rebuild: ignoring any existing cache for '%s'",
+                        resolved_pipeline_id,
+                    )
                 logger.info("Starting new pipeline run: '%s'", resolved_pipeline_id)
                 context, start_stage_name = self._prepare_new_run(
                     source_path, resolved_pipeline_id, resolved_resume_stage
@@ -812,26 +833,29 @@ class DataIngestionPipeline:
         logger.info("=" * 60)
         logger.info(summary)
 
-    def repair_pipeline_metadata(self, context: PipelineContext) -> bool:
-        logger.info(
-            "Attempting to repair pipeline metadata for: %s", context.pipeline_id
-        )
+    def repair_pipeline_metadata(self, pipeline_id: str) -> bool:
+        """Repair the on-disk metadata for ``pipeline_id``.
+
+        Loads the existing metadata, reconstructs a :class:`PipelineContext`, and
+        re-persists it (which re-merges stage results into canonical order). Takes
+        a pipeline_id — symmetric with :meth:`verify_pipeline_metadata` — so the
+        CLI does not have to hand-build a context.
+        """
+        logger.info("Attempting to repair pipeline metadata for: %s", pipeline_id)
 
         try:
+            metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
+            context = self.state_manager.create_context_from_metadata(metadata)
             result = self.state_manager.repair_pipeline_metadata(context)
             if result:
-                logger.info(
-                    "Pipeline metadata repair successful for: %s", context.pipeline_id
-                )
+                logger.info("Pipeline metadata repair successful for: %s", pipeline_id)
             else:
-                logger.warning(
-                    "Pipeline metadata repair failed for: %s", context.pipeline_id
-                )
+                logger.warning("Pipeline metadata repair failed for: %s", pipeline_id)
             return result
         except Exception as e:
             logger.error(
                 "Error during pipeline metadata repair for %s: %s",
-                context.pipeline_id,
+                pipeline_id,
                 e,
             )
             return False

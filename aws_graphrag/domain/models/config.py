@@ -1062,6 +1062,12 @@ class GlobalSearchConfig(BaseModel):
         description="Minimum community results before map-reduce synthesis is "
         "applied; below this the results are returned directly.",
     )
+    graph_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0.0,
+        description="Timeout (seconds) for the Neptune community-graph retrieval "
+        "in global search; raise for very large graphs or slow clusters.",
+    )
 
 
 class LocalSearchConfig(BaseModel):

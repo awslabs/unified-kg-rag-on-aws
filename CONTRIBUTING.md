@@ -87,20 +87,23 @@ mypy aws_graphrag
 
 ### Testing
 - Write **unit tests** for new functionality
-- Maintain **80%+ code coverage**
+- Keep coverage at or above the current CI gate (**63%**, ratcheting toward 80%
+  per milestone — see `.gitlab-ci.yml` `--cov-fail-under`)
 - Use **pytest** for testing framework
-- Mock AWS services in unit tests using `pytest-mock`
+- Prefer the port-based in-memory fakes in `tests/fixtures/fakes/` (e.g.
+  `FakeDocStatusStore`) over ad-hoc boto3 mocking; use `moto` when an adapter
+  must be exercised against a real boto3 surface
 
-Run tests:
+Run tests (AWS-free by default):
 ```bash
-# Run all tests
-pytest
+# Run all non-AWS tests
+uv run pytest -m "not aws"
 
 # Run with coverage
-pytest --cov=aws_graphrag --cov-report=html
+uv run pytest -m "not aws" --cov=aws_graphrag --cov-report=html
 
-# Run specific test file
-pytest tests/test_specific_module.py
+# Run a specific test file
+uv run pytest tests/unit/test_chunker_logic.py
 ```
 
 ## 🔄 Contribution Process

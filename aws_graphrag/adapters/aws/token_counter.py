@@ -9,12 +9,29 @@ from aws_graphrag.shared import get_logger
 logger = get_logger(__name__)
 
 
+def estimate_token_count(text: str) -> int:
+    """Script-aware token-count estimate for the API-unavailable fallback.
+
+    A plain whitespace word count under-counts space-less scripts (CJK, Thai)
+    catastrophically — a whole Korean/Chinese sentence is ~1 "word" but many
+    tokens — which corrupts downstream token budgeting on the multilingual
+    corpora this project targets. We take the max of the whitespace word count
+    and a ~4-chars-per-token character estimate, so dense scripts are not
+    under-counted while space-delimited text is unaffected.
+    """
+    if not text:
+        return 0
+    word_count = len(text.split())
+    char_estimate = len(text) // 4
+    return max(word_count, char_estimate, 1)
+
+
 class BedrockTokenCounter:
     """Token counter using the Bedrock count_tokens API for accurate token measurement.
 
     The Bedrock ``count_tokens`` API is the single source of truth. If a call
     fails (e.g. transient error or a model that does not support the API), it
-    degrades to a whitespace word count purely to keep the pipeline running — no
+    degrades to a script-aware estimate purely to keep the pipeline running — no
     third-party tokenizer is used, so counting stays consistent with the model.
     """
 
@@ -47,11 +64,12 @@ class BedrockTokenCounter:
             return self._cached_count(text)
         except Exception as e:
             logger.debug(
-                "Bedrock count_tokens failed for model '%s': %s. Degrading to whitespace word count.",
+                "Bedrock count_tokens failed for model '%s': %s. Degrading to "
+                "script-aware estimate.",
                 self.model_id,
                 e,
             )
-            return len(text.split())
+            return estimate_token_count(text)
 
     def truncate_to_token_limit(self, text: str, max_tokens: int) -> tuple[str, int]:
         """Truncate text to fit within max_tokens using ratio-based estimation and verification.

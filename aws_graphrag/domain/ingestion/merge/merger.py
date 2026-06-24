@@ -103,10 +103,15 @@ def merge_relationships(
     delta: list[Relationship],
     entity_id_remap: dict[str, str] | None = None,
 ) -> list[Relationship]:
-    """Merge delta relationships into old ones by (source, target).
+    """Merge delta relationships into old ones by (source, target, type).
 
     ``entity_id_remap`` (from :func:`merge_entities`) is applied to delta
     relationship endpoints first so edges point at surviving entity ids.
+
+    The merge key includes the normalized relationship ``type`` so a delta edge
+    of a *different* type between the same endpoints stays a distinct edge (the
+    full-build resolver groups by (source, target, type) too — keying on
+    endpoints alone here would silently collapse them and drop the delta type).
     """
     remap = entity_id_remap or {}
 
@@ -115,14 +120,17 @@ def merge_relationships(
             rel.target_id, rel.target_id
         )
 
-    by_key: dict[tuple[str, str], Relationship] = {}
+    def _key(source_id: str, target_id: str, rel: Relationship) -> tuple[str, str, str]:
+        return source_id, target_id, (rel.type or "").strip().lower()
+
+    by_key: dict[tuple[str, str, str], Relationship] = {}
 
     for rel in old:
-        by_key[(rel.source_id, rel.target_id)] = rel.model_copy(deep=True)
+        by_key[_key(rel.source_id, rel.target_id, rel)] = rel.model_copy(deep=True)
 
     for rel in delta:
         source_id, target_id = _endpoints(rel)
-        key = (source_id, target_id)
+        key = _key(source_id, target_id, rel)
         existing = by_key.get(key)
         if existing is None:
             new_rel = rel.model_copy(deep=True)

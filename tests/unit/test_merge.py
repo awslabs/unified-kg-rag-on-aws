@@ -102,6 +102,33 @@ class TestMergeRelationships:
         # After remap, (e1,e2) collides with old -> merged into one.
         assert len(merged) == 1
 
+    def test_distinct_types_between_same_endpoints_kept_separate(self) -> None:
+        # A delta edge of a DIFFERENT type between the same endpoints must stay
+        # a distinct edge (merge key includes normalized type) — not collapse
+        # into the old edge and silently drop the delta type.
+        old = [Relationship(id="r1", source_id="e1", target_id="e2", type="WORKS_AT")]
+        delta = [Relationship(id="r2", source_id="e1", target_id="e2", type="FOUNDED")]
+        merged = merge_relationships(old, delta)
+        assert len(merged) == 2
+        assert {r.type for r in merged} == {"WORKS_AT", "FOUNDED"}
+
+    def test_same_type_case_insensitive_merges(self) -> None:
+        # Type matching is normalized (strip + lowercase): "WORKS_AT" and
+        # " works_at " are the same edge and merge.
+        old = [
+            Relationship(
+                id="r1", source_id="e1", target_id="e2", type="WORKS_AT", weight=1.0
+            )
+        ]
+        delta = [
+            Relationship(
+                id="r2", source_id="e1", target_id="e2", type=" works_at ", weight=2.0
+            )
+        ]
+        merged = merge_relationships(old, delta)
+        assert len(merged) == 1
+        assert merged[0].weight == 3.0
+
 
 class TestMergeCommunities:
     def test_appends_and_disambiguates_colliding_ids(self) -> None:

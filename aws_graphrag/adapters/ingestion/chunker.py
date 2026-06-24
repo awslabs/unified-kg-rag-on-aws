@@ -21,7 +21,10 @@ from aws_graphrag.adapters.aws.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
-from aws_graphrag.adapters.aws.token_counter import BedrockTokenCounter
+from aws_graphrag.adapters.aws.token_counter import (
+    BedrockTokenCounter,
+    estimate_token_count,
+)
 from aws_graphrag.domain.models import ChunkingStrategy, Config, Document, TextUnit
 from aws_graphrag.domain.prompts import TextChunkingPrompt
 from aws_graphrag.shared import DataProcessingError, get_logger
@@ -306,12 +309,10 @@ class LineBasedBoundaryProcessor:
 class ChunkProcessor:
     def __init__(
         self,
-        chunk_overlap: int,
         min_chunk_size: int,
         max_chunk_size: int,
         fallback_splitter: RecursiveCharacterTextSplitter | None = None,
     ):
-        self.chunk_overlap = chunk_overlap
         self.min_chunk_size = min_chunk_size
         self.max_chunk_size = max_chunk_size
         self.fallback_splitter = fallback_splitter
@@ -379,7 +380,6 @@ class BaseChunker(ABC):
             self.chunking_config.fallback_chunk_size, self.chunking_config.chunk_overlap
         )
         self.chunk_processor = ChunkProcessor(
-            self.chunking_config.chunk_overlap,
             self.chunking_config.min_chunk_size,
             self.chunking_config.max_chunk_size,
             fallback_splitter=self.fallback_splitter,
@@ -537,7 +537,7 @@ class BaseChunker(ABC):
         try:
             return self._token_counter.count_tokens(text)
         except Exception:
-            return len(text.split())
+            return estimate_token_count(text)
 
     def _extract_document_content(self, doc: Document) -> str | None:
         try:

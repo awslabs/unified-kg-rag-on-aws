@@ -213,7 +213,11 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         if not seed_ids:
             return []
 
-        hops = max(self._max_hops, self.DEFAULT_MAX_HOPS)
+        # Use the configured max_hops directly (it is already validated/bounded
+        # by NeptuneIndexingConfig). DEFAULT_MAX_HOPS is only a fallback for an
+        # unset value — clamping UP to it silently ignored a user lowering hops
+        # to bound entity-expansion cost.
+        hops = self._max_hops or self.DEFAULT_MAX_HOPS
         entity_label = self._get_name(
             self._neptune_config.entity_label_prefix.capitalize(), query.suffix
         )
@@ -246,7 +250,10 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         if not seed_ids:
             return []
 
-        hops = min(self._max_hops, self.DEFAULT_MAX_HOPS)
+        # Mirror entity traversal: honor the configured max_hops (validated by
+        # NeptuneIndexingConfig) rather than capping at DEFAULT_MAX_HOPS, so the
+        # config is authoritative in both directions.
+        hops = self._max_hops or self.DEFAULT_MAX_HOPS
         community_label = self._get_name(
             self._neptune_config.community_label_prefix.capitalize(), query.suffix
         )

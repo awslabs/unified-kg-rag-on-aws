@@ -730,9 +730,13 @@ class GraphGleaner(BaseProcessor):
                         else:
                             existing_rel.description = rel.description
 
-                    existing_rel.weight = (existing_rel.weight or 1.0) + (
-                        rel.weight or 1.0
+                    # Use `is not None` (not `or`): a legitimate weight of 0.0
+                    # must not be silently promoted to the 1.0 default.
+                    existing_w = (
+                        existing_rel.weight if existing_rel.weight is not None else 1.0
                     )
+                    delta_w = rel.weight if rel.weight is not None else 1.0
+                    existing_rel.weight = existing_w + delta_w
             else:
                 # Endpoint merged away / not resolved, or a self-loop after
                 # remap: the relationship cannot be kept. Count it so dropped

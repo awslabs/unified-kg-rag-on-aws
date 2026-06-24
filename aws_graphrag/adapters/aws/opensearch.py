@@ -196,8 +196,15 @@ class OpenSearchClient:
 
         success_count, errors = 0, []
         try:
+            # raise_on_error=False so a single rejected document is collected
+            # into `errors` and reported, rather than aborting the whole batch
+            # mid-stream (matches bulk_delete). Without it, one bad doc raises
+            # BulkIndexError and silently kills every other doc in the batch.
             for ok, result in streaming_bulk(
-                client=self.client, actions=generate_actions(), chunk_size=100
+                client=self.client,
+                actions=generate_actions(),
+                chunk_size=100,
+                raise_on_error=False,
             ):
                 if ok:
                     success_count += 1

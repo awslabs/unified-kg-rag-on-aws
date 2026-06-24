@@ -51,9 +51,9 @@ aws:
     create_table_if_missing: true
     billing_mode: "PAY_PER_REQUEST"
 
-# Global Output Fixing Configuration
+# Global Output Fixing Configuration (auto-repair malformed model responses)
 fixing:
-  enabled: false
+  enabled: true
   fixing_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
 
 # Data Processing Configuration
@@ -67,9 +67,9 @@ processing:
   batch_size: 10
   max_retries: 3
   ignore_errors: false
-  deduplicate: true
+  deduplicate: false
   resolution_method: "minhash"
-  similarity_threshold: 0.8
+  similarity_threshold: 0.6
 
   # Document Parsing
   document_parsing:
@@ -285,10 +285,11 @@ indexing:
     max_retries: 3
     retry_delay_seconds: 2
     property_max_length: 1000
-    # Graph-traversal tuning for retrieval (neighbor expansion).
-    max_hops: 2
+    # Graph-traversal tuning for retrieval (neighbor expansion). max_hops is
+    # honored directly by the retriever (NeptuneIndexingConfig default 3).
+    max_hops: 3
     max_results_per_hop: 50
-    min_entity_importance: 0.0
+    min_entity_importance: 0.5
 
 # Search Configuration
 search:
@@ -381,7 +382,7 @@ memory:
 
 # Cache Configuration
 cache:
-  ttl_seconds: null
+  ttl_seconds: 86400  # cache entry TTL in seconds; null = never expire
   chunking:
     enabled: true
     chunk_size: 1000
@@ -414,7 +415,7 @@ evaluation:
     - context_precision
     - context_recall
     - faithfulness
-  max_context_tokens: 200000
+  max_context_tokens: 8192
   save_detailed_results: true
   save_summary_only: false
 

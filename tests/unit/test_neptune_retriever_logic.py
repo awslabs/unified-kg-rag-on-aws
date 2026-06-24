@@ -331,3 +331,42 @@ async def test_get_seed_nodes_no_label_prefixes_returns_empty(
     entities, communities = await retriever._get_seed_nodes(g, query)
     assert entities == []
     assert communities == []
+
+
+@pytest.mark.parametrize("configured_hops", [1, 2, 5])
+async def test_entity_traversal_honors_configured_max_hops(
+    retriever, mocker, configured_hops
+) -> None:
+    # Regression: hops was max(self._max_hops, DEFAULT_MAX_HOPS=3), so a
+    # configured max_hops < 3 was silently raised to 3 (and the config was
+    # ignored). The configured value must be used directly.
+    object.__setattr__(retriever, "_max_hops", configured_hops)
+
+    captured: dict[str, int] = {}
+
+    class FluentTraversal:
+        """Records every step; .times() captures its arg."""
+
+        def times(self, n, *a, **k):
+            captured["times"] = n
+            return self
+
+        def __getattr__(self, name):
+            return lambda *a, **k: self
+
+    g = mocker.MagicMock()
+    g.V.return_value = FluentTraversal()
+
+    # Patch via object.__setattr__ (not mocker.patch.object): the retriever is a
+    # __new__-constructed pydantic model whose attribute deletion at teardown
+    # raises, so set bound replacements directly.
+    async def _fake_execute(_traversal):
+        return []
+
+    object.__setattr__(retriever, "_apply_filters", lambda t, f: t)
+    object.__setattr__(retriever, "_with_projection", lambda t: t)
+    object.__setattr__(retriever, "_execute_traversal", _fake_execute)
+
+    await retriever._traverse_from_entities(g, [{"id": "e1"}], SearchQuery(query="x"))
+
+    assert captured.get("times") == configured_hops

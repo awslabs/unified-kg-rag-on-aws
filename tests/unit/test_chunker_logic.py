@@ -75,9 +75,7 @@ class TestChunkQualityValidator:
 # --------------------------------------------------------------------------- #
 class TestMergeSmallChunks:
     def _proc(self, min_size=10, max_size=100) -> ChunkProcessor:
-        return ChunkProcessor(
-            chunk_overlap=0, min_chunk_size=min_size, max_chunk_size=max_size
-        )
+        return ChunkProcessor(min_chunk_size=min_size, max_chunk_size=max_size)
 
     def test_empty_returns_empty(self) -> None:
         assert self._proc().merge_small_chunks([]) == []

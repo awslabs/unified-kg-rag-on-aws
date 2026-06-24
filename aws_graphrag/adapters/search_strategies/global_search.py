@@ -256,7 +256,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             ]
 
             return await asyncio.wait_for(
-                self.graph_retriever.aretrieve(search_query), timeout=30.0
+                self.graph_retriever.aretrieve(search_query),
+                timeout=self.global_search_config.graph_timeout_seconds,
             )
         except Exception as e:
             logger.error("Neptune community retrieval failed: %s", e)
