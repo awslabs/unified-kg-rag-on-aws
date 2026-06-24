@@ -198,9 +198,7 @@ class GraphIndexer(BaseIndexer):
         return []
 
     @abstractmethod
-    def delete_by_id(
-        self, ids: list[str], suffix: str | None = None
-    ) -> IndexingStats:
+    def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
         """Delete vertices/edges by id (for removed/changed documents).
 
         ``suffix`` scopes the deletion to one tenant/version's labels so a

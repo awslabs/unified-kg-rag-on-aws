@@ -184,9 +184,7 @@ def test_run_indexing_phase_pool_size_capped_at_eight(manager, mocker) -> None:
     mgr, _g, _v, IndexingTask = manager
     captured: dict[str, int] = {}
 
-    real_pool = (
-        "aws_graphrag.application.storage.indexing_manager.ThreadPoolExecutor"
-    )
+    real_pool = "aws_graphrag.application.storage.indexing_manager.ThreadPoolExecutor"
     RealExecutor = mocker.patch(real_pool, wraps=None)
 
     from concurrent.futures import ThreadPoolExecutor as _Real
@@ -199,8 +197,7 @@ def test_run_indexing_phase_pool_size_capped_at_eight(manager, mocker) -> None:
 
     # 10 valid tasks -> pool capped at 8.
     tasks = [
-        IndexingTask(lambda items: IndexingStats(), [["a"]], f"k{i}")
-        for i in range(10)
+        IndexingTask(lambda items: IndexingStats(), [["a"]], f"k{i}") for i in range(10)
     ]
     mgr._run_indexing_phase(tasks)
     assert captured["max_workers"] == 8
@@ -221,8 +218,7 @@ def test_run_indexing_phase_pool_size_matches_task_count_when_small(
     )
 
     tasks = [
-        IndexingTask(lambda items: IndexingStats(), [["a"]], f"k{i}")
-        for i in range(3)
+        IndexingTask(lambda items: IndexingStats(), [["a"]], f"k{i}") for i in range(3)
     ]
     mgr._run_indexing_phase(tasks)
     assert captured["max_workers"] == 3

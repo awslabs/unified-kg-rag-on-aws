@@ -100,9 +100,7 @@ class TestChunking:
         assert entry.metadata["is_chunked"] is True
         assert entry.metadata["chunk_count"] == 4
 
-    def test_chunked_round_trip_preserves_order_and_items(
-        self, tmp_path: Path
-    ) -> None:
+    def test_chunked_round_trip_preserves_order_and_items(self, tmp_path: Path) -> None:
         mgr = _manager(tmp_path, chunk_size=3)
         data = list(range(10))
         mgr.save_stage_result(data, "big", STAGE, PIPELINE)
@@ -136,9 +134,7 @@ class TestChunking:
     def test_chunked_filter_applied_on_load(self, tmp_path: Path) -> None:
         mgr = _manager(tmp_path, chunk_size=2)
         mgr.save_stage_result(list(range(10)), "c", STAGE, PIPELINE)
-        loaded = mgr.load_stage_result(
-            "c", PIPELINE, chunk_filter=lambda x: x % 2 == 0
-        )
+        loaded = mgr.load_stage_result("c", PIPELINE, chunk_filter=lambda x: x % 2 == 0)
         assert loaded == [0, 2, 4, 6, 8]
 
     def test_estimated_size_threshold_triggers_chunking(self, tmp_path: Path) -> None:

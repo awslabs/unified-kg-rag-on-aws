@@ -358,6 +358,22 @@ class GraphExtractionConfig(BaseModel):
         description="Enable confidence score extraction from LLM. "
         "When disabled, all entities default to confidence 1.0.",
     )
+    entity_types: list[str] = Field(
+        default_factory=lambda: [
+            "PERSON: Names, individuals, roles, titles",
+            "ORGANIZATION: Companies, institutions, departments, groups",
+            "LOCATION: Places, addresses, geographic areas, facilities",
+            "CONCEPT: Ideas, theories, methodologies, frameworks, principles",
+            "OBJECT: Documents, tools, products, systems, technologies",
+            "EVENT: Meetings, projects, activities, processes, incidents",
+            "TEMPORAL: Dates, time periods, schedules, deadlines",
+        ],
+        description="Domain entity categories the extractor may use, injected "
+        "into the extraction prompt's {entity_types} slot. Override this to adapt "
+        "to a domain (e.g. ['GENE: ...', 'DISEASE: ...']) WITHOUT rewriting the "
+        "whole prompt. Each item is 'LABEL: short description' (description "
+        "optional). Empty list lets the model choose any relevant types.",
+    )
 
 
 class GleaningConfig(BaseModel):

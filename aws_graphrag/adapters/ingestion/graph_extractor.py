@@ -149,12 +149,34 @@ class GraphExtractor(BaseProcessor):
 
         return all_entities, all_relationships, self.stats
 
+    @staticmethod
+    def _format_entity_types(entity_types: list[str]) -> str:
+        """Render config entity types into the prompt's category block.
+
+        Each item is rendered as ``- **LABEL**: description`` (the description
+        after the first ':' is optional). An empty list lets the model choose
+        any relevant types — the prompt slot then says so explicitly.
+        """
+        if not entity_types:
+            return "Use any entity types relevant to the document's domain."
+        lines = []
+        for item in entity_types:
+            label, sep, desc = item.partition(":")
+            label = label.strip()
+            if not label:
+                continue
+            lines.append(f"- **{label}**:{desc.rstrip()}" if sep else f"- **{label}**")
+        return "\n".join(lines)
+
     def _prepare_extraction_inputs(
         self, text_units: list[TextUnit]
     ) -> list[dict[str, str]]:
         inputs = []
         graph_extraction_config = self.extraction_config
         failed_preparations = 0
+        entity_types_block = self._format_entity_types(
+            graph_extraction_config.entity_types
+        )
 
         for text_unit in text_units:
             try:
@@ -167,6 +189,7 @@ class GraphExtractor(BaseProcessor):
                         "max_relationships_per_chunk": str(
                             graph_extraction_config.max_relationships_per_chunk
                         ),
+                        "entity_types": entity_types_block,
                     }
                 )
             except Exception as e:

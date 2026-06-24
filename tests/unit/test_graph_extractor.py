@@ -96,12 +96,12 @@ class TestParseConfidence:
         assert BaseProcessor._parse_confidence({"confidence": 15}) == 1.0
 
     def test_invalid_value_uses_default(self) -> None:
-        assert BaseProcessor._parse_confidence({"confidence": "abc"}, default=0.5) == 0.5
+        assert (
+            BaseProcessor._parse_confidence({"confidence": "abc"}, default=0.5) == 0.5
+        )
 
     def test_parse_entity_data_reads_confidence(self, processor, text_unit) -> None:
-        ent = processor.parse_entity_data(
-            {"name": "Acme", "confidence": 9}, text_unit
-        )
+        ent = processor.parse_entity_data({"name": "Acme", "confidence": 9}, text_unit)
         assert ent.confidence == 0.9
 
 

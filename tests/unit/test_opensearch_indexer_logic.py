@@ -134,9 +134,7 @@ def test_index_community_reports_prepare_doc_via_closure(indexer, mocker) -> Non
         captured["prepare"] = kwargs["prepare_doc_func"]
         return IndexingStats()
 
-    mocker.patch.object(
-        indexer, "_index_item_type", side_effect=fake_index_item_type
-    )
+    mocker.patch.object(indexer, "_index_item_type", side_effect=fake_index_item_type)
     report = CommunityReport(
         id="cr1",
         community_id="c1",

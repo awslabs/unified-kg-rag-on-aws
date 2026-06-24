@@ -301,9 +301,7 @@ def test_determine_section_type_per_index(retriever, config) -> None:
         == SectionType.RELATIONSHIP
     )
     assert (
-        retriever._determine_section_type(
-            f"{o.community_reports_index_prefix}-default"
-        )
+        retriever._determine_section_type(f"{o.community_reports_index_prefix}-default")
         == SectionType.COMMUNITY
     )
     assert retriever._determine_section_type("unknown-index") == SectionType.GENERAL

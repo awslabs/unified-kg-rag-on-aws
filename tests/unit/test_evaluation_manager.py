@@ -133,9 +133,7 @@ class TestLoadData:
 
     def test_no_ground_truth_signal_skips_gt_but_keeps_query(self, tmp_path) -> None:
         path = tmp_path / "data.json"
-        path.write_text(
-            json.dumps([{"question": "Q only"}]), encoding="utf-8"
-        )
+        path.write_text(json.dumps([{"question": "Q only"}]), encoding="utf-8")
         queries, gts = EvaluationManager.load_data(path)
         assert len(queries) == 1
         assert gts == []
@@ -159,14 +157,10 @@ class TestLoadData:
     def test_item_metadata_overrides_base(self, tmp_path) -> None:
         path = tmp_path / "data.json"
         path.write_text(
-            json.dumps(
-                [{"question": "Q?", "answer": "A", "metadata": {"k": "item"}}]
-            ),
+            json.dumps([{"question": "Q?", "answer": "A", "metadata": {"k": "item"}}]),
             encoding="utf-8",
         )
-        queries, _ = EvaluationManager.load_data(
-            path, base_metadata={"k": "base"}
-        )
+        queries, _ = EvaluationManager.load_data(path, base_metadata={"k": "base"})
         assert queries[0].metadata["k"] == "item"
 
 
@@ -191,9 +185,7 @@ class TestInitialization:
     def test_unknown_evaluator_type_skipped(self, config: Config, mocker) -> None:
         # An evaluator type absent from EVALUATOR_MAPPING is skipped, not fatal.
         config.evaluation.enabled_evaluators = [EvaluatorType.GRAPH_AWARE]
-        mocker.patch.dict(
-            EvaluationManager.EVALUATOR_MAPPING, {}, clear=True
-        )
+        mocker.patch.dict(EvaluationManager.EVALUATOR_MAPPING, {}, clear=True)
         manager = EvaluationManager(config, rag_chain=object())
         assert manager.evaluators == {}
 
@@ -243,9 +235,7 @@ class TestEvaluateResults:
         result.metadata["expected_entities"].append("Mutant")
         assert gt.expected_entities == ["Alice", "Acme"]
 
-    async def test_no_matching_gt_leaves_metadata_clean(
-        self, config: Config
-    ) -> None:
+    async def test_no_matching_gt_leaves_metadata_clean(self, config: Config) -> None:
         manager = _graph_aware_manager(config)
         query = EvaluationQuery(query_id="q1", question="?")
         result = EvaluationResult(
@@ -257,9 +247,7 @@ class TestEvaluateResults:
         assert result.ground_truth == ""  # no GT for this id
         assert reports  # still produced a report
 
-    async def test_evaluator_failure_isolated(
-        self, config: Config, mocker
-    ) -> None:
+    async def test_evaluator_failure_isolated(self, config: Config, mocker) -> None:
         manager = _graph_aware_manager(config)
 
         async def _boom(*a, **k):
@@ -279,13 +267,9 @@ class TestEvaluateResults:
 class TestExtractFromResult:
     def test_dict_answer_extracted(self, config: Config) -> None:
         manager = _graph_aware_manager(config)
-        assert (
-            manager._extract_from_result({"answer": "hi"}, "answer", "") == "hi"
-        )
+        assert manager._extract_from_result({"answer": "hi"}, "answer", "") == "hi"
 
-    def test_non_dict_non_ragoutput_answer_stringified(
-        self, config: Config
-    ) -> None:
+    def test_non_dict_non_ragoutput_answer_stringified(self, config: Config) -> None:
         manager = _graph_aware_manager(config)
         # For "answer" key, an unknown raw type is stringified.
         assert manager._extract_from_result(42, "answer") == "42"
@@ -305,11 +289,7 @@ class TestLeanContextStrings:
         assert "description" in out[0] and "name" in out[0]
         assert "irrelevant" not in out[0]
 
-    def test_minimal_info_fallback_when_no_desired_fields(
-        self, config: Config
-    ) -> None:
+    def test_minimal_info_fallback_when_no_desired_fields(self, config: Config) -> None:
         manager = _graph_aware_manager(config)
-        out = manager.create_lean_context_strings(
-            [{"source": "s1", "score": 0.5}]
-        )
+        out = manager.create_lean_context_strings([{"source": "s1", "score": 0.5}])
         assert "s1" in out[0]

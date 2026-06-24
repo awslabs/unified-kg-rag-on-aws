@@ -494,9 +494,7 @@ class NeptuneIndexer(GraphIndexer):
             entity_label=self.neptune_config.entity_label_prefix.capitalize(),
         )
 
-    def delete_by_id(
-        self, ids: list[str], suffix: str | None = None
-    ) -> IndexingStats:
+    def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
         """Delete vertices and edges by their ``id`` property (delta removals).
 
         When ``suffix`` is given, the drop is scoped to that suffix's entity and

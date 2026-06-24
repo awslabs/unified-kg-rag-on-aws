@@ -144,8 +144,7 @@ class TestInitialQuality:
         # blended = (0.5 + 0.5) / 2 = 0.5.
         ents = [Entity(id=f"e{i}", name=f"n{i}") for i in range(500)]
         rels = [
-            Relationship(id=f"r{i}", source_id="e0", target_id="e1")
-            for i in range(500)
+            Relationship(id=f"r{i}", source_id="e0", target_id="e1") for i in range(500)
         ]
         assert gleaner._calculate_initial_quality(ents, rels) == 0.5
 
@@ -228,9 +227,7 @@ class TestFormatEntitiesWithLimit:
     def test_prioritizes_described_and_high_support_entities(self) -> None:
         # An entity with a description and more text_unit_ids should be picked
         # over a bare one when truncating.
-        rich = Entity(
-            id="e1", name="Rich", description="d", text_unit_ids=["t1", "t2"]
-        )
+        rich = Entity(id="e1", name="Rich", description="d", text_unit_ids=["t1", "t2"])
         bare = Entity(id="e2", name="Bare")
         out = format_entities_with_limit_task([bare, rich], max_entities=1)
         assert out.splitlines()[0] == "Rich"

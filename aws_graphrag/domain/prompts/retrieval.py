@@ -5,21 +5,13 @@ from typing import TYPE_CHECKING
 from .base import BasePrompt
 
 if TYPE_CHECKING:
-    from aws_graphrag.domain.models.config import CustomPromptConfig
+    pass
 
 
 @dataclass(frozen=True)
 class AnswerGenerationPrompt(BasePrompt):
+    prompt_key = "answer_generation"
     input_variables = ["query", "context"]
-
-    @classmethod
-    def _get_custom_prompts(
-        cls, custom_prompts: "CustomPromptConfig"
-    ) -> tuple[str | None, str | None]:
-        return (
-            custom_prompts.answer_generation_system,
-            custom_prompts.answer_generation_human,
-        )
 
     system_prompt_template = """You are an expert AI assistant specialized in synthesizing information from knowledge
 graphs to provide accurate, comprehensive answers. Your goal is to deliver precise, well-structured responses using only
@@ -149,16 +141,8 @@ Relevance Score (1-10):"""
 
 @dataclass(frozen=True)
 class ContextBuildingPrompt(BasePrompt):
+    prompt_key = "context_building"
     input_variables = ["query", "search_results", "conversation_history"]
-
-    @classmethod
-    def _get_custom_prompts(
-        cls, custom_prompts: "CustomPromptConfig"
-    ) -> tuple[str | None, str | None]:
-        return (
-            custom_prompts.context_building_system,
-            custom_prompts.context_building_human,
-        )
 
     system_prompt_template = """You are an expert context synthesizer for knowledge graph retrieval systems. Transform
 diverse information sources into a unified, comprehensive context that enables precise and complete query responses.
@@ -294,16 +278,8 @@ No explanatory text, formatting, or additional commentary."""
 
 @dataclass(frozen=True)
 class EntityExtractionPrompt(BasePrompt):
+    prompt_key = "entity_extraction"
     input_variables = ["query", "target_language"]
-
-    @classmethod
-    def _get_custom_prompts(
-        cls, custom_prompts: "CustomPromptConfig"
-    ) -> tuple[str | None, str | None]:
-        return (
-            custom_prompts.entity_extraction_system,
-            custom_prompts.entity_extraction_human,
-        )
 
     system_prompt_template = """You are a specialized entity extraction expert for graph-based retrieval. Your task
 is to identify and extract key entities from the user's query only.
@@ -359,6 +335,7 @@ Extract key entities for knowledge graph search (comma-separated list only):"""
 
 @dataclass(frozen=True)
 class KeywordsExtractionPrompt(BasePrompt):
+    prompt_key = "keywords_extraction"
     """Dual-level keyword extractor for LightRAG-style retrieval.
 
     Produces high-level keywords (themes/intent -> relationship retrieval) and
@@ -369,15 +346,6 @@ class KeywordsExtractionPrompt(BasePrompt):
 
     input_variables = ["query", "target_language"]
     output_variables = ["high_level_keywords", "low_level_keywords"]
-
-    @classmethod
-    def _get_custom_prompts(
-        cls, custom_prompts: "CustomPromptConfig"
-    ) -> tuple[str | None, str | None]:
-        return (
-            custom_prompts.keywords_extraction_system,
-            custom_prompts.keywords_extraction_human,
-        )
 
     system_prompt_template = """You are an expert keyword extractor for a Retrieval-Augmented
 Generation system. Identify two distinct types of keywords in the user's query for effective
@@ -412,16 +380,8 @@ Extract the dual-level keywords as a single JSON object (in {target_language}):"
 
 @dataclass(frozen=True)
 class KeywordExpansionPrompt(BasePrompt):
+    prompt_key = "keyword_expansion"
     input_variables = ["query", "entities", "topics", "max_keywords"]
-
-    @classmethod
-    def _get_custom_prompts(
-        cls, custom_prompts: "CustomPromptConfig"
-    ) -> tuple[str | None, str | None]:
-        return (
-            custom_prompts.keyword_expansion_system,
-            custom_prompts.keyword_expansion_human,
-        )
 
     system_prompt_template = """You are a strategic keyword expansion specialist for comprehensive knowledge graph
 search. Generate targeted keyword expansions that will discover hidden connections, ensure complete topic coverage, and
@@ -532,16 +492,8 @@ Create a comprehensive, well-structured synthesis that directly and completely a
 
 @dataclass(frozen=True)
 class QueryRefinementPrompt(BasePrompt):
+    prompt_key = "query_refinement"
     input_variables = ["original_query", "results_summary", "iteration"]
-
-    @classmethod
-    def _get_custom_prompts(
-        cls, custom_prompts: "CustomPromptConfig"
-    ) -> tuple[str | None, str | None]:
-        return (
-            custom_prompts.query_refinement_system,
-            custom_prompts.query_refinement_human,
-        )
 
     system_prompt_template = """You are an expert query refinement specialist for iterative knowledge graph exploration.
 Your task is to analyze current search results and create an improved query that will discover new, valuable information
@@ -585,16 +537,8 @@ Return only the refined query, nothing else:"""
 
 @dataclass(frozen=True)
 class StrategySelectionPrompt(BasePrompt):
+    prompt_key = "strategy_selection"
     input_variables = ["query"]
-
-    @classmethod
-    def _get_custom_prompts(
-        cls, custom_prompts: "CustomPromptConfig"
-    ) -> tuple[str | None, str | None]:
-        return (
-            custom_prompts.strategy_selection_system,
-            custom_prompts.strategy_selection_human,
-        )
 
     system_prompt_template = """You are an expert search strategy selector for advanced knowledge graph retrieval
 systems. Analyze user queries comprehensively and select the optimal search strategy based on query characteristics,

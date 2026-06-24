@@ -98,9 +98,7 @@ def test_index_entities_passes_full_label_to_factory(indexer, mocker) -> None:
     captured: dict = {}
 
     def fake_index_generic(items, name, prefix, clear, factory, **kw):
-        captured.update(
-            {"name": name, "prefix": prefix, "clear": clear, "kw": kw}
-        )
+        captured.update({"name": name, "prefix": prefix, "clear": clear, "kw": kw})
 
     indexer._index_generic = fake_index_generic  # type: ignore[assignment]
     indexer.index_entities([Entity(id="e1", name="Alice")])
@@ -121,12 +119,11 @@ def test_index_entities_writes_list_props_multi_valued(indexer) -> None:
         captured_factory = factory("Entity")
 
     indexer._index_generic = fake_index_generic  # type: ignore[assignment]
-    indexer.index_entities(
-        [Entity(id="e1", name="Alice", text_unit_ids=["t1", "t2"])]
+    indexer.index_entities([Entity(id="e1", name="Alice", text_unit_ids=["t1", "t2"])])
+    captured_factory(
+        RecordingTraversal(calls),
+        [Entity(id="e1", name="Alice", text_unit_ids=["t1", "t2"])],
     )
-    captured_factory(RecordingTraversal(calls), [
-        Entity(id="e1", name="Alice", text_unit_ids=["t1", "t2"])
-    ])
     # A 2-element list property fans out to two property() calls (multi-valued),
     # on top of the scalar properties (id, name, and any non-None defaults).
     # So the total exceeds the count of non-list properties by the list length.
@@ -228,9 +225,7 @@ def test_index_communities_empty_returns_empty_stats(indexer) -> None:
     assert stats.successful_items == 0
 
 
-def test_index_communities_skips_member_edges_when_no_entities(
-    indexer, mocker
-) -> None:
+def test_index_communities_skips_member_edges_when_no_entities(indexer, mocker) -> None:
     # A community with no entity_ids must not attempt any edge creation.
     mocker.patch.object(indexer, "_clear_existing_data_by_label")
 

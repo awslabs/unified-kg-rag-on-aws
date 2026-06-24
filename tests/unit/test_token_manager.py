@@ -31,9 +31,7 @@ def _make_manager(mocker, max_context_tokens: int = 200000) -> TokenManager:
 
     fake_counter = mocker.Mock()
     fake_counter.count_tokens.side_effect = lambda text: len(text.split())
-    mocker.patch.object(
-        tm_module, "BedrockTokenCounter", return_value=fake_counter
-    )
+    mocker.patch.object(tm_module, "BedrockTokenCounter", return_value=fake_counter)
 
     config = Config()
     config.search.token_manager.max_context_tokens = max_context_tokens
@@ -61,9 +59,7 @@ class TestBudgeting:
         # query alone (3 tokens) + buffer (512) exceeds a tiny target -> short circuit.
         mgr = _make_manager(mocker, max_context_tokens=1024)
         results = [_r("a b c d e", 0.9, "text", "s1")]
-        out = mgr.optimize_context(
-            results, query="one two three", max_tokens=100
-        )
+        out = mgr.optimize_context(results, query="one two three", max_tokens=100)
         assert out.sections == []
         assert out.sections_included == 0
         assert out.sections_excluded == 1
@@ -152,9 +148,7 @@ class TestQualityScore:
         assert out.sections_included == 2
         assert out.quality_score == pytest.approx(1.0)
 
-    def test_partial_selection_blends_coverage_and_diversity(
-        self, mocker
-    ) -> None:
+    def test_partial_selection_blends_coverage_and_diversity(self, mocker) -> None:
         # Two TEXT sections, only one fits. priority_coverage = 0.5 of total
         # priority; type_diversity = 1/1 (one type) = 1.0.
         # score = 0.5*0.7 + 1.0*0.3 = 0.65.
@@ -179,7 +173,9 @@ class TestBuildContextString:
             sections_excluded=0,
             quality_score=0.0,
         )
-        assert TokenManager.build_context_string(empty) == "No relevant information found."
+        assert (
+            TokenManager.build_context_string(empty) == "No relevant information found."
+        )
 
     def test_string_contains_headers_and_separator(self, mocker) -> None:
         mgr = _make_manager(mocker)

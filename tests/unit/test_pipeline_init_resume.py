@@ -174,9 +174,7 @@ def test_resolve_pipeline_id_prefers_explicit_argument() -> None:
 def test_resolve_pipeline_id_falls_back_to_config() -> None:
     pipe = object.__new__(DataIngestionPipeline)
     pipe.pipeline_config = SimpleNamespace(pipeline_id="config-id")
-    resolved = DataIngestionPipeline._resolve_pipeline_id(
-        pipe, Path("/tmp/src"), None
-    )
+    resolved = DataIngestionPipeline._resolve_pipeline_id(pipe, Path("/tmp/src"), None)
     assert resolved == "config-id"
 
 
@@ -240,11 +238,13 @@ def test_execute_pipeline_stages_skips_completed_and_runs_rest(mocker) -> None:
     mocker.patch.object(pipe, "_should_stop_pipeline", return_value=False)
 
     ctx = _ctx_with_results(
-        [PipelineStageResult(
-            stage_name="b",
-            status=PipelineStageStatus.COMPLETED,
-            start_time=datetime(2026, 1, 1),
-        )]
+        [
+            PipelineStageResult(
+                stage_name="b",
+                status=PipelineStageStatus.COMPLETED,
+                start_time=datetime(2026, 1, 1),
+            )
+        ]
     )
 
     DataIngestionPipeline._execute_pipeline_stages(pipe, ctx, start_stage_name=None)

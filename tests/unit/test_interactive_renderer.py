@@ -24,8 +24,9 @@ def _graph() -> nx.Graph:
     g.add_node("e1", name="Alice", community_id="c0", node_type="entity")
     g.add_node("e2", name="Acme", community_id="c0", node_type="entity")
     g.add_node("e3", name="Seattle", community_id="c1", node_type="entity")
-    g.add_edge("e1", "e2", weight=2.0, type="works_at", source_name="Alice",
-               target_name="Acme")
+    g.add_edge(
+        "e1", "e2", weight=2.0, type="works_at", source_name="Alice", target_name="Acme"
+    )
     g.add_edge("e2", "e3", weight=0.5, type="located_in")
     return g
 
@@ -71,16 +72,12 @@ class TestNetworkVisualization:
         # A provided layout disables physics; output still produced.
         out = tmp_path / "graph.html"
         layout = {"e1": (0.0, 0.0), "e2": (1.0, 1.0), "e3": (0.5, 0.5)}
-        InteractiveRenderer({}).create_network_visualization(
-            _graph(), layout, str(out)
-        )
+        InteractiveRenderer({}).create_network_visualization(_graph(), layout, str(out))
         assert out.exists()
 
     def test_empty_graph_writes_nothing(self, tmp_path: Path) -> None:
         out = tmp_path / "graph.html"
-        InteractiveRenderer({}).create_network_visualization(
-            nx.Graph(), {}, str(out)
-        )
+        InteractiveRenderer({}).create_network_visualization(nx.Graph(), {}, str(out))
         assert not out.exists()
 
     def test_directed_graph_handled(self, tmp_path: Path) -> None:
@@ -127,9 +124,7 @@ class TestCommunityHierarchy:
 
     def test_writes_html_file(self, tmp_path: Path) -> None:
         out = tmp_path / "hierarchy.html"
-        InteractiveRenderer({}).create_community_hierarchy(
-            self._hierarchy(), str(out)
-        )
+        InteractiveRenderer({}).create_community_hierarchy(self._hierarchy(), str(out))
         assert out.exists()
         assert out.stat().st_size > 0
 

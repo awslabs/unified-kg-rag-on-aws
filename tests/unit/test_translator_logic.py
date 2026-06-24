@@ -66,9 +66,7 @@ def _units() -> list[TextUnit]:
 
 class TestCreateChainInputs:
     def test_pairs_text_with_target_language(self) -> None:
-        inputs = TextUnitTranslator._create_chain_inputs(
-            ["a", "b"], LanguageCode.KO
-        )
+        inputs = TextUnitTranslator._create_chain_inputs(["a", "b"], LanguageCode.KO)
         assert inputs == [
             {"text": "a", "target_language": LanguageCode.KO},
             {"text": "b", "target_language": LanguageCode.KO},
@@ -161,9 +159,7 @@ class TestTranslateTextUnits:
         def transform(inp):
             return "" if inp["text"] == "Goodbye world" else "ok"
 
-        tr, _ = _make_translator(
-            mocker, target=LanguageCode.KO, transform=transform
-        )
+        tr, _ = _make_translator(mocker, target=LanguageCode.KO, transform=transform)
         units = _units()
         tr.translate_text_units(units)
         assert units[0].translated_texts == {"ko": "ok"}
@@ -181,9 +177,7 @@ class TestTranslationStats:
         assert s.success_rate == pytest.approx(75.0)
 
     def test_processed_unit_count(self) -> None:
-        s = TranslationStats(
-            num_successful_translations=2, num_failed_translations=1
-        )
+        s = TranslationStats(num_successful_translations=2, num_failed_translations=1)
         assert s.processed_unit_count == 3
 
     def test_average_processing_time_guards_zero(self) -> None:

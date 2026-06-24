@@ -5,25 +5,18 @@ from typing import TYPE_CHECKING
 from .base import BasePrompt
 
 if TYPE_CHECKING:
-    from aws_graphrag.domain.models.config import CustomPromptConfig
+    pass
 
 
 @dataclass(frozen=True)
 class GraphExtractionPrompt(BasePrompt):
+    prompt_key = "graph_extraction"
     input_variables = [
         "input_text",
         "max_entities_per_chunk",
         "max_relationships_per_chunk",
+        "entity_types",
     ]
-
-    @classmethod
-    def _get_custom_prompts(
-        cls, custom_prompts: "CustomPromptConfig"
-    ) -> tuple[str | None, str | None]:
-        return (
-            custom_prompts.graph_extraction_system,
-            custom_prompts.graph_extraction_human,
-        )
 
     system_prompt_template = """You are a world-class knowledge graph extraction expert with unparalleled expertise in
 transforming unstructured text into precise, comprehensive knowledge graphs.
@@ -34,13 +27,7 @@ output format requirements.
 # ENTITY EXTRACTION RULES
 
 ## Entity Categories (STRICT - use only these types):
-- **PERSON**: Names, individuals, roles, titles
-- **ORGANIZATION**: Companies, institutions, departments, groups
-- **LOCATION**: Places, addresses, geographic areas, facilities
-- **CONCEPT**: Ideas, theories, methodologies, frameworks, principles
-- **OBJECT**: Documents, tools, products, systems, technologies
-- **EVENT**: Meetings, projects, activities, processes, incidents
-- **TEMPORAL**: Dates, time periods, schedules, deadlines
+{entity_types}
 
 ## Entity Naming Requirements:
 - Use EXACT names as they appear in source text
@@ -151,16 +138,8 @@ Begin extraction now:"""
 
 @dataclass(frozen=True)
 class ClaimExtractionPrompt(BasePrompt):
+    prompt_key = "claim_extraction"
     input_variables = ["input_text", "entity_specs"]
-
-    @classmethod
-    def _get_custom_prompts(
-        cls, custom_prompts: "CustomPromptConfig"
-    ) -> tuple[str | None, str | None]:
-        return (
-            custom_prompts.claim_extraction_system,
-            custom_prompts.claim_extraction_human,
-        )
 
     system_prompt_template = """You are an expert claim extraction specialist focused on identifying and structuring all
 factual assertions from text with maximum precision and completeness.
@@ -273,20 +252,12 @@ Begin claim extraction:"""
 
 @dataclass(frozen=True)
 class GraphRefinementPrompt(BasePrompt):
+    prompt_key = "graph_refinement"
     input_variables = [
         "text",
         "entities",
         "relationships",
     ]
-
-    @classmethod
-    def _get_custom_prompts(
-        cls, custom_prompts: "CustomPromptConfig"
-    ) -> tuple[str | None, str | None]:
-        return (
-            custom_prompts.graph_refinement_system,
-            custom_prompts.graph_refinement_human,
-        )
 
     system_prompt_template = """You are an expert knowledge graph refinement specialist. Analyze existing extractions
 against source text and identify specific, high-impact improvements.
@@ -414,6 +385,7 @@ Begin analysis:"""
 
 @dataclass(frozen=True)
 class CommunityReportPrompt(BasePrompt):
+    prompt_key = "community_report"
     input_variables = [
         "community_id",
         "entities",
@@ -422,15 +394,6 @@ class CommunityReportPrompt(BasePrompt):
         "include_statistics",
         "include_key_entities",
     ]
-
-    @classmethod
-    def _get_custom_prompts(
-        cls, custom_prompts: "CustomPromptConfig"
-    ) -> tuple[str | None, str | None]:
-        return (
-            custom_prompts.community_report_system,
-            custom_prompts.community_report_human,
-        )
 
     system_prompt_template = """You are an expert knowledge graph analyst specializing in community analysis and report
 generation. Transform raw community data into comprehensive, actionable intelligence reports.

@@ -196,9 +196,7 @@ class EntityResolver(BaseResolver):
                         if v not in visited:
                             visited.add(v)
                             q.append(v)
-                groups.append(
-                    [e for n in current_group_names for e in entity_map[n]]
-                )
+                groups.append([e for n in current_group_names for e in entity_map[n]])
 
         logger.info("Created %s entity groups", len(groups))
         return groups

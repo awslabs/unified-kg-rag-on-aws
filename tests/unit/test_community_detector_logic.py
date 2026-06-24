@@ -508,7 +508,5 @@ class TestGenerateReportsCounting:
         cd = self._ready_detector(
             [{"community_name": "A", "summary": "s", "full_content": "c"}, None]
         )
-        reports = cd.generate_reports(
-            [_community(["e1"]), _community(["e1"])]
-        )
+        reports = cd.generate_reports([_community(["e1"]), _community(["e1"])])
         assert len(reports) == 1

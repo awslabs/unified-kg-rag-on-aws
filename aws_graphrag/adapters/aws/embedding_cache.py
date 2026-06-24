@@ -12,6 +12,7 @@ stale vectors.
 Best-effort: any S3 error degrades to an in-memory-only cache (load returns
 empty, flush is skipped) rather than failing the run.
 """
+
 from __future__ import annotations
 
 import json
@@ -69,9 +70,7 @@ class S3EmbeddingCache:
             if isinstance(data, dict):
                 # Only keep entries for the current model/dimension namespace.
                 prefix = f"{self._namespace}|"
-                self._cache = {
-                    k: v for k, v in data.items() if k.startswith(prefix)
-                }
+                self._cache = {k: v for k, v in data.items() if k.startswith(prefix)}
                 logger.info(
                     "Loaded %s embedding-cache entries from 's3://%s/%s'",
                     len(self._cache),
@@ -79,9 +78,7 @@ class S3EmbeddingCache:
                     self.key,
                 )
         except Exception as e:  # noqa: BLE001 - degrade to empty in-memory cache
-            logger.info(
-                "Embedding cache not loaded from S3 (starting empty): %s", e
-            )
+            logger.info("Embedding cache not loaded from S3 (starting empty): %s", e)
             self._cache = {}
 
     def get(self, content_hash: str) -> list[float] | None:

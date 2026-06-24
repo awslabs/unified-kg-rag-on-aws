@@ -282,7 +282,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     {"community_summary": item.content, "query": query.query}
                 )
                 parsed_score = safe_float_parse(llm_output, default_value=5.0)
-                relevance_score = (parsed_score / 10.0) if parsed_score is not None else 0.0
+                relevance_score = (
+                    (parsed_score / 10.0) if parsed_score is not None else 0.0
+                )
 
                 if parsed_score is not None:
                     item.score = ((item.score or 0.5) * 0.4) + (relevance_score * 0.6)

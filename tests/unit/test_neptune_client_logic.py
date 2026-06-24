@@ -45,7 +45,9 @@ def _client(config: Config, session: Any | None = None) -> NeptuneClient:
     return NeptuneClient(config, boto_session=session or _FakeSession())
 
 
-def _config_with_neptune(endpoint: str = "db.example.com", use_iam: bool = True) -> Config:
+def _config_with_neptune(
+    endpoint: str = "db.example.com", use_iam: bool = True
+) -> Config:
     config = Config()
     config.aws.neptune.endpoint = endpoint
     config.aws.neptune.use_iam = use_iam
@@ -99,7 +101,9 @@ def test_create_connection_builds_url_and_iam_headers(mocker) -> None:
     fake_g = mocker.MagicMock()
     fake_g.V.return_value.limit.return_value.toList.return_value = []
     mocker.patch.object(
-        neptune_mod, "traversal", return_value=mocker.MagicMock(withRemote=lambda c: fake_g)
+        neptune_mod,
+        "traversal",
+        return_value=mocker.MagicMock(withRemote=lambda c: fake_g),
     )
 
     conn = client._create_connection()
@@ -123,7 +127,9 @@ def test_create_connection_no_iam_empty_headers(mocker) -> None:
     fake_g = mocker.MagicMock()
     fake_g.V.return_value.limit.return_value.toList.return_value = []
     mocker.patch.object(
-        neptune_mod, "traversal", return_value=mocker.MagicMock(withRemote=lambda c: fake_g)
+        neptune_mod,
+        "traversal",
+        return_value=mocker.MagicMock(withRemote=lambda c: fake_g),
     )
     client._create_connection()
     assert captured["headers"] == {}

@@ -154,7 +154,9 @@ def test_eval_parser_defaults() -> None:
 
 def test_eval_parser_rejects_bad_strategy() -> None:
     with pytest.raises(SystemExit):
-        _eval_parser().parse_args(["--eval-data-path", "d.json", "--search-strategy", "nope"])
+        _eval_parser().parse_args(
+            ["--eval-data-path", "d.json", "--search-strategy", "nope"]
+        )
 
 
 def test_eval_runner_missing_file_exits(config, mocker, tmp_path) -> None:
@@ -366,9 +368,7 @@ def test_prompt_tuning_main_no_texts_returns_1(config, mocker, tmp_path) -> None
     mocker.patch.object(run_prompt_tuning, "get_config", return_value=config)
     empty = tmp_path / "empty"
     empty.mkdir()
-    mocker.patch(
-        "sys.argv", ["run-prompt-tuning", "--source-dir", str(empty)]
-    )
+    mocker.patch("sys.argv", ["run-prompt-tuning", "--source-dir", str(empty)])
     # No text files -> early return 1, tuner/AWS never constructed.
     assert run_prompt_tuning.main() == 1
 

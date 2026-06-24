@@ -153,6 +153,7 @@ class BatchProcessor(BaseModel):
                 )
                 return []
             try:
+
                 def run_batch(inputs: list[dict[str, Any]] = chunk_inputs) -> Any:
                     return prepared_batch_func(inputs)
 

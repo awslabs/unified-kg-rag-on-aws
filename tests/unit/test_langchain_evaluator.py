@@ -71,9 +71,7 @@ def _result(answer: str = "Alice founded Acme.") -> EvaluationResult:
 class TestStripMarkdownCodeFence:
     def test_fenced_json_block_is_unwrapped(self) -> None:
         text = '```json\n{"score": 0.5}\n```'
-        assert (
-            LangChainEvaluator._strip_markdown_code_fence(text) == '{"score": 0.5}'
-        )
+        assert LangChainEvaluator._strip_markdown_code_fence(text) == '{"score": 0.5}'
 
     def test_bare_fence_is_unwrapped(self) -> None:
         text = "```\nhello\n```"
@@ -114,21 +112,18 @@ class TestParseScore:
 class TestPrepareEvalArgs:
     def test_reference_added_when_required(self, mocker) -> None:
         ev = _make_evaluator(mocker)
-        args = ev._prepare_eval_args(
-            EvaluationMetricType.CORRECTNESS, "q", "a", "gt"
-        )
+        args = ev._prepare_eval_args(EvaluationMetricType.CORRECTNESS, "q", "a", "gt")
         assert args == {"input": "q", "prediction": "a", "reference": "gt"}
 
     def test_reference_omitted_when_not_required(self, mocker) -> None:
         ev = _make_evaluator(mocker)
         # Inject a metric mapping entry without requires_reference.
         ev.METRIC_MAPPING = {
-            EvaluationMetricType.CORRECTNESS: {"type": ev.METRIC_MAPPING[
-                EvaluationMetricType.CORRECTNESS]["type"]}
+            EvaluationMetricType.CORRECTNESS: {
+                "type": ev.METRIC_MAPPING[EvaluationMetricType.CORRECTNESS]["type"]
+            }
         }
-        args = ev._prepare_eval_args(
-            EvaluationMetricType.CORRECTNESS, "q", "a", "gt"
-        )
+        args = ev._prepare_eval_args(EvaluationMetricType.CORRECTNESS, "q", "a", "gt")
         assert args == {"input": "q", "prediction": "a"}
 
 

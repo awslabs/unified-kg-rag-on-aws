@@ -326,9 +326,7 @@ class CommunityDetector(BaseProcessor):
                                 neighbor_counts[neighbor_comm] += 1
 
                 if neighbor_counts:
-                    target_comm = max(
-                        neighbor_counts, key=lambda x: neighbor_counts[x]
-                    )
+                    target_comm = max(neighbor_counts, key=lambda x: neighbor_counts[x])
                     communities[target_comm].update(nodes)
                     for node in nodes:
                         node_to_comm[node] = target_comm

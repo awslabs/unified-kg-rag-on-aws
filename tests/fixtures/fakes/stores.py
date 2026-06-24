@@ -74,9 +74,7 @@ class FakeGraphStore(_Recorder):
     def upsert_communities(self, comms: list[Any] | None = None) -> IndexingStats:
         return self._put("communities", comms)
 
-    def delete_by_id(
-        self, ids: list[str], suffix: str | None = None
-    ) -> IndexingStats:
+    def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
         return self.delete(ids)
 
     def get_entity_count(self, suffixes: list[str]) -> int:

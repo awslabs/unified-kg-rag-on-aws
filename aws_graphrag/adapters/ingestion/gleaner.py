@@ -431,7 +431,9 @@ class GraphGleaner(BaseProcessor):
                 try:
                     unit_to_input[unit.id] = future.result()
                 except Exception as e:
-                    logger.error("Error preparing gleaning input for unit '%s': %s", unit.id, e)
+                    logger.error(
+                        "Error preparing gleaning input for unit '%s': %s", unit.id, e
+                    )
 
         def prepare_inputs_for_chunk(
             chunk_items: list[TextUnit],

@@ -143,9 +143,7 @@ class ParserFactory:
                     " (.md/.html require the optional 'unstructured' package, which "
                     "is not installed)"
                 )
-            raise DataProcessingError(
-                f"Unsupported file type: '{extension}'{hint}"
-            )
+            raise DataProcessingError(f"Unsupported file type: '{extension}'{hint}")
 
         loader_class, loader_kwargs, file_type_name = cls._loader_configs[extension]
         return FileParser(config, loader_class, loader_kwargs, file_type_name)

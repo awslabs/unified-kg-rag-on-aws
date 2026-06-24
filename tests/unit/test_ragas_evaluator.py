@@ -41,12 +41,11 @@ def _make_evaluator(mocker, *, ragas_metrics=None, max_context_tokens=8192):
     fake_counter = mocker.Mock()
     # 1 token per whitespace-delimited word.
     fake_counter.count_tokens.side_effect = lambda text: len(text.split())
-    fake_counter.truncate_to_token_limit.side_effect = (
-        lambda text, limit: (" ".join(text.split()[:limit]), limit)
+    fake_counter.truncate_to_token_limit.side_effect = lambda text, limit: (
+        " ".join(text.split()[:limit]),
+        limit,
     )
-    mocker.patch.object(
-        rg_module, "BedrockTokenCounter", return_value=fake_counter
-    )
+    mocker.patch.object(rg_module, "BedrockTokenCounter", return_value=fake_counter)
 
     config = Config()
     config.evaluation.max_context_tokens = max_context_tokens
@@ -90,9 +89,7 @@ class TestTruncateContexts:
         assert contexts[1].endswith("...")
         assert len(contexts) == 2
 
-    def test_overflow_with_too_little_remaining_drops_context(
-        self, mocker
-    ) -> None:
+    def test_overflow_with_too_little_remaining_drops_context(self, mocker) -> None:
         # After the first context, remaining budget <= BUFFER_TOKENS so the
         # overflowing context is dropped entirely (no truncated fragment added).
         ev, _ = _make_evaluator(mocker, max_context_tokens=200)
@@ -121,9 +118,7 @@ class TestParseRagasReports:
                 EvaluationMetricType.FAITHFULNESS,
             ],
         )
-        df = pd.DataFrame(
-            {"answer_correctness": [0.8], "faithfulness": [0.6]}
-        )
+        df = pd.DataFrame({"answer_correctness": [0.8], "faithfulness": [0.6]})
         reports = ev._parse_ragas_reports(df, [_query()], [_result()])
         assert len(reports) == 1
         report = reports[0]
@@ -219,9 +214,7 @@ class TestAevaluateBatch:
         assert dd["ground_truth"] == ["truth"]
         # Faithfulness metric object selected.
         assert captured["metrics"] == [
-            rg_module.RagasEvaluator.RAGAS_METRICS[
-                EvaluationMetricType.FAITHFULNESS
-            ]
+            rg_module.RagasEvaluator.RAGAS_METRICS[EvaluationMetricType.FAITHFULNESS]
         ]
         assert reports[0].metrics[0].value == 0.9
 

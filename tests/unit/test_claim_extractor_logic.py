@@ -115,9 +115,7 @@ class TestParseExtractionResult:
 
     def test_single_claim_wrapped(self, extractor, text_unit) -> None:
         result = {
-            "claims": {
-                "claim": {"subject": "A", "object": "B", "claim_type": "X"}
-            }
+            "claims": {"claim": {"subject": "A", "object": "B", "claim_type": "X"}}
         }
         claims = extractor._parse_extraction_result(result, text_unit)
         assert len(claims) == 1

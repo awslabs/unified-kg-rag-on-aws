@@ -6,9 +6,10 @@ resolution — NO LangChain/backend imports (the domain dependency rule). The
 adapter layer (``adapters/aws/chain_factory.py``) turns a resolved
 ``ResolvedPrompt`` into a LangChain ``ChatPromptTemplate``.
 """
+
 from abc import ABC
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from aws_graphrag.domain.models.config import CustomPromptConfig
@@ -34,6 +35,11 @@ class BasePrompt(ABC):
     human_prompt_template: str
     input_variables: list[str]
     output_variables: list[str] | None = None
+    # Subclasses set this to their CustomPromptConfig field prefix (e.g.
+    # "graph_extraction" -> graph_extraction_system / graph_extraction_human).
+    # The base resolve() looks the overrides up by convention, so a new prompt
+    # only declares its key — no per-class _get_custom_prompts boilerplate.
+    prompt_key: ClassVar[str | None] = None
 
     def __post_init__(self) -> None:
         self._validate_prompt_variables()
@@ -71,14 +77,31 @@ class BasePrompt(ABC):
         system_template = cls.system_prompt_template  # type: ignore[misc]
         human_template = cls.human_prompt_template  # type: ignore[misc]
 
+        overridden = False
         if custom_prompts:
             custom_system, custom_human = cls._get_custom_prompts(custom_prompts)
             if custom_system:
                 system_template = custom_system
+                overridden = True
             if custom_human:
                 human_template = custom_human
+                overridden = True
 
-        # Run field validation via a throwaway instance.
+        if overridden:
+            # A user-supplied override owns its own variable set; the built-in
+            # input_variables may not all appear in it (e.g. overriding only the
+            # human template, or dropping a variable). Don't hard-fail on that —
+            # the strict missing-variable check is for the SHIPPED defaults
+            # (enforced when the dataclass is instantiated). Skip it here so
+            # partial / minimal overrides are allowed.
+            return ResolvedPrompt(
+                system_prompt_template=system_template,
+                human_prompt_template=human_template,
+                input_variables=cls.input_variables,  # type: ignore[misc]
+                output_variables=cls.output_variables,
+            )
+
+        # No override: validate the shipped defaults via a throwaway instance.
         instance = cls(
             input_variables=cls.input_variables,  # type: ignore[misc]
             output_variables=cls.output_variables,
@@ -96,4 +119,14 @@ class BasePrompt(ABC):
     def _get_custom_prompts(
         cls, custom_prompts: "CustomPromptConfig"
     ) -> tuple[str | None, str | None]:
-        return None, None
+        """Look up the (system, human) overrides by ``prompt_key`` convention.
+
+        Returns ``(None, None)`` when the prompt declares no key. Subclasses set
+        ``prompt_key`` instead of overriding this method.
+        """
+        if not cls.prompt_key:
+            return None, None
+        return (
+            getattr(custom_prompts, f"{cls.prompt_key}_system", None),
+            getattr(custom_prompts, f"{cls.prompt_key}_human", None),
+        )

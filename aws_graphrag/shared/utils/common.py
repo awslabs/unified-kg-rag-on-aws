@@ -19,6 +19,7 @@ def default_max_workers() -> int:
     """
     return max(1, int(cpu_count() * _DEFAULT_WORKER_CPU_FRACTION))
 
+
 # Strip punctuation/symbols but KEEP letters, marks and digits of ANY script
 # (\w is Unicode-aware in Python 3). The previous [^a-z0-9\s] deleted all
 # non-ASCII text, which collapsed every CJK/Cyrillic/accented entity name to ""

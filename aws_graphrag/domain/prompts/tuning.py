@@ -15,24 +15,16 @@ from typing import TYPE_CHECKING
 from .base import BasePrompt
 
 if TYPE_CHECKING:
-    from aws_graphrag.domain.models.config import CustomPromptConfig
+    pass
 
 
 @dataclass(frozen=True)
 class CorpusProfilePrompt(BasePrompt):
+    prompt_key = "corpus_profile"
     """Analyze a corpus sample and emit a domain/persona/entity-type profile."""
 
     input_variables = ["corpus_sample"]
     output_variables = ["domain", "language", "persona", "entity_types"]
-
-    @classmethod
-    def _get_custom_prompts(
-        cls, custom_prompts: CustomPromptConfig
-    ) -> tuple[str | None, str | None]:
-        return (
-            custom_prompts.corpus_profile_system,
-            custom_prompts.corpus_profile_human,
-        )
 
     system_prompt_template = """You are an expert corpus analyst configuring a knowledge-graph
 extraction system for a specific domain. Analyze the provided document sample and produce a
@@ -59,6 +51,7 @@ Produce the corpus profile JSON:"""
 
 @dataclass(frozen=True)
 class ExtractionExamplesPrompt(BasePrompt):
+    prompt_key = "extraction_examples"
     """Generate domain-adapted few-shot extraction examples from a sample.
 
     Ports MS GraphRAG ``prompt_tune`` few-shot generation: grounding the
@@ -68,15 +61,6 @@ class ExtractionExamplesPrompt(BasePrompt):
 
     input_variables = ["domain", "persona", "entity_types", "corpus_sample"]
     output_variables = ["examples"]
-
-    @classmethod
-    def _get_custom_prompts(
-        cls, custom_prompts: CustomPromptConfig
-    ) -> tuple[str | None, str | None]:
-        return (
-            custom_prompts.extraction_examples_system,
-            custom_prompts.extraction_examples_human,
-        )
 
     system_prompt_template = """You are building few-shot examples for a knowledge-graph extraction
 prompt specialized to the "{domain}" domain. {persona}
