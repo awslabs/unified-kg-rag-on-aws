@@ -673,7 +673,7 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 
 ## 📄 License
 
-This project is licensed under the MIT-0 License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache-2.0 License - see the [LICENSE](LICENSE) file for details.
 
 ## 📚 References
 
@@ -689,4 +689,4 @@ This project is licensed under the MIT-0 License - see the [LICENSE](LICENSE) fi
 
 ## 🏢 About
 
-This project is developed by Amazon Web Services as an enterprise-grade solution for knowledge graph-based RAG systems, released under the MIT-0 License.
+This project is developed by Amazon Web Services as an enterprise-grade solution for knowledge graph-based RAG systems, released under the Apache-2.0 License.

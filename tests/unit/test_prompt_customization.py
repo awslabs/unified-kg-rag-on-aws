@@ -1,4 +1,5 @@
-# Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Prompt domain-customization ergonomics (A + B refactor).
 
 A: domain entity types are a {entity_types} template slot fed from config, so a

@@ -1,4 +1,5 @@
-# Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Resume-strategy unit tests for PipelineResumeManager.
 
 These cover the phased-execution handoff used by the Step Functions ingestion
@@ -125,8 +126,8 @@ def test_explicit_resume_empty_history() -> None:
 
 def test_save_metadata_accumulates_stage_results_across_phases(tmp_path) -> None:
     # The core fix: a later phase saving only its own stage_results must NOT
-    # clobber the earlier phases' history. This is what caused docparser-007 to
-    # index entities/communities but silently drop relationships and claims.
+    # clobber the earlier phases' history. The regression this guards against:
+    # indexing entities/communities but silently dropping relationships/claims.
     state = PipelineStateManager(_StubCacheManager(tmp_path))
     pid = "phased-run"
 

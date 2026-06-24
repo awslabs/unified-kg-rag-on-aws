@@ -105,8 +105,8 @@ Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
 
 ## Quality gate
 
-CI (`.gitlab-ci.yml`) and `.pre-commit-config.yaml` run ruff, black, isort,
-mypy, and pytest+coverage. Install hooks with `pre-commit install`.
+CI (`.github/workflows/quality.yml`) and `.pre-commit-config.yaml` run ruff,
+black, isort, mypy, and pytest+coverage. Install hooks with `pre-commit install`.
 
 ## Notes
 

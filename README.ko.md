@@ -165,7 +165,7 @@ uv run mypy aws_graphrag
 
 - `aws` 마커는 실제 AWS 서비스가 필요한 테스트를 분리하며 CI에서 제외됩니다.
 - DynamoDB/S3는 `moto`, Neptune/OpenSearch는 포트 기반 in-memory fake로 테스트합니다.
-- CI(`.gitlab-ci.yml`): ruff/black/isort/mypy + pytest+coverage 게이트, ASH 보안 스캔.
+- CI(`.github/workflows/`): ruff/black/isort/mypy + pytest+coverage 게이트, ASH 보안 스캔.
 
 ---
 
@@ -175,7 +175,7 @@ uv run mypy aws_graphrag
 
 ## 📄 라이선스
 
-MIT-0. [`LICENSE`](./LICENSE) 참고.
+Apache-2.0. [`LICENSE`](./LICENSE) 참고.
 
 ## 📚 참고문헌
 

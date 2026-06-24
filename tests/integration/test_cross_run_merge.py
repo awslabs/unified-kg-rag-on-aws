@@ -1,4 +1,5 @@
-# Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Cross-run merge: delta upsert unions with existing graph state (AWS-free).
 
 When ``indexing.cross_run_merge`` is on, IndexingManager.index_delta reads the

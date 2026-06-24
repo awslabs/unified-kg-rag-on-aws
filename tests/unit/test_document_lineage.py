@@ -1,4 +1,5 @@
-# Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Unit tests for per-document lineage attribution (incremental indexing, AWS-free).
 
 `build_document_lineage` is the pure logic that lets the production pipeline

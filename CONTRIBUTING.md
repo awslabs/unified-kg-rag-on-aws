@@ -88,7 +88,7 @@ mypy aws_graphrag
 ### Testing
 - Write **unit tests** for new functionality
 - Keep coverage at or above the current CI gate (**63%**, ratcheting toward 80%
-  per milestone — see `.gitlab-ci.yml` `--cov-fail-under`)
+  per milestone — see `.github/workflows/quality.yml` `--cov-fail-under`)
 - Use **pytest** for testing framework
 - Prefer the port-based in-memory fakes in `tests/fixtures/fakes/` (e.g.
   `FakeDocStatusStore`) over ad-hoc boto3 mocking; use `moto` when an adapter
@@ -271,10 +271,9 @@ Implement [solution] using [AWS services/approach].
 - **Allow** reasonable time for response before disclosure
 
 ### Dependency / SAST scan findings
-How GitLab Dependency-Scanning and SAST findings are assessed (reachability,
-disposition, and how to dismiss accepted ones) is recorded in
-[`docs/security-triage.md`](docs/security-triage.md). Update it whenever a new
-finding appears or a pinned version changes.
+The `security` workflow (`.github/workflows/security.yml`) runs the Automated
+Security Helper (ASH) in report-only mode. Assess findings for reachability and
+disposition before acting; pin or upgrade dependencies via `uv lock --upgrade`.
 
 ## 📦 Release Process
 

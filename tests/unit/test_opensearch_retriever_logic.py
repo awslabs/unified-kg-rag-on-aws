@@ -1,4 +1,5 @@
-# Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """AWS-free unit tests for OpenSearchRetriever query/parse logic.
 
 Complements ``test_opensearch_clause_budget.py`` (batch-size budgeting). Here we

@@ -1,4 +1,5 @@
-# Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Deployment configuration resolved from CDK context.
 
 All knobs are read from ``cdk.json`` ``context`` (or ``-c key=value`` on the CLI)
@@ -95,9 +96,8 @@ class DeploymentConfig:
 
     @property
     def stack_prefix(self) -> str:
-        # PascalCase project name for CloudFormation stack ids — matches the
-        # account's convention (NaviWikiGraph, AnchorNetwork) which carries no
-        # env prefix (environments are separated by account/region).
+        # PascalCase project name for CloudFormation stack ids; carries no env
+        # prefix (environments are separated by account/region).
         return "GraphRag"
 
     @property

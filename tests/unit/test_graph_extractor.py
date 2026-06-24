@@ -1,4 +1,5 @@
-# Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Unit tests for GraphExtractor pure parse/merge/materialize logic (AWS-free).
 
 The parse_entity_data / parse_relationship_data / _parse_confidence helpers live

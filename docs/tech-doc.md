@@ -282,7 +282,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 ## 14. CI/CD와 보안
 
-- **CI** (`.gitlab-ci.yml`, code.aws.dev GitLab): `quality` 스테이지(ruff/black/isort/mypy + pytest+coverage 게이트, MR/기본 브랜치 트리거), `security` 스테이지(ASH 스캔 비차단 + 자격증명 구성 시 라이선스 체크).
+- **CI** (`.github/workflows/`): `quality` 워크플로(ruff/black/isort/mypy + pytest+coverage 게이트, PR/기본 브랜치 트리거), `security` 워크플로(ASH 스캔 비차단, 리포트 전용).
 - **pre-commit** (`.pre-commit-config.yaml`): CI 게이트 미러링. `pre-commit install`.
 - **보안 하드닝**: 콘텐츠 해시는 SHA-256 전용(MD5 제거, CWE-327 해소). 의존성은 `uv lock --upgrade`로 정기 갱신해 의존성 스캔 CVE 대응. 토큰은 환경/설정으로 주입(코드 하드코딩 없음).
 

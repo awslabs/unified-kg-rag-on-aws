@@ -1,4 +1,5 @@
-# Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Importing adapters registers them with the renderer registry.
 from .adapters import InteractiveRendererAdapter, StaticRendererAdapter
 from .base import (

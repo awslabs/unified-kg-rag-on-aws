@@ -7,9 +7,8 @@ Bedrock Guardrail.
 
 ## Stacks
 
-Stack ids are PascalCase with a `GraphRag` prefix and no env segment, matching
-the account's convention (e.g. `NaviWikiGraph`, `AnchorNetwork`); environments
-are separated by account/region and tracked via the `env` tag.
+Stack ids are PascalCase with a `GraphRag` prefix and no env segment;
+environments are separated by account/region and tracked via the `env` tag.
 
 | Stack | Resources |
 |---|---|
@@ -155,5 +154,3 @@ cdk deploy --all
    ```
    (`source_directory` / `pipeline_id` are passed to the tasks as
    `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID`.)
-
-See `docs/docparser-e2e-plan.md` for an end-to-end test plan on real contracts.

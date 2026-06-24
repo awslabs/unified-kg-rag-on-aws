@@ -1,0 +1,48 @@
+name: quality
+
+# Lint / format / import-order / type-check / tests + coverage.
+# Mirrors the pre-commit gate; runs on PRs and pushes to the default branch.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Ruff (lint)
+        run: uv run ruff check aws_graphrag tests
+
+      - name: Black (format check)
+        run: uv run black --check aws_graphrag tests
+
+      - name: isort (import order)
+        run: uv run isort --check-only aws_graphrag tests
+
+      - name: mypy (type check)
+        run: uv run mypy aws_graphrag
+
+      - name: pytest + coverage
+        # The `aws` marker gates tests needing real AWS services; excluded in CI.
+        # The coverage floor ratchets up toward the 80% target as the suite grows.
+        run: >-
+          uv run pytest -m "not aws"
+          --cov=aws_graphrag --cov-report=term-missing
+          --cov-report=xml:coverage.xml --junitxml=report.xml
+          --cov-fail-under=63

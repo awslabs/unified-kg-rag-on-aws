@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """CDK app entry point for the aws-graphrag infrastructure.
 
 Assembles the modular stacks (networking -> storage -> compute -> orchestration
@@ -41,8 +42,7 @@ stack_prefix = config.stack_prefix
 
 
 def stack_id(name: str) -> str:
-    # PascalCase stack ids (GraphRagNetwork, ...) to match the account's other
-    # assets (NaviWikiGraph, AnchorNetwork) — no env prefix.
+    # PascalCase stack ids (GraphRagNetwork, ...) — no env prefix.
     return f"{stack_prefix}{name}"
 
 

@@ -1,4 +1,5 @@
-# Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Incremental merge of a delta index into the existing graph artifacts.
 
 Ports Microsoft GraphRAG's ``index/update/*`` merge semantics to operate on

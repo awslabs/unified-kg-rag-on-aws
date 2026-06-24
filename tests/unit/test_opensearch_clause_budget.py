@@ -1,4 +1,5 @@
-# Copyright © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms and the SOW between the parties.
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Unit tests for config-driven OpenSearch clause-budget batching.
 
 The clause-budget knobs moved from hardcoded ClassVars to config; this verifies
