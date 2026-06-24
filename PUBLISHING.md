@@ -5,26 +5,62 @@ This repository is being prepared for potential open-source publication to the
 is a reusable framework/library (not a demo → not `aws-samples`; not a turnkey
 one-click deployable → not AWS Solutions).
 
-This file tracks what is **DONE** on the `publish-prep` branch vs. what **REMAINS**
-(notably the Legal/IP blocker, which gates everything).
+The owner-performed process below follows the **AWS ProServe GenAI Innovation
+Center "Open Source Contribution Playbook"**
+([w.amazon.com/bin/view/AWS/Teams/Proserve/GenAIID/GenAIIDResourcesProgram/AssetSharing/OpenSource](https://w.amazon.com/bin/view/AWS/Teams/Proserve/GenAIID/GenAIIDResourcesProgram/AssetSharing/OpenSource/)),
+which is the sanctioned path for a ProServe builder to release a reusable asset to
+`awslabs`. The playbook recommends a dedicated `awslabs` repo (one repo per
+project) over `aws-samples`/`aws-solutions-library-samples`, and confirms
+**Apache-2.0** (not MIT-0, which it says explicitly NOT to use for `aws`/`awslabs`
+orgs).
 
-> The work below was done on a branch and is reversible. Nothing here authorizes
-> publication — that requires the Legal clearance and OSPO approval in Phase A.
+This file tracks what is **DONE** in this repo (the code/scrub/governance work,
+Phase B–D) vs. the **owner-performed, Midway-gated process** that must run before
+anything goes public (Phase A). Nothing here authorizes publication.
 
-## Phase A — Legal / IP clearance (BLOCKING, internal, NOT done here)
+## Phase A — Owner-performed launch process (Midway-gated, NOT done here)
 
-- [ ] **SOW clearance.** Source headers previously read *"Developed Content as
-      defined in the AWS Service Terms and the SOW between the parties"* — i.e.
-      this was produced under a customer ProServe SOW. **Legal must confirm AWS
-      holds the rights to open-source it before publishing.** This gates everything.
-- [ ] File the **OSPO outbound open-source release request** (internal Open Source
-      portal; Midway-gated). Target org: `awslabs`.
-- [ ] Obtain **security review** + **management/leadership approval** per the OSPO
-      workflow.
-- [ ] Confirm **awslabs org admins** will create the repo and grant maintainer access.
+These steps require the owner's authenticated identity (training, tickets, Launch
+Manager, lawyer assignment, org/repo self-service). They cannot be automated here.
+The IP review (A5) is where the SOW "Developed Content" ownership question is
+formally cleared — i.e. the old "Legal blocker" is a step in this flow, not a
+separate gate. The FAST/GASP case study in the playbook shows a ProServe asset
+completing exactly this path (IP Release ticket V2071786068).
 
-> The exact internal forms/SLAs are not web-documented — check the internal Open
-> Source portal and confirm the process with your manager / the awslabs admins.
+1. [ ] **Choose license + name.** License = Apache-2.0 (done). The name
+       `aws-graphrag` is a creative name → a **Trademark Legal Risk Review** is
+       likely required (most take 1–2 days; only registration takes ~7 months).
+2. [ ] **Prerequisite training:** GitHub Training + AWS Launch Manager Training
+       (~20–30 min) on atoz.amazon.work.
+3. [ ] **Link GitHub account** to your Amazon alias via Open Sourcerer Connect
+       Account (`console.harmony.a2z.com/open-sourcerer/connect-account`).
+4. [ ] **Create the Open Source Release ticket**
+       (`t.corp.amazon.com/create/templates/0dc2e94d-5225-4f08-b512-a2cd5b0fdd77`).
+5. [ ] **AWS Launch Manager (ALM) launch** (`regions.aws.dev/alm-product/products`):
+       create an Open Source launch (Region IAD/us-east-1), then resolve tasks:
+       - [ ] **IP Review** (mandatory) — ticket template
+         `t.corp.amazon.com/create/templates/533581d8-4a83-40d5-bae0-ac2fbed41102`;
+         assign to your IP lawyer via Pathfinder (`lawyer-update.corp.amazon.com`).
+         **This clears the SOW Developed-Content ownership question.**
+       - [ ] **Trademark Legal Risk Review** (mandatory).
+       - [ ] **AppSec / PCSR security review** (mandatory) — initiate via the River
+         workflow; a Public Content Security Review (PCSR) is sufficient for an
+         `awslabs` source release (binary artifacts would also need an AppSec
+         Open Source review — N/A here, no binaries).
+       - [ ] **Dependency Review** + **Open Source Blog** (required before public).
+       - [ ] **awslabs Repository Approval** ticket
+         `t.corp.amazon.com/create/templates/27808ec8-a9ca-4e51-a2f2-b1dd2dbd7e82`
+         (needs links to the IP Review, Trademark Review, and ALM launch page).
+6. [ ] **Join the `awslabs` org** via Open Sourcerer Self-Invite
+       (`console.harmony.a2z.com/open-sourcerer/self-invite`).
+7. [ ] **Create the repo** via Open Sourcerer Create Repo
+       (`console.harmony.a2z.com/open-sourcerer/create-repo`) — never create it
+       manually or on a personal account. License: Apache. Then push the scrubbed
+       tree (Phase D: fresh squashed commit).
+
+> POCs/refs: Open Source guidelines `w.amazon.com/bin/view/Open_Source/Open_Sourcing`;
+> licensing `w.amazon.com/bin/view/Open_Source/LicensingForGitHubProjects` (note:
+> Amazon OSS copyright notices should be **dateless** — our headers already are).
 
 ## Phase B — Code scrub (DONE on publish-prep branch)
 
@@ -50,8 +86,9 @@ This file tracks what is **DONE** on the `publish-prep` branch vs. what **REMAIN
 - [x] `NOTICE` (Apache-2.0 §4(d) attribution).
 - [x] `CODE_OF_CONDUCT.md` (Amazon Open Source Code of Conduct).
 - [x] `SECURITY.md` (AWS vulnerability-reporting page; no public issues).
-- [x] `THIRD_PARTY_LICENSES` (MIT attributions for vendored `references/graphrag`,
-      `references/LightRAG`).
+- [x] `THIRD_PARTY_LICENSES` (MIT attribution / provenance for the ported
+      microsoft/graphrag + HKUDS/LightRAG methodology; the `references/` copies
+      are git-ignored and not redistributed).
 - [x] `.github/workflows/quality.yml` + `security.yml` (ported the GitLab quality
       gate + ASH scan to GitHub Actions).
 
