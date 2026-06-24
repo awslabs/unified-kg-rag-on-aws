@@ -290,7 +290,10 @@ class CacheManager:
         try:
             sample_size = min(10, data_length)
             sample_data = data[:sample_size]
-            sample_json = json.dumps(sample_data, default=self._json_default)
+            # Estimate with the SAME serialization used to write (serialize_data,
+            # indent=2). json.dumps without indent under-counts the on-disk size,
+            # so a file that will exceed the limit could be written un-chunked.
+            sample_json = self.serialize_data(sample_data)
             estimated_size = (len(sample_json) / sample_size) * data_length
             estimated_size_mb = estimated_size / 1024 / 1024
 

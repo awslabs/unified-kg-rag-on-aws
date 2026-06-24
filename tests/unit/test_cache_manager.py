@@ -120,6 +120,20 @@ class TestChunking:
         entry = mgr.save_stage_result([1, 2, 3], "small", STAGE, PIPELINE)
         assert entry.metadata["is_chunked"] is False
 
+    def test_size_estimate_uses_indented_serialization(self, tmp_path: Path) -> None:
+        # Regression: _should_chunk_data estimated with non-indented json.dumps
+        # while the write uses serialize_data(indent=2), undershooting the on-disk
+        # size. A list UNDER chunk_size but whose indented bytes exceed the file
+        # limit must still chunk. Each item is a dict so indent=2 inflates size.
+        mgr = _manager(tmp_path, chunk_size=100_000, max_file_size_mb=1)
+        # ~8000 dicts; indented JSON comfortably exceeds 1 MB (well above the
+        # ~946 KB a smaller set produced) so the size-based trigger fires.
+        data = [{"id": i, "v": "x" * 200} for i in range(8000)]
+        entry = mgr.save_stage_result(data, "bysize", STAGE, PIPELINE)
+        assert entry.metadata["is_chunked"] is True
+        # Round-trips intact despite size-triggered chunking.
+        assert mgr.load_stage_result("bysize", PIPELINE) == data
+
     def test_chunking_disabled_keeps_single_file(self, tmp_path: Path) -> None:
         mgr = _manager(tmp_path, chunk_size=2, enable_chunking=False)
         entry = mgr.save_stage_result([1, 2, 3, 4, 5], "k", STAGE, PIPELINE)

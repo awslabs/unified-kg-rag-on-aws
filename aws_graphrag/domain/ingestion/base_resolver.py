@@ -153,6 +153,15 @@ class FuzzyMatcher:
         return abbrevs
 
     def find_all_matches(self, query: str) -> list[tuple[str, float]]:
+        """Return ALL candidates similar to ``query`` (used for entity grouping).
+
+        Unlike :meth:`find_best_match`, this intentionally omits the abbreviation
+        tier: grouping fans every match into a merge cluster, and abbreviation
+        matches ("AC" -> "Acme Corp") are too aggressive there (they would
+        over-merge unrelated entities). Exact/normalized equality is still
+        covered — ``_create_minhash`` normalizes (NFKC/casefold) before
+        shingling, so normalized-equal names (incl. CJK) score 1.0 under LSH.
+        """
         if self.resolution_method == ResolutionMethod.MINHASH:
             return self._find_all_lsh_matches(query)
         return self._find_all_string_similarity_matches(query)
