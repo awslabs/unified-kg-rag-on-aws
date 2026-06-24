@@ -131,13 +131,31 @@ class TestParseRagasReports:
         }
         assert report.overall_score == pytest.approx(0.7)
 
-    def test_nan_value_becomes_zero(self, mocker) -> None:
+    def test_nan_value_is_skipped_not_zeroed(self, mocker) -> None:
+        # NaN means "uncomputable" — it must be skipped, not coerced to 0.0
+        # (which would conflate a measurement failure with a genuine zero and
+        # bias the aggregate down).
         ev, _ = _make_evaluator(
             mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
         )
         df = pd.DataFrame({"faithfulness": [float("nan")]})
         reports = ev._parse_ragas_reports(df, [_query()], [_result()])
-        assert reports[0].metrics[0].value == 0.0
+        assert reports[0].metrics == []
+
+    def test_nan_excluded_from_overall_score(self, mocker) -> None:
+        # A NaN metric must not drag the overall score: only the real metric counts.
+        ev, _ = _make_evaluator(
+            mocker,
+            ragas_metrics=[
+                EvaluationMetricType.FAITHFULNESS,
+                EvaluationMetricType.ANSWER_RELEVANCY,
+            ],
+        )
+        df = pd.DataFrame({"faithfulness": [0.8], "answer_relevancy": [float("nan")]})
+        reports = ev._parse_ragas_reports(df, [_query()], [_result()])
+        assert len(reports[0].metrics) == 1
+        assert reports[0].metrics[0].value == 0.8
+        assert reports[0].overall_score == 0.8
 
     def test_metric_not_in_config_excluded(self, mocker) -> None:
         ev, _ = _make_evaluator(
@@ -219,9 +237,8 @@ class TestAevaluateBatch:
         ]
         assert reports[0].metrics[0].value == 0.9
 
-    async def test_failure_returns_empty_reports_when_not_ignore_errors(
-        self, mocker
-    ) -> None:
+    async def test_failure_reraises_when_not_ignore_errors(self, mocker) -> None:
+        # ignore_errors=False (strict): a batch failure must propagate.
         ev, _ = _make_evaluator(
             mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
         )
@@ -229,15 +246,13 @@ class TestAevaluateBatch:
         mocker.patch.object(
             rg_module, "evaluate", side_effect=RuntimeError("ragas down")
         )
-        reports = await ev.aevaluate_batch([_query()], [_result()], [""])
-        # One empty report per query, flagged as failed.
-        assert len(reports) == 1
-        assert reports[0].metadata.get("evaluation_failed") is True
-        assert reports[0].metrics == []
+        with pytest.raises(RuntimeError):
+            await ev.aevaluate_batch([_query()], [_result()], [""])
 
-    async def test_failure_reraises_when_ignore_errors_true(self, mocker) -> None:
-        # NOTE: the source re-raises when ignore_errors is True (inverted-looking
-        # guard); pin that real behaviour.
+    async def test_failure_returns_empty_reports_when_ignore_errors(
+        self, mocker
+    ) -> None:
+        # ignore_errors=True (tolerant): degrade to empty reports, don't abort.
         ev, _ = _make_evaluator(
             mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
         )
@@ -245,8 +260,9 @@ class TestAevaluateBatch:
         mocker.patch.object(
             rg_module, "evaluate", side_effect=RuntimeError("ragas down")
         )
-        with pytest.raises(RuntimeError):
-            await ev.aevaluate_batch([_query()], [_result()], [""])
+        reports = await ev.aevaluate_batch([_query()], [_result()], [""])
+        assert len(reports) == 1
+        assert reports[0].metrics == []
 
 
 class TestValidateConfig:

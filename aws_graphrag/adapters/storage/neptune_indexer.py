@@ -728,6 +728,12 @@ class NeptuneIndexer(GraphIndexer):
             len(batches),
             concurrency,
         )
+        # Reset total_items to 0 here: each per-batch stats carries its own
+        # batch total, and stats.merge() sums total_items. Without this reset
+        # the seeded len(items) above would be double-counted on the concurrent
+        # path. (_execute_single_batch only adds successes/errors, so the
+        # per-batch total_items seed is what makes success_rate correct.)
+        stats.total_items = 0
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             futures = [
                 executor.submit(
@@ -735,7 +741,7 @@ class NeptuneIndexer(GraphIndexer):
                     batch,
                     traversal_builder,
                     operation_name,
-                    IndexingStats(),
+                    IndexingStats(total_items=len(batch)),
                 )
                 for batch in batches
             ]

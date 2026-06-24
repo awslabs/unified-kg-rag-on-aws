@@ -711,11 +711,11 @@ class VisualizationConfig(BaseModel):
         description="Configuration parameters for layout algorithms.",
     )
     interactive: dict[str, Any] = Field(
-        default={"physics_enabled": False},
+        default_factory=lambda: {"physics_enabled": False},
         description="Configuration for interactive visualization rendering.",
     )
     static: dict[str, Any] = Field(
-        default={"figure_width": 900, "figure_height": 600},
+        default_factory=lambda: {"figure_width": 900, "figure_height": 600},
         description="Configuration for static visualization rendering.",
     )
 
@@ -1396,8 +1396,14 @@ class EvaluationConfig(BaseModel):
         description="Language model identifier used for evaluation",
     )
     enabled_evaluators: list[EvaluatorType] = Field(
-        default=[EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS],
-        description="List of evaluator types to enable for this evaluation run.",
+        default_factory=lambda: [
+            EvaluatorType.LANGCHAIN,
+            EvaluatorType.RAGAS,
+            EvaluatorType.GRAPH_AWARE,
+        ],
+        description="List of evaluator types to enable for this evaluation run. "
+        "GRAPH_AWARE is deterministic and LLM-free (entity/relationship coverage), "
+        "so it is enabled by default alongside the LLM-based evaluators.",
     )
     langchain_metrics: list[EvaluationMetricType] = Field(
         default=[

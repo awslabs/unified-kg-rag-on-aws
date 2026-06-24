@@ -452,6 +452,24 @@ def test_execute_batch_concurrent_matches_sequential_totals(indexer, mocker) -> 
     assert stats.failed_items == 0
 
 
+def test_execute_batch_concurrent_multi_item_batches_total_and_rate(
+    indexer, mocker
+) -> None:
+    # Regression: the concurrent path seeded each per-batch IndexingStats with
+    # total_items=0, so the merged total_items was 0 and success_rate was 0.0
+    # even on full success. With multi-item batches (batch_size>1) the total
+    # must equal the item count and success_rate must be 1.0 — and must NOT
+    # double-count the outer seed.
+    mocker.patch.object(indexer.neptune_config, "batch_size", 10)
+    mocker.patch.object(indexer.neptune_config, "index_concurrency", 4)
+    mocker.patch.object(indexer, "_execute_with_retries")
+    items = list(range(50))  # 5 ten-item batches across 4 workers
+    stats = indexer._execute_batch_traversal(items, _no_op_builder, "op")
+    assert stats.total_items == 50
+    assert stats.successful_items == 50
+    assert stats.success_rate == 1.0
+
+
 def test_execute_batch_concurrency_clamped_to_batch_count(indexer, mocker) -> None:
     # index_concurrency > number of batches must not spawn idle workers nor
     # change correctness; one batch -> sequential-equivalent.

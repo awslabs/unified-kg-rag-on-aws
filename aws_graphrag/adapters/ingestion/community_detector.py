@@ -560,7 +560,7 @@ class CommunityDetector(BaseProcessor):
         return Community(
             id=hier_comm.community_id,
             short_id=hier_comm.community_id,
-            name=f"Level {hier_comm.level} Community {hier_comm.community_id.split('_C')[1]}",
+            name=f"Level {hier_comm.level} Community {hier_comm.community_id.split('_C', 1)[-1]}",
             name_embedding=None,
             level=str(hier_comm.level),
             parent=hier_comm.parent_id or "",

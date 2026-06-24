@@ -166,9 +166,16 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                     and metric_name in row
                 ):
                     raw_value = row[metric_name]
-                    value = 0.0 if pd.isna(raw_value) else float(raw_value)
+                    # RAGAS returns NaN when a metric is uncomputable (empty
+                    # answer, no contexts, parse failure). Skip it rather than
+                    # coercing to 0.0, which would conflate "failed to measure"
+                    # with a genuine zero score and bias the aggregate down.
+                    if pd.isna(raw_value):
+                        continue
                     metrics.append(
-                        EvaluationMetric(metric_type=metric_type, value=value)
+                        EvaluationMetric(
+                            metric_type=metric_type, value=float(raw_value)
+                        )
                     )
 
             overall_score = (
@@ -226,7 +233,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 ragas_result_df.to_pandas(), queries, results
             )
         except Exception as e:
-            if self.ignore_errors:
+            if not self.ignore_errors:
                 raise
 
             logger.error("Ragas async evaluation failed for batch: %s", e)
