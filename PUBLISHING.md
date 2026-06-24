@@ -72,7 +72,11 @@ This file tracks what is **DONE** on the `publish-prep` branch vs. what **REMAIN
       this on the machine that performs the publish.
 - [ ] **Publish from a fresh squashed commit** (safest internal→public path) once
       Legal clears it, even though history scanned clean.
-- [ ] Final OSPO/automated license scan must pass.
+- [ ] Final OSPO/automated license scan must pass. (Self-scan, 2026-06: 200
+      distributions / 34 direct runtime deps — **zero strong-copyleft GPL/AGPL/
+      SSPL**, so no Apache-2.0 outbound blocker; direct deps are MIT/BSD/Apache,
+      with 5 transitive MPL-2.0 deps that are dependency-only and compatible.
+      Re-scan after any `uv lock --upgrade`.)
 
 ## Notes
 

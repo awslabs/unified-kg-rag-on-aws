@@ -6,7 +6,7 @@
 
 대규모 다국어 문서를 동적 지식 그래프로 변환하여, 복잡한 멀티홉 추론 기반의 지능형 질의응답을 제공하는 **프로덕션급 AWS 네이티브 Knowledge Graph RAG 프레임워크**입니다.
 
-Microsoft의 *"From Local to Global: A Graph RAG Approach to Query-Focused Summarization"* 논문을 토대로 처음부터 재구현했으며, 엔터프라이즈 규모 배포를 위해 AWS 네이티브 서비스(Bedrock, Neptune, OpenSearch, S3, DynamoDB)를 적극 활용하도록 설계되었습니다.
+상호 보완적인 두 연구 — Microsoft GraphRAG(*"From Local to Global: A Graph RAG Approach to Query-Focused Summarization"*)와 LightRAG(*"Simple and Fast Retrieval-Augmented Generation"*) — 를 토대로 **두 방법론 모두**를 단일 AWS 네이티브 스택(Bedrock, Neptune, OpenSearch, S3, DynamoDB) 위에 처음부터 재구현했으며, 엔터프라이즈 규모 배포를 위해 설계되었습니다. 두 방법론은 질의마다 선택 가능하며 동일한 인제스천·인덱싱·캐싱·다국어·하이브리드 검색 인프라를 공유합니다.
 
 ---
 
@@ -40,7 +40,7 @@ Microsoft의 *"From Local to Global: A Graph RAG Approach to Query-Focused Summa
 
 - **LangChain 평가자**: 정확성/부분정확성
 - **RAGAS 지표**: 답변 충실도·관련성·컨텍스트 정확도
-- **그래프 인식 평가**: 정답 기대치(`expected_entities`/`expected_relationships`) 대비 엔티티·관계 커버리지 precision/recall/F1 (결정적·LLM 불필요, 단어 경계 매칭)
+- **그래프 인식 평가**: 정답 기대치(`expected_entities`/`expected_relationships`) 대비 엔티티·관계 커버리지(= recall) (결정적·LLM 불필요, 단어 경계 매칭; precision/F1은 자유 텍스트 답변에서 엔티티 열거가 불가해 의도적으로 미산출)
 
 ### 🌍 다국어 지원
 
@@ -179,5 +179,5 @@ Apache-2.0. [`LICENSE`](./LICENSE) 참고.
 
 ## 📚 참고문헌
 
-- Microsoft GraphRAG: *From Local to Global: A Graph RAG Approach to Query-Focused Summarization*
-- LightRAG: *Simple and Fast Retrieval-Augmented Generation*
+- Microsoft GraphRAG: [*From Local to Global: A Graph RAG Approach to Query-Focused Summarization*](https://arxiv.org/abs/2404.16130) · [라이브러리](https://github.com/microsoft/graphrag)
+- LightRAG: [*Simple and Fast Retrieval-Augmented Generation*](https://arxiv.org/abs/2410.05779) · [라이브러리](https://github.com/HKUDS/LightRAG)

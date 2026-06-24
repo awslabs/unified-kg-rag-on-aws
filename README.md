@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![CI](https://github.com/awslabs/aws-graphrag/actions/workflows/quality.yml/badge.svg)](https://github.com/awslabs/aws-graphrag/actions/workflows/quality.yml)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.10–3.12-blue.svg)](https://www.python.org/downloads/)
 
 📖 **[한국어 README](./README.ko.md)** · 🤝 **[Contributing](./CONTRIBUTING.md)**
 
@@ -10,7 +10,7 @@
 
 A production-ready, AWS-native knowledge graph RAG (Retrieval-Augmented Generation) framework that transforms large-scale multilingual documents into dynamic knowledge graphs, enabling intelligent question-answering with complex multi-hop reasoning capabilities.
 
-Built from the ground up based on Microsoft's "From Local to Global: A Graph RAG Approach to Query-Focused Summarization" paper and subsequent research, this framework is specifically designed to leverage AWS native services for enterprise-scale deployment.
+Built from the ground up on two complementary lines of research — Microsoft's GraphRAG ("From Local to Global: A Graph RAG Approach to Query-Focused Summarization") and LightRAG ("Simple and Fast Retrieval-Augmented Generation") — this framework reimplements **both** methodologies over a single AWS-native stack designed for enterprise-scale deployment. The two are user-selectable per query and share one ingestion, indexing, caching, multilingual, and hybrid-search infrastructure.
 
 > **What's new**
 > - **Two retrieval methodologies, one infrastructure.** Choose per query via `search_strategy`: GraphRAG community-summary (`auto`/`drift`/`global`/`local`/`simple`) or **LightRAG dual-level keyword** (`mix`/`hybrid`/`naive`). Both share the same ingestion, indexing, caching, multilingual translation, and hybrid (lexical + semantic + graph) scoring — only the retrieval algorithm differs.
@@ -25,6 +25,7 @@ Built from the ground up based on Microsoft's "From Local to Global: A Graph RAG
 - [🏛️ Architecture Overview](#️-architecture-overview)
 - [🚀 Installation](#-installation)
 - [📖 Usage](#-usage)
+- [🧪 Testing & Quality](#-testing--quality)
 - [🤝 Contributing](#-contributing)
 - [📄 License](#-license)
 - [📚 References](#-references)
@@ -97,11 +98,11 @@ The framework implements a sophisticated indexing and retrieval pipeline:
 ![Data Ingestion Pipeline](./assets/ingestion_pipeline.png)
 
 #### Core Stages:
-- **Document Loading/Parsing**: Multi-format support (PDF, TXT, MD, CSV, JSON)
+- **Document Loading/Parsing**: PDF, TXT, CSV, JSON out of the box (plus MD/HTML when the optional `unstructured` extra is installed)
 - **Text Chunking**: Simple/intelligent strategies with context preservation
 - **Graph Extraction**: Entity/relationship extraction via LLM
 - **Graph Resolution**: Fuzzy matching and deduplication of entities/relationships
-- **Graph Analysis**: Centrality metrics (degree, betweenness, PageRank) and graph statistics
+- **Graph Analysis**: Centrality metrics (degree, betweenness, PageRank, eigenvector) and graph statistics
 - **Community Detection**: Leiden algorithm for topic clustering
 - **Indexing**: Storage backend integration (OpenSearch + Neptune)
 
@@ -194,13 +195,14 @@ as a fast lexical/semantic fallback and for comparison evaluation.
 ## 🚀 Installation
 
 ### Prerequisites
-- **Python 3.10+** with pip package manager
+- **Python 3.10–3.12** (`uv` recommended)
 - **AWS CLI** configured with appropriate permissions
 - **AWS Services** deployed and accessible:
   - Amazon Bedrock (with model access enabled)
   - Amazon Neptune cluster
   - Amazon OpenSearch domain
   - Amazon S3 bucket
+  - Amazon DynamoDB (only for incremental indexing)
 
 ### Quick Start
 ```bash
@@ -208,8 +210,8 @@ as a fast lexical/semantic fallback and for comparison evaluation.
 git clone <repository-url>
 cd aws-graphrag
 
-# Install the framework
-pip install -e .
+# Install the framework (uv recommended; or: pip install -e .)
+uv sync --extra dev
 
 # Copy and configure settings
 cp config-template.yaml config.yaml
@@ -650,10 +652,12 @@ await pipeline.run(
     resume_from_stage="graph_extraction"
 )
 
-# Force rebuild ignoring cache
-await pipeline.run(
-    source_directory="./documents"
+# Force a full rebuild, ignoring any existing cache (set on the config, then run)
+rebuild_pipeline = DataIngestionPipeline(
+    config=config,
+    pipeline_config=PipelineConfig(force_rebuild=True),
 )
+await rebuild_pipeline.run(source_directory="./documents")
 ```
 
 #### Evaluation and Benchmarking
@@ -671,6 +675,19 @@ results = await eval_manager.evaluate_dataset(
 )
 ```
 
+## 🧪 Testing & Quality
+
+```bash
+uv run pytest -m "not aws"                    # AWS-free tests (unit/integration/property)
+uv run pytest -m "not aws" --cov=aws_graphrag # with coverage
+uv run ruff check aws_graphrag tests
+uv run mypy aws_graphrag
+```
+
+- The `aws` marker isolates tests that need real AWS services; they are excluded in CI.
+- DynamoDB/S3 are tested with `moto`; Neptune/OpenSearch with port-based in-memory fakes.
+- CI (`.github/workflows/`): ruff/black/isort/mypy + pytest+coverage gate, plus a non-blocking ASH security scan.
+
 ## 🤝 Contributing
 
 We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
@@ -681,6 +698,8 @@ This project is licensed under the Apache-2.0 License - see the [LICENSE](LICENS
 
 ## 📚 References
 
+**GraphRAG (Microsoft)**
+
 - [From Local to Global: A Graph RAG Approach to Query-Focused Summarization](https://arxiv.org/abs/2404.16130)
 - [GraphRAG: Unlocking LLM Discovery on Narrative Private Data](https://www.microsoft.com/en-us/research/blog/graphrag-unlocking-llm-discovery-on-narrative-private-data/)
 - [GraphRAG: New Tool for Complex Data Discovery Now on GitHub](https://www.microsoft.com/en-us/research/blog/graphrag-new-tool-for-complex-data-discovery-now-on-github/)
@@ -690,6 +709,11 @@ This project is licensed under the Apache-2.0 License - see the [LICENSE](LICENS
 - [LazyGraphRAG: Setting a New Standard for Quality and Cost](https://www.microsoft.com/en-us/research/blog/lazygraphrag-setting-a-new-standard-for-quality-and-cost/)
 - [Introducing GraphRAG 1.0](https://www.microsoft.com/en-us/research/blog/moving-to-graphrag-1-0-streamlining-ergonomics-for-developers-and-users/)
 - [Microsoft GraphRAG Library](https://github.com/microsoft/graphrag)
+
+**LightRAG (HKUDS)**
+
+- [LightRAG: Simple and Fast Retrieval-Augmented Generation](https://arxiv.org/abs/2410.05779)
+- [HKUDS/LightRAG Library](https://github.com/HKUDS/LightRAG)
 
 ## 🏢 About
 
