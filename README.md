@@ -8,16 +8,16 @@
 
 ![Knowledge Graph](./assets/interactive_graph.jpg)
 
-A production-ready, AWS-native knowledge graph RAG (Retrieval-Augmented Generation) framework that transforms large-scale multilingual documents into dynamic knowledge graphs, enabling intelligent question-answering with complex multi-hop reasoning capabilities.
+An AWS-native knowledge graph RAG (Retrieval-Augmented Generation) framework that turns large multilingual document corpora into knowledge graphs and answers questions over them with multi-hop graph traversal.
 
-Built from the ground up on two complementary lines of research — Microsoft's GraphRAG ("From Local to Global: A Graph RAG Approach to Query-Focused Summarization") and LightRAG ("Simple and Fast Retrieval-Augmented Generation") — this framework reimplements **both** methodologies over a single AWS-native stack designed for enterprise-scale deployment. The two are user-selectable per query and share one ingestion, indexing, caching, multilingual, and hybrid-search infrastructure.
+It reimplements two retrieval methodologies — Microsoft's GraphRAG ("From Local to Global: A Graph RAG Approach to Query-Focused Summarization") and LightRAG ("Simple and Fast Retrieval-Augmented Generation") — over a single AWS-native stack. The two are selectable per query and share one ingestion, indexing, caching, multilingual, and hybrid (lexical + semantic + graph) search infrastructure; only the retrieval algorithm differs.
 
-> **What's new**
-> - **Two retrieval methodologies, one infrastructure.** Choose per query via `search_strategy`: GraphRAG community-summary (`auto`/`drift`/`global`/`local`/`simple`) or **LightRAG dual-level keyword** (`mix`/`hybrid`/`naive`). Both share the same ingestion, indexing, caching, multilingual translation, and hybrid (lexical + semantic + graph) scoring — only the retrieval algorithm differs.
-> - **Incremental indexing.** Enable the DynamoDB document-status registry (`aws.dynamodb`) to diff a corpus by content hash and re-index only new/changed documents, merging into the live graph (idempotent upserts; deletions remove a document's exclusive artifacts).
+> **Highlights**
+> - **Two methodologies, one stack.** GraphRAG community-summary (`auto`/`drift`/`global`/`local`/`simple`) and LightRAG dual-level keyword (`mix`/`hybrid`/`naive`), chosen per query via `search_strategy`.
+> - **Incremental indexing.** The DynamoDB document-status registry (`aws.dynamodb`) diffs a corpus by content hash and re-indexes only new/changed documents, merging into the live graph (idempotent upserts; deletions remove a document's exclusive artifacts).
 > - **Prompt tuning.** `run-prompt-tuning` profiles a corpus (domain/language/persona/entity-types) and emits domain-adapted `custom_prompts`.
 > - **Standalone visualization & graph-aware evaluation.** `run-visualization` renders from exported graph data without re-ingesting; the `graph_aware` evaluator scores entity/relationship coverage.
-> - **Hexagonal architecture.** Ports & adapters (`domain/ports/adapters/application` layers) + registries make storage backends, retrieval strategies, evaluators, and renderers pluggable. See `docs/tech-doc.md`.
+> - **Hexagonal architecture.** Ports & adapters + registries make storage backends, retrieval strategies, evaluators, and renderers pluggable. See `docs/tech-doc.md`.
 
 ## 📋 Table of Contents
 
@@ -33,10 +33,10 @@ Built from the ground up on two complementary lines of research — Microsoft's 
 ## ✨ Features & Advantages
 
 ### 🏗️ **AWS-Native Design**
-- **AWS Service Integration**: Seamless integration with Bedrock, Neptune, OpenSearch, S3, and other AWS services
-- **Scalable**: Parallel processing architecture supporting large-scale document processing
-- **Cost-Optimized**: Intelligent caching and S3 synchronization for cost optimization with elastic task retry
-- **Enterprise Security**: S3 encryption and private VPC-based enterprise-grade security implementation
+- **AWS service integration**: Bedrock, Neptune, OpenSearch, S3, and DynamoDB
+- **Scalable**: parallel, batched processing for large document corpora
+- **Caching**: local + S3-synced stage cache with task retry to avoid recomputation
+- **Security**: S3 encryption and private-VPC deployment
 
 ### 🚀 **Triple Hybrid Search Architecture**
 - **Semantic Search**: High-quality vector search based on Amazon Bedrock embedding models
@@ -717,4 +717,5 @@ This project is licensed under the Apache-2.0 License - see the [LICENSE](LICENS
 
 ## 🏢 About
 
-This project is developed by Amazon Web Services as an enterprise-grade solution for knowledge graph-based RAG systems, released under the Apache-2.0 License.
+Maintained by AWS under the awslabs organization. Licensed under Apache-2.0.
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).

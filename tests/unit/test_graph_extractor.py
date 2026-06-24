@@ -14,7 +14,10 @@ from __future__ import annotations
 import pytest
 
 import aws_graphrag.adapters.ingestion.graph_extractor as ge_module
-from aws_graphrag.adapters.ingestion.graph_extractor import GraphExtractor
+from aws_graphrag.adapters.ingestion.graph_extractor import (
+    ExtractionStats,
+    GraphExtractor,
+)
 from aws_graphrag.domain.ingestion.base_processor import BaseProcessor
 from aws_graphrag.domain.models import Config, Entity, Relationship, TextUnit
 
@@ -334,3 +337,238 @@ class TestConfidenceFiltering:
         out, removed = extractor._filter_orphan_relationships(rels, valid)
         assert removed == 1
         assert {r.id for r in out} == {"r1"}
+
+
+# --------------------------------------------------------------------------- #
+# ExtractionStats derived properties
+# --------------------------------------------------------------------------- #
+class TestExtractionStats:
+    def test_success_rate_zero_processed(self) -> None:
+        assert ExtractionStats().success_rate == 0.0
+
+    def test_average_processing_time_zero_processed(self) -> None:
+        assert ExtractionStats().average_processing_time == 0.0
+
+    def test_rates_computed(self) -> None:
+        s = ExtractionStats(
+            num_successful_extractions=3,
+            num_failed_extractions=1,
+            total_processing_time=8.0,
+        )
+        assert s.processed_unit_count == 4
+        assert s.success_rate == 75.0
+        assert s.average_processing_time == 2.0
+
+
+# --------------------------------------------------------------------------- #
+# _format_entity_types
+# --------------------------------------------------------------------------- #
+class TestFormatEntityTypes:
+    def test_empty_list_uses_free_choice_message(self) -> None:
+        out = GraphExtractor._format_entity_types([])
+        assert "any entity types" in out.lower()
+
+    def test_label_only(self) -> None:
+        assert GraphExtractor._format_entity_types(["PERSON"]) == "- **PERSON**"
+
+    def test_label_with_description(self) -> None:
+        out = GraphExtractor._format_entity_types(["ORG: a company"])
+        assert out == "- **ORG**: a company"
+
+    def test_blank_label_skipped(self) -> None:
+        out = GraphExtractor._format_entity_types([": no label", "PERSON"])
+        assert out == "- **PERSON**"
+
+
+# --------------------------------------------------------------------------- #
+# _parse_extraction_result
+# --------------------------------------------------------------------------- #
+class TestParseExtractionResult:
+    def test_non_dict_returns_empty(self, extractor, text_unit) -> None:
+        ents, rels = extractor._parse_extraction_result("nope", text_unit)
+        assert ents == [] and rels == []
+
+    def test_missing_keys_returns_empty(self, extractor, text_unit) -> None:
+        ents, rels = extractor._parse_extraction_result({"entities": {}}, text_unit)
+        assert ents == [] and rels == []
+
+    def test_entities_and_relationships_parsed(self, extractor, text_unit) -> None:
+        result = {
+            "entities": {
+                "entity": [
+                    {"name": "Alice", "type": "PERSON"},
+                    {"name": "Acme", "type": "ORG"},
+                ]
+            },
+            "relationships": {
+                "relationship": {
+                    "source": "Alice",
+                    "target": "Acme",
+                    "type": "WORKS_AT",
+                }
+            },
+        }
+        ents, rels = extractor._parse_extraction_result(result, text_unit)
+        assert {e.name for e in ents} == {"alice", "acme"}
+        assert len(rels) == 1
+        # Relationship endpoint id resolved through the local name->id map.
+        alice_id = next(e.id for e in ents if e.name == "alice")
+        assert rels[0].source_id == alice_id
+
+    def test_invalid_entity_skipped(self, extractor, text_unit) -> None:
+        result = {
+            "entities": {"entity": [{"name": ""}, {"name": "Bob"}]},
+            "relationships": {},
+        }
+        ents, rels = extractor._parse_extraction_result(result, text_unit)
+        assert [e.name for e in ents] == ["bob"]
+
+
+# --------------------------------------------------------------------------- #
+# _prepare_extraction_inputs
+# --------------------------------------------------------------------------- #
+class TestPrepareExtractionInputs:
+    def test_inputs_built_for_each_unit(self, extractor) -> None:
+        extractor.extraction_config.entity_types = ["PERSON", "ORG"]
+        units = [TextUnit(id="t1", text="hello"), TextUnit(id="t2", text="world")]
+        inputs = extractor._prepare_extraction_inputs(units)
+        assert len(inputs) == 2
+        assert inputs[0]["input_text"] == "hello"
+        assert "PERSON" in inputs[0]["entity_types"]
+        assert inputs[0]["max_entities_per_chunk"] == str(
+            extractor.extraction_config.max_entities_per_chunk
+        )
+
+
+# --------------------------------------------------------------------------- #
+# _process_extraction_results
+# --------------------------------------------------------------------------- #
+class TestProcessExtractionResults:
+    def test_none_result_counts_failure(self, extractor) -> None:
+        units = [TextUnit(id="t1", text="x")]
+        ents, rels = extractor._process_extraction_results(units, [None])
+        assert ents == [] and rels == []
+        assert extractor.stats.num_failed_extractions == 1
+
+    def test_successful_result_accumulates(self, extractor) -> None:
+        units = [TextUnit(id="t1", text="x")]
+        results = [
+            {
+                "entities": {
+                    "entity": [{"name": "Alice", "type": "PERSON", "confidence": 0.9}]
+                },
+                "relationships": {},
+            }
+        ]
+        extractor.extraction_config.entity_confidence_threshold = 0.0
+        ents, _ = extractor._process_extraction_results(units, results)
+        assert [e.name for e in ents] == ["alice"]
+        assert extractor.stats.num_successful_extractions == 1
+        assert extractor.stats.average_entity_confidence == 0.9
+
+    def test_confidence_filter_drops_orphan_relationship(self, extractor) -> None:
+        extractor.extraction_config.entity_confidence_threshold = 0.5
+        units = [TextUnit(id="t1", text="x")]
+        results = [
+            {
+                "entities": {
+                    "entity": [
+                        {"name": "Alice", "type": "PERSON", "confidence": 0.1},
+                        {"name": "Acme", "type": "ORG", "confidence": 0.9},
+                    ]
+                },
+                "relationships": {
+                    "relationship": {
+                        "source": "Alice",
+                        "target": "Acme",
+                        "type": "WORKS_AT",
+                    }
+                },
+            }
+        ]
+        ents, rels = extractor._process_extraction_results(units, results)
+        # Alice (0.1) filtered out -> its relationship is now an orphan.
+        assert "alice" not in {e.name for e in ents}
+        assert extractor.stats.entities_filtered_by_confidence == 1
+        assert extractor.stats.relationships_filtered_by_confidence == 1
+        assert rels == []
+
+
+# --------------------------------------------------------------------------- #
+# extract_from_text_units (batch chain mocked)
+# --------------------------------------------------------------------------- #
+class TestExtractFromTextUnits:
+    def test_empty_units_returns_empty(self, extractor) -> None:
+        ents, rels, stats = extractor.extract_from_text_units([])
+        assert ents == [] and rels == []
+        assert stats.num_total_units == 0
+
+    def test_end_to_end_with_mocked_chain(self, extractor, mocker) -> None:
+        extractor.extraction_config.entity_confidence_threshold = 0.0
+        units = [TextUnit(id="t1", text="Alice works at Acme.")]
+        extractor.graph_extractor.batch = mocker.Mock(
+            return_value=[
+                {
+                    "entities": {
+                        "entity": [
+                            {"name": "Alice", "type": "PERSON"},
+                            {"name": "Acme", "type": "ORG"},
+                        ]
+                    },
+                    "relationships": {
+                        "relationship": {
+                            "source": "Alice",
+                            "target": "Acme",
+                            "type": "WORKS_AT",
+                        }
+                    },
+                }
+            ]
+        )
+        ents, rels, stats = extractor.extract_from_text_units(units)
+        assert {e.name for e in ents} == {"alice", "acme"}
+        assert len(rels) == 1
+        assert stats.total_entities_extracted == 2
+        assert stats.total_relationships_extracted == 1
+        assert stats.num_total_units == 1
+
+    def test_batch_error_with_ignore_errors_returns_empty(
+        self, extractor, mocker
+    ) -> None:
+        extractor.ignore_errors = True
+        fake_bp = mocker.Mock()
+        fake_bp.execute_with_fallback.side_effect = RuntimeError("boom")
+        extractor.batch_processor = fake_bp
+        ents, rels, stats = extractor.extract_from_text_units(
+            [TextUnit(id="t1", text="x")]
+        )
+        assert ents == [] and rels == []
+
+    def test_batch_error_without_ignore_raises(self, extractor, mocker) -> None:
+        extractor.ignore_errors = False
+        fake_bp = mocker.Mock()
+        fake_bp.execute_with_fallback.side_effect = RuntimeError("boom")
+        extractor.batch_processor = fake_bp
+        with pytest.raises(RuntimeError, match="boom"):
+            extractor.extract_from_text_units([TextUnit(id="t1", text="x")])
+
+
+# --------------------------------------------------------------------------- #
+# _log_completion_summary (smoke — exercises the logging branches)
+# --------------------------------------------------------------------------- #
+class TestLogCompletionSummary:
+    def test_logs_with_filtering_and_failures(self) -> None:
+        stats = ExtractionStats(
+            num_total_units=3,
+            num_successful_extractions=2,
+            num_failed_extractions=1,
+            total_entities_extracted=5,
+            total_relationships_extracted=4,
+            entities_filtered_by_confidence=2,
+            relationships_filtered_by_confidence=1,
+            average_entity_confidence=0.7,
+            confidence_threshold_applied=0.5,
+            total_processing_time=1.23,
+        )
+        # Should not raise; covers both the confidence and failure log branches.
+        GraphExtractor._log_completion_summary(stats)

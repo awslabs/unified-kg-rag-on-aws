@@ -14,7 +14,12 @@ from __future__ import annotations
 import pytest
 
 import aws_graphrag.adapters.ingestion.claim_extractor as ce_module
-from aws_graphrag.adapters.ingestion.claim_extractor import ClaimExtractor
+from aws_graphrag.adapters.ingestion.claim_extractor import (
+    ClaimExtractionStats,
+    ClaimExtractor,
+    _prepare_claim_input_task,
+    format_entities_with_limit_task,
+)
 from aws_graphrag.domain.models import Claim, Config, Entity, TextUnit
 
 pytestmark = pytest.mark.unit
@@ -195,3 +200,206 @@ class TestPrepareExtractionInputs:
 
     def test_empty_unit_list_yields_empty_dict(self, extractor) -> None:
         assert extractor._prepare_extraction_inputs([], all_entities=[]) == {}
+
+
+# --------------------------------------------------------------------------- #
+# format_entities_with_limit_task (module-level, AWS-free)
+# --------------------------------------------------------------------------- #
+class TestFormatEntitiesWithLimit:
+    def test_empty_returns_empty_string(self) -> None:
+        assert format_entities_with_limit_task([], max_entities=5) == ""
+
+    def test_under_limit_lists_all_names(self) -> None:
+        ents = [Entity(id="e1", name="Alice"), Entity(id="e2", name="Bob")]
+        out = format_entities_with_limit_task(ents, max_entities=5)
+        assert out == "Alice\nBob"
+
+    def test_over_limit_truncates_and_appends_more(self) -> None:
+        ents = [
+            Entity(id=f"e{i}", name=f"N{i}", text_unit_ids=["t"] * i) for i in range(5)
+        ]
+        out = format_entities_with_limit_task(ents, max_entities=2)
+        # Most-supported entities (more text_unit_ids) sort first.
+        assert "N4" in out and "N3" in out
+        assert "... and 3 more entities" in out
+
+
+# --------------------------------------------------------------------------- #
+# _prepare_claim_input_task (module-level, AWS-free)
+# --------------------------------------------------------------------------- #
+class TestPrepareClaimInputTask:
+    def test_plain_text_no_entities(self) -> None:
+        unit = TextUnit(id="t1", text="raw text")
+        out = _prepare_claim_input_task(
+            unit, [], {"max_entities_per_prompt": 0, "target_language": "en"}
+        )
+        assert out == {"input_text": "raw text", "entity_specs": ""}
+
+    def test_translated_text_preferred(self) -> None:
+        unit = TextUnit(id="t1", text="original", translated_texts={"en": "translated"})
+        out = _prepare_claim_input_task(
+            unit, [], {"max_entities_per_prompt": 0, "target_language": "en"}
+        )
+        assert out["input_text"] == "translated"
+
+    def test_translated_text_missing_target_falls_back_to_text(self) -> None:
+        unit = TextUnit(id="t1", text="original", translated_texts={"fr": "francais"})
+        out = _prepare_claim_input_task(
+            unit, [], {"max_entities_per_prompt": 0, "target_language": "en"}
+        )
+        assert out["input_text"] == "original"
+
+    def test_relevant_entities_included(self) -> None:
+        unit = TextUnit(id="t1", text="body")
+        entities = [
+            Entity(id="e1", name="Acme", text_unit_ids=["t1"]),
+            Entity(id="e2", name="Other", text_unit_ids=["t9"]),
+        ]
+        out = _prepare_claim_input_task(
+            unit, entities, {"max_entities_per_prompt": 5, "target_language": "en"}
+        )
+        assert "Acme" in out["entity_specs"]
+        assert "Other" not in out["entity_specs"]
+
+
+# --------------------------------------------------------------------------- #
+# _get_string_value — multi-key dict branch
+# --------------------------------------------------------------------------- #
+class TestGetStringValueExtra:
+    def test_multi_key_dict_stringified(self) -> None:
+        # More than one value and no #text -> str(dict).
+        out = ClaimExtractor._get_string_value({"a": "1", "b": "2"})
+        assert "a" in out and "b" in out
+
+
+# --------------------------------------------------------------------------- #
+# ClaimExtractionStats derived properties
+# --------------------------------------------------------------------------- #
+class TestClaimExtractionStats:
+    def test_zero_processed(self) -> None:
+        assert ClaimExtractionStats().success_rate == 0.0
+        assert ClaimExtractionStats().processed_unit_count == 0
+
+    def test_success_rate_computed(self) -> None:
+        s = ClaimExtractionStats(num_successful_extractions=3, num_failed_extractions=1)
+        assert s.processed_unit_count == 4
+        assert s.success_rate == 75.0
+
+
+# --------------------------------------------------------------------------- #
+# _process_extraction_results
+# --------------------------------------------------------------------------- #
+class TestProcessExtractionResults:
+    def test_none_result_counts_failure(self, extractor) -> None:
+        units = [TextUnit(id="t1", text="x")]
+        claims = extractor._process_extraction_results(units, [None])
+        assert claims == []
+        assert extractor.stats.num_failed_extractions == 1
+
+    def test_success_accumulates_claims(self, extractor) -> None:
+        units = [TextUnit(id="t1", text="x")]
+        results = [
+            {"claims": {"claim": {"subject": "A", "object": "B", "claim_type": "X"}}}
+        ]
+        claims = extractor._process_extraction_results(units, results)
+        assert len(claims) == 1
+        assert extractor.stats.num_successful_extractions == 1
+
+    def test_length_mismatch_warns_and_zips_available(self, extractor) -> None:
+        # 2 units but 1 result -> strict=False zip stops at the shorter list.
+        units = [TextUnit(id="t1", text="x"), TextUnit(id="t2", text="y")]
+        results = [
+            {"claims": {"claim": {"subject": "A", "object": "B", "claim_type": "X"}}}
+        ]
+        claims = extractor._process_extraction_results(units, results)
+        assert len(claims) == 1
+
+    def test_parse_failure_counts_failure(self, extractor, mocker) -> None:
+        units = [TextUnit(id="t1", text="x")]
+        mocker.patch.object(
+            extractor, "_parse_extraction_result", side_effect=ValueError("bad")
+        )
+        claims = extractor._process_extraction_results(units, [{"claims": {}}])
+        assert claims == []
+        assert extractor.stats.num_failed_extractions == 1
+
+
+# --------------------------------------------------------------------------- #
+# _parse_claim_data — exception path
+# --------------------------------------------------------------------------- #
+class TestParseClaimDataExceptions:
+    def test_exception_during_build_returns_none(
+        self, extractor, text_unit, mocker
+    ) -> None:
+        mocker.patch.object(
+            extractor, "_parse_attributes", side_effect=RuntimeError("attr boom")
+        )
+        out = extractor._parse_claim_data(
+            {"subject": "A", "object": "B", "claim_type": "X"}, text_unit
+        )
+        assert out is None
+
+
+# --------------------------------------------------------------------------- #
+# extract_from_text_units (batch chain mocked)
+# --------------------------------------------------------------------------- #
+class TestExtractFromTextUnits:
+    def test_empty_units_returns_empty(self, extractor) -> None:
+        claims, stats = extractor.extract_from_text_units([])
+        assert claims == []
+        assert stats.num_total_units == 0
+
+    def test_end_to_end_with_mocked_chain(self, extractor, mocker) -> None:
+        units = [TextUnit(id="t1", text="Acme acquired Beta.")]
+        extractor.claim_extractor.batch = mocker.Mock(
+            return_value=[
+                {
+                    "claims": {
+                        "claim": {
+                            "subject": "Acme",
+                            "object": "Beta",
+                            "claim_type": "ACQUISITION",
+                        }
+                    }
+                }
+            ]
+        )
+        claims, stats = extractor.extract_from_text_units(units)
+        assert len(claims) == 1
+        assert claims[0].subject_name == "Acme"
+        assert stats.total_claims_extracted == 1
+        assert stats.num_total_units == 1
+
+    def test_batch_error_with_ignore_errors_returns_empty(
+        self, extractor, mocker
+    ) -> None:
+        extractor.ignore_errors = True
+        fake_bp = mocker.Mock()
+        fake_bp.execute_with_fallback.side_effect = RuntimeError("boom")
+        extractor.batch_processor = fake_bp
+        claims, stats = extractor.extract_from_text_units([TextUnit(id="t1", text="x")])
+        assert claims == []
+
+    def test_batch_error_without_ignore_raises(self, extractor, mocker) -> None:
+        extractor.ignore_errors = False
+        fake_bp = mocker.Mock()
+        fake_bp.execute_with_fallback.side_effect = RuntimeError("boom")
+        extractor.batch_processor = fake_bp
+        with pytest.raises(RuntimeError, match="boom"):
+            extractor.extract_from_text_units([TextUnit(id="t1", text="x")])
+
+
+# --------------------------------------------------------------------------- #
+# _log_completion_summary (smoke)
+# --------------------------------------------------------------------------- #
+class TestLogCompletionSummary:
+    def test_logs_with_failures(self) -> None:
+        stats = ClaimExtractionStats(
+            num_total_units=3,
+            num_successful_extractions=2,
+            num_failed_extractions=1,
+            total_claims_extracted=4,
+            total_processing_time=1.5,
+        )
+        # Should not raise; covers the failure-warning branch.
+        ClaimExtractor._log_completion_summary(stats)
