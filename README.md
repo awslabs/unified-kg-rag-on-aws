@@ -1,5 +1,9 @@
 # AWS Native Graph RAG
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+[![CI](https://github.com/awslabs/aws-graphrag/actions/workflows/quality.yml/badge.svg)](https://github.com/awslabs/aws-graphrag/actions/workflows/quality.yml)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+
 📖 **[한국어 README](./README.ko.md)** · 🤝 **[Contributing](./CONTRIBUTING.md)**
 
 ![Knowledge Graph](./assets/interactive_graph.jpg)

@@ -1,18 +1,16 @@
-This project ports methodology from the following third-party open-source
-projects. Their source is vendored under `references/` for porting reference
-only and is NOT part of the distributed `aws_graphrag` package.
-
-NOTE: Before public release, prefer REMOVING the vendored `references/` trees and
-linking to the upstream repositories instead (cleaner license-scan surface). If
-they are retained, the attributions below satisfy the MIT notice requirement.
+This project ports and adapts methodology from the following third-party
+open-source projects. Their source is NOT redistributed here (the local
+`references/` copies used during porting are git-ignored and excluded from the
+published repository); these attributions are provided as courtesy and to
+document provenance.
 
 --------------------------------------------------------------------------------
-microsoft/graphrag  (references/graphrag)
+microsoft/graphrag
 https://github.com/microsoft/graphrag
 MIT License — Copyright (c) Microsoft Corporation.
 
 --------------------------------------------------------------------------------
-HKUDS/LightRAG  (references/LightRAG)
+HKUDS/LightRAG
 https://github.com/HKUDS/LightRAG
 MIT License — Copyright (c) 2025 LightRAG Team
 --------------------------------------------------------------------------------

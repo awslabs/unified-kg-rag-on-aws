@@ -57,15 +57,19 @@ This file tracks what is **DONE** on the `publish-prep` branch vs. what **REMAIN
 
 ## Phase D — Remaining before publish
 
-- [ ] **Decide on `references/` vendored trees.** Recommended: **delete** them and
-      link upstream (microsoft/graphrag, HKUDS/LightRAG) — cleanest license-scan
-      surface. If retained, `THIRD_PARTY_LICENSES` already attributes them.
+- [x] **`references/` vendored trees — no action needed.** They are git-ignored
+      (`.gitignore` line `references/`) and never tracked, so they are
+      automatically excluded from the published repo (no license-scan surface).
+      `THIRD_PARTY_LICENSES` attributes the ported methodology as courtesy.
+- [x] **README badges added** (License/CI/coverage; URLs point at the planned
+      `awslabs/aws-graphrag` repo — verify the slug when the repo is created).
+- [x] **`README.ko.md` decision:** kept (multilingual support is a headline
+      feature; the Korean README reinforces it). Revisit if awslabs prefers
+      English-only.
 - [ ] **Local working-tree cleanup** (untracked, never commit): delete `logs/*.txt`,
       sanitize/remove `docker/config.yaml` (real dev endpoints + account id) and
-      `cdk.context.json` (account id in AZ-lookup cache). All are gitignored.
-- [ ] Decide whether `README.ko.md` (Korean) belongs in the public repo.
-- [ ] Add README badges (License/Apache-2.0, CI, coverage) once the GitHub repo
-      and Actions exist.
+      `cdk.context.json` (account id in AZ-lookup cache). All are gitignored — do
+      this on the machine that performs the publish.
 - [ ] **Publish from a fresh squashed commit** (safest internal→public path) once
       Legal clears it, even though history scanned clean.
 - [ ] Final OSPO/automated license scan must pass.
