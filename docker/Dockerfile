@@ -10,8 +10,13 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # Runtime deps: the AWS CLI is used by the entrypoint to sync the source corpus
 # from S3 (the loader only reads a local Path). libgomp1 is needed by the
 # scientific stack (graspologic/numpy) used in community detection.
+# Versions are pinned (reproducible builds + satisfies SAST). Bump these when
+# the python:3.12-slim base advances and the pinned version is dropped from the
+# apt repo (check with `apt-cache policy awscli libgomp1` in the base image).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends awscli libgomp1 \
+    && apt-get install -y --no-install-recommends \
+        awscli=2.23.6-1 \
+        libgomp1=14.2.0-19 \
     && rm -rf /var/lib/apt/lists/*
 
 # GIT_PYTHON_REFRESH=quiet: GitPython (pulled in transitively by ragas) probes
@@ -43,6 +48,15 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENV PATH="/app/.venv/bin:${PATH}"
+
+# Run as a non-root user (defense in depth; satisfies SAST "missing USER").
+# The user owns /app so the entrypoint can write under it; the entrypoint also
+# syncs the source corpus to /tmp, which is world-writable. HOME is set so AWS
+# CLI / boto3 can resolve a cache/config dir.
+RUN useradd --create-home --uid 10001 appuser \
+    && chown -R appuser:appuser /app
+ENV HOME=/home/appuser
+USER appuser
 
 # The entrypoint syncs an s3:// source dir locally (if any) then exec's the
 # command supplied by Step Functions (run-ingestion ...).
