@@ -1,0 +1,57 @@
+<mxGraphModel adaptiveColors="auto" dx="900" dy="600" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="640" math="0" shadow="0">
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+    <mxCell id="title" value="Hexagonal Architecture — dependencies point inward" style="text;html=1;align=center;verticalAlign=middle;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="40" y="16" width="700" height="30" as="geometry"/>
+    </mxCell>
+    <mxCell id="application" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+      <mxGeometry x="40" y="60" width="700" height="470" as="geometry"/>
+    </mxCell>
+    <mxCell id="application-lbl" value="application/ — orchestration + entry points&#10;cli · ingestion (pipeline+stages) · storage/indexing_manager · retrieval/rag_chain" style="text;html=1;align=center;verticalAlign=top;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="60" y="68" width="660" height="34" as="geometry"/>
+    </mxCell>
+    <mxCell id="adapters" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;verticalAlign=top;fontSize=13;" vertex="1" parent="1">
+      <mxGeometry x="80" y="120" width="620" height="350" as="geometry"/>
+    </mxCell>
+    <mxCell id="adapters-lbl" value="adapters/ — concrete technology bindings&#10;aws (Bedrock·Neptune·OpenSearch·DynamoDB·S3) · storage · retrievers · search_strategies · ingestion · renderers · evaluators" style="text;html=1;align=center;verticalAlign=top;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="96" y="128" width="588" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="ports" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;verticalAlign=top;fontSize=13;" vertex="1" parent="1">
+      <mxGeometry x="130" y="186" width="520" height="240" as="geometry"/>
+    </mxCell>
+    <mxCell id="ports-lbl" value="ports/ — abstract interfaces the domain depends on&#10;DocStatusPort · CachePort · ModelFactoryPort · BaseIndexer/GraphIndexer/VectorIndexer" style="text;html=1;align=center;verticalAlign=top;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="146" y="194" width="488" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="domain" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;verticalAlign=top;fontSize=13;" vertex="1" parent="1">
+      <mxGeometry x="180" y="250" width="420" height="160" as="geometry"/>
+    </mxCell>
+    <mxCell id="domain-lbl" value="domain/ — technology-agnostic core&#10;(no boto3 / LangChain / backend imports)&#10;models · ingestion (merge/delta/resolve/analyze) · retrieval (strategy_registry) · prompts" style="text;html=1;align=center;verticalAlign=top;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="196" y="258" width="388" height="56" as="geometry"/>
+    </mxCell>
+    <mxCell id="algo-graphrag" value="GraphRAG&#10;community-summary&#10;(auto/drift/global/local/simple)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=10;align=center;" vertex="1" parent="1">
+      <mxGeometry x="200" y="330" width="180" height="60" as="geometry"/>
+    </mxCell>
+    <mxCell id="algo-lightrag" value="LightRAG&#10;dual-level keyword&#10;(mix/hybrid/naive)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=10;align=center;" vertex="1" parent="1">
+      <mxGeometry x="400" y="330" width="180" height="60" as="geometry"/>
+    </mxCell>
+    <mxCell id="shared" value="shared/ — cross-cutting kernel (any layer may use)&#10;config · logging · exceptions · metrics · cache/pipeline managers · utils" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;verticalAlign=middle;align=center;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="40" y="548" width="700" height="56" as="geometry"/>
+    </mxCell>
+    <mxCell id="dep-arrow" value="depends on →" style="endArrow=classic;html=1;strokeColor=#333333;strokeWidth=2;fontSize=11;fontStyle=2;rounded=0;" edge="1" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <mxPoint x="770" y="500" as="sourcePoint"/>
+        <mxPoint x="770" y="290" as="targetPoint"/>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="dep-arrow-lbl" value="inward" style="text;html=1;align=center;fontSize=10;fontStyle=2;rotation=-90;" vertex="1" parent="1">
+      <mxGeometry x="752" y="385" width="40" height="20" as="geometry"/>
+    </mxCell>
+    <mxCell id="shared-arrow" value="" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#9673a6;strokeWidth=2;dashed=1;" edge="1" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <mxPoint x="390" y="548" as="sourcePoint"/>
+        <mxPoint x="390" y="530" as="targetPoint"/>
+      </mxGeometry>
+    </mxCell>
+  </root>
+</mxGraphModel>
