@@ -99,6 +99,11 @@ class ComputeStack(Stack):
                 actions=[
                     "bedrock:InvokeModel",
                     "bedrock:InvokeModelWithResponseStream",
+                    # The hybrid scorer's reranking step calls the Bedrock Rerank
+                    # API (cohere.rerank / amazon.rerank), a distinct action from
+                    # InvokeModel. Without it reranking silently degrades to
+                    # RRF-only (AccessDeniedException, caught by the scorer).
+                    "bedrock:Rerank",
                 ],
                 resources=bedrock_resources,
             )
