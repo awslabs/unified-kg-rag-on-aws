@@ -203,3 +203,6 @@ config.yaml
 # CDK synth artifacts (synthesized from iac/)
 cdk.out/
 cdk.context.json
+
+# Local backups of gitignored configs (may carry real endpoints / account ids)
+*.bak
