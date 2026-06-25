@@ -162,7 +162,14 @@ class TokenManager(MetricsMixin):
         self, result: RetrievalResult, index: int
     ) -> ContextSection:
         section_type_str = result.retriever_type or SectionType.GENERAL.value
-        section_type = SectionType(section_type_str.lower())
+        try:
+            section_type = SectionType(section_type_str.lower())
+        except ValueError:
+            # `retriever_type` is a free-form str; an out-of-enum value (a future
+            # retriever, or a malformed result) must degrade to GENERAL rather
+            # than abort context-building for the whole query. The multiplier
+            # lookup below already tolerates unknowns via `.get(..., 1.0)`.
+            section_type = SectionType.GENERAL
 
         base_score = result.score or 0.5
         priority_multiplier = self.PRIORITY_MULTIPLIERS.get(section_type, 1.0)

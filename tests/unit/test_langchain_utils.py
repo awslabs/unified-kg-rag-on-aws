@@ -262,8 +262,10 @@ class TestAExecuteWithFallback:
         assert bp.max_concurrency == 4
 
     async def test_async_batch_failure_falls_back_concurrently(self) -> None:
-        # Batch raises -> concurrent sequential fallback; failing items return
-        # None and are filtered out of the results.
+        # Batch raises -> concurrent sequential fallback; a failing item is kept
+        # as an empty-dict sentinel (NOT dropped) so the result list stays
+        # positionally aligned with the inputs — callers zip it back with
+        # strict=True and a dropped item would abort the whole run.
         bp = BatchProcessor(batch_size=10, max_concurrency=2)
 
         async def batch(inputs, config=None):  # noqa: ANN001, ARG001
@@ -282,8 +284,9 @@ class TestAExecuteWithFallback:
             task_name="t",
             show_progress=False,
         )
-        # Order preserved by gather; the failing item (None) is dropped.
-        assert out == [{"echo": 1}, {"echo": 3}]
+        # Position preserved: the failing item is {} so len(out) == len(inputs).
+        assert out == [{"echo": 1}, {}, {"echo": 3}]
+        assert len(out) == 3
 
     async def test_async_empty_prepared_chunk_skipped(self) -> None:
         bp = BatchProcessor(batch_size=10)

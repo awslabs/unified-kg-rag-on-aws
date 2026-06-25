@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import logging
 import os
 from pathlib import Path
 
@@ -9,6 +10,10 @@ from pydantic import SecretStr, ValidationError
 
 from aws_graphrag.domain.models import Config
 
+# Stdlib logger (not get_logger): this module is imported by the logging setup,
+# so reaching back through get_logger -> get_config would risk a circular import.
+_logger = logging.getLogger(__name__)
+
 
 class ConfigLoader:
     def __init__(self, config_path: Path | None = None) -> None:
@@ -16,10 +21,12 @@ class ConfigLoader:
         self._config: Config | None = None
         load_dotenv()
 
-        print(
-            f"Config path: '{self.config_path.resolve()}'"
-            if self.config_path
-            else "No config path provided, using default configuration"
+        # Debug, not print: a module-level ConfigLoader() runs this on every
+        # import, and a bare print() to stdout corrupts `run-rag --output-format
+        # json` (machine-parseable stdout) and violates the print-vs-logging rule.
+        _logger.debug(
+            "Config path: '%s'",
+            self.config_path.resolve() if self.config_path else None,
         )
 
     def load_config(self) -> Config:

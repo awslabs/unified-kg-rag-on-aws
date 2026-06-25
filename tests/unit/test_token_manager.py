@@ -116,12 +116,27 @@ class TestPriorityOrdering:
 
     def test_unknown_retriever_type_falls_back_to_general(self, mocker) -> None:
         mgr = _make_manager(mocker)
+        # An out-of-enum retriever_type must degrade to GENERAL, not raise
+        # ValueError out of SectionType(...) and abort context-building. A future
+        # retriever or a malformed result would otherwise crash the whole query.
         section = mgr._create_context_section(
-            _r("hello world", 0.5, "general", "s1"), index=0
+            _r("hello world", 0.5, "some_future_retriever", "s1"), index=0
         )
         # GENERAL multiplier is 0.8: 0.5 * 0.8 = 0.4.
         assert section.section_type == SectionType.GENERAL
         assert section.priority == pytest.approx(0.4)
+
+    def test_unknown_retriever_type_does_not_crash_optimize_context(
+        self, mocker
+    ) -> None:
+        # End-to-end guard: a result with an out-of-enum type flows through the
+        # public optimize_context without raising.
+        mgr = _make_manager(mocker)
+        results = [_r("alpha beta gamma", 0.9, "mystery_type", "s1")]
+        out = mgr.optimize_context(results, query="q", max_tokens=10000)
+        assert out.sections_included == 1
+        assert out.sections[0].section_type == SectionType.GENERAL
+        assert out.sections[0].content == "alpha beta gamma"
 
     def test_claim_section_type_has_weight(self, mocker) -> None:
         # Claims are evidentiary; weighted alongside relationships (1.1).

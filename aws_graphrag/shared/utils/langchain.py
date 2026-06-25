@@ -402,14 +402,21 @@ class BatchProcessor(BaseModel):
             *tasks, disable=not show_progress, desc=progress_desc
         )
 
-        successful_results = [res for res in results if res is not None]
+        # Preserve positional alignment with `inputs`: failed items are kept as
+        # an empty-dict sentinel (mirrors the sync `_process_sequentially_with_
+        # fallback` path), NOT dropped. Callers zip the result back against the
+        # original inputs (e.g. EvaluationManager zips with `strict=True`), so a
+        # dropped item would raise a length-mismatch and abort the whole run
+        # instead of recording a single failure.
+        results = [{} if res is None else res for res in results]
+        successful = sum(1 for res in results if res != {})
         logger.info(
             "Concurrent sequential processing completed for '%s': %s/%s items processed successfully",
             task_name,
-            len(successful_results),
+            successful,
             len(inputs),
         )
-        return successful_results
+        return results
 
 
 class RobustXMLOutputParser(XMLOutputParser):

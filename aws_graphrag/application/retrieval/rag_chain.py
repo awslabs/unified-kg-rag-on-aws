@@ -195,7 +195,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             boto_session=boto_session,
             region_name=config.aws.bedrock.region_name,
         )
-        self.search_strategy_instance: BaseSearchStrategy | None = None
         self._retriever_cache: dict[
             tuple[RetrieverRole, int | None], BaseGraphRAGRetriever
         ] = {}
@@ -450,9 +449,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         return state
 
     async def _search_step(self, state: dict[str, Any]) -> SearchResult:
-        self.search_strategy_instance = self._get_strategy_instance(
-            state["resolved_strategy"]
-        )
+        # A single GraphRAGChain is reused for concurrent invocations (the
+        # evaluation path runs queries through `abatch`). Keep the per-query
+        # strategy instance LOCAL — storing it on `self` lets a concurrent
+        # `_search_step` overwrite it between assignment and `await`, executing
+        # one query against another query's strategy (silent cross-contamination).
+        strategy_instance = self._get_strategy_instance(state["resolved_strategy"])
         processed: ProcessedQuery = state["processed_query"]
         entity_focus = list(
             set(processed.entities + state.get("relevant_entities", []))
@@ -476,7 +478,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             filters=state.get("filters"),
             metadata=metadata,
         )
-        return await self.search_strategy_instance.asearch(search_query)
+        return await strategy_instance.asearch(search_query)
 
     def _get_strategy_instance(
         self, strategy_type: SearchStrategy

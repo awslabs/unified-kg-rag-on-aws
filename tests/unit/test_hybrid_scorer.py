@@ -43,6 +43,16 @@ class TestNormalizeScores:
         assert by_content["b"] == 1.0
         assert by_content["c"] == 0.5
 
+    def test_does_not_mutate_input_scores(self) -> None:
+        # Callers (e.g. drift_search) keep the original result objects in
+        # SearchResult/metrics and reuse them after fusion; normalization must
+        # operate on copies, not clobber the caller's scores in place.
+        results = [_r("a", 10.0, "s1"), _r("b", 20.0, "s2")]
+        out = _scorer()._normalize_scores(results)
+        assert results[0].score == 10.0
+        assert results[1].score == 20.0
+        assert out[0] is not results[0]
+
 
 class TestReciprocalRankFusion:
     def test_higher_rank_contributes_more(self) -> None:

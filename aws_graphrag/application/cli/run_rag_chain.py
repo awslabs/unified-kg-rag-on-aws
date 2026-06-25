@@ -280,7 +280,10 @@ class RAGChainRunner:
                     "conversation_id", state["conversation_id"]
                 )
 
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, EOFError):
+                # Ctrl-C or Ctrl-D / piped-EOF. Without the EOFError case the
+                # now-closed stdin re-raises EOF on every subsequent
+                # console.input, spinning the generic handler below forever.
                 console.print("\n[yellow]Conversation interrupted.[/yellow]")
                 break
             except Exception as e:

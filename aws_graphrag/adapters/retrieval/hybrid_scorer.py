@@ -116,29 +116,36 @@ class HybridScorer(MetricsMixin):
         if not results:
             return []
 
+        # Operate on COPIES: callers (e.g. drift_search) keep the original
+        # result objects in SearchResult/metrics and may reuse them after
+        # fusion. Mutating `result.score` in place would clobber those originals
+        # with normalized values. RRF/weighted fusion downstream re-copies too,
+        # but the normalization itself must not leak into the caller's list.
+        copies = [r.model_copy() for r in results]
+
         min_score = float("inf")
         max_score = float("-inf")
         has_score = False
 
-        for r in results:
+        for r in copies:
             if r.score is not None:
                 has_score = True
                 min_score = min(min_score, r.score)
                 max_score = max(max_score, r.score)
 
         if not has_score:
-            for r in results:
+            for r in copies:
                 r.score = 0.5
-            return results
+            return copies
 
         score_range = max_score - min_score
 
-        for result in results:
+        for result in copies:
             result.score = (
                 0.5 if score_range == 0 else (result.score - min_score) / score_range
             )
 
-        return results
+        return copies
 
     def _reciprocal_rank_fusion(
         self, result_map: dict[str, list[RetrievalResult]]
