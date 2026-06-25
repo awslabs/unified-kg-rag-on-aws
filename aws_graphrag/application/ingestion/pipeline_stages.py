@@ -13,6 +13,7 @@ from aws_graphrag.adapters.ingestion.community_detector import (
     CommunityDetector,
     CommunityMetrics,
 )
+from aws_graphrag.adapters.ingestion.description_summarizer import DescriptionSummarizer
 from aws_graphrag.adapters.ingestion.gleaner import GraphGleaner
 from aws_graphrag.adapters.ingestion.graph_extractor import GraphExtractor
 from aws_graphrag.adapters.ingestion.loader import DirectoryLoader
@@ -717,9 +718,13 @@ class GleaningStage(PipelineStage):
 
 
 class GraphResolutionStage(PipelineStage):
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, boto_session: boto3.Session | None = None):
         super().__init__(PipelineStageType.GRAPH_RESOLUTION, config)
         self.resolver = GraphResolver(config)
+        # Resolution merges descriptions (concatenation); re-summarize the
+        # over-long ones with an LLM here (parity with MS/LightRAG). Needs Bedrock,
+        # hence GRAPH_RESOLUTION is in BOTO_REQUIRED_STAGES.
+        self.description_summarizer = DescriptionSummarizer(config, boto_session)
 
     def _execute_core(
         self, context: PipelineContext
@@ -735,8 +740,14 @@ class GraphResolutionStage(PipelineStage):
         original_entities_count = len(context.entities)
         original_relationships_count = len(context.relationships)
 
-        context.resolved_entities = resolution_result["entities"]
-        context.resolved_relationships = resolution_result["relationships"]
+        context.resolved_entities = self.description_summarizer.summarize_entities(
+            resolution_result["entities"]
+        )
+        context.resolved_relationships = (
+            self.description_summarizer.summarize_relationships(
+                resolution_result["relationships"]
+            )
+        )
 
         resolved_entities_count = len(context.resolved_entities)
         resolved_relationships_count = len(context.resolved_relationships)

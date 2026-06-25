@@ -834,7 +834,11 @@ class NeptuneIndexingConfig(BaseModel):
             "preserves sequential indexing; >1 fans batches over a thread pool, "
             "multiplexed across the Gremlin connection pool (size aws.neptune."
             "pool_size to match). Each batch accumulates its own stats, merged "
-            "on completion."
+            "on completion. NOTE (real-AWS finding): >1 can trigger Neptune "
+            "ConcurrentModificationException when batches touch overlapping "
+            "vertices/properties; the retry (exponential backoff) recovers but "
+            "the conflict churn can make a large run SLOWER than sequential. "
+            "Prefer 1 unless you have measured a net win on your data/cluster."
         ),
     )
     max_retries: int = Field(

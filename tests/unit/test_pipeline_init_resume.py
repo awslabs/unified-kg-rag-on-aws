@@ -456,3 +456,40 @@ def _ctx_with_results(results: list[PipelineStageResult]):
     )
     ctx.stage_results = results
     return ctx
+
+
+# --------------------------------------------------------------------------- #
+# Stage __init__ signature contract (regression: real-AWS E2E caught a
+# GraphResolutionStage that didn't accept boto_session while pipeline._
+# initialize_stages passed it because GRAPH_RESOLUTION is in BOTO_REQUIRED_STAGES).
+# The stub-based tests above can't catch this, so introspect the REAL stage
+# classes' __init__ signatures against the kwargs the pipeline injects.
+# --------------------------------------------------------------------------- #
+def test_real_stage_init_signatures_accept_injected_kwargs() -> None:
+    import inspect
+
+    pipe = DataIngestionPipeline
+    for stage_type, stage_cls in pipe.STAGE_CLASSES.items():
+        params = inspect.signature(stage_cls.__init__).parameters
+        accepts_kwargs = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+        # config is always injected.
+        assert (
+            "config" in params or accepts_kwargs
+        ), f"{stage_cls.__name__} must accept 'config'"
+        if stage_type in pipe.BOTO_REQUIRED_STAGES:
+            assert "boto_session" in params or accepts_kwargs, (
+                f"{stage_cls.__name__} is in BOTO_REQUIRED_STAGES but its "
+                f"__init__ does not accept 'boto_session'"
+            )
+        if stage_type in pipe.INPUT_DIR_REQUIRED_STAGES:
+            assert "source_directory" in params or accepts_kwargs, (
+                f"{stage_cls.__name__} is in INPUT_DIR_REQUIRED_STAGES but its "
+                f"__init__ does not accept 'source_directory'"
+            )
+        if stage_type in pipe.DOC_STATUS_STAGES:
+            assert "doc_status" in params or accepts_kwargs, (
+                f"{stage_cls.__name__} is in DOC_STATUS_STAGES but its "
+                f"__init__ does not accept 'doc_status'"
+            )
