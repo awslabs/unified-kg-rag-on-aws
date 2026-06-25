@@ -719,7 +719,7 @@ class GleaningStage(PipelineStage):
 
 class GraphResolutionStage(PipelineStage):
     def __init__(self, config: Config, boto_session: boto3.Session | None = None):
-        super().__init__(PipelineStageType.GRAPH_RESOLUTION, config)
+        super().__init__(PipelineStageType.GRAPH_RESOLUTION, config, boto_session)
         self.resolver = GraphResolver(config)
         # Resolution merges descriptions (concatenation); re-summarize the
         # over-long ones with an LLM here (parity with MS/LightRAG). Needs Bedrock,

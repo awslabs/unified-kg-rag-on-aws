@@ -45,4 +45,4 @@ jobs:
           uv run pytest -m "not aws"
           --cov=aws_graphrag --cov-report=term-missing
           --cov-report=xml:coverage.xml --junitxml=report.xml
-          --cov-fail-under=63
+          --cov-fail-under=75

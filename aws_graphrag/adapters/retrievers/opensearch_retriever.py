@@ -472,6 +472,12 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             hits = response.get("hits", {}).get("hits", [])
             return [self._parse_hit(hit) for hit in hits]
         except Exception as e:
+            # A fatal error (auth/config/connection) must propagate so the
+            # caller surfaces it, rather than masquerading as "0 results".
+            # Transient/per-index errors degrade to an empty list.
+            if is_fatal_retrieval_error(e):
+                logger.error("Fatal search error on indices %s: %s", aliases, e)
+                raise
             logger.error("Search failed on indices %s: %s", aliases, e)
             return []
 

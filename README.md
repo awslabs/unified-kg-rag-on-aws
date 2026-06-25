@@ -17,7 +17,7 @@ It reimplements two retrieval methodologies — Microsoft's GraphRAG ("From Loca
 > - **Incremental indexing.** The DynamoDB document-status registry (`aws.dynamodb`) diffs a corpus by content hash and re-indexes only new/changed documents, merging into the live graph (idempotent upserts; deletions remove a document's exclusive artifacts).
 > - **Prompt tuning.** `run-prompt-tuning` profiles a corpus (domain/language/persona/entity-types) and emits domain-adapted `custom_prompts`.
 > - **Standalone visualization & graph-aware evaluation.** `run-visualization` renders from exported graph data without re-ingesting; the `graph_aware` evaluator scores entity/relationship coverage.
-> - **Hexagonal architecture.** Ports & adapters + registries make storage backends, retrieval strategies, evaluators, and renderers pluggable. See `docs/design.md`.
+> - **Hexagonal architecture.** Ports & adapters + registries make storage backends, retrieval strategies, evaluators, and renderers pluggable. See `docs/design.en.md`.
 
 ## 📋 Table of Contents
 

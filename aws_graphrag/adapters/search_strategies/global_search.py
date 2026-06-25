@@ -61,7 +61,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         super().__init__(config, retrievers, boto_session, **kwargs)
         self.global_search_config = config.search.global_search
         self.ignore_errors = config.processing.ignore_errors
-        self.target_language = config.processing.translation.target_language
+        self.target_language = config.processing.translation.target_language.value
 
         factory = BedrockLanguageModelFactory(
             config=config,

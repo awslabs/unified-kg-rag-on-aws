@@ -4,9 +4,9 @@
 
 ![Knowledge Graph](./assets/interactive_graph.jpg)
 
-대규모 다국어 문서를 동적 지식 그래프로 변환하여, 복잡한 멀티홉 추론 기반의 지능형 질의응답을 제공하는 **프로덕션급 AWS 네이티브 Knowledge Graph RAG 프레임워크**입니다.
+대규모 다국어 문서 코퍼스를 지식 그래프로 변환하고, 멀티홉 그래프 순회로 질의에 답하는 **AWS 네이티브 Knowledge Graph RAG 프레임워크**입니다.
 
-상호 보완적인 두 연구 — Microsoft GraphRAG(*"From Local to Global: A Graph RAG Approach to Query-Focused Summarization"*)와 LightRAG(*"Simple and Fast Retrieval-Augmented Generation"*) — 를 토대로 **두 방법론 모두**를 단일 AWS 네이티브 스택(Bedrock, Neptune, OpenSearch, S3, DynamoDB) 위에 처음부터 재구현했으며, 엔터프라이즈 규모 배포를 위해 설계되었습니다. 두 방법론은 질의마다 선택 가능하며 동일한 인제스천·인덱싱·캐싱·다국어·하이브리드 검색 인프라를 공유합니다.
+두 검색 방법론 — Microsoft GraphRAG(*"From Local to Global: A Graph RAG Approach to Query-Focused Summarization"*)와 LightRAG(*"Simple and Fast Retrieval-Augmented Generation"*) — 를 단일 AWS 네이티브 스택(Bedrock, Neptune, OpenSearch, S3, DynamoDB) 위에 재구현했습니다. 두 방법론은 질의마다 선택 가능하며 동일한 인제스천·인덱싱·캐싱·다국어·하이브리드 검색 인프라를 공유합니다.
 
 ---
 
@@ -86,7 +86,7 @@
 
 ### 사전 요구사항
 
-- **Python 3.10+** (uv 권장)
+- **Python 3.10 – 3.12** (uv 권장)
 - 적절한 권한으로 구성된 **AWS CLI**
 - 배포·접근 가능한 **AWS 서비스**: Amazon Bedrock(모델 액세스 활성화), Neptune 클러스터, OpenSearch 도메인, S3 버킷, (증분 인덱싱 시) DynamoDB
 

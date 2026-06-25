@@ -64,7 +64,12 @@ def _opensearch_retriever(config: Config) -> OpenSearchRetriever:
     object.__setattr__(inst, "_config", config)
     object.__setattr__(inst, "_opensearch_config", config.indexing.opensearch)
     object.__setattr__(inst, "_max_size", config.indexing.opensearch.max_query_size)
+    object.__setattr__(
+        inst, "_terms_batch_size", config.indexing.opensearch.terms_batch_size
+    )
     object.__setattr__(inst, "_field_mappings", inst._initialize_field_mappings())
+    object.__setattr__(inst, "_record_timing", lambda *a, **k: None)
+    object.__setattr__(inst, "_record_metric", lambda *a, **k: None)
     return inst
 
 
@@ -92,6 +97,43 @@ async def test_opensearch_retriever_reraises_fatal(config: Config) -> None:
 async def test_opensearch_retriever_degrades_on_transient(config: Config) -> None:
     retriever = _opensearch_retriever(config)
     _set_query_vector_raising(retriever, AWSServiceError("Read timed out"))
+    results = await retriever.aretrieve(SearchQuery(query="hello"))
+    assert results == []
+
+
+def _set_asearch_raising(retriever: OpenSearchRetriever, exc: Exception) -> None:
+    # Let the query-vector step succeed, then make the actual search execution
+    # (``_opensearch_client.asearch``) raise — this is the path that previously
+    # swallowed fatal errors inside ``_execute_search`` and returned [].
+    async def _vec(*_args, **_kwargs):
+        return [0.0] * 8
+
+    async def _asearch(*_args, **_kwargs):
+        raise exc
+
+    object.__setattr__(retriever, "_get_query_vector", _vec)
+    object.__setattr__(retriever, "_opensearch_client", _MockSearchClient(_asearch))
+
+
+class _MockSearchClient:
+    def __init__(self, asearch) -> None:
+        self.asearch = asearch
+
+
+async def test_opensearch_execute_search_reraises_fatal(config: Config) -> None:
+    # Regression: a fatal error raised by the real asearch call must propagate
+    # out of _execute_search, not be swallowed into an empty result list.
+    retriever = _opensearch_retriever(config)
+    _set_asearch_raising(
+        retriever, AWSServiceError("The security token included is invalid.")
+    )
+    with pytest.raises(AWSServiceError, match="security token"):
+        await retriever.aretrieve(SearchQuery(query="hello"))
+
+
+async def test_opensearch_execute_search_degrades_on_transient(config: Config) -> None:
+    retriever = _opensearch_retriever(config)
+    _set_asearch_raising(retriever, AWSServiceError("Read timed out"))
     results = await retriever.aretrieve(SearchQuery(query="hello"))
     assert results == []
 

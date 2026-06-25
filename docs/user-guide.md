@@ -10,7 +10,7 @@ two retrieval methodologies on one stack: **Microsoft GraphRAG**
 
 - For the *what / why* and a one-minute quickstart, see [README.md](../README.md).
 - For *internals / architecture* (hexagonal layers, ports & adapters, the
-  dependency rule), see [docs/design.md](./design.md).
+  dependency rule), see [docs/design.en.md](./design.en.md).
 
 Everything below is grounded in the actual CLI flags and config keys in the
 codebase. The five console entry points (defined as `pyproject` scripts) are:
@@ -450,12 +450,12 @@ OpenSearch + Neptune.
 
 ### The 12 pipeline stages
 
-Run order (enum `PipelineStageType`). Use the stage **names** (case-insensitive)
-with `--enabled-stages` / `--resume-from-stage`:
+Run order (`DataIngestionPipeline.STAGE_CLASSES`). Use the stage **names**
+(case-insensitive) with `--enabled-stages` / `--resume-from-stage`:
 
-1. **`document_loading`** — discover files in the source directory.
-2. **`document_parsing`** — extract text per format (`.pdf`, `.txt`, `.csv`,
+1. **`document_parsing`** — extract text per format (`.pdf`, `.txt`, `.csv`,
    `.json`; `.md`/`.html` with the `unstructured` extra).
+2. **`document_loading`** — load parsed documents into the pipeline corpus.
 3. **`text_chunking`** — split documents into text units (`processing.chunking`).
 4. **`translation`** — optional; translate to `target_language` (no-op when
    source == target and no extra targets).
@@ -856,8 +856,9 @@ Available override keys (each `_system` + `_human`): `graph_extraction`,
 `description_summarization`, `claim_extraction`, `graph_refinement`,
 `community_report`, `answer_generation`, `context_building`,
 `entity_extraction`, `keyword_expansion`, `query_refinement`,
-`strategy_selection`, `keywords_extraction` (LightRAG dual-level), plus the
-prompt-tuning prompts (`corpus_profile`, `extraction_examples`).
+`strategy_selection`, `keywords_extraction` (LightRAG dual-level),
+`global_map` (global-search map-reduce), plus the prompt-tuning prompts
+(`corpus_profile`, `extraction_examples`).
 
 **Recommended flow:** run `run-prompt-tuning` to generate a starting point →
 review → merge the useful prompts + tune `entity_types` by hand → re-ingest.
@@ -936,4 +937,4 @@ to avoid full re-ingests.
 ---
 
 *See also: [README.md](../README.md) for the overview and quickstart, and
-[docs/design.md](./design.md) for architecture and internals.*
+[docs/design.en.md](./design.en.md) for architecture and internals.*

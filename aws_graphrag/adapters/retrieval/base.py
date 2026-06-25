@@ -38,6 +38,10 @@ _FATAL_ERROR_MARKERS: tuple[str, ...] = (
     "unauthorized",
     "access denied",
     "accessdenied",
+    "security token",
+    "expiredtoken",
+    "expired token",
+    "invalidclienttoken",
     "failed to connect",
     "failed to establish connection",
 )

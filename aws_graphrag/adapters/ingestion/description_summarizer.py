@@ -181,9 +181,15 @@ class DescriptionSummarizer:
 
     @staticmethod
     def _coerce_summary(result: object) -> str | None:
-        """Normalize a chain result into a clean summary string (or None)."""
-        if result is None:
+        """Normalize a chain result into a clean summary string (or None).
+
+        ``BatchProcessor`` inserts an empty ``{}`` (not a string) for any item
+        whose per-item LLM call failed during the sequential fallback. We must
+        return ``None`` for such non-string results so the caller keeps the
+        concatenated original — ``str({})`` would otherwise overwrite the
+        description with the literal ``"{}"``.
+        """
+        if not isinstance(result, str):
             return None
-        text = result if isinstance(result, str) else str(result)
-        text = text.strip()
+        text = result.strip()
         return text or None

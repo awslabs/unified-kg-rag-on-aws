@@ -452,12 +452,12 @@ evaluation:
 
 ### 12개 파이프라인 스테이지
 
-실행 순서(enum `PipelineStageType`). `--enabled-stages` / `--resume-from-stage`
-에는 스테이지 **이름**(대소문자 무관)을 사용하세요.
+실행 순서(`DataIngestionPipeline.STAGE_CLASSES`). `--enabled-stages` /
+`--resume-from-stage`에는 스테이지 **이름**(대소문자 무관)을 사용하세요.
 
-1. **`document_loading`** — 소스 디렉터리에서 파일 발견.
-2. **`document_parsing`** — 포맷별 텍스트 추출(`.pdf`, `.txt`, `.csv`,
+1. **`document_parsing`** — 포맷별 텍스트 추출(`.pdf`, `.txt`, `.csv`,
    `.json`; `unstructured` 추가 패키지로 `.md`/`.html`).
+2. **`document_loading`** — 파싱된 문서를 파이프라인 코퍼스로 로드.
 3. **`text_chunking`** — 문서를 텍스트 유닛으로 분할(`processing.chunking`).
 4. **`translation`** — 선택적; `target_language`로 번역(source == target이고
    추가 타겟이 없으면 no-op).
@@ -852,8 +852,9 @@ custom_prompts:
 `description_summarization`, `claim_extraction`, `graph_refinement`,
 `community_report`, `answer_generation`, `context_building`,
 `entity_extraction`, `keyword_expansion`, `query_refinement`,
-`strategy_selection`, `keywords_extraction`(LightRAG 이중 레벨), 그리고
-프롬프트 튜닝 프롬프트(`corpus_profile`, `extraction_examples`).
+`strategy_selection`, `keywords_extraction`(LightRAG 이중 레벨),
+`global_map`(글로벌 검색 map-reduce), 그리고 프롬프트 튜닝
+프롬프트(`corpus_profile`, `extraction_examples`).
 
 **권장 흐름:** `run-prompt-tuning`을 실행해 시작점 생성 → 검토 → 유용한
 프롬프트 병합 + `entity_types`를 직접 튜닝 → 재인제스천.

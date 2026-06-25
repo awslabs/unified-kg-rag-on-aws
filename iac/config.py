@@ -148,9 +148,7 @@ class DeploymentConfig:
             neptune_instances=int(ctx("neptune_instances", 1)),
             opensearch_instance=str(ctx("opensearch_instance", "r6g.large.search")),
             opensearch_count=int(ctx("opensearch_count", 2)),
-            doc_status_table=str(
-                ctx("doc_status_table", "graphrag-doc-status")
-            ),
+            doc_status_table=str(ctx("doc_status_table", "graphrag-doc-status")),
             backup_retention_days=int(ctx("backup_retention_days", 7)),
             fargate_cpu=int(ctx("fargate_cpu", 2048)),
             fargate_memory=int(ctx("fargate_memory", 8192)),

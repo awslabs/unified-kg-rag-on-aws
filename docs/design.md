@@ -1,6 +1,6 @@
 # AWS Native Graph RAG — 기술 문서
 
-본 문서는 `aws-graphrag` 라이브러리의 아키텍처·알고리즘·데이터 모델·운영 측면을 다루는 **기여자/고급 사용자용 설계 레퍼런스**입니다. "무엇/왜"와 빠른 시작은 [README.ko.md](../README.ko.md)를, "어떻게 쓰는가"는 [docs/user-guide.md](user-guide.md)를, 기여/확장 규약은 [CLAUDE.md](../CLAUDE.md)를 참고하세요.
+본 문서는 `aws-graphrag` 라이브러리의 아키텍처·알고리즘·데이터 모델·운영 측면을 다루는 **기여자/고급 사용자용 설계 레퍼런스**입니다. "무엇/왜"와 빠른 시작은 [README.ko.md](../README.ko.md)를, "어떻게 쓰는가"는 [docs/user-guide.ko.md](user-guide.ko.md)를, 기여/확장 규약은 [CLAUDE.md](../CLAUDE.md)를 참고하세요. 본 문서의 영문판은 [docs/design.en.md](design.en.md)에 있습니다.
 
 ## 목차
 

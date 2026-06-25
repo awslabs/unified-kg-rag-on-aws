@@ -1,27 +1,32 @@
-# Pre-commit hooks mirroring the CI quality gate (.gitlab-ci.yml).
+# Pre-commit hooks mirroring the CI quality gate (.github/workflows/quality.yml).
 # Install with: pre-commit install
+#
+# ruff/black/isort/mypy all run via `uv run` against the project's own venv
+# (language: system) rather than pre-commit's isolated, separately-pinned envs.
+# This guarantees the hooks execute the *same* tool versions as CI's
+# `uv run ruff/black/isort/mypy`, so a local pre-commit pass and CI never
+# disagree because of version drift. Requires `uv sync --extra dev` first.
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.6
-    hooks:
-      - id: ruff
-        args: [--fix]
-
-  - repo: https://github.com/pycqa/isort
-    rev: 5.13.2
-    hooks:
-      - id: isort
-
-  - repo: https://github.com/psf/black
-    rev: 25.9.0
-    hooks:
-      - id: black
-
-  # mypy runs against the project's own venv (not an isolated pre-commit env) so
-  # it sees the same dependencies/stubs as CI and reproduces `uv run mypy`.
-  # Requires `uv sync --extra dev` first.
   - repo: local
     hooks:
+      - id: ruff
+        name: ruff
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+        require_serial: true
+      - id: isort
+        name: isort
+        entry: uv run isort
+        language: system
+        types: [python]
+        require_serial: true
+      - id: black
+        name: black
+        entry: uv run black
+        language: system
+        types: [python]
+        require_serial: true
       - id: mypy
         name: mypy
         entry: uv run mypy aws_graphrag
