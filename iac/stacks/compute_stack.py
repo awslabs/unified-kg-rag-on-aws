@@ -99,13 +99,21 @@ class ComputeStack(Stack):
                 actions=[
                     "bedrock:InvokeModel",
                     "bedrock:InvokeModelWithResponseStream",
-                    # The hybrid scorer's reranking step calls the Bedrock Rerank
-                    # API (cohere.rerank / amazon.rerank), a distinct action from
-                    # InvokeModel. Without it reranking silently degrades to
-                    # RRF-only (AccessDeniedException, caught by the scorer).
-                    "bedrock:Rerank",
                 ],
                 resources=bedrock_resources,
+            )
+        )
+        # The hybrid scorer's reranking step calls the Bedrock Rerank API
+        # (cohere.rerank / amazon.rerank) — a distinct action from InvokeModel.
+        # Real-AWS verification showed Rerank is denied when scoped to the
+        # foundation-model/inference-profile ARNs above (it authorizes against a
+        # different resource shape), so it needs its own statement; "*" is
+        # acceptable for this read-only action. Without it, reranking silently
+        # degrades to RRF-only (AccessDeniedException, caught by the scorer).
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["bedrock:Rerank"],
+                resources=["*"],
             )
         )
         # The cross-region model resolver lists/inspects inference profiles to
