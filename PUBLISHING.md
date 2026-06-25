@@ -76,7 +76,7 @@ completing exactly this path (IP Release ticket V2071786068).
 - [x] Genericized internal codename comments (`NaviWikiGraph`/`AnchorNetwork`) in
       `iac/`.
 - [x] Scrubbed GitLab/`code.aws.dev` references from `CLAUDE.md`, `CONTRIBUTING.md`,
-      `docs/tech-doc.md`, `README.ko.md`, `iac/README.md`, and a test comment.
+      `docs/design.md`, `README.ko.md`, `iac/README.md`, and a test comment.
 - [x] Verified: **no AWS account IDs, ARNs, real endpoints, or secrets in tracked
       files**; git history is clean (account IDs / endpoints / `docker/config.yaml`
       / `cdk.context.json` were never committed).

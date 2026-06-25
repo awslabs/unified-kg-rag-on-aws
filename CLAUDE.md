@@ -39,7 +39,7 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   pattern — and the declarative `ParserFactory._loader_configs` /
   `EvaluationManager.EVALUATOR_MAPPING` — instead of `if/elif` dispatch.
 
-See `docs/tech-doc.md` §2 for the full layer map and dependency rule.
+See `docs/design.md` §2 for the full layer map and dependency rule.
 
 ### Adding things
 - **New search strategy**: subclass `BaseSearchStrategy`, decorate with

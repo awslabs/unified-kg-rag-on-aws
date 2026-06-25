@@ -58,7 +58,7 @@
 
 ### 🧱 헥사고날 아키텍처 (포트 & 어댑터)
 
-스토리지/검색 백엔드를 교체 가능하게 하고, 검색 전략·평가자·렌더러를 레지스트리로 확장합니다 — 디스패치 코드를 수정하지 않고 확장 가능. 자세한 내용은 [`CLAUDE.md`](./CLAUDE.md)와 [기술 문서](./docs/tech-doc.md) 참고.
+스토리지/검색 백엔드를 교체 가능하게 하고, 검색 전략·평가자·렌더러를 레지스트리로 확장합니다 — 디스패치 코드를 수정하지 않고 확장 가능. 자세한 내용은 [`CLAUDE.md`](./CLAUDE.md)와 [기술 문서](./docs/design.md) 참고.
 
 ---
 
@@ -78,7 +78,7 @@
 - **융합/재랭킹**: RRF, 다양성 필터링, Bedrock 리랭킹, 토큰 예산 관리
 - **검색 전략**은 추상 역할(GRAPH/DOCUMENT)로 백엔드를 주입받아 백엔드 무관하게 동작
 
-자세한 컴포넌트·데이터 흐름·알고리즘은 **[기술 문서](./docs/tech-doc.md)**를 참고하세요.
+자세한 컴포넌트·데이터 흐름·알고리즘은 **[기술 문서](./docs/design.md)**를 참고하세요.
 
 ---
 
@@ -113,44 +113,30 @@ cp .env-template .env
 
 ## 📖 사용법
 
-### CLI
+모든 동작은 `config.yaml`(스키마: `config-template.yaml`)로 제어합니다. 5개 CLI(pyproject 스크립트)가 전체 워크플로를 커버합니다:
 
 ```bash
-# 1) 문서 인덱싱
+# 1) 코퍼스 인덱싱 (12단계 풀 파이프라인; DynamoDB 활성화 시 증분)
 run-ingestion --source-directory ./source --config-path config.yaml
 
-# 2) 질의 (GraphRAG)
+# 2) 질의 — GraphRAG(커뮤니티 요약) 또는 LightRAG(이중 레벨 키워드)
 run-rag --query "문서의 주요 주제는?" --search-strategy global --config-path config.yaml
+run-rag --query "Alice와 Acme의 관계는?" --search-strategy mix --config-path config.yaml
 run-rag --interactive --use-memory --conversation-id my-session --config-path config.yaml
 
-# 2') 질의 (LightRAG 방법론)
-run-rag --query "Alice와 Acme의 관계는?" --search-strategy mix --config-path config.yaml
-
-# 3) 평가
+# 3) 평가 (langchain + ragas + graph-aware)
 run-eval --eval-data-path eval_data.json --config-path config.yaml
 
-# 4) 시각화 (인제스천 불필요, 내보낸 그래프 데이터에서 렌더)
+# 4) 시각화 (재인제스천 불필요, 내보낸 그래프 데이터에서 렌더)
 run-visualization --data-path visualization_data.json --output-dir ./viz --config-path config.yaml
 
-# 5) 프롬프트 튜닝 (도메인 적응 custom_prompts YAML 생성)
+# 5) 도메인 코퍼스에 프롬프트 자동 튜닝
 run-prompt-tuning --source-dir ./source --output tuned_prompts.yaml --config-path config.yaml
 ```
 
-### 증분 인덱싱 활성화
+**전략 선택** — GraphRAG: `simple`(직접 벡터/렉시컬), `local`(엔티티 중심), `global`(커뮤니티 요약, map-reduce), `drift`(점진 탐색), `auto`(LLM 라우터). LightRAG: `mix` / `hybrid` / `naive`(이중 레벨 키워드).
 
-`config.yaml`에서 DynamoDB 레지스트리를 켜면, 재실행 시 콘텐츠 해시로 신규/변경 문서만 재인덱싱합니다.
-
-```yaml
-aws:
-  dynamodb:
-    enabled: true
-    table_name: "aws-graphrag-doc-status"
-    create_table_if_missing: true
-```
-
-### 설정
-
-모든 동작은 `config.yaml`(스키마: `config-template.yaml`)로 제어합니다. AWS·청킹·번역·그래프 추출·gleaning·커뮤니티 탐지·인덱싱(OpenSearch/Neptune)·검색(하이브리드/융합/리랭킹/global/drift/lightrag)·메모리·캐시·평가·`custom_prompts` 등. 임계값·가중치는 하드코딩이 아닌 설정 기반입니다.
+📘 **전체 설정 레퍼런스, 모든 CLI 플래그, Python API, 증분 추가/수정/삭제, 도메인 적응, 트러블슈팅은 [사용자 가이드](./docs/user-guide.ko.md)(영문: [User Guide](./docs/user-guide.md))를 참고하세요.** 아키텍처·알고리즘·구현 내부는 [설계 문서](./docs/design.md)(영문: [Design Doc](./docs/design.en.md))를 참고하세요.
 
 ---
 
