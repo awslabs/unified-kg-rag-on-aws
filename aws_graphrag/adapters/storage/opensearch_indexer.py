@@ -120,6 +120,10 @@ class OpenSearchIndexer(VectorIndexer):
             else model_info.dimensions or 1024
         )
 
+    def close(self) -> None:
+        """Release the underlying OpenSearch client's connections (best-effort)."""
+        self.opensearch_client.close()
+
     def clear(self, suffixes: list[str]) -> bool:
         if not suffixes:
             return True

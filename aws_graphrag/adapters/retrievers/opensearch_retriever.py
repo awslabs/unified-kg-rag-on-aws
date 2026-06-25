@@ -8,7 +8,10 @@ from typing import Any
 import boto3
 
 from aws_graphrag.adapters.aws import BedrockEmbeddingModelFactory, OpenSearchClient
-from aws_graphrag.adapters.retrieval.base import BaseGraphRAGRetriever
+from aws_graphrag.adapters.retrieval.base import (
+    BaseGraphRAGRetriever,
+    is_fatal_retrieval_error,
+)
 from aws_graphrag.adapters.retrieval.token_manager import SectionType
 from aws_graphrag.domain.models import Config, RetrievalResult, SearchQuery, SearchType
 from aws_graphrag.shared import get_logger
@@ -44,6 +47,14 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             self._opensearch_config.embedding_model_id
         )
         self._field_mappings = self._initialize_field_mappings()
+
+    def close(self) -> None:
+        """Release the underlying OpenSearch client's connections (best-effort)."""
+        self._opensearch_client.close()
+
+    async def aclose(self) -> None:
+        """Async teardown: await the underlying OpenSearch client's close."""
+        await self._opensearch_client.aclose()
 
     def _initialize_field_mappings(self) -> dict[str, dict[str, list[str]]]:
         target_language = self._config.processing.translation.target_language.value
@@ -138,7 +149,21 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return final_results
 
         except Exception as e:
-            logger.error("Retrieval failed: %s", e)
+            # Log loudly with the traceback. Re-raise clearly-fatal errors
+            # (auth/credentials/endpoint/connection) so a broken configuration
+            # surfaces instead of masquerading as "0 results"; degrade to an
+            # empty list only on genuinely-transient failures.
+            if is_fatal_retrieval_error(e):
+                logger.error(
+                    "OpenSearch retrieval failed (fatal): %s", e, exc_info=True
+                )
+                raise
+            logger.error(
+                "OpenSearch retrieval failed (transient, degrading to empty "
+                "results): %s",
+                e,
+                exc_info=True,
+            )
             return []
 
     def _create_search_tasks(

@@ -296,7 +296,8 @@ indexing:
       m: 24
       ef_search: 100
       space_type: "cosinesimil"
-      engine: "nmslib"
+      # faiss is the modern OpenSearch kNN engine; nmslib is deprecated.
+      engine: "faiss"
 
   # Neptune Indexing
   neptune:

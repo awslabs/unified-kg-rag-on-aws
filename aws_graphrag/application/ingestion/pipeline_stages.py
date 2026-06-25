@@ -92,6 +92,13 @@ class PipelineStage(ABC):
     def name(self) -> str:
         return self.stage_type.value
 
+    def close(self) -> None:  # noqa: B027 - intentional no-op default hook
+        """Release any backend clients the stage owns.
+
+        Default is a no-op: only ``IndexingStage`` holds long-lived backend
+        connections. Not abstract on purpose — stages opt in by overriding.
+        """
+
     def execute(self, context: PipelineContext) -> PipelineStageResult:
         logger.info("Starting stage: '%s'", self.name)
         start_time = datetime.now()
@@ -1020,6 +1027,10 @@ class IndexingStage(PipelineStage):
         self.indexing_manager = IndexingManager(config=self.config)
         # Injected by the pipeline for the incremental commit/registry write-back.
         self._doc_status = doc_status
+
+    def close(self) -> None:
+        """Close the indexers' Neptune/OpenSearch clients (best-effort)."""
+        self.indexing_manager.close()
 
     def _build_doc_status_store(self) -> "DocStatusPort":
         if self._doc_status is not None:

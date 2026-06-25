@@ -976,7 +976,9 @@ class OpenSearchIndexingConfig(BaseModel):
     )
     vector_search: dict[str, Any] = Field(
         default_factory=lambda: {
-            "engine": "nmslib",
+            # faiss is the modern OpenSearch kNN engine; nmslib is deprecated.
+            # Kept in sync with the index mapping default in OpenSearchIndexer.
+            "engine": "faiss",
             "space_type": "cosinesimil",
             "ef_construction": 128,
             "m": 24,

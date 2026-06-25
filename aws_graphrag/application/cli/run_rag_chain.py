@@ -176,32 +176,38 @@ class RAGChainRunner:
         self._display_run_info()
         await self._initialize_chain()
 
-        if self.args.interactive:
-            await self._interactive_mode()
-        else:
-            rag_input = RAGInput(
-                query=self.args.query,
-                suffix=self.args.suffix,
-                enable_thinking=self.args.enable_thinking,
-                search_strategy=self.args.search_strategy,
-                search_type=SearchType(self.args.search_type),
-                conversation_id=self.args.conversation_id,
-                use_memory=self.args.use_memory,
-                enable_query_processing=not self.args.disable_query_processing,
-                target_language=self.config.processing.translation.target_language,
-                top_k=self.args.top_k,
-                retrieval_multiplier=self.args.retrieval_multiplier,
-                filters=self._parse_filters(self.args.filters),
-            )
-
-            result = await self._run_query(rag_input)
-            if self.args.output_format == "json":
-                print(json.dumps(result, indent=2, ensure_ascii=False))
+        try:
+            if self.args.interactive:
+                await self._interactive_mode()
             else:
-                self._print_result(result, self.args.verbose)
+                rag_input = RAGInput(
+                    query=self.args.query,
+                    suffix=self.args.suffix,
+                    enable_thinking=self.args.enable_thinking,
+                    search_strategy=self.args.search_strategy,
+                    search_type=SearchType(self.args.search_type),
+                    conversation_id=self.args.conversation_id,
+                    use_memory=self.args.use_memory,
+                    enable_query_processing=not self.args.disable_query_processing,
+                    target_language=self.config.processing.translation.target_language,
+                    top_k=self.args.top_k,
+                    retrieval_multiplier=self.args.retrieval_multiplier,
+                    filters=self._parse_filters(self.args.filters),
+                )
 
-            if not result.get("success", False):
-                sys.exit(1)
+                result = await self._run_query(rag_input)
+                if self.args.output_format == "json":
+                    print(json.dumps(result, indent=2, ensure_ascii=False))
+                else:
+                    self._print_result(result, self.args.verbose)
+
+                if not result.get("success", False):
+                    sys.exit(1)
+        finally:
+            # Release Neptune/OpenSearch sockets when the query/session ends so
+            # a finished process does not leak the retrievers' connection pools.
+            if self.rag_chain is not None:
+                await self.rag_chain.aclose()
 
     async def _initialize_chain(self) -> None:
         console.print("[bold]Initializing RAG chain...[/bold]")

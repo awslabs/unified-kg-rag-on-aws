@@ -272,6 +272,19 @@ class DataIngestionPipeline:
 
         return stages, name_to_type_map
 
+    def close(self) -> None:
+        """Release backend clients owned by the pipeline's stages.
+
+        Only the indexing stage holds long-lived Neptune/OpenSearch connections;
+        every other stage's ``close`` is a no-op. Best-effort: never raises, so
+        the CLI can call it from a ``finally`` regardless of run outcome.
+        """
+        for stage in self.stages:
+            try:
+                stage.close()
+            except Exception as e:  # noqa: BLE001 - teardown must never raise
+                logger.debug("Error closing stage '%s': %s", stage.name, e)
+
     def run(
         self,
         source_directory: str | Path,

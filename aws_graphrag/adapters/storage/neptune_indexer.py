@@ -34,6 +34,10 @@ class NeptuneIndexer(GraphIndexer):
         self.neptune_config = self.config.indexing.neptune
         self.neptune_client = NeptuneClient(config=self.config)
 
+    def close(self) -> None:
+        """Close the underlying Neptune websocket + thread pool (best-effort)."""
+        self.neptune_client.close()
+
     def clear(self, suffixes: list[str]) -> bool:
         if not suffixes:
             return True

@@ -15,7 +15,10 @@ from gremlin_python.process.graph_traversal import (
 from gremlin_python.process.traversal import Order, P, TextP, Traversal
 
 from aws_graphrag.adapters.aws import NeptuneClient
-from aws_graphrag.adapters.retrieval.base import BaseGraphRAGRetriever
+from aws_graphrag.adapters.retrieval.base import (
+    BaseGraphRAGRetriever,
+    is_fatal_retrieval_error,
+)
 from aws_graphrag.adapters.retrieval.token_manager import SectionType
 from aws_graphrag.domain.models import Config, RetrievalResult, SearchQuery
 from aws_graphrag.shared import get_logger
@@ -40,6 +43,14 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         self._max_hops = self._neptune_config.max_hops
         self._max_results_per_hop = self._neptune_config.max_results_per_hop
         self._min_entity_importance = self._neptune_config.min_entity_importance
+
+    def close(self) -> None:
+        """Close the underlying Neptune websocket + thread pool (best-effort)."""
+        self._neptune_client.close()
+
+    async def aclose(self) -> None:
+        """Async-symmetric teardown; the Neptune client close is synchronous."""
+        self._neptune_client.close()
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         start_time = time.time()
@@ -76,8 +87,19 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             return results
 
         except Exception as e:
-            logger.error("Neptune retrieval failed: %s", e)
             self._record_metric("error_count", 1)
+            # Re-raise clearly-fatal errors (auth/credentials/endpoint/
+            # connection) so a broken configuration is not silently reported as
+            # "no results"; degrade to an empty list only on transient failures.
+            if is_fatal_retrieval_error(e):
+                logger.error("Neptune retrieval failed (fatal): %s", e, exc_info=True)
+                raise
+            logger.error(
+                "Neptune retrieval failed (transient, degrading to empty "
+                "results): %s",
+                e,
+                exc_info=True,
+            )
             return []
         finally:
             self._record_timing("total_retrieval", time.time() - start_time)

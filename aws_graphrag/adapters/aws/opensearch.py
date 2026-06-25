@@ -96,16 +96,105 @@ class OpenSearchClient:
                     self._bound_loop_id,
                     current_loop_id,
                 )
+                # The previous AsyncOpenSearch is bound to a now-defunct event
+                # loop; abandon it without awaiting (we are in a sync property
+                # and cannot await its aclose() here) so the replacement does
+                # not silently leak the old aiohttp session/connection pool.
+                # Best effort: close the underlying connector(s) synchronously.
+                self._discard_async_client(self._async_client)
             self._async_client = self._create_async_client()
             self._bound_loop_id = current_loop_id
 
         return self._async_client
+
+    @staticmethod
+    def _discard_async_client(async_client: AsyncOpenSearch) -> None:
+        """Best-effort, non-awaiting close of an async client from sync code.
+
+        Used when the bound event loop has rotated: the old client's coroutine
+        ``transport.close()`` cannot be awaited here. Close the underlying
+        aiohttp connector(s) synchronously instead. Never raises.
+        """
+        try:
+            transport = getattr(async_client, "transport", None)
+            pool = getattr(transport, "connection_pool", None)
+            for connection in getattr(pool, "connections", []) or []:
+                session = getattr(connection, "session", None)
+                connector = getattr(session, "connector", None)
+                if connector is not None:
+                    connector.close()
+        except Exception as e:  # noqa: BLE001 - teardown must never raise
+            logger.debug("Could not eagerly close rotated async client: %s", e)
 
     def _get_current_loop_id(self) -> int | None:
         try:
             return id(asyncio.get_running_loop())
         except RuntimeError:
             return None
+
+    def close(self) -> None:
+        """Close the sync HTTP client and best-effort the async one.
+
+        Mirrors :class:`NeptuneClient.close`: idempotent and never raises. The
+        async client's transport exposes a coroutine ``close()``; from sync code
+        we can only eagerly close its connector (see ``aclose`` for the awaited
+        path). Releases the requests connection pool so a process that finishes
+        a query/ingest does not leak sockets.
+        """
+        if self._client is not None:
+            try:
+                self._client.close()
+            except Exception as e:  # noqa: BLE001 - teardown must never raise
+                logger.debug("Error closing sync OpenSearch client: %s", e)
+            self._client = None
+        if self._async_client is not None:
+            self._discard_async_client(self._async_client)
+            self._async_client = None
+            self._bound_loop_id = None
+
+    async def aclose(self) -> None:
+        """Async teardown: await the AsyncOpenSearch transport close.
+
+        This is the correct path when running inside an event loop — it awaits
+        ``AsyncOpenSearch.close()`` so the aiohttp session is closed cleanly
+        (avoiding the "Unclosed client session" warning) rather than only
+        dropping the connector. The sync client is closed too. Never raises.
+        """
+        if self._async_client is not None:
+            try:
+                await self._async_client.close()
+            except Exception as e:  # noqa: BLE001 - teardown must never raise
+                logger.debug("Error closing async OpenSearch client: %s", e)
+            self._async_client = None
+            self._bound_loop_id = None
+        if self._client is not None:
+            try:
+                self._client.close()
+            except Exception as e:  # noqa: BLE001 - teardown must never raise
+                logger.debug("Error closing sync OpenSearch client: %s", e)
+            self._client = None
+
+    def __enter__(self) -> "OpenSearchClient":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        self.close()
+
+    async def __aenter__(self) -> "OpenSearchClient":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        await self.aclose()
 
     def _create_client(self) -> OpenSearch:
         params = self._get_base_connection_params(async_mode=False)

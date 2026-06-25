@@ -371,22 +371,28 @@ class IngestionPipelineRunner:
             metrics_sink=self._build_metrics_sink(),
         )
 
-        if self._handle_metadata_operations():
-            return
+        try:
+            if self._handle_metadata_operations():
+                return
 
-        if not self._validate_pipeline_integrity():
-            return
+            if not self._validate_pipeline_integrity():
+                return
 
-        context = self._execute_pipeline()
+            context = self._execute_pipeline()
 
-        if context:
-            display_pipeline_results(context)
-            success_msg = "✓ Pipeline completed successfully!"
-            console.print(
-                Panel.fit(
-                    f"[bold green]{success_msg}[/bold green]", border_style="green"
+            if context:
+                display_pipeline_results(context)
+                success_msg = "✓ Pipeline completed successfully!"
+                console.print(
+                    Panel.fit(
+                        f"[bold green]{success_msg}[/bold green]", border_style="green"
+                    )
                 )
-            )
+        finally:
+            # Release the indexers' Neptune/OpenSearch connections so a finished
+            # ingest run does not leak websockets/HTTP pools until interpreter
+            # exit. Best-effort: pipeline.close() never raises.
+            self.pipeline.close()
 
 
 def main() -> None:

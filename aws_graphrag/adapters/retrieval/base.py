@@ -24,6 +24,41 @@ from aws_graphrag.shared import get_logger
 
 logger = get_logger(__name__)
 
+# Substrings in an error message that indicate a non-transient (fatal)
+# misconfiguration — auth, credentials, endpoint/config, or an outright
+# connection failure. A retriever should surface these to the caller rather
+# than masking them as "0 results", which is indistinguishable from a genuine
+# empty match and silently hides broken auth/config from the user.
+_FATAL_ERROR_MARKERS: tuple[str, ...] = (
+    "credential",
+    "not configured",
+    "endpoint",
+    "auth",
+    "forbidden",
+    "unauthorized",
+    "access denied",
+    "accessdenied",
+    "failed to connect",
+    "failed to establish connection",
+)
+
+
+def is_fatal_retrieval_error(exc: BaseException) -> bool:
+    """Classify a retrieval error as fatal (re-raise) vs transient (degrade).
+
+    Fatal = a clearly non-recoverable misconfiguration (auth/credentials/
+    endpoint/config) or a connection failure: returning ``[]`` for these turns a
+    real failure into a misleading "no results". Everything else (timeouts,
+    throttling, a single malformed query) is treated as transient and the caller
+    may degrade to an empty result list. ``ConnectionError`` is always fatal.
+    The repo's adapters wrap backend failures in ``AWSServiceError`` carrying the
+    original message, so the markers are matched against the message text.
+    """
+    if isinstance(exc, ConnectionError):
+        return True
+    message = str(exc).lower()
+    return any(marker in message for marker in _FATAL_ERROR_MARKERS)
+
 
 class BaseGraphRAGRetriever(BaseRetriever, MetricsMixin, ABC):
     def __init__(

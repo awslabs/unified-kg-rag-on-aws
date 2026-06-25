@@ -45,6 +45,14 @@ class IndexingManager:
             self._description_summarizer = DescriptionSummarizer(self.config)
         return self._description_summarizer
 
+    def close(self) -> None:
+        """Close both indexers' backing clients (best-effort, never raises)."""
+        for indexer in (self.opensearch_indexer, self.neptune_indexer):
+            try:
+                indexer.close()
+            except Exception as e:  # noqa: BLE001 - teardown must never raise
+                logger.debug("Error closing %s: %s", type(indexer).__name__, e)
+
     def clear_all_data(self, text_units: list[TextUnit]) -> bool:
         suffixes = self._discover_suffixes(text_units)
         if not suffixes:

@@ -542,6 +542,34 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         except RuntimeError:
             return None
 
+    async def aclose(self) -> None:
+        """Close every cached retriever's backing client (best-effort).
+
+        Each retriever build opens a Neptune websocket + thread pool and/or an
+        OpenSearch (a)sync HTTP pool that otherwise survive until GC. Call this
+        when the chain is done (e.g. from the CLI ``finally``) so a process that
+        finishes a query releases its sockets. Never raises.
+        """
+        for retriever in self._retriever_cache.values():
+            aclose = getattr(retriever, "aclose", None)
+            if aclose is not None:
+                try:
+                    await aclose()
+                except Exception as e:  # noqa: BLE001 - teardown must never raise
+                    logger.debug("Error closing retriever %r: %s", retriever, e)
+        self._retriever_cache.clear()
+
+    def close(self) -> None:
+        """Synchronous teardown of cached retrievers' backing clients."""
+        for retriever in self._retriever_cache.values():
+            close = getattr(retriever, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except Exception as e:  # noqa: BLE001 - teardown must never raise
+                    logger.debug("Error closing retriever %r: %s", retriever, e)
+        self._retriever_cache.clear()
+
     def _context_building_step(self, state: dict[str, Any]) -> str:
         try:
             query: ProcessedQuery = state["processed_query"]
