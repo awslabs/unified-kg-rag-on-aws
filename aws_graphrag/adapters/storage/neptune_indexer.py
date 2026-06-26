@@ -500,6 +500,45 @@ class NeptuneIndexer(GraphIndexer):
             entity_label=self.neptune_config.entity_label_prefix.capitalize(),
         )
 
+    def find_incident_relationship_ids(
+        self, entity_ids: list[str], suffix: str | None = None
+    ) -> list[str]:
+        """Return ids of edges incident to any of the given entity vertices.
+
+        Deleting an entity exclusive to a removed document leaves any
+        relationship pointing AT it dangling. Neptune drops incident edges when
+        the vertex is dropped, but the relationship's document in the OpenSearch
+        relationship index survives (it is keyed by its own id, attributed to a
+        *different*, still-present document's lineage). We query the incident
+        edge ids here so the caller can also remove those orphaned relationship
+        documents from OpenSearch. Best-effort: returns [] on any failure (the
+        caller still performs the id-set based deletion).
+        """
+        if not entity_ids:
+            return []
+        try:
+            g = self.neptune_client.g
+            base = (
+                g.V().hasLabel(
+                    self._get_name(
+                        self.neptune_config.entity_label_prefix.capitalize(), suffix
+                    )
+                )
+                if suffix is not None
+                else g.V()
+            )
+            rel_ids = (
+                base.has("id", P.within(entity_ids))
+                .bothE()
+                .values("id")
+                .dedup()
+                .toList()
+            )
+            return [str(rid) for rid in rel_ids if rid is not None]
+        except Exception as e:  # noqa: BLE001 - best-effort orphan cleanup
+            logger.warning("find_incident_relationship_ids failed: %s", e)
+            return []
+
     def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
         """Delete vertices and edges by their ``id`` property (delta removals).
 

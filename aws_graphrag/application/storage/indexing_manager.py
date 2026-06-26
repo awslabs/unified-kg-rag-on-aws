@@ -292,21 +292,40 @@ class IndexingManager:
         text-unit/community ids that belonged only to deleted documents.
         """
         results: dict[str, IndexingStats] = {}
+        os_config = self.opensearch_indexer.opensearch_config
+        rel_prefix = os_config.relationships_index_prefix
         for suffix, ids in ids_by_suffix.items():
             if not ids:
                 continue
+            # Orphan-edge cleanup: a relationship pointing AT one of these
+            # deleted entities is owned (in lineage) by a SURVIVING document, so
+            # it is not in `ids`. Neptune drops the incident edge on vertex drop,
+            # but its OpenSearch relationship document would survive as a
+            # dangling edge. Collect those incident edge ids BEFORE the Neptune
+            # drop, then fold them into the relationship-index deletion below.
+            incident_rel_ids = self.neptune_indexer.find_incident_relationship_ids(
+                ids, suffix=suffix
+            )
             results[f"neptune_delete_{suffix}"] = self.neptune_indexer.delete_by_id(
                 ids, suffix=suffix
             )
             for prefix in (
-                self.opensearch_indexer.opensearch_config.text_units_index_prefix,
-                self.opensearch_indexer.opensearch_config.entities_index_prefix,
-                self.opensearch_indexer.opensearch_config.relationships_index_prefix,
-                self.opensearch_indexer.opensearch_config.claims_index_prefix,
-                self.opensearch_indexer.opensearch_config.community_reports_index_prefix,
+                os_config.text_units_index_prefix,
+                os_config.entities_index_prefix,
+                rel_prefix,
+                os_config.claims_index_prefix,
+                os_config.community_reports_index_prefix,
             ):
+                # The relationship index also gets the orphaned incident edges.
+                delete_ids = (
+                    sorted(set(ids) | set(incident_rel_ids))
+                    if prefix == rel_prefix and incident_rel_ids
+                    else ids
+                )
                 key = f"opensearch_delete_{prefix}_{suffix}"
-                results[key] = self.opensearch_indexer.delete_by_id(ids, prefix, suffix)
+                results[key] = self.opensearch_indexer.delete_by_id(
+                    delete_ids, prefix, suffix
+                )
         return results
 
     def _run_indexing_phase(

@@ -516,8 +516,13 @@ class TestCombinations:
         deleted = _all_deleted_ids(manager)
         # e_target is removed (exclusive to deleted doc a)...
         assert "e_target" in deleted
-        # ...but r1 survives with a now-dangling target endpoint. The orchestrator
-        # does NOT cascade edge cleanup from a deleted endpoint entity.
+        # ...and r1 is NOT in the lineage-derived exclusive id-set (it is owned
+        # by surviving doc b). The orphan-edge cascade does not happen at THIS
+        # (lineage) layer — it is handled downstream in
+        # IndexingManager.delete_documents, which queries Neptune for edges
+        # incident to the deleted entities and folds them into the relationship-
+        # index deletion (see test_indexing_manager_orphan_cleanup). So at the
+        # incremental layer r1 stays out of the exclusive set by design.
         assert "r1" not in deleted
 
     def test_empty_delta_is_clean_noop(self, rig) -> None:

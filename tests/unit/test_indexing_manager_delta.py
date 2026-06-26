@@ -30,10 +30,14 @@ def manager(mocker):
     os_indexer.opensearch_config.text_units_index_prefix = "text-units"
     os_indexer.opensearch_config.entities_index_prefix = "entities"
     os_indexer.opensearch_config.relationships_index_prefix = "relationships"
+    os_indexer.opensearch_config.claims_index_prefix = "claims"
+    os_indexer.opensearch_config.community_reports_index_prefix = "community-reports"
     neptune_indexer.upsert_entities.return_value = IndexingStats()
     neptune_indexer.upsert_relationships.return_value = IndexingStats()
     neptune_indexer.index_communities.return_value = IndexingStats()
     neptune_indexer.delete_by_id.return_value = IndexingStats()
+    # No orphaned incident edges by default; orphan-cleanup test overrides this.
+    neptune_indexer.find_incident_relationship_ids.return_value = []
 
     mocker.patch(
         "aws_graphrag.application.storage.indexing_manager.OpenSearchIndexer",
@@ -90,3 +94,26 @@ def test_delete_documents_skips_empty(manager) -> None:
     mgr.delete_documents({"default": []})
     neptune_indexer.delete_by_id.assert_not_called()
     os_indexer.delete_by_id.assert_not_called()
+
+
+def test_delete_documents_cascades_orphan_relationship_ids(manager) -> None:
+    # Orphan-edge cleanup: a relationship pointing at a deleted entity is owned
+    # (in lineage) by a surviving document, so it is NOT in the exclusive id-set.
+    # delete_documents must query Neptune for incident edge ids and fold them
+    # into the OpenSearch relationship-index deletion so no dangling relationship
+    # document survives.
+    mgr, os_indexer, neptune_indexer = manager
+    neptune_indexer.find_incident_relationship_ids.return_value = ["r_orphan"]
+
+    mgr.delete_documents({"default": ["e_target"]})
+
+    # Incident edges are queried for the deleted entities, scoped to the suffix.
+    neptune_indexer.find_incident_relationship_ids.assert_called_once_with(
+        ["e_target"], suffix="default"
+    )
+    # The relationships-index deletion includes BOTH the exclusive id and the
+    # orphaned incident edge; other indexes get only the exclusive id.
+    calls = {c.args[1]: c.args[0] for c in os_indexer.delete_by_id.call_args_list}
+    assert set(calls["relationships"]) == {"e_target", "r_orphan"}
+    assert calls["entities"] == ["e_target"]
+    assert calls["text-units"] == ["e_target"]

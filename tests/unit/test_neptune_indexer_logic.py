@@ -514,3 +514,44 @@ def test_execute_batch_records_individual_failures(indexer, mocker) -> None:
     assert stats.failed_items == 2
     assert stats.successful_items == 0
     assert stats.errors  # error messages captured
+
+
+# --------------------------------------------------------------------------- #
+# find_incident_relationship_ids (orphan-edge cleanup support)
+# --------------------------------------------------------------------------- #
+
+
+def test_find_incident_relationship_ids_empty_short_circuits(indexer) -> None:
+    assert indexer.find_incident_relationship_ids([]) == []
+
+
+def test_find_incident_relationship_ids_scopes_to_entity_label(indexer, mocker) -> None:
+    g = mocker.MagicMock()
+    # g.V().hasLabel(label).has(...).bothE().values("id").dedup().toList() -> ids
+    (
+        g.V.return_value.hasLabel.return_value.has.return_value.bothE.return_value.values.return_value.dedup.return_value.toList.return_value
+    ) = ["r1", "r2"]
+    indexer.neptune_client.g = g
+
+    out = indexer.find_incident_relationship_ids(["e1", "e2"], suffix="default")
+    assert out == ["r1", "r2"]
+    # Suffix path scopes by the capitalized entity label.
+    g.V.return_value.hasLabel.assert_called_once_with("Entity-default")
+
+
+def test_find_incident_relationship_ids_coerces_and_drops_none(indexer, mocker) -> None:
+    g = mocker.MagicMock()
+    (
+        g.V.return_value.has.return_value.bothE.return_value.values.return_value.dedup.return_value.toList.return_value
+    ) = [1, None, "r3"]
+    indexer.neptune_client.g = g
+    # No suffix -> unscoped V().has(...) path; results coerced to str, None dropped.
+    out = indexer.find_incident_relationship_ids(["e1"])
+    assert out == ["1", "r3"]
+
+
+def test_find_incident_relationship_ids_swallows_errors(indexer, mocker) -> None:
+    g = mocker.MagicMock()
+    g.V.side_effect = RuntimeError("neptune down")
+    indexer.neptune_client.g = g
+    assert indexer.find_incident_relationship_ids(["e1"]) == []

@@ -89,6 +89,23 @@ class FakeGraphStore(_Recorder):
         bucket = self.data.get("relationships", {})
         return [bucket[i] for i in ids if i in bucket]
 
+    def find_incident_relationship_ids(
+        self, entity_ids: list[str], suffix: str | None = None
+    ) -> list[str]:
+        # Model the real contract: ids of stored relationships whose source or
+        # target endpoint is one of the given entities (these become orphaned
+        # when the entity is deleted).
+        if not entity_ids:
+            return []
+        targets = set(entity_ids)
+        bucket = self.data.get("relationships", {})
+        return sorted(
+            rid
+            for rid, rel in bucket.items()
+            if getattr(rel, "source_id", None) in targets
+            or getattr(rel, "target_id", None) in targets
+        )
+
 
 class FakeVectorStore(_Recorder):
     """In-memory stand-in for the OpenSearch vector indexer."""
