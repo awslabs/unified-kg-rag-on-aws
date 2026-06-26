@@ -17,9 +17,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from aws_graphrag.adapters.search_strategies.drift_search import DriftSearchStrategy
-from aws_graphrag.domain.models import RetrievalResult, SearchQuery
-from aws_graphrag.shared.utils import compute_hash
+from unified_kg_rag.adapters.search_strategies.drift_search import DriftSearchStrategy
+from unified_kg_rag.domain.models import RetrievalResult, SearchQuery
+from unified_kg_rag.shared.utils import compute_hash
 
 pytestmark = pytest.mark.unit
 

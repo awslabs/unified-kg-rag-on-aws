@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.adapters.aws.token_counter import (
+from unified_kg_rag.adapters.aws.token_counter import (
     BedrockTokenCounter,
     estimate_token_count,
 )

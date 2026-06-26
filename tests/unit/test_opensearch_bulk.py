@@ -15,8 +15,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import aws_graphrag.adapters.aws.opensearch as opensearch_mod
-from aws_graphrag.adapters.aws.opensearch import OpenSearchClient
+import unified_kg_rag.adapters.aws.opensearch as opensearch_mod
+from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 
 pytestmark = pytest.mark.unit
 

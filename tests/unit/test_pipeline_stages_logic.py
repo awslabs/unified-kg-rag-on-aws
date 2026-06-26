@@ -15,21 +15,21 @@ from typing import Any
 
 import pytest
 
-from aws_graphrag.domain.models import (
+from unified_kg_rag.domain.models import (
     Config,
     PipelineContext,
     PipelineStageStatus,
     PipelineStageType,
 )
-from aws_graphrag.ports.indexer import IndexingStats
-from aws_graphrag.shared import PipelineStageError
+from unified_kg_rag.ports.indexer import IndexingStats
+from unified_kg_rag.shared import PipelineStageError
 
 pytestmark = pytest.mark.unit
 
 
 # A minimal concrete stage to exercise the abstract base's shared helpers.
 def _make_stage(stage_type: PipelineStageType):
-    from aws_graphrag.application.ingestion.pipeline_stages import PipelineStage
+    from unified_kg_rag.application.ingestion.pipeline_stages import PipelineStage
 
     class _Concrete(PipelineStage):
         def __init__(self, st: PipelineStageType) -> None:
@@ -97,7 +97,7 @@ def test_should_validate_output_defaults_true_for_unlisted() -> None:
 
 
 def test_allows_empty_output_when_incremental_delta_empty_docs() -> None:
-    from aws_graphrag.domain.models.document import DocumentDelta
+    from unified_kg_rag.domain.models.document import DocumentDelta
 
     stage = _make_stage(PipelineStageType.GRAPH_EXTRACTION)
     ctx = _context()
@@ -114,8 +114,8 @@ def test_disallows_empty_output_without_delta() -> None:
 
 
 def test_disallows_empty_output_when_delta_has_docs() -> None:
-    from aws_graphrag.domain.models import Document
-    from aws_graphrag.domain.models.document import DocumentDelta
+    from unified_kg_rag.domain.models import Document
+    from unified_kg_rag.domain.models.document import DocumentDelta
 
     stage = _make_stage(PipelineStageType.GRAPH_EXTRACTION)
     ctx = _context()
@@ -171,13 +171,13 @@ def test_create_result_defaults_metrics_to_empty_dict() -> None:
 
 
 def test_stats_to_dict_none_returns_empty() -> None:
-    from aws_graphrag.application.ingestion.pipeline_stages import PipelineStage
+    from unified_kg_rag.application.ingestion.pipeline_stages import PipelineStage
 
     assert PipelineStage._stats_to_dict(None) == {}
 
 
 def test_stats_to_dict_uses_to_dict_when_available() -> None:
-    from aws_graphrag.application.ingestion.pipeline_stages import PipelineStage
+    from unified_kg_rag.application.ingestion.pipeline_stages import PipelineStage
 
     class _Stats:
         def to_dict(self) -> dict[str, Any]:
@@ -187,7 +187,7 @@ def test_stats_to_dict_uses_to_dict_when_available() -> None:
 
 
 def test_stats_to_dict_falls_back_to_dunder_dict() -> None:
-    from aws_graphrag.application.ingestion.pipeline_stages import PipelineStage
+    from unified_kg_rag.application.ingestion.pipeline_stages import PipelineStage
 
     class _Stats:
         def __init__(self) -> None:
@@ -201,7 +201,7 @@ def test_stats_to_dict_falls_back_to_dunder_dict() -> None:
 
 def _indexing_stage(mocker, indexing_results: dict[str, IndexingStats]):
     """Build an IndexingStage with its IndexingManager fully stubbed."""
-    from aws_graphrag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
 
     fake_mgr = mocker.MagicMock()
     fake_mgr.initialize.return_value = True
@@ -244,7 +244,7 @@ def test_indexing_stage_success_rate_zero_when_nothing(mocker) -> None:
 
 
 def test_indexing_stage_input_count_sums_all_artifact_types(mocker) -> None:
-    from aws_graphrag.domain.models import Entity, Relationship, TextUnit
+    from unified_kg_rag.domain.models import Entity, Relationship, TextUnit
 
     stage, _mgr = _indexing_stage(
         mocker, {"neptune_entities": IndexingStats(total_items=1, successful_items=1)}

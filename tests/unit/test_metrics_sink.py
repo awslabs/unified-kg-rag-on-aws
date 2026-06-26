@@ -10,7 +10,7 @@ import logging
 
 import pytest
 
-from aws_graphrag.shared import CloudWatchEMFSink, MetricsSink, NullMetricsSink
+from unified_kg_rag.shared import CloudWatchEMFSink, MetricsSink, NullMetricsSink
 
 pytestmark = pytest.mark.unit
 
@@ -37,13 +37,13 @@ def test_null_sink_is_noop() -> None:
 def test_emf_emits_numeric_metrics_and_dimensions() -> None:
     lg, buf = _emf_logger()
     CloudWatchEMFSink(emf_logger=lg).emit(
-        "aws_graphrag/ingestion",
+        "unified_kg_rag/ingestion",
         {"entities": 42, "rate": 0.5, "name": "ignored"},
         {"pipeline_id": "p1"},
     )
     out = json.loads(buf.getvalue())
     cw = out["_aws"]["CloudWatchMetrics"][0]
-    assert cw["Namespace"] == "aws_graphrag/ingestion"
+    assert cw["Namespace"] == "unified_kg_rag/ingestion"
     assert {m["Name"] for m in cw["Metrics"]} == {"entities", "rate"}
     assert cw["Dimensions"] == [["pipeline_id"]]
     assert out["entities"] == 42

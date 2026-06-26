@@ -12,15 +12,15 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.application.ingestion.incremental import (
+from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
     build_document_lineage,
 )
-from aws_graphrag.application.storage.indexing_manager import IndexingManager
-from aws_graphrag.domain.ingestion.delta_detector import compute_doc_id
-from aws_graphrag.domain.models import Config, Document, Entity, TextUnit
-from tests.fixtures.fakes.doc_status import FakeDocStatusStore
-from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
+from unified_kg_rag.domain.models import Config, Document, Entity, TextUnit
 
 pytestmark = pytest.mark.integration
 
@@ -31,11 +31,11 @@ def harness(mocker):
     graph = FakeGraphStore()
     vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
     mocker.patch(
-        "aws_graphrag.application.storage.indexing_manager.OpenSearchIndexer",
+        "unified_kg_rag.application.storage.indexing_manager.OpenSearchIndexer",
         return_value=vector,
     )
     mocker.patch(
-        "aws_graphrag.application.storage.indexing_manager.NeptuneIndexer",
+        "unified_kg_rag.application.storage.indexing_manager.NeptuneIndexer",
         return_value=graph,
     )
     manager = IndexingManager(config=config)

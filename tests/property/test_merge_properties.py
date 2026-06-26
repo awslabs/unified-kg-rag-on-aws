@@ -18,9 +18,9 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from aws_graphrag.domain.ingestion.merge import merge_entities, merge_relationships
-from aws_graphrag.domain.models import Entity, Relationship
-from aws_graphrag.shared.utils.common import normalize_name
+from unified_kg_rag.domain.ingestion.merge import merge_entities, merge_relationships
+from unified_kg_rag.domain.models import Entity, Relationship
+from unified_kg_rag.shared.utils.common import normalize_name
 
 pytestmark = pytest.mark.property
 

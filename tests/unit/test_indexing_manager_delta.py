@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.domain.models import Entity, Relationship
-from aws_graphrag.ports.indexer import IndexingStats
+from unified_kg_rag.domain.models import Entity, Relationship
+from unified_kg_rag.ports.indexer import IndexingStats
 
 pytestmark = pytest.mark.unit
 
@@ -40,15 +40,15 @@ def manager(mocker):
     neptune_indexer.find_incident_relationship_ids.return_value = []
 
     mocker.patch(
-        "aws_graphrag.application.storage.indexing_manager.OpenSearchIndexer",
+        "unified_kg_rag.application.storage.indexing_manager.OpenSearchIndexer",
         return_value=os_indexer,
     )
     mocker.patch(
-        "aws_graphrag.application.storage.indexing_manager.NeptuneIndexer",
+        "unified_kg_rag.application.storage.indexing_manager.NeptuneIndexer",
         return_value=neptune_indexer,
     )
-    from aws_graphrag.application.storage.indexing_manager import IndexingManager
-    from aws_graphrag.domain.models import Config
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.domain.models import Config
 
     mgr = IndexingManager(config=Config())
     return mgr, os_indexer, neptune_indexer

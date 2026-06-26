@@ -3,7 +3,7 @@
 """AWS-free unit tests for BatchProcessor and RobustXMLOutputParser.
 
 These exercise the pure orchestration / parsing surface of
-``aws_graphrag.shared.utils.langchain`` with plain fake callables (no real LLM,
+``unified_kg_rag.shared.utils.langchain`` with plain fake callables (no real LLM,
 no boto3). The wall-clock timeout / chunk-ordering / concurrency cases already
 live in ``test_batch_processor_timeout.py``; this module covers the
 complementary branches: the batch-success happy path, run_config overrides,
@@ -18,7 +18,7 @@ import threading
 
 import pytest
 
-from aws_graphrag.shared.utils.langchain import (
+from unified_kg_rag.shared.utils.langchain import (
     BatchProcessor,
     RobustXMLOutputParser,
 )

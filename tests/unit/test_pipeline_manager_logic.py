@@ -19,17 +19,17 @@ from typing import Any
 
 import pytest
 
-from aws_graphrag.domain.models import (
+from unified_kg_rag.domain.models import (
     Entity,
     PipelineContext,
     PipelineStageResult,
     PipelineStageStatus,
 )
-from aws_graphrag.shared.exceptions import (
+from unified_kg_rag.shared.exceptions import (
     PipelineResumeError,
     PipelineStateError,
 )
-from aws_graphrag.shared.pipeline_manager import (
+from unified_kg_rag.shared.pipeline_manager import (
     PipelineResumeManager,
     PipelineStateManager,
 )

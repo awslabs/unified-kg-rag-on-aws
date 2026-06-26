@@ -1,6 +1,6 @@
-# AWS Native Graph RAG — Technical Documentation
+# Unified Knowledge Graph RAG on AWS — Technical Documentation
 
-This document is a **design reference for contributors and advanced users**, covering the architecture, algorithms, data model, and operational aspects of the `aws-graphrag` library. For the "what/why" and a quick start, see [README.md](../README.md); for "how to use it," see [docs/user-guide.md](user-guide.md) (English) / [docs/user-guide.ko.md](user-guide.ko.md) (Korean); for contribution/extension conventions, see [CLAUDE.md](../CLAUDE.md). A Korean version of this document is available at [docs/design.md](design.md).
+This document is a **design reference for contributors and advanced users**, covering the architecture, algorithms, data model, and operational aspects of the `unified-kg-rag-on-aws` library. For the "what/why" and a quick start, see [README.md](../README.md); for "how to use it," see [docs/user-guide.md](user-guide.md) (English) / [docs/user-guide.ko.md](user-guide.ko.md) (Korean); for contribution/extension conventions, see [CLAUDE.md](../CLAUDE.md). A Korean version of this document is available at [docs/design.md](design.md).
 
 ## Table of Contents
 
@@ -24,7 +24,7 @@ This document is a **design reference for contributors and advanced users**, cov
 
 ## 1. Overview and Design Philosophy
 
-`aws-graphrag` is a library that reimplements the Microsoft GraphRAG paper on top of an AWS-native stack (Bedrock + Neptune + OpenSearch + S3 + DynamoDB). The core design principles are as follows.
+`unified-kg-rag-on-aws` is a library that reimplements the Microsoft GraphRAG paper on top of an AWS-native stack (Bedrock + Neptune + OpenSearch + S3 + DynamoDB). The core design principles are as follows.
 
 - **Two methodologies, one infrastructure**: GraphRAG (community-summary) and LightRAG (dual-level keyword) share the same ingestion, indexing, caching, multilingual, and hybrid-search infrastructure, and **only the retrieval algorithm layer is swapped**.
 - **Generalization first**: We avoid hardcoding, regex heuristics, and overfitting. Semantic judgments are delegated to the LLM or to authoritative data, token counting uses the Bedrock `count_tokens` API, and thresholds/weights are config-driven.
@@ -47,7 +47,7 @@ application  ──►  adapters  ──►  ports  ──►  domain
 ```
 
 ```
-aws_graphrag/
+unified_kg_rag/
 ├─ domain/              # technology-agnostic core (no boto3/LangChain/backend imports)
 │  ├─ models/           #   Pydantic domain models
 │  ├─ ingestion/        #   pure algorithms: delta_detector, graph_analyzer/
@@ -327,7 +327,7 @@ The nested Pydantic tree in `domain/models/config.py` (root `Config`), loaded by
 - Layers: unit (models/registry/merge/dual-keyword/evaluation/token-counter/clause budget/lineage relevance), property (hypothesis: hashing determinism, diff partition completeness, merge laws), integration (incremental add/change/delete cycles), regression.
 - Markers: `unit`, `integration`, `property`, `aws` (real AWS, excluded in CI), `slow`. `asyncio_mode = "auto"`.
 
-Run: `uv run pytest -m "not aws" --cov=aws_graphrag`.
+Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 
 ---
 

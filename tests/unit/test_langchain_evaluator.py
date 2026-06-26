@@ -14,10 +14,10 @@ import json
 
 import pytest
 
-import aws_graphrag.evaluation  # noqa: F401  (resolves package import cycle)
-from aws_graphrag.adapters.evaluators import langchain_evaluator as lc_module
-from aws_graphrag.adapters.evaluators.langchain_evaluator import LangChainEvaluator
-from aws_graphrag.domain.models import (
+import unified_kg_rag.evaluation  # noqa: F401  (resolves package import cycle)
+from unified_kg_rag.adapters.evaluators import langchain_evaluator as lc_module
+from unified_kg_rag.adapters.evaluators.langchain_evaluator import LangChainEvaluator
+from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetricType,
     EvaluationQuery,
@@ -141,7 +141,7 @@ class TestInitialization:
         assert set(ev.evaluators) == {EvaluationMetricType.CORRECTNESS}
 
     def test_init_failure_raises_evaluation_exception(self, mocker) -> None:
-        from aws_graphrag.shared import EvaluationException
+        from unified_kg_rag.shared import EvaluationException
 
         mocker.patch.object(lc_module.boto3, "Session")
         mocker.patch.object(

@@ -19,18 +19,19 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.application.ingestion.incremental import (
+from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
     build_document_lineage,
 )
-from aws_graphrag.domain.ingestion.delta_detector import compute_doc_id
-from aws_graphrag.domain.ingestion.merge import (
+from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
+from unified_kg_rag.domain.ingestion.merge import (
     merge_communities,
     merge_community_reports,
     merge_entities,
     merge_relationships,
 )
-from aws_graphrag.domain.models import (
+from unified_kg_rag.domain.models import (
     Community,
     CommunityReport,
     Document,
@@ -39,8 +40,7 @@ from aws_graphrag.domain.models import (
     Relationship,
     TextUnit,
 )
-from aws_graphrag.ports.indexer import IndexingStats
-from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from unified_kg_rag.ports.indexer import IndexingStats
 
 pytestmark = pytest.mark.unit
 

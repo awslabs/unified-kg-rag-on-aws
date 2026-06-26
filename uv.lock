@@ -259,166 +259,6 @@ wheels = [
 ]
 
 [[package]]
-name = "aws-graphrag"
-version = "0.2.3"
-source = { editable = "." }
-dependencies = [
-    { name = "asyncio-throttle" },
-    { name = "aws-assume-role-lib" },
-    { name = "bokeh" },
-    { name = "boto3" },
-    { name = "datasets" },
-    { name = "datasketch" },
-    { name = "graspologic" },
-    { name = "gremlinpython" },
-    { name = "langchain" },
-    { name = "langchain-aws" },
-    { name = "langchain-community" },
-    { name = "langchain-core" },
-    { name = "langchain-text-splitters" },
-    { name = "llvmlite" },
-    { name = "lxml" },
-    { name = "nest-asyncio" },
-    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "numpy" },
-    { name = "opensearch-py" },
-    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "pypdf" },
-    { name = "python-dotenv" },
-    { name = "pyvis" },
-    { name = "pyyaml" },
-    { name = "ragas" },
-    { name = "rapidfuzz" },
-    { name = "rich" },
-    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "structlog" },
-    { name = "tenacity" },
-    { name = "tqdm" },
-    { name = "umap-learn" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "black" },
-    { name = "boto3-stubs" },
-    { name = "hypothesis" },
-    { name = "isort" },
-    { name = "moto", extra = ["dynamodb", "s3"] },
-    { name = "mypy" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "pytest-mock" },
-    { name = "ruff" },
-    { name = "types-boto3", extra = ["full"] },
-]
-docs = [
-    { name = "mkdocs" },
-    { name = "mkdocs-material" },
-    { name = "mkdocstrings", extra = ["python"] },
-]
-unstructured = [
-    { name = "unstructured", version = "0.18.32", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "unstructured", version = "0.23.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "black" },
-    { name = "boto3-stubs" },
-    { name = "hypothesis" },
-    { name = "isort" },
-    { name = "moto", extra = ["dynamodb", "s3"] },
-    { name = "mypy" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "pytest-mock" },
-    { name = "ruff" },
-    { name = "types-boto3", extra = ["full"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "asyncio-throttle", specifier = ">=1.0.2" },
-    { name = "aws-assume-role-lib", specifier = ">=2.10.0" },
-    { name = "black", marker = "extra == 'dev'", specifier = ">=25.9.0" },
-    { name = "bokeh", specifier = ">=3.7.3" },
-    { name = "boto3", specifier = ">=1.38.45" },
-    { name = "boto3-stubs", marker = "extra == 'dev'", specifier = "~=1.42.62" },
-    { name = "datasets", specifier = ">=2.14.0,<4.0.0" },
-    { name = "datasketch", specifier = ">=1.6.5" },
-    { name = "graspologic", specifier = ">=3.4.1" },
-    { name = "gremlinpython", specifier = ">=3.6.3,<3.7.0" },
-    { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.100.0" },
-    { name = "isort", marker = "extra == 'dev'", specifier = ">=5.12.0" },
-    { name = "langchain", specifier = ">=0.3.26,<1.0.0" },
-    { name = "langchain-aws", specifier = ">=0.2.27,<1.0.0" },
-    { name = "langchain-community", specifier = ">=0.3.27,<1.0.0" },
-    { name = "langchain-core", specifier = ">=0.3.68,<1.0.0" },
-    { name = "langchain-text-splitters", specifier = ">=0.3.9" },
-    { name = "llvmlite", specifier = ">=0.43.0" },
-    { name = "lxml", specifier = ">=6.0.0" },
-    { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.5.0" },
-    { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.0.0" },
-    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.24.0" },
-    { name = "moto", extras = ["dynamodb", "s3"], marker = "extra == 'dev'", specifier = ">=5.0.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.7.0" },
-    { name = "nest-asyncio", specifier = ">=1.6.0" },
-    { name = "networkx", specifier = ">=3.4" },
-    { name = "numpy", specifier = ">=1.26.4" },
-    { name = "opensearch-py", specifier = ">=3.0.0" },
-    { name = "pandas", specifier = ">=2.3.1" },
-    { name = "pillow", specifier = ">=11.3.0" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.5.0" },
-    { name = "pydantic", specifier = ">=2.11.7" },
-    { name = "pypdf", specifier = ">=6.0.1" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.0.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
-    { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.12.0" },
-    { name = "python-dotenv", specifier = ">=1.1.1" },
-    { name = "pyvis", specifier = ">=0.3.2" },
-    { name = "pyyaml", specifier = ">=6.0.2" },
-    { name = "ragas", specifier = ">=0.3.0" },
-    { name = "rapidfuzz", specifier = ">=3.13.0" },
-    { name = "rich", specifier = ">=14.0.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
-    { name = "scikit-learn", specifier = ">=1.7.1" },
-    { name = "structlog", specifier = ">=25.4.0" },
-    { name = "tenacity", specifier = ">=9.1.2" },
-    { name = "tqdm", specifier = ">=4.67.1" },
-    { name = "types-boto3", extras = ["full"], marker = "extra == 'dev'", specifier = ">=1.39.4" },
-    { name = "umap-learn", specifier = ">=0.5.6" },
-    { name = "unstructured", marker = "extra == 'unstructured'", specifier = ">=0.14.0" },
-]
-provides-extras = ["dev", "docs", "unstructured"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "black", specifier = ">=25.9.0" },
-    { name = "boto3-stubs", specifier = "~=1.42.62" },
-    { name = "hypothesis", specifier = ">=6.100.0" },
-    { name = "isort", specifier = ">=5.12.0" },
-    { name = "moto", extras = ["dynamodb", "s3"], specifier = ">=5.0.0" },
-    { name = "mypy", specifier = ">=1.7.0" },
-    { name = "pre-commit", specifier = ">=3.5.0" },
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "pytest-cov", specifier = ">=4.1.0" },
-    { name = "pytest-mock", specifier = ">=3.12.0" },
-    { name = "ruff", specifier = ">=0.3.0" },
-    { name = "types-boto3", extras = ["full"], specifier = ">=1.39.4" },
-]
-
-[[package]]
 name = "babel"
 version = "2.18.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4833,6 +4673,166 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/02/ee/af4171241117f85c74b5ca6448ea1033cc28d599c13651d67289bacd4083/umap_learn-0.5.12.tar.gz", hash = "sha256:6aff02ecac5f2aad9f3c65ee518d7ae93e1a985ae38721fdcffceee4232c33c7", size = 96672, upload-time = "2026-04-08T20:03:54.012Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1b/98/f63318ccbe75c810011fe9233884c5d348d94d90005de1b79e5f93bef9c0/umap_learn-0.5.12-py3-none-any.whl", hash = "sha256:f2a85d2a2adcb52b541bed9b27a23ca169b56bb1b23283abeebfb8dfb8a42fe5", size = 91849, upload-time = "2026-04-08T20:03:52.561Z" },
+]
+
+[[package]]
+name = "unified-kg-rag-on-aws"
+version = "0.2.3"
+source = { editable = "." }
+dependencies = [
+    { name = "asyncio-throttle" },
+    { name = "aws-assume-role-lib" },
+    { name = "bokeh" },
+    { name = "boto3" },
+    { name = "datasets" },
+    { name = "datasketch" },
+    { name = "graspologic" },
+    { name = "gremlinpython" },
+    { name = "langchain" },
+    { name = "langchain-aws" },
+    { name = "langchain-community" },
+    { name = "langchain-core" },
+    { name = "langchain-text-splitters" },
+    { name = "llvmlite" },
+    { name = "lxml" },
+    { name = "nest-asyncio" },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "numpy" },
+    { name = "opensearch-py" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "pypdf" },
+    { name = "python-dotenv" },
+    { name = "pyvis" },
+    { name = "pyyaml" },
+    { name = "ragas" },
+    { name = "rapidfuzz" },
+    { name = "rich" },
+    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "structlog" },
+    { name = "tenacity" },
+    { name = "tqdm" },
+    { name = "umap-learn" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "black" },
+    { name = "boto3-stubs" },
+    { name = "hypothesis" },
+    { name = "isort" },
+    { name = "moto", extra = ["dynamodb", "s3"] },
+    { name = "mypy" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-mock" },
+    { name = "ruff" },
+    { name = "types-boto3", extra = ["full"] },
+]
+docs = [
+    { name = "mkdocs" },
+    { name = "mkdocs-material" },
+    { name = "mkdocstrings", extra = ["python"] },
+]
+unstructured = [
+    { name = "unstructured", version = "0.18.32", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "unstructured", version = "0.23.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "black" },
+    { name = "boto3-stubs" },
+    { name = "hypothesis" },
+    { name = "isort" },
+    { name = "moto", extra = ["dynamodb", "s3"] },
+    { name = "mypy" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-mock" },
+    { name = "ruff" },
+    { name = "types-boto3", extra = ["full"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "asyncio-throttle", specifier = ">=1.0.2" },
+    { name = "aws-assume-role-lib", specifier = ">=2.10.0" },
+    { name = "black", marker = "extra == 'dev'", specifier = ">=25.9.0" },
+    { name = "bokeh", specifier = ">=3.7.3" },
+    { name = "boto3", specifier = ">=1.38.45" },
+    { name = "boto3-stubs", marker = "extra == 'dev'", specifier = "~=1.42.62" },
+    { name = "datasets", specifier = ">=2.14.0,<4.0.0" },
+    { name = "datasketch", specifier = ">=1.6.5" },
+    { name = "graspologic", specifier = ">=3.4.1" },
+    { name = "gremlinpython", specifier = ">=3.6.3,<3.7.0" },
+    { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.100.0" },
+    { name = "isort", marker = "extra == 'dev'", specifier = ">=5.12.0" },
+    { name = "langchain", specifier = ">=0.3.26,<1.0.0" },
+    { name = "langchain-aws", specifier = ">=0.2.27,<1.0.0" },
+    { name = "langchain-community", specifier = ">=0.3.27,<1.0.0" },
+    { name = "langchain-core", specifier = ">=0.3.68,<1.0.0" },
+    { name = "langchain-text-splitters", specifier = ">=0.3.9" },
+    { name = "llvmlite", specifier = ">=0.43.0" },
+    { name = "lxml", specifier = ">=6.0.0" },
+    { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.5.0" },
+    { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.0.0" },
+    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.24.0" },
+    { name = "moto", extras = ["dynamodb", "s3"], marker = "extra == 'dev'", specifier = ">=5.0.0" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.7.0" },
+    { name = "nest-asyncio", specifier = ">=1.6.0" },
+    { name = "networkx", specifier = ">=3.4" },
+    { name = "numpy", specifier = ">=1.26.4" },
+    { name = "opensearch-py", specifier = ">=3.0.0" },
+    { name = "pandas", specifier = ">=2.3.1" },
+    { name = "pillow", specifier = ">=11.3.0" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.5.0" },
+    { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "pypdf", specifier = ">=6.0.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
+    { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.12.0" },
+    { name = "python-dotenv", specifier = ">=1.1.1" },
+    { name = "pyvis", specifier = ">=0.3.2" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
+    { name = "ragas", specifier = ">=0.3.0" },
+    { name = "rapidfuzz", specifier = ">=3.13.0" },
+    { name = "rich", specifier = ">=14.0.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
+    { name = "scikit-learn", specifier = ">=1.7.1" },
+    { name = "structlog", specifier = ">=25.4.0" },
+    { name = "tenacity", specifier = ">=9.1.2" },
+    { name = "tqdm", specifier = ">=4.67.1" },
+    { name = "types-boto3", extras = ["full"], marker = "extra == 'dev'", specifier = ">=1.39.4" },
+    { name = "umap-learn", specifier = ">=0.5.6" },
+    { name = "unstructured", marker = "extra == 'unstructured'", specifier = ">=0.14.0" },
+]
+provides-extras = ["dev", "docs", "unstructured"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "black", specifier = ">=25.9.0" },
+    { name = "boto3-stubs", specifier = "~=1.42.62" },
+    { name = "hypothesis", specifier = ">=6.100.0" },
+    { name = "isort", specifier = ">=5.12.0" },
+    { name = "moto", extras = ["dynamodb", "s3"], specifier = ">=5.0.0" },
+    { name = "mypy", specifier = ">=1.7.0" },
+    { name = "pre-commit", specifier = ">=3.5.0" },
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "pytest-cov", specifier = ">=4.1.0" },
+    { name = "pytest-mock", specifier = ">=3.12.0" },
+    { name = "ruff", specifier = ">=0.3.0" },
+    { name = "types-boto3", extras = ["full"], specifier = ">=1.39.4" },
 ]
 
 [[package]]

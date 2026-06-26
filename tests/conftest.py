@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.domain.models import (
+from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from unified_kg_rag.domain.models import (
     Community,
     CommunityReport,
     Config,
@@ -20,7 +21,6 @@ from aws_graphrag.domain.models import (
     Relationship,
     TextUnit,
 )
-from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 
 
 @pytest.fixture

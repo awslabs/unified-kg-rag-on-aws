@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.application.ingestion.pipeline_stages import (
+from unified_kg_rag.application.ingestion.pipeline_stages import (
     DocumentLoadingStage,
     IndexingStage,
 )
-from aws_graphrag.domain.models import Config
+from unified_kg_rag.domain.models import Config
 
 pytestmark = pytest.mark.unit
 

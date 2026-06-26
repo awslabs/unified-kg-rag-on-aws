@@ -8,13 +8,13 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from aws_graphrag.adapters.aws import DynamoDBDocStatusStore
-from aws_graphrag.application.ingestion.pipeline_stages import DocumentLoadingStage
-from aws_graphrag.domain.ingestion.delta_detector import (
+from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
+from unified_kg_rag.application.ingestion.pipeline_stages import DocumentLoadingStage
+from unified_kg_rag.domain.ingestion.delta_detector import (
     compute_content_hash,
     compute_doc_id,
 )
-from aws_graphrag.domain.models import Config, DocStatusRecord, Document
+from unified_kg_rag.domain.models import Config, DocStatusRecord, Document
 
 pytestmark = pytest.mark.integration
 
@@ -32,7 +32,7 @@ def test_deletion_only_run_allows_empty_output() -> None:
     # documents to (re)extract. DOCUMENT_LOADING is critical + must-have-input,
     # so without the incremental opt-out the run would crash before deletions
     # are propagated. _allows_empty_output must permit it.
-    from aws_graphrag.domain.models import DocumentDelta
+    from unified_kg_rag.domain.models import DocumentDelta
 
     config = Config()
     config.aws.dynamodb.enabled = True

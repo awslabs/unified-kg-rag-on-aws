@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.domain.models import Constants, Entity
-from aws_graphrag.ports.indexer import BaseIndexer, IndexingStats
+from unified_kg_rag.domain.models import Constants, Entity
+from unified_kg_rag.ports.indexer import BaseIndexer, IndexingStats
 
 pytestmark = pytest.mark.unit
 

@@ -1,4 +1,4 @@
-# AWS Native Graph RAG
+# Unified Knowledge Graph RAG on AWS
 
 🇬🇧 **[English README](./README.md)** · 🤝 **[기여 가이드](./CONTRIBUTING.md)**
 
@@ -95,7 +95,7 @@
 ```bash
 # 저장소 클론
 git clone <repository-url>
-cd aws-graphrag
+cd unified-kg-rag-on-aws
 
 # 설치 (uv 권장)
 uv sync --extra dev        # 또는: pip install -e .
@@ -144,9 +144,9 @@ run-prompt-tuning --source-dir ./source --output tuned_prompts.yaml --config-pat
 
 ```bash
 uv run pytest -m "not aws"                       # AWS 불필요 테스트 (단위/통합/프로퍼티)
-uv run pytest -m "not aws" --cov=aws_graphrag    # 커버리지 포함
-uv run ruff check aws_graphrag tests
-uv run mypy aws_graphrag
+uv run pytest -m "not aws" --cov=unified_kg_rag    # 커버리지 포함
+uv run ruff check unified_kg_rag tests
+uv run mypy unified_kg_rag
 ```
 
 - `aws` 마커는 실제 AWS 서비스가 필요한 테스트를 분리하며 CI에서 제외됩니다.

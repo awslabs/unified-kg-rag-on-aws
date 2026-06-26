@@ -27,7 +27,7 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   managers), `ingestion/` (LLM/IO-coupled chunker/extractor/loader/parser/
   translator), `renderers/`, `evaluators/`.
 - **`application/`**: orchestration + entry points — `cli/` (pyproject scripts
-  resolve to `aws_graphrag.application.cli.*`), `ingestion/` (pipeline + stages),
+  resolve to `unified_kg_rag.application.cli.*`), `ingestion/` (pipeline + stages),
   `storage/indexing_manager`, `retrieval/rag_chain`.
 - **`shared/`**: cross-cutting kernel — config, logging, exceptions, metrics,
   cache/pipeline managers, `utils/`.
@@ -84,7 +84,7 @@ See `docs/design.md` §2 for the full layer map and dependency rule.
 - **Packages**: `uv` (`uv sync --extra dev`), not pip.
 - **Logging**: `%`-formatting, not f-strings — `logger.info("did %s", x)`.
 - **LLM calls**: LangChain LCEL (`prompt | llm | parser`); prompts live in
-  `aws_graphrag/domain/prompts/*.py` for version control, overridable via
+  `unified_kg_rag/domain/prompts/*.py` for version control, overridable via
   `custom_prompts` config.
 - **Exceptions**: specific custom types from `shared/exceptions.py`; fail fast at
   boundaries; degrade gracefully only where recovery is meaningful.
@@ -101,7 +101,7 @@ Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
 - Property tests (`hypothesis`) cover invariants: hashing determinism, diff
   partition completeness, merge laws, fusion monotonicity.
 - Coverage gate ratchets up per milestone toward 80% (currently `--cov-fail-under=75`
-  in CI; 78% actual). Run: `uv run pytest -m "not aws" --cov=aws_graphrag`.
+  in CI; 78% actual). Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 
 ## Quality gate
 

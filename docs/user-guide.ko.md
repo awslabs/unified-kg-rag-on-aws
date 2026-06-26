@@ -1,8 +1,8 @@
-# AWS GraphRAG — 사용자 가이드
+# Unified Knowledge Graph RAG on AWS — 사용자 가이드
 
 > 🇬🇧 English version: [docs/user-guide.md](./user-guide.md)
 
-이 문서는 **aws-graphrag**의 실용적인 사용 방법 가이드입니다. aws-graphrag는
+이 문서는 **unified-kg-rag-on-aws**의 실용적인 사용 방법 가이드입니다. unified-kg-rag-on-aws는
 대규모 다국어 문서 코퍼스로부터 지식 그래프를 구축하고 그 위에서 질문에 답하는
 AWS 네이티브 Knowledge Graph RAG 프레임워크입니다. 두 가지 검색 방법론 —
 **Microsoft GraphRAG**(커뮤니티 요약)와 **LightRAG**(이중 레벨 키워드) — 을
@@ -47,7 +47,7 @@ AWS 네이티브 Knowledge Graph RAG 프레임워크입니다. 두 가지 검색
 
 ```bash
 git clone <repository-url>
-cd aws-graphrag
+cd unified-kg-rag-on-aws
 
 # uv (recommended)
 uv sync --extra dev
@@ -94,7 +94,7 @@ pip install -e .
 cp config-template.yaml config.yaml
 ```
 
-설정은 중첩된 Pydantic 모델입니다(`aws_graphrag/domain/models/config.py`).
+설정은 중첩된 Pydantic 모델입니다(`unified_kg_rag/domain/models/config.py`).
 `config-template.yaml`에 전체 스키마와 인라인 주석이 담겨 있으며, 가장 유용한
 섹션과 실제로 튜닝하게 될 항목들은 아래와 같습니다.
 
@@ -135,7 +135,7 @@ aws:
 
   dynamodb:                       # incremental indexing registry
     enabled: false                # set true to enable delta indexing
-    table_name: "aws-graphrag-doc-status"
+    table_name: "unified-kg-rag-on-aws-doc-status"
     create_table_if_missing: true
     billing_mode: "PAY_PER_REQUEST"
 ```
@@ -420,7 +420,7 @@ evaluation:
 ### 2.9 `custom_prompts`
 
 모든 프롬프트에는 `*_system` / `*_human` 오버라이드가 있습니다(기본값 `null` =
-`aws_graphrag/domain/prompts/`의 내장 프롬프트 사용). §9를 참고하세요. 필요한
+`unified_kg_rag/domain/prompts/`의 내장 프롬프트 사용). §9를 참고하세요. 필요한
 것만 오버라이드하고 나머지는 `null`로 두세요.
 
 ---
@@ -639,7 +639,7 @@ CLI에서 단발 멀티턴을 하려면 동일한 `--conversation-id`를 `--use-
 aws:
   dynamodb:
     enabled: true
-    table_name: "aws-graphrag-doc-status"
+    table_name: "unified-kg-rag-on-aws-doc-status"
     create_table_if_missing: true
 ```
 

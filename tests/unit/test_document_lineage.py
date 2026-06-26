@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.application.ingestion.incremental import build_document_lineage
-from aws_graphrag.domain.ingestion.delta_detector import compute_doc_id
-from aws_graphrag.domain.models import Document, Entity, Relationship, TextUnit
+from unified_kg_rag.application.ingestion.incremental import build_document_lineage
+from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
+from unified_kg_rag.domain.models import Document, Entity, Relationship, TextUnit
 
 pytestmark = pytest.mark.unit
 
@@ -80,7 +80,7 @@ def test_lineage_uses_stable_doc_id_not_runtime_document_id() -> None:
 def test_community_report_attributed_via_its_community() -> None:
     # A community report attaches to a document through its community's member
     # text units, so deleting the document can prune the report.
-    from aws_graphrag.domain.models import Community, CommunityReport
+    from unified_kg_rag.domain.models import Community, CommunityReport
 
     docs = [_doc("d1", "/a.txt")]
     text_units = [TextUnit(id="t1", text="...", document_ids=["d1"])]

@@ -17,8 +17,8 @@ from datetime import datetime, timedelta
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from aws_graphrag.adapters.retrieval import memory_manager as mm
-from aws_graphrag.domain.models import Config, MessageRole
+from unified_kg_rag.adapters.retrieval import memory_manager as mm
+from unified_kg_rag.domain.models import Config, MessageRole
 
 pytestmark = pytest.mark.unit
 

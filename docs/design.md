@@ -1,6 +1,6 @@
-# AWS Native Graph RAG — 기술 문서
+# Unified Knowledge Graph RAG on AWS — 기술 문서
 
-본 문서는 `aws-graphrag` 라이브러리의 아키텍처·알고리즘·데이터 모델·운영 측면을 다루는 **기여자/고급 사용자용 설계 레퍼런스**입니다. "무엇/왜"와 빠른 시작은 [README.ko.md](../README.ko.md)를, "어떻게 쓰는가"는 [docs/user-guide.ko.md](user-guide.ko.md)를, 기여/확장 규약은 [CLAUDE.md](../CLAUDE.md)를 참고하세요. 본 문서의 영문판은 [docs/design.en.md](design.en.md)에 있습니다.
+본 문서는 `unified-kg-rag-on-aws` 라이브러리의 아키텍처·알고리즘·데이터 모델·운영 측면을 다루는 **기여자/고급 사용자용 설계 레퍼런스**입니다. "무엇/왜"와 빠른 시작은 [README.ko.md](../README.ko.md)를, "어떻게 쓰는가"는 [docs/user-guide.ko.md](user-guide.ko.md)를, 기여/확장 규약은 [CLAUDE.md](../CLAUDE.md)를 참고하세요. 본 문서의 영문판은 [docs/design.en.md](design.en.md)에 있습니다.
 
 ## 목차
 
@@ -24,7 +24,7 @@
 
 ## 1. 개요와 설계 철학
 
-`aws-graphrag`는 Microsoft GraphRAG 논문을 AWS 네이티브 스택(Bedrock + Neptune + OpenSearch + S3 + DynamoDB) 위에 재구현한 라이브러리입니다. 핵심 설계 원칙은 다음과 같습니다.
+`unified-kg-rag-on-aws`는 Microsoft GraphRAG 논문을 AWS 네이티브 스택(Bedrock + Neptune + OpenSearch + S3 + DynamoDB) 위에 재구현한 라이브러리입니다. 핵심 설계 원칙은 다음과 같습니다.
 
 - **두 방법론, 하나의 인프라**: GraphRAG(커뮤니티 요약)와 LightRAG(이중 레벨 키워드)가 동일한 인제스천·인덱싱·캐싱·다국어·하이브리드 검색 인프라를 공유하고, **검색 알고리즘 레이어만 교체**됩니다.
 - **일반화 우선**: 하드코딩·정규표현식 휴리스틱·과적합을 지양합니다. 의미 판단은 LLM 또는 권위 데이터에 위임하고, 토큰 카운팅은 Bedrock `count_tokens` API를 사용하며, 임계값/가중치는 설정 기반입니다.
@@ -47,7 +47,7 @@ application  ──►  adapters  ──►  ports  ──►  domain
 ```
 
 ```
-aws_graphrag/
+unified_kg_rag/
 ├─ domain/              # 기술 무관 코어 (boto3/LangChain/백엔드 import 없음)
 │  ├─ models/           #   Pydantic 도메인 모델
 │  ├─ ingestion/        #   순수 알고리즘: delta_detector, graph_analyzer/
@@ -78,8 +78,14 @@ aws_graphrag/
 ├─ shared/              # cross-cutting 커널 (config, logging, exceptions, metrics,
 │                       #   cache/pipeline manager, utils)
 └─ (facades)            # 공개 import 경로 안정용 thin re-export shim:
-   retrieval/ storage/ ingestion/ evaluation/ visualization/
+   retrieval/ storage/ ingestion/  (evaluation/·visualization/은 아래 주석 참고)
 ```
+
+> 파사드 주석: `retrieval/`·`storage/`·`ingestion/`은 단일 `__init__` re-export
+> shim입니다. 반면 `evaluation/`·`visualization/`은 **실제 로직 패키지**입니다
+> (`evaluation/`은 `evaluation_manager`·`graph_aware_evaluator` 등을, `visualization/`은
+> 렌더 루프 + `embeddings/`·`exporters/`·`renderers/` 하위패키지를 보유). 헥사고날
+> 레이어 분리 전부터 이 위치에 있던 것으로, "전부 thin shim"은 아닙니다.
 
 ### 2.1 포트(추상 인터페이스)
 
@@ -117,11 +123,19 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 이 패턴은 기존의 `ParserFactory._loader_configs`(선언적 파서 등록)와 동일한 철학입니다.
 
+> 쓰기(인덱싱) 경로 주석: 레지스트리는 **읽기/평가/렌더/파싱** 경로에 적용됩니다.
+> 쓰기 경로의 `IndexingManager`는 의도적으로 **Neptune + OpenSearch 두 백엔드를
+> 고정**으로 구성합니다(레지스트리 순회가 아님) — 이 두 스토어(그래프 DB + 벡터/
+> 렉시컬 검색)는 프레임워크의 본질적 구성이라 런타임 교체 대상이 아니기 때문입니다.
+> 따라서 새 검색 전략·평가자·렌더러는 레지스트리 등록만으로 추가되지만, 쓰기측
+> 스토어 백엔드 교체는 `GraphIndexer`/`VectorIndexer` 포트 구현 + `IndexingManager`
+> 수정을 수반합니다. (읽기 경로는 `RetrieverRole`→builder 맵으로 이미 일반화됨.)
+
 ### 2.4 의존성 규칙 검증 상태
 
 grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import하지 않고, `ports/`도 그렇습니다. 컴파일 타임 한정 예외 하나가 남아 있습니다 — `domain/retrieval/strategy_registry.py`가 `TYPE_CHECKING` 하에서 `adapters.retrieval.base.BaseSearchStrategy`를 참조합니다(레지스트리가 전략 서브클래스를 저장하므로). 순수 전략/리트리버 포트를 추출하면 이 타입 수준 참조도 제거되며, §15의 향후 작업으로 추적합니다.
 
-레거시 최상위 패키지(`retrieval/`, `storage/`, `ingestion/`, `evaluation/`, `visualization/`)는 레이어 분리 후에도 공개 import 경로/API를 안정적으로 유지하기 위한 thin 파사드 `__init__` 모듈로 의도적으로 보존됩니다.
+레거시 최상위 패키지 중 `retrieval/`·`storage/`·`ingestion/`은 레이어 분리 후에도 공개 import 경로/API를 안정적으로 유지하기 위한 thin 파사드 `__init__` 모듈로 의도적으로 보존됩니다(`evaluation/`·`visualization/`은 §2 주석대로 thin shim이 아니라 실제 로직 패키지입니다).
 
 ---
 
@@ -327,7 +341,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 - 계층: 단위(모델/레지스트리/머지/dual-keyword/평가/토큰카운터/clause budget/계보 관련성), 프로퍼티(hypothesis: 해시 결정성, diff 분할 완전성, 머지 법칙), 통합(증분 add/change/delete 사이클), 회귀.
 - 마커: `unit`, `integration`, `property`, `aws`(실 AWS, CI 제외), `slow`. `asyncio_mode = "auto"`.
 
-실행: `uv run pytest -m "not aws" --cov=aws_graphrag`.
+실행: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 
 ---
 

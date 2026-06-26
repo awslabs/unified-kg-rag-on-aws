@@ -79,7 +79,7 @@ class ComputeStack(Stack):
             self,
             "TaskRole",
             assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
-            description="aws-graphrag Fargate task role (least privilege)",
+            description="unified-kg-rag-on-aws Fargate task role (least privilege)",
         )
         # Bedrock model invocation (LLM/embedding/rerank). Cross-region and
         # global inference profiles fan a single InvokeModel out to foundation

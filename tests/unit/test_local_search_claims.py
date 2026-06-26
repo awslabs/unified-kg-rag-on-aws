@@ -14,15 +14,15 @@ from __future__ import annotations
 
 import pytest
 
-import aws_graphrag.adapters.search_strategies  # noqa: F401
-from aws_graphrag.domain.models import (
+import unified_kg_rag.adapters.search_strategies  # noqa: F401
+from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
     SearchStrategy,
 )
-from aws_graphrag.domain.retrieval.strategy_registry import get_strategy_spec
+from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
 
 pytestmark = pytest.mark.unit
 

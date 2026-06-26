@@ -23,18 +23,18 @@ from pathlib import Path
 
 import pytest
 
-from aws_graphrag.adapters.ingestion.parser import ParserFactory
-from aws_graphrag.application.ingestion.pipeline_stages import TranslationStage
-from aws_graphrag.domain.models import (
+from unified_kg_rag.adapters.ingestion.parser import ParserFactory
+from unified_kg_rag.application.ingestion.pipeline_stages import TranslationStage
+from unified_kg_rag.domain.models import (
     Config,
     Document,
     LanguageCode,
     PipelineContext,
     TextUnit,
 )
-from aws_graphrag.domain.models.config import TranslationConfig
-from aws_graphrag.domain.models.document import _read_text_autodetect
-from aws_graphrag.domain.prompts import KeywordExpansionPrompt, QueryRefinementPrompt
+from unified_kg_rag.domain.models.config import TranslationConfig
+from unified_kg_rag.domain.models.document import _read_text_autodetect
+from unified_kg_rag.domain.prompts import KeywordExpansionPrompt, QueryRefinementPrompt
 
 pytestmark = pytest.mark.unit
 
@@ -114,7 +114,7 @@ class TestNonUtf8Recovery:
 
     def test_text_loaders_are_encoding_aware(self) -> None:
         # The .txt/.csv loaders are eligible for the detect-and-retry path.
-        from aws_graphrag.adapters.ingestion.parser import _ENCODING_AWARE_LOADERS
+        from unified_kg_rag.adapters.ingestion.parser import _ENCODING_AWARE_LOADERS
 
         for ext in (".txt", ".csv"):
             loader_class = ParserFactory._loader_configs[ext][0]
@@ -123,7 +123,7 @@ class TestNonUtf8Recovery:
     def test_document_from_json_file_reads_cp949(self, tmp_path: Path) -> None:
         # Build a real exported Document JSON, re-encode it as cp949, and confirm
         # from_json_file recovers it (it previously hardcoded encoding="utf-8").
-        from aws_graphrag.domain.models.document import DocumentContent
+        from unified_kg_rag.domain.models.document import DocumentContent
 
         doc = Document(
             document_id="d1",
@@ -180,8 +180,8 @@ class TestTranslationStageSkip:
     def _context(config: Config) -> PipelineContext:
         from datetime import datetime
 
-        from aws_graphrag.domain.models import PipelineStageStatus
-        from aws_graphrag.domain.models.config import PipelineConfig
+        from unified_kg_rag.domain.models import PipelineStageStatus
+        from unified_kg_rag.domain.models.config import PipelineConfig
 
         ctx = PipelineContext(
             pipeline_id="p1",

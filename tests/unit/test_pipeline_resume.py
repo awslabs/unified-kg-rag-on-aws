@@ -13,12 +13,12 @@ from pathlib import Path
 
 import pytest
 
-from aws_graphrag.domain.models import (
+from unified_kg_rag.domain.models import (
     PipelineContext,
     PipelineStageResult,
     PipelineStageStatus,
 )
-from aws_graphrag.shared.pipeline_manager import (
+from unified_kg_rag.shared.pipeline_manager import (
     PipelineResumeManager,
     PipelineStateManager,
 )
@@ -180,7 +180,7 @@ def test_prepare_context_for_resume_keeps_upstream_in_narrow_phase() -> None:
     # Defense-in-depth for the same bug: when the Index phase narrows self.stages
     # to just ["indexing"], _prepare_context_for_resume must judge upstream-ness
     # against the CANONICAL order, not the narrow window, or it wipes everything.
-    from aws_graphrag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 
     ctx = _context(
         "phased",
@@ -208,7 +208,7 @@ def test_prepare_context_for_resume_keeps_upstream_in_narrow_phase() -> None:
 
 
 def test_prepare_context_for_resume_drops_results_at_or_after_start() -> None:
-    from aws_graphrag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 
     ctx = _context(
         "resume",

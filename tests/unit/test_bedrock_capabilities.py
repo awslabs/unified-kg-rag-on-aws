@@ -16,20 +16,20 @@ from typing import Any
 
 import pytest
 
-from aws_graphrag.adapters.aws import bedrock as bedrock_mod
-from aws_graphrag.adapters.aws.bedrock import (
+from unified_kg_rag.adapters.aws import bedrock as bedrock_mod
+from unified_kg_rag.adapters.aws.bedrock import (
     BedrockCrossRegionModelHelper,
     BedrockEmbeddingModelFactory,
     BedrockLanguageModelFactory,
     LanguageModelInfo,
     get_assumed_role_boto_session,
 )
-from aws_graphrag.domain.models import (
+from unified_kg_rag.domain.models import (
     Config,
     EmbeddingModelId,
     LanguageModelId,
 )
-from aws_graphrag.shared import EmbeddingModelError
+from unified_kg_rag.shared import EmbeddingModelError
 
 pytestmark = pytest.mark.unit
 

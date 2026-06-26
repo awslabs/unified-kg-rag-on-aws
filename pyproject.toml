@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "aws-graphrag"
+name = "unified-kg-rag-on-aws"
 version = "0.2.3"
 description = "AWS-native Knowledge Graph RAG on Bedrock, Neptune & OpenSearch — GraphRAG and LightRAG over one hexagonal ingestion, indexing, and hybrid-search stack."
 readme = "README.md"
@@ -62,11 +62,11 @@ dependencies = [
 ]
 
 [project.scripts]
-run-ingestion = "aws_graphrag.application.cli.run_ingestion_pipeline:main"
-run-rag = "aws_graphrag.application.cli.run_rag_chain:main"
-run-eval = "aws_graphrag.application.cli.run_evaluation:main"
-run-visualization = "aws_graphrag.application.cli.run_visualization:main"
-run-prompt-tuning = "aws_graphrag.application.cli.run_prompt_tuning:main"
+run-ingestion = "unified_kg_rag.application.cli.run_ingestion_pipeline:main"
+run-rag = "unified_kg_rag.application.cli.run_rag_chain:main"
+run-eval = "unified_kg_rag.application.cli.run_evaluation:main"
+run-visualization = "unified_kg_rag.application.cli.run_visualization:main"
+run-prompt-tuning = "unified_kg_rag.application.cli.run_prompt_tuning:main"
 
 [project.optional-dependencies]
 dev = [
@@ -99,13 +99,13 @@ unstructured = [
 ]
 
 [project.urls]
-Repository = "https://github.com/awslabs/aws-graphrag"
+Repository = "https://github.com/awslabs/unified-kg-rag-on-aws"
 
 [tool.hatch.version]
-path = "aws_graphrag/__init__.py"
+path = "unified_kg_rag/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["aws_graphrag"]
+packages = ["unified_kg_rag"]
 
 [tool.black]
 line-length = 88
@@ -130,7 +130,7 @@ extend-exclude = '''
 profile = "black"
 multi_line_output = 3
 line_length = 88
-known_first_party = ["aws_graphrag"]
+known_first_party = ["unified_kg_rag"]
 skip_gitignore = true
 
 [tool.ruff]
@@ -219,7 +219,7 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["aws_graphrag"]
+source = ["unified_kg_rag"]
 omit = [
     "tests/*",
     "*/test_*.py",

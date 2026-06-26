@@ -13,10 +13,10 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from aws_graphrag.adapters.aws import DynamoDBDocStatusStore
-from aws_graphrag.domain.models import Config, DocStatus, DocStatusRecord
-from aws_graphrag.ports import DocStatusPort
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
+from unified_kg_rag.domain.models import Config, DocStatus, DocStatusRecord
+from unified_kg_rag.ports import DocStatusPort
 
 pytestmark = pytest.mark.integration
 

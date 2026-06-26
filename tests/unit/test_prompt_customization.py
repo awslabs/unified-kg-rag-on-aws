@@ -13,14 +13,14 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.adapters.ingestion.graph_extractor import GraphExtractor
-from aws_graphrag.domain.models.config import CustomPromptConfig
-from aws_graphrag.domain.prompts import (
+from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
+from unified_kg_rag.domain.models.config import CustomPromptConfig
+from unified_kg_rag.domain.prompts import (
     AnswerGenerationPrompt,
     CommunityReportPrompt,
     GraphExtractionPrompt,
 )
-from aws_graphrag.domain.prompts.base import BasePrompt
+from unified_kg_rag.domain.prompts.base import BasePrompt
 
 pytestmark = pytest.mark.unit
 
@@ -33,7 +33,7 @@ def test_prompt_keys_map_to_real_config_fields() -> None:
     # have matching <key>_system / <key>_human fields on CustomPromptConfig, so
     # the by-convention base lookup actually resolves. Prompts WITHOUT a key are
     # intentionally non-customizable (e.g. internal translation/chunking) — fine.
-    import aws_graphrag.domain.prompts as prompts
+    import unified_kg_rag.domain.prompts as prompts
 
     cfg = CustomPromptConfig()
     customizable = [

@@ -16,15 +16,15 @@ from __future__ import annotations
 
 import pytest
 
-import aws_graphrag.adapters.ingestion.gleaner as gleaner_module
-from aws_graphrag.adapters.ingestion.gleaner import (
+import unified_kg_rag.adapters.ingestion.gleaner as gleaner_module
+from unified_kg_rag.adapters.ingestion.gleaner import (
     GleaningRound,
     GleaningStats,
     GraphGleaner,
     format_relationships_with_limit_task,
     prepare_input_task,
 )
-from aws_graphrag.domain.models import Config, Entity, Relationship, TextUnit
+from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
 
 pytestmark = pytest.mark.unit
 

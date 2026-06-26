@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from aws_graphrag.shared.utils.langchain import BatchProcessor
+from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 pytestmark = pytest.mark.unit
 

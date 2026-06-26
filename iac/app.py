@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""CDK app entry point for the aws-graphrag infrastructure.
+"""CDK app entry point for the unified-kg-rag-on-aws infrastructure.
 
 Assembles the modular stacks (networking -> storage -> compute -> orchestration
 -> observability, plus security). Deployment is parameterized via cdk.json
@@ -96,7 +96,7 @@ ObservabilityStack(
 # to every taggable resource in every stack (cost-allocation reports group on
 # `project` + `env` + `cost-center`).
 for tag_key, tag_value in {
-    "project": "aws-graphrag",
+    "project": "unified-kg-rag-on-aws",
     "env": config.env_name,
     "managed-by": "cdk",
     "owner": config.owner,

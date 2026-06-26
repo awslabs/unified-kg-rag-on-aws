@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from aws_graphrag.adapters.aws.embedding_cache import S3EmbeddingCache
+from unified_kg_rag.adapters.aws.embedding_cache import S3EmbeddingCache
 
 pytestmark = pytest.mark.unit
 

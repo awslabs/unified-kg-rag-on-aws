@@ -28,7 +28,7 @@ separate gate. The FAST/GASP case study in the playbook shows a ProServe asset
 completing exactly this path (IP Release ticket V2071786068).
 
 1. [ ] **Choose license + name.** License = Apache-2.0 (done). The name
-       `aws-graphrag` is a creative name → a **Trademark Legal Risk Review** is
+       `unified-kg-rag-on-aws` is a creative name → a **Trademark Legal Risk Review** is
        likely required (most take 1–2 days; only registration takes ~7 months).
 2. [ ] **Prerequisite training:** GitHub Training + AWS Launch Manager Training
        (~20–30 min) on atoz.amazon.work.
@@ -72,7 +72,7 @@ completing exactly this path (IP Release ticket V2071786068).
 - [x] Deleted customer-specific docs: `docs/docparser-e2e-plan.md` (Example Customer
       Example Customer / Example Site corpus), `docs/security-triage.md` (internal GitLab
       triage process).
-- [x] `pyproject.toml` Repository URL → `https://github.com/awslabs/aws-graphrag`.
+- [x] `pyproject.toml` Repository URL → `https://github.com/awslabs/unified-kg-rag-on-aws`.
 - [x] Genericized internal codename comments (`NaviWikiGraph`/`AnchorNetwork`) in
       `iac/`.
 - [x] Scrubbed GitLab/`code.aws.dev` references from `CLAUDE.md`, `CONTRIBUTING.md`,
@@ -99,7 +99,7 @@ completing exactly this path (IP Release ticket V2071786068).
       automatically excluded from the published repo (no license-scan surface).
       `THIRD_PARTY_LICENSES` attributes the ported methodology as courtesy.
 - [x] **README badges added** (License/CI/coverage; URLs point at the planned
-      `awslabs/aws-graphrag` repo — verify the slug when the repo is created).
+      `awslabs/unified-kg-rag-on-aws` repo — verify the slug when the repo is created).
 - [x] **`README.ko.md` decision:** kept (multilingual support is a headline
       feature; the Korean README reinforces it). Revisit if awslabs prefers
       English-only.

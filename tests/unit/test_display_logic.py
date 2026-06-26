@@ -16,7 +16,7 @@ from datetime import datetime
 
 import pytest
 
-from aws_graphrag.domain.models import (
+from unified_kg_rag.domain.models import (
     Claim,
     Community,
     CommunityReport,
@@ -27,7 +27,7 @@ from aws_graphrag.domain.models import (
     PipelineStageStatus,
     Relationship,
 )
-from aws_graphrag.shared.utils import display
+from unified_kg_rag.shared.utils import display
 
 pytestmark = pytest.mark.unit
 

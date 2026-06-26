@@ -15,8 +15,8 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from aws_graphrag.adapters.aws.s3_cache import S3CacheManager
-from aws_graphrag.domain.models import Config, S3EncryptionType
+from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager
+from unified_kg_rag.domain.models import Config, S3EncryptionType
 
 pytestmark = pytest.mark.unit
 

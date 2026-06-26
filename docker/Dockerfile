@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# aws-graphrag data-plane image: the same image runs every Step Functions phase
+# unified-kg-rag-on-aws data-plane image: the same image runs every Step Functions phase
 # (run-ingestion) and ad-hoc run-rag / run-eval. Built with uv for reproducible,
 # locked dependency resolution.
 FROM public.ecr.aws/docker/library/python:3.12-slim AS base
@@ -37,7 +37,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --no-dev
 
 # Now the source, then install the project itself.
-COPY aws_graphrag ./aws_graphrag
+COPY unified_kg_rag ./unified_kg_rag
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 

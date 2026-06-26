@@ -9,18 +9,18 @@ from pathlib import Path
 
 import pytest
 
-from aws_graphrag.adapters.renderers import (
+from unified_kg_rag.adapters.renderers import (
     BaseRenderer,
     RenderContext,
     get_renderer_class,
     register_renderer,
     registered_renderers,
 )
-from aws_graphrag.application.cli.run_visualization import (
+from unified_kg_rag.application.cli.run_visualization import (
     load_render_context,
     run_visualization,
 )
-from aws_graphrag.domain.models import Config
+from unified_kg_rag.domain.models import Config
 
 pytestmark = pytest.mark.unit
 

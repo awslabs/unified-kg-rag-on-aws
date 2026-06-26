@@ -6,15 +6,15 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.domain.ingestion.delta_detector import (
+from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from unified_kg_rag.domain.ingestion.delta_detector import (
     compute_content_hash,
     compute_doc_id,
     detect_delta,
     filter_documents_to_process,
     fingerprint_documents,
 )
-from aws_graphrag.domain.models import DocStatusRecord, Document
-from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from unified_kg_rag.domain.models import DocStatusRecord, Document
 
 pytestmark = pytest.mark.unit
 

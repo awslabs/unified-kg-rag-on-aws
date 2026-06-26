@@ -14,8 +14,8 @@ from pathlib import Path
 import networkx as nx
 import pytest
 
-from aws_graphrag.adapters.ingestion.community_detector import HierarchicalCommunity
-from aws_graphrag.adapters.renderers.interactive import InteractiveRenderer
+from unified_kg_rag.adapters.ingestion.community_detector import HierarchicalCommunity
+from unified_kg_rag.adapters.renderers.interactive import InteractiveRenderer
 
 pytestmark = pytest.mark.unit
 

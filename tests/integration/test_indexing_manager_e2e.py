@@ -10,15 +10,15 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.application.storage.indexing_manager import IndexingManager
-from aws_graphrag.domain.models import (
+from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+from unified_kg_rag.domain.models import (
     Claim,
     Config,
     Entity,
     Relationship,
     TextUnit,
 )
-from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 
 pytestmark = pytest.mark.integration
 
@@ -29,11 +29,11 @@ def manager(mocker):
     graph = FakeGraphStore()
     vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
     mocker.patch(
-        "aws_graphrag.application.storage.indexing_manager.OpenSearchIndexer",
+        "unified_kg_rag.application.storage.indexing_manager.OpenSearchIndexer",
         return_value=vector,
     )
     mocker.patch(
-        "aws_graphrag.application.storage.indexing_manager.NeptuneIndexer",
+        "unified_kg_rag.application.storage.indexing_manager.NeptuneIndexer",
         return_value=graph,
     )
     mgr = IndexingManager(config=config)

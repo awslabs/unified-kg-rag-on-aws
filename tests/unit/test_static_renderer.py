@@ -15,9 +15,9 @@ import networkx as nx
 import pytest
 from bokeh.plotting import figure
 
-from aws_graphrag.adapters.renderers.static import StaticRenderer
-from aws_graphrag.domain.ingestion.graph_analyzer import CentralityMetrics
-from aws_graphrag.domain.models import Community
+from unified_kg_rag.adapters.renderers.static import StaticRenderer
+from unified_kg_rag.domain.ingestion.graph_analyzer import CentralityMetrics
+from unified_kg_rag.domain.models import Community
 
 pytestmark = pytest.mark.unit
 

@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.domain.ingestion.base_resolver import FuzzyMatcher
-from aws_graphrag.domain.ingestion.claim_resolver import resolve_single_claim_task
-from aws_graphrag.domain.models import Claim
+from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
+from unified_kg_rag.domain.ingestion.claim_resolver import resolve_single_claim_task
+from unified_kg_rag.domain.models import Claim
 
 pytestmark = pytest.mark.unit
 

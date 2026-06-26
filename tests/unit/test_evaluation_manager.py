@@ -15,15 +15,15 @@ import json
 
 import pytest
 
-from aws_graphrag.domain.models import (
+from unified_kg_rag.domain.models import (
     Config,
     EvaluationGroundTruth,
     EvaluationQuery,
     EvaluationResult,
     EvaluatorType,
 )
-from aws_graphrag.evaluation import EvaluationManager
-from aws_graphrag.evaluation.evaluation_manager import (
+from unified_kg_rag.evaluation import EvaluationManager
+from unified_kg_rag.evaluation.evaluation_manager import (
     GraphAwareEvaluator,
     LangChainEvaluator,
     RagasEvaluator,
@@ -167,7 +167,7 @@ class TestLoadData:
 
 class TestInitialization:
     def test_requires_rag_chain(self, config: Config) -> None:
-        from aws_graphrag.shared import EvaluationException
+        from unified_kg_rag.shared import EvaluationException
 
         with pytest.raises(EvaluationException):
             EvaluationManager(config, rag_chain=None)

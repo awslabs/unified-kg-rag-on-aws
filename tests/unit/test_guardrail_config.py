@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.adapters.aws.bedrock import BedrockLanguageModelFactory
-from aws_graphrag.domain.models import Config
+from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
+from unified_kg_rag.domain.models import Config
 
 pytestmark = pytest.mark.unit
 
@@ -79,7 +79,7 @@ def test_guardrail_identifier_from_env(monkeypatch) -> None:
     # IaC injects the deployed guardrail id via this env var (4-level nested
     # config path); verify the override lands and enables guardrails.
     monkeypatch.setenv("BEDROCK_GUARDRAIL_IDENTIFIER", "gr-from-env")
-    from aws_graphrag.shared.config import ConfigLoader
+    from unified_kg_rag.shared.config import ConfigLoader
 
     cfg = ConfigLoader().load_config()
     assert cfg.aws.bedrock.guardrail.identifier == "gr-from-env"

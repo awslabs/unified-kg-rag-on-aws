@@ -15,8 +15,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from aws_graphrag.adapters.search_strategies.global_search import GlobalSearchStrategy
-from aws_graphrag.domain.models import RetrievalResult, SearchQuery
+from unified_kg_rag.adapters.search_strategies.global_search import GlobalSearchStrategy
+from unified_kg_rag.domain.models import RetrievalResult, SearchQuery
 
 pytestmark = pytest.mark.unit
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.domain.models import (
+from unified_kg_rag.domain.models import (
     Community,
     CommunityReport,
     Config,

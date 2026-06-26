@@ -8,20 +8,20 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aws_graphrag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
 def indexer(mocker):
-    mocker.patch("aws_graphrag.adapters.storage.opensearch_indexer.OpenSearchClient")
+    mocker.patch("unified_kg_rag.adapters.storage.opensearch_indexer.OpenSearchClient")
     factory = mocker.patch(
-        "aws_graphrag.adapters.storage.opensearch_indexer.BedrockEmbeddingModelFactory"
+        "unified_kg_rag.adapters.storage.opensearch_indexer.BedrockEmbeddingModelFactory"
     )
     factory.return_value.get_model_info.return_value = MagicMock(dimensions=1024)
     factory.return_value.get_model.return_value = MagicMock()
-    from aws_graphrag.domain.models import Config
+    from unified_kg_rag.domain.models import Config
 
     ix = OpenSearchIndexer(config=Config())
     embedded: list[str] = []

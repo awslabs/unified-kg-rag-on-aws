@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-import aws_graphrag.adapters.ingestion.chunker as chunker_module
-from aws_graphrag.adapters.ingestion.chunker import (
+import unified_kg_rag.adapters.ingestion.chunker as chunker_module
+from unified_kg_rag.adapters.ingestion.chunker import (
     ChunkerFactory,
     ChunkingStats,
     ChunkProcessor,
@@ -25,13 +25,13 @@ from aws_graphrag.adapters.ingestion.chunker import (
     LineBasedBoundaryProcessor,
     SimpleTextChunker,
 )
-from aws_graphrag.domain.models import (
+from unified_kg_rag.domain.models import (
     ChunkingStrategy,
     Config,
     Document,
     DocumentContent,
 )
-from aws_graphrag.shared import DataProcessingError
+from unified_kg_rag.shared import DataProcessingError
 
 pytestmark = pytest.mark.unit
 

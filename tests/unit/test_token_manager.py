@@ -13,13 +13,13 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.adapters.retrieval import token_manager as tm_module
-from aws_graphrag.adapters.retrieval.token_manager import (
+from unified_kg_rag.adapters.retrieval import token_manager as tm_module
+from unified_kg_rag.adapters.retrieval.token_manager import (
     OptimizedContext,
     SectionType,
     TokenManager,
 )
-from aws_graphrag.domain.models import Config, RetrievalResult
+from unified_kg_rag.domain.models import Config, RetrievalResult
 
 pytestmark = pytest.mark.unit
 

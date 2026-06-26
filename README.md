@@ -1,7 +1,7 @@
-# AWS Native Graph RAG
+# Unified Knowledge Graph RAG on AWS
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![CI](https://github.com/awslabs/aws-graphrag/actions/workflows/quality.yml/badge.svg)](https://github.com/awslabs/aws-graphrag/actions/workflows/quality.yml)
+[![CI](https://github.com/awslabs/unified-kg-rag-on-aws/actions/workflows/quality.yml/badge.svg)](https://github.com/awslabs/unified-kg-rag-on-aws/actions/workflows/quality.yml)
 [![Python](https://img.shields.io/badge/python-3.10–3.12-blue.svg)](https://www.python.org/downloads/)
 
 📖 **[한국어 README](./README.ko.md)** · 🤝 **[Contributing](./CONTRIBUTING.md)**
@@ -208,7 +208,7 @@ as a fast lexical/semantic fallback and for comparison evaluation.
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd aws-graphrag
+cd unified-kg-rag-on-aws
 
 # Install the framework (uv recommended; or: pip install -e .)
 uv sync --extra dev
@@ -279,9 +279,9 @@ For architecture, algorithms, and implementation internals see the
 
 ```bash
 uv run pytest -m "not aws"                    # AWS-free tests (unit/integration/property)
-uv run pytest -m "not aws" --cov=aws_graphrag # with coverage
-uv run ruff check aws_graphrag tests
-uv run mypy aws_graphrag
+uv run pytest -m "not aws" --cov=unified_kg_rag # with coverage
+uv run ruff check unified_kg_rag tests
+uv run mypy unified_kg_rag
 ```
 
 - The `aws` marker isolates tests that need real AWS services; they are excluded in CI.

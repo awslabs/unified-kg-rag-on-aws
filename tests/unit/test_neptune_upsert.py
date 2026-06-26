@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.domain.models import Config, Entity, Relationship
+from unified_kg_rag.domain.models import Config, Entity, Relationship
 
 pytestmark = pytest.mark.unit
 
@@ -35,8 +35,8 @@ class RecordingTraversal:
 
 @pytest.fixture
 def indexer(mocker):
-    mocker.patch("aws_graphrag.adapters.storage.neptune_indexer.NeptuneClient")
-    from aws_graphrag.adapters.storage.neptune_indexer import NeptuneIndexer
+    mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.NeptuneClient")
+    from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 
     return NeptuneIndexer(config=Config())
 
@@ -51,7 +51,7 @@ def _run_entity_builder(indexer, entities: list[Entity]) -> list[str]:
         builder_factory = factory("Entity")
         return None
 
-    import aws_graphrag.adapters.storage.neptune_indexer as mod  # noqa: F401
+    import unified_kg_rag.adapters.storage.neptune_indexer as mod  # noqa: F401
 
     orig = indexer._index_generic
     indexer._index_generic = fake_index_generic  # type: ignore[assignment]

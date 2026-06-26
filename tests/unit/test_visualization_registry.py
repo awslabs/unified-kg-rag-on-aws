@@ -15,7 +15,7 @@ import networkx as nx
 import numpy as np
 import pytest
 
-from aws_graphrag.adapters.renderers import (
+from unified_kg_rag.adapters.renderers import (
     BaseRenderer,
     InteractiveRendererAdapter,
     RenderContext,
@@ -24,10 +24,10 @@ from aws_graphrag.adapters.renderers import (
     register_renderer,
     registered_renderers,
 )
-from aws_graphrag.visualization.embeddings.dimensionality import (
+from unified_kg_rag.visualization.embeddings.dimensionality import (
     DimensionalityReducer,
 )
-from aws_graphrag.visualization.embeddings.node2vec import NodeEmbeddings
+from unified_kg_rag.visualization.embeddings.node2vec import NodeEmbeddings
 
 pytestmark = pytest.mark.unit
 

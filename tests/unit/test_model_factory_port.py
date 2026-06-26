@@ -6,12 +6,12 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.adapters.aws.bedrock import (
+from unified_kg_rag.adapters.aws.bedrock import (
     BedrockEmbeddingModelFactory,
     BedrockLanguageModelFactory,
     BedrockRerankModelFactory,
 )
-from aws_graphrag.ports import ModelFactoryPort
+from unified_kg_rag.ports import ModelFactoryPort
 
 pytestmark = pytest.mark.unit
 

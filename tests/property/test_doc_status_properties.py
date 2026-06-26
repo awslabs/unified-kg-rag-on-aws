@@ -8,9 +8,9 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from aws_graphrag.domain.models import DocStatusRecord
-from aws_graphrag.shared.utils.common import compute_hash
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from unified_kg_rag.domain.models import DocStatusRecord
+from unified_kg_rag.shared.utils.common import compute_hash
 
 pytestmark = pytest.mark.property
 

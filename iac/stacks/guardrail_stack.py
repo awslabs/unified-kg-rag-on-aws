@@ -46,7 +46,7 @@ class GuardrailStack(Stack):
             name=f"{self.config.prefix}-guardrail-{self.region}",
             blocked_input_messaging="This request was blocked by content policy.",
             blocked_outputs_messaging="This response was blocked by content policy.",
-            description="Baseline guardrail for aws-graphrag (PII + prompt attack).",
+            description="Baseline guardrail for unified-kg-rag-on-aws (PII + prompt attack).",
             sensitive_information_policy_config=(
                 bedrock.CfnGuardrail.SensitiveInformationPolicyConfigProperty(
                     pii_entities_config=[

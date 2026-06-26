@@ -1,6 +1,6 @@
-# Contributing to AWS Native Graph RAG
+# Contributing to Unified Knowledge Graph RAG on AWS
 
-We welcome contributions to the AWS Native Graph RAG framework! This document provides guidelines for contributing to the project.
+We welcome contributions to the Unified Knowledge Graph RAG on AWS framework! This document provides guidelines for contributing to the project.
 
 ## 🚀 Getting Started
 
@@ -13,8 +13,8 @@ We welcome contributions to the AWS Native Graph RAG framework! This document pr
 ### Development Setup
 1. **Fork and Clone**
    ```bash
-   git clone https://github.com/your-username/aws-graphrag.git
-   cd aws-graphrag
+   git clone https://github.com/your-username/unified-kg-rag-on-aws.git
+   cd unified-kg-rag-on-aws
    ```
 
 2. **Create Virtual Environment**
@@ -73,16 +73,16 @@ Tests run **AWS-free by default** — use the port-based fakes in
 Run quality checks:
 ```bash
 # Format code
-black aws_graphrag tests
+black unified_kg_rag tests
 
 # Sort imports
-isort aws_graphrag tests
+isort unified_kg_rag tests
 
 # Lint code
-ruff check aws_graphrag tests
+ruff check unified_kg_rag tests
 
 # Type checking
-mypy aws_graphrag
+mypy unified_kg_rag
 ```
 
 ### Testing
@@ -100,7 +100,7 @@ Run tests (AWS-free by default):
 uv run pytest -m "not aws"
 
 # Run with coverage
-uv run pytest -m "not aws" --cov=aws_graphrag --cov-report=html
+uv run pytest -m "not aws" --cov=unified_kg_rag --cov-report=html
 
 # Run a specific test file
 uv run pytest tests/unit/test_chunker_logic.py
@@ -325,4 +325,4 @@ Contributors will be recognized in:
 - **Release notes** for significant contributions
 - **GitHub contributors** page
 
-Thank you for contributing to AWS Native Graph RAG! 🚀
+Thank you for contributing to Unified Knowledge Graph RAG on AWS! 🚀

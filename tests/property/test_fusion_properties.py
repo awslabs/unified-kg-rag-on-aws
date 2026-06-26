@@ -8,8 +8,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from aws_graphrag.adapters.retrieval.hybrid_scorer import HybridScorer
-from aws_graphrag.domain.models import Config, RetrievalResult
+from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
+from unified_kg_rag.domain.models import Config, RetrievalResult
 
 pytestmark = pytest.mark.property
 

@@ -23,7 +23,7 @@ import json
 
 import pytest
 
-from aws_graphrag.domain.models import Community, Config, Entity
+from unified_kg_rag.domain.models import Community, Config, Entity
 
 pytestmark = pytest.mark.unit
 
@@ -44,8 +44,8 @@ class RecordingTraversal:
 
 @pytest.fixture
 def indexer(mocker):
-    mocker.patch("aws_graphrag.adapters.storage.neptune_indexer.NeptuneClient")
-    from aws_graphrag.adapters.storage.neptune_indexer import NeptuneIndexer
+    mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.NeptuneClient")
+    from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 
     return NeptuneIndexer(config=Config())
 
@@ -153,7 +153,7 @@ def test_index_communities_full_clears_label_and_builds_vertices(
 
     def fake_execute_batch(comms, builder, op_name):
         builder(RecordingTraversal(vertex_calls), comms)
-        from aws_graphrag.ports.indexer import IndexingStats
+        from unified_kg_rag.ports.indexer import IndexingStats
 
         return IndexingStats(total_items=len(comms), successful_items=len(comms))
 
@@ -192,7 +192,7 @@ def test_upsert_communities_does_not_clear_label(indexer, mocker) -> None:
 
     def fake_execute_batch(comms, builder, op_name):
         builder(RecordingTraversal(vertex_calls), comms)
-        from aws_graphrag.ports.indexer import IndexingStats
+        from unified_kg_rag.ports.indexer import IndexingStats
 
         return IndexingStats()
 
@@ -231,7 +231,7 @@ def test_index_communities_skips_member_edges_when_no_entities(indexer, mocker) 
     mocker.patch.object(indexer, "_clear_existing_data_by_label")
 
     def fake_execute_batch(comms, builder, op_name):
-        from aws_graphrag.ports.indexer import IndexingStats
+        from unified_kg_rag.ports.indexer import IndexingStats
 
         return IndexingStats()
 

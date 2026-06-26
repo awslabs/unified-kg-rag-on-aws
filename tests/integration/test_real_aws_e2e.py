@@ -34,7 +34,7 @@ def _require_config():
             f"set {_CONFIG_ENV} to a config.yaml with real AWS endpoints to run "
             "the real-AWS E2E smoke tests"
         )
-    from aws_graphrag.shared import get_config
+    from unified_kg_rag.shared import get_config
 
     return get_config(path)
 
@@ -46,7 +46,7 @@ def live_config():
 
 def test_bedrock_embedding_roundtrip(live_config) -> None:
     """A real embedding call returns a non-empty vector of the configured dim."""
-    from aws_graphrag.adapters.aws import BedrockEmbeddingModelFactory
+    from unified_kg_rag.adapters.aws import BedrockEmbeddingModelFactory
 
     factory = BedrockEmbeddingModelFactory(
         config=live_config,
@@ -61,7 +61,7 @@ def test_bedrock_embedding_roundtrip(live_config) -> None:
 
 def test_opensearch_connectivity(live_config) -> None:
     """The OpenSearch client can reach the cluster and report stats."""
-    from aws_graphrag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 
     indexer = OpenSearchIndexer(config=live_config)
     assert indexer.initialize() is True
@@ -73,7 +73,7 @@ def test_neptune_connectivity(live_config) -> None:
     NeptuneIndexer.initialize() is a no-op (returns True without touching the
     cluster), so issue an actual traversal to verify connectivity.
     """
-    from aws_graphrag.adapters.storage.neptune_indexer import NeptuneIndexer
+    from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 
     indexer = NeptuneIndexer(config=live_config)
     # A trivial count traversal exercises the wss:// connection + SigV4 auth.
@@ -85,8 +85,8 @@ def test_neptune_relationship_read_roundtrips(live_config) -> None:
     """Regression for cross-run merge: read_relationships must reconstruct
     source_id/target_id from edge topology (not edge properties), so the
     relationship half of cross_run_merge actually accumulates."""
-    from aws_graphrag.adapters.storage.neptune_indexer import NeptuneIndexer
-    from aws_graphrag.domain.models import Entity, Relationship
+    from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
+    from unified_kg_rag.domain.models import Entity, Relationship
 
     indexer = NeptuneIndexer(config=live_config)
     a = Entity(id="_t_e_a", name="_T_A")
@@ -116,8 +116,8 @@ def test_ingest_then_search_round_trip(live_config, tmp_path) -> None:
     """
     import asyncio
 
-    from aws_graphrag.domain.models import RAGInput
-    from aws_graphrag.retrieval import create_rag_chain
+    from unified_kg_rag.domain.models import RAGInput
+    from unified_kg_rag.retrieval import create_rag_chain
 
     corpus = tmp_path / "docs"
     corpus.mkdir()
@@ -126,7 +126,7 @@ def test_ingest_then_search_round_trip(live_config, tmp_path) -> None:
         encoding="utf-8",
     )
 
-    from aws_graphrag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 
     pipeline = DataIngestionPipeline(config=live_config, source_directory=corpus)
     pipeline.run()

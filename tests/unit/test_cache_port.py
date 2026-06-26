@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.ports import CachePort
-from aws_graphrag.shared.cache_manager import CacheManager
+from unified_kg_rag.ports import CachePort
+from unified_kg_rag.shared.cache_manager import CacheManager
 
 pytestmark = pytest.mark.unit
 

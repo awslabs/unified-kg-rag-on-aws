@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.adapters.retrieval.token_manager import SectionType
-from aws_graphrag.adapters.retrievers.neptune_retriever import NeptuneRetriever
-from aws_graphrag.domain.models import Config, SearchQuery
+from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
+from unified_kg_rag.domain.models import Config, SearchQuery
 
 pytestmark = pytest.mark.unit
 

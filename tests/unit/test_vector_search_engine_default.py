@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.adapters.storage.opensearch_indexer import OpenSearchIndexer
-from aws_graphrag.domain.models import Config
+from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+from unified_kg_rag.domain.models import Config
 
 pytestmark = pytest.mark.unit
 

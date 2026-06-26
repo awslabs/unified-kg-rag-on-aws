@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.application.prompts.tuner import CorpusProfile, PromptTuner
-from aws_graphrag.domain.models import Config
+from unified_kg_rag.application.prompts.tuner import CorpusProfile, PromptTuner
+from unified_kg_rag.domain.models import Config
 
 pytestmark = pytest.mark.unit
 
@@ -70,7 +70,7 @@ class TestSampleAndParse:
     @pytest.fixture
     def tuner(self, config: Config, mocker) -> PromptTuner:
         mocker.patch(
-            "aws_graphrag.application.prompts.tuner.BedrockLanguageModelFactory"
+            "unified_kg_rag.application.prompts.tuner.BedrockLanguageModelFactory"
         )
         return PromptTuner(config)
 
@@ -131,7 +131,7 @@ class TestSampleAndParse:
         chain = mocker.MagicMock()
         chain.ainvoke = mocker.AsyncMock(side_effect=RuntimeError("bedrock down"))
         mocker.patch(
-            "aws_graphrag.application.prompts.tuner.setup_chain", return_value=chain
+            "unified_kg_rag.application.prompts.tuner.setup_chain", return_value=chain
         )
         result = await tuner.generate_examples(
             CorpusProfile(domain="x"), ["non-empty text"]
@@ -144,7 +144,7 @@ class TestSampleAndParse:
         chain = mocker.MagicMock()
         chain.ainvoke = mocker.AsyncMock(return_value="sorry, no JSON here")
         mocker.patch(
-            "aws_graphrag.application.prompts.tuner.setup_chain", return_value=chain
+            "unified_kg_rag.application.prompts.tuner.setup_chain", return_value=chain
         )
         profile = await tuner.profile_corpus(["some text"])
         assert profile.domain == "general knowledge"

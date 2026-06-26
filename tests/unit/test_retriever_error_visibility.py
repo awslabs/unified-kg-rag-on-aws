@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.adapters.retrieval.base import is_fatal_retrieval_error
-from aws_graphrag.adapters.retrievers.neptune_retriever import NeptuneRetriever
-from aws_graphrag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
-from aws_graphrag.domain.models import Config, SearchQuery
-from aws_graphrag.shared import AWSServiceError
+from unified_kg_rag.adapters.retrieval.base import is_fatal_retrieval_error
+from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
+from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
+from unified_kg_rag.domain.models import Config, SearchQuery
+from unified_kg_rag.shared import AWSServiceError
 
 pytestmark = pytest.mark.unit
 

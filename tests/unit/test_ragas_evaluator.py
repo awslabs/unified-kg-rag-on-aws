@@ -15,10 +15,10 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-import aws_graphrag.evaluation  # noqa: F401  (resolves package import cycle)
-from aws_graphrag.adapters.evaluators import ragas_evaluator as rg_module
-from aws_graphrag.adapters.evaluators.ragas_evaluator import RagasEvaluator
-from aws_graphrag.domain.models import (
+import unified_kg_rag.evaluation  # noqa: F401  (resolves package import cycle)
+from unified_kg_rag.adapters.evaluators import ragas_evaluator as rg_module
+from unified_kg_rag.adapters.evaluators.ragas_evaluator import RagasEvaluator
+from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetricType,
     EvaluationQuery,
@@ -282,7 +282,7 @@ class TestValidateConfig:
 
 class TestInitFailure:
     def test_init_failure_raises_evaluation_exception(self, mocker) -> None:
-        from aws_graphrag.shared import EvaluationException
+        from unified_kg_rag.shared import EvaluationException
 
         mocker.patch.object(rg_module.boto3, "Session")
         mocker.patch.object(rg_module, "get_assumed_role_boto_session")

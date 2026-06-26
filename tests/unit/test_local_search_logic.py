@@ -16,8 +16,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from aws_graphrag.adapters.search_strategies.local_search import LocalSearchStrategy
-from aws_graphrag.domain.models import RetrievalResult, SearchQuery, SearchType
+from unified_kg_rag.adapters.search_strategies.local_search import LocalSearchStrategy
+from unified_kg_rag.domain.models import RetrievalResult, SearchQuery, SearchType
 
 pytestmark = pytest.mark.unit
 

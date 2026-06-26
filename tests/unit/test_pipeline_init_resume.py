@@ -18,8 +18,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from aws_graphrag.application.ingestion.pipeline import DataIngestionPipeline
-from aws_graphrag.domain.models import (
+from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.domain.models import (
     Config,
     PipelineStageResult,
     PipelineStageStatus,
@@ -377,8 +377,8 @@ def test_calculate_stage_performance_durations_and_throughput() -> None:
 
 
 def test_create_pipeline_metrics_populates_counts_and_stage_metrics() -> None:
-    from aws_graphrag.domain.models import Entity, Relationship, TextUnit
-    from aws_graphrag.domain.models.cache import CacheStats
+    from unified_kg_rag.domain.models import Entity, Relationship, TextUnit
+    from unified_kg_rag.domain.models.cache import CacheStats
 
     pipe = object.__new__(DataIngestionPipeline)
     pipe.cache_manager = SimpleNamespace(
@@ -445,7 +445,7 @@ def _result(
 
 
 def _ctx_with_results(results: list[PipelineStageResult]):
-    from aws_graphrag.domain.models import PipelineContext
+    from unified_kg_rag.domain.models import PipelineContext
 
     ctx = PipelineContext(
         pipeline_id="pid",

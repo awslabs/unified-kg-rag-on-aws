@@ -189,7 +189,7 @@ class OrchestrationStack(Stack):
             f"{phase_name}Failed",
             topic=self.alarm_topic,
             message=sfn.TaskInput.from_text(
-                f"aws-graphrag ingestion failed at phase {phase_name}"
+                f"unified-kg-rag-on-aws ingestion failed at phase {phase_name}"
             ),
         ).next(sfn.Fail(self, f"{phase_name}Abort", cause=f"{phase_name} failed"))
         run.add_catch(notify, errors=["States.ALL"])

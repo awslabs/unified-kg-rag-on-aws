@@ -27,22 +27,22 @@ jobs:
         run: uv sync --extra dev
 
       - name: Ruff (lint)
-        run: uv run ruff check aws_graphrag tests
+        run: uv run ruff check unified_kg_rag tests
 
       - name: Black (format check)
-        run: uv run black --check aws_graphrag tests
+        run: uv run black --check unified_kg_rag tests
 
       - name: isort (import order)
-        run: uv run isort --check-only aws_graphrag tests
+        run: uv run isort --check-only unified_kg_rag tests
 
       - name: mypy (type check)
-        run: uv run mypy aws_graphrag
+        run: uv run mypy unified_kg_rag
 
       - name: pytest + coverage
         # The `aws` marker gates tests needing real AWS services; excluded in CI.
         # The coverage floor ratchets up toward the 80% target as the suite grows.
         run: >-
           uv run pytest -m "not aws"
-          --cov=aws_graphrag --cov-report=term-missing
+          --cov=unified_kg_rag --cov-report=term-missing
           --cov-report=xml:coverage.xml --junitxml=report.xml
           --cov-fail-under=75

@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.domain.ingestion.base_processor import BaseProcessor
-from aws_graphrag.domain.models import Config, Entity, Relationship, TextUnit
+from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
 
 pytestmark = pytest.mark.unit
 
@@ -61,7 +61,7 @@ def test_still_dropped_when_names_or_type_missing() -> None:
 
 
 def test_materialize_endpoints_creates_stub_entities() -> None:
-    from aws_graphrag.adapters.ingestion.graph_extractor import GraphExtractor
+    from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
 
     extractor = GraphExtractor.__new__(GraphExtractor)
     # Only 'alice' was extracted; 'acme' is referenced only by the relationship.

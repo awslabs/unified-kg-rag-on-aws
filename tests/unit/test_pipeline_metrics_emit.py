@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.application.ingestion.pipeline import DataIngestionPipeline
-from aws_graphrag.domain.models import PipelineMetrics
+from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.domain.models import PipelineMetrics
 
 pytestmark = pytest.mark.unit
 

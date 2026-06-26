@@ -1,4 +1,4 @@
-# aws-graphrag — Infrastructure (AWS CDK, Python)
+# unified-kg-rag-on-aws — Infrastructure (AWS CDK, Python)
 
 Modular CDK app that provisions the AWS-native stack the library targets:
 Bedrock + Neptune + OpenSearch + DynamoDB + S3, an ECS Fargate data plane, and a
@@ -91,10 +91,10 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `alarm_email` | _(none)_ | subscribe an email to the pipeline alarm topic |
 | `enable_cdk_nag` | `false` | run cdk-nag AwsSolutions (Well-Architected) checks at synth |
 | `owner` | `aws-proserve` | `owner` tag applied to every resource |
-| `cost_center` | `aws-graphrag` | `cost-center` tag applied to every resource |
+| `cost_center` | `unified-kg-rag-on-aws` | `cost-center` tag applied to every resource |
 | `removal_destroy` | `true` | `DESTROY` (dev) vs `RETAIN` (prod) on stack deletion |
 
-> Every resource is tagged `project=aws-graphrag`, `env=<env_name>`,
+> Every resource is tagged `project=unified-kg-rag-on-aws`, `env=<env_name>`,
 > `managed-by=cdk`, `owner`, and `cost-center` for cost allocation and ownership.
 
 ### Well-Architected

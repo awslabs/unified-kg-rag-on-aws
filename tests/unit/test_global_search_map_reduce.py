@@ -21,11 +21,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from aws_graphrag.adapters.search_strategies.global_search import (
+from unified_kg_rag.adapters.search_strategies.global_search import (
     GlobalSearchStrategy,
     _MapPoint,
 )
-from aws_graphrag.domain.models import RetrievalResult, SearchQuery
+from unified_kg_rag.domain.models import RetrievalResult, SearchQuery
 
 pytestmark = pytest.mark.unit
 
@@ -110,7 +110,7 @@ def _strategy(
     )
     strat.token_manager = _TokenCounter(cost=token_cost)
     # Real BatchProcessor with batch_size=1 (one prepared input per LLM call).
-    from aws_graphrag.shared.utils import BatchProcessor
+    from unified_kg_rag.shared.utils import BatchProcessor
 
     strat.batch_processor = BatchProcessor(batch_size=1, max_concurrency=4)
     return strat

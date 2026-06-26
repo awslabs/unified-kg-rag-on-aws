@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.adapters.storage.neptune_indexer import NeptuneIndexer
-from aws_graphrag.domain.models import Config
+from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
+from unified_kg_rag.domain.models import Config
 
 pytestmark = pytest.mark.unit
 
@@ -36,7 +36,7 @@ class _FlakyTraversal:
 
 @pytest.fixture
 def indexer(mocker):
-    mocker.patch("aws_graphrag.adapters.storage.neptune_indexer.NeptuneClient")
+    mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.NeptuneClient")
     return NeptuneIndexer(config=Config())
 
 
@@ -44,10 +44,10 @@ def indexer(mocker):
 def _no_sleep(mocker):
     # Keep retries instant and deterministic.
     mocker.patch(
-        "aws_graphrag.adapters.storage.neptune_indexer.time.sleep", return_value=None
+        "unified_kg_rag.adapters.storage.neptune_indexer.time.sleep", return_value=None
     )
     mocker.patch(
-        "aws_graphrag.adapters.storage.neptune_indexer.random.uniform",
+        "unified_kg_rag.adapters.storage.neptune_indexer.random.uniform",
         return_value=0.0,
     )
 
@@ -56,7 +56,7 @@ def test_returns_after_transient_failures_then_success(indexer, mocker) -> None:
     indexer.neptune_config.max_retries = 3
     indexer.neptune_config.retry_delay_seconds = 1
     sleep = mocker.patch(
-        "aws_graphrag.adapters.storage.neptune_indexer.time.sleep", return_value=None
+        "unified_kg_rag.adapters.storage.neptune_indexer.time.sleep", return_value=None
     )
     # Fails twice (ConcurrentModificationException), succeeds on the 3rd attempt.
     traversal = _FlakyTraversal(
@@ -81,7 +81,7 @@ def test_succeeds_on_first_attempt_does_not_sleep(indexer, mocker) -> None:
     indexer.neptune_config.max_retries = 3
     indexer.neptune_config.retry_delay_seconds = 1
     sleep = mocker.patch(
-        "aws_graphrag.adapters.storage.neptune_indexer.time.sleep", return_value=None
+        "unified_kg_rag.adapters.storage.neptune_indexer.time.sleep", return_value=None
     )
     traversal = _FlakyTraversal(fail_times=0, exc=Exception("never raised"))
     indexer._execute_with_retries(traversal, "upsert entities")

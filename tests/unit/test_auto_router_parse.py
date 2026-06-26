@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.application.retrieval.rag_chain import GraphRAGChain
-from aws_graphrag.domain.models import SearchStrategy
+from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+from unified_kg_rag.domain.models import SearchStrategy
 
 pytestmark = pytest.mark.unit
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from aws_graphrag.ports.indexer import IndexingStats
+from unified_kg_rag.ports.indexer import IndexingStats
 
 
 class _Recorder:

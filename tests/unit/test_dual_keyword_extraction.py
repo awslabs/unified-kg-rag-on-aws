@@ -6,12 +6,12 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.application.retrieval.rag_chain import (
+from unified_kg_rag.application.retrieval.rag_chain import (
     LIGHTRAG_STRATEGIES,
     GraphRAGChain,
     ProcessedQuery,
 )
-from aws_graphrag.domain.models import Config, SearchQuery, SearchStrategy, SearchType
+from unified_kg_rag.domain.models import Config, SearchQuery, SearchStrategy, SearchType
 
 pytestmark = pytest.mark.unit
 

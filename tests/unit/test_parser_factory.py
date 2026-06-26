@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.adapters.ingestion.parser import (
+from unified_kg_rag.adapters.ingestion.parser import (
     _UNSTRUCTURED_AVAILABLE,
     ParserFactory,
 )
-from aws_graphrag.domain.models import Config
-from aws_graphrag.shared import DataProcessingError
+from unified_kg_rag.domain.models import Config
+from unified_kg_rag.shared import DataProcessingError
 
 pytestmark = pytest.mark.unit
 

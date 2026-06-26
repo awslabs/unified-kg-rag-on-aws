@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.adapters.retrieval.hybrid_scorer import HybridScorer
-from aws_graphrag.domain.models import Config, FusionMethod, RetrievalResult
+from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
+from unified_kg_rag.domain.models import Config, FusionMethod, RetrievalResult
 
 pytestmark = pytest.mark.unit
 

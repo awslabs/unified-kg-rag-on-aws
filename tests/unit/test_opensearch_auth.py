@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 from opensearchpy import AWSV4SignerAsyncAuth, AWSV4SignerAuth
 
-from aws_graphrag.adapters.aws.opensearch import OpenSearchClient
+from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 
 pytestmark = pytest.mark.unit
 

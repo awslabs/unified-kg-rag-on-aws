@@ -13,11 +13,11 @@ from datetime import datetime
 
 import pytest
 
-from aws_graphrag.domain.ingestion.claim_resolver import (
+from unified_kg_rag.domain.ingestion.claim_resolver import (
     ClaimResolutionStats,
     ClaimResolver,
 )
-from aws_graphrag.domain.models import Claim, Config, Entity
+from unified_kg_rag.domain.models import Claim, Config, Entity
 
 pytestmark = pytest.mark.unit
 

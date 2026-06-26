@@ -17,14 +17,14 @@ from pathlib import Path
 
 import pytest
 
-from aws_graphrag.application.cli import (
+from unified_kg_rag.application.cli import (
     run_evaluation,
     run_ingestion_pipeline,
     run_prompt_tuning,
     run_rag_chain,
     run_visualization,
 )
-from aws_graphrag.domain.models import SearchStrategy, SearchType
+from unified_kg_rag.domain.models import SearchStrategy, SearchType
 
 pytestmark = pytest.mark.unit
 
@@ -282,7 +282,7 @@ def test_ingestion_create_pipeline_config_rejects_invalid_stage(
 def test_ingestion_create_pipeline_config_enables_subset(
     config, mocker, tmp_path
 ) -> None:
-    from aws_graphrag.domain.models import PipelineStageType
+    from unified_kg_rag.domain.models import PipelineStageType
 
     mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
     src = tmp_path / "src"
@@ -303,7 +303,7 @@ def test_ingestion_create_pipeline_config_enables_subset(
 def test_ingestion_create_pipeline_config_defaults_all_stages(
     config, mocker, tmp_path
 ) -> None:
-    from aws_graphrag.domain.models import PipelineStageType
+    from unified_kg_rag.domain.models import PipelineStageType
 
     mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
     src = tmp_path / "src"
@@ -316,7 +316,7 @@ def test_ingestion_create_pipeline_config_defaults_all_stages(
 
 
 def test_ingestion_build_metrics_sink(config, mocker, tmp_path) -> None:
-    from aws_graphrag.shared import CloudWatchEMFSink, NullMetricsSink
+    from unified_kg_rag.shared import CloudWatchEMFSink, NullMetricsSink
 
     mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
     src = tmp_path / "src"

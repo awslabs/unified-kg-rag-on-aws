@@ -13,8 +13,8 @@ from __future__ import annotations
 import networkx as nx
 import pytest
 
-from aws_graphrag.domain.ingestion.graph_analyzer import GraphAnalyzer
-from aws_graphrag.domain.models import Config
+from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
+from unified_kg_rag.domain.models import Config
 
 pytestmark = pytest.mark.unit
 

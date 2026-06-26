@@ -13,13 +13,13 @@ from __future__ import annotations
 
 import pytest
 
-import aws_graphrag.adapters.ingestion.graph_extractor as ge_module
-from aws_graphrag.adapters.ingestion.graph_extractor import (
+import unified_kg_rag.adapters.ingestion.graph_extractor as ge_module
+from unified_kg_rag.adapters.ingestion.graph_extractor import (
     ExtractionStats,
     GraphExtractor,
 )
-from aws_graphrag.domain.ingestion.base_processor import BaseProcessor
-from aws_graphrag.domain.models import Config, Entity, Relationship, TextUnit
+from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
 
 pytestmark = pytest.mark.unit
 

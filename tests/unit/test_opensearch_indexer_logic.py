@@ -16,15 +16,15 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.adapters.storage.opensearch_indexer import OpenSearchIndexer
-from aws_graphrag.domain.models import (
+from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+from unified_kg_rag.domain.models import (
     Claim,
     CommunityReport,
     Config,
     Entity,
     TextUnit,
 )
-from aws_graphrag.ports.indexer import IndexingStats
+from unified_kg_rag.ports.indexer import IndexingStats
 
 pytestmark = pytest.mark.unit
 

@@ -1,8 +1,8 @@
-# AWS GraphRAG — User Guide
+# Unified Knowledge Graph RAG on AWS — User Guide
 
 > 🇰🇷 한국어 버전: [docs/user-guide.ko.md](./user-guide.ko.md)
 
-This is the practical, how-to-use guide for **aws-graphrag** — an AWS-native
+This is the practical, how-to-use guide for **unified-kg-rag-on-aws** — an AWS-native
 knowledge-graph RAG framework that builds knowledge graphs from large,
 multilingual document corpora and answers questions over them. It reimplements
 two retrieval methodologies on one stack: **Microsoft GraphRAG**
@@ -46,7 +46,7 @@ codebase. The five console entry points (defined as `pyproject` scripts) are:
 
 ```bash
 git clone <repository-url>
-cd aws-graphrag
+cd unified-kg-rag-on-aws
 
 # uv (recommended)
 uv sync --extra dev
@@ -93,7 +93,7 @@ Create your config from the template and point every CLI at it with
 cp config-template.yaml config.yaml
 ```
 
-The config is a nested Pydantic model (`aws_graphrag/domain/models/config.py`).
+The config is a nested Pydantic model (`unified_kg_rag/domain/models/config.py`).
 `config-template.yaml` carries the full schema and inline notes; the most useful
 sections and the knobs you will actually tune are below.
 
@@ -134,7 +134,7 @@ aws:
 
   dynamodb:                       # incremental indexing registry
     enabled: false                # set true to enable delta indexing
-    table_name: "aws-graphrag-doc-status"
+    table_name: "unified-kg-rag-on-aws-doc-status"
     create_table_if_missing: true
     billing_mode: "PAY_PER_REQUEST"
 ```
@@ -418,7 +418,7 @@ evaluation:
 ### 2.9 `custom_prompts`
 
 Every prompt has a `*_system` / `*_human` override (default `null` = use the
-built-in prompt in `aws_graphrag/domain/prompts/`). See §9. Override what you
+built-in prompt in `unified_kg_rag/domain/prompts/`). See §9. Override what you
 need; leave the rest `null`.
 
 ---
@@ -641,7 +641,7 @@ rebuilding everything.
 aws:
   dynamodb:
     enabled: true
-    table_name: "aws-graphrag-doc-status"
+    table_name: "unified-kg-rag-on-aws-doc-status"
     create_table_if_missing: true
 ```
 

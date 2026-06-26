@@ -15,12 +15,12 @@ from __future__ import annotations
 import networkx as nx
 import pytest
 
-from aws_graphrag.adapters.ingestion.community_detector import (
+from unified_kg_rag.adapters.ingestion.community_detector import (
     CommunityDetector,
     HierarchicalCommunity,
 )
-from aws_graphrag.domain.models import Community, Config
-from aws_graphrag.shared import GraphError
+from unified_kg_rag.domain.models import Community, Config
+from unified_kg_rag.shared import GraphError
 
 pytestmark = pytest.mark.unit
 

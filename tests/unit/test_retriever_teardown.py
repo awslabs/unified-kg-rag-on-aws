@@ -15,11 +15,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aws_graphrag.adapters.retrievers.neptune_retriever import NeptuneRetriever
-from aws_graphrag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
-from aws_graphrag.adapters.storage.neptune_indexer import NeptuneIndexer
-from aws_graphrag.adapters.storage.opensearch_indexer import OpenSearchIndexer
-from aws_graphrag.application.retrieval.rag_chain import GraphRAGChain
+from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
+from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
+from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
+from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 
 pytestmark = pytest.mark.unit
 

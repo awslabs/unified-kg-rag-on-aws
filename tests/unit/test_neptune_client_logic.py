@@ -15,10 +15,10 @@ from typing import Any
 
 import pytest
 
-from aws_graphrag.adapters.aws import neptune as neptune_mod
-from aws_graphrag.adapters.aws.neptune import NeptuneClient
-from aws_graphrag.domain.models import Config
-from aws_graphrag.shared import AWSServiceError
+from unified_kg_rag.adapters.aws import neptune as neptune_mod
+from unified_kg_rag.adapters.aws.neptune import NeptuneClient
+from unified_kg_rag.domain.models import Config
+from unified_kg_rag.shared import AWSServiceError
 
 pytestmark = pytest.mark.unit
 

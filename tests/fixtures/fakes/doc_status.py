@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """In-memory fake implementing ``DocStatusPort`` for fast, AWS-free tests.
 
-Structurally conforms to ``aws_graphrag.ports.DocStatusPort``. The diff
+Structurally conforms to ``unified_kg_rag.ports.DocStatusPort``. The diff
 logic here is the reference behaviour the production DynamoDB adapter (M2) must
 match; both are exercised by the same test suite.
 """
 
 from __future__ import annotations
 
-from aws_graphrag.domain.models import DocStatusRecord, DocumentDelta
+from unified_kg_rag.domain.models import DocStatusRecord, DocumentDelta
 
 
 class FakeDocStatusStore:

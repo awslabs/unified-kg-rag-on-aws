@@ -3,7 +3,7 @@
 """Observability: CloudWatch dashboard + alarms over the pipeline.
 
 The application emits Embedded Metric Format (EMF) records under the
-``aws_graphrag/ingestion`` namespace when run with ``--metrics-sink cloudwatch``
+``unified_kg_rag/ingestion`` namespace when run with ``--metrics-sink cloudwatch``
 (see core/metrics.py). This stack surfaces those plus Step Functions execution
 health on a dashboard, and alarms on pipeline failures -> the orchestration SNS
 topic.
@@ -19,7 +19,7 @@ from constructs import Construct
 from iac.config import DeploymentConfig
 from iac.stacks.orchestration_stack import OrchestrationStack
 
-EMF_NAMESPACE = "aws_graphrag/ingestion"
+EMF_NAMESPACE = "unified_kg_rag/ingestion"
 
 
 class ObservabilityStack(Stack):
@@ -43,7 +43,7 @@ class ObservabilityStack(Stack):
             threshold=1,
             evaluation_periods=1,
             comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-            alarm_description="aws-graphrag ingestion pipeline had a failed execution",
+            alarm_description="unified-kg-rag-on-aws ingestion pipeline had a failed execution",
         )
         failed_alarm.add_alarm_action(cw_actions.SnsAction(orchestration.alarm_topic))
 

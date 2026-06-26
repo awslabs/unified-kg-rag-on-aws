@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.adapters.ingestion import translator as tr_module
-from aws_graphrag.adapters.ingestion.translator import (
+from unified_kg_rag.adapters.ingestion import translator as tr_module
+from unified_kg_rag.adapters.ingestion.translator import (
     TextUnitTranslator,
     TranslationStats,
 )
-from aws_graphrag.domain.models import Config, LanguageCode, TextUnit
+from unified_kg_rag.domain.models import Config, LanguageCode, TextUnit
 
 pytestmark = pytest.mark.unit
 

@@ -16,14 +16,14 @@ import json
 
 import pytest
 
-import aws_graphrag.adapters.search_strategies  # noqa: F401  (registers strategies)
-from aws_graphrag.application.retrieval.rag_chain import (
+import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     ProcessedQuery,
     RAGInput,
     RAGOutput,
 )
-from aws_graphrag.domain.models import (
+from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
     SearchQuery,

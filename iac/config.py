@@ -50,7 +50,7 @@ Context keys (all optional; sensible defaults shown):
 
   # --- Governance (propagated as cost-allocation / ownership tags) ---
   owner               "aws-proserve"   `owner` tag on every resource
-  cost_center         "aws-graphrag"   `cost-center` tag on every resource
+  cost_center         "unified-kg-rag-on-aws"   `cost-center` tag on every resource
 
   # --- Lifecycle ---
   removal_destroy     True (dev)       DESTROY vs RETAIN on stack deletion
@@ -160,6 +160,6 @@ class DeploymentConfig:
             alarm_email=ctx("alarm_email"),
             enable_cdk_nag=as_bool(ctx("enable_cdk_nag"), default=False),
             owner=str(ctx("owner", "aws-proserve")),
-            cost_center=str(ctx("cost_center", "aws-graphrag")),
+            cost_center=str(ctx("cost_center", "unified-kg-rag-on-aws")),
             removal_destroy=as_bool(ctx("removal_destroy"), default=True),
         )

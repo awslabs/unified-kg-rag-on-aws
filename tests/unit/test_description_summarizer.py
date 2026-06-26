@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import pytest
 
-import aws_graphrag.adapters.ingestion.description_summarizer as ds_module
-from aws_graphrag.adapters.ingestion.description_summarizer import DescriptionSummarizer
-from aws_graphrag.domain.models import Config, Entity, Relationship
-from aws_graphrag.domain.models.config import DescriptionSummarizationConfig
-from aws_graphrag.domain.prompts import DescriptionSummarizationPrompt
+import unified_kg_rag.adapters.ingestion.description_summarizer as ds_module
+from unified_kg_rag.adapters.ingestion.description_summarizer import (
+    DescriptionSummarizer,
+)
+from unified_kg_rag.domain.models import Config, Entity, Relationship
+from unified_kg_rag.domain.models.config import DescriptionSummarizationConfig
+from unified_kg_rag.domain.prompts import DescriptionSummarizationPrompt
 
 pytestmark = pytest.mark.unit
 
@@ -84,7 +86,7 @@ class TestPrompt:
         assert "256" in rendered
 
     def test_custom_override_respected(self) -> None:
-        from aws_graphrag.domain.models.config import CustomPromptConfig
+        from unified_kg_rag.domain.models.config import CustomPromptConfig
 
         resolved = DescriptionSummarizationPrompt.resolve(
             custom_prompts=CustomPromptConfig(

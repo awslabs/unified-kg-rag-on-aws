@@ -6,9 +6,9 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.domain.models import DocStatus, DocStatusRecord, DocumentDelta
-from aws_graphrag.ports import DocStatusPort
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from unified_kg_rag.domain.models import DocStatus, DocStatusRecord, DocumentDelta
+from unified_kg_rag.ports import DocStatusPort
 
 pytestmark = pytest.mark.unit
 

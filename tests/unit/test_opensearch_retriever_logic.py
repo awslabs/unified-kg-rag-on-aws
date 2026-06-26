@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.adapters.retrieval.token_manager import SectionType
-from aws_graphrag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
-from aws_graphrag.domain.models import Config, SearchQuery, SearchType
+from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
+from unified_kg_rag.domain.models import Config, SearchQuery, SearchType
 
 pytestmark = pytest.mark.unit
 

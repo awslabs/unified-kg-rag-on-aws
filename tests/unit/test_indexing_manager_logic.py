@@ -13,15 +13,15 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.domain.models import (
+from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from unified_kg_rag.domain.models import (
     Community,
     Config,
     Entity,
     Relationship,
     TextUnit,
 )
-from aws_graphrag.ports.indexer import IndexingStats
-from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from unified_kg_rag.ports.indexer import IndexingStats
 
 pytestmark = pytest.mark.unit
 
@@ -32,14 +32,14 @@ def manager(mocker):
     graph = FakeGraphStore()
     vector = FakeVectorStore()
     mocker.patch(
-        "aws_graphrag.application.storage.indexing_manager.OpenSearchIndexer",
+        "unified_kg_rag.application.storage.indexing_manager.OpenSearchIndexer",
         return_value=vector,
     )
     mocker.patch(
-        "aws_graphrag.application.storage.indexing_manager.NeptuneIndexer",
+        "unified_kg_rag.application.storage.indexing_manager.NeptuneIndexer",
         return_value=graph,
     )
-    from aws_graphrag.application.storage.indexing_manager import (
+    from unified_kg_rag.application.storage.indexing_manager import (
         IndexingManager,
         IndexingTask,
     )
@@ -52,7 +52,7 @@ def manager(mocker):
 
 
 def test_enrich_text_units_backlinks_community_ids() -> None:
-    from aws_graphrag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 
     units = [TextUnit(id="t1", text="a"), TextUnit(id="t2", text="b")]
     communities = [
@@ -83,7 +83,7 @@ def test_enrich_text_units_backlinks_community_ids() -> None:
 
 
 def test_enrich_text_units_idempotent_no_duplicates() -> None:
-    from aws_graphrag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 
     units = [TextUnit(id="t1", text="a", community_ids=["c1"])]
     communities = [
@@ -105,7 +105,7 @@ def test_enrich_text_units_idempotent_no_duplicates() -> None:
 
 
 def test_enrich_text_units_noop_without_communities() -> None:
-    from aws_graphrag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 
     units = [TextUnit(id="t1", text="a")]
     IndexingManager._enrich_text_units(units, None)
@@ -114,7 +114,7 @@ def test_enrich_text_units_noop_without_communities() -> None:
 
 
 def test_enrich_text_units_ignores_unknown_text_unit_id() -> None:
-    from aws_graphrag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 
     units = [TextUnit(id="t1", text="a")]
     communities = [
@@ -185,7 +185,7 @@ def test_run_indexing_phase_pool_size_capped_at_eight(manager, mocker) -> None:
     mgr, _g, _v, IndexingTask = manager
     captured: dict[str, int] = {}
 
-    real_pool = "aws_graphrag.application.storage.indexing_manager.ThreadPoolExecutor"
+    real_pool = "unified_kg_rag.application.storage.indexing_manager.ThreadPoolExecutor"
     RealExecutor = mocker.patch(real_pool, wraps=None)
 
     from concurrent.futures import ThreadPoolExecutor as _Real
@@ -212,7 +212,7 @@ def test_run_indexing_phase_pool_size_matches_task_count_when_small(
     from concurrent.futures import ThreadPoolExecutor as _Real
 
     RealExecutor = mocker.patch(
-        "aws_graphrag.application.storage.indexing_manager.ThreadPoolExecutor"
+        "unified_kg_rag.application.storage.indexing_manager.ThreadPoolExecutor"
     )
     RealExecutor.side_effect = lambda max_workers: (
         captured.update(max_workers=max_workers) or _Real(max_workers=max_workers)
@@ -270,7 +270,7 @@ def test_merge_with_existing_graph_handles_empty_inputs(manager) -> None:
 
 
 def test_log_completion_summary_aggregates_and_warns_on_failures(caplog) -> None:
-    from aws_graphrag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 
     results = {
         "opensearch_entities": IndexingStats(
@@ -297,7 +297,7 @@ def test_log_completion_summary_aggregates_and_warns_on_failures(caplog) -> None
 def test_log_completion_summary_no_warnings_on_full_success(caplog) -> None:
     import logging
 
-    from aws_graphrag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 
     results = {
         "opensearch_text_units": IndexingStats(
@@ -311,7 +311,7 @@ def test_log_completion_summary_no_warnings_on_full_success(caplog) -> None:
 
 
 def test_log_completion_summary_handles_empty_results() -> None:
-    from aws_graphrag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 
     # No items -> success_rate guard divides safely (no exception).
     IndexingManager._log_completion_summary({}, elapsed_time=0.0)
@@ -321,14 +321,14 @@ def test_log_completion_summary_handles_empty_results() -> None:
 
 
 def test_discover_suffixes_empty_returns_empty() -> None:
-    from aws_graphrag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 
     assert IndexingManager._discover_suffixes(None) == []
     assert IndexingManager._discover_suffixes([]) == []
 
 
 def test_discover_suffixes_defaults_when_no_attributes() -> None:
-    from aws_graphrag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 
     units = [TextUnit(id="t1", text="a"), TextUnit(id="t2", text="b")]
     assert IndexingManager._discover_suffixes(units) == ["default"]

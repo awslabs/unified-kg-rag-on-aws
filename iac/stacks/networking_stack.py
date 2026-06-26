@@ -77,7 +77,7 @@ class NetworkingStack(Stack):
             self,
             "ServiceSg",
             vpc=self.vpc,
-            description="aws-graphrag data plane: Fargate to Neptune/OpenSearch",
+            description="unified-kg-rag-on-aws data plane: Fargate to Neptune/OpenSearch",
             allow_all_outbound=True,
         )
         # Same-SG ingress on Neptune (8182) and OpenSearch (443) so the Fargate

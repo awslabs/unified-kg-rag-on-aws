@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.domain.models import (
+from unified_kg_rag.domain.models import (
     Config,
     EvaluationGroundTruth,
     EvaluationMetricType,
@@ -14,7 +14,7 @@ from aws_graphrag.domain.models import (
     EvaluationResult,
     EvaluatorType,
 )
-from aws_graphrag.evaluation import EvaluationManager, GraphAwareEvaluator
+from unified_kg_rag.evaluation import EvaluationManager, GraphAwareEvaluator
 
 pytestmark = pytest.mark.unit
 

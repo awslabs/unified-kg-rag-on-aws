@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from aws_graphrag.domain.ingestion.graph_resolver import EntityResolver
-from aws_graphrag.domain.models import Config, Entity
+from unified_kg_rag.domain.ingestion.graph_resolver import EntityResolver
+from unified_kg_rag.domain.models import Config, Entity
 
 pytestmark = pytest.mark.unit
 

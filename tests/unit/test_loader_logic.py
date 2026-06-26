@@ -17,12 +17,12 @@ from pathlib import Path
 
 import pytest
 
-from aws_graphrag.adapters.ingestion.loader import (
+from unified_kg_rag.adapters.ingestion.loader import (
     DirectoryLoader,
     compute_jaccard_similarity,
     compute_minhash,
 )
-from aws_graphrag.domain.models import Config
+from unified_kg_rag.domain.models import Config
 
 pytestmark = pytest.mark.unit
 

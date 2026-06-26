@@ -13,14 +13,14 @@ from __future__ import annotations
 
 import pytest
 
-import aws_graphrag.adapters.ingestion.claim_extractor as ce_module
-from aws_graphrag.adapters.ingestion.claim_extractor import (
+import unified_kg_rag.adapters.ingestion.claim_extractor as ce_module
+from unified_kg_rag.adapters.ingestion.claim_extractor import (
     ClaimExtractionStats,
     ClaimExtractor,
     _prepare_claim_input_task,
     format_entities_with_limit_task,
 )
-from aws_graphrag.domain.models import Claim, Config, Entity, TextUnit
+from unified_kg_rag.domain.models import Claim, Config, Entity, TextUnit
 
 pytestmark = pytest.mark.unit
 

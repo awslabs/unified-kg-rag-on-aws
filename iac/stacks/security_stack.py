@@ -40,7 +40,7 @@ class SecurityStack(Stack):
             self,
             "DataKey",
             alias=f"alias/{self.config.prefix}-data",
-            description="aws-graphrag at-rest encryption key (S3/Neptune/OpenSearch/SNS/DDB)",
+            description="unified-kg-rag-on-aws at-rest encryption key (S3/Neptune/OpenSearch/SNS/DDB)",
             enable_key_rotation=True,
             removal_policy=(
                 RemovalPolicy.DESTROY
