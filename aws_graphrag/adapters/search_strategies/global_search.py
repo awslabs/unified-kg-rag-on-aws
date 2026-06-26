@@ -308,7 +308,15 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             self.global_search_config.max_communities * query.retrieval_multiplier
         )
         if not self.global_search_config.use_dynamic_selection:
-            return all_communities[:max_communities]
+            # Without per-query LLM scoring, fall back to the community-report
+            # `rank` (graph-importance, set at indexing time) so we keep the
+            # most central communities rather than truncating in arbitrary
+            # retrieval order. Missing rank sorts last.
+            return sorted(
+                all_communities,
+                key=lambda c: float(c.metadata.get("rank", 0.0) or 0.0),
+                reverse=True,
+            )[:max_communities]
 
         async def score_item(item: RetrievalResult) -> tuple[RetrievalResult, float]:
             # Return the relevance on a 0-1 scale so it is comparable to

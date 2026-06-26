@@ -642,6 +642,21 @@ class CommunityDetector(BaseProcessor):
 
         return reports
 
+    def _compute_report_rank(self, community: Community) -> int:
+        """Deterministic community-importance rank (no LLM call).
+
+        MS GraphRAG uses a report ``rank`` to reflect community importance (it
+        prefilters/sorts global-search candidates by it). We derive it from
+        graph structure: the sum of in-graph degrees of the community's member
+        entities — a connectivity signal that is stable across runs and needs no
+        model call. Higher = more central/important. Falls back to the member
+        count when the graph is unavailable.
+        """
+        entity_ids = community.entity_ids or []
+        if not self.graph or self.graph.number_of_nodes() == 0:
+            return len(entity_ids)
+        return sum(self.graph.degree(eid) for eid in entity_ids if eid in self.graph)
+
     def _select_report_entities(self, community: Community) -> list[str]:
         """Pick the community's entity ids most worth putting in its report.
 
@@ -811,7 +826,7 @@ class CommunityDetector(BaseProcessor):
             summary_embedding=None,
             full_content=full_content,
             full_content_embedding=None,
-            rank=1,
+            rank=self._compute_report_rank(community),
             size=community.size,
             period=community.period,
             attributes=attributes,

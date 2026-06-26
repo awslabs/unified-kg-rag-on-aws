@@ -432,6 +432,42 @@ class TestReportInputShaping:
         assert chain_in["include_key_entities"] == "False"
 
 
+class TestReportRank:
+    """_compute_report_rank: graph-importance rank (sum of member degrees),
+    deterministic and LLM-free. Replaces the old hardcoded rank=1."""
+
+    def test_rank_is_sum_of_member_degrees(self) -> None:
+        cd = _detector()
+        g = nx.Graph()
+        # triangle: each of a,b,c has degree 2 -> sum = 6 for the 3-member community
+        g.add_edge("a", "b")
+        g.add_edge("b", "c")
+        g.add_edge("a", "c")
+        cd.graph = g
+        assert cd._compute_report_rank(_community(["a", "b", "c"])) == 6
+
+    def test_more_connected_community_outranks_sparser_one(self) -> None:
+        cd = _detector()
+        cd.graph = _star_graph(4)  # hub degree 4, each leaf degree 1
+        hub_community = _community(["hub", "leaf0", "leaf1"])  # 4 + 1 + 1 = 6
+        leaf_community = _community(["leaf2", "leaf3"])  # 1 + 1 = 2
+        assert cd._compute_report_rank(hub_community) > cd._compute_report_rank(
+            leaf_community
+        )
+
+    def test_entities_absent_from_graph_are_ignored(self) -> None:
+        cd = _detector()
+        g = nx.Graph()
+        g.add_edge("a", "b")  # both degree 1
+        cd.graph = g
+        # 'ghost' is not in the graph -> contributes 0.
+        assert cd._compute_report_rank(_community(["a", "b", "ghost"])) == 2
+
+    def test_empty_graph_falls_back_to_member_count(self) -> None:
+        cd = _detector()  # default graph is empty
+        assert cd._compute_report_rank(_community(["a", "b", "c"])) == 3
+
+
 def _star_graph(n_leaves: int) -> nx.Graph:
     """A hub 'hub' connected to n leaves -> hub has the highest degree."""
     g = nx.Graph()

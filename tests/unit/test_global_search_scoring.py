@@ -75,3 +75,53 @@ async def test_score_normalized_into_unit_interval() -> None:
     query = SearchQuery(query="q", retrieval_multiplier=1)
     kept = await strat._select_relevant_communities(_communities(1), query)
     assert kept and 0.0 <= kept[0].score <= 1.0
+
+
+def _strategy_static(*, max_communities: int) -> GlobalSearchStrategy:
+    strat = GlobalSearchStrategy.__new__(GlobalSearchStrategy)
+    strat.global_search_config = SimpleNamespace(
+        max_communities=max_communities,
+        use_dynamic_selection=False,
+        relevance_threshold=0.5,
+    )
+    strat.ignore_errors = False
+    return strat
+
+
+def _communities_with_rank(ranks: list[float]) -> list[RetrievalResult]:
+    return [
+        RetrievalResult(
+            content=f"community {i}",
+            score=0.5,
+            source=f"c{i}",
+            retriever_type="graph",
+            metadata={"rank": r},
+        )
+        for i, r in enumerate(ranks)
+    ]
+
+
+async def test_static_selection_keeps_highest_rank_communities() -> None:
+    # use_dynamic_selection=False: select by community-report `rank` (graph
+    # importance) instead of arbitrary retrieval order, capped at max_communities.
+    strat = _strategy_static(max_communities=2)
+    query = SearchQuery(query="q", retrieval_multiplier=1)
+    # ranks deliberately out of order; top-2 by rank are c2(9.0) and c0(5.0).
+    kept = await strat._select_relevant_communities(
+        _communities_with_rank([5.0, 1.0, 9.0, 2.0]), query
+    )
+    assert [c.source for c in kept] == ["c2", "c0"]
+
+
+async def test_static_selection_missing_rank_sorts_last() -> None:
+    strat = _strategy_static(max_communities=2)
+    query = SearchQuery(query="q", retrieval_multiplier=1)
+    ranked = _communities_with_rank([3.0])
+    unranked = [
+        RetrievalResult(
+            content="no-rank", score=0.5, source="cX", retriever_type="graph"
+        )
+    ]
+    kept = await strat._select_relevant_communities(ranked + unranked, query)
+    # The ranked community comes first; the rank-less one sorts last.
+    assert kept[0].source == "c0"
