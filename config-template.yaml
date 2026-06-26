@@ -108,7 +108,6 @@ processing:
     max_entities_per_chunk: 100
     max_relationships_per_chunk: 100
     entity_confidence_threshold: 0.0
-    enable_confidence_extraction: true
     # Domain entity categories injected into the extraction prompt's
     # {entity_types} slot. Override to adapt to a domain WITHOUT rewriting the
     # whole prompt — each item is "LABEL: short description" (description
@@ -219,13 +218,13 @@ graph:
     embedding_method: "node2vec"
     layout_method: "umap"
 
-    # Node-embedding hyperparameters, keyed by method (only the active
-    # embedding_method's block is used).
-    embeddings:
-      node2vec:
-        dimensions: 128
-        num_walks: 10
-        walk_length: 80
+    # Node embeddings come from Bedrock (the model determines dimensionality).
+    # Only 'bedrock_model_id' is honored here; when unset, the OpenSearch
+    # embedding model is reused. Set embedding_method: "none" to skip embeddings
+    # and fall back to a spring layout.
+    embeddings: {}
+    # embeddings:
+    #   bedrock_model_id: "amazon.titan-embed-text-v2:0"
 
     # Dimensionality-reduction layout hyperparameters, keyed by method.
     layout:
@@ -284,10 +283,12 @@ indexing:
     max_total_clauses: 600
     reserved_clauses: 300
 
-    # Index settings
+    # Index settings (applied at index creation)
     index_settings:
       number_of_shards: 1
       number_of_replicas: 0
+      # Search-visibility latency vs indexing throughput; raise (e.g. "30s" or
+      # "-1" to disable) for faster bulk loads, then reset for live querying.
       refresh_interval: "1s"
 
     # Vector search settings
@@ -457,7 +458,6 @@ evaluation:
     - faithfulness
   max_context_tokens: 8192
   save_detailed_results: true
-  save_summary_only: false
 
 # Custom Prompts Configuration
 custom_prompts:

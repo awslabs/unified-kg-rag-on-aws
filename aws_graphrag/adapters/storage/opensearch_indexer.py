@@ -782,6 +782,11 @@ class OpenSearchIndexer(VectorIndexer):
                 "number_of_replicas": self.opensearch_config.index_settings.get(
                     "number_of_replicas", 0
                 ),
+                # refresh_interval trades search-visibility latency for indexing
+                # throughput; raising it (e.g. "30s" or "-1") speeds bulk loads.
+                "refresh_interval": self.opensearch_config.index_settings.get(
+                    "refresh_interval", "1s"
+                ),
                 "index.knn": True,
                 "index.knn.algo_param.ef_search": self.opensearch_config.vector_search.get(
                     "ef_search", 100

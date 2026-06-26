@@ -424,11 +424,6 @@ class GraphExtractionConfig(BaseModel):
         description="Minimum confidence score for filtering entities. "
         "Entities below this threshold are excluded. Set to 0.0 to disable filtering.",
     )
-    enable_confidence_extraction: bool = Field(
-        default=True,
-        description="Enable confidence score extraction from LLM. "
-        "When disabled, all entities default to confidence 1.0.",
-    )
     entity_types: list[str] = Field(
         default_factory=lambda: [
             "PERSON: Names, individuals, roles, titles",
@@ -771,10 +766,11 @@ class VisualizationConfig(BaseModel):
         description="Method for dimensionality reduction ('umap', 'tsne', 'pca').",
     )
     embeddings: dict[str, Any] = Field(
-        default={
-            "node2vec": {"dimensions": 128, "num_walks": 10, "walk_length": 80},
-        },
-        description="Configuration parameters for embedding methods.",
+        default_factory=dict,
+        description="Embedding parameters for node embedding. Only "
+        "'bedrock_model_id' is honored (node embeddings come from Bedrock; the "
+        "embedding dimensionality is determined by the chosen model). When "
+        "unset, the OpenSearch embedding model is reused.",
     )
     layout: dict[str, Any] = Field(
         default={
@@ -1548,10 +1544,6 @@ class EvaluationConfig(BaseModel):
     save_detailed_results: bool = Field(
         default=True,
         description="Whether to save detailed evaluation results and reports.",
-    )
-    save_summary_only: bool = Field(
-        default=False,
-        description="Whether to save only the evaluation summary (excludes detailed results).",
     )
 
 
