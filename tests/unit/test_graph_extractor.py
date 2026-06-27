@@ -572,3 +572,65 @@ class TestLogCompletionSummary:
         )
         # Should not raise; covers both the confidence and failure log branches.
         GraphExtractor._log_completion_summary(stats)
+
+
+# --------------------------------------------------------------------------- #
+# Entity grounding (hallucination guard) via _parse_extraction_result
+# --------------------------------------------------------------------------- #
+class TestEntityGrounding:
+    """The chunk text comes from the `text_unit` fixture: 'Alice works at Acme Corp.'"""
+
+    @staticmethod
+    def _result() -> dict:
+        # Two entities: one grounded (span in the chunk), one hallucinated
+        # (span absent — the model invented it from domain priors).
+        return {
+            "entities": [
+                {
+                    "name": "Acme Corp",
+                    "type": "ORG",
+                    "description": "A company",
+                    "source_text": "Alice works at Acme Corp.",
+                },
+                {
+                    "name": "24 months",
+                    "type": "TEMPORAL",
+                    "description": "The warranty period",
+                    "source_text": "The Warranty Period from the Provisional Acceptance Date.",
+                },
+            ],
+            "relationships": [],
+        }
+
+    def test_disabled_keeps_all(self, extractor, text_unit) -> None:
+        extractor.extraction_config.entity_grounding.enabled = False
+        entities, _ = extractor._parse_extraction_result(self._result(), text_unit)
+        assert {e.name for e in entities} == {"acme corp", "24 months"}
+        assert extractor.stats.entities_ungrounded == 0
+
+    def test_drop_removes_ungrounded(self, extractor, text_unit) -> None:
+        extractor.extraction_config.entity_grounding.enabled = True
+        extractor.extraction_config.entity_grounding.action = "drop"
+        entities, _ = extractor._parse_extraction_result(self._result(), text_unit)
+        names = {e.name for e in entities}
+        assert "acme corp" in names
+        assert "24 months" not in names  # hallucination dropped
+        assert extractor.stats.entities_ungrounded == 1
+
+    def test_penalize_keeps_but_lowers_confidence(self, extractor, text_unit) -> None:
+        g = extractor.extraction_config.entity_grounding
+        g.enabled = True
+        g.action = "penalize"
+        g.penalty_factor = 0.5
+        entities, _ = extractor._parse_extraction_result(self._result(), text_unit)
+        by_name = {e.name: e for e in entities}
+        assert "24 months" in by_name  # kept
+        assert by_name["24 months"].confidence == pytest.approx(0.5)  # penalized
+        assert by_name["acme corp"].confidence == pytest.approx(1.0)  # untouched
+        assert extractor.stats.entities_ungrounded == 1
+
+    def test_source_text_not_persisted_as_attribute(self, extractor, text_unit) -> None:
+        extractor.extraction_config.entity_grounding.enabled = True
+        entities, _ = extractor._parse_extraction_result(self._result(), text_unit)
+        for e in entities:
+            assert "_source_text" not in (e.attributes or {})

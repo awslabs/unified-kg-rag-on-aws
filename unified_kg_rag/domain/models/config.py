@@ -414,6 +414,55 @@ class DescriptionSummarizationConfig(BaseModel):
     )
 
 
+class EntityGroundingConfig(BaseModel):
+    """Provenance grounding for extracted entities.
+
+    The extraction prompt asks the model to emit a verbatim ``source_text`` span
+    for every entity. When enabled, an entity whose evidence span does not occur
+    in its source chunk (verbatim or by token overlap) is treated as a
+    hallucination — the model invented it from domain priors rather than the
+    document — and is either dropped or confidence-penalized. OFF by default:
+    it relies on the model emitting spans and is conservative, but turning it on
+    is the defense against corpus-absent entities polluting the index.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="Reject/penalize entities whose source_text evidence span is "
+        "not found in the source chunk (hallucination guard). Requires the "
+        "extraction model to emit a source_text span per entity.",
+    )
+    action: str = Field(
+        default="drop",
+        pattern="^(drop|penalize)$",
+        description="What to do with an ungrounded entity: 'drop' removes it; "
+        "'penalize' multiplies its confidence by penalty_factor so the "
+        "confidence threshold can filter it without hard deletion.",
+    )
+    penalty_factor: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Confidence multiplier applied to ungrounded entities when "
+        "action='penalize'.",
+    )
+    min_span_tokens: int = Field(
+        default=4,
+        ge=1,
+        description="Evidence spans shorter than this (after normalization) are "
+        "treated as grounded — too short to judge, so the gate never deletes "
+        "short legitimate names on weak signal.",
+    )
+    min_overlap_ratio: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        description="When the span is not a verbatim substring, the fraction of "
+        "its tokens that must appear in the chunk to still count as grounded "
+        "(handles light paraphrase / whitespace edits).",
+    )
+
+
 class GraphExtractionConfig(BaseModel):
     extraction_model_id: LanguageModelId = Field(
         default=LanguageModelId.CLAUDE_V4_5_SONNET,
@@ -451,6 +500,10 @@ class GraphExtractionConfig(BaseModel):
     description_summarization: DescriptionSummarizationConfig = Field(
         default_factory=DescriptionSummarizationConfig,
         description="LLM re-summarization of over-long merged descriptions",
+    )
+    entity_grounding: EntityGroundingConfig = Field(
+        default_factory=EntityGroundingConfig,
+        description="Provenance grounding guard against hallucinated entities",
     )
 
 

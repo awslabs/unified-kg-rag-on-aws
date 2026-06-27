@@ -136,6 +136,20 @@ processing:
       # Target length (tokens) of the produced summary.
       max_summary_tokens: 256
 
+    # Provenance grounding — hallucination guard. The extraction prompt asks the
+    # model to emit a verbatim source_text span per entity; when enabled, an
+    # entity whose span is NOT found in its source chunk (verbatim or by token
+    # overlap) is treated as hallucinated (the model invented it from domain
+    # priors) and dropped or confidence-penalized. OFF by default: it depends on
+    # the model emitting spans and is conservative (never deletes on weak signal),
+    # but it is the defense against corpus-absent entities polluting the index.
+    entity_grounding:
+      enabled: false
+      action: "drop" # "drop" removes ungrounded entities; "penalize" scales confidence
+      penalty_factor: 0.5 # confidence multiplier when action == "penalize"
+      min_span_tokens: 4 # spans shorter than this are treated as grounded (too short to judge)
+      min_overlap_ratio: 0.6 # non-verbatim spans need this token-overlap fraction to count as grounded
+
   # Gleaning (Iterative Information Extraction)
   gleaning:
     enabled: true

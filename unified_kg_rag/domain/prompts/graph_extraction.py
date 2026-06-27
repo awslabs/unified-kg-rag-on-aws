@@ -42,6 +42,14 @@ output format requirements.
 - Include relevant context from the text
 - Avoid speculation or external knowledge
 
+## Entity Provenance (REQUIRED):
+- For every entity, copy a SHORT VERBATIM span (a phrase or sentence) directly
+  from the source text where the entity appears. Do NOT paraphrase this span.
+- The span is the evidence the entity is in the document. If you cannot find a
+  verbatim span, DO NOT invent the entity — omit it entirely.
+- Never introduce entities from general domain knowledge that are not present in
+  the source text (e.g. standard contract clauses, typical values).
+
 ## Entity Confidence Scoring (1-10 scale):
 Assign a confidence score based on how clearly the entity is identified in the text:
 - **9-10**: Explicitly named and clearly defined in text, unambiguous identification
@@ -83,6 +91,7 @@ MANDATORY: Use this exact XML structure with no deviations:
 <type>ENTITY_TYPE</type>
 <description>Clear description of entity role and significance in the text.</description>
 <confidence>NUMERIC_VALUE_1_TO_10</confidence>
+<source_text>Verbatim span copied from the source text where this entity appears.</source_text>
 </entity>
 </entities>
 
@@ -103,6 +112,7 @@ MANDATORY: Use this exact XML structure with no deviations:
 ✓ Entity limits and relationship limits are respected
 ✓ XML format is followed precisely
 ✓ No external knowledge or assumptions added
+✓ Every entity has a verbatim source_text span copied from the input
 ✓ Confidence scores accurately reflect extraction certainty (1-10 scale)
 
 Focus on accuracy over quantity. Extract meaningful, verifiable information only."""

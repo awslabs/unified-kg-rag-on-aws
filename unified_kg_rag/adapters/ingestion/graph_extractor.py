@@ -13,6 +13,7 @@ from unified_kg_rag.adapters.aws.chain_factory import (
     setup_chain,
 )
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.ingestion.entity_grounding import is_grounded
 from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
 from unified_kg_rag.domain.prompts import GraphExtractionPrompt
 from unified_kg_rag.shared import get_logger
@@ -60,6 +61,11 @@ class ExtractionStats(BaseModel):
     confidence_threshold_applied: float = Field(
         default=0.0,
         description="Confidence threshold value used for filtering",
+    )
+    entities_ungrounded: int = Field(
+        default=0,
+        description="Number of entities whose source_text span was not found in "
+        "their source chunk (dropped or confidence-penalized by the grounding guard)",
     )
 
     @property
@@ -299,6 +305,8 @@ class GraphExtractor(BaseProcessor):
             if entity := self.parse_entity_data(entity_data, text_unit):
                 entities.append(entity)
 
+        entities = self._apply_entity_grounding(entities, text_unit)
+
         entity_name_to_id = {entity.name: entity.id for entity in entities}
         relationships_data = ensure_list(
             result.get("relationships"), inner_key="relationship"
@@ -402,6 +410,54 @@ class GraphExtractor(BaseProcessor):
             )
 
         return filtered_entities, removed_count
+
+    def _apply_entity_grounding(
+        self, entities: list[Entity], text_unit: TextUnit
+    ) -> list[Entity]:
+        """Drop or penalize entities not grounded in their source chunk.
+
+        Per-chunk (before merge), so each entity is checked against the exact
+        text it was extracted from. The verbatim evidence span lives in the
+        reserved ``_source_text`` attribute (stripped here so it is not
+        persisted). No-op when grounding is disabled.
+        """
+        grounding = self.extraction_config.entity_grounding
+        chunk_text = self.get_text_for_processing(text_unit)
+
+        kept: list[Entity] = []
+        for entity in entities:
+            source_text = (entity.attributes or {}).pop("_source_text", None)
+            grounded = (not grounding.enabled) or is_grounded(
+                source_text,
+                chunk_text,
+                min_span_tokens=grounding.min_span_tokens,
+                min_overlap_ratio=grounding.min_overlap_ratio,
+            )
+
+            if grounded:
+                kept.append(entity)
+                continue
+
+            # Ungrounded.
+            self.stats.entities_ungrounded += 1
+            if grounding.action == "penalize":
+                base = entity.confidence if entity.confidence is not None else 1.0
+                entity.confidence = base * grounding.penalty_factor
+                kept.append(entity)
+                logger.debug(
+                    "Ungrounded entity '%s' penalized to confidence %.2f (chunk '%s')",
+                    entity.name,
+                    entity.confidence,
+                    text_unit.short_id,
+                )
+            else:  # drop
+                logger.info(
+                    "Dropping ungrounded entity '%s' — source_text not found in "
+                    "chunk '%s' (likely hallucinated)",
+                    entity.name,
+                    text_unit.short_id,
+                )
+        return kept
 
     def _materialize_relationship_endpoints(
         self,

@@ -50,6 +50,12 @@ class BaseProcessor:
             attributes = self._parse_attributes(
                 entity_data.get("attributes"), text_unit
             )
+            # Stash the verbatim evidence span (when the model emits one) so the
+            # extractor can verify the entity is grounded in the source chunk.
+            # Reserved key; not persisted as a public attribute downstream.
+            source_text = entity_data.get("source_text")
+            if isinstance(source_text, str) and source_text.strip():
+                attributes["_source_text"] = source_text.strip()
             confidence = self._parse_confidence(entity_data)
 
             logger.debug(
