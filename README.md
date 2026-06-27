@@ -26,6 +26,7 @@ It reimplements two retrieval methodologies — Microsoft's GraphRAG ("From Loca
 - [🚀 Installation](#-installation)
 - [📖 Usage](#-usage)
 - [🧪 Testing & Quality](#-testing--quality)
+- [🔒 Security & Disclaimer](#-security--disclaimer)
 - [🤝 Contributing](#-contributing)
 - [📄 License](#-license)
 - [📚 References](#-references)
@@ -287,6 +288,25 @@ uv run mypy unified_kg_rag
 - The `aws` marker isolates tests that need real AWS services; they are excluded in CI.
 - DynamoDB/S3 are tested with `moto`; Neptune/OpenSearch with port-based in-memory fakes.
 - CI (`.github/workflows/`): ruff/black/isort/mypy + pytest+coverage gate, plus a non-blocking ASH security scan.
+
+## 🔒 Security & Disclaimer
+
+This project is a **reference framework provided for educational and
+illustrative purposes**. It is offered "AS IS" without warranty of any kind (see
+[LICENSE](LICENSE)). **It should not be deployed to a production environment
+without your own additional security testing, threat modeling, and hardening.**
+
+- Run it in your own AWS account against your own resources; you are responsible
+  for IAM policies, network configuration, data classification, and end-user
+  authentication in your deployment.
+- The optional CDK stack (`iac/`) provides secure defaults (private-VPC
+  isolation, KMS at-rest encryption, enforced TLS, least-privilege IAM, an
+  optional Bedrock Guardrail for PII/prompt-attack filtering), but you own the
+  deployment and should review it for your environment.
+- Enable the Bedrock Guardrail (`aws.bedrock.guardrail`) and apply rate limiting
+  / monitoring appropriate to your use case before production use.
+- To report a security issue, see [SECURITY.md](SECURITY.md) — please do not
+  open a public issue.
 
 ## 🤝 Contributing
 
