@@ -249,3 +249,72 @@ class TestFormatEntitiesWithLimit:
         bare = Entity(id="e2", name="Bare")
         out = format_entities_with_limit_task([bare, rich], max_entities=1)
         assert out.splitlines()[0] == "Rich"
+
+
+# --------------------------------------------------------------------------- #
+# Gleaner provenance grounding (hallucination guard on gleaner-added items)
+# --------------------------------------------------------------------------- #
+from unified_kg_rag.domain.models import TextUnit  # noqa: E402
+
+
+class TestGleanerGrounding:
+    UNIT = TextUnit(id="u1", text="Alice works at Acme Corp in Seattle.")
+
+    def _missing_entity_issue(self, evidence: str) -> dict:
+        return {
+            "issue_type": "MISSING_ENTITY",
+            "details": {"name": "Acme Corp", "type": "ORG", "description": "A company"},
+            "text_evidence": evidence,
+        }
+
+    def test_disabled_keeps_addition(self, gleaner) -> None:
+        gleaner.extraction_config.entity_grounding.enabled = False
+        new_e, new_r = [], []
+        # ungrounded evidence, but gate off -> kept
+        gleaner._process_issue(
+            self._missing_entity_issue("A fabricated clause never in the text."),
+            self.UNIT,
+            [],
+            new_e,
+            new_r,
+        )
+        assert len(new_e) == 1
+
+    def test_grounded_addition_kept(self, gleaner) -> None:
+        gleaner.extraction_config.entity_grounding.enabled = True
+        new_e, new_r = [], []
+        gleaner._process_issue(
+            self._missing_entity_issue("Alice works at Acme Corp in Seattle."),
+            self.UNIT,
+            [],
+            new_e,
+            new_r,
+        )
+        assert len(new_e) == 1
+        assert new_e[0].name == "acme corp"
+
+    def test_ungrounded_addition_dropped(self, gleaner) -> None:
+        gleaner.extraction_config.entity_grounding.enabled = True
+        new_e, new_r = [], []
+        gleaner._process_issue(
+            self._missing_entity_issue(
+                "The Warranty Period from the Provisional Acceptance Date."
+            ),
+            self.UNIT,
+            [],
+            new_e,
+            new_r,
+        )
+        assert new_e == []  # hallucinated gleaner entity rejected
+
+    def test_source_text_not_persisted_on_kept_entity(self, gleaner) -> None:
+        gleaner.extraction_config.entity_grounding.enabled = True
+        new_e, new_r = [], []
+        gleaner._process_issue(
+            self._missing_entity_issue("Alice works at Acme Corp in Seattle."),
+            self.UNIT,
+            [],
+            new_e,
+            new_r,
+        )
+        assert "_source_text" not in (new_e[0].attributes or {})

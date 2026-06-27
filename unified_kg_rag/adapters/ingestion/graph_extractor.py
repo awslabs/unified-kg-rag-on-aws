@@ -67,6 +67,11 @@ class ExtractionStats(BaseModel):
         description="Number of entities whose source_text span was not found in "
         "their source chunk (dropped or confidence-penalized by the grounding guard)",
     )
+    relationships_ungrounded: int = Field(
+        default=0,
+        description="Number of relationships whose source_text span was not found "
+        "in their source chunk (dropped or weight-penalized by the grounding guard)",
+    )
 
     @property
     def processed_unit_count(self) -> int:
@@ -317,6 +322,8 @@ class GraphExtractor(BaseProcessor):
             ):
                 relationships.append(relationship)
 
+        relationships = self._apply_relationship_grounding(relationships, text_unit)
+
         return entities, relationships
 
     def _merge_entities(self, entities: list[Entity]) -> list[Entity]:
@@ -455,6 +462,55 @@ class GraphExtractor(BaseProcessor):
                     "Dropping ungrounded entity '%s' — source_text not found in "
                     "chunk '%s' (likely hallucinated)",
                     entity.name,
+                    text_unit.short_id,
+                )
+        return kept
+
+    def _apply_relationship_grounding(
+        self, relationships: list[Relationship], text_unit: TextUnit
+    ) -> list[Relationship]:
+        """Drop or weight-penalize relationships not grounded in their chunk.
+
+        Mirrors entity grounding: the reserved ``_source_text`` attribute holds
+        the verbatim evidence span (stripped here). In ``penalize`` mode the
+        relationship weight (not confidence — relationships have no confidence)
+        is scaled by ``penalty_factor``. No-op when grounding is disabled.
+        """
+        grounding = self.extraction_config.entity_grounding
+        chunk_text = self.get_text_for_processing(text_unit)
+
+        kept: list[Relationship] = []
+        for rel in relationships:
+            source_text = (rel.attributes or {}).pop("_source_text", None)
+            grounded = (not grounding.enabled) or is_grounded(
+                source_text,
+                chunk_text,
+                min_span_tokens=grounding.min_span_tokens,
+                min_overlap_ratio=grounding.min_overlap_ratio,
+            )
+
+            if grounded:
+                kept.append(rel)
+                continue
+
+            self.stats.relationships_ungrounded += 1
+            if grounding.action == "penalize":
+                rel.weight = (rel.weight or 1.0) * grounding.penalty_factor
+                kept.append(rel)
+                logger.debug(
+                    "Ungrounded relationship '%s -> %s' penalized to weight %.2f "
+                    "(chunk '%s')",
+                    rel.source_name,
+                    rel.target_name,
+                    rel.weight,
+                    text_unit.short_id,
+                )
+            else:  # drop
+                logger.info(
+                    "Dropping ungrounded relationship '%s -> %s' — source_text "
+                    "not found in chunk '%s' (likely hallucinated)",
+                    rel.source_name,
+                    rel.target_name,
                     text_unit.short_id,
                 )
         return kept

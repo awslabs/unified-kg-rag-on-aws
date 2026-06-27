@@ -81,6 +81,11 @@ Assign a confidence score based on how clearly the entity is identified in the t
 - Ensure source and target entities exist in your entity list
 - Base relationships only on explicit text content
 
+## Relationship Provenance (REQUIRED):
+- For every relationship, copy a SHORT VERBATIM span from the source text that
+  states the connection. Do NOT paraphrase it. If no verbatim span supports the
+  relationship, DO NOT emit it — never infer relationships from domain knowledge.
+
 # OUTPUT FORMAT REQUIREMENTS
 
 MANDATORY: Use this exact XML structure with no deviations:
@@ -102,6 +107,7 @@ MANDATORY: Use this exact XML structure with no deviations:
 <type>SPECIFIC_RELATIONSHIP_TYPE</type>
 <description>Clear explanation of the relationship between entities.</description>
 <strength>NUMERIC_VALUE</strength>
+<source_text>Verbatim span copied from the source text that states this relationship.</source_text>
 </relationship>
 </relationships>
 

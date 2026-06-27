@@ -161,6 +161,11 @@ class BaseProcessor:
 
             rel_id = self._generate_relationship_id(source_name, target_name, rel_type)
             attributes = self._parse_attributes(rel_data.get("attributes"), text_unit)
+            # Stash the verbatim evidence span (when emitted) for grounding; a
+            # reserved key, stripped before persistence.
+            source_text = rel_data.get("source_text")
+            if isinstance(source_text, str) and source_text.strip():
+                attributes["_source_text"] = source_text.strip()
             weight = self._parse_weight(rel_data)
 
             logger.debug(

@@ -19,6 +19,7 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     check_entity_relevance_task,
     check_relationship_relevance_task,
 )
+from unified_kg_rag.domain.ingestion.entity_grounding import is_grounded
 from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
 from unified_kg_rag.domain.prompts import GraphRefinementPrompt
 from unified_kg_rag.shared import get_logger
@@ -621,9 +622,34 @@ class GraphGleaner(BaseProcessor):
         details = issue.get("details", {})
         issue_type = issue.get("issue_type", "").upper()
 
+        # The refinement prompt requires a <text_evidence> exact quote per issue
+        # (sibling of <details>). When grounding is enabled, reject additions
+        # whose evidence is not actually in the chunk — the same hallucination
+        # guard applied at first-pass extraction, now for gleaner-introduced
+        # entities/relationships.
+        if self.extraction_config.entity_grounding.enabled:
+            text_evidence = issue.get("text_evidence")
+            chunk_text = self.get_text_for_processing(unit)
+            grounding = self.extraction_config.entity_grounding
+            if not is_grounded(
+                text_evidence if isinstance(text_evidence, str) else None,
+                chunk_text,
+                min_span_tokens=grounding.min_span_tokens,
+                min_overlap_ratio=grounding.min_overlap_ratio,
+            ):
+                logger.info(
+                    "Dropping ungrounded gleaner %s in chunk '%s' — text_evidence "
+                    "not found (likely hallucinated)",
+                    issue_type or "issue",
+                    unit.short_id,
+                )
+                return
+
         if issue_type == "MISSING_ENTITY":
             entity = self.parse_entity_data(details, unit)
             if entity:
+                # Strip the reserved grounding span (gleaner already verified it).
+                (entity.attributes or {}).pop("_source_text", None)
                 new_entities.append(entity)
                 current_and_new_entities.append(entity)
         elif issue_type == "MISSING_RELATIONSHIP":
@@ -632,6 +658,7 @@ class GraphGleaner(BaseProcessor):
             }
             rel = self.parse_relationship_data(details, unit, entity_name_to_id)
             if rel:
+                (rel.attributes or {}).pop("_source_text", None)
                 new_relationships.append(rel)
 
     @staticmethod

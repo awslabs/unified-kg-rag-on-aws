@@ -634,3 +634,68 @@ class TestEntityGrounding:
         entities, _ = extractor._parse_extraction_result(self._result(), text_unit)
         for e in entities:
             assert "_source_text" not in (e.attributes or {})
+
+
+# --------------------------------------------------------------------------- #
+# Relationship grounding (hallucination guard)
+# --------------------------------------------------------------------------- #
+class TestRelationshipGrounding:
+    """Chunk text from `text_unit` fixture: 'Alice works at Acme Corp.'"""
+
+    @staticmethod
+    def _result() -> dict:
+        return {
+            "entities": [
+                {"name": "Alice", "type": "PERSON", "source_text": "Alice works at Acme Corp."},
+                {"name": "Acme Corp", "type": "ORG", "source_text": "Alice works at Acme Corp."},
+            ],
+            "relationships": [
+                {
+                    "source": "Alice",
+                    "target": "Acme Corp",
+                    "type": "WORKS_AT",
+                    "strength": 8,
+                    "source_text": "Alice works at Acme Corp.",
+                },
+                {
+                    "source": "Alice",
+                    "target": "Acme Corp",
+                    "type": "FOUNDED",
+                    "strength": 9,
+                    "source_text": "Alice founded Acme Corp in 1998 with venture funding.",
+                },
+            ],
+        }
+
+    def test_disabled_keeps_all(self, extractor, text_unit) -> None:
+        extractor.extraction_config.entity_grounding.enabled = False
+        _, rels = extractor._parse_extraction_result(self._result(), text_unit)
+        assert {r.type for r in rels} == {"WORKS_AT", "FOUNDED"}
+        assert extractor.stats.relationships_ungrounded == 0
+
+    def test_drop_removes_ungrounded(self, extractor, text_unit) -> None:
+        extractor.extraction_config.entity_grounding.enabled = True
+        extractor.extraction_config.entity_grounding.action = "drop"
+        _, rels = extractor._parse_extraction_result(self._result(), text_unit)
+        types = {r.type for r in rels}
+        assert "WORKS_AT" in types
+        assert "FOUNDED" not in types  # hallucinated relationship dropped
+        assert extractor.stats.relationships_ungrounded == 1
+
+    def test_penalize_scales_weight(self, extractor, text_unit) -> None:
+        g = extractor.extraction_config.entity_grounding
+        g.enabled = True
+        g.action = "penalize"
+        g.penalty_factor = 0.5
+        _, rels = extractor._parse_extraction_result(self._result(), text_unit)
+        by_type = {r.type: r for r in rels}
+        assert "FOUNDED" in by_type  # kept
+        assert by_type["FOUNDED"].weight == pytest.approx(4.5)  # 9 * 0.5
+        assert by_type["WORKS_AT"].weight == pytest.approx(8.0)  # untouched
+        assert extractor.stats.relationships_ungrounded == 1
+
+    def test_source_text_not_persisted(self, extractor, text_unit) -> None:
+        extractor.extraction_config.entity_grounding.enabled = True
+        _, rels = extractor._parse_extraction_result(self._result(), text_unit)
+        for r in rels:
+            assert "_source_text" not in (r.attributes or {})
