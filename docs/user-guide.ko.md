@@ -10,7 +10,7 @@ AWS 네이티브 Knowledge Graph RAG 프레임워크입니다. 두 가지 검색
 
 - *무엇을 / 왜*와 1분 빠른 시작은 [README.md](../README.md)를 참고하세요.
 - *내부 구조 / 아키텍처*(헥사고날 레이어, 포트 & 어댑터, 의존성 규칙)는
-  기술 문서([docs/design.md](./design.md) 한국어 / [docs/design.en.md](./design.en.md)
+  기술 문서([docs/design.md](./design.md) 한국어 / [docs/design.md](./design.md)
   영어)를 참고하세요.
 
 아래 내용은 모두 코드베이스의 실제 CLI 플래그와 설정 키에 기반합니다. 다섯 개의

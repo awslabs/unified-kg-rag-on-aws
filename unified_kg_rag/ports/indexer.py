@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.domain.models import (
+    Claim,
     Community,
     CommunityReport,
     Config,
@@ -84,6 +85,14 @@ class BaseIndexer(ABC):
     @abstractmethod
     def initialize(self) -> bool:
         pass
+
+    def close(self) -> None:
+        """Release any backing clients/connections. Default no-op.
+
+        Adapters holding network clients (Neptune/OpenSearch) override this;
+        in-memory implementations need no teardown.
+        """
+        return None
 
     @classmethod
     def get_suffix(cls, item: Any) -> str:
@@ -206,6 +215,18 @@ class GraphIndexer(BaseIndexer):
         content-hash id shared across suffixes does not delete another tenant's
         data; ``None`` is unscoped (single-tenant)."""
 
+    def find_incident_relationship_ids(
+        self, entity_ids: list[str], suffix: str | None = None
+    ) -> list[str]:
+        """Return ids of edges incident to any of ``entity_ids``.
+
+        Used to find relationship documents orphaned when an entity vertex is
+        dropped (the edge is owned in lineage by a surviving document, so it is
+        not in the exclusive id-set). Default returns ``[]`` for backends that
+        cannot answer this; adapters that can (Neptune) override it.
+        """
+        return []
+
     @abstractmethod
     def get_entity_count(self, suffixes: list[str]) -> int:
         pass
@@ -236,6 +257,14 @@ class VectorIndexer(BaseIndexer):
         """Embed and index relationship descriptions (LightRAG global)."""
 
     @abstractmethod
+    def index_claims(self, claims: list[Claim]) -> IndexingStats:
+        """Embed and index claim (covariate) descriptions as searchable vectors."""
+
+    @abstractmethod
+    def upsert_claims(self, claims: list[Claim]) -> IndexingStats:
+        """Upsert claim vectors by id into the live index (delta)."""
+
+    @abstractmethod
     def upsert_text_units(self, text_units: list[TextUnit]) -> IndexingStats:
         """Upsert text units by id into the live index (delta)."""
 
@@ -252,6 +281,22 @@ class VectorIndexer(BaseIndexer):
         self, ids: list[str], alias_prefix: str, suffix: str
     ) -> IndexingStats:
         """Delete documents by id from the live aliased index (delta)."""
+
+    @abstractmethod
+    def delete_document_artifacts(
+        self,
+        ids: list[str],
+        suffix: str,
+        extra_relationship_ids: list[str] | None = None,
+    ) -> dict[str, IndexingStats]:
+        """Delete a document's artifacts from every vector index, by id.
+
+        Fans ``ids`` out across all of this backend's artifact indices
+        (text-units, entities, relationships, claims, community-reports) so the
+        caller does not need to know the backend's index layout.
+        ``extra_relationship_ids`` are additionally removed from the relationship
+        index only (orphaned incident edges). Returns a per-index stats map.
+        """
 
     @abstractmethod
     def get_entity_count(self, suffixes: list[str]) -> int:

@@ -19,6 +19,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.ports.indexer import IndexingStats, VectorIndexer
+from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils.common import compute_hash
 
@@ -33,6 +34,7 @@ class OpenSearchIndexer(VectorIndexer):
         self,
         config: Config,
         boto_session: boto3.Session | None = None,
+        embedding_factory: EmbeddingFactoryPort | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(config)
@@ -41,10 +43,14 @@ class OpenSearchIndexer(VectorIndexer):
             profile_name=self.config.aws.profile_name
         )
         self.opensearch_client = OpenSearchClient(config, self.boto_session)
-        self.embedding_factory = BedrockEmbeddingModelFactory(
-            config,
-            self.boto_session,
-            self.config.aws.bedrock.region_name,
+        # Embedding provider via the port; defaults to Bedrock when not injected.
+        self.embedding_factory: EmbeddingFactoryPort = (
+            embedding_factory
+            or BedrockEmbeddingModelFactory(
+                config,
+                self.boto_session,
+                self.config.aws.bedrock.region_name,
+            )
         )
         self._embedding_dimension = self._resolve_embedding_dimension()
         self.embedding_model = self.embedding_factory.get_model(
@@ -462,6 +468,43 @@ class OpenSearchIndexer(VectorIndexer):
         except Exception as e:
             stats.add_error(f"Delete-by-id failed: {e}", len(ids))
         return stats
+
+    def delete_document_artifacts(
+        self,
+        ids: list[str],
+        suffix: str,
+        extra_relationship_ids: list[str] | None = None,
+    ) -> dict[str, IndexingStats]:
+        """Delete a document's artifacts from every OpenSearch index, by id.
+
+        Encapsulates the per-index fan-out (text-units / entities / relationships
+        / claims / community-reports) so callers stay backend-agnostic. The
+        relationship index additionally receives ``extra_relationship_ids``
+        (incident edges orphaned by an entity drop) so no dangling relationship
+        document survives.
+        """
+        results: dict[str, IndexingStats] = {}
+        if not ids:
+            return results
+
+        rel_prefix = self.opensearch_config.relationships_index_prefix
+        orphan_ids = set(extra_relationship_ids or [])
+        for prefix in (
+            self.opensearch_config.text_units_index_prefix,
+            self.opensearch_config.entities_index_prefix,
+            rel_prefix,
+            self.opensearch_config.claims_index_prefix,
+            self.opensearch_config.community_reports_index_prefix,
+        ):
+            delete_ids = (
+                sorted(set(ids) | orphan_ids)
+                if prefix == rel_prefix and orphan_ids
+                else ids
+            )
+            results[f"opensearch_delete_{prefix}_{suffix}"] = self.delete_by_id(
+                delete_ids, prefix, suffix
+            )
+        return results
 
     def _upsert_item_type(
         self,

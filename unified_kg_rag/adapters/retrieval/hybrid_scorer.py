@@ -10,6 +10,7 @@ from langchain_core.documents import Document
 from unified_kg_rag.adapters.aws import BedrockRerankModelFactory
 from unified_kg_rag.domain.models import Config, FusionMethod, RetrievalResult
 from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
+from unified_kg_rag.ports.model_factory import RerankFactoryPort
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import compute_hash
 
@@ -18,13 +19,19 @@ logger = get_logger(__name__)
 
 class HybridScorer(MetricsMixin):
     def __init__(
-        self, config: Config, boto_session: Any | None = None, **kwargs: Any
+        self,
+        config: Config,
+        boto_session: Any | None = None,
+        rerank_factory: RerankFactoryPort | None = None,
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.config = config
         self.boto_session = boto_session
         self.fusion_config = config.search.fusion
-        self.rerank_factory: BedrockRerankModelFactory | None = None
+        # Injected rerank provider (port); defaults to Bedrock when reranking is
+        # enabled and none is supplied.
+        self.rerank_factory: RerankFactoryPort | None = rerank_factory
         self.rerank_model: Any = None
         self._initialize_reranking()
 
@@ -35,11 +42,12 @@ class HybridScorer(MetricsMixin):
                 logger.debug("Reranking is disabled in configuration")
                 return
 
-            self.rerank_factory = BedrockRerankModelFactory(
-                config=self.config,
-                boto_session=self.boto_session,
-                region_name=self.config.aws.bedrock.region_name,
-            )
+            if self.rerank_factory is None:
+                self.rerank_factory = BedrockRerankModelFactory(
+                    config=self.config,
+                    boto_session=self.boto_session,
+                    region_name=self.config.aws.bedrock.region_name,
+                )
 
             self.rerank_model = self.rerank_factory.get_model(
                 model_id=rerank_config.rerank_model_id,
@@ -214,7 +222,9 @@ class HybridScorer(MetricsMixin):
             return results
 
         target_count = top_k * retrieval_multiplier
-        results.sort(key=lambda x: x.score or 0.0, reverse=True)
+        # Sort a copy: the caller still holds `results` (the post-fusion list),
+        # and an in-place sort here would reorder it as a side effect.
+        results = sorted(results, key=lambda x: x.score or 0.0, reverse=True)
 
         word_sets: dict[int, set[str]] = {}
         for i, result in enumerate(results):
@@ -333,6 +343,18 @@ class HybridScorer(MetricsMixin):
             processing_time = time.time() - start_time
             self._record_timing("processing_time", processing_time)
             self._record_metric("reranked_count", len(reranked_results))
+
+            if not reranked_results:
+                # The rerank model returned nothing usable (empty output, or all
+                # keys failed the guard above). Returning [] here would silently
+                # drop the entire candidate set and produce an empty answer, so
+                # degrade to the original (already fused/scored) results instead.
+                logger.warning(
+                    "Reranking produced no usable results; "
+                    "falling back to the %s pre-rerank results",
+                    len(results),
+                )
+                return results
 
             logger.info(
                 "Reranking completed: %s -> %s results in %.3fs",

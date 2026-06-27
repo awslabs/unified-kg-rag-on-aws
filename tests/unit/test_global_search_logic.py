@@ -159,15 +159,32 @@ async def test_select_dynamic_sorts_by_blended_score_desc() -> None:
     assert all(0.0 <= c.score <= 1.0 for c in kept)
 
 
-async def test_select_dynamic_error_with_ignore_errors_drops_item() -> None:
+async def test_select_dynamic_error_with_ignore_errors_keeps_at_retrieval_score() -> (
+    None
+):
     strat = _bare_strategy(
         threshold=0.1, use_dynamic_selection=True, ignore_errors=True
     )
     strat.community_relevance_scorer = _RaisingScorer()
     query = SearchQuery(query="q", retrieval_multiplier=1)
     kept = await strat._select_relevant_communities(_communities(2), query)
-    # relevance_score falls to 0.0 on error; 0.0 < 0.1 threshold -> dropped.
-    assert kept == []
+    # A scoring failure must NOT silently drop a community: it is kept as a
+    # candidate at its retrieval score (0.5 >= 0.1 threshold), and its score is
+    # left unmutated (no in-place blending happened).
+    assert len(kept) == 2
+    assert all(c.score == 0.5 for c in kept)
+
+
+async def test_select_dynamic_does_not_mutate_input_items() -> None:
+    # The scored objects must be copies: the input list is shared with the
+    # fallback set and downstream fusion, so blending must not mutate it.
+    strat = _bare_strategy(threshold=0.0, use_dynamic_selection=True)
+    strat.community_relevance_scorer = _AScorer("9")  # 0.9 normalized
+    query = SearchQuery(query="q", retrieval_multiplier=1)
+    items = [_community(0, score=0.2)]
+    kept = await strat._select_relevant_communities(items, query)
+    assert items[0].score == 0.2  # original untouched
+    assert kept[0].score != 0.2  # returned copy was blended
 
 
 async def test_select_dynamic_error_without_ignore_errors_raises() -> None:

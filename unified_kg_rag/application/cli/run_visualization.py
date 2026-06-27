@@ -162,12 +162,24 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _build_parser().parse_args()
-    config = get_config(args.config_path)
-    written = run_visualization(args.data_path, args.output_dir, args.renderers, config)
-    logger.info(
-        "Visualization complete: %d files in '%s'", len(written), args.output_dir
-    )
-    return 0 if written else 1
+    try:
+        config = get_config(args.config_path)
+        written = run_visualization(
+            args.data_path, args.output_dir, args.renderers, config
+        )
+        logger.info(
+            "Visualization complete: %d files in '%s'", len(written), args.output_dir
+        )
+        return 0 if written else 1
+    except KeyboardInterrupt:
+        logger.warning("Visualization interrupted by user.")
+        return 130
+    except Exception as e:
+        # Clean error line rather than a raw traceback (parity with the other
+        # CLIs); full detail goes to the log at debug level.
+        logger.error("Visualization failed: %s", e)
+        logger.debug("Traceback:", exc_info=True)
+        return 1
 
 
 if __name__ == "__main__":

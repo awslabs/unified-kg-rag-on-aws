@@ -143,9 +143,26 @@ def test_relationship_merge_collapses_to_distinct_keys(
     old: list[Relationship], delta: list[Relationship]
 ) -> None:
     merged = merge_relationships(old, delta)
-    expected_keys = {_rel_key(r) for r in (old + delta)}
+    # Self-loops are dropped (parity with the full-build resolver), so they are
+    # excluded from the expected key set.
+    expected_keys = {_rel_key(r) for r in (old + delta) if r.source_id != r.target_id}
     assert {_rel_key(r) for r in merged} == expected_keys
     assert len(merged) == len(expected_keys)
+    # No merged edge is a self-loop.
+    assert all(r.source_id != r.target_id for r in merged)
+
+
+@given(old=_relationships("o"), delta=_relationships("d"))
+def test_relationship_merge_is_idempotent_in_weight(
+    old: list[Relationship], delta: list[Relationship]
+) -> None:
+    # Re-applying the same delta must not change any edge's weight (the prior
+    # summed-weight semantics inflated it on every re-application).
+    once = merge_relationships(old, delta)
+    twice = merge_relationships(once, delta)
+    weights_once = {_rel_key(r): r.weight for r in once}
+    weights_twice = {_rel_key(r): r.weight for r in twice}
+    assert weights_once == weights_twice
 
 
 @given(old=_relationships("o"), delta=_relationships("d"))

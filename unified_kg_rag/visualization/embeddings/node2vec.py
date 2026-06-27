@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.aws import BedrockEmbeddingModelFactory
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -28,7 +29,10 @@ class NodeEmbeddings(BaseModel):
 
 class BedrockNodeEmbedder:
     def __init__(
-        self, config: Config, boto_session: boto3.Session | None = None
+        self,
+        config: Config,
+        boto_session: boto3.Session | None = None,
+        embedding_factory: EmbeddingFactoryPort | None = None,
     ) -> None:
         self.config = config
         self.viz_config = self.config.graph.visualization
@@ -36,7 +40,7 @@ class BedrockNodeEmbedder:
             profile_name=self.config.aws.profile_name
         )
 
-        embedding_factory = BedrockEmbeddingModelFactory(
+        embedding_factory = embedding_factory or BedrockEmbeddingModelFactory(
             config=self.config,
             boto_session=self.boto_session,
             region_name=self.config.aws.bedrock.region_name,

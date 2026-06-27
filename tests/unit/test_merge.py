@@ -74,9 +74,10 @@ class TestMergeRelationships:
         merged = merge_relationships(old, delta)
         assert len(merged) == 2
 
-    def test_same_endpoints_merge_and_sum_weight(self) -> None:
-        # Weights are summed (MS GraphRAG semantics): order-independent and
-        # associative, unlike a running pairwise mean.
+    def test_same_endpoints_merge_weight_is_supporting_text_unit_count(self) -> None:
+        # Weight tracks the count of distinct supporting text units (evidence
+        # count): idempotent and order-independent, and convergent with the
+        # full-build resolver. Two distinct supporting units -> weight 2.0.
         old = [
             Relationship(
                 id="r1",
@@ -97,8 +98,31 @@ class TestMergeRelationships:
         ]
         merged = merge_relationships(old, delta)
         assert len(merged) == 1
-        assert merged[0].weight == 4.0
+        assert merged[0].weight == 2.0
         assert set(merged[0].text_unit_ids) == {"t1", "t2"}
+
+    def test_relationship_merge_is_idempotent(self) -> None:
+        # Re-applying the same delta must NOT inflate the weight (the prior
+        # summed-weight semantics grew it without bound on re-application).
+        old = [
+            Relationship(id="r1", source_id="e1", target_id="e2", text_unit_ids=["t1"])
+        ]
+        delta = [
+            Relationship(id="r2", source_id="e1", target_id="e2", text_unit_ids=["t2"])
+        ]
+        once = merge_relationships(old, delta)
+        twice = merge_relationships(once, delta)
+        assert once[0].weight == twice[0].weight == 2.0
+        assert set(twice[0].text_unit_ids) == {"t1", "t2"}
+
+    def test_remap_collapsing_endpoints_drops_self_loop(self) -> None:
+        # When the entity remap collapses both endpoints onto one entity, the
+        # resulting self-loop must be dropped (parity with the full-build
+        # RelationshipResolver, which removes self-referencing edges).
+        old: list[Relationship] = []
+        delta = [Relationship(id="r2", source_id="e9", target_id="e2")]
+        merged = merge_relationships(old, delta, entity_id_remap={"e9": "e2"})
+        assert merged == []
 
     def test_endpoints_remapped_via_entity_remap(self) -> None:
         old = [Relationship(id="r1", source_id="e1", target_id="e2")]
@@ -133,7 +157,8 @@ class TestMergeRelationships:
         ]
         merged = merge_relationships(old, delta)
         assert len(merged) == 1
-        assert merged[0].weight == 3.0
+        # No text-unit lineage -> falls back to the surviving edge's own weight.
+        assert merged[0].weight == 1.0
 
 
 class TestMergeCommunities:

@@ -44,7 +44,14 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Generate domain-adapted custom_prompts from a corpus sample."
     )
     parser.add_argument(
-        "--source-dir", required=True, type=Path, help="Directory of text documents"
+        # Canonical flag matches run-ingestion's --source-directory; --source-dir
+        # is kept as a backward-compatible alias so existing invocations still work.
+        "--source-directory",
+        "--source-dir",
+        dest="source_directory",
+        required=True,
+        type=Path,
+        help="Directory of text documents (.txt/.md) to sample",
     )
     parser.add_argument(
         "--output", type=Path, default=Path("tuned_prompts.yaml"), help="Output YAML"
@@ -60,22 +67,33 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _build_parser().parse_args()
-    config = get_config(args.config_path)
+    try:
+        config = get_config(args.config_path)
 
-    texts = load_corpus_texts(args.source_dir, args.max_docs)
-    if not texts:
-        logger.error("No text documents found under '%s'", args.source_dir)
+        texts = load_corpus_texts(args.source_directory, args.max_docs)
+        if not texts:
+            logger.error("No text documents found under '%s'", args.source_directory)
+            return 1
+
+        tuner = PromptTuner(config)
+        result = asyncio.run(tuner.tune(texts))
+
+        args.output.write_text(
+            yaml.safe_dump(result, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+        logger.info("Wrote tuned prompts to '%s'", args.output)
+        logger.info("Detected domain: '%s'", result["profile"]["domain"])
+        return 0
+    except KeyboardInterrupt:
+        logger.warning("Prompt tuning interrupted by user.")
+        return 130
+    except Exception as e:
+        # Surface a clean error line instead of a raw traceback (parity with the
+        # other CLIs); details still go to the log at debug level.
+        logger.error("Prompt tuning failed: %s", e)
+        logger.debug("Traceback:", exc_info=True)
         return 1
-
-    tuner = PromptTuner(config)
-    result = asyncio.run(tuner.tune(texts))
-
-    args.output.write_text(
-        yaml.safe_dump(result, sort_keys=False, allow_unicode=True), encoding="utf-8"
-    )
-    logger.info("Wrote tuned prompts to '%s'", args.output)
-    logger.info("Detected domain: '%s'", result["profile"]["domain"])
-    return 0
 
 
 if __name__ == "__main__":

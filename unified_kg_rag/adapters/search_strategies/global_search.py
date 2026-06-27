@@ -324,29 +324,38 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             # emits a 0-10 score; normalizing here was previously only done for
             # the blended item.score, leaving the threshold filter (line below)
             # comparing a 0-1 threshold against a 0-10 score -> a near no-op.
-            try:
-                llm_output = await self.community_relevance_scorer.ainvoke(
-                    {"community_summary": item.content, "query": query.query}
-                )
-                parsed_score = safe_float_parse(llm_output, default_value=5.0)
-                relevance_score = (
-                    (parsed_score / 10.0) if parsed_score is not None else 0.0
-                )
+            #
+            # Work on a COPY: the input RetrievalResult objects are shared with
+            # the fallback list and the downstream fuse/rerank, so mutating
+            # item.score in place would corrupt the scores fed to fusion (and,
+            # under concurrent queries sharing a strategy, race across queries).
+            llm_output = await self.community_relevance_scorer.ainvoke(
+                {"community_summary": item.content, "query": query.query}
+            )
+            parsed_score = safe_float_parse(llm_output, default_value=5.0)
+            relevance_score = (parsed_score / 10.0) if parsed_score is not None else 0.0
+            scored = item.model_copy()
+            if parsed_score is not None:
+                scored.score = ((item.score or 0.5) * 0.4) + (relevance_score * 0.6)
+            return scored, relevance_score
 
-                if parsed_score is not None:
-                    item.score = ((item.score or 0.5) * 0.4) + (relevance_score * 0.6)
-
-            except Exception as e:
-                if not self.ignore_errors:
-                    raise
-
-                logger.warning("Community scoring failed: %s", e)
-                relevance_score = 0.0
-
-            return item, relevance_score
-
+        # return_exceptions=True so a single throttled/failed LLM scoring call
+        # degrades that one community to score 0 rather than aborting the whole
+        # query (matching the drift/map-reduce paths' graceful degradation).
         tasks = [score_item(item) for item in all_communities]
-        evaluated_items = await asyncio.gather(*tasks)
+        outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+
+        evaluated_items: list[tuple[RetrievalResult, float]] = []
+        for original, outcome in zip(all_communities, outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                if not self.ignore_errors:
+                    raise outcome
+                logger.warning("Community scoring failed: %s", outcome)
+                # Keep the community as a candidate at its retrieval score so a
+                # transient scoring failure cannot silently drop a strong hit.
+                evaluated_items.append((original, original.score or 0.0))
+            else:
+                evaluated_items.append(outcome)
 
         relevance_threshold = self.global_search_config.relevance_threshold
         relevant_items = [

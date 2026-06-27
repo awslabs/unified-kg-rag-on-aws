@@ -1,45 +1,45 @@
-# Unified Knowledge Graph RAG on AWS — 기술 문서
+# Unified Knowledge Graph RAG on AWS — Technical Documentation
 
-본 문서는 `unified-kg-rag-on-aws` 라이브러리의 아키텍처·알고리즘·데이터 모델·운영 측면을 다루는 **기여자/고급 사용자용 설계 레퍼런스**입니다. "무엇/왜"와 빠른 시작은 [README.ko.md](../README.ko.md)를, "어떻게 쓰는가"는 [docs/user-guide.ko.md](user-guide.ko.md)를, 기여/확장 규약은 [CLAUDE.md](../CLAUDE.md)를 참고하세요. 본 문서의 영문판은 [docs/design.en.md](design.en.md)에 있습니다.
+This document is a **design reference for contributors and advanced users**, covering the architecture, algorithms, data model, and operational aspects of the `unified-kg-rag-on-aws` library. For the "what/why" and a quick start, see [README.md](../README.md); for "how to use it," see the [User Guide](user-guide.md); for contribution/extension conventions, see [CLAUDE.md](../CLAUDE.md).
 
-## 목차
+## Table of Contents
 
-1. [개요와 설계 철학](#1-개요와-설계-철학)
-2. [헥사고날 아키텍처 (포트 & 어댑터)](#2-헥사고날-아키텍처-포트--어댑터)
-3. [도메인 모델](#3-도메인-모델)
-4. [인제스천 파이프라인](#4-인제스천-파이프라인)
-5. [증분 인덱싱](#5-증분-인덱싱)
-6. [검색: 두 방법론](#6-검색-두-방법론)
-7. [하이브리드 스코어링과 토큰 관리](#7-하이브리드-스코어링과-토큰-관리)
-8. [AWS 서비스 통합](#8-aws-서비스-통합)
-9. [평가 프레임워크](#9-평가-프레임워크)
-10. [시각화 & 분석](#10-시각화--분석)
-11. [프롬프트와 프롬프트 튜닝](#11-프롬프트와-프롬프트-튜닝)
-12. [설정 시스템](#12-설정-시스템)
-13. [테스트 전략](#13-테스트-전략)
-14. [CI/CD와 보안](#14-cicd와-보안)
-15. [확장 가이드](#15-확장-가이드)
-
----
-
-## 1. 개요와 설계 철학
-
-`unified-kg-rag-on-aws`는 Microsoft GraphRAG 논문을 AWS 네이티브 스택(Bedrock + Neptune + OpenSearch + S3 + DynamoDB) 위에 재구현한 라이브러리입니다. 핵심 설계 원칙은 다음과 같습니다.
-
-- **두 방법론, 하나의 인프라**: GraphRAG(커뮤니티 요약)와 LightRAG(이중 레벨 키워드)가 동일한 인제스천·인덱싱·캐싱·다국어·하이브리드 검색 인프라를 공유하고, **검색 알고리즘 레이어만 교체**됩니다.
-- **일반화 우선**: 하드코딩·정규표현식 휴리스틱·과적합을 지양합니다. 의미 판단은 LLM 또는 권위 데이터에 위임하고, 토큰 카운팅은 Bedrock `count_tokens` API를 사용하며, 임계값/가중치는 설정 기반입니다.
-- **헥사고날 경계**: 도메인/알고리즘 코드는 추상 포트에 의존하고, 구체 AWS 어댑터는 그 뒤에 둡니다.
-- **레지스트리 기반 확장**: 검색 전략·평가자·렌더러는 데코레이터 레지스트리로 등록되어, 디스패치 코드 수정 없이 확장됩니다.
+1. [Overview and Design Philosophy](#1-overview-and-design-philosophy)
+2. [Hexagonal Architecture (Ports & Adapters)](#2-hexagonal-architecture-ports--adapters)
+3. [Domain Model](#3-domain-model)
+4. [Ingestion Pipeline](#4-ingestion-pipeline)
+5. [Incremental Indexing](#5-incremental-indexing)
+6. [Retrieval: Two Methodologies](#6-retrieval-two-methodologies)
+7. [Hybrid Scoring and Token Management](#7-hybrid-scoring-and-token-management)
+8. [AWS Service Integration](#8-aws-service-integration)
+9. [Evaluation Framework](#9-evaluation-framework)
+10. [Visualization & Analytics](#10-visualization--analytics)
+11. [Prompts and Prompt Tuning](#11-prompts-and-prompt-tuning)
+12. [Configuration System](#12-configuration-system)
+13. [Testing Strategy](#13-testing-strategy)
+14. [CI/CD and Security](#14-cicd-and-security)
+15. [Extension Guide](#15-extension-guide)
 
 ---
 
-## 2. 헥사고날 아키텍처 (포트 & 어댑터)
+## 1. Overview and Design Philosophy
 
-### 2.0 의존성 규칙과 레이어 맵
+`unified-kg-rag-on-aws` is a library that reimplements the Microsoft GraphRAG paper on top of an AWS-native stack (Bedrock + Neptune + OpenSearch + S3 + DynamoDB). The core design principles are as follows.
 
-import는 **안쪽을 향합니다**(왼쪽이 오른쪽을 import, 역방향 금지). `shared/`는 어느 레이어나 쓸 수 있는 cross-cutting 커널입니다. 두 RAG 방법론(GraphRAG 커뮤니티 요약, LightRAG dual-level 키워드)은 하나의 인제스천/인덱싱/캐싱/하이브리드 검색 인프라를 공유하고 알고리즘 레이어에서만 갈립니다.
+- **Two methodologies, one infrastructure**: GraphRAG (community-summary) and LightRAG (dual-level keyword) share the same ingestion, indexing, caching, multilingual, and hybrid-search infrastructure, and **only the retrieval algorithm layer is swapped**.
+- **Generalization first**: We avoid hardcoding, regex heuristics, and overfitting. Semantic judgments are delegated to the LLM or to authoritative data, token counting uses the Bedrock `count_tokens` API, and thresholds/weights are config-driven.
+- **Hexagonal boundaries**: Domain/algorithm code depends on abstract ports, with concrete AWS adapters placed behind them.
+- **Registry-based extension**: Search strategies, evaluators, and renderers are registered via decorator registries, so they can be extended without modifying dispatch code.
 
-![헥사고날 아키텍처](../assets/hexagonal-architecture.png)
+---
+
+## 2. Hexagonal Architecture (Ports & Adapters)
+
+### 2.0 Dependency Rule and Layer Map
+
+Imports point **inward** (left imports right, never the reverse). `shared/` is a cross-cutting kernel any layer may use. The two RAG methodologies (GraphRAG community-summary, LightRAG dual-level keyword) share one ingestion/indexing/caching/hybrid-search infrastructure and diverge only at the algorithm layer.
+
+![Hexagonal Architecture](../assets/hexagonal-architecture.png)
 
 ```
 application  ──►  adapters  ──►  ports  ──►  domain
@@ -48,66 +48,68 @@ application  ──►  adapters  ──►  ports  ──►  domain
 
 ```
 unified_kg_rag/
-├─ domain/              # 기술 무관 코어 (boto3/LangChain/백엔드 import 없음)
-│  ├─ models/           #   Pydantic 도메인 모델
-│  ├─ ingestion/        #   순수 알고리즘: delta_detector, graph_analyzer/
+├─ domain/              # technology-agnostic core (no boto3/LangChain/backend imports)
+│  ├─ models/           #   Pydantic domain models
+│  ├─ ingestion/        #   pure algorithms: delta_detector, graph_analyzer/
 │  │  └─ merge/         #   builder/resolver, claim_resolver, merge/merger
-│                       #   (IncrementalIndexer는 오케스트레이션이라 application/)
+│                       #   (IncrementalIndexer is orchestration, so it lives in application/)
 │  ├─ retrieval/        #   strategy_registry, MetricsMixin
-│  └─ prompts/          #   버전 관리되는 프롬프트 템플릿
-├─ ports/               # 도메인이 의존하는 추상 인터페이스 (DocStatusPort,
+│  └─ prompts/          #   version-controlled prompt templates
+├─ ports/               # abstract interfaces the domain depends on (DocStatusPort,
 │                       #   BaseIndexer/GraphIndexer/VectorIndexer, CachePort,
-│                       #   ModelFactoryPort — ports/__init__이 포트 카탈로그)
-├─ adapters/            # 구체 기술 바인딩
-│  ├─ aws/              #   Bedrock, Neptune, OpenSearch, DynamoDB, S3 클라이언트
-│  ├─ storage/          #   Neptune/OpenSearch 인덱서 (쓰기측 포트 구현)
-│  ├─ retrievers/       #   Neptune/OpenSearch 리트리버
+│                       #   ModelFactoryPort — ports/__init__ is the port catalog)
+├─ adapters/            # concrete technology bindings
+│  ├─ aws/              #   Bedrock, Neptune, OpenSearch, DynamoDB, S3 clients
+│  ├─ storage/          #   Neptune/OpenSearch indexers (write-side port implementations)
+│  ├─ retrievers/       #   Neptune/OpenSearch retrievers
 │  ├─ search_strategies/#   simple/local/global/drift + lightrag(mix/hybrid/naive)
-│  ├─ retrieval/        #   추상 리트리버/전략 베이스, hybrid scorer, 토큰/메모리 매니저
-│  ├─ ingestion/        #   LLM/IO 결합: chunker, *_extractor, loader, parser,
+│  ├─ retrieval/        #   abstract retriever/strategy bases, hybrid scorer, token/memory managers
+│  ├─ ingestion/        #   LLM/IO coupled: chunker, *_extractor, loader, parser,
 │  │                    #   translator, gleaner, community_detector
-│  ├─ renderers/        #   그래프 시각화 렌더러
-│  └─ evaluators/       #   langchain/ragas 평가자 (순수 graph_aware_evaluator는
-│                       #   evaluation/ 파사드에 co-locate)
-├─ application/         # 오케스트레이션 + 엔트리포인트
+│  ├─ renderers/        #   graph visualization renderers
+│  └─ evaluators/       #   langchain/ragas evaluators (the pure graph_aware_evaluator is
+│                       #   co-located in the evaluation/ facade)
+├─ application/         # orchestration + entry points
 │  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning
 │  ├─ ingestion/        #   DataIngestionPipeline + pipeline_stages
-│  ├─ storage/          #   IndexingManager (인덱서 fan-out)
+│  ├─ storage/          #   IndexingManager (indexer fan-out)
 │  ├─ retrieval/        #   rag_chain (GraphRAGChain, RAGInput/Output)
-│  └─ prompts/          #   PromptTuner (LLM 기반 코퍼스 프로파일링)
-├─ shared/              # cross-cutting 커널 (config, logging, exceptions, metrics,
+│  └─ prompts/          #   PromptTuner (LLM-based corpus profiling)
+├─ shared/              # cross-cutting kernel (config, logging, exceptions, metrics,
 │                       #   cache/pipeline manager, utils)
-└─ (facades)            # 공개 import 경로 안정용 thin re-export shim:
-   retrieval/ storage/ ingestion/  (evaluation/·visualization/은 아래 주석 참고)
+└─ (facades)            # thin re-export shims to keep public import paths stable:
+   retrieval/ storage/ ingestion/  (evaluation/ and visualization/ — see note below)
 ```
 
-> 파사드 주석: `retrieval/`·`storage/`·`ingestion/`은 단일 `__init__` re-export
-> shim입니다. 반면 `evaluation/`·`visualization/`은 **실제 로직 패키지**입니다
-> (`evaluation/`은 `evaluation_manager`·`graph_aware_evaluator` 등을, `visualization/`은
-> 렌더 루프 + `embeddings/`·`exporters/`·`renderers/` 하위패키지를 보유). 헥사고날
-> 레이어 분리 전부터 이 위치에 있던 것으로, "전부 thin shim"은 아닙니다.
+> Facade note: `retrieval/`, `storage/`, and `ingestion/` are single `__init__`
+> re-export shims. `evaluation/` and `visualization/`, by contrast, are **real
+> logic packages** (`evaluation/` holds `evaluation_manager` /
+> `graph_aware_evaluator` / `base`; `visualization/` holds the render loop plus
+> the `embeddings/`, `exporters/`, and `renderers/` subpackages). They predate
+> the hexagonal layer split and live here for import-path stability — they are
+> not thin shims.
 
-### 2.1 포트(추상 인터페이스)
+### 2.1 Ports (Abstract Interfaces)
 
-| 포트 | 위치 | 어댑터 | 비고 |
+| Port | Location | Adapter | Notes |
 |---|---|---|---|
-| `DocStatusPort` | `ports/doc_status.py` | `adapters/aws/dynamodb.py` (`DynamoDBDocStatusStore`), 테스트용 `FakeDocStatusStore` | 증분 인덱싱 문서 상태/계보 영속 |
-| `CachePort` | `ports/cache.py` (`Protocol`) | `shared/cache_manager.py`(로컬) + `adapters/aws/s3_cache.py`(S3) | 스테이지 결과 영속 경계 |
-| `GraphIndexer` (쓰기측) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py` | full + delta(`upsert_*`/`delete_by_id`) 단일 계약 |
-| `VectorIndexer` (쓰기측) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` | 동일 |
-| `BaseGraphRAGRetriever` (읽기측) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch}_retriever.py` | 검색 어댑터 |
-| LLM/Embedding/Rerank 팩토리 | `adapters/aws/bedrock.py` | Bedrock 구현 | 향후 LLMPort 추출 대상(아래 §15) |
+| `DocStatusPort` | `ports/doc_status.py` | `adapters/aws/dynamodb.py` (`DynamoDBDocStatusStore`), `FakeDocStatusStore` for tests | Persists incremental-indexing document status/lineage |
+| `CachePort` | `ports/cache.py` (`Protocol`) | `shared/cache_manager.py` (local) + `adapters/aws/s3_cache.py` (S3) | Stage-result persistence boundary |
+| `GraphIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py` | Single contract for full + delta (`upsert_*`/`delete_by_id`) |
+| `VectorIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` | Same |
+| `BaseGraphRAGRetriever` (read-side) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch}_retriever.py` | Retrieval adapters |
+| LLM/Embedding/Rerank factories | `adapters/aws/bedrock.py` | Bedrock implementation | Conform to `ModelFactoryPort`; injected at the embedding/rerank construction points (default Bedrock) |
 
-> 설계 노트: 순수 포트(`DocStatusPort`, 쓰기측 indexer ABC)는 `ports/`에 모읍니다. 읽기측 추상 베이스(`BaseGraphRAGRetriever`/`BaseSearchStrategy`)는 `__init__`에서 인프라(HybridScorer/TokenManager)를 생성하는 "어댑터 베이스"라 `adapters/retrieval/base.py`에 두고 `ports/__init__`에서 발견용으로 re-export합니다(중복 Protocol 정의를 두지 않음).
+> Design note: Pure ports (`DocStatusPort`, the write-side indexer ABCs) are gathered in `ports/`. The read-side abstract bases (`BaseGraphRAGRetriever`/`BaseSearchStrategy`) are "adapter bases" that construct infrastructure (HybridScorer/TokenManager) in `__init__`, so they live in `adapters/retrieval/base.py` and are re-exported from `ports/__init__` for discovery (no duplicate Protocol definition is kept).
 
-### 2.2 역할 기반 검색 주입
+### 2.2 Role-Based Retriever Injection
 
-검색 전략은 **구체 백엔드 이름이 아니라 추상 역할**로 리트리버를 주입받습니다.
+Search strategies are injected with retrievers **by abstract role, not by concrete backend name**.
 
-- `RetrieverRole.GRAPH` → 그래프 순회/확장 (현재 Neptune)
-- `RetrieverRole.DOCUMENT` → 벡터/렉시컬 조회 (현재 OpenSearch)
+- `RetrieverRole.GRAPH` → graph traversal/expansion (currently Neptune)
+- `RetrieverRole.DOCUMENT` → vector/lexical lookup (currently OpenSearch)
 
-전략은 `self.graph_retriever` / `self.document_retriever`(베이스 클래스 프로퍼티)로만 접근하고, `rag_chain`의 역할→어댑터 빌더 맵이 실제 구현을 바인딩합니다. 따라서 그래프 백엔드를 교체해도 전략 코드는 수정하지 않습니다.
+Strategies access retrievers only via `self.graph_retriever` / `self.document_retriever` (base-class properties), and the role→adapter builder map in `rag_chain` binds the actual implementation. As a result, swapping the graph backend requires no changes to the strategy code.
 
 ```python
 # domain/retrieval/strategy_registry.py
@@ -115,256 +117,265 @@ unified_kg_rag/
 class LocalSearchStrategy(BaseSearchStrategy): ...
 ```
 
-### 2.3 레지스트리
+### 2.3 Registries
 
-- **검색 전략**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)`로 `SearchStrategy` enum에 클래스와 필요한 역할을 등록.
-- **평가자**: `EvaluationManager.EVALUATOR_MAPPING` — `EvaluatorType` → 평가자 클래스.
-- **렌더러**: `adapters/renderers/base.py` — `@register_renderer("name")`.
+- **Search strategies**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)` registers a class and its required roles against the `SearchStrategy` enum.
+- **Evaluators**: `EvaluationManager.EVALUATOR_MAPPING` — `EvaluatorType` → evaluator class.
+- **Renderers**: `adapters/renderers/base.py` — `@register_renderer("name")`.
 
-이 패턴은 기존의 `ParserFactory._loader_configs`(선언적 파서 등록)와 동일한 철학입니다.
+This pattern follows the same philosophy as the existing `ParserFactory._loader_configs` (declarative parser registration).
 
-> 쓰기(인덱싱) 경로 주석: 레지스트리는 **읽기/평가/렌더/파싱** 경로에 적용됩니다.
-> 쓰기 경로의 `IndexingManager`는 의도적으로 **Neptune + OpenSearch 두 백엔드를
-> 고정**으로 구성합니다(레지스트리 순회가 아님) — 이 두 스토어(그래프 DB + 벡터/
-> 렉시컬 검색)는 프레임워크의 본질적 구성이라 런타임 교체 대상이 아니기 때문입니다.
-> 따라서 새 검색 전략·평가자·렌더러는 레지스트리 등록만으로 추가되지만, 쓰기측
-> 스토어 백엔드 교체는 `GraphIndexer`/`VectorIndexer` 포트 구현 + `IndexingManager`
-> 수정을 수반합니다. (읽기 경로는 `RetrieverRole`→builder 맵으로 이미 일반화됨.)
+### 2.4 Dependency Rule Verification Status
 
-### 2.4 의존성 규칙 검증 상태
+Verified with grep: `domain/` does not import `adapters`/`application` at runtime, and neither does `ports/`. One compile-time-only exception remains — `domain/retrieval/strategy_registry.py` references `adapters.retrieval.base.BaseSearchStrategy` under `TYPE_CHECKING` (because the registry stores strategy subclasses). Extracting pure strategy/retriever ports would also remove this type-level reference; it is left in place as a deliberate boundary (see "Deliberate Design Boundaries" at the end of this document).
 
-grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import하지 않고, `ports/`도 그렇습니다. 컴파일 타임 한정 예외 하나가 남아 있습니다 — `domain/retrieval/strategy_registry.py`가 `TYPE_CHECKING` 하에서 `adapters.retrieval.base.BaseSearchStrategy`를 참조합니다(레지스트리가 전략 서브클래스를 저장하므로). 순수 전략/리트리버 포트를 추출하면 이 타입 수준 참조도 제거되며, §15의 향후 작업으로 추적합니다.
-
-레거시 최상위 패키지 중 `retrieval/`·`storage/`·`ingestion/`은 레이어 분리 후에도 공개 import 경로/API를 안정적으로 유지하기 위한 thin 파사드 `__init__` 모듈로 의도적으로 보존됩니다(`evaluation/`·`visualization/`은 §2 주석대로 thin shim이 아니라 실제 로직 패키지입니다).
+The legacy top-level packages `retrieval/`, `storage/`, and `ingestion/` are intentionally preserved as thin facade `__init__` modules so that public import paths/APIs remain stable after the layer split. `evaluation/` and `visualization/` are *not* facades — they are real logic packages that predate the split (see the facade note in §2).
 
 ---
 
-## 3. 도메인 모델
+## 3. Domain Model
 
-`domain/models/` 패키지는 인프라 의존이 없는 순수 Pydantic 모델입니다.
+The `domain/models/` package contains pure Pydantic models with no infrastructure dependencies.
 
-- `Entity`(`name`, `description`, `type`, `text_unit_ids`, `community_ids`, `rank`, `frequency`, `confidence`, 임베딩 필드)
-- `Relationship`(`source_id`/`target_id`, `description`, `weight`, `text_unit_ids`, `description_embedding`)
-- `Community` / `CommunityReport`, `TextUnit`, `Covariate`(claim)
-- `DocStatus`(상태 머신: PENDING→PARSING→PROCESSING→PROCESSED|FAILED), `DocStatusRecord`(콘텐츠 해시 + 아티팩트 계보 + suffix), `DocumentDelta`(new/changed/unchanged/deleted), `DocumentLineage`(문서별 아티팩트 귀속)
+- `Entity` (`name`, `description`, `type`, `text_unit_ids`, `community_ids`, `rank`, `frequency`, `confidence`, embedding fields)
+- `Relationship` (`source_id`/`target_id`, `description`, `weight`, `text_unit_ids`, `description_embedding`)
+- `Community` / `CommunityReport`, `TextUnit`, `Covariate` (claim)
+- `DocStatus` (state machine: PENDING→PARSING→PROCESSING→PROCESSED|FAILED), `DocStatusRecord` (content hash + artifact lineage + suffix), `DocumentDelta` (new/changed/unchanged/deleted), `DocumentLineage` (per-document artifact attribution)
 - `SearchQuery`/`SearchResult`/`RetrievalResult`, `SearchStrategy`/`SearchType`/`RetrieverRole`
 
-**계보(lineage)가 핵심 데이터**입니다. 엔티티/관계는 추출 시 자신이 등장한 `text_unit_ids`를 기록하며, 이 권위 데이터가 (구) 토큰 중첩 휴리스틱을 대체하여 "이 엔티티가 이 텍스트 단위와 관련 있는가?"를 정확하고 언어 무관하게 판정합니다.
+**Lineage is the core data.** Entities/relationships record the `text_unit_ids` they appeared in at extraction time, and this authoritative data replaces the (old) token-overlap heuristic, judging "is this entity related to this text unit?" accurately and language-independently.
 
-**엔티티 ID와 다국어**: 엔티티/관계 ID는 정규화된 이름의 해시입니다. `normalize_name`(`shared/utils/common.py`)은 NFKC + casefold 후 **모든 스크립트의 문자/숫자를 보존**(`\w`, `re.UNICODE`)하고 구두점만 제거합니다. 따라서 한국어·CJK·악센트 이름도 고유 ID를 가집니다(ASCII 전용 정규화는 비라틴 이름을 빈 문자열로 만들어 그래프를 붕괴시킵니다). 비어 있지 않은 입력은 절대 빈 ID로 collapse되지 않습니다.
+**Entity IDs and multilingual support**: Entity/relationship IDs are hashes of the normalized name. `normalize_name` (`shared/utils/common.py`) applies NFKC + casefold, then **preserves letters/digits of all scripts** (`\w`, `re.UNICODE`) and removes only punctuation. As a result, Korean, CJK, and accented names also get unique IDs (ASCII-only normalization would collapse non-Latin names to empty strings, collapsing the graph). Non-empty input is never collapsed to an empty ID.
 
 ---
 
-## 4. 인제스천 파이프라인
+## 4. Ingestion Pipeline
 
-`application/ingestion/pipeline.py`의 `DataIngestionPipeline`이 12개 스테이지를 순서대로 실행합니다(`application/ingestion/pipeline_stages.py`).
+The `DataIngestionPipeline` in `application/ingestion/pipeline.py` runs 12 stages in order (`application/ingestion/pipeline_stages.py`).
 
-![인제스천 파이프라인](../assets/ingestion_pipeline.png)
+![Ingestion Pipeline](../assets/ingestion_pipeline.png)
 
-| # | 스테이지 | 모듈 | 비고 |
+| # | Stage | Module | Notes |
 |---|---|---|---|
-| 1 | 문서 파싱 | `parser.py` (`ParserFactory`) | PDF/TXT/CSV/JSON 기본 (+MD/HTML은 옵션 `unstructured` extra) |
-| 2 | 문서 로딩 | `loader.py` (`DirectoryLoader`) | MinHash 중복 제거 |
-| 3 | 청킹 | `chunker.py` (`ChunkerFactory`) | simple / intelligent(LLM 시맨틱) |
-| 4 | 번역 (선택) | `translator.py` | 다국어 → 대상 언어 |
-| 5 | 그래프 추출 | `graph_extractor.py` | LLM 엔티티/관계 추출 |
-| 6 | Gleaning (선택) | `gleaner.py` | 반복 정제(수렴/품질 임계값은 설정) |
-| 7 | 그래프 해석 | `graph_resolver.py` + `description_summarizer.py` | 퍼지 매칭 병합, `text_unit_ids` union, **병합 설명 LLM 재요약** |
-| 8 | Claim 추출 (선택) | `claim_extractor.py` | 사실 주장(covariate) |
-| 9 | Claim 해석 (선택) | `claim_resolver.py` | |
-| 10 | 그래프 분석 | `graph_analyzer.py` | 중심성(degree/betweenness/PageRank/eigenvector), 통계 |
-| 11 | 커뮤니티 탐지 | `community_detector.py` | 계층적 Leiden, 커뮤니티 리포트 생성(degree-sort + 토큰 예산 팩) |
-| 12 | 인덱싱 | `application/storage/indexing_manager.py` | OpenSearch + Neptune |
+| 1 | Document parsing | `parser.py` (`ParserFactory`) | PDF/TXT/CSV/JSON out of the box (+MD/HTML via the optional `unstructured` extra) |
+| 2 | Document loading | `loader.py` (`DirectoryLoader`) | MinHash deduplication |
+| 3 | Chunking | `chunker.py` (`ChunkerFactory`) | simple / intelligent (LLM semantic) |
+| 4 | Translation (optional) | `translator.py` | multilingual → target language |
+| 5 | Graph extraction | `graph_extractor.py` | LLM entity/relationship extraction |
+| 6 | Gleaning (optional) | `gleaner.py` | iterative refinement (convergence/quality thresholds are config) |
+| 7 | Graph resolution | `graph_resolver.py` + `description_summarizer.py` | fuzzy-matching merge, `text_unit_ids` union, **LLM re-summarization of merged descriptions** |
+| 8 | Claim extraction (optional) | `claim_extractor.py` | factual assertions (covariate) |
+| 9 | Claim resolution (optional) | `claim_resolver.py` | |
+| 10 | Graph analysis | `graph_analyzer.py` | centrality (degree/betweenness/PageRank/eigenvector), statistics |
+| 11 | Community detection | `community_detector.py` | hierarchical Leiden, community report generation (degree-sort + token-budget pack) |
+| 12 | Indexing | `application/storage/indexing_manager.py` | OpenSearch + Neptune |
 
-> 스테이지 순서는 `DataIngestionPipeline.STAGE_CLASSES`(`pipeline.py:62`)가 단일 진실 소스입니다. Bedrock가 필요한 스테이지는 `BOTO_REQUIRED_STAGES`로 선언되며, 설명 재요약이 추가되면서 **그래프 해석(7)도 이 집합에 포함**됩니다.
+> The stage order is single-sourced in `DataIngestionPipeline.STAGE_CLASSES` (`pipeline.py:62`). Stages that require Bedrock are declared in `BOTO_REQUIRED_STAGES`; with the addition of description re-summarization, **graph resolution (7) is now also included in this set**.
 
-**병합 설명 재요약(stage 7)**: 그래프 해석은 동일 엔티티/관계의 설명을 단순 연결(concatenation)로 병합하므로, 많은 청크에 등장하는 인기 엔티티의 설명이 무한정 길어집니다. `DescriptionSummarizer`(`GraphResolutionStage`에서 실행)는 토큰 예산을 초과한 설명만 저렴한 LLM으로 하나의 일관된 설명으로 재요약합니다(MS GraphRAG `summarize_descriptions` / LightRAG `_handle_entity_relation_summary` 패리티, `DescriptionSummarizationConfig`로 제어). 임베딩/프롬프트 비대화를 막는 것이 목적입니다.
+**Merged-description re-summarization (stage 7)**: Graph resolution merges descriptions of the same entity/relationship by simple concatenation, so the description of a popular entity that appears in many chunks grows without bound. `DescriptionSummarizer` (run in `GraphResolutionStage`) re-summarizes only descriptions that exceed a token budget into a single coherent description using a cheap LLM (parity with MS GraphRAG `summarize_descriptions` / LightRAG `_handle_entity_relation_summary`, controlled by `DescriptionSummarizationConfig`). The goal is to prevent embedding/prompt bloat.
 
-**커뮤니티 리포트 컨텍스트 팩(stage 11)**: 리포트 생성 입력은 커뮤니티 내 엔티티를 **그래프 degree 내림차순으로 정렬**(동점은 안정적 id 정렬)한 뒤 `max_entities_per_report`로 캡하고, `max_report_context_tokens` 토큰 예산에 맞춰 팩합니다(관계는 양 끝점 degree 합·가중치 tiebreak로 동일하게 정렬·팩). 최상위 degree 엔티티는 단독으로 예산을 초과해도 항상 1개는 포함되어 리포트가 빈 컨텍스트로 남지 않습니다(`community_detector.py:651-720`).
+**Community report context pack (stage 11)**: The report-generation input **sorts entities within a community by graph degree in descending order** (ties broken by stable id sort), caps them at `max_entities_per_report`, and packs them to fit the `max_report_context_tokens` token budget (relationships are sorted/packed identically by the sum of both endpoints' degree, with weight as the tiebreak). The top-degree entity is always included (at least one) even if it alone exceeds the budget, so a report never ends up with empty context (`community_detector.py:651-720`).
 
-**파이프라인 인프라**: 스테이지 체크포인트 기반 재개(`shared/pipeline_manager.py`), S3 캐시 동기화(`adapters/aws/s3_cache.py`), `continue_on_error` 토글, 스테이지별 캐시(`shared/cache_manager.py`). 번역 스테이지는 `TranslationConfig.is_noop`(source==target & 추가 언어 없음)이면 비용 없이 스킵합니다. LLM 출력 파싱은 `FixingConfig` 기반 output-fixing 파서를 일관되게 사용합니다. 파이프라인은 `close()`로 인덱서/클라이언트 자원을 해제하며, `run-ingestion` CLI가 `finally`에서 호출합니다(§8.6).
+**Pipeline infrastructure**: Stage-checkpoint-based resumption (`shared/pipeline_manager.py`), S3 cache sync (`adapters/aws/s3_cache.py`), a `continue_on_error` toggle, per-stage caching (`shared/cache_manager.py`). The translation stage is skipped at no cost when `TranslationConfig.is_noop` (source == target & no additional languages). LLM output parsing consistently uses a `FixingConfig`-based output-fixing parser. The pipeline releases indexer/client resources via `close()`, which the `run-ingestion` CLI calls in `finally` (§8.6).
 
-**일반화 적용 사례**:
-- 관련성 게이트(claim/gleaning에서 어떤 엔티티를 프롬프트에 넣을지)는 토큰-Jaccard 정규표현식 휴리스틱이 아니라 `text_unit_ids` 계보 멤버십으로 판정 → 정확·언어 무관.
-- gleaning 품질/수렴 공식의 스케일 상수(엔티티 50, 관계 100, completeness 가중치 0.6, 변화 스케일 20)는 모두 `GleaningConfig`로 노출.
-
----
-
-## 5. 증분 인덱싱
-
-문서 추가/변경/삭제 시 전체 재인덱싱 대신 델타만 처리합니다.
-
-1. **델타 감지** (`domain/ingestion/delta_detector.py`): 경로 정규화 기반 안정적 `doc_id` + 콘텐츠 SHA-256 해시로 `{doc_id: content_hash}`를 만들고, `DocStatusPort.diff()`가 new/changed/unchanged/deleted로 분류.
-2. **stale 정리** (`IncrementalIndexer.prune_changed`): 변경 문서의 기존 아티팩트 중 *공유되지 않은* 것을 먼저 제거(재추출 후 사라진 엔티티가 그래프에 잔존하지 않도록).
-3. **델타 upsert** (`IndexingManager.index_delta`): Neptune은 Gremlin `coalesce(unfold, addV)` 멱등 upsert, OpenSearch는 live alias 인덱스에 id 기준 upsert. 관계 벡터 인덱스도 동일하게 갱신.
-4. **삭제 전파** (`remove_deleted`): 삭제 문서의 *독점* 아티팩트만 `delete_by_id`로 제거(공유 엔티티 보존). 텍스트 단위·엔티티·관계 인덱스 모두 대상.
-5. **레지스트리 갱신**: 처리한 문서를 `DocumentLineage`(문서별 아티팩트 id + suffix)로 `DocStatusRecord`에 기록.
-
-**병합 의미론**(`domain/ingestion/merge/merger.py`, MS GraphRAG `update/*` 이식): 엔티티는 정규화된 이름 기준 병합(설명 결합, `text_unit_ids` union, `frequency` 재계산, 기존 id 보존+remap), 관계는 (source,target) 기준 병합(weight 평균), 커뮤니티는 id-offset append.
-
-활성화: `config.aws.dynamodb.enabled = true`.
+**Generalization in practice**:
+- The relevance gate (which entities to include in the prompt for claim/gleaning) is decided by `text_unit_ids` lineage membership rather than a token-Jaccard regex heuristic → accurate and language-independent.
+- The scale constants in the gleaning quality/convergence formula (entities 50, relationships 100, completeness weight 0.6, change scale 20) are all exposed via `GleaningConfig`.
 
 ---
 
-## 6. 검색: 두 방법론
+## 5. Incremental Indexing
 
-`application/retrieval/rag_chain.py`의 `GraphRAGChain`(LCEL Runnable)이 전략 해석 → 질의 처리(번역·엔티티/키워드 추출) → 메모리 → 검색 → (RAG) 컨텍스트 빌드+답변 생성을 수행합니다. `RAGInput.search_strategy`로 방법론을 선택합니다.
+When documents are added/changed/deleted, only the delta is processed instead of a full re-index.
 
-![검색 파이프라인](../assets/retrieval_pipeline.png)
+1. **Delta detection** (`domain/ingestion/delta_detector.py`): Builds `{doc_id: content_hash}` from a stable `doc_id` (based on path normalization) + content SHA-256 hash, and `DocStatusPort.diff()` classifies them as new/changed/unchanged/deleted.
+2. **Stale cleanup** (`IncrementalIndexer.prune_changed`): For changed documents, first removes existing artifacts that are *not shared* (so entities that disappear after re-extraction do not linger in the graph).
+3. **Delta upsert** (`IndexingManager.index_delta`): Neptune uses a Gremlin `coalesce(unfold, addV)` idempotent upsert; OpenSearch upserts by id into the live alias index. The relationship vector index is updated the same way.
+4. **Deletion propagation** (`remove_deleted`): Removes only the *exclusive* artifacts of deleted documents via `delete_by_id` (preserving shared entities). Targets the text-unit, entity, and relationship indices alike.
+5. **Registry update**: Records processed documents into `DocStatusRecord` as `DocumentLineage` (per-document artifact ids + suffix).
 
-### 6.1 GraphRAG 방법론 (`adapters/search_strategies/`)
+**Merge semantics** (`domain/ingestion/merge/merger.py`, ported from MS GraphRAG `update/*`): Entities merge by normalized name (concatenating descriptions, union of `text_unit_ids`, recomputing `frequency`, preserving existing ids + remap); relationships merge by (source, target) (averaging weight); communities append by id-offset.
 
-- **simple**: OpenSearch 전용 벡터/렉시컬, 그래프 없음. claim 추출이 켜져 있으면 claims 인덱스도 자동 sweep 대상이고, 꺼져 있으면 `_apply_claim_gate`가 claims 인덱스를 명시적으로 제외해 claims-off 실행이 그 인덱스를 절대 조회하지 않습니다.
-- **local**: 엔티티 중심 — 후보 엔티티 → Neptune 그래프 확장 → 빈도 필터 → 텍스트 단위 결합. claim 추출이 켜져 있으면 MS GraphRAG처럼 **claims(covariate)를 컨텍스트에 주입**합니다(`_retrieve_claims`가 claims 인덱스를 별도 조회해 `all_results["claims"]`로 추가, `SectionType.CLAIM` 우선순위로 토큰 예산에 편입). claims-off 기본 경로는 추가 조회를 일절 하지 않습니다.
-- **global**: 커뮤니티 리포트 검색 → 커뮤니티 노드 확장 → LLM 동적 관련성 선택 → **map-reduce 합성**(아래 §6.1.1).
-- **drift**: 반복적 질의 진화(커뮤니티 시드 → LLM 질의 재정의/키워드 확장 → 수렴 판정).
-- **auto**: `StrategySelectionPrompt`로 위 전략 중 LLM 라우팅.
+Enable with: `config.aws.dynamodb.enabled = true`.
+
+---
+
+## 6. Retrieval: Two Methodologies
+
+The `GraphRAGChain` (an LCEL Runnable) in `application/retrieval/rag_chain.py` performs strategy resolution → query processing (translation, entity/keyword extraction) → memory → retrieval → (RAG) context build + answer generation. The methodology is selected via `RAGInput.search_strategy`.
+
+![Retrieval Pipeline](../assets/retrieval_pipeline.png)
+
+### 6.1 GraphRAG Methodology (`adapters/search_strategies/`)
+
+- **simple**: OpenSearch-only vector/lexical, no graph. If claim extraction is enabled, the claims index is also automatically swept; if disabled, `_apply_claim_gate` explicitly excludes the claims index so a claims-off run never queries that index.
+- **local**: Entity-centric — candidate entities → Neptune graph expansion → frequency filter → text-unit combination. If claim extraction is enabled, it **injects claims (covariates) into the context** like MS GraphRAG (`_retrieve_claims` queries the claims index separately and adds them as `all_results["claims"]`, folded into the token budget at `SectionType.CLAIM` priority). The default claims-off path performs no additional lookups at all.
+- **global**: Community report search → community node expansion → LLM dynamic relevance selection → **map-reduce synthesis** (see §6.1.1 below).
+- **drift**: Iterative query evolution (community seeding → LLM query refinement/keyword expansion → convergence detection).
+- **auto**: LLM routing among the above strategies via `StrategySelectionPrompt`.
 
 #### 6.1.1 Global search map-reduce (`global_search.py`)
 
-`enable_map_reduce`이고 결과가 `map_reduce_min_results` 이상일 때, MS GraphRAG의 정식 map-reduce를 따릅니다(이전의 단순 concat-reduce를 대체).
+When `enable_map_reduce` is set and results are at least `map_reduce_min_results`, it follows MS GraphRAG's canonical map-reduce (replacing the earlier simple concat-reduce).
 
-1. **MAP** — 커뮤니티 리포트를 `map_batch_size`개씩 배치로 묶어, 각 배치마다 `GlobalMapPrompt`로 LLM에게 핵심 포인트(key point)를 추출하고 질의 관련성을 **0-100**으로 채점시킵니다. 배치는 `BatchProcessor`로 동시 실행되며 항목별 graceful fallback이 있습니다.
-2. **FILTER+RANK** — `map_relevance_threshold` 이하 포인트를 버리고 점수 내림차순 정렬(`_filter_and_rank_points`).
-3. **PACK** — `max_map_reduce_tokens` 토큰 예산까지 상위 포인트를 팩(`token_manager.count_tokens` 기준, `_pack_points_within_budget`).
-4. **REDUCE** — 팩된 포인트(relevance 주석 포함)를 `MapReduceSummaryPrompt`로 최종 답변 합성(`_reduce_from_points`). 결과는 `synthesized_summary` `RetrievalResult`로 결과 앞에 추가.
+1. **MAP** — Community reports are batched in groups of `map_batch_size`, and for each batch `GlobalMapPrompt` asks the LLM to extract key points and score query relevance from **0-100**. Batches are run concurrently via `BatchProcessor`, with per-item graceful fallback.
+2. **FILTER+RANK** — Drops points at or below `map_relevance_threshold` and sorts by score in descending order (`_filter_and_rank_points`).
+3. **PACK** — Packs the top points up to the `max_map_reduce_tokens` token budget (based on `token_manager.count_tokens`, `_pack_points_within_budget`).
+4. **REDUCE** — Synthesizes the final answer from the packed points (with relevance annotations) via `MapReduceSummaryPrompt` (`_reduce_from_points`). The result is prepended to the results as a `synthesized_summary` `RetrievalResult`.
 
-견고성: map 응답이 코드펜스/산문에 싸여 와도 `_parse_map_points`가 JSON을 추출하고, 단일 배치 파싱 실패는 무시합니다. map 단계가 유용한 포인트를 전혀 못 내거나 임계값에 전부 걸러지면 레거시 `_concat_reduce`로 graceful degrade해 global search가 hard-fail하지 않습니다.
+Robustness: Even if the map response comes wrapped in code fences or prose, `_parse_map_points` extracts the JSON, and a single batch's parse failure is ignored. If the map stage produces no useful points at all or everything is filtered out by the threshold, it gracefully degrades to the legacy `_concat_reduce` so global search does not hard-fail.
 
-### 6.2 LightRAG 방법론 (`lightrag_search.py`)
+### 6.2 LightRAG Methodology (`lightrag_search.py`)
 
-이중 레벨 키워드(`KeywordsExtractionPrompt`로 hl/ll 추출)를 공유 하이브리드 인프라 위에서 실행합니다.
+Runs dual-level keyword retrieval (hl/ll extraction via `KeywordsExtractionPrompt`) on top of the shared hybrid infrastructure.
 
-모드(`RAGInput.search_strategy`):
-- **naive** — 그래프 없이 벡터 청크 검색만.
-- **hybrid** — ll→엔티티 인덱스 + hl→관계 인덱스 + Neptune 그래프 확장.
-- **mix** — hybrid 그래프 검색에 naive 청크 검색을 추가 블렌딩.
+Modes (`RAGInput.search_strategy`):
+- **naive** — vector chunk retrieval only, no graph.
+- **hybrid** — ll → entity index + hl → relationship index + Neptune graph expansion.
+- **mix** — hybrid graph search with naive chunk retrieval additionally blended in.
 
-소스별 동작:
-- **저수준 키워드(ll)** → 엔티티 인덱스(렉시컬+시맨틱, `entities_index_prefix`)
-- **고수준 키워드(hl)** → **관계 인덱스**(LightRAG의 `relationships_vdb`에 해당. `relationships_index_prefix`, `Relationship.description` 임베딩)
-- 엔티티 히트는 Neptune(=GRAPH 역할)으로 확장
-- 키워드 추출 결과가 비면 짧은 질의는 원 질의를 ll 키워드로 폴백(설정 `search.lightrag_search.raw_query_fallback_max_len`)
-- 모든 소스는 공유 `HybridScorer`로 융합
+Per-source behavior:
+- **Low-level keywords (ll)** → entity index (lexical + semantic, `entities_index_prefix`)
+- **High-level keywords (hl)** → **relationship index** (corresponds to LightRAG's `relationships_vdb`; `relationships_index_prefix`, `Relationship.description` embedding)
+- Entity hits are expanded via Neptune (= GRAPH role)
+- If keyword extraction yields nothing, short queries fall back to using the raw query as ll keywords (config `search.lightrag_search.raw_query_fallback_max_len`)
+- All sources are fused through the shared `HybridScorer`
 
-> 두 방법론은 동일 인제스천 산출물(엔티티/관계/커뮤니티/청크 + 임베딩)을 공유하고 검색 레이어에서만 분기합니다.
-
----
-
-## 7. 하이브리드 스코어링과 토큰 관리
-
-- **HybridScorer** (`adapters/retrieval/hybrid_scorer.py`): 소스별 결과를 RRF(`rrf_k`) 또는 가중 융합, 다양성 필터링(`diversity_lambda`), Bedrock 리랭킹으로 결합. 가중치·방법은 `config.search.fusion`/`hybrid`. 리랭킹은 `search.reranking.enabled`일 때만 활성화되며, `compress_documents`로 `top_n`을 문서 수에 맞춰 일시 조정 후 복원합니다. 초기화 실패 시 리랭커는 비활성(`None`)으로 degrade.
-  - **IAM 주의**: Bedrock Rerank는 `bedrock:Rerank` 권한을 **`Resource:*`**로 요구합니다(실 AWS E2E에서 발견 — 모델 ARN로 좁히면 AccessDenied). IaC에 전용 statement로 분리합니다.
-- **TokenManager** (`adapters/retrieval/token_manager.py`): 모델 한도 내 컨텍스트 최적화. 섹션 타입별 우선순위 배수로 가중(`PRIORITY_MULTIPLIERS`: TEXT 1.3 / ENTITY 1.2 / RELATIONSHIP 1.1 / CLAIM 1.1 / COMMUNITY 1.0 / GENERAL 0.8), 우선순위 내림차순으로 예산 내 섹션을 선택. `SectionType.CLAIM`은 query-time claims 주입(§6.1)을 토큰 예산에 편입하기 위한 타입입니다.
-- **토큰 카운팅** (`adapters/aws/token_counter.py`): Bedrock `count_tokens` API가 단일 진실 소스. 실패 시에만 공백 단어 수로 degrade(서드파티 토크나이저 미사용). 절단은 char 비율로 후보를 잡고 API로 검증하는 수렴 루프.
+> The two methodologies share the same ingestion outputs (entities/relationships/communities/chunks + embeddings) and branch only at the retrieval layer.
 
 ---
 
-## 8. AWS 서비스 통합
+## 7. Hybrid Scoring and Token Management
 
-| 서비스 | 모듈 | 용도 |
+- **HybridScorer** (`adapters/retrieval/hybrid_scorer.py`): Combines per-source results via RRF (`rrf_k`) or weighted fusion, diversity filtering (`diversity_lambda`), and Bedrock reranking. Weights/method come from `config.search.fusion`/`hybrid`. Reranking is only active when `search.reranking.enabled`, and `compress_documents` temporarily adjusts `top_n` to the document count before restoring it. On initialization failure, the reranker degrades to disabled (`None`).
+  - **IAM caveat**: Bedrock Rerank requires the `bedrock:Rerank` permission on **`Resource:*`** (discovered in real-AWS E2E — narrowing it to the model ARN yields AccessDenied). Isolate it as a dedicated statement in IaC.
+- **TokenManager** (`adapters/retrieval/token_manager.py`): Optimizes context within model limits. Weights by per-section-type priority multiplier (`PRIORITY_MULTIPLIERS`: TEXT 1.3 / ENTITY 1.2 / RELATIONSHIP 1.1 / CLAIM 1.1 / COMMUNITY 1.0 / GENERAL 0.8) and selects sections within budget in descending priority order. `SectionType.CLAIM` is the type used to fold query-time claims injection (§6.1) into the token budget.
+- **Token counting** (`adapters/aws/token_counter.py`): The Bedrock `count_tokens` API is the single source of truth. It degrades to a whitespace word count only on failure (no third-party tokenizer). Truncation uses a convergence loop that estimates candidates by char ratio and validates them via the API.
+
+---
+
+## 8. AWS Service Integration
+
+| Service | Module | Purpose |
 |---|---|---|
-| **Bedrock** | `adapters/aws/bedrock.py` | LLM/임베딩/리랭킹. cross-region inference profile 자동 해석, thinking 모드, 1M 컨텍스트, prompt 캐싱, capability 테이블 |
-| **Neptune** | `adapters/aws/neptune.py` | Gremlin over `wss://`, SigV4 IAM, 배치 upsert/삭제. 쓰기 배치는 `indexing.neptune.index_concurrency`>1이면 스레드 풀로 동시 제출(배치별 독립 `IndexingStats` → 메인 스레드 병합, 공유 변경 없음), `aws.neptune.pool_size`로 Gremlin 커넥션 풀 다중화. 기본 1=순차 |
-| **OpenSearch** | `adapters/aws/opensearch.py` | 벡터(kNN/HNSW, 기본 엔진 **faiss** — nmslib는 deprecated) + BM25, async SigV4, sync/async 클라이언트, hybrid search pipeline, alias 관리, bulk upsert/delete, 언어별 분석기(en→english, ko→nori 등) |
-| **S3** | `adapters/aws/s3_cache.py` | 파이프라인 캐시 동기화(AES256/KMS 암호화) |
-| **DynamoDB** | `adapters/aws/dynamodb.py` | 증분 인덱싱 문서-상태 레지스트리 |
+| **Bedrock** | `adapters/aws/bedrock.py` | LLM/embedding/reranking. Automatic cross-region inference profile resolution, thinking mode, 1M context, prompt caching, capability table |
+| **Neptune** | `adapters/aws/neptune.py` | Gremlin over `wss://`, SigV4 IAM, batch upsert/delete. Write batches submit concurrently via a thread pool when `indexing.neptune.index_concurrency` > 1 (per-batch independent `IndexingStats` → merged on the main thread, no shared mutation), with `aws.neptune.pool_size` multiplexing the Gremlin connection pool. Default 1 = sequential |
+| **OpenSearch** | `adapters/aws/opensearch.py` | Vector (kNN/HNSW, default engine **faiss** — nmslib is deprecated) + BM25, async SigV4, sync/async clients, hybrid search pipeline, alias management, bulk upsert/delete, per-language analyzers (en→english, ko→nori, etc.) |
+| **S3** | `adapters/aws/s3_cache.py` | Pipeline cache sync (AES256/KMS encryption) |
+| **DynamoDB** | `adapters/aws/dynamodb.py` | Incremental-indexing document-status registry |
 
-모든 어댑터는 `boto_session`을 주입받을 수 있어(기본은 `config.aws.profile_name`으로 생성) 테스트 시 fake/moto 세션을 주입할 수 있습니다.
+All adapters can be injected with a `boto_session` (by default created from `config.aws.profile_name`), so a fake/moto session can be injected during testing.
 
-### 8.5 검색 오류 가시성
+### 8.5 Retrieval Error Visibility
 
-리트리버(`opensearch_retriever`/`neptune_retriever`)는 인증/설정/연결 실패를 더 이상 조용히 "결과 없음"으로 둔갑시키지 않습니다. `is_fatal_retrieval_error()`(`adapters/retrieval/base.py:46`)가 치명적 오류는 `exc_info`와 함께 재발생시키고, 일시적(transient) 오류일 때만 `[]`로 degrade합니다. 따라서 잘못된 IAM 권한이나 엔드포인트 오타가 "0건 검색"으로 묻히지 않습니다.
+The retrievers (`opensearch_retriever`/`neptune_retriever`) no longer silently disguise authentication/configuration/connection failures as "no results." `is_fatal_retrieval_error()` (`adapters/retrieval/base.py:46`) re-raises fatal errors with `exc_info`, and degrades to `[]` only for transient errors. As a result, an incorrect IAM permission or an endpoint typo is not buried as "0 search hits."
 
-### 8.6 클라이언트 수명주기 / 자원 해제
+### 8.6 Client Lifecycle / Resource Release
 
-각 리트리버 빌드는 Neptune 웹소켓 + 스레드 풀, OpenSearch (a)sync HTTP 풀을 엽니다. 이 자원들은 명시적으로 닫지 않으면 GC까지 누수됩니다. 그래서 전 계층이 best-effort `close()`/`aclose()`를 노출합니다(절대 raise하지 않음):
+Each retriever build opens a Neptune WebSocket + thread pool and OpenSearch (a)sync HTTP pools. These resources leak until GC unless explicitly closed. Therefore every layer exposes best-effort `close()`/`aclose()` (never raising):
 
-- **OpenSearchClient**: `close()`/`aclose()` + sync/async 컨텍스트 매니저(NeptuneClient 미러링). 이벤트 루프가 바뀌면 이전 `AsyncOpenSearch`를 즉시 폐기(best-effort connector close)해 루프당 aiohttp 풀이 누수되지 않게 합니다. `aclose()`는 transport close를 await해 "Unclosed client session" 경고를 방지.
-- **NeptuneClient**: Gremlin 커넥션 풀 종료.
-- **체인 배선**: 리트리버/인덱서 → `IndexingManager.close()` / `GraphRAGChain.close()`·`aclose()`(캐시된 리트리버 순회)로 위임. `run-rag` CLI는 `finally`에서 `await rag_chain.aclose()`, `run-ingestion` CLI는 `finally`에서 `pipeline.close()`를 호출해 프로세스 종료 시 소켓을 해제합니다.
+- **OpenSearchClient**: `close()`/`aclose()` + sync/async context managers (mirroring NeptuneClient). When the event loop changes, the previous `AsyncOpenSearch` is discarded immediately (best-effort connector close) so per-loop aiohttp pools do not leak. `aclose()` awaits the transport close to prevent the "Unclosed client session" warning.
+- **NeptuneClient**: Closes the Gremlin connection pool.
+- **Chain wiring**: Retrievers/indexers delegate up to `IndexingManager.close()` / `GraphRAGChain.close()`·`aclose()` (iterating the cached retrievers). The `run-rag` CLI calls `await rag_chain.aclose()` in `finally`, and the `run-ingestion` CLI calls `pipeline.close()` in `finally`, releasing sockets at process exit.
 
-### 8.7 다국어 처리
+### 8.7 Multilingual Processing
 
-- **OpenSearch 분석기**: 언어→분석기 매핑은 설정(`indexing.opensearch.language_analyzers`, 기본 `{"en": "english", "ko": "nori"}`)으로 노출되어 코드 변경 없이 확장합니다. nori(한국어 형태소 분석기)는 OpenSearch Service에 내장. 매핑이 없는 언어는 `default_analyzer`로 폴백.
-- **엔티티 ID 정규화**: `normalize_name`(`shared/utils/common.py`)은 NFKC + casefold 후 모든 스크립트의 문자/숫자를 보존(`\w`, `re.UNICODE`)하고 구두점만 제거 → 한국어·CJK·악센트 이름도 고유 ID(§3). 비어 있지 않은 입력이 빈 ID로 collapse되지 않습니다.
-- **번역 스킵**: `TranslationConfig.is_noop`(source_language == target_language이고 추가 대상 언어 없음)이면 번역 스테이지가 비용 없이 통째로 스킵됩니다(`pipeline_stages.py:539`).
-- **인코딩 자동 감지**: 텍스트 파서는 비-UTF-8 파일에서 `UnicodeDecodeError`를 만나면 `charset-normalizer`로 인코딩을 감지해 명시적 `encoding=`으로 재시도(`parser.py:89`). LangChain의 `autodetect_encoding=True`(추가 의존성 `chardet`을 끌어옴)는 의도적으로 사용하지 않습니다.
+- **OpenSearch analyzers**: The language→analyzer mapping is exposed via config (`indexing.opensearch.language_analyzers`, default `{"en": "english", "ko": "nori"}`) so it can be extended without code changes. nori (the Korean morphological analyzer) is built into OpenSearch Service. Languages without a mapping fall back to `default_analyzer`.
+- **Entity ID normalization**: `normalize_name` (`shared/utils/common.py`) applies NFKC + casefold, then preserves letters/digits of all scripts (`\w`, `re.UNICODE`) and removes only punctuation → Korean, CJK, and accented names also get unique IDs (§3). Non-empty input is not collapsed to an empty ID.
+- **Translation skip**: When `TranslationConfig.is_noop` (source_language == target_language and no additional target languages), the translation stage is skipped in its entirety at no cost (`pipeline_stages.py:539`).
+- **Encoding auto-detection**: When the text parser hits a `UnicodeDecodeError` on a non-UTF-8 file, it detects the encoding via `charset-normalizer` and retries with an explicit `encoding=` (`parser.py:89`). LangChain's `autodetect_encoding=True` (which pulls in the extra `chardet` dependency) is intentionally not used.
 
 ---
 
-## 9. 평가 프레임워크
+## 9. Evaluation Framework
 
-`evaluation/` — `EvaluationManager`가 `EVALUATOR_MAPPING`으로 평가자를 디스패치합니다.
+`evaluation/` — `EvaluationManager` dispatches evaluators via `EVALUATOR_MAPPING`.
 
-- **LangChain 평가자**: correctness / partial_correctness (LLM 기반 루브릭)
-- **RAGAS 평가자**: answer_correctness/relevancy, context_precision/recall, faithfulness
-- **그래프 인식 평가자** (`graph_aware_evaluator.py`): 정답의 `expected_entities`/`expected_relationships`가 생성 답변에 등장하는 비율(= coverage = recall)을 `ENTITY_COVERAGE`/`RELATIONSHIP_COVERAGE`로 계산. 결정적·LLM 불필요. precision/F1은 답변 내 엔티티를 열거해야 하므로(자유 텍스트에서 불가) 산출하지 않습니다 — recall의 복제로 신호를 과장하지 않기 위함. 라틴 문자는 단어 경계 기준 연속 토큰 매칭("AI"가 "airport" 안에서 매칭되지 않음), 공백이 없는 CJK는 부분 문자열 매칭으로 폴백. 매니저가 기대치를 `result.metadata`로 주입하므로 추상 시그니처 변경이 없습니다.
+- **LangChain evaluators**: correctness / partial_correctness (LLM-based rubric)
+- **RAGAS evaluators**: answer_correctness/relevancy, context_precision/recall, faithfulness
+- **Graph-aware evaluator** (`graph_aware_evaluator.py`): Computes the rate at which the ground truth's `expected_entities`/`expected_relationships` appear in the generated answer (= coverage = recall) as `ENTITY_COVERAGE`/`RELATIONSHIP_COVERAGE`. Deterministic, no LLM required. Precision/F1 are not produced because they would require enumerating the entities in the answer (impossible from free text) — to avoid exaggerating the signal as a duplicate of recall. Latin characters use word-boundary contiguous token matching ("AI" does not match inside "airport"); CJK without whitespace falls back to substring matching. The manager injects the expectations via `result.metadata`, so the abstract signature is unchanged.
 
 CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 ---
 
-## 10. 시각화 & 분석
+## 10. Visualization & Analytics
 
-`visualization/` — `BaseRenderer` ABC + `@register_renderer` 레지스트리 + `RenderContext`.
+`visualization/` — `BaseRenderer` ABC + `@register_renderer` registry + `RenderContext`.
 
-- `InteractiveRenderer`(pyvis 네트워크 + 커뮤니티 계층), `StaticRenderer`(Bokeh degree/centrality/community-size)
-- 레이아웃: Bedrock Node2Vec 임베딩 + UMAP 차원 축소(실패 시 spring layout)
-- **독립 실행** (`application/cli/run_visualization.py`): 인제스천 없이 내보낸 그래프 JSON(`export_visualization_data` 출력 포맷: `nodes`/`edges`/`layout`/`communities.hierarchy`)을 읽어 타입 객체로 rehydrate 후 등록된 렌더러로 렌더.
-
----
-
-## 11. 프롬프트와 프롬프트 튜닝
-
-- **프롬프트**(`prompts/`): `BasePrompt`(frozen dataclass) 기반 클래스. 시스템/휴먼 템플릿을 `.py`로 버전 관리. `CustomPromptConfig`로 모든 프롬프트를 설정에서 오버라이드(의료/법률/금융 도메인 등).
-- **프롬프트 튜닝**(`application/prompts/tuner.py`, MS `prompt_tune` 이식): 코퍼스 샘플 → Bedrock LLM으로 도메인/언어/persona/entity-types 프로파일(`CorpusProfilePrompt`) → 도메인 적응 `custom_prompts` YAML 조각 생성. CLI `run-prompt-tuning`. 런타임 자동 적용이 아니라 사용자가 검토 후 config에 반영하는 명시적 단계.
+- `InteractiveRenderer` (pyvis network + community hierarchy), `StaticRenderer` (Bokeh degree/centrality/community-size)
+- Layout: Bedrock Node2Vec embeddings + UMAP dimensionality reduction (spring layout on failure)
+- **Standalone execution** (`application/cli/run_visualization.py`): Reads exported graph JSON without ingestion (`export_visualization_data` output format: `nodes`/`edges`/`layout`/`communities.hierarchy`), rehydrates it into typed objects, and renders with the registered renderers.
 
 ---
 
-## 12. 설정 시스템
+## 11. Prompts and Prompt Tuning
 
-`domain/models/config.py`의 중첩 Pydantic 트리(루트 `Config`), 로딩은 `shared/config.py`(`get_config`), 스키마 예시는 `config-template.yaml`.
-
-- 섹션: `aws`(bedrock/neptune/opensearch/s3/dynamodb), `fixing`, `processing`(chunking/translation/graph_extraction/gleaning/claim_extraction), `graph`(analysis/community_detection/visualization), `indexing`(opensearch/neptune), `search`(hybrid/fusion/reranking/global_search/drift_search/lightrag_search/token_manager), `memory`, `cache`, `logging`, `evaluation`, `custom_prompts`.
-- **설정 기반 일반화**: 언어→분석기 매핑(`language_analyzers`), OpenSearch clause budget(`max_total_clauses` 등), LightRAG 폴백 길이, gleaning 스케일 상수, eigenvector 수렴 파라미터 모두 설정 노출.
-- 새 설정 섹션 추가: Pydantic `BaseModel` 정의 → 부모에 `Field(default_factory=...)` 연결 → `config-template.yaml` 문서화.
+- **Prompts** (`prompts/`): Classes based on `BasePrompt` (frozen dataclass). System/human templates are version-controlled as `.py`. Every prompt can be overridden from config via `CustomPromptConfig` (e.g., medical/legal/financial domains).
+- **Prompt tuning** (`application/prompts/tuner.py`, ported from MS `prompt_tune`): Corpus sample → profile domain/language/persona/entity-types via a Bedrock LLM (`CorpusProfilePrompt`) → generate a domain-adapted `custom_prompts` YAML fragment. CLI: `run-prompt-tuning`. This is an explicit step where the user reviews and applies it to config, not automatic runtime application.
 
 ---
 
-## 13. 테스트 전략
+## 12. Configuration System
 
-`tests/{unit,integration,property,fixtures/fakes}/` — 기본적으로 **AWS 불필요**.
+The nested Pydantic tree in `domain/models/config.py` (root `Config`), loaded by `shared/config.py` (`get_config`); the schema example is `config-template.yaml`.
 
-- **포트 기반 fake 어댑터**(`fixtures/fakes/`): GraphStore/VectorStore/DocStatus의 in-memory 구현으로 도메인 로직을 실 AWS 없이 검증(헥사고날의 테스트 측 이득).
-- **moto**: DynamoDB/S3 어댑터를 boto3 표면에 대해 검증.
-- 계층: 단위(모델/레지스트리/머지/dual-keyword/평가/토큰카운터/clause budget/계보 관련성), 프로퍼티(hypothesis: 해시 결정성, diff 분할 완전성, 머지 법칙), 통합(증분 add/change/delete 사이클), 회귀.
-- 마커: `unit`, `integration`, `property`, `aws`(실 AWS, CI 제외), `slow`. `asyncio_mode = "auto"`.
-
-실행: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
+- Sections: `aws` (bedrock/neptune/opensearch/s3/dynamodb), `fixing`, `processing` (chunking/translation/graph_extraction/gleaning/claim_extraction), `graph` (analysis/community_detection/visualization), `indexing` (opensearch/neptune), `search` (hybrid/fusion/reranking/global_search/drift_search/lightrag_search/token_manager), `memory`, `cache`, `logging`, `evaluation`, `custom_prompts`.
+- **Config-based generalization**: The language→analyzer mapping (`language_analyzers`), OpenSearch clause budget (`max_total_clauses`, etc.), LightRAG fallback length, gleaning scale constants, and eigenvector convergence parameters are all exposed via config.
+- Adding a new config section: Define a Pydantic `BaseModel` → attach to its parent via `Field(default_factory=...)` → document in `config-template.yaml`.
 
 ---
 
-## 14. CI/CD와 보안
+## 13. Testing Strategy
 
-- **CI** (`.github/workflows/`): `quality` 워크플로(ruff/black/isort/mypy + pytest+coverage 게이트, PR/기본 브랜치 트리거), `security` 워크플로(ASH 스캔 비차단, 리포트 전용).
-- **pre-commit** (`.pre-commit-config.yaml`): CI 게이트 미러링. `pre-commit install`.
-- **보안 하드닝**: 콘텐츠 해시는 SHA-256 전용(MD5 제거, CWE-327 해소). 의존성은 `uv lock --upgrade`로 정기 갱신해 의존성 스캔 CVE 대응. 토큰은 환경/설정으로 주입(코드 하드코딩 없음).
+`tests/{unit,integration,property,fixtures/fakes}/` — **AWS-free by default**.
+
+- **Port-based fake adapters** (`fixtures/fakes/`): In-memory implementations of GraphStore/VectorStore/DocStatus verify domain logic without real AWS (the test-side benefit of hexagonal architecture).
+- **moto**: Verifies the DynamoDB/S3 adapters against the boto3 surface.
+- Layers: unit (models/registry/merge/dual-keyword/evaluation/token-counter/clause budget/lineage relevance), property (hypothesis: hashing determinism, diff partition completeness, merge laws), integration (incremental add/change/delete cycles), regression.
+- Markers: `unit`, `integration`, `property`, `aws` (real AWS, excluded in CI), `slow`. `asyncio_mode = "auto"`.
+
+Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 
 ---
 
-## 15. 확장 가이드
+## 14. CI/CD and Security
 
-대부분의 확장은 레지스트리 등록만으로 가능하며 디스패치 코드를 수정하지 않습니다(자세한 내용 `CONTRIBUTING.md`/`CLAUDE.md`).
+- **CI** (`.github/workflows/`): the `quality` workflow (ruff/black/isort/mypy + pytest+coverage gate, triggered on PR/default branch), the `security` workflow (ASH scan, non-blocking, report-only).
+- **pre-commit** (`.pre-commit-config.yaml`): Mirrors the CI gates. `pre-commit install`.
+- **Security hardening**: Content hashes use SHA-256 exclusively (MD5 removed, resolving CWE-327). Dependencies are refreshed regularly via `uv lock --upgrade` to address dependency-scan CVEs. Tokens are injected via environment/config (no hardcoding in code).
 
-- **새 검색 전략**: `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...))` + `adapters/search_strategies/__init__.py` export.
-- **새 스토리지/LLM 백엔드**: 해당 포트(ABC) 구현 후 레지스트리/빌더에 바인딩. 매니저 `__init__`에 하드코딩 금지.
-- **새 평가자**: `BaseGraphRAGEvaluator` 상속 + `EVALUATOR_MAPPING` + `EvaluatorType` enum 추가.
-- **새 렌더러**: `BaseRenderer` 상속 + `@register_renderer("name")`.
+---
 
-### 알려진 향후 작업 (정직한 갭)
+## 15. Extension Guide
 
-> **이번 마일스톤에 해소된 항목**: 캐시 추상화(`CachePort` 정의 + S3/로컬 캐시 매니저 배선), query-time claims 주입(local/simple, §6.1), 병합 설명 LLM 재요약(stage 7, §4), 클라이언트 수명주기 teardown(§8.6). 아래 두 항목만 의도적으로 보류 중입니다.
+Most extensions are possible with registry registration alone and require no changes to dispatch code (details in `CONTRIBUTING.md`/`CLAUDE.md`).
 
-- **LLM/Embedding/Rerank 포트 — 정의됨, DI 미배선(의도적)**: `ports/model_factory.py`에 `ModelFactoryPort`(+`LLMFactoryPort`/`EmbeddingFactoryPort`/`RerankFactoryPort` 별칭) Protocol을 정의했고 Bedrock 팩토리들이 구조적으로 conform합니다(테스트로 검증). ~20개 어댑터/애플리케이션 모듈은 구체 `Bedrock*ModelFactory`를 직접 생성하지만, 이들은 모두 adapters/application 계층이라 **의존성 규칙 위반이 아니고**(도메인은 팩토리를 import하지 않음) 호출 측은 이미 LangChain 호환 객체를 받아 공급자 무관합니다. 두 번째 공급자가 실재하기 전에 20개 생성 지점에 DI를 끼우는 것은 과한 추상화이므로 **의도적으로 보류**합니다 — 비-Bedrock 공급자가 필요해지면 conforming 팩토리 어댑터를 작성해 생성 지점에 주입하면 됩니다(포트 타입은 준비됨).
-- **`SearchQuery.ln`(label/index prefix)**: 어댑터 어휘(인덱스/라벨 prefix)가 도메인 질의 모델에 남아 있습니다. 모든 검색 전략과 두 리트리버(36개 참조)가 이를 읽고 쓰므로 백엔드 중립 추상화로의 완전 위임은 큰 churn + 동작 동등성 리스크를 수반합니다. 백엔드 교체가 실재할 때 리팩터하는 게 합리적입니다.
+- **New search strategy**: Subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...))` + export from `adapters/search_strategies/__init__.py`.
+- **New storage/LLM backend**: Implement the relevant port (ABC) and bind it in the registry/builder. Do not hardcode it into a manager's `__init__`.
+- **New evaluator**: Subclass `BaseGraphRAGEvaluator` + `EVALUATOR_MAPPING` + add an `EvaluatorType` enum.
+- **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`.
+
+### Deliberate Design Boundaries
+
+The codebase makes one boundary call worth stating explicitly, so it reads as an
+intentional decision rather than an oversight:
+
+- **`SearchQuery` carries adapter vocabulary (label/index prefixes) by design.**
+  The domain query model exposes index/label prefixes that the search strategies
+  and both retrievers read and write (~120 references). Hoisting these behind a
+  fully backend-neutral abstraction would be a large, behavior-risking churn that
+  buys nothing while there is exactly one storage backend pairing (Neptune +
+  OpenSearch). The hexagonal boundary that matters — the write-side indexer ports
+  and the model-factory ports — *is* abstracted and dependency-injected (see
+  §2.1 and the `IndexingManager` / `ModelFactoryPort` DI seams). The query-model
+  vocabulary is the pragmatic place to stop: it is revisited if and when a second
+  backend pairing actually lands, at which point the refactor pays for itself.
+
+Everything else the earlier milestones tracked as a gap is now closed: the cache
+abstraction (`CachePort` + S3/local cache managers), query-time claims injection
+(local/simple, §6.1), LLM re-summarization of merged descriptions (stage 7, §4),
+client-lifecycle teardown (§8.6), the model-factory port DI (the embedding/rerank
+construction points accept an injected `ModelFactoryPort`, defaulting to Bedrock),
+and the `IndexingManager` port-based DI (vector/graph stores are injected; the
+in-memory fakes drive the real manager in tests).

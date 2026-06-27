@@ -358,3 +358,65 @@ def test_delete_by_id_exception_counts_all_failed(indexer, mocker) -> None:
     stats = indexer.delete_by_id(["a", "b"], "graphrag-entities", "default")
     assert stats.failed_items == 2
     assert stats.successful_items == 0
+
+
+# --------------------------------------------------------------------------- #
+# delete_document_artifacts — per-index fan-out + orphan-edge routing
+# --------------------------------------------------------------------------- #
+
+
+def _capture_delete_calls(indexer, mocker) -> dict[str, list[str]]:
+    """Spy on delete_by_id, returning {alias_prefix: ids} per call."""
+    calls: dict[str, list[str]] = {}
+
+    def _fake_delete(ids, alias_prefix, suffix):
+        calls[alias_prefix] = list(ids)
+        from unified_kg_rag.ports.indexer import IndexingStats
+
+        return IndexingStats(total_items=len(ids))
+
+    mocker.patch.object(indexer, "delete_by_id", side_effect=_fake_delete)
+    return calls
+
+
+def test_delete_document_artifacts_fans_out_to_every_index(indexer, mocker) -> None:
+    calls = _capture_delete_calls(indexer, mocker)
+    results = indexer.delete_document_artifacts(["e1", "t1"], "default")
+
+    oc = indexer.opensearch_config
+    expected_prefixes = {
+        oc.text_units_index_prefix,
+        oc.entities_index_prefix,
+        oc.relationships_index_prefix,
+        oc.claims_index_prefix,
+        oc.community_reports_index_prefix,
+    }
+    # Every artifact index receives the delete, keyed result map matches.
+    assert set(calls) == expected_prefixes
+    assert len(results) == len(expected_prefixes)
+    # Without orphan edges, every index gets exactly the requested ids.
+    for ids in calls.values():
+        assert ids == ["e1", "t1"]
+
+
+def test_delete_document_artifacts_routes_orphans_to_relationship_index_only(
+    indexer, mocker
+) -> None:
+    calls = _capture_delete_calls(indexer, mocker)
+    oc = indexer.opensearch_config
+    indexer.delete_document_artifacts(
+        ["e_target"], "default", extra_relationship_ids=["r_orphan"]
+    )
+    # The relationship index gets BOTH the exclusive id and the orphan edge...
+    assert set(calls[oc.relationships_index_prefix]) == {"e_target", "r_orphan"}
+    # ...while every other index gets only the exclusive id.
+    assert calls[oc.entities_index_prefix] == ["e_target"]
+    assert calls[oc.text_units_index_prefix] == ["e_target"]
+    assert calls[oc.community_reports_index_prefix] == ["e_target"]
+
+
+def test_delete_document_artifacts_empty_ids_is_noop(indexer, mocker) -> None:
+    calls = _capture_delete_calls(indexer, mocker)
+    results = indexer.delete_document_artifacts([], "default")
+    assert results == {}
+    assert calls == {}

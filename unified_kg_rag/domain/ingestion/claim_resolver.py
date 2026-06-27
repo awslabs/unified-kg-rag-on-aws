@@ -276,9 +276,11 @@ class ClaimResolver(BaseResolver):
             attributes=self._merge_attributes(
                 [c.attributes for c in claims if c.attributes]
             ),
+            # Leave created_at None when unknown (see graph_resolver) so the
+            # merge stays a pure function of its inputs.
             created_at=min(
                 (c.created_at for c in claims if c.created_at),
-                default=datetime.now(),
+                default=None,
             ),
             updated_at=datetime.now(),
         )

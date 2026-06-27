@@ -242,9 +242,13 @@ class EntityResolver(BaseResolver):
             attributes=self._merge_attributes(
                 [e.attributes for e in entities if e.attributes]
             ),
+            # Keep the earliest known creation time; leave it None (truthfully
+            # unknown) rather than fabricating wall-clock time when no member
+            # carries one, so the merge stays a pure, reproducible function of
+            # its inputs. updated_at is the one genuinely time-valued field.
             created_at=min(
                 (e.created_at for e in entities if e.created_at),
-                default=datetime.now(),
+                default=None,
             ),
             updated_at=datetime.now(),
         )
@@ -344,6 +348,20 @@ class RelationshipResolver(BaseResolver):
         if len(relationships) == 1:
             return relationships[0]
         primary_rel = relationships[0]
+        merged_text_unit_ids = self._merge_lists(
+            [r.text_unit_ids for r in relationships if r.text_unit_ids]
+        )
+        # Weight tracks the count of distinct supporting text units (evidence
+        # count). This is idempotent and order-independent, so the full-build and
+        # incremental (merge_relationships) paths converge to the same weight; a
+        # summed LLM "strength" would diverge and double-count on incremental
+        # re-application. Falls back to the primary edge's own weight when no
+        # text-unit lineage exists.
+        merged_weight = (
+            float(len(merged_text_unit_ids))
+            if merged_text_unit_ids
+            else (primary_rel.weight if primary_rel.weight is not None else 1.0)
+        )
         return Relationship(
             id=primary_rel.id,
             short_id=primary_rel.short_id,
@@ -352,21 +370,21 @@ class RelationshipResolver(BaseResolver):
             target_id=primary_rel.target_id,
             target_name=primary_rel.target_name,
             type=primary_rel.type,
-            weight=sum(r.weight for r in relationships if r.weight is not None) or 1.0,
+            weight=merged_weight,
             description=self._merge_descriptions(
                 [r.description for r in relationships if r.description]
             ),
             description_embedding=primary_rel.description_embedding,
-            text_unit_ids=self._merge_lists(
-                [r.text_unit_ids for r in relationships if r.text_unit_ids]
-            ),
+            text_unit_ids=merged_text_unit_ids,
             rank=max((r.rank for r in relationships if r.rank is not None), default=1),
             attributes=self._merge_attributes(
                 [r.attributes for r in relationships if r.attributes]
             ),
+            # See _merge_entities: leave created_at None when unknown so the
+            # merge is a pure function of its inputs.
             created_at=min(
                 (r.created_at for r in relationships if r.created_at),
-                default=datetime.now(),
+                default=None,
             ),
             updated_at=datetime.now(),
         )

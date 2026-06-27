@@ -35,6 +35,7 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
 )
 from unified_kg_rag.evaluation.base import BaseGraphRAGEvaluator
+from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import EvaluationException, get_logger
 
 logger = get_logger(__name__)
@@ -63,10 +64,12 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         config: Config,
         rag_chain: Any | None = None,
         boto_session: boto3.Session | None = None,
+        embedding_factory: EmbeddingFactoryPort | None = None,
         **kwargs: Any,
     ) -> None:
         self.embeddings: Embeddings | None = None
         self.llm: BaseLanguageModel | None = None
+        self._embedding_factory = embedding_factory
         self.boto_session = boto_session or boto3.Session(
             profile_name=config.aws.profile_name
         )
@@ -103,7 +106,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             ) from e
 
     def _initialize_models(self) -> None:
-        embedding_factory = BedrockEmbeddingModelFactory(
+        embedding_factory = self._embedding_factory or BedrockEmbeddingModelFactory(
             config=self.config,
             boto_session=self.boto_session,
             region_name=self.config.aws.bedrock.region_name,

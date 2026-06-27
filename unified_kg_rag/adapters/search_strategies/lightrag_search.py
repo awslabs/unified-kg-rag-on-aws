@@ -112,11 +112,22 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             if query.hl_keywords:
                 results_by_source.update(await self._retrieve_relationships(query))
 
-            entity_ids = self._get_ids(
-                results_by_source.get("lightrag_entities", []), "id"
+            # Seed graph expansion from BOTH the low-level entity hits and the
+            # endpoints of the high-level relationship hits. Without the latter,
+            # an hl-only (purely thematic/global) query — relationships but no
+            # entities — gets no graph expansion and no entity grounding, which
+            # diverges from LightRAG (its global mode reaches entities via the
+            # matched relationships' endpoints).
+            seed_entity_ids = list(
+                dict.fromkeys(
+                    self._get_ids(results_by_source.get("lightrag_entities", []), "id")
+                    + self._relationship_endpoint_ids(
+                        results_by_source.get("lightrag_relationships", [])
+                    )
+                )
             )
-            if entity_ids:
-                expanded = await self._expand_via_graph(query, entity_ids)
+            if seed_entity_ids:
+                expanded = await self._expand_via_graph(query, seed_entity_ids)
                 if expanded:
                     results_by_source["graph_entities"] = expanded
 
@@ -213,6 +224,25 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         except Exception as e:
             logger.error("Chunk retrieval failed: %s", e)
             return {}
+
+    @staticmethod
+    def _relationship_endpoint_ids(
+        relationship_results: list[RetrievalResult],
+    ) -> list[str]:
+        """Collect source/target entity ids from relationship hits.
+
+        Relationship documents carry their endpoint entity ids in metadata
+        (``source_id``/``target_id``); these ground a high-level (relationship)
+        hit back to the graph so it can be expanded like an entity hit.
+        """
+        endpoint_ids: list[str] = []
+        for result in relationship_results:
+            metadata = result.metadata or {}
+            for field in ("source_id", "target_id"):
+                value = metadata.get(field)
+                if isinstance(value, str) and value:
+                    endpoint_ids.append(value)
+        return endpoint_ids
 
     async def _expand_via_graph(
         self, query: SearchQuery, seed_entity_ids: list[str]

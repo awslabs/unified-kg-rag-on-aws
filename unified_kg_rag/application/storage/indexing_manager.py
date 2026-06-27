@@ -8,8 +8,6 @@ from typing import Any, NamedTuple
 from unified_kg_rag.adapters.ingestion.description_summarizer import (
     DescriptionSummarizer,
 )
-from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
-from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.domain.ingestion.merge import merge_entities, merge_relationships
 from unified_kg_rag.domain.models import (
     Claim,
@@ -20,7 +18,12 @@ from unified_kg_rag.domain.models import (
     Relationship,
     TextUnit,
 )
-from unified_kg_rag.ports.indexer import BaseIndexer, IndexingStats
+from unified_kg_rag.ports.indexer import (
+    BaseIndexer,
+    GraphIndexer,
+    IndexingStats,
+    VectorIndexer,
+)
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -33,10 +36,39 @@ class IndexingTask(NamedTuple):
 
 
 class IndexingManager:
-    def __init__(self, config: Config) -> None:
+    """Coordinates writes across the vector and graph stores.
+
+    The two backends are injected as :class:`VectorIndexer` / :class:`GraphIndexer`
+    ports; the concrete OpenSearch/Neptune adapters are constructed by default
+    only when none are supplied. This keeps the application layer off any
+    concrete backend import and lets tests drive the *real* manager with the
+    in-memory fakes. The per-backend fan-out (entities to both stores;
+    entities-before-edges phasing; the orphan-edge cascade across stores) is
+    deliberate domain knowledge, not arbitrary dispatch, so it stays explicit
+    here rather than behind a uniform registry loop.
+    """
+
+    def __init__(
+        self,
+        config: Config,
+        *,
+        vector_indexer: VectorIndexer | None = None,
+        graph_indexer: GraphIndexer | None = None,
+    ) -> None:
         self.config = config
-        self.opensearch_indexer = OpenSearchIndexer(config=config)
-        self.neptune_indexer = NeptuneIndexer(config=config)
+        if vector_indexer is None or graph_indexer is None:
+            # Import the concrete adapters lazily so the default construction
+            # path does not pull boto3-backed modules into callers that inject
+            # their own (e.g. test fakes).
+            from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
+            from unified_kg_rag.adapters.storage.opensearch_indexer import (
+                OpenSearchIndexer,
+            )
+
+            vector_indexer = vector_indexer or OpenSearchIndexer(config=config)
+            graph_indexer = graph_indexer or NeptuneIndexer(config=config)
+        self.opensearch_indexer: VectorIndexer = vector_indexer
+        self.neptune_indexer: GraphIndexer = graph_indexer
         # Built lazily on first cross-run merge so a manager only used for
         # indexing (no incremental read-back) never constructs a Bedrock client.
         self._description_summarizer: DescriptionSummarizer | None = None
@@ -294,8 +326,6 @@ class IndexingManager:
         text-unit/community ids that belonged only to deleted documents.
         """
         results: dict[str, IndexingStats] = {}
-        os_config = self.opensearch_indexer.opensearch_config
-        rel_prefix = os_config.relationships_index_prefix
         for suffix, ids in ids_by_suffix.items():
             if not ids:
                 continue
@@ -311,23 +341,11 @@ class IndexingManager:
             results[f"neptune_delete_{suffix}"] = self.neptune_indexer.delete_by_id(
                 ids, suffix=suffix
             )
-            for prefix in (
-                os_config.text_units_index_prefix,
-                os_config.entities_index_prefix,
-                rel_prefix,
-                os_config.claims_index_prefix,
-                os_config.community_reports_index_prefix,
-            ):
-                # The relationship index also gets the orphaned incident edges.
-                delete_ids = (
-                    sorted(set(ids) | set(incident_rel_ids))
-                    if prefix == rel_prefix and incident_rel_ids
-                    else ids
+            results.update(
+                self.opensearch_indexer.delete_document_artifacts(
+                    ids, suffix, extra_relationship_ids=incident_rel_ids
                 )
-                key = f"opensearch_delete_{prefix}_{suffix}"
-                results[key] = self.opensearch_indexer.delete_by_id(
-                    delete_ids, prefix, suffix
-                )
+            )
         return results
 
     def _run_indexing_phase(

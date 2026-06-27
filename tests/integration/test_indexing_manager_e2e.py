@@ -24,19 +24,11 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def manager(mocker):
+def manager():
     config = Config()
     graph = FakeGraphStore()
     vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
-    mocker.patch(
-        "unified_kg_rag.application.storage.indexing_manager.OpenSearchIndexer",
-        return_value=vector,
-    )
-    mocker.patch(
-        "unified_kg_rag.application.storage.indexing_manager.NeptuneIndexer",
-        return_value=graph,
-    )
-    mgr = IndexingManager(config=config)
+    mgr = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)
     return mgr, graph, vector
 
 

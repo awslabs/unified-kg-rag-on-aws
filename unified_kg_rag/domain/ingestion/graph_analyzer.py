@@ -118,7 +118,18 @@ class GraphAnalyzer:
             "betweenness": (
                 self.analysis_config.centrality.calculate_betweenness,
                 nx.betweenness_centrality,
-                {"k": self.analysis_config.centrality.betweenness_k},
+                # k is the pivot-sample size; networkx raises when k exceeds the
+                # node count, so clamp it. None means "use all nodes" (exact).
+                {
+                    "k": (
+                        min(
+                            self.analysis_config.centrality.betweenness_k,
+                            self._graph.number_of_nodes(),
+                        )
+                        if self.analysis_config.centrality.betweenness_k
+                        else None
+                    )
+                },
             ),
             "pagerank": (
                 self.analysis_config.centrality.calculate_pagerank,

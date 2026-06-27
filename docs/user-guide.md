@@ -1,7 +1,5 @@
 # Unified Knowledge Graph RAG on AWS — User Guide
 
-> 🇰🇷 한국어 버전: [docs/user-guide.ko.md](./user-guide.ko.md)
-
 This is the practical, how-to-use guide for **unified-kg-rag-on-aws** — an AWS-native
 knowledge-graph RAG framework that builds knowledge graphs from large,
 multilingual document corpora and answers questions over them. It reimplements
@@ -10,7 +8,7 @@ two retrieval methodologies on one stack: **Microsoft GraphRAG**
 
 - For the *what / why* and a one-minute quickstart, see [README.md](../README.md).
 - For *internals / architecture* (hexagonal layers, ports & adapters, the
-  dependency rule), see [docs/design.en.md](./design.en.md).
+  dependency rule), see [docs/design.md](./design.md).
 
 Everything below is grounded in the actual CLI flags and config keys in the
 codebase. The five console entry points (defined as `pyproject` scripts) are:
@@ -937,4 +935,4 @@ to avoid full re-ingests.
 ---
 
 *See also: [README.md](../README.md) for the overview and quickstart, and
-[docs/design.en.md](./design.en.md) for architecture and internals.*
+[docs/design.md](./design.md) for architecture and internals.*

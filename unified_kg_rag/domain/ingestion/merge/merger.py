@@ -104,6 +104,22 @@ def merge_entities(
     return merged, id_remap
 
 
+def _relationship_weight(rel: Relationship, supporting_text_units: list[str]) -> float:
+    """Derive an edge weight from the count of distinct supporting text units.
+
+    The full-build resolver sums per-instance weights across a (source, target,
+    type) group, and each extracted instance carries ~1.0 — so the summed weight
+    tracks the number of supporting occurrences. Deriving the weight from the
+    *deduplicated* supporting-text-unit count makes the incremental merge
+    converge to the same value AND idempotent: re-applying a delta unions the
+    same ids, so the count (and weight) is unchanged. An edge carrying no
+    text-unit lineage falls back to its own weight (default 1.0).
+    """
+    if supporting_text_units:
+        return float(len(supporting_text_units))
+    return rel.weight if rel.weight is not None else 1.0
+
+
 def merge_relationships(
     old: list[Relationship],
     delta: list[Relationship],
@@ -118,6 +134,12 @@ def merge_relationships(
     of a *different* type between the same endpoints stays a distinct edge (the
     full-build resolver groups by (source, target, type) too — keying on
     endpoints alone here would silently collapse them and drop the delta type).
+
+    The merge is idempotent: weight is derived from the deduplicated
+    supporting-text-unit union (not summed), and an edge whose remapped endpoints
+    collapse onto the same entity is dropped as a self-loop — matching the
+    full-build :class:`RelationshipResolver`, which removes self-referencing
+    edges and would otherwise diverge from this path.
     """
     remap = entity_id_remap or {}
 
@@ -132,31 +154,37 @@ def merge_relationships(
     by_key: dict[tuple[str, str, str], Relationship] = {}
 
     for rel in old:
-        by_key[_key(rel.source_id, rel.target_id, rel)] = rel.model_copy(deep=True)
+        # The full-build resolver drops self-referencing edges, so the merged
+        # output must never contain one — including any that slipped into the
+        # stored set.
+        if rel.source_id == rel.target_id:
+            continue
+        existing = rel.model_copy(deep=True)
+        existing.weight = _relationship_weight(existing, existing.text_unit_ids or [])
+        by_key[_key(rel.source_id, rel.target_id, rel)] = existing
 
     for rel in delta:
         source_id, target_id = _endpoints(rel)
+        if source_id == target_id:
+            # Either an inherent self-loop or one the remap created by collapsing
+            # both endpoints onto one entity; the full-build resolver drops these,
+            # so the incremental path must too.
+            continue
         key = _key(source_id, target_id, rel)
-        existing = by_key.get(key)
-        if existing is None:
+        match = by_key.get(key)
+        if match is None:
             new_rel = rel.model_copy(deep=True)
             new_rel.source_id = source_id
             new_rel.target_id = target_id
+            new_rel.weight = _relationship_weight(new_rel, new_rel.text_unit_ids or [])
             by_key[key] = new_rel
             continue
 
-        existing.description = _merge_descriptions(
-            existing.description, rel.description
+        match.description = _merge_descriptions(match.description, rel.description)
+        match.text_unit_ids = _dedupe_preserve_order(
+            (match.text_unit_ids or []) + (rel.text_unit_ids or [])
         )
-        existing.text_unit_ids = _dedupe_preserve_order(
-            (existing.text_unit_ids or []) + (rel.text_unit_ids or [])
-        )
-        # Sum supporting weights (MS GraphRAG semantics). Additive merge is
-        # order-independent and associative, unlike a running pairwise mean
-        # which depends on merge order and is non-deterministic across runs.
-        old_weight = existing.weight if existing.weight is not None else 1.0
-        new_weight = rel.weight if rel.weight is not None else 1.0
-        existing.weight = old_weight + new_weight
+        match.weight = _relationship_weight(match, match.text_unit_ids or [])
 
     merged = list(by_key.values())
     logger.info(
@@ -169,18 +197,37 @@ def merge_relationships(
 
 
 def _community_content_key(community: Community) -> tuple:
-    """Identity signature for a community (excludes the id, which we reassign)."""
+    """Identity signature for a community (excludes the id, which we reassign).
+
+    Includes every membership/content field so two communities that differ in
+    any of them are treated as distinct: keying on a subset would make a delta
+    community that genuinely differs only in (say) its relationship/text-unit
+    membership collide with an existing one and be silently dropped as
+    "already merged".
+    """
     return (
         community.name,
         str(community.level),
         community.parent,
         tuple(sorted(community.entity_ids or [])),
+        tuple(sorted(community.relationship_ids or [])),
+        tuple(sorted(community.text_unit_ids or [])),
     )
 
 
 def _report_content_key(report: CommunityReport) -> tuple:
-    """Identity signature for a community report (excludes the id)."""
-    return (report.name, report.community_id, report.summary)
+    """Identity signature for a community report (excludes the id).
+
+    Includes ``full_content`` and ``rank`` so a regenerated report that differs
+    only in its body or importance is not collapsed onto the old one.
+    """
+    return (
+        report.name,
+        report.community_id,
+        report.summary,
+        report.full_content,
+        report.rank,
+    )
 
 
 def _placed_id(

@@ -63,7 +63,11 @@ class FuzzyMatcher:
         if not 0.0 <= similarity_threshold <= 1.0:
             raise ValueError("similarity_threshold must be between 0.0 and 1.0")
 
-        self.candidates = list(set(candidates))
+        # Deduplicate deterministically (preserve first-seen order). A plain
+        # set() gives process-dependent ordering, which makes max(..., key=score)
+        # tie-breaks — and therefore the resolved canonical entity — vary across
+        # runs, especially under the ProcessPoolExecutor in GraphResolver.
+        self.candidates = list(dict.fromkeys(candidates))
         self.resolution_method = resolution_method
         self.similarity_threshold = similarity_threshold
         self.minhash_permutations = minhash_permutations
@@ -411,8 +415,21 @@ class BaseResolver(ABC):
 
     @staticmethod
     def _merge_descriptions(descriptions: list[str]) -> str:
+        """Combine descriptions, dropping empties and duplicates.
+
+        Uses the same newline join + order-preserving dedup as the incremental
+        ``merge._merge_descriptions`` so the full-build and incremental paths
+        produce an identical merged description for the same inputs (a divergent
+        separator previously made a rebuild differ from an incremental update).
+        """
         valid_descriptions = [desc for desc in descriptions if desc and desc.strip()]
-        return "; ".join(valid_descriptions) if valid_descriptions else ""
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for desc in valid_descriptions:
+            if desc not in seen:
+                seen.add(desc)
+                deduped.append(desc)
+        return "\n".join(deduped)
 
     @staticmethod
     def _merge_lists(lists: list[list[str]]) -> list[str]:

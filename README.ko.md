@@ -34,7 +34,9 @@
 ### 🧠 고급 지식 그래프 처리
 
 - 퍼지 매칭 기반 엔티티 해석(중복 통합), Leiden 알고리즘 커뮤니티 탐지
-- gleaning(반복 정제), claim(사실 주장) 추출, 멀티홉 추론, 출처 투명성
+- gleaning(반복 정제), 멀티홉 추론, 출처 투명성
+- claim(사실 주장) 추출(옵트인, 기본 off): 활성화 시 전용 인덱스에 임베딩되어
+  `local`/`simple` 검색 컨텍스트에 covariate로 주입
 
 ### 🎯 종합 평가 프레임워크
 
@@ -136,7 +138,7 @@ run-prompt-tuning --source-dir ./source --output tuned_prompts.yaml --config-pat
 
 **전략 선택** — GraphRAG: `simple`(직접 벡터/렉시컬), `local`(엔티티 중심), `global`(커뮤니티 요약, map-reduce), `drift`(점진 탐색), `auto`(LLM 라우터). LightRAG: `mix` / `hybrid` / `naive`(이중 레벨 키워드).
 
-📘 **전체 설정 레퍼런스, 모든 CLI 플래그, Python API, 증분 추가/수정/삭제, 도메인 적응, 트러블슈팅은 [사용자 가이드](./docs/user-guide.ko.md)(영문: [User Guide](./docs/user-guide.md))를 참고하세요.** 아키텍처·알고리즘·구현 내부는 [설계 문서](./docs/design.md)(영문: [Design Doc](./docs/design.en.md))를 참고하세요.
+📘 **전체 설정 레퍼런스, 모든 CLI 플래그, Python API, 증분 추가/수정/삭제, 도메인 적응, 트러블슈팅은 [사용자 가이드](./docs/user-guide.ko.md)(영문: [User Guide](./docs/user-guide.md))를 참고하세요.** 아키텍처·알고리즘·구현 내부는 [설계 문서](./docs/design.md)(영문: [Design Doc](./docs/design.md))를 참고하세요.
 
 ---
 

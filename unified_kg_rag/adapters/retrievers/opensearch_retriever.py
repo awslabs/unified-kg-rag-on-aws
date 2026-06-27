@@ -19,6 +19,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchType,
 )
+from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -30,6 +31,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         config: Config,
         opensearch_client: OpenSearchClient,
         boto_session: boto3.Session | None = None,
+        embedding_factory: EmbeddingFactoryPort | None = None,
         **kwargs: Any,
     ):
         super().__init__(config, boto_session, **kwargs)
@@ -43,7 +45,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         self._terms_batch_size = self._opensearch_config.terms_batch_size
         self._max_total_clauses = self._opensearch_config.max_total_clauses
         self._reserved_clauses = self._opensearch_config.reserved_clauses
-        self._embedding_factory = BedrockEmbeddingModelFactory(
+        self._embedding_factory = embedding_factory or BedrockEmbeddingModelFactory(
             config=config,
             boto_session=boto_session,
             region_name=config.aws.bedrock.region_name,

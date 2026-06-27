@@ -342,11 +342,18 @@ def test_prompt_tuning_parser_requires_source_dir() -> None:
 
 
 def test_prompt_tuning_parser_defaults() -> None:
-    args = run_prompt_tuning._build_parser().parse_args(["--source-dir", "docs"])
-    assert args.source_dir == Path("docs")
+    # Canonical flag is --source-directory (matches run-ingestion).
+    args = run_prompt_tuning._build_parser().parse_args(["--source-directory", "docs"])
+    assert args.source_directory == Path("docs")
     assert args.output == Path("tuned_prompts.yaml")
     assert args.max_docs == 20
     assert args.config_path is None
+
+
+def test_prompt_tuning_parser_accepts_legacy_source_dir_alias() -> None:
+    # --source-dir is kept as a backward-compatible alias of --source-directory.
+    args = run_prompt_tuning._build_parser().parse_args(["--source-dir", "docs"])
+    assert args.source_directory == Path("docs")
 
 
 def test_load_corpus_texts_filters_and_limits(tmp_path) -> None:

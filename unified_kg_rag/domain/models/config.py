@@ -183,6 +183,14 @@ class OpenSearchConfig(BaseModel):
     use_iam: bool = Field(
         default=False, description="Enable IAM authentication for OpenSearch"
     )
+    sigv4_service_name: str = Field(
+        default="es",
+        description=(
+            "SigV4 signing service for IAM auth: 'es' for a managed OpenSearch "
+            "domain, 'aoss' for an OpenSearch Serverless collection. A wrong "
+            "value fails auth (often surfacing as zero search hits)."
+        ),
+    )
 
 
 class S3EncryptionConfig(BaseModel):

@@ -2,9 +2,9 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![CI](https://github.com/awslabs/unified-kg-rag-on-aws/actions/workflows/quality.yml/badge.svg)](https://github.com/awslabs/unified-kg-rag-on-aws/actions/workflows/quality.yml)
-[![Python](https://img.shields.io/badge/python-3.10–3.12-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.10--3.12-blue.svg)](https://www.python.org/downloads/)
 
-📖 **[한국어 README](./README.ko.md)** · 🤝 **[Contributing](./CONTRIBUTING.md)**
+🤝 **[Contributing](./CONTRIBUTING.md)**
 
 ![Knowledge Graph](./assets/interactive_graph.jpg)
 
@@ -17,7 +17,7 @@ It reimplements two retrieval methodologies — Microsoft's GraphRAG ("From Loca
 > - **Incremental indexing.** The DynamoDB document-status registry (`aws.dynamodb`) diffs a corpus by content hash and re-indexes only new/changed documents, merging into the live graph (idempotent upserts; deletions remove a document's exclusive artifacts).
 > - **Prompt tuning.** `run-prompt-tuning` profiles a corpus (domain/language/persona/entity-types) and emits domain-adapted `custom_prompts`.
 > - **Standalone visualization & graph-aware evaluation.** `run-visualization` renders from exported graph data without re-ingesting; the `graph_aware` evaluator scores entity/relationship coverage.
-> - **Hexagonal architecture.** Ports & adapters + registries make storage backends, retrieval strategies, evaluators, and renderers pluggable. See `docs/design.en.md`.
+> - **Hexagonal architecture.** Ports & adapters + registries make storage backends, retrieval strategies, evaluators, and renderers pluggable. See `docs/design.md`.
 
 ## 📋 Table of Contents
 
@@ -111,8 +111,9 @@ The framework implements a sophisticated indexing and retrieval pipeline:
 - **Translation**: Multi-language support with automatic language detection
 - **Gleaning**: Iterative graph refinement for improved accuracy
 - **Claim Extraction/Resolution**: Factual assertions extraction and validation
-  (opt-in: `processing.claim_extraction.enabled`, off by default — claims are
-  indexed but not yet consumed by retrieval)
+  (opt-in: `processing.claim_extraction.enabled`, off by default). When enabled,
+  claims are embedded into a dedicated index and injected into `local`/`simple`
+  search context as covariates.
 
 #### Key Features:
 - **Incremental Indexing**: content-hash delta detection + merge (DynamoDB registry)
@@ -269,11 +270,9 @@ run-prompt-tuning --source-dir ./source --output tuned_prompts.yaml --config-pat
 (entity-centric), `global` (community-summary, map-reduce), `drift` (iterative),
 `auto` (LLM router). LightRAG: `mix` / `hybrid` / `naive` (dual-level keyword).
 
-📘 **Full configuration reference, every CLI flag, the Python API, incremental
-add/modify/delete, domain adaptation, and troubleshooting are in the
-[User Guide](./docs/user-guide.md)** ([한국어](./docs/user-guide.ko.md)).
-For architecture, algorithms, and implementation internals see the
-[Design Doc](./docs/design.en.md) ([한국어](./docs/design.md)).
+See the **[User Guide](./docs/user-guide.md)** for configuration, CLI flags, the
+Python API, and incremental indexing, and the **[Design Doc](./docs/design.md)**
+for architecture and algorithms.
 
 
 ## 🧪 Testing & Quality

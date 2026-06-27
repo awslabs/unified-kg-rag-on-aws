@@ -27,24 +27,16 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def manager(mocker):
+def manager():
     """An IndexingManager wired to in-memory fake stores (no AWS)."""
     graph = FakeGraphStore()
     vector = FakeVectorStore()
-    mocker.patch(
-        "unified_kg_rag.application.storage.indexing_manager.OpenSearchIndexer",
-        return_value=vector,
-    )
-    mocker.patch(
-        "unified_kg_rag.application.storage.indexing_manager.NeptuneIndexer",
-        return_value=graph,
-    )
     from unified_kg_rag.application.storage.indexing_manager import (
         IndexingManager,
         IndexingTask,
     )
 
-    mgr = IndexingManager(config=Config())
+    mgr = IndexingManager(config=Config(), vector_indexer=vector, graph_indexer=graph)
     return mgr, graph, vector, IndexingTask
 
 

@@ -579,12 +579,11 @@ class TestMergeLaws:
         # ...nor double-accumulate text units (dedupe by id).
         assert set(twice[0].text_unit_ids) == {"t1", "t2"}
 
-    def test_relationship_weight_double_counts_on_reapply(self) -> None:
-        # SUSPECTED WEAK SPOT (non-idempotent weight): merge_relationships SUMS
-        # weights (merger.py:154). Re-applying the SAME delta therefore adds the
-        # weight again — merge is NOT idempotent on relationship weight. With
-        # text_unit dedupe the text_unit_ids stay stable, but weight drifts. This
-        # matters if a pipeline retries a commit. Documenting current behaviour.
+    def test_relationship_weight_idempotent_on_reapply(self) -> None:
+        # Regression: relationship weight is derived from the count of distinct
+        # supporting text units, NOT a running sum, so re-applying the same delta
+        # (e.g. a retried commit) leaves both the weight and the text-unit set
+        # stable. The prior summed-weight semantics double-counted on re-apply.
         old = [
             Relationship(
                 id="r1",
@@ -605,8 +604,8 @@ class TestMergeLaws:
         ]
         once = merge_relationships(old, delta)
         twice = merge_relationships(once, delta)
-        assert once[0].weight == 3.0
-        assert twice[0].weight == 5.0  # NOT 3.0 -> re-apply double-counts weight
+        assert once[0].weight == 2.0  # two distinct supporting text units
+        assert twice[0].weight == 2.0  # re-apply does NOT inflate the weight
         assert set(twice[0].text_unit_ids) == {"t1", "t2"}  # tu set stays stable
 
     def test_merge_entities_order_independent_on_names(self) -> None:

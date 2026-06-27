@@ -39,18 +39,27 @@ def manager(mocker):
     # No orphaned incident edges by default; orphan-cleanup test overrides this.
     neptune_indexer.find_incident_relationship_ids.return_value = []
 
-    mocker.patch(
-        "unified_kg_rag.application.storage.indexing_manager.OpenSearchIndexer",
-        return_value=os_indexer,
-    )
-    mocker.patch(
-        "unified_kg_rag.application.storage.indexing_manager.NeptuneIndexer",
-        return_value=neptune_indexer,
+    # Inject the mocked indexers via the port-based DI seam (no module-level
+    # patching needed — the manager constructs concrete adapters only when none
+    # are supplied).
+    os_indexer.delete_document_artifacts.side_effect = (
+        lambda ids, suffix, extra_relationship_ids=None: {
+            f"opensearch_delete_{prefix}_{suffix}": IndexingStats()
+            for prefix in (
+                "text-units",
+                "entities",
+                "relationships",
+                "claims",
+                "community-reports",
+            )
+        }
     )
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
     from unified_kg_rag.domain.models import Config
 
-    mgr = IndexingManager(config=Config())
+    mgr = IndexingManager(
+        config=Config(), vector_indexer=os_indexer, graph_indexer=neptune_indexer
+    )
     return mgr, os_indexer, neptune_indexer
 
 
@@ -82,26 +91,27 @@ def test_delete_documents_routes_to_delete_by_id(manager) -> None:
     neptune_indexer.delete_by_id.assert_called_once_with(
         ["e1", "r1", "t1"], suffix="default"
     )
-    # OpenSearch delete is called per vector index prefix: text-units +
-    # entities + relationships + claims + community-reports (none of these
-    # artifacts — including LightRAG relationship vectors and claim vectors —
-    # may be orphaned on document deletion).
-    assert os_indexer.delete_by_id.call_count == 5
+    # The manager delegates the per-index vector fan-out to the vector port's
+    # cohesive delete_document_artifacts (the prefix layout is the adapter's
+    # concern, not the manager's), threading the suffix and no orphan edges.
+    os_indexer.delete_document_artifacts.assert_called_once_with(
+        ["e1", "r1", "t1"], "default", extra_relationship_ids=[]
+    )
 
 
 def test_delete_documents_skips_empty(manager) -> None:
     mgr, os_indexer, neptune_indexer = manager
     mgr.delete_documents({"default": []})
     neptune_indexer.delete_by_id.assert_not_called()
-    os_indexer.delete_by_id.assert_not_called()
+    os_indexer.delete_document_artifacts.assert_not_called()
 
 
 def test_delete_documents_cascades_orphan_relationship_ids(manager) -> None:
     # Orphan-edge cleanup: a relationship pointing at a deleted entity is owned
     # (in lineage) by a surviving document, so it is NOT in the exclusive id-set.
-    # delete_documents must query Neptune for incident edge ids and fold them
-    # into the OpenSearch relationship-index deletion so no dangling relationship
-    # document survives.
+    # delete_documents must query Neptune for incident edge ids and pass them as
+    # extra_relationship_ids so the vector backend can fold them into the
+    # relationship-index deletion (no dangling relationship document survives).
     mgr, os_indexer, neptune_indexer = manager
     neptune_indexer.find_incident_relationship_ids.return_value = ["r_orphan"]
 
@@ -111,9 +121,8 @@ def test_delete_documents_cascades_orphan_relationship_ids(manager) -> None:
     neptune_indexer.find_incident_relationship_ids.assert_called_once_with(
         ["e_target"], suffix="default"
     )
-    # The relationships-index deletion includes BOTH the exclusive id and the
-    # orphaned incident edge; other indexes get only the exclusive id.
-    calls = {c.args[1]: c.args[0] for c in os_indexer.delete_by_id.call_args_list}
-    assert set(calls["relationships"]) == {"e_target", "r_orphan"}
-    assert calls["entities"] == ["e_target"]
-    assert calls["text-units"] == ["e_target"]
+    # The orphaned incident edge is handed to the vector port as an extra
+    # relationship id to delete.
+    os_indexer.delete_document_artifacts.assert_called_once_with(
+        ["e_target"], "default", extra_relationship_ids=["r_orphan"]
+    )

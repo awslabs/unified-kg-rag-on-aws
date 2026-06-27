@@ -4,7 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "unified-kg-rag-on-aws"
-version = "0.2.3"
+# Version is sourced from unified_kg_rag.__version__ via [tool.hatch.version].
+dynamic = ["version"]
 description = "AWS-native Knowledge Graph RAG on Bedrock, Neptune & OpenSearch — GraphRAG and LightRAG over one hexagonal ingestion, indexing, and hybrid-search stack."
 readme = "README.md"
 requires-python = ">=3.10, <3.13"
@@ -106,6 +107,11 @@ path = "unified_kg_rag/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["unified_kg_rag"]
+
+[tool.hatch.build.targets.sdist]
+# Ship only the package + top-level project files; never bundle build/venv
+# artifacts (IaC CDK venvs, caches, references) into the source distribution.
+only-include = ["unified_kg_rag", "README.md", "LICENSE", "pyproject.toml"]
 
 [tool.black]
 line-length = 88

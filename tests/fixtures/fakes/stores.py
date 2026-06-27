@@ -31,6 +31,12 @@ class _Recorder:
             stats.add_success()
         return stats
 
+    def close(self) -> None:
+        """No-op teardown (mirrors the BaseIndexer.close default for in-memory
+        stores), so the manager exercises the real close contract rather than
+        falling through its AttributeError guard."""
+        return None
+
     def ids(self, collection: str) -> set[str]:
         return set(self.data.get(collection, {}).keys())
 
@@ -160,3 +166,39 @@ class FakeVectorStore(_Recorder):
     ) -> IndexingStats:
         self.delete_calls.append((prefix, suffix))
         return self.delete(ids)
+
+    def delete_document_artifacts(
+        self,
+        ids: list[str],
+        suffix: str,
+        extra_relationship_ids: list[str] | None = None,
+    ) -> dict[str, IndexingStats]:
+        """Mirror the real OpenSearch fan-out across artifact indices.
+
+        Records a delete call per index prefix (so per-index routing can be
+        asserted) and folds orphaned incident-edge ids into the relationship
+        index only, matching OpenSearchIndexer.delete_document_artifacts.
+        """
+        results: dict[str, IndexingStats] = {}
+        if not ids:
+            return results
+        oc = self.opensearch_config
+        rel_prefix = getattr(oc, "relationships_index_prefix", "relationships")
+        prefixes = [
+            getattr(oc, "text_units_index_prefix", "text-units"),
+            getattr(oc, "entities_index_prefix", "entities"),
+            rel_prefix,
+            getattr(oc, "claims_index_prefix", "claims"),
+            getattr(oc, "community_reports_index_prefix", "community-reports"),
+        ]
+        orphan_ids = set(extra_relationship_ids or [])
+        for prefix in prefixes:
+            delete_ids = (
+                sorted(set(ids) | orphan_ids)
+                if prefix == rel_prefix and orphan_ids
+                else ids
+            )
+            results[f"opensearch_delete_{prefix}_{suffix}"] = self.delete_by_id(
+                delete_ids, prefix, suffix
+            )
+        return results

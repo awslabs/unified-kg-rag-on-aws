@@ -196,7 +196,10 @@ graph:
     trials: 3
     extra_forced_iterations: 2
     min_community_size: 3
+    # When true, sweep auto_resolution_candidates and keep the resolution that
+    # maximizes modularity (the static `resolution` above is used when false).
     auto_resolution: true
+    auto_resolution_candidates: [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0]
 
     # Community report generation
     report_generation:
@@ -270,6 +273,9 @@ indexing:
     relationships_index_prefix: "graphrag-relationships"
     # Claim (covariate) vector index — makes extracted claims searchable.
     claims_index_prefix: "graphrag-claims"
+    # OpenSearch search pipeline that fuses lexical + vector results (created on
+    # initialize); its normalization/combination weights come from search.hybrid.
+    hybrid_search_pipeline_name: "graphrag-hybrid-search-pipeline"
     # Text analyzer per language code (extend without code changes); unlisted
     # languages use default_analyzer.
     default_analyzer: "standard"
@@ -373,6 +379,9 @@ search:
     relevance_threshold: 0.5
     use_dynamic_selection: true
     enable_map_reduce: true
+    # Timeout (seconds) for the Neptune community-graph retrieval; raise for very
+    # large graphs or slow clusters.
+    graph_timeout_seconds: 30.0
     # Upper bound on text units pulled into the global-search context.
     max_text_units: 100
     # Minimum community results before map-reduce synthesis kicks in; below
@@ -445,7 +454,8 @@ evaluation:
     - langchain
     - ragas
     # - graph_aware  # deterministic, LLM-free entity/relationship coverage
-    #                (precision/recall/F1); requires `expected_entities` /
+    #                (= recall of expected graph artifacts; precision/F1 are
+    #                intentionally not emitted). Requires `expected_entities` /
     #                `expected_relationships` in the evaluation dataset.
   langchain_metrics:
     - correctness
@@ -480,6 +490,11 @@ custom_prompts:
   # Community Report Prompts
   community_report_system: null
   community_report_human: null
+
+  # Global-search MAP-step Prompts (rates each community report's key points
+  # against the query in the map-reduce path).
+  global_map_system: null
+  global_map_human: null
 
   # Answer Generation Prompts
   answer_generation_system: null

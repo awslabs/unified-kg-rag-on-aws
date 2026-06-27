@@ -40,9 +40,42 @@ jobs:
 
       - name: pytest + coverage
         # The `aws` marker gates tests needing real AWS services; excluded in CI.
-        # The coverage floor ratchets up toward the 80% target as the suite grows.
+        # The coverage floor tracks the actual ratchet (currently ~79%) so new
+        # untested code cannot silently regress coverage; raise toward 80%.
         run: >-
           uv run pytest -m "not aws"
           --cov=unified_kg_rag --cov-report=term-missing
           --cov-report=xml:coverage.xml --junitxml=report.xml
-          --cov-fail-under=75
+          --cov-fail-under=78
+
+      - name: Upload coverage + test report
+        # Surface coverage.xml / report.xml as artifacts for inspection on each run.
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-and-report
+          path: |
+            coverage.xml
+            report.xml
+          if-no-files-found: ignore
+
+  markers:
+    # Verify the property and integration suites pass in isolation, so a suite
+    # that is accidentally excluded from the default selection can't rot unseen.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Property suite
+        run: uv run pytest -m "property" -q
+
+      - name: Integration suite (AWS-free)
+        run: uv run pytest -m "integration and not aws" -q

@@ -19,24 +19,19 @@ from unified_kg_rag.domain.models import Config, Entity
 pytestmark = pytest.mark.integration
 
 
-def _manager(mocker, *, cross_run_merge: bool):
+def _manager(*, cross_run_merge: bool):
     config = Config()
     config.indexing.cross_run_merge = cross_run_merge
     graph = FakeGraphStore()
     vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
-    mocker.patch(
-        "unified_kg_rag.application.storage.indexing_manager.OpenSearchIndexer",
-        return_value=vector,
+    return (
+        IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph),
+        graph,
     )
-    mocker.patch(
-        "unified_kg_rag.application.storage.indexing_manager.NeptuneIndexer",
-        return_value=graph,
-    )
-    return IndexingManager(config=config), graph
 
 
-def test_cross_run_merge_unions_descriptions_and_text_units(mocker) -> None:
-    mgr, graph = _manager(mocker, cross_run_merge=True)
+def test_cross_run_merge_unions_descriptions_and_text_units() -> None:
+    mgr, graph = _manager(cross_run_merge=True)
 
     # Run 1: entity 'alice' seen in text unit t1 with description A.
     mgr.index_delta(
@@ -53,8 +48,8 @@ def test_cross_run_merge_unions_descriptions_and_text_units(mocker) -> None:
     assert set(stored.text_unit_ids or []) == {"t1", "t2"}
 
 
-def test_without_flag_overwrites(mocker) -> None:
-    mgr, graph = _manager(mocker, cross_run_merge=False)
+def test_without_flag_overwrites() -> None:
+    mgr, graph = _manager(cross_run_merge=False)
 
     mgr.index_delta(
         entities=[Entity(id="e1", name="alice", description="A", text_unit_ids=["t1"])]

@@ -852,7 +852,8 @@ class NeptuneIndexer(GraphIndexer):
                 # Exponential backoff with full jitter so concurrent workers do
                 # not retry a throttled endpoint in lock-step.
                 backoff = delay * (2**attempt)
-                sleep_for = random.uniform(0, backoff)
+                # Retry-backoff jitter only; not a security/crypto context.
+                sleep_for = random.uniform(0, backoff)  # nosec B311
                 logger.warning(
                     "%s attempt %s failed, retrying in %.2fs: %s",
                     operation_name,

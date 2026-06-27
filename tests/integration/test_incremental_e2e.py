@@ -26,19 +26,11 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def harness(mocker):
+def harness():
     config = Config()
     graph = FakeGraphStore()
     vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
-    mocker.patch(
-        "unified_kg_rag.application.storage.indexing_manager.OpenSearchIndexer",
-        return_value=vector,
-    )
-    mocker.patch(
-        "unified_kg_rag.application.storage.indexing_manager.NeptuneIndexer",
-        return_value=graph,
-    )
-    manager = IndexingManager(config=config)
+    manager = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)
     store = FakeDocStatusStore()
     inc = IncrementalIndexer(store, manager)
     return inc, store, graph, vector

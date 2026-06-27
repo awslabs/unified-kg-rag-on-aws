@@ -260,7 +260,12 @@ class OpenSearchClient:
             # attribute 'encode'", silently returning zero search hits. The async
             # connection needs AWSV4SignerAsyncAuth; the sync one AWSV4SignerAuth.
             signer = AWSV4SignerAsyncAuth if async_mode else AWSV4SignerAuth
-            return signer(creds, self.config.aws.region_name, "es")
+            # 'es' (managed domain) by default; 'aoss' for OpenSearch Serverless.
+            return signer(
+                creds,
+                self.config.aws.region_name,
+                self.opensearch_config.sigv4_service_name,
+            )
 
         if self.opensearch_config.username and self.opensearch_config.password:
             return (
