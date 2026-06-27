@@ -34,8 +34,12 @@ def _client(*, use_iam: bool, username: str | None = None) -> OpenSearchClient:
     cfg.aws.region_name = "ap-northeast-2"
     client.config = cfg
     session = MagicMock()
+    # Dummy non-secret placeholder credentials on a MagicMock for SigV4 signing
+    # tests; not real keys.
     session.get_credentials.return_value = MagicMock(
-        access_key="AKIA", secret_key="secret", token="token"
+        access_key="AKIA",  # nosec B106
+        secret_key="secret",  # nosec B106
+        token="token",  # nosec B106
     )
     client.boto_session = session
     return client
