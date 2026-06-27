@@ -206,3 +206,6 @@ cdk.context.json
 
 # Local backups of gitignored configs (may carry real endpoints / account ids)
 *.bak
+
+# Security-scan output (ASH) — local artifacts, not for the published repo
+.ash/
