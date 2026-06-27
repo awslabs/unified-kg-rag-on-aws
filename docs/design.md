@@ -241,7 +241,9 @@ Per-source behavior:
 - If keyword extraction yields nothing, short queries fall back to using the raw query as ll keywords (config `search.lightrag_search.raw_query_fallback_max_len`)
 - All sources are fused through the shared `HybridScorer`
 
-> The two methodologies share the same ingestion outputs (entities/relationships/communities/chunks + embeddings) and branch only at the retrieval layer.
+> The two methodologies share the same ingestion outputs (entities/relationships/communities/chunks + embeddings) and branch only at the retrieval layer — so a single indexed corpus answers both GraphRAG and LightRAG queries with no re-indexing. This is a deliberate extension over the source papers: stock MS GraphRAG does not build a relationship vector index, and stock LightRAG does not do community detection/reports; here the ingestion builds the *union* so either methodology can run.
+>
+> The trade-off: a full ingestion pays GraphRAG's community-detection + report-generation cost even if you only query with LightRAG. For a LightRAG-only deployment, set `graph.community_detection.enabled: false` to skip the Leiden pass and all community-report LLM calls — `mix`/`hybrid`/`naive` need only entities, relationships, and the relationship vector index. (Leave it on if you want `global`/`drift` available.)
 
 ---
 
@@ -371,11 +373,3 @@ intentional decision rather than an oversight:
   §2.1 and the `IndexingManager` / `ModelFactoryPort` DI seams). The query-model
   vocabulary is the pragmatic place to stop: it is revisited if and when a second
   backend pairing actually lands, at which point the refactor pays for itself.
-
-Everything else the earlier milestones tracked as a gap is now closed: the cache
-abstraction (`CachePort` + S3/local cache managers), query-time claims injection
-(local/simple, §6.1), LLM re-summarization of merged descriptions (stage 7, §4),
-client-lifecycle teardown (§8.6), the model-factory port DI (the embedding/rerank
-construction points accept an injected `ModelFactoryPort`, defaulting to Bedrock),
-and the `IndexingManager` port-based DI (vector/graph stores are injected; the
-in-memory fakes drive the real manager in tests).

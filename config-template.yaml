@@ -190,6 +190,12 @@ graph:
 
   # Community Detection
   community_detection:
+    # Run Leiden community detection + LLM community-report generation during
+    # indexing. Required for GraphRAG global/drift search. Set false for a
+    # lighter LightRAG-only ingestion (mix/hybrid/naive need only entities,
+    # relationships, and the relationship vector index) — skips the Leiden pass
+    # and all community-report LLM calls.
+    enabled: true
     resolution: 1.0
     random_state: 42
     max_levels: 5

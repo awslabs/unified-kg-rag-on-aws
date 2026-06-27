@@ -787,13 +787,13 @@ persona / entity types) via Bedrock, and writes a domain-adapted
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--source-dir` | **required** | Directory of text documents (`.txt`, `.md`, `.markdown`) |
+| `--source-directory` | **required** | Directory of text documents (`.txt`, `.md`, `.markdown`); `--source-dir` is accepted as an alias |
 | `--output` | `tuned_prompts.yaml` | Output YAML path |
 | `--max-docs` | `20` | Max documents to sample |
 | `--config-path` | — | Path to `config.yaml` |
 
 ```bash
-run-prompt-tuning --source-dir ./source --output tuned_prompts.yaml --config-path config.yaml
+run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
 ```
 
 The output YAML contains a `custom_prompts` block (and a `profile` with the

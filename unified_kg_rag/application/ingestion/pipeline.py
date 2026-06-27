@@ -247,6 +247,16 @@ class DataIngestionPipeline:
                 if claim_config and hasattr(claim_config, "enabled"):
                     stage_enabled = stage_enabled and claim_config.enabled
 
+            elif stage_type == PipelineStageType.COMMUNITY_DETECTION:
+                # Optional for a LightRAG-only (mix/hybrid/naive) ingestion, which
+                # needs no communities; skipping avoids the Leiden pass and all
+                # community-report LLM calls. GraphRAG global/drift require it.
+                community_config = getattr(
+                    self.config.graph, "community_detection", None
+                )
+                if community_config and hasattr(community_config, "enabled"):
+                    stage_enabled = stage_enabled and community_config.enabled
+
             if stage_enabled:
                 kwargs: dict[str, Any] = {}
                 if stage_type in self.INPUT_DIR_REQUIRED_STAGES:

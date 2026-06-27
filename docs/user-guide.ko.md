@@ -785,13 +785,13 @@ run-visualization --data-path visualization_data.json --renderers interactive --
 
 | 플래그 | 기본값 | 의미 |
 |---|---|---|
-| `--source-dir` | **필수** | 텍스트 문서 디렉터리 (`.txt`, `.md`, `.markdown`) |
+| `--source-directory` | **필수** | 텍스트 문서 디렉터리 (`.txt`, `.md`, `.markdown`); `--source-dir`도 별칭으로 허용 |
 | `--output` | `tuned_prompts.yaml` | 출력 YAML 경로 |
 | `--max-docs` | `20` | 샘플링할 최대 문서 수 |
 | `--config-path` | — | `config.yaml` 경로 |
 
 ```bash
-run-prompt-tuning --source-dir ./source --output tuned_prompts.yaml --config-path config.yaml
+run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
 ```
 
 출력 YAML에는 `custom_prompts` 블록(과 감지된 도메인이 담긴 `profile`)이

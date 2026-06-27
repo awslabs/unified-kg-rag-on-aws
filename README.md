@@ -1,7 +1,6 @@
 # Unified Knowledge Graph RAG on AWS
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![CI](https://github.com/awslabs/unified-kg-rag-on-aws/actions/workflows/quality.yml/badge.svg)](https://github.com/awslabs/unified-kg-rag-on-aws/actions/workflows/quality.yml)
 [![Python](https://img.shields.io/badge/python-3.10--3.12-blue.svg)](https://www.python.org/downloads/)
 
 🤝 **[Contributing](./CONTRIBUTING.md)**
@@ -263,7 +262,7 @@ run-eval --eval-data-path eval_data.json --config-path config.yaml
 run-visualization --data-path visualization_data.json --output-dir ./viz --config-path config.yaml
 
 # 5) Auto-tune prompts to a domain corpus
-run-prompt-tuning --source-dir ./source --output tuned_prompts.yaml --config-path config.yaml
+run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
 ```
 
 **Choosing a strategy** — GraphRAG: `simple` (direct vector/lexical), `local`

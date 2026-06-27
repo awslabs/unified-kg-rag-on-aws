@@ -715,6 +715,16 @@ class ReportGenerationConfig(BaseModel):
 
 
 class CommunityDetectionConfig(BaseModel):
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Run Leiden community detection + LLM community-report generation "
+            "during indexing. Required for GraphRAG global/drift search. Disable "
+            "for a lighter, LightRAG-only ingestion (mix/hybrid/naive need only "
+            "entities, relationships, and the relationship vector index — no "
+            "communities), which skips the Leiden pass and all report LLM calls."
+        ),
+    )
     resolution: float = Field(
         default=1.0,
         gt=0.0,

@@ -60,7 +60,7 @@
 
 ### 🧱 헥사고날 아키텍처 (포트 & 어댑터)
 
-스토리지/검색 백엔드를 교체 가능하게 하고, 검색 전략·평가자·렌더러를 레지스트리로 확장합니다 — 디스패치 코드를 수정하지 않고 확장 가능. 자세한 내용은 [`CLAUDE.md`](./CLAUDE.md)와 [기술 문서](./docs/design.md) 참고.
+스토리지/검색 백엔드를 교체 가능하게 하고, 검색 전략·평가자·렌더러를 레지스트리로 확장합니다 — 디스패치 코드를 수정하지 않고 확장 가능. 자세한 내용은 [`CLAUDE.md`](./CLAUDE.md)와 [기술 문서](./docs/design.ko.md) 참고.
 
 ---
 
@@ -80,7 +80,7 @@
 - **융합/재랭킹**: RRF, 다양성 필터링, Bedrock 리랭킹, 토큰 예산 관리
 - **검색 전략**은 추상 역할(GRAPH/DOCUMENT)로 백엔드를 주입받아 백엔드 무관하게 동작
 
-자세한 컴포넌트·데이터 흐름·알고리즘은 **[기술 문서](./docs/design.md)**를 참고하세요.
+자세한 컴포넌트·데이터 흐름·알고리즘은 **[기술 문서](./docs/design.ko.md)**를 참고하세요.
 
 ---
 
@@ -133,12 +133,12 @@ run-eval --eval-data-path eval_data.json --config-path config.yaml
 run-visualization --data-path visualization_data.json --output-dir ./viz --config-path config.yaml
 
 # 5) 도메인 코퍼스에 프롬프트 자동 튜닝
-run-prompt-tuning --source-dir ./source --output tuned_prompts.yaml --config-path config.yaml
+run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
 ```
 
 **전략 선택** — GraphRAG: `simple`(직접 벡터/렉시컬), `local`(엔티티 중심), `global`(커뮤니티 요약, map-reduce), `drift`(점진 탐색), `auto`(LLM 라우터). LightRAG: `mix` / `hybrid` / `naive`(이중 레벨 키워드).
 
-📘 **전체 설정 레퍼런스, 모든 CLI 플래그, Python API, 증분 추가/수정/삭제, 도메인 적응, 트러블슈팅은 [사용자 가이드](./docs/user-guide.ko.md)(영문: [User Guide](./docs/user-guide.md))를 참고하세요.** 아키텍처·알고리즘·구현 내부는 [설계 문서](./docs/design.md)(영문: [Design Doc](./docs/design.md))를 참고하세요.
+설정·CLI 플래그·Python API·증분 인덱싱은 **[사용자 가이드](./docs/user-guide.ko.md)**, 아키텍처·알고리즘은 **[설계 문서](./docs/design.ko.md)**를 참고하세요.
 
 ---
 

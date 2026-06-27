@@ -120,6 +120,30 @@ def test_initialize_stages_gleaning_disabled_excludes_gleaning() -> None:
     assert "gleaning" not in names
 
 
+def test_initialize_stages_community_detection_on_by_default() -> None:
+    _StubStage.instances = []
+    cfg = Config()
+    pipe = _pipeline_for_init(cfg)
+    stages, _ = pipe._initialize_stages()
+    names = {s.name for s in stages}
+    # Community detection is on by default (GraphRAG global/drift need it).
+    assert "community_detection" in names
+
+
+def test_initialize_stages_community_detection_disabled_excludes_it() -> None:
+    _StubStage.instances = []
+    cfg = Config()
+    # LightRAG-only ingestion: skip the Leiden pass + community-report LLM calls.
+    cfg.graph.community_detection.enabled = False
+    pipe = _pipeline_for_init(cfg)
+    stages, _ = pipe._initialize_stages()
+    names = {s.name for s in stages}
+    assert "community_detection" not in names
+    # The rest of the graph pipeline (entities/relationships) still runs.
+    assert "graph_extraction" in names
+    assert "indexing" in names
+
+
 def test_initialize_stages_respects_pipeline_config_stages_enabled() -> None:
     _StubStage.instances = []
     cfg = Config()
