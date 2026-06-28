@@ -77,17 +77,18 @@ unified_kg_rag/
 │  └─ prompts/          #   PromptTuner (LLM-based corpus profiling)
 ├─ shared/              # cross-cutting kernel (config, logging, exceptions, metrics,
 │                       #   cache/pipeline manager, utils)
-└─ (facades)            # thin re-export shims to keep public import paths stable:
-   retrieval/ storage/ ingestion/  (evaluation/ and visualization/ — see note below)
+├─ evaluation/          # real logic package: evaluation_manager / base / graph_aware
+└─ visualization/       # real logic package: render loop + embeddings/exporters/renderers
 ```
 
-> Facade note: `retrieval/`, `storage/`, and `ingestion/` are single `__init__`
-> re-export shims. `evaluation/` and `visualization/`, by contrast, are **real
-> logic packages** (`evaluation/` holds `evaluation_manager` /
+> Layout note: `evaluation/` and `visualization/` are **real logic packages**
+> (they predate the hexagonal split — `evaluation/` holds `evaluation_manager` /
 > `graph_aware_evaluator` / `base`; `visualization/` holds the render loop plus
-> the `embeddings/`, `exporters/`, and `renderers/` subpackages). They predate
-> the hexagonal layer split and live here for import-path stability — they are
-> not thin shims.
+> the `embeddings/`, `exporters/`, and `renderers/` subpackages), not facades.
+> The earlier thin re-export shims (`retrieval/`, `storage/`, `ingestion/`) that
+> preserved pre-split import paths have been removed; import from the real
+> locations (`application.retrieval.rag_chain`, `application.storage.indexing_manager`,
+> `application.ingestion.pipeline`, `adapters.*`, `domain.*`).
 
 ### 2.1 Ports (Abstract Interfaces)
 
@@ -129,7 +130,7 @@ This pattern follows the same philosophy as the existing `ParserFactory._loader_
 
 Verified with grep: `domain/` does not import `adapters`/`application` at runtime, and neither does `ports/`. One compile-time-only exception remains — `domain/retrieval/strategy_registry.py` references `adapters.retrieval.base.BaseSearchStrategy` under `TYPE_CHECKING` (because the registry stores strategy subclasses). Extracting pure strategy/retriever ports would also remove this type-level reference; it is left in place as a deliberate boundary (see "Deliberate Design Boundaries" at the end of this document).
 
-The legacy top-level packages `retrieval/`, `storage/`, and `ingestion/` are intentionally preserved as thin facade `__init__` modules so that public import paths/APIs remain stable after the layer split. `evaluation/` and `visualization/` are *not* facades — they are real logic packages that predate the split (see the facade note in §2).
+The legacy top-level facade shims `retrieval/`, `storage/`, and `ingestion/` (thin `__init__` re-export modules left behind by the layer split) have been removed; code imports from the real locations (`application.retrieval.rag_chain`, `application.storage.indexing_manager`, `application.ingestion.pipeline`, and the `adapters.*` / `domain.*` modules). `evaluation/` and `visualization/` remain as real logic packages that predate the split (see the layout note in §2).
 
 ---
 

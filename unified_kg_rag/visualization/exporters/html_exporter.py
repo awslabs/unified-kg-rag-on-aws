@@ -4,11 +4,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from unified_kg_rag.ingestion import (
+from unified_kg_rag.domain.ingestion.graph_analyzer import (
     CentralityMetrics,
-    CommunityMetrics,
     GraphStatistics,
 )
+from unified_kg_rag.domain.models.community import CommunityMetrics
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)

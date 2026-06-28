@@ -646,8 +646,16 @@ class TestRelationshipGrounding:
     def _result() -> dict:
         return {
             "entities": [
-                {"name": "Alice", "type": "PERSON", "source_text": "Alice works at Acme Corp."},
-                {"name": "Acme Corp", "type": "ORG", "source_text": "Alice works at Acme Corp."},
+                {
+                    "name": "Alice",
+                    "type": "PERSON",
+                    "source_text": "Alice works at Acme Corp.",
+                },
+                {
+                    "name": "Acme Corp",
+                    "type": "ORG",
+                    "source_text": "Alice works at Acme Corp.",
+                },
             ],
             "relationships": [
                 {

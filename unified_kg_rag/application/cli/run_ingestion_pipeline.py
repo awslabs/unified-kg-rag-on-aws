@@ -12,12 +12,12 @@ from dotenv import load_dotenv
 from rich.panel import Panel
 from rich.prompt import Confirm
 
+from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import (
     PipelineConfig,
     PipelineContext,
     PipelineStageType,
 )
-from unified_kg_rag.ingestion import DataIngestionPipeline
 from unified_kg_rag.shared import (
     CloudWatchEMFSink,
     MetricsSink,

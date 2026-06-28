@@ -14,13 +14,13 @@ import nest_asyncio
 from dotenv import load_dotenv
 from rich.panel import Panel
 
-from unified_kg_rag.domain.models import Constants, SearchStrategy, SearchType
-from unified_kg_rag.retrieval import (
+from unified_kg_rag.application.retrieval.rag_chain import (
     ChainMode,
     GraphRAGChain,
     RAGInput,
     create_rag_chain,
 )
+from unified_kg_rag.domain.models import Constants, SearchStrategy, SearchType
 from unified_kg_rag.shared import get_config, get_logger
 from unified_kg_rag.shared.utils import console, display_ascii_art
 

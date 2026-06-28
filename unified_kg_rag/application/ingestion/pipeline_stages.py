@@ -21,6 +21,7 @@ from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
 from unified_kg_rag.adapters.ingestion.loader import DirectoryLoader
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
+from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
@@ -41,7 +42,6 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.shared import PipelineStageError, get_logger
-from unified_kg_rag.storage import IndexingManager
 
 if TYPE_CHECKING:
     from unified_kg_rag.ports import DocStatusPort

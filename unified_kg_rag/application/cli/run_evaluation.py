@@ -13,6 +13,7 @@ from langchain.schema.runnable import Runnable
 from rich.panel import Panel
 from rich.table import Table
 
+from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
     EvaluationGroundTruth,
     EvaluationSummary,
@@ -20,7 +21,6 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.evaluation import EvaluationManager
-from unified_kg_rag.retrieval import GraphRAGChain
 from unified_kg_rag.shared import get_config, get_logger
 from unified_kg_rag.shared.utils import console, display_ascii_art
 

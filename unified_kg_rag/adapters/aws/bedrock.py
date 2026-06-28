@@ -389,9 +389,7 @@ class BedrockCrossRegionModelHelper:
         return f"{prefix}.{model_id.value}"
 
     @classmethod
-    def _get_available_profiles(
-        cls, bedrock_client: Any, region_name: str
-    ) -> set[str]:
+    def _get_available_profiles(cls, bedrock_client: Any, region_name: str) -> set[str]:
         """System-defined inference-profile ids for a region, fetched once.
 
         Cached per region on the class so resolving many models in one process

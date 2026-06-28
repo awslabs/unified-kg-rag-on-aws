@@ -116,8 +116,8 @@ def test_ingest_then_search_round_trip(live_config, tmp_path) -> None:
     """
     import asyncio
 
+    from unified_kg_rag.application.retrieval.rag_chain import create_rag_chain
     from unified_kg_rag.domain.models import RAGInput
-    from unified_kg_rag.retrieval import create_rag_chain
 
     corpus = tmp_path / "docs"
     corpus.mkdir()

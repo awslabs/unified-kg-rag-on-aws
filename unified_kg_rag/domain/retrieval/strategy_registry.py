@@ -3,7 +3,7 @@
 """Registry for search strategies.
 
 Replaces the previous hardcoded ``strategy_map`` dict and ``if SIMPLE/else``
-retriever wiring in :mod:`unified_kg_rag.retrieval.rag_chain` with a declarative,
+retriever wiring in :mod:`unified_kg_rag.application.retrieval.rag_chain` with a declarative,
 enum-keyed registry. New strategies register themselves with
 ``@register_strategy`` and declare which retrievers they need, so adding a
 strategy no longer requires editing dispatch code.

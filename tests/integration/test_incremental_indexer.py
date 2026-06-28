@@ -13,9 +13,9 @@ from __future__ import annotations
 import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
 from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
 from unified_kg_rag.domain.models import Document, DocumentLineage, Entity
-from unified_kg_rag.ingestion import IncrementalIndexer
 from unified_kg_rag.ports.indexer import IndexingStats
 
 pytestmark = pytest.mark.integration

@@ -7,13 +7,14 @@ from typing import Any
 import boto3
 import networkx as nx
 
+from unified_kg_rag.adapters.ingestion.community_detector import CommunityDetector
 from unified_kg_rag.adapters.renderers import (
     RenderContext,
     get_renderer_class,
     registered_renderers,
 )
+from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.ingestion import CommunityDetector, GraphAnalyzer
 from unified_kg_rag.shared import get_logger
 
 from .embeddings.dimensionality import DimensionalityReducer

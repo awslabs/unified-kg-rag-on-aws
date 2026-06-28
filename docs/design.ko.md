@@ -77,15 +77,18 @@ unified_kg_rag/
 │  └─ prompts/          #   PromptTuner (LLM 기반 코퍼스 프로파일링)
 ├─ shared/              # cross-cutting 커널 (config, logging, exceptions, metrics,
 │                       #   cache/pipeline manager, utils)
-└─ (facades)            # 공개 import 경로 안정용 thin re-export shim:
-   retrieval/ storage/ ingestion/  (evaluation/·visualization/은 아래 주석 참고)
+├─ evaluation/          # 실제 로직 패키지: evaluation_manager / base / graph_aware
+└─ visualization/       # 실제 로직 패키지: 렌더 루프 + embeddings/exporters/renderers
 ```
 
-> 파사드 주석: `retrieval/`·`storage/`·`ingestion/`은 단일 `__init__` re-export
-> shim입니다. 반면 `evaluation/`·`visualization/`은 **실제 로직 패키지**입니다
-> (`evaluation/`은 `evaluation_manager`·`graph_aware_evaluator` 등을, `visualization/`은
-> 렌더 루프 + `embeddings/`·`exporters/`·`renderers/` 하위패키지를 보유). 헥사고날
-> 레이어 분리 전부터 이 위치에 있던 것으로, "전부 thin shim"은 아닙니다.
+> 레이아웃 주석: `evaluation/`·`visualization/`은 **실제 로직 패키지**입니다
+> (헥사고날 분리 전부터 존재 — `evaluation/`은 `evaluation_manager`·
+> `graph_aware_evaluator`·`base`를, `visualization/`은 렌더 루프 + `embeddings/`·
+> `exporters/`·`renderers/` 하위패키지를 보유). 파사드가 아닙니다. 분리 전 import
+> 경로를 보존하던 thin re-export shim(`retrieval/`·`storage/`·`ingestion/`)은
+> 제거되었으며, 실제 위치(`application.retrieval.rag_chain`,
+> `application.storage.indexing_manager`, `application.ingestion.pipeline`,
+> `adapters.*`, `domain.*`)에서 import합니다.
 
 ### 2.1 포트(추상 인터페이스)
 
@@ -135,7 +138,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import하지 않고, `ports/`도 그렇습니다. 컴파일 타임 한정 예외 하나가 남아 있습니다 — `domain/retrieval/strategy_registry.py`가 `TYPE_CHECKING` 하에서 `adapters.retrieval.base.BaseSearchStrategy`를 참조합니다(레지스트리가 전략 서브클래스를 저장하므로). 순수 전략/리트리버 포트를 추출하면 이 타입 수준 참조도 제거되며, 의도적 경계로 남겨둡니다(문서 말미 "의도적 설계 경계" 참조).
 
-레거시 최상위 패키지 중 `retrieval/`·`storage/`·`ingestion/`은 레이어 분리 후에도 공개 import 경로/API를 안정적으로 유지하기 위한 thin 파사드 `__init__` 모듈로 의도적으로 보존됩니다(`evaluation/`·`visualization/`은 §2 주석대로 thin shim이 아니라 실제 로직 패키지입니다).
+레이어 분리가 남긴 thin 파사드 shim(`retrieval/`·`storage/`·`ingestion/` — re-export 전용 `__init__`)은 제거되었으며, 코드는 실제 위치(`application.retrieval.rag_chain`, `application.storage.indexing_manager`, `application.ingestion.pipeline`, `adapters.*`/`domain.*`)에서 import합니다. `evaluation/`·`visualization/`은 §2 주석대로 분리 전부터 존재한 실제 로직 패키지로 그대로 유지됩니다.
 
 ---
 

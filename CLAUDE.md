@@ -31,9 +31,12 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   `storage/indexing_manager`, `retrieval/rag_chain`.
 - **`shared/`**: cross-cutting kernel — config, logging, exceptions, metrics,
   cache/pipeline managers, `utils/`.
-- **Facades**: `retrieval/`, `storage/`, `ingestion/`, `evaluation/`,
-  `visualization/` remain as thin `__init__` re-export shims so public import
-  paths stay stable across the layer split.
+- **Real logic packages**: `evaluation/` and `visualization/` predate the layer
+  split and hold real code (not facades). The thin re-export shims that once
+  preserved pre-split import paths (`retrieval/`, `storage/`, `ingestion/`) have
+  been removed — import from the real locations (`application.retrieval.rag_chain`,
+  `application.storage.indexing_manager`, `application.ingestion.pipeline`,
+  `adapters.*`, `domain.*`).
 - **Registries over hardcoded dispatch**: search strategies register via
   `@register_strategy` (`domain/retrieval/strategy_registry.py`). Follow this
   pattern — and the declarative `ParserFactory._loader_configs` /
