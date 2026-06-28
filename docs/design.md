@@ -407,3 +407,23 @@ intentional decision rather than an oversight:
   §2.1 and the `IndexingManager` / `ModelFactoryPort` DI seams). The query-model
   vocabulary is the pragmatic place to stop: it is revisited if and when a second
   backend pairing actually lands, at which point the refactor pays for itself.
+
+- **Incremental `diff()` does a full DynamoDB table scan per run.**
+  `DynamoDBDocStatusStore.diff()` scans the whole doc-status table to classify
+  new/changed/unchanged *and* to compute `deleted` (deletion detection genuinely
+  needs the full set of stored ids). Cost is O(total docs across all suffixes),
+  not O(delta). This is acceptable for a single-corpus deployment but becomes a
+  real per-run cost when one table holds tens of thousands of `suffix`
+  (tenant/project) partitions. Reducing it requires either a GSI keyed by
+  `suffix` (so a run scopes its scan/query to its own partition) or a corpus
+  manifest — both a schema/redeploy change, deferred until that scale is real.
+  Pairs with the per-suffix OpenSearch index multiplication noted below.
+
+- **One physical OpenSearch index per `suffix` per artifact type.**
+  Multi-tenant/versioned isolation uses a real index per `suffix`
+  (`{prefix}-{suffix}`). With a handful of tenants this is fine; with tens of
+  thousands of `suffix` values it multiplies the cluster's index/shard count and
+  the cluster-state overhead. The scale-out fix is a single index per artifact
+  type with a `tenant` filter field + routing (delete-by-query instead of index
+  drop) — a behavior-affecting change across the index/search/delete paths,
+  deferred as a dedicated migration rather than bundled here.
