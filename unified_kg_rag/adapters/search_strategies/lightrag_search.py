@@ -8,7 +8,11 @@ unified-kg-rag-on-aws's *shared* infrastructure rather than as a separate, reduc
 - low-level keywords (``ll_keywords``) -> entities index (lexical + vector),
 - high-level keywords (``hl_keywords``) -> relationships index (lexical + vector),
 - the entity hits are expanded through Neptune graph traversal,
-- ``mix`` additionally blends a naive vector chunk retrieval,
+- ``mix`` additionally pulls the source chunks referenced by the matched
+  entities/relationships (following ``text_unit_ids`` lineage, ranked by how
+  many matched entities/relationships cite each chunk — LightRAG's
+  ``_find_related_text_unit_from_entities``/``_from_relationships``) and blends
+  a naive vector chunk retrieval,
 - everything is fused and reranked via the shared :class:`HybridScorer`
   (BM25 lexical + vector semantic + graph + RRF + Bedrock rerank).
 
@@ -132,6 +136,16 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                     results_by_source["graph_entities"] = expanded
 
             if mode == SearchStrategy.MIX.value:
+                # KG-grounded chunks: follow text_unit_ids lineage from the
+                # matched entities/relationships to their source chunks (ranked
+                # by citation count), then blend a naive vector chunk query.
+                linked = await self._retrieve_linked_chunks(
+                    query,
+                    results_by_source.get("lightrag_entities", []),
+                    results_by_source.get("lightrag_relationships", []),
+                )
+                if linked:
+                    results_by_source.update(linked)
                 results_by_source.update(await self._retrieve_chunks(query))
 
         final_results = self.hybrid_scorer.fuse_and_rerank_results(
@@ -223,6 +237,74 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             return {"lightrag_chunks": results}
         except Exception as e:
             logger.error("Chunk retrieval failed: %s", e)
+            return {}
+
+    @staticmethod
+    def _collect_linked_chunk_ids(
+        entity_results: list[RetrievalResult],
+        relationship_results: list[RetrievalResult],
+        limit: int,
+    ) -> list[str]:
+        """Rank source chunk ids by how many matched KG items cite them.
+
+        Mirrors LightRAG's ``_find_related_text_unit_from_entities``/
+        ``_from_relationships``: each matched entity/relationship contributes the
+        chunks in its ``text_unit_ids`` lineage; chunks cited by more matched
+        items are more central to the query and ranked first. Ties keep first-
+        seen order so ranking is deterministic.
+        """
+        counts: dict[str, int] = {}
+        order: dict[str, int] = {}
+        seq = 0
+        for result in [*entity_results, *relationship_results]:
+            metadata = result.metadata or {}
+            unit_ids = metadata.get("text_unit_ids")
+            if not isinstance(unit_ids, list):
+                continue
+            for uid in unit_ids:
+                if not isinstance(uid, str) or not uid:
+                    continue
+                if uid not in counts:
+                    counts[uid] = 0
+                    order[uid] = seq
+                    seq += 1
+                counts[uid] += 1
+        ranked = sorted(counts, key=lambda uid: (-counts[uid], order[uid]))
+        return ranked[:limit]
+
+    async def _retrieve_linked_chunks(
+        self,
+        query: SearchQuery,
+        entity_results: list[RetrievalResult],
+        relationship_results: list[RetrievalResult],
+    ) -> dict[str, list[RetrievalResult]]:
+        """Fetch the source chunks cited by the matched entities/relationships.
+
+        Collects ``text_unit_ids`` lineage from the entity/relationship hits,
+        ranks chunk ids by citation count, and fetches the top chunks by id from
+        the text-units index. Degrades to no section if lineage is absent (e.g.
+        an index built before lineage was added) or retrieval fails.
+        """
+        if not self.document_retriever:
+            return {}
+        chunk_ids = self._collect_linked_chunk_ids(
+            entity_results, relationship_results, limit=query.top_k
+        )
+        if not chunk_ids:
+            return {}
+        search_query = SearchQuery(
+            query="",
+            search_type=SearchType.LEXICAL,
+            top_k=len(chunk_ids),
+            index_prefixes=[self._os_config.text_units_index_prefix],
+            suffix=query.suffix,
+            filters={"id": chunk_ids},
+        )
+        try:
+            results = await self.document_retriever.aretrieve(search_query)
+            return {"lightrag_linked_chunks": results} if results else {}
+        except Exception as e:
+            logger.error("Linked chunk retrieval failed: %s", e)
             return {}
 
     @staticmethod

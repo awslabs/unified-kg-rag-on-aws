@@ -332,6 +332,9 @@ class OpenSearchIndexer(VectorIndexer):
             "type": entity.type or "",
             "rank": entity.rank or 1.0,
             "confidence": (entity.confidence if entity.confidence is not None else 1.0),
+            # Chunk lineage: lets LightRAG mix follow entity -> source chunks
+            # instead of relying solely on a separate naive vector query.
+            "text_unit_ids": list(entity.text_unit_ids or []),
         }
 
     @staticmethod
@@ -348,6 +351,9 @@ class OpenSearchIndexer(VectorIndexer):
             "description_embedding": embeddings[0],
             "weight": rel.weight if rel.weight is not None else 1.0,
             "rank": rel.rank or 1.0,
+            # Chunk lineage: lets LightRAG mix follow relationship -> source
+            # chunks (LightRAG's _find_related_text_unit_from_relationships).
+            "text_unit_ids": list(rel.text_unit_ids or []),
         }
 
     def index_relationships(self, relationships: list[Relationship]) -> IndexingStats:
@@ -909,6 +915,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "type": {"type": "keyword"},
                 "rank": {"type": "double"},
                 "confidence": {"type": "double"},
+                "text_unit_ids": {"type": "keyword"},
                 "attributes": {"type": "object", "dynamic": True},
             }
         )
@@ -925,6 +932,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "description_embedding": self._get_knn_vector_mapping(),
                 "weight": {"type": "double"},
                 "rank": {"type": "double"},
+                "text_unit_ids": {"type": "keyword"},
                 "attributes": {"type": "object", "dynamic": True},
             }
         )

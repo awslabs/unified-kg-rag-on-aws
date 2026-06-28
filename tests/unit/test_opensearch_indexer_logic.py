@@ -53,6 +53,7 @@ def test_prepare_entity_doc_full(indexer) -> None:
         type="PERSON",
         rank=5,
         confidence=0.9,
+        text_unit_ids=["t1", "t2"],
     )
     doc = indexer._prepare_entity_doc(entity, ([0.1], [0.2]))
     assert doc["id"] == "e1"
@@ -63,6 +64,8 @@ def test_prepare_entity_doc_full(indexer) -> None:
     assert doc["type"] == "PERSON"
     assert doc["rank"] == 5
     assert doc["confidence"] == 0.9
+    # Chunk lineage indexed for LightRAG mix linked-chunk retrieval.
+    assert doc["text_unit_ids"] == ["t1", "t2"]
 
 
 def test_prepare_entity_doc_defaults_when_none(indexer) -> None:

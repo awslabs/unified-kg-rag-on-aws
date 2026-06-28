@@ -26,6 +26,7 @@ def test_prepare_relationship_doc_embeds_description() -> None:
         description="Alice works at Acme",
         weight=0.7,
         rank=3,
+        text_unit_ids=["t1", "t2"],
     )
     doc = OpenSearchIndexer._prepare_relationship_doc(rel, ([0.1, 0.2, 0.3],))
 
@@ -38,6 +39,8 @@ def test_prepare_relationship_doc_embeds_description() -> None:
     assert doc["description_embedding"] == [0.1, 0.2, 0.3]
     assert doc["weight"] == 0.7
     assert doc["rank"] == 3
+    # Chunk lineage indexed for LightRAG mix linked-chunk retrieval.
+    assert doc["text_unit_ids"] == ["t1", "t2"]
 
 
 def test_prepare_relationship_doc_degrades_none_to_empty() -> None:
@@ -47,6 +50,7 @@ def test_prepare_relationship_doc_degrades_none_to_empty() -> None:
     assert doc["source_name"] == ""
     assert doc["target_name"] == ""
     assert doc["weight"] == 1.0  # default when None
+    assert doc["text_unit_ids"] == []  # None lineage -> empty list
 
 
 def test_relationships_mapping_has_knn_vector(config) -> None:
@@ -60,3 +64,4 @@ def test_relationships_mapping_has_knn_vector(config) -> None:
     assert props["description_embedding"]["type"] == "knn_vector"
     assert props["description"]["type"] == "text"
     assert props["source_id"]["type"] == "keyword"
+    assert props["text_unit_ids"]["type"] == "keyword"

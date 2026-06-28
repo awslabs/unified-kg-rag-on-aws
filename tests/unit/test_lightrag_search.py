@@ -119,6 +119,85 @@ async def test_mix_mode_blends_chunks(config: Config) -> None:
     } <= prefixes
 
 
+def test_collect_linked_chunk_ids_ranks_by_citation_count() -> None:
+    spec = get_strategy_spec(SearchStrategy.MIX)
+    cls = spec.strategy_class
+
+    def _hit(unit_ids: list[str]) -> RetrievalResult:
+        return RetrievalResult(
+            content="x",
+            score=1.0,
+            source="s",
+            retriever_type="document",
+            metadata={"id": "i", "text_unit_ids": unit_ids},
+        )
+
+    entity_hits = [_hit(["t1", "t2"]), _hit(["t1"])]  # t1 cited twice
+    rel_hits = [_hit(["t2", "t3"])]  # t2 cited twice total, t3 once
+    ranked = cls._collect_linked_chunk_ids(entity_hits, rel_hits, limit=10)
+    # t1 (2) and t2 (2) before t3 (1); ties keep first-seen order (t1 before t2).
+    assert ranked[:2] == ["t1", "t2"]
+    assert ranked[-1] == "t3"
+    # limit caps the list.
+    assert cls._collect_linked_chunk_ids(entity_hits, rel_hits, limit=1) == ["t1"]
+
+
+def test_collect_linked_chunk_ids_ignores_missing_lineage() -> None:
+    spec = get_strategy_spec(SearchStrategy.MIX)
+    cls = spec.strategy_class
+    no_lineage = RetrievalResult(
+        content="x", score=1.0, source="s", retriever_type="document", metadata={}
+    )
+    assert cls._collect_linked_chunk_ids([no_lineage], [], limit=10) == []
+
+
+class LineageRetriever:
+    """Returns entity/relationship hits carrying text_unit_ids lineage."""
+
+    def __init__(self) -> None:
+        self.calls: list[SearchQuery] = []
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        self.calls.append(query)
+        prefix = query.index_prefixes[0] if query.index_prefixes else "x"
+        return [
+            RetrievalResult(
+                content=f"{prefix} result",
+                score=1.0,
+                source=f"{prefix}-1",
+                retriever_type="document",
+                metadata={"id": f"{prefix}-id", "text_unit_ids": ["chunk-A"]},
+            )
+        ]
+
+
+async def test_mix_mode_fetches_linked_chunks_by_lineage(config: Config) -> None:
+    spec = get_strategy_spec(SearchStrategy.MIX)
+    os_r = LineageRetriever()
+    strategy = spec.strategy_class(
+        config=config,
+        retrievers={
+            RetrieverRole.DOCUMENT.value: os_r,
+            RetrieverRole.GRAPH.value: FakeRetriever("graph"),
+        },
+    )
+    strategy.hybrid_scorer.fuse_and_rerank_results = (  # type: ignore[method-assign]
+        lambda results_dict, top_k, retrieval_multiplier=1, query=None: [
+            r for results in results_dict.values() for r in results
+        ]
+    )
+    await strategy.asearch(
+        _query(SearchStrategy.MIX, ll_keywords=["x"], hl_keywords=["y"])
+    )
+    # The linked-chunk fetch queries the text-units index filtered by the chunk
+    # ids cited by the matched entities/relationships.
+    text_units_prefix = config.indexing.opensearch.text_units_index_prefix
+    linked_calls = [
+        q for q in os_r.calls if q.index_prefixes == [text_units_prefix] and q.filters
+    ]
+    assert linked_calls and linked_calls[0].filters.get("id") == ["chunk-A"]
+
+
 async def test_empty_keywords_fall_back_to_raw_query(config: Config) -> None:
     strategy, os_r, neptune_r = _make_strategy(config)
     # Short hybrid query with no extracted keywords -> raw query forced as an
