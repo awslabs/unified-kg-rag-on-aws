@@ -236,29 +236,52 @@ def test_build_cross_region_model_id_us_prefix() -> None:
 
 
 def test_is_cross_region_model_available_true() -> None:
+    BedrockCrossRegionModelHelper._profiles_by_region.clear()
+
     class _Client:
         def list_inference_profiles(self, **kwargs: Any) -> dict:
             return {"inferenceProfileSummaries": [{"inferenceProfileId": "us.model-x"}]}
 
     assert (
         BedrockCrossRegionModelHelper._is_cross_region_model_available(
-            _Client(), "us.model-x"
+            _Client(), "us.model-x", "us-east-1"
         )
         is True
     )
 
 
 def test_is_cross_region_model_available_false() -> None:
+    BedrockCrossRegionModelHelper._profiles_by_region.clear()
+
     class _Client:
         def list_inference_profiles(self, **kwargs: Any) -> dict:
             return {"inferenceProfileSummaries": []}
 
     assert (
         BedrockCrossRegionModelHelper._is_cross_region_model_available(
-            _Client(), "us.model-x"
+            _Client(), "us.model-x", "us-east-1"
         )
         is False
     )
+
+
+def test_inference_profiles_fetched_once_per_region() -> None:
+    # The list_inference_profiles call must be cached per region so resolving
+    # many models does not re-issue it.
+    BedrockCrossRegionModelHelper._profiles_by_region.clear()
+    calls = {"n": 0}
+
+    class _Client:
+        def list_inference_profiles(self, **kwargs: Any) -> dict:
+            calls["n"] += 1
+            return {"inferenceProfileSummaries": [{"inferenceProfileId": "us.a"}]}
+
+    c = _Client()
+    for _ in range(5):
+        BedrockCrossRegionModelHelper._is_cross_region_model_available(
+            c, "us.a", "us-east-1"
+        )
+    assert calls["n"] == 1  # fetched once, then cached
 
 
 def test_get_cross_region_model_id_falls_back_on_error(mocker) -> None:

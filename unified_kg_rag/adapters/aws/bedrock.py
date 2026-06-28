@@ -321,6 +321,12 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
 
 
 class BedrockCrossRegionModelHelper:
+    # Cache the system-defined inference-profile id set per region. Resolving a
+    # model id used to call list_inference_profiles on EVERY get_model() (twice
+    # when enable_global_profile) — once per model creation across the whole
+    # pipeline. The set is process-stable, so fetch it once per region.
+    _profiles_by_region: ClassVar[dict[str, set[str]]] = {}
+
     @staticmethod
     def get_cross_region_model_id(
         boto_session: boto3.Session,
@@ -342,7 +348,7 @@ class BedrockCrossRegionModelHelper:
                     )
                 )
                 if BedrockCrossRegionModelHelper._is_cross_region_model_available(
-                    bedrock_client, global_model_id
+                    bedrock_client, global_model_id, region_name
                 ):
                     logger.debug(
                         "Using global cross-region model: '%s'", global_model_id
@@ -354,7 +360,7 @@ class BedrockCrossRegionModelHelper:
                 )
             )
             if BedrockCrossRegionModelHelper._is_cross_region_model_available(
-                bedrock_client, regional_model_id
+                bedrock_client, regional_model_id, region_name
             ):
                 logger.debug(
                     "Using regional cross-region model: '%s'", regional_model_id
@@ -382,23 +388,40 @@ class BedrockCrossRegionModelHelper:
         prefix = "apac" if region_name.startswith("ap-") else region_name[:2]
         return f"{prefix}.{model_id.value}"
 
-    @staticmethod
-    def _is_cross_region_model_available(
-        bedrock_client: Any, cross_region_id: str
-    ) -> bool:
+    @classmethod
+    def _get_available_profiles(
+        cls, bedrock_client: Any, region_name: str
+    ) -> set[str]:
+        """System-defined inference-profile ids for a region, fetched once.
+
+        Cached per region on the class so resolving many models in one process
+        does not re-issue list_inference_profiles each time.
+        """
+        cached = cls._profiles_by_region.get(region_name)
+        if cached is not None:
+            return cached
         try:
             response = bedrock_client.list_inference_profiles(
                 maxResults=1000, typeEquals="SYSTEM_DEFINED"
             )
-            available_profiles = {
+            profiles = {
                 profile["inferenceProfileId"]
                 for profile in response.get("inferenceProfileSummaries", [])
             }
-            return cross_region_id in available_profiles
         except Exception as e:
             raise AWSServiceError(
                 f"Failed to check cross-region model availability: {e}"
             ) from e
+        cls._profiles_by_region[region_name] = profiles
+        return profiles
+
+    @classmethod
+    def _is_cross_region_model_available(
+        cls, bedrock_client: Any, cross_region_id: str, region_name: str
+    ) -> bool:
+        return cross_region_id in cls._get_available_profiles(
+            bedrock_client, region_name
+        )
 
 
 class BedrockEmbeddingsWrapper(BaseBedrockWrapper, BedrockEmbeddings):
