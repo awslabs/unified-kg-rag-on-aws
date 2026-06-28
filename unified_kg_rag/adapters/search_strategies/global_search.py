@@ -312,12 +312,17 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         )
         if not self.global_search_config.use_dynamic_selection:
             # Without per-query LLM scoring, fall back to the community-report
-            # `rank` (graph-importance, set at indexing time) so we keep the
-            # most central communities rather than truncating in arbitrary
-            # retrieval order. Missing rank sorts last.
+            # `rank` (graph-importance, set at indexing time), tie-breaking on the
+            # LLM-assigned `rating` (importance/impact severity, MS GraphRAG
+            # parity) so we keep the most central + most important communities
+            # rather than truncating in arbitrary retrieval order. Both missing
+            # sort last.
             return sorted(
                 all_communities,
-                key=lambda c: float(c.metadata.get("rank", 0.0) or 0.0),
+                key=lambda c: (
+                    float(c.metadata.get("rank", 0.0) or 0.0),
+                    float(c.metadata.get("rating", 0.0) or 0.0),
+                ),
                 reverse=True,
             )[:max_communities]
 

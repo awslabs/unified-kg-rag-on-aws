@@ -125,3 +125,28 @@ async def test_static_selection_missing_rank_sorts_last() -> None:
     kept = await strat._select_relevant_communities(ranked + unranked, query)
     # The ranked community comes first; the rank-less one sorts last.
     assert kept[0].source == "c0"
+
+
+async def test_static_selection_breaks_rank_ties_by_rating() -> None:
+    # Equal `rank` -> the LLM-assigned `rating` (MS GraphRAG importance) decides,
+    # so the indexed rating actually influences selection.
+    strat = _strategy_static(max_communities=1)
+    query = SearchQuery(query="q", retrieval_multiplier=1)
+    communities = [
+        RetrievalResult(
+            content="low rating",
+            score=0.5,
+            source="c_low",
+            retriever_type="graph",
+            metadata={"rank": 5.0, "rating": 2.0},
+        ),
+        RetrievalResult(
+            content="high rating",
+            score=0.5,
+            source="c_high",
+            retriever_type="graph",
+            metadata={"rank": 5.0, "rating": 9.0},
+        ),
+    ]
+    kept = await strat._select_relevant_communities(communities, query)
+    assert [c.source for c in kept] == ["c_high"]
