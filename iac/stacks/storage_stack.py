@@ -185,7 +185,7 @@ class StorageStack(Stack):
             subnet_type=self.app_subnets.subnet_type
         ).subnets
         os_subnets = ec2.SubnetSelection(subnets=selected[: (2 if multi_node else 1)])
-        return opensearch.Domain(
+        domain = opensearch.Domain(
             self,
             "OpenSearch",
             version=opensearch.EngineVersion.OPENSEARCH_2_13,
@@ -217,16 +217,23 @@ class StorageStack(Stack):
             ),
             enforce_https=True,
             tls_security_policy=opensearch.TLSSecurityPolicy.TLS_1_2,
-            # Network access is already restricted to the VPC + service SG;
-            # require IAM-signed requests so callers also need es:ESHttp* (the
-            # Fargate task role has it). VPC domains can't be public anyway.
-            access_policies=[
-                iam.PolicyStatement(
-                    effect=iam.Effect.ALLOW,
-                    principals=[iam.AccountRootPrincipal()],
-                    actions=["es:ESHttp*"],
-                    resources=["*"],
-                )
-            ],
             removal_policy=self.removal_policy,
         )
+        # Resource-scoped access policy (added post-construction so it can
+        # reference the domain's own ARN). Network access is already restricted
+        # to the VPC + service SG; this requires IAM-signed requests AND scopes
+        # the resource to THIS domain's indices (not "*"), so the policy is
+        # least-privilege rather than account-wide. Principal stays
+        # AccountRootPrincipal — scoping it to the Fargate task role would create
+        # a cross-stack circular dependency (the role lives in the compute stack
+        # which depends on this one); the IAM caller still needs es:ESHttp* on
+        # the role, which is granted there.
+        domain.add_access_policies(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                principals=[iam.AccountRootPrincipal()],
+                actions=["es:ESHttp*"],
+                resources=[f"{domain.domain_arn}/*"],
+            )
+        )
+        return domain
