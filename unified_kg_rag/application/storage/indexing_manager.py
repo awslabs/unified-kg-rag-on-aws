@@ -164,11 +164,6 @@ class IndexingManager:
                 "opensearch_community_reports",
             ),
             IndexingTask(
-                self.opensearch_indexer.index_relationships,
-                [relationships],
-                "opensearch_relationships",
-            ),
-            IndexingTask(
                 self.opensearch_indexer.index_claims,
                 [claims],
                 "opensearch_claims",
@@ -177,6 +172,19 @@ class IndexingManager:
                 self.neptune_indexer.index_entities, [entities], "neptune_entities"
             ),
         ]
+        # The OpenSearch relationship VECTOR index is only consumed by LightRAG
+        # high-level keyword retrieval (mix/hybrid). Skip it for a GraphRAG-only
+        # deployment (symmetric with community_detection.enabled). The Neptune
+        # relationship EDGES below are always built — both methodologies traverse
+        # them for graph expansion.
+        if self.config.indexing.opensearch.build_relationship_vector_index:
+            phase1_tasks.append(
+                IndexingTask(
+                    self.opensearch_indexer.index_relationships,
+                    [relationships],
+                    "opensearch_relationships",
+                )
+            )
 
         logger.info("--- Starting Indexing Phase 1 ---")
         results.update(self._run_indexing_phase(phase1_tasks))
@@ -244,11 +252,6 @@ class IndexingManager:
                 "opensearch_community_reports",
             ),
             IndexingTask(
-                self.opensearch_indexer.upsert_relationships,
-                [relationships],
-                "opensearch_relationships",
-            ),
-            IndexingTask(
                 self.opensearch_indexer.upsert_claims,
                 [claims],
                 "opensearch_claims",
@@ -257,6 +260,16 @@ class IndexingManager:
                 self.neptune_indexer.upsert_entities, [entities], "neptune_entities"
             ),
         ]
+        # LightRAG-only vector index — gate symmetrically with the full build.
+        # Neptune relationship edges (phase 2) are always upserted.
+        if self.config.indexing.opensearch.build_relationship_vector_index:
+            phase1_tasks.append(
+                IndexingTask(
+                    self.opensearch_indexer.upsert_relationships,
+                    [relationships],
+                    "opensearch_relationships",
+                )
+            )
         logger.info("--- Starting Delta Indexing Phase 1 (upsert) ---")
         results.update(self._run_indexing_phase(phase1_tasks))
 

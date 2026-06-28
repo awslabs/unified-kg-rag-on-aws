@@ -324,3 +324,39 @@ def test_discover_suffixes_defaults_when_no_attributes() -> None:
 
     units = [TextUnit(id="t1", text="a"), TextUnit(id="t2", text="b")]
     assert IndexingManager._discover_suffixes(units) == ["default"]
+
+
+# --- build_relationship_vector_index toggle (GraphRAG-only deployments) ------
+
+
+def _rel(rid: str = "r1"):
+    from unified_kg_rag.domain.models import Relationship
+
+    return Relationship(id=rid, source_id="e1", target_id="e2", type="REL")
+
+
+def test_relationship_vector_index_built_by_default(manager) -> None:
+    mgr, graph, vector, _ = manager
+    mgr.index_all_data(relationships=[_rel()], entities=[])
+    # OpenSearch (vector) relationship index built by default...
+    assert "relationships" in vector.data
+    # ...and the Neptune relationship edges too.
+    assert "relationships" in graph.data
+
+
+def test_relationship_vector_index_skipped_when_disabled(manager) -> None:
+    mgr, graph, vector, _ = manager
+    mgr.config.indexing.opensearch.build_relationship_vector_index = False
+    mgr.index_all_data(relationships=[_rel()], entities=[])
+    # The LightRAG-only vector index is skipped...
+    assert "relationships" not in vector.data
+    # ...but the Neptune relationship edges (graph expansion) are still built.
+    assert "relationships" in graph.data
+
+
+def test_relationship_vector_index_disabled_in_delta(manager) -> None:
+    mgr, graph, vector, _ = manager
+    mgr.config.indexing.opensearch.build_relationship_vector_index = False
+    mgr.index_delta(relationships=[_rel()], entities=[])
+    assert "relationships" not in vector.data
+    assert "relationships" in graph.data

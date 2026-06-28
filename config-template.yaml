@@ -291,8 +291,15 @@ indexing:
     text_units_index_prefix: "graphrag-text-units"
     entities_index_prefix: "graphrag-entities"
     community_reports_index_prefix: "graphrag-community-reports"
-    # Relationship vector index — enables LightRAG high-level keyword retrieval
-    # (mix/hybrid modes). Built automatically during indexing.
+    # Build the relationship VECTOR index (embeds Relationship.description). Only
+    # LightRAG high-level keyword retrieval (mix/hybrid) consumes it; GraphRAG
+    # (auto/drift/global/local/simple) never does. Set false for a GraphRAG-only
+    # deployment to skip the relationship embeddings — symmetric with
+    # graph.community_detection.enabled (the LightRAG-only escape hatch). The
+    # Neptune relationship EDGES are always built regardless (both methodologies
+    # traverse them for graph expansion); this toggles only the vector index.
+    build_relationship_vector_index: true
+    # Relationship vector index name prefix (used when the above is true).
     relationships_index_prefix: "graphrag-relationships"
     # Claim (covariate) vector index — makes extracted claims searchable.
     claims_index_prefix: "graphrag-claims"

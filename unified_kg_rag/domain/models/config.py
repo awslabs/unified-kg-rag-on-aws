@@ -972,6 +972,17 @@ class OpenSearchIndexingConfig(BaseModel):
         max_length=100,
         description="Index name prefix for community report documents",
     )
+    build_relationship_vector_index: bool = Field(
+        default=True,
+        description="Build the OpenSearch relationship VECTOR index (embeds "
+        "Relationship.description). Required only for LightRAG high-level keyword "
+        "retrieval (mix/hybrid). Set false for a GraphRAG-only deployment "
+        "(auto/drift/global/local/simple use community reports + entities + the "
+        "Neptune graph, never this index) to skip the relationship embeddings. "
+        "The Neptune relationship EDGES are always indexed regardless — both "
+        "methodologies traverse them for graph expansion; this toggles only the "
+        "vector index. Symmetric with graph.community_detection.enabled.",
+    )
     relationships_index_prefix: str = Field(
         default="graphrag-relationships",
         min_length=1,
