@@ -25,10 +25,11 @@ Context keys (all optional; sensible defaults shown):
   cache_bucket_name   None             reuse an existing S3 cache bucket (else
                                        create one, KMS-encrypted)
   neptune_instance    "db.r6g.large"   Neptune instance class (Graviton)
-  neptune_instances   1                Neptune instances (>=2 => Multi-AZ HA)
+  neptune_instances   dev:1/else:2     Neptune instances (>=2 => Multi-AZ HA)
   opensearch_instance "r6g.large.search"  OpenSearch data node type (Graviton)
-  opensearch_count    2                OpenSearch data node count
-  doc_status_table    "<env>-graphrag-doc-status"  DynamoDB table name
+  opensearch_count    dev:1/else:2     OpenSearch data node count (>1 =>
+                                       zone-aware multi-node + 3 dedicated masters)
+  doc_status_table    dev:"graphrag-doc-status"/else:"<env>-graphrag-doc-status"
   backup_retention_days 7              Neptune automated backup retention
 
   # --- Security ---
@@ -95,16 +96,26 @@ class DeploymentConfig:
     removal_destroy: bool
 
     @property
+    def is_dev(self) -> bool:
+        return self.env_name.lower() == "dev"
+
+    @property
     def stack_prefix(self) -> str:
-        # PascalCase project name for CloudFormation stack ids; carries no env
-        # prefix (environments are separated by account/region).
-        return "GraphRag"
+        # PascalCase project name for CloudFormation stack ids. dev keeps the bare
+        # "GraphRag" (backward-compatible); a non-dev env is suffixed (e.g.
+        # "GraphRagProd") so two environments can coexist in one account/region
+        # without stack-id collision.
+        return "GraphRag" if self.is_dev else f"GraphRag{self.env_name.capitalize()}"
 
     @property
     def prefix(self) -> str:
-        # Lowercase prefix for *physical resource* names (S3/ECR require
-        # lowercase). No env segment, to match the account's naming convention.
-        return "graphrag"
+        # Lowercase prefix for *physical resource* names (S3/ECR/DDB require
+        # lowercase). dev keeps the bare "graphrag"; a non-dev env is prefixed
+        # (e.g. "prod-graphrag") so physical names (S3 bucket, DDB table, ECR
+        # repo, cluster, SFN) don't collide across environments in one
+        # account/region — the prior code assumed one-env-per-account/region but
+        # never enforced it.
+        return "graphrag" if self.is_dev else f"{self.env_name.lower()}-graphrag"
 
     @property
     def is_private(self) -> bool:
@@ -152,10 +163,28 @@ class DeploymentConfig:
             max_azs=int(ctx("max_azs", 2)),
             cache_bucket_name=ctx("cache_bucket_name"),
             neptune_instance=str(ctx("neptune_instance", "db.r6g.large")),
-            neptune_instances=int(ctx("neptune_instances", 1)),
+            # HA vs cost is env-driven, mirroring the destructive-default pattern:
+            # dev defaults to a single instance/node (cheap, no failover), while a
+            # non-dev env defaults to 2 (Neptune reader in another AZ; OpenSearch
+            # zone-aware multi-node with dedicated masters). Explicit
+            # `-c neptune_instances=`/`-c opensearch_count=` always override.
+            neptune_instances=int(ctx("neptune_instances", 1 if is_dev else 2)),
             opensearch_instance=str(ctx("opensearch_instance", "r6g.large.search")),
-            opensearch_count=int(ctx("opensearch_count", 2)),
-            doc_status_table=str(ctx("doc_status_table", "graphrag-doc-status")),
+            opensearch_count=int(ctx("opensearch_count", 1 if is_dev else 2)),
+            # Default DDB table name follows the same env-scoped prefix as the
+            # other physical names (dev: "graphrag-doc-status";
+            # non-dev: "<env>-graphrag-doc-status") so environments don't share a
+            # registry table in one account/region.
+            doc_status_table=str(
+                ctx(
+                    "doc_status_table",
+                    (
+                        "graphrag-doc-status"
+                        if is_dev
+                        else f"{env_name.lower()}-graphrag-doc-status"
+                    ),
+                )
+            ),
             backup_retention_days=int(ctx("backup_retention_days", 7)),
             fargate_cpu=int(ctx("fargate_cpu", 2048)),
             fargate_memory=int(ctx("fargate_memory", 8192)),

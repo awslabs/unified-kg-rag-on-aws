@@ -89,6 +89,7 @@ ObservabilityStack(
     stack_id("Observability"),
     config=config,
     orchestration=orchestration,
+    storage=storage,
     env=env,
 )
 

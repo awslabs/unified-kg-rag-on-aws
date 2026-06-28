@@ -18,6 +18,7 @@ from constructs import Construct
 
 from iac.config import DeploymentConfig
 from iac.stacks.orchestration_stack import OrchestrationStack
+from iac.stacks.storage_stack import StorageStack
 
 EMF_NAMESPACE = "unified_kg_rag/ingestion"
 
@@ -29,10 +30,12 @@ class ObservabilityStack(Stack):
         construct_id: str,
         config: DeploymentConfig,
         orchestration: OrchestrationStack,
+        storage: StorageStack,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
         self.config = config
+        self.storage = storage
         sm = orchestration.state_machine
 
         # Alarm: any Step Functions execution failure -> SNS.
@@ -72,6 +75,24 @@ class ObservabilityStack(Stack):
             cw_actions.SnsAction(orchestration.alarm_topic)
         )
 
+        # Store-health alarms: the SFN/indexing alarms above only fire when a
+        # pipeline RUN fails. These surface data-store degradation (red cluster,
+        # disk pressure, memory pressure, DDB throttling) that would otherwise be
+        # invisible until the next run breaks. All route to the same SNS topic.
+        self._add_store_health_alarms(orchestration)
+
+        # All alarms route to the orchestration SNS topic, but with no subscriber
+        # they fire into the void. Warn at synth (rather than silently) when no
+        # email is wired so the operator knows to add one (`-c alarm_email=...`).
+        if not config.alarm_email:
+            from aws_cdk import Annotations
+
+            Annotations.of(self).add_warning(
+                "No alarm_email configured: pipeline-failure and store-health "
+                "alarms publish to SNS with no subscriber. Pass "
+                "-c alarm_email=<addr> to receive them."
+            )
+
         # Dashboard: execution health + a couple of EMF pipeline metrics.
         dashboard = cw.Dashboard(
             self, "Dashboard", dashboard_name=f"{config.prefix}-dashboard"
@@ -109,3 +130,67 @@ class ObservabilityStack(Stack):
             cw.GraphWidget(title="Indexed artifacts (EMF)", left=indexed_metrics),
         )
         self.dashboard = dashboard
+
+    def _add_store_health_alarms(self, orchestration: OrchestrationStack) -> None:
+        topic = orchestration.alarm_topic
+        action = cw_actions.SnsAction(topic)
+        domain = self.storage.opensearch_domain
+        table = self.storage.doc_status_table
+
+        def _alarm(
+            ident: str,
+            metric: cw.IMetric,
+            threshold: float,
+            description: str,
+            comparison: cw.ComparisonOperator = (
+                cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+            ),
+        ) -> None:
+            alarm = cw.Alarm(
+                self,
+                ident,
+                metric=metric,
+                threshold=threshold,
+                evaluation_periods=1,
+                comparison_operator=comparison,
+                treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+                alarm_description=description,
+            )
+            alarm.add_alarm_action(action)
+
+        # OpenSearch: a red cluster means at least one primary shard is
+        # unallocated (data unavailable); free storage / JVM pressure precede
+        # write rejections.
+        _alarm(
+            "OpenSearchClusterRed",
+            domain.metric_cluster_status_red(period=Duration.minutes(5)),
+            1,
+            "OpenSearch cluster status is RED (unallocated primary shard)",
+        )
+        _alarm(
+            "OpenSearchFreeStorageLow",
+            domain.metric_free_storage_space(period=Duration.minutes(5)),
+            # MiB; alarm well before the ~20% block-write watermark on the 50 GiB
+            # GP3 volume so there is time to react.
+            20480,
+            "OpenSearch free storage space is low (<20 GiB)",
+            comparison=cw.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
+        )
+        _alarm(
+            "OpenSearchJvmPressure",
+            domain.metric_jvm_memory_pressure(period=Duration.minutes(5)),
+            85,
+            "OpenSearch JVM memory pressure is high (>85%)",
+        )
+        # DynamoDB doc-status registry: throttled writes mean delta/lineage
+        # updates are being rejected, which silently corrupts incremental-indexing
+        # state. Alarm on the write path specifically (a single operation, so the
+        # metric stays a plain metric, not a >10-metric math expression).
+        _alarm(
+            "DocStatusWriteThrottled",
+            table.metric_throttled_requests_for_operation(
+                "PutItem", period=Duration.minutes(5)
+            ),
+            1,
+            "DynamoDB doc-status table is throttling PutItem (write) requests",
+        )

@@ -16,7 +16,7 @@ environments are separated by account/region and tracked via the `env` tag.
 | `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (VPC, encrypted), DynamoDB doc-status table, S3 cache bucket |
 | `GraphRagCompute` | ECR repo, ECS cluster, Fargate task definition + least-privilege task role |
 | `GraphRagOrchestration` | Step Functions state machine — 4 resumable phases on Fargate + retries + SNS alarms |
-| `GraphRagObservability` | CloudWatch dashboard + failure alarm over the pipeline & EMF metrics |
+| `GraphRagObservability` | CloudWatch dashboard + alarms: pipeline-failure, silent indexing-failure (EMF), and store health (OpenSearch cluster-red / free-storage / JVM pressure, DynamoDB write throttling) → SNS. Synth warns if `alarm_email` is unset (alarms would have no subscriber) |
 | `GraphRagSecurity` | Shared customer-managed KMS key (optional, `use_cmk`) |
 | `GraphRagGuardrail` | Bedrock Guardrail, **pinned to `bedrock_region`** (reuse or create a baseline PII/prompt-attack guardrail) |
 
@@ -71,15 +71,15 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 
 | Key | Default | Meaning |
 |---|---|---|
-| `env_name` | `dev` | stack/resource name prefix |
+| `env_name` | `dev` | stack/resource name prefix. `dev` keeps bare `GraphRag*`/`graphrag-*` names; a non-dev env (e.g. `prod`) scopes them (`GraphRagProd*`, `prod-graphrag-*`) so environments don't collide in one account/region |
 | `network_mode` | `private` | `private` = isolated subnets + VPC endpoints, **no NAT** (no internet egress); `public` = private subnets with NAT egress |
 | `vpc_id` | _(none)_ | **reuse** an existing VPC instead of creating one |
 | `max_azs` | `2` | AZs for a newly-created VPC |
 | `cache_bucket_name` | _(none)_ | **reuse** an existing S3 cache bucket instead of creating one |
 | `neptune_instance` | `db.r6g.large` | Neptune instance class (Graviton) |
-| `neptune_instances` | `1` | Neptune instances; `>=2` ⇒ Multi-AZ HA |
+| `neptune_instances` | `1` (dev) / `2` (non-dev) | Neptune instances; `>=2` ⇒ Multi-AZ HA (reader in another AZ). dev defaults to 1 (no failover) for cost |
 | `opensearch_instance` | `r6g.large.search` | OpenSearch data node type (Graviton) |
-| `opensearch_count` | `2` | OpenSearch data node count (`>1` ⇒ dedicated masters + zone awareness) |
+| `opensearch_count` | `1` (dev) / `2` (non-dev) | OpenSearch data node count (`>1` ⇒ 3 dedicated masters + zone awareness = 5 nodes; dev runs a single node for cost) |
 | `backup_retention_days` | `7` | Neptune automated backup retention |
 | `fargate_cpu` | `2048` | Fargate task vCPU units (in-task ProcessPool extractors scale with vCPU) |
 | `fargate_memory` | `8192` | Fargate task memory (MiB) |
