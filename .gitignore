@@ -210,5 +210,5 @@ cdk.context.json
 # Security-scan output (ASH) — local artifacts, not for the published repo
 .ash/
 
-# Local-only test corpus backup (Example Customer ITB — customer data, never commit)
+# Local-only test corpus backup (customer data, never commit)
 .test-corpus-backup/

@@ -69,9 +69,8 @@ completing exactly this path (IP Release ticket V2071786068).
       `# SPDX-License-Identifier: Apache-2.0`.
 - [x] `LICENSE` switched from **MIT-0 → Apache-2.0** (awslabs default; matches headers).
 - [x] Deleted internal CI: `.gitlab-ci.yml`, `.gitlab/sast-ruleset.toml`.
-- [x] Deleted customer-specific docs: `docs/docparser-e2e-plan.md` (Example Customer
-      Example Customer / Example Site corpus), `docs/security-triage.md` (internal GitLab
-      triage process).
+- [x] Deleted customer-specific docs: an internal E2E plan (customer ITB
+      corpus) and a security-triage doc (internal GitLab triage process).
 - [x] `pyproject.toml` Repository URL → `https://github.com/awslabs/unified-kg-rag-on-aws`.
 - [x] Genericized internal codename comments (`NaviWikiGraph`/`AnchorNetwork`) in
       `iac/`.
