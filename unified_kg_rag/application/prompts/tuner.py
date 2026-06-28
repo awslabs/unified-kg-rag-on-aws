@@ -3,10 +3,12 @@
 """Automatic prompt tuning (MS GraphRAG ``prompt_tune`` ported AWS-native).
 
 Samples a corpus, asks a Bedrock model to profile its domain/language/persona/
-entity-types, then emits ``custom_prompts`` overrides adapted to that profile.
-The output is a YAML-ready dict the user pastes under ``custom_prompts`` in
-their config — keeping prompt tuning a deliberate, reviewable step rather than
-opaque runtime behaviour.
+entity-types, and grounds few-shot extraction examples by running the real
+``GraphExtractor`` over sampled chunks (capturing genuine input→output pairs,
+as MS GraphRAG does), then emits ``custom_prompts`` overrides adapted to that
+profile. The output is a YAML-ready dict the user pastes under ``custom_prompts``
+in their config — keeping prompt tuning a deliberate, reviewable step rather
+than opaque runtime behaviour.
 """
 
 from __future__ import annotations
@@ -20,9 +22,11 @@ from langchain_core.output_parsers import StrOutputParser
 
 from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
-from unified_kg_rag.domain.models import Config
-from unified_kg_rag.domain.prompts import CorpusProfilePrompt, ExtractionExamplesPrompt
+from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
+from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
+from unified_kg_rag.domain.prompts import CorpusProfilePrompt
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils import generate_stable_id
 
 logger = get_logger(__name__)
 
@@ -112,38 +116,133 @@ class PromptTuner:
             return {}
         return parsed if isinstance(parsed, dict) else {}
 
-    async def generate_examples(self, profile: CorpusProfile, texts: list[str]) -> str:
-        """Generate a domain-adapted few-shot extraction example (LLM-driven).
+    MAX_EXAMPLES = 3
+    EXAMPLE_CHUNK_CHARS = 1200
 
-        Grounds the extraction prompt in a worked example drawn from the corpus
-        itself — MS GraphRAG's few-shot tuning step. Returns an empty string if
-        the corpus is empty or generation fails (extraction still works without
-        examples, so this degrades gracefully rather than failing the tune).
+    def _sample_chunks(self, texts: list[str]) -> list[str]:
+        """Slice the corpus into up to ``MAX_EXAMPLES`` example-sized chunks.
+
+        Few-shot grounding wants a handful of *real, self-contained* passages,
+        not the whole concatenated sample. We take the leading slice of distinct
+        documents (then fall back to slicing within one document) so the worked
+        examples span the corpus rather than repeating one document's opening.
         """
-        corpus_sample = self.sample_corpus(texts)
-        if not corpus_sample:
+        chunks: list[str] = []
+        for text in texts:
+            stripped = (text or "").strip()
+            if not stripped:
+                continue
+            chunks.append(stripped[: self.EXAMPLE_CHUNK_CHARS])
+            if len(chunks) >= self.MAX_EXAMPLES:
+                break
+        # Single long document: slice it into multiple non-overlapping windows so
+        # we still get several distinct examples.
+        if len(chunks) == 1 and len(texts) == 1:
+            whole = (texts[0] or "").strip()
+            chunks = [
+                whole[i : i + self.EXAMPLE_CHUNK_CHARS]
+                for i in range(0, len(whole), self.EXAMPLE_CHUNK_CHARS)
+            ][: self.MAX_EXAMPLES]
+        return [c for c in chunks if c.strip()]
+
+    async def generate_examples(self, profile: CorpusProfile, texts: list[str]) -> str:
+        """Generate corpus-grounded few-shot extraction examples.
+
+        MS GraphRAG's prompt-tune step grounds few-shots in the real corpus by
+        running actual entity/relationship extraction over sampled chunks and
+        embedding those genuine input→output pairs into the tuned prompt (rather
+        than asking the model to invent a representative example). We do the
+        same: run the real ``GraphExtractor`` over a few sampled chunks and
+        render each ``(chunk text → extracted entities/relationships)`` pair in
+        the exact XML shape the extraction prompt teaches. Returns an empty
+        string if the corpus is empty or extraction yields nothing (extraction
+        still works without examples, so this degrades gracefully).
+        """
+        chunks = self._sample_chunks(texts)
+        if not chunks:
             return ""
 
-        chain = setup_chain(
-            factory=self.factory,
-            model_id=self.config.search.entity_extraction_model_id,
-            prompt_class=ExtractionExamplesPrompt,
-            parser=StrOutputParser(),
-            custom_prompts=self.config.custom_prompts,
-        )
-        try:
-            example = await chain.ainvoke(
+        text_units = [
+            TextUnit.model_validate(
                 {
-                    "domain": profile.domain,
-                    "persona": profile.persona,
-                    "entity_types": ", ".join(profile.entity_types) or "any relevant",
-                    "corpus_sample": corpus_sample,
+                    "id": generate_stable_id(f"tune-example:{idx}:{chunk}"),
+                    "text": chunk,
                 }
             )
+            for idx, chunk in enumerate(chunks)
+        ]
+        try:
+            extractor = GraphExtractor(self.config, boto_session=self.boto_session)
+            extractor.show_progress = False
+            entities, relationships, _ = extractor.extract_from_text_units(text_units)
         except Exception as exc:  # noqa: BLE001 - examples are best-effort
-            logger.warning("Few-shot example generation failed: %s", exc)
+            logger.warning("Corpus-grounded example extraction failed: %s", exc)
             return ""
-        return str(example).strip()
+
+        # Group the real extraction output back by source chunk so each rendered
+        # example pairs a genuine passage with what was actually extracted from it.
+        rendered: list[str] = []
+        for unit in text_units:
+            unit_entities = [e for e in entities if unit.id in (e.text_unit_ids or [])]
+            unit_relationships = [
+                r for r in relationships if unit.id in (r.text_unit_ids or [])
+            ]
+            if not unit_entities and not unit_relationships:
+                continue
+            rendered.append(
+                self._render_example(unit.text, unit_entities, unit_relationships)
+            )
+            if len(rendered) >= self.MAX_EXAMPLES:
+                break
+
+        return "\n\n".join(rendered).strip()
+
+    @staticmethod
+    def _render_example(
+        text: str, entities: list[Entity], relationships: list[Relationship]
+    ) -> str:
+        """Render one (text → extraction) pair in the GraphExtractionPrompt shape.
+
+        Confidence/weight are stored normalized (0.0-1.0) but the extraction
+        prompt teaches a 1-10 scale, so scale back up for the demonstration.
+        """
+
+        def _esc(value: str | None) -> str:
+            return (value or "").strip()
+
+        lines = [f"EXAMPLE TEXT:\n{text.strip()}", "", "<entities>"]
+        for entity in entities:
+            confidence_1_10 = round(
+                (entity.confidence if entity.confidence else 1.0) * 10
+            )
+            lines.extend(
+                [
+                    "<entity>",
+                    f"<name>{_esc(entity.name)}</name>",
+                    f"<type>{_esc(entity.type) or 'ENTITY'}</type>",
+                    f"<description>{_esc(entity.description)}</description>",
+                    f"<confidence>{confidence_1_10}</confidence>",
+                    "</entity>",
+                ]
+            )
+        lines.append("</entities>")
+        lines.append("")
+        lines.append("<relationships>")
+        for rel in relationships:
+            strength_1_10 = round((rel.weight if rel.weight else 1.0) * 10)
+            lines.extend(
+                [
+                    "<relationship>",
+                    f"<source>{_esc(rel.source_name)}</source>",
+                    f"<target>{_esc(rel.target_name)}</target>",
+                    f"<type>{_esc(rel.type) or 'RELATED_TO'}</type>",
+                    f"<description>{_esc(rel.description)}</description>",
+                    f"<strength>{strength_1_10}</strength>",
+                    "</relationship>",
+                ]
+            )
+        lines.append("</relationships>")
+        return "\n".join(lines)
 
     @staticmethod
     def build_custom_prompts(profile: CorpusProfile) -> dict[str, str]:

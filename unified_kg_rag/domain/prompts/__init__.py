@@ -27,7 +27,7 @@ from .retrieval import (
     StrategySelectionPrompt,
     TranslationPrompt,
 )
-from .tuning import CorpusProfilePrompt, ExtractionExamplesPrompt
+from .tuning import CorpusProfilePrompt
 
 __all__ = [
     "AnswerGenerationPrompt",
@@ -40,7 +40,6 @@ __all__ = [
     "CorpusProfilePrompt",
     "DescriptionSummarizationPrompt",
     "EntityExtractionPrompt",
-    "ExtractionExamplesPrompt",
     "GlobalMapPrompt",
     "GraphExtractionPrompt",
     "GraphRefinementPrompt",

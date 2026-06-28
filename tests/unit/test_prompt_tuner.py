@@ -123,19 +123,98 @@ class TestSampleAndParse:
     ) -> None:
         assert await tuner.generate_examples(CorpusProfile(), []) == ""
 
-    async def test_generate_examples_degrades_on_chain_error(
+    async def test_generate_examples_degrades_on_extractor_error(
         self, tuner: PromptTuner, mocker
     ) -> None:
-        # The documented except branch: a failing chain returns "" rather than
-        # propagating, so tuning still completes without a few-shot example.
-        chain = mocker.MagicMock()
-        chain.ainvoke = mocker.AsyncMock(side_effect=RuntimeError("bedrock down"))
+        # The documented except branch: a failing extractor returns "" rather
+        # than propagating, so tuning still completes without a few-shot example.
         mocker.patch(
-            "unified_kg_rag.application.prompts.tuner.setup_chain", return_value=chain
+            "unified_kg_rag.application.prompts.tuner.GraphExtractor",
+            side_effect=RuntimeError("bedrock down"),
         )
         result = await tuner.generate_examples(
             CorpusProfile(domain="x"), ["non-empty text"]
         )
+        assert result == ""
+
+    async def test_generate_examples_grounded_in_real_extraction(
+        self, tuner: PromptTuner, mocker
+    ) -> None:
+        # Few-shots are the REAL GraphExtractor output over sampled chunks,
+        # rendered in the extraction prompt's XML shape — not LLM-invented.
+        from unified_kg_rag.domain.models import Entity, Relationship
+
+        captured: dict = {}
+
+        def _fake_extract(text_units):
+            captured["units"] = text_units
+            uid = text_units[0].id
+            entities = [
+                Entity(
+                    id="e1",
+                    name="Acme Corp",
+                    type="ORG",
+                    description="A vendor.",
+                    confidence=0.9,
+                    text_unit_ids=[uid],
+                ),
+                Entity(
+                    id="e2",
+                    name="Globex",
+                    type="ORG",
+                    description="A buyer.",
+                    confidence=0.8,
+                    text_unit_ids=[uid],
+                ),
+            ]
+            relationships = [
+                Relationship(
+                    id="r1",
+                    source_id="e1",
+                    source_name="Acme Corp",
+                    target_id="e2",
+                    target_name="Globex",
+                    type="SUPPLIES",
+                    weight=0.7,
+                    description="Acme supplies Globex.",
+                    text_unit_ids=[uid],
+                )
+            ]
+            return entities, relationships, None
+
+        extractor = mocker.MagicMock()
+        extractor.extract_from_text_units.side_effect = _fake_extract
+        mocker.patch(
+            "unified_kg_rag.application.prompts.tuner.GraphExtractor",
+            return_value=extractor,
+        )
+
+        result = await tuner.generate_examples(
+            CorpusProfile(domain="trade"), ["Acme Corp supplies Globex with parts."]
+        )
+
+        # The demonstration text is the real sampled chunk, and the output is the
+        # actual extraction rendered in the GraphExtractionPrompt XML shape.
+        assert "EXAMPLE TEXT:" in result
+        assert "Acme Corp supplies Globex" in result
+        assert "<entity>" in result and "<name>Acme Corp</name>" in result
+        assert "<relationship>" in result and "<type>SUPPLIES</type>" in result
+        # Normalized 0.9 confidence renders back on the prompt's 1-10 scale.
+        assert "<confidence>9</confidence>" in result
+        # The extractor was fed real TextUnits built from the corpus sample.
+        assert captured["units"][0].text.startswith("Acme Corp supplies Globex")
+
+    async def test_generate_examples_no_extraction_returns_empty(
+        self, tuner: PromptTuner, mocker
+    ) -> None:
+        # Extractor finds nothing -> no examples (graceful, no crash).
+        extractor = mocker.MagicMock()
+        extractor.extract_from_text_units.return_value = ([], [], None)
+        mocker.patch(
+            "unified_kg_rag.application.prompts.tuner.GraphExtractor",
+            return_value=extractor,
+        )
+        result = await tuner.generate_examples(CorpusProfile(), ["some text"])
         assert result == ""
 
     async def test_profile_corpus_degrades_on_unparseable_output(
