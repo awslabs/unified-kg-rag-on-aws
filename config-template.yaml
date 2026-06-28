@@ -35,6 +35,9 @@ aws:
     use_ssl: true
     verify_certs: true
     use_iam: false
+    # SigV4 signing service name for IAM auth. "es" for Amazon OpenSearch Service
+    # (managed domains); "aoss" for OpenSearch Serverless collections.
+    sigv4_service_name: "es"
 
   # S3 Configuration
   s3:
@@ -105,8 +108,8 @@ processing:
   # Graph Extraction
   graph_extraction:
     extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
-    max_entities_per_chunk: 100
-    max_relationships_per_chunk: 100
+    max_entities_per_chunk: 50
+    max_relationships_per_chunk: 50
     entity_confidence_threshold: 0.0
     # Domain entity categories injected into the extraction prompt's
     # {entity_types} slot. Override to adapt to a domain WITHOUT rewriting the
@@ -158,8 +161,8 @@ processing:
     convergence_threshold: 0.8
     quality_threshold: 0.9
     min_improvement_threshold: 0.03
-    max_entities_per_prompt: 200
-    max_relationships_per_prompt: 200
+    max_entities_per_prompt: 100
+    max_relationships_per_prompt: 100
     # Scaling constants for the count-based quality/convergence estimates
     # (defaults shown; tune per corpus scale rather than hardcoding).
     quality_completeness_weight: 0.6
@@ -176,7 +179,7 @@ processing:
     # the entity graph.
     enabled: false
     extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
-    max_entities_per_prompt: 200
+    max_entities_per_prompt: 100
 
 # Graph Configuration
 graph:

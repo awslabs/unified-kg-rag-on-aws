@@ -174,7 +174,7 @@ The `DataIngestionPipeline` in `application/ingestion/pipeline.py` runs 12 stage
 
 **Merged-description re-summarization (stage 7)**: Graph resolution merges descriptions of the same entity/relationship by simple concatenation, so the description of a popular entity that appears in many chunks grows without bound. `DescriptionSummarizer` (run in `GraphResolutionStage`) re-summarizes only descriptions that exceed a token budget into a single coherent description using a cheap LLM (parity with MS GraphRAG `summarize_descriptions` / LightRAG `_handle_entity_relation_summary`, controlled by `DescriptionSummarizationConfig`). The goal is to prevent embedding/prompt bloat.
 
-**Community report context pack (stage 11)**: The report-generation input **sorts entities within a community by graph degree in descending order** (ties broken by stable id sort), caps them at `max_entities_per_report`, and packs them to fit the `max_report_context_tokens` token budget (relationships are sorted/packed identically by the sum of both endpoints' degree, with weight as the tiebreak). The top-degree entity is always included (at least one) even if it alone exceeds the budget, so a report never ends up with empty context (`community_detector.py:651-720`).
+**Community report context pack (stage 11)**: The report-generation input **sorts entities within a community by graph degree in descending order** (ties broken by stable id sort), caps them at `max_entities_per_report`, and packs them to fit the `max_report_context_tokens` token budget (relationships are sorted/packed identically by the sum of both endpoints' degree, with weight as the tiebreak). The top-degree entity is always included (at least one) even if it alone exceeds the budget, so a report never ends up with empty context (`community_detector.py:681-720`).
 
 **Pipeline infrastructure**: Stage-checkpoint-based resumption (`shared/pipeline_manager.py`), S3 cache sync (`adapters/aws/s3_cache.py`), a `continue_on_error` toggle, per-stage caching (`shared/cache_manager.py`). The translation stage is skipped at no cost when `TranslationConfig.is_noop` (source == target & no additional languages). LLM output parsing consistently uses a `FixingConfig`-based output-fixing parser. The pipeline releases indexer/client resources via `close()`, which the `run-ingestion` CLI calls in `finally` (§8.6).
 
@@ -270,7 +270,7 @@ All adapters can be injected with a `boto_session` (by default created from `con
 
 ### 8.5 Retrieval Error Visibility
 
-The retrievers (`opensearch_retriever`/`neptune_retriever`) no longer silently disguise authentication/configuration/connection failures as "no results." `is_fatal_retrieval_error()` (`adapters/retrieval/base.py:46`) re-raises fatal errors with `exc_info`, and degrades to `[]` only for transient errors. As a result, an incorrect IAM permission or an endpoint typo is not buried as "0 search hits."
+The retrievers (`opensearch_retriever`/`neptune_retriever`) no longer silently disguise authentication/configuration/connection failures as "no results." `is_fatal_retrieval_error()` (`adapters/retrieval/base.py:50`) re-raises fatal errors with `exc_info`, and degrades to `[]` only for transient errors. As a result, an incorrect IAM permission or an endpoint typo is not buried as "0 search hits."
 
 ### 8.6 Client Lifecycle / Resource Release
 
@@ -284,7 +284,7 @@ Each retriever build opens a Neptune WebSocket + thread pool and OpenSearch (a)s
 
 - **OpenSearch analyzers**: The language→analyzer mapping is exposed via config (`indexing.opensearch.language_analyzers`, default `{"en": "english", "ko": "nori"}`) so it can be extended without code changes. nori (the Korean morphological analyzer) is built into OpenSearch Service. Languages without a mapping fall back to `default_analyzer`.
 - **Entity ID normalization**: `normalize_name` (`shared/utils/common.py`) applies NFKC + casefold, then preserves letters/digits of all scripts (`\w`, `re.UNICODE`) and removes only punctuation → Korean, CJK, and accented names also get unique IDs (§3). Non-empty input is not collapsed to an empty ID.
-- **Translation skip**: When `TranslationConfig.is_noop` (source_language == target_language and no additional target languages), the translation stage is skipped in its entirety at no cost (`pipeline_stages.py:539`).
+- **Translation skip**: When `TranslationConfig.is_noop` (source_language == target_language and no additional target languages), the translation stage is skipped in its entirety at no cost (`pipeline_stages.py:541`).
 - **Encoding auto-detection**: When the text parser hits a `UnicodeDecodeError` on a non-UTF-8 file, it detects the encoding via `charset-normalizer` and retries with an explicit `encoding=` (`parser.py:89`). LangChain's `autodetect_encoding=True` (which pulls in the extra `chardet` dependency) is intentionally not used.
 
 ---

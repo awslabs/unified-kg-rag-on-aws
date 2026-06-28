@@ -210,10 +210,9 @@ most impactful domain-adaptation knob (see §9). Each item is
 ```yaml
   graph_extraction:
     extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
-    max_entities_per_chunk: 100
-    max_relationships_per_chunk: 100
+    max_entities_per_chunk: 50
+    max_relationships_per_chunk: 50
     entity_confidence_threshold: 0.0
-    enable_confidence_extraction: true
     entity_types:
       - "PERSON: Names, individuals, roles, titles"
       - "ORGANIZATION: Companies, institutions, departments, groups"
@@ -227,7 +226,21 @@ most impactful domain-adaptation knob (see §9). Each item is
       summary_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
       force_summary_threshold_tokens: 600
       max_summary_tokens: 256
+    entity_grounding:              # hallucination guard (opt-in, off by default)
+      enabled: false              # drop/penalize entities+relationships whose
+      action: "drop"              # verbatim source_text span is absent from the
+      penalty_factor: 0.5         # source chunk (the model invented them); also
+      min_span_tokens: 4          # gates gleaner MISSING_* additions
+      min_overlap_ratio: 0.6
 ```
+
+**Entity grounding** is a provenance guard against extraction hallucination: the
+extraction prompt asks the model for a verbatim `source_text` span per entity
+and relationship, and when `enabled`, anything whose span is not found in its
+source chunk is dropped (or confidence/weight-penalized). It is conservative —
+a missing or very short span is treated as grounded — so turning it on never
+deletes legitimate artifacts on weak signal. It also gates gleaner-introduced
+entities/relationships via their `text_evidence`.
 
 **Gleaning** — iterative extraction passes that catch entities/relationships
 missed on the first pass (quality vs. cost trade-off).
@@ -251,7 +264,7 @@ When ON, `local` search injects matching claims (MS GraphRAG covariates) and
   claim_extraction:
     enabled: false
     extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
-    max_entities_per_prompt: 200
+    max_entities_per_prompt: 100
 ```
 
 ### 2.4 `graph` — analysis, community detection, visualization
@@ -272,6 +285,9 @@ graph:
       calculate_components: true
 
   community_detection:              # Leiden clustering
+    enabled: true                   # set false for a lighter LightRAG-only
+                                    # ingestion (skips Leiden + community-report
+                                    # LLM calls; GraphRAG global/drift need it)
     resolution: 1.0
     random_state: 42
     max_levels: 5

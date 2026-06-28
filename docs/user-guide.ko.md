@@ -214,10 +214,9 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 ```yaml
   graph_extraction:
     extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
-    max_entities_per_chunk: 100
-    max_relationships_per_chunk: 100
+    max_entities_per_chunk: 50
+    max_relationships_per_chunk: 50
     entity_confidence_threshold: 0.0
-    enable_confidence_extraction: true
     entity_types:
       - "PERSON: Names, individuals, roles, titles"
       - "ORGANIZATION: Companies, institutions, departments, groups"
@@ -231,7 +230,19 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
       summary_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
       force_summary_threshold_tokens: 600
       max_summary_tokens: 256
+    entity_grounding:              # 환각 방지 가드 (옵트인, 기본 off)
+      enabled: false              # source_text 근거 span이 청크에 없는 엔티티/
+      action: "drop"              # 관계를 드롭(또는 confidence/weight 페널티).
+      penalty_factor: 0.5         # gleaner의 MISSING_* 추가도 text_evidence로 게이트
+      min_span_tokens: 4
+      min_overlap_ratio: 0.6
 ```
+
+**엔티티 그라운딩**은 추출 환각에 대한 출처(provenance) 가드입니다. 추출 프롬프트가
+엔티티·관계마다 verbatim `source_text` span을 요구하고, `enabled`일 때 그 span이
+출처 청크에서 발견되지 않으면(모델이 지어낸 것) 드롭합니다. 보수적이라 — span이
+없거나 매우 짧으면 grounded로 간주 — 켜더라도 약한 신호로 정당한 산출물을 삭제하지
+않습니다. gleaner가 추가하는 엔티티·관계도 `text_evidence`로 게이트합니다.
 
 **Gleaning** — 첫 번째 패스에서 놓친 엔티티/관계를 잡아내는 반복 추출
 패스입니다(품질 대 비용 트레이드오프).
@@ -255,7 +266,7 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
   claim_extraction:
     enabled: false
     extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
-    max_entities_per_prompt: 200
+    max_entities_per_prompt: 100
 ```
 
 ### 2.4 `graph` — 분석, 커뮤니티 탐지, 시각화
@@ -276,6 +287,9 @@ graph:
       calculate_components: true
 
   community_detection:              # Leiden clustering
+    enabled: true                   # false로 두면 LightRAG 전용 경량 인제스천
+                                    # (Leiden + 커뮤니티 리포트 LLM 호출 생략;
+                                    # GraphRAG global/drift는 이 단계가 필요)
     resolution: 1.0
     random_state: 42
     max_levels: 5
