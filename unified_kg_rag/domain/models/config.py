@@ -1306,6 +1306,13 @@ class DriftSearchConfig(BaseModel):
         ge=1,
         description="Maximum number of result summaries to include in query evolution",
     )
+    summary_char_limit: int = Field(
+        default=200,
+        ge=1,
+        description="Per-result character budget when summarizing retrieved "
+        "content into the evolved DRIFT query. Caps how much of each result is "
+        "fed back into the next iteration's query (was a hardcoded cutoff).",
+    )
     n_entities: int = Field(
         default=5,
         ge=1,

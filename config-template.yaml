@@ -445,6 +445,9 @@ search:
     max_iterations: 3
     initial_top_k: 5
     summary_length: 5
+    # Per-result character budget when summarizing retrieved content into the
+    # evolved DRIFT query (caps how much of each result feeds the next iteration).
+    summary_char_limit: 200
     n_entities: 5
     convergence_threshold: 0.1
     improvement_threshold: 0.05

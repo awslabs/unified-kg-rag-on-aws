@@ -327,9 +327,13 @@ class DriftSearchStrategy(BaseSearchStrategy):
             if result.metadata and "community_reports" in result.metadata.get(
                 "_search_index", ""
             ):
-                summaries.append(f"Community: {result.content[:200]}...")
+                summaries.append(
+                    f"Community: {result.content[: self.drift_config.summary_char_limit]}..."
+                )
             else:
-                summaries.append(f"Item: {result.content[:150]}...")
+                summaries.append(
+                    f"Item: {result.content[: self.drift_config.summary_char_limit]}..."
+                )
 
         return "\n".join(summaries[: self.drift_config.summary_length])
 

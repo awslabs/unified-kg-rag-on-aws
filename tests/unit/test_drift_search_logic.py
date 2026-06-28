@@ -86,6 +86,7 @@ def _bare_strategy(
         max_iterations=3,
         initial_top_k=5,
         summary_length=summary_length,
+        summary_char_limit=200,
         n_entities=n_entities,
         convergence_threshold=convergence_threshold,
         improvement_threshold=0.05,
@@ -162,13 +163,12 @@ def test_summarize_results_community_vs_item_formatting() -> None:
     item = _result("I" * 300, score=0.1, metadata={"_search_index": "text_units-dev"})
     out = strat._summarize_results([item, community])
     lines = out.split("\n")
-    # Sorted by score desc -> community (0.9) first; community truncates at 200,
-    # item at 150.
+    # Sorted by score desc -> community (0.9) first. Both community and item are
+    # capped at the configurable summary_char_limit (200 here).
     assert lines[0].startswith("Community: ")
     assert lines[1].startswith("Item: ")
-    assert len("C" * 200) == 200  # sanity on the truncation length used below
     assert lines[0] == f"Community: {'C' * 200}..."
-    assert lines[1] == f"Item: {'I' * 150}..."
+    assert lines[1] == f"Item: {'I' * 200}..."
 
 
 def test_summarize_results_caps_at_summary_length() -> None:
