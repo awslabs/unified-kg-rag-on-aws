@@ -81,14 +81,13 @@ unified_kg_rag/
 └─ visualization/       # real logic package: render loop + embeddings/exporters/renderers
 ```
 
-> Layout note: `evaluation/` and `visualization/` are **real logic packages**
-> (they predate the hexagonal split — `evaluation/` holds `evaluation_manager` /
-> `graph_aware_evaluator` / `base`; `visualization/` holds the render loop plus
-> the `embeddings/`, `exporters/`, and `renderers/` subpackages), not facades.
-> The earlier thin re-export shims (`retrieval/`, `storage/`, `ingestion/`) that
-> preserved pre-split import paths have been removed; import from the real
-> locations (`application.retrieval.rag_chain`, `application.storage.indexing_manager`,
-> `application.ingestion.pipeline`, `adapters.*`, `domain.*`).
+> Layout note: `evaluation/` and `visualization/` are **real logic packages** —
+> `evaluation/` holds `evaluation_manager` / `graph_aware_evaluator` / `base`;
+> `visualization/` holds the render loop plus the `embeddings/`, `exporters/`,
+> and `renderers/` subpackages. Everything else is imported from its real
+> location (`application.retrieval.rag_chain`,
+> `application.storage.indexing_manager`, `application.ingestion.pipeline`,
+> `adapters.*`, `domain.*`).
 
 ### 2.1 Ports (Abstract Interfaces)
 
@@ -121,7 +120,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 ### 2.3 Registries
 
 - **Search strategies**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)` registers a class and its required roles against the `SearchStrategy` enum.
-- **Evaluators**: `EvaluationManager.EVALUATOR_MAPPING` — `EvaluatorType` → evaluator class.
+- **Evaluators**: `EvaluationManager._resolve_evaluator_class` — `EvaluatorType` → evaluator class (lazy, import-on-use).
 - **Renderers**: `adapters/renderers/base.py` — `@register_renderer("name")`.
 
 This pattern follows the same philosophy as the existing `ParserFactory._loader_configs` (declarative parser registration).
@@ -130,7 +129,7 @@ This pattern follows the same philosophy as the existing `ParserFactory._loader_
 
 Verified with grep: `domain/` does not import `adapters`/`application` at runtime, and neither does `ports/`. One compile-time-only exception remains — `domain/retrieval/strategy_registry.py` references `adapters.retrieval.base.BaseSearchStrategy` under `TYPE_CHECKING` (because the registry stores strategy subclasses). Extracting pure strategy/retriever ports would also remove this type-level reference; it is left in place as a deliberate boundary (see "Deliberate Design Boundaries" at the end of this document).
 
-The legacy top-level facade shims `retrieval/`, `storage/`, and `ingestion/` (thin `__init__` re-export modules left behind by the layer split) have been removed; code imports from the real locations (`application.retrieval.rag_chain`, `application.storage.indexing_manager`, `application.ingestion.pipeline`, and the `adapters.*` / `domain.*` modules). `evaluation/` and `visualization/` remain as real logic packages that predate the split (see the layout note in §2).
+Code imports from real layer locations (`application.retrieval.rag_chain`, `application.storage.indexing_manager`, `application.ingestion.pipeline`, and the `adapters.*` / `domain.*` modules). `evaluation/` and `visualization/` are real logic packages (see the layout note in §2).
 
 ---
 
@@ -219,7 +218,7 @@ The `GraphRAGChain` (an LCEL Runnable) in `application/retrieval/rag_chain.py` p
 
 #### 6.1.1 Global search map-reduce (`global_search.py`)
 
-When `enable_map_reduce` is set and results are at least `map_reduce_min_results`, it follows MS GraphRAG's canonical map-reduce (replacing the earlier simple concat-reduce).
+When `enable_map_reduce` is set and results are at least `map_reduce_min_results`, it follows MS GraphRAG's canonical map-reduce; otherwise it returns a direct concat-reduce.
 
 1. **MAP** — Community reports are batched in groups of `map_batch_size`, and for each batch `GlobalMapPrompt` asks the LLM to extract key points and score query relevance from **0-100**. Batches are run concurrently via `BatchProcessor`, with per-item graceful fallback.
 2. **FILTER+RANK** — Drops points at or below `map_relevance_threshold` and sorts by score in descending order (`_filter_and_rank_points`).
@@ -273,7 +272,7 @@ All adapters can be injected with a `boto_session` (by default created from `con
 
 ### 8.5 Retrieval Error Visibility
 
-The retrievers (`opensearch_retriever`/`neptune_retriever`) no longer silently disguise authentication/configuration/connection failures as "no results." `is_fatal_retrieval_error()` (`adapters/retrieval/base.py:50`) re-raises fatal errors with `exc_info`, and degrades to `[]` only for transient errors. As a result, an incorrect IAM permission or an endpoint typo is not buried as "0 search hits."
+The retrievers (`opensearch_retriever`/`neptune_retriever`) do not disguise authentication/configuration/connection failures as "no results." `is_fatal_retrieval_error()` (`adapters/retrieval/base.py:50`) re-raises fatal errors with `exc_info` and degrades to `[]` only for transient errors, so an incorrect IAM permission or an endpoint typo surfaces instead of being buried as "0 search hits."
 
 ### 8.6 Client Lifecycle / Resource Release
 
@@ -294,7 +293,7 @@ Each retriever build opens a Neptune WebSocket + thread pool and OpenSearch (a)s
 
 ## 9. Evaluation Framework
 
-`evaluation/` — `EvaluationManager` dispatches evaluators via `EVALUATOR_MAPPING`.
+`evaluation/` — `EvaluationManager` dispatches evaluators via `_resolve_evaluator_class` (lazy registry).
 
 - **LangChain evaluators**: correctness / partial_correctness (LLM-based rubric)
 - **RAGAS evaluators**: answer_correctness/relevancy, context_precision/recall, faithfulness
@@ -348,7 +347,7 @@ Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 
 - **CI** (`.github/workflows/`): the `quality` workflow (ruff/black/isort/mypy + pytest+coverage gate, triggered on PR/default branch), the `security` workflow (ASH scan, non-blocking, report-only).
 - **pre-commit** (`.pre-commit-config.yaml`): Mirrors the CI gates. `pre-commit install`.
-- **Security hardening**: Content hashes use SHA-256 exclusively (MD5 removed, resolving CWE-327). Dependencies are refreshed regularly via `uv lock --upgrade` to address dependency-scan CVEs. Tokens are injected via environment/config (no hardcoding in code).
+- **Security hardening**: Content hashes use SHA-256 exclusively (CWE-327-safe). Dependencies are refreshed regularly via `uv lock --upgrade` to address dependency-scan CVEs. Tokens are injected via environment/config (no hardcoding in code).
 
 ---
 
@@ -358,8 +357,9 @@ Most extensions are possible with registry registration alone and require no cha
 
 - **New search strategy**: Subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...))` + export from `adapters/search_strategies/__init__.py`.
 - **New storage/LLM backend**: Implement the relevant port and inject it (see "Custom backends" below). Do not hardcode it into a manager's `__init__`.
-- **New evaluator**: Subclass `BaseGraphRAGEvaluator` + `EVALUATOR_MAPPING` + add an `EvaluatorType` enum.
+- **New evaluator**: Subclass `BaseGraphRAGEvaluator` + add a branch in `EvaluationManager._resolve_evaluator_class` + an `EvaluatorType` enum.
 - **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`.
+- **New parser / file format**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — any LangChain `BaseLoader` subclass; no edit to the factory, and the extension is then auto-discovered + parseable. Override a built-in by registering its extension.
 
 ### Custom backends (run without AWS)
 

@@ -342,8 +342,7 @@ indexing:
     min_entity_importance: 0.5
 ```
 
-> The `*_index_prefix` keys are the real config names. (Older READMEs referred
-> to `*_index_alias` — that key does not exist.)
+> The `*_index_prefix` keys are the index-name config names.
 
 ### 2.6 `search` — retrieval, fusion, reranking, per-strategy knobs
 

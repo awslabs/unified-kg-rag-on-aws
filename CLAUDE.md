@@ -1,8 +1,8 @@
 # Project Guide for Claude Code
 
-AWS-native Knowledge Graph RAG framework. Reimplements Microsoft GraphRAG (and,
-from M3, LightRAG methodology) on Bedrock + Neptune + OpenSearch, with DynamoDB
-for incremental-indexing state.
+AWS-native Knowledge Graph RAG framework. Reimplements the Microsoft GraphRAG
+and LightRAG methodologies on Bedrock + Neptune + OpenSearch, with DynamoDB for
+incremental-indexing state.
 
 ## Architecture (hexagonal / ports & adapters)
 
@@ -31,16 +31,15 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   `storage/indexing_manager`, `retrieval/rag_chain`.
 - **`shared/`**: cross-cutting kernel — config, logging, exceptions, metrics,
   cache/pipeline managers, `utils/`.
-- **Real logic packages**: `evaluation/` and `visualization/` predate the layer
-  split and hold real code (not facades). The thin re-export shims that once
-  preserved pre-split import paths (`retrieval/`, `storage/`, `ingestion/`) have
-  been removed — import from the real locations (`application.retrieval.rag_chain`,
+- **`evaluation/` and `visualization/`**: real logic packages (evaluators +
+  manager; render loop + `embeddings/`/`exporters/`/`renderers/`). Import
+  everything else from its real location (`application.retrieval.rag_chain`,
   `application.storage.indexing_manager`, `application.ingestion.pipeline`,
   `adapters.*`, `domain.*`).
 - **Registries over hardcoded dispatch**: search strategies register via
   `@register_strategy` (`domain/retrieval/strategy_registry.py`). Follow this
-  pattern — and the declarative `ParserFactory._loader_configs` /
-  `EvaluationManager.EVALUATOR_MAPPING` — instead of `if/elif` dispatch.
+  pattern — and `ParserFactory.register_loader` /
+  `EvaluationManager._resolve_evaluator_class` — instead of `if/elif` dispatch.
 
 See `docs/design.md` §2 for the full layer map and dependency rule.
 
@@ -48,8 +47,17 @@ See `docs/design.md` §2 for the full layer map and dependency rule.
 - **New search strategy**: subclass `BaseSearchStrategy`, decorate with
   `@register_strategy(SearchStrategy.X, required_roles=(...))`, export from
   `adapters/search_strategies/__init__.py`. No edits to `rag_chain` needed.
-- **New storage/LLM backend**: implement the relevant port; register it in the
-  corresponding registry. Do not hardcode it into a manager's `__init__`.
+- **New storage/LLM backend**: implement the relevant port and inject it —
+  `IndexingManager(vector_indexer=…, graph_indexer=…)`,
+  `GraphRAGChain(model_factory=…, retriever_builders=…)`,
+  `*(embedding_factory=…)`. Defaults stay Bedrock/Neptune/OpenSearch; don't
+  hardcode a backend into a manager's `__init__`. (See design.md §15 "Custom
+  backends".)
+- **New parser / file format**: `ParserFactory.register_loader(".ext", Loader)`
+  with any LangChain `BaseLoader` subclass — auto-discovered and parseable, no
+  factory edit.
+- **New evaluator**: subclass `BaseGraphRAGEvaluator`, add a branch in
+  `EvaluationManager._resolve_evaluator_class`, add an `EvaluatorType` enum.
 - **New config section**: add a Pydantic `BaseModel`, attach it to its parent
   via `Field(default_factory=...)`, document it in `config-template.yaml`.
 
@@ -74,7 +82,7 @@ See `docs/design.md` §2 for the full layer map and dependency rule.
   (entity/relationship coverage = recall, from ground-truth
   `expected_entities`/`expected_relationships`; precision/F1 intentionally not
   emitted — see the evaluator docstring). Add an evaluator by subclassing
-  `BaseGraphRAGEvaluator` + an `EVALUATOR_MAPPING` entry.
+  `BaseGraphRAGEvaluator` + a branch in `EvaluationManager._resolve_evaluator_class`.
 - **Visualization**: renderers register via `@register_renderer`
   (`visualization/renderers/`); the manager and the standalone CLI drive them
   through one registry + `RenderContext`.

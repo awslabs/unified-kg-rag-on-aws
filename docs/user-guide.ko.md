@@ -344,8 +344,7 @@ indexing:
     min_entity_importance: 0.5
 ```
 
-> `*_index_prefix` 키가 실제 설정 이름입니다. (예전 README는 `*_index_alias`를
-> 언급했으나 — 그런 키는 존재하지 않습니다.)
+> `*_index_prefix` 키가 인덱스 이름 설정 키입니다.
 
 ### 2.6 `search` — 검색, 융합, 리랭킹, 전략별 항목
 

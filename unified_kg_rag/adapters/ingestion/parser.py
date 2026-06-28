@@ -192,6 +192,53 @@ class ParserFactory:
         )
 
     @classmethod
+    def register_loader(
+        cls,
+        extension: str,
+        loader_class: type[BaseLoader],
+        loader_kwargs: dict | None = None,
+        file_type_name: str | None = None,
+    ) -> None:
+        """Register a custom loader for a file extension (extension seam).
+
+        Any LangChain ``BaseLoader`` subclass works — ``FileParser`` only calls
+        ``loader_class(file_path, **loader_kwargs).load()``. This lets a user add
+        a new format (or override a built-in one) without editing the factory::
+
+            from langchain_community.document_loaders import UnstructuredXMLLoader
+            ParserFactory.register_loader(".xml", UnstructuredXMLLoader)
+
+        The new extension is automatically picked up by
+        ``get_supported_extensions()`` and by the loader's discovery filter, so
+        files of that type are then both discovered and parsed.
+
+        Args:
+            extension: file extension including the leading dot (case-insensitive).
+            loader_class: a LangChain ``BaseLoader`` subclass.
+            loader_kwargs: kwargs passed to the loader constructor (besides the
+                file path), e.g. ``{"jq_schema": "."}`` for ``JSONLoader``.
+            file_type_name: human-readable name for logs (defaults to the
+                extension without its dot, upper-cased).
+        """
+        ext = extension.lower()
+        if not ext.startswith("."):
+            raise ValueError(
+                f"extension must include the leading dot, got '{extension}'"
+            )
+        if not (
+            isinstance(loader_class, type) and issubclass(loader_class, BaseLoader)
+        ):
+            raise TypeError(
+                f"loader_class must be a langchain BaseLoader subclass, got "
+                f"{loader_class!r}"
+            )
+        cls._loader_configs[ext] = (
+            loader_class,
+            loader_kwargs or {},
+            file_type_name or ext.lstrip(".").upper(),
+        )
+
+    @classmethod
     def create_parser(cls, file_path: str | Path, config: Config) -> BaseParser:
         extension = Path(file_path).suffix.lower()
 

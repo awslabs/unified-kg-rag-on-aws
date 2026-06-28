@@ -55,3 +55,62 @@ def test_core_parser_constructs() -> None:
     # A supported core format yields a parser without touching AWS.
     parser = ParserFactory.create_parser("doc.txt", Config())
     assert parser is not None
+
+
+# --- register_loader: custom-format extension seam --------------------------
+
+from langchain_community.document_loaders.base import BaseLoader  # noqa: E402
+
+
+@pytest.fixture
+def _restore_loader_configs():
+    # register_loader mutates class-level _loader_configs; snapshot + restore so
+    # registration tests don't leak into others.
+    saved = dict(ParserFactory._loader_configs)
+    yield
+    ParserFactory._loader_configs = saved
+
+
+class _DummyLoader(BaseLoader):
+    def __init__(self, file_path, **kwargs):  # noqa: ANN001, ANN003
+        self.file_path = file_path
+        self.kwargs = kwargs
+
+    def load(self):
+        return []
+
+
+def test_register_loader_adds_extension(_restore_loader_configs) -> None:
+    ParserFactory.register_loader(".xyz", _DummyLoader, file_type_name="XYZ")
+    assert ".xyz" in ParserFactory.get_supported_extensions()
+    parser = ParserFactory.create_parser("data.xyz", Config())
+    assert parser.loader_class is _DummyLoader
+    assert parser.file_type_name == "XYZ"
+
+
+def test_register_loader_default_type_name(_restore_loader_configs) -> None:
+    ParserFactory.register_loader(".abc", _DummyLoader)
+    parser = ParserFactory.create_parser("f.abc", Config())
+    assert parser.file_type_name == "ABC"  # derived from extension
+
+
+def test_register_loader_passes_kwargs(_restore_loader_configs) -> None:
+    ParserFactory.register_loader(".kv", _DummyLoader, loader_kwargs={"mode": "x"})
+    parser = ParserFactory.create_parser("f.kv", Config())
+    assert parser.loader_kwargs == {"mode": "x"}
+
+
+def test_register_loader_can_override_builtin(_restore_loader_configs) -> None:
+    ParserFactory.register_loader(".txt", _DummyLoader)
+    parser = ParserFactory.create_parser("f.txt", Config())
+    assert parser.loader_class is _DummyLoader
+
+
+def test_register_loader_rejects_missing_dot(_restore_loader_configs) -> None:
+    with pytest.raises(ValueError, match="leading dot"):
+        ParserFactory.register_loader("xyz", _DummyLoader)
+
+
+def test_register_loader_rejects_non_loader(_restore_loader_configs) -> None:
+    with pytest.raises(TypeError, match="BaseLoader subclass"):
+        ParserFactory.register_loader(".xyz", dict)  # type: ignore[arg-type]
