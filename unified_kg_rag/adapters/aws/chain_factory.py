@@ -22,9 +22,9 @@ from langchain_core.prompts import (
 )
 from langchain_core.runnables import Runnable
 
-from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
 from unified_kg_rag.domain.models import LanguageModelId
 from unified_kg_rag.domain.prompts import BasePrompt, ResolvedPrompt
+from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import GraphRAGException, get_logger
 from unified_kg_rag.shared.utils.langchain import RobustXMLOutputParser
 
@@ -67,7 +67,7 @@ def _build_chat_prompt(
 
 
 def create_robust_xml_output_parser(
-    factory: BedrockLanguageModelFactory,
+    factory: LLMFactoryPort,
     enable_output_fixing: bool,
     output_fixing_model_id: LanguageModelId,
 ) -> BaseOutputParser:
@@ -91,7 +91,7 @@ def create_robust_xml_output_parser(
 
 
 def setup_chain(
-    factory: BedrockLanguageModelFactory,
+    factory: LLMFactoryPort,
     model_id: LanguageModelId,
     prompt_class: type[BasePrompt],
     parser: BaseOutputParser,
@@ -106,7 +106,7 @@ def setup_chain(
         )
         resolved = prompt_class.resolve(custom_prompts=custom_prompts)
         prompt = _build_chat_prompt(resolved, enable_prompt_cache)
-        chain = prompt | llm | parser
+        chain: Runnable = prompt | llm | parser
         logger.debug("Successfully created LLM chain with model: '%s'", model_id.value)
         return chain
     except Exception as e:

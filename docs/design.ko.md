@@ -360,9 +360,30 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 대부분의 확장은 레지스트리 등록만으로 가능하며 디스패치 코드를 수정하지 않습니다(자세한 내용 `CONTRIBUTING.md`/`CLAUDE.md`).
 
 - **새 검색 전략**: `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...))` + `adapters/search_strategies/__init__.py` export.
-- **새 스토리지/LLM 백엔드**: 해당 포트(ABC) 구현 후 레지스트리/빌더에 바인딩. 매니저 `__init__`에 하드코딩 금지.
+- **새 스토리지/LLM 백엔드**: 해당 포트 구현 후 주입(아래 "커스텀 백엔드" 참조). 매니저 `__init__`에 하드코딩 금지.
 - **새 평가자**: `BaseGraphRAGEvaluator` 상속 + `EVALUATOR_MAPPING` + `EvaluatorType` enum 추가.
 - **새 렌더러**: `BaseRenderer` 상속 + `@register_renderer("name")`.
+
+### 커스텀 백엔드 (AWS 없이 실행)
+
+모든 외부 서비스 의존성은 포트 뒤에 있고, 오케스트레이터가 그 포트를 **생성자
+주입**으로 받습니다 — 따라서 non-AWS/커스텀 백엔드를 서브클래싱이나 디스패치 코드
+수정 없이 끼울 수 있습니다.
+
+| 포트 | 기본 어댑터 | 주입 방법 |
+|---|---|---|
+| `LLMFactoryPort` / `EmbeddingFactoryPort` (`Protocol`) | Bedrock 팩토리 | `GraphRAGChain(model_factory=...)`; `OpenSearchIndexer(embedding_factory=...)`; `OpenSearchRetriever(embedding_factory=...)` |
+| `VectorIndexer` / `GraphIndexer` (ABC) | OpenSearch / Neptune | `IndexingManager(vector_indexer=..., graph_indexer=...)` |
+| 리트리버(role-keyed builder) | OpenSearch / Neptune 리트리버 | `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyRetriever(...)})` |
+| `DocStatusPort` / `CachePort` (`Protocol`) | DynamoDB / 파일시스템 | 구조적 적합(structural) — 메서드 형태만 맞추면 됨 |
+
+model-factory·doc-status·cache 포트는 `runtime_checkable Protocol`이라, 커스텀
+클래스는 **메서드 형태만** 맞으면 되고 상속할 베이스 클래스가 없습니다. `tests/
+fixtures/fakes/`의 인메모리 fake(`FakeGraphStore`/`FakeVectorStore`)가 인덱서
+포트의 동작하는 참조 구현이며 — 전체 인제스천+인덱싱 파이프라인이 AWS 없이 이들로
+돌아갑니다. 커스텀 스토어의 출발점으로 권장합니다. 이 프레임워크는 AWS 어댑터만
+제공하고, 커뮤니티/로컬 어댑터(NetworkX 그래프, 로컬 벡터DB, Ollama 등)는 이
+포트를 구현하는 애드온 패키지로 두는 것을 의도합니다.
 
 ### 의도적 설계 경계
 

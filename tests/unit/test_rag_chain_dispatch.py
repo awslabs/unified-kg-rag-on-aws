@@ -77,3 +77,40 @@ def test_instance_type_matches_registered_class(chain: GraphRAGChain) -> None:
         spec = get_strategy_spec(strategy)
         instance = chain._get_strategy_instance(strategy)
         assert isinstance(instance, spec.strategy_class)
+
+
+# --- Provider/backend injection seams (hexagonal — custom/local backends) ----
+
+
+class _FakeModelFactory:
+    """A minimal LLMFactoryPort stand-in (structural typing — no Bedrock)."""
+
+    def get_model(self, model_id, **kwargs):  # noqa: ANN001, ANN003
+        return object()
+
+    def get_model_info(self, model_id):  # noqa: ANN001
+        return None
+
+
+def test_injected_model_factory_replaces_bedrock(config: Config) -> None:
+    fake = _FakeModelFactory()
+    chain = GraphRAGChain(config=config, model_factory=fake)
+    # The injected factory is used verbatim instead of constructing Bedrock.
+    assert chain.factory is fake
+
+
+def test_injected_retriever_builder_overrides_role(config: Config) -> None:
+    sentinel = _SentinelRetriever(RetrieverRole.GRAPH)
+    chain = GraphRAGChain(
+        config=config,
+        retriever_builders={RetrieverRole.GRAPH: lambda: sentinel},
+    )
+    # The custom builder wins over the default Neptune builder for that role.
+    assert chain._get_retriever(RetrieverRole.GRAPH) is sentinel
+
+
+def test_default_backends_unchanged_without_injection(config: Config) -> None:
+    # No injection -> AWS defaults remain (Bedrock factory instance present).
+    chain = GraphRAGChain(config=config)
+    assert chain.factory is not None
+    assert chain._retriever_builders_override == {}

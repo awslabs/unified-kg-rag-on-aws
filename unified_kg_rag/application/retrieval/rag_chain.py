@@ -66,6 +66,7 @@ from unified_kg_rag.domain.prompts import (
     TranslationPrompt,
 )
 from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
+from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -179,6 +180,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         config: Config,
         boto_session: boto3.Session | None = None,
         mode: ChainMode = ChainMode.RAG,
+        *,
+        model_factory: LLMFactoryPort | None = None,
+        retriever_builders: (
+            dict[RetrieverRole, Callable[[], BaseGraphRAGRetriever]] | None
+        ) = None,
         **kwargs: Any,
     ) -> None:
         super().__init__()
@@ -190,11 +196,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         self.ignore_errors = self.config.processing.ignore_errors
         self.memory_manager = get_memory_manager()
         self.token_manager = TokenManager(self.config, boto_session=self.boto_session)
-        self.factory = BedrockLanguageModelFactory(
+        # Provider seam (hexagonal): inject a custom LLM factory (any
+        # LLMFactoryPort — e.g. a local Ollama-backed one) instead of Bedrock.
+        # Defaults to Bedrock so existing callers are unchanged.
+        self.factory: LLMFactoryPort = model_factory or BedrockLanguageModelFactory(
             config=config,
             boto_session=boto_session,
             region_name=config.aws.bedrock.region_name,
         )
+        # Backend seam: inject custom retriever builders keyed by abstract role
+        # ("graph"/"document") to swap Neptune/OpenSearch for another store
+        # without subclassing. Unspecified roles fall back to the AWS defaults.
+        self._retriever_builders_override = retriever_builders or {}
         self._retriever_cache: dict[
             tuple[RetrieverRole, int | None], BaseGraphRAGRetriever
         ] = {}
@@ -525,10 +538,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             return self._retriever_cache[cache_key]
 
         # Role -> adapter builder. Swapping a backend means changing the builder
-        # bound to a role here, not editing any strategy.
+        # bound to a role here, not editing any strategy. Injected
+        # retriever_builders take precedence over the AWS defaults (the backend
+        # seam), so a custom store is wired without subclassing.
         builders: dict[RetrieverRole, Callable[[], BaseGraphRAGRetriever]] = {
             RetrieverRole.GRAPH: self._build_graph_retriever,
             RetrieverRole.DOCUMENT: self._build_document_retriever,
+            **self._retriever_builders_override,
         }
         builder = builders.get(role)
         if builder is None:

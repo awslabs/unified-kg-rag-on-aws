@@ -354,9 +354,43 @@ Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 Most extensions are possible with registry registration alone and require no changes to dispatch code (details in `CONTRIBUTING.md`/`CLAUDE.md`).
 
 - **New search strategy**: Subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...))` + export from `adapters/search_strategies/__init__.py`.
-- **New storage/LLM backend**: Implement the relevant port (ABC) and bind it in the registry/builder. Do not hardcode it into a manager's `__init__`.
+- **New storage/LLM backend**: Implement the relevant port and inject it (see "Custom backends" below). Do not hardcode it into a manager's `__init__`.
 - **New evaluator**: Subclass `BaseGraphRAGEvaluator` + `EVALUATOR_MAPPING` + add an `EvaluatorType` enum.
 - **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`.
+
+### Custom backends (run without AWS)
+
+Every cross-service dependency is behind a port, and the orchestrators accept the
+port via **constructor injection** — so a non-AWS or custom backend is wired in
+without subclassing or editing dispatch code. The ports and their default
+(Bedrock/Neptune/OpenSearch/DynamoDB) adapters:
+
+| Port | Contract | Default adapter | Inject via |
+|---|---|---|---|
+| `LLMFactoryPort` / `EmbeddingFactoryPort` (`ports/model_factory.py`, `Protocol`) | `get_model()` / `get_model_info()` returning a LangChain-compatible model | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` | `GraphRAGChain(model_factory=...)`; `OpenSearchIndexer(embedding_factory=...)`; `OpenSearchRetriever(embedding_factory=...)` |
+| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` | `IndexingManager(vector_indexer=..., graph_indexer=...)` |
+| retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
+| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `list_all` / `diff` | `DynamoDBDocStatusStore` | pipeline accepts the store; conform structurally |
+| `CachePort` (`ports/cache.py`, `Protocol`) | get/set pipeline state | filesystem `CacheManager` | structural — no AWS needed by default |
+
+Because the model-factory and doc-status/cache ports are `runtime_checkable`
+`Protocol`s, a custom class only needs the right **method shapes** — no base
+class to import. Example (a local LLM provider):
+
+```python
+class OllamaModelFactory:                 # structurally an LLMFactoryPort
+    def get_model(self, model_id, **kwargs): ...   # returns a LangChain model
+    def get_model_info(self, model_id): ...        # returns ModelInfo | None
+
+chain = GraphRAGChain(config=cfg, model_factory=OllamaModelFactory())
+```
+
+The in-memory fakes in `tests/fixtures/fakes/` (e.g. `FakeGraphStore`,
+`FakeVectorStore`) are working reference implementations of the indexer ports —
+the whole ingestion+indexing pipeline runs against them with no AWS. They are
+the recommended starting point for a custom store. This framework ships only the
+AWS adapters; community/local adapters (e.g. NetworkX graph, a local vector DB,
+Ollama) are intended as add-on packages that implement these ports.
 
 ### Deliberate Design Boundaries
 
