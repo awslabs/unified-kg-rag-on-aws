@@ -3,14 +3,13 @@
 import json
 import statistics
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from langchain_core.runnables import Runnable
 
-from unified_kg_rag.adapters.evaluators.langchain_evaluator import LangChainEvaluator
-from unified_kg_rag.adapters.evaluators.ragas_evaluator import RagasEvaluator
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationGroundTruth,
@@ -31,11 +30,37 @@ logger = get_logger(__name__)
 
 
 class EvaluationManager:
-    EVALUATOR_MAPPING = {
-        EvaluatorType.LANGCHAIN: LangChainEvaluator,
-        EvaluatorType.RAGAS: RagasEvaluator,
-        EvaluatorType.GRAPH_AWARE: GraphAwareEvaluator,
-    }
+    @staticmethod
+    def _resolve_evaluator_class(
+        evaluator_type: EvaluatorType,
+    ) -> Callable[..., BaseEvaluator] | None:
+        """Resolve an evaluator class lazily (registry, but import-on-use).
+
+        The langchain/ragas adapter evaluators import `evaluation.base`, which
+        runs this package's __init__; importing them at module load here would
+        create a circular import (manager -> adapter -> evaluation.base ->
+        __init__ -> manager). Resolving inside the method defers the import to
+        instantiation time, when the package is fully initialized — while
+        keeping the declarative type->class registry.
+        """
+        if evaluator_type is EvaluatorType.LANGCHAIN:
+            from unified_kg_rag.adapters.evaluators.langchain_evaluator import (
+                LangChainEvaluator,
+            )
+
+            return LangChainEvaluator
+        if evaluator_type is EvaluatorType.RAGAS:
+            from unified_kg_rag.adapters.evaluators.ragas_evaluator import (
+                RagasEvaluator,
+            )
+
+            return RagasEvaluator
+        if evaluator_type is EvaluatorType.GRAPH_AWARE:
+            return GraphAwareEvaluator
+        # Defensive: a future EvaluatorType with no mapping resolves to None and
+        # is skipped by the caller. mypy sees the enum as exhaustive today, hence
+        # the ignore — the branch is real once a new member is added.
+        return None  # type: ignore[unreachable]
 
     def __init__(self, config: Config, rag_chain: Runnable | None = None) -> None:
         self.config = config
@@ -49,7 +74,7 @@ class EvaluationManager:
     def _initialize_evaluators(self) -> None:
         enabled_count = 0
         for evaluator_type in self.config.evaluation.enabled_evaluators:
-            evaluator_class = self.EVALUATOR_MAPPING.get(evaluator_type)
+            evaluator_class = self._resolve_evaluator_class(evaluator_type)
             if not evaluator_class:
                 logger.warning("Unknown evaluator type: '%s'", evaluator_type)
                 continue

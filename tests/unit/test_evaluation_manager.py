@@ -23,11 +23,7 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
 )
 from unified_kg_rag.evaluation import EvaluationManager
-from unified_kg_rag.evaluation.evaluation_manager import (
-    GraphAwareEvaluator,
-    LangChainEvaluator,
-    RagasEvaluator,
-)
+from unified_kg_rag.evaluation.evaluation_manager import GraphAwareEvaluator
 
 pytestmark = pytest.mark.unit
 
@@ -172,21 +168,32 @@ class TestInitialization:
         with pytest.raises(EvaluationException):
             EvaluationManager(config, rag_chain=None)
 
-    def test_evaluator_mapping_covers_all_types(self) -> None:
-        assert EvaluationManager.EVALUATOR_MAPPING == {
-            EvaluatorType.LANGCHAIN: LangChainEvaluator,
-            EvaluatorType.RAGAS: RagasEvaluator,
-            EvaluatorType.GRAPH_AWARE: GraphAwareEvaluator,
-        }
+    def test_resolver_covers_all_types(self) -> None:
+        # The lazy resolver returns a class for every evaluator type (langchain/
+        # ragas are imported on demand to avoid a circular import at module load).
+        assert (
+            EvaluationManager._resolve_evaluator_class(EvaluatorType.LANGCHAIN).__name__
+            == "LangChainEvaluator"
+        )
+        assert (
+            EvaluationManager._resolve_evaluator_class(EvaluatorType.RAGAS).__name__
+            == "RagasEvaluator"
+        )
+        assert (
+            EvaluationManager._resolve_evaluator_class(EvaluatorType.GRAPH_AWARE)
+            is GraphAwareEvaluator
+        )
 
     def test_only_enabled_evaluators_initialized(self, config: Config) -> None:
         manager = _graph_aware_manager(config)
         assert set(manager.evaluators) == {EvaluatorType.GRAPH_AWARE}
 
     def test_unknown_evaluator_type_skipped(self, config: Config, mocker) -> None:
-        # An evaluator type absent from EVALUATOR_MAPPING is skipped, not fatal.
+        # A type the resolver returns None for is skipped, not fatal.
         config.evaluation.enabled_evaluators = [EvaluatorType.GRAPH_AWARE]
-        mocker.patch.dict(EvaluationManager.EVALUATOR_MAPPING, {}, clear=True)
+        mocker.patch.object(
+            EvaluationManager, "_resolve_evaluator_class", return_value=None
+        )
         manager = EvaluationManager(config, rag_chain=object())
         assert manager.evaluators == {}
 
@@ -199,9 +206,8 @@ class TestInitialization:
             def __init__(self, *a, **k):
                 raise RuntimeError("init failed")
 
-        mocker.patch.dict(
-            EvaluationManager.EVALUATOR_MAPPING,
-            {EvaluatorType.GRAPH_AWARE: _Boom},
+        mocker.patch.object(
+            EvaluationManager, "_resolve_evaluator_class", return_value=_Boom
         )
         manager = EvaluationManager(config, rag_chain=object())
         assert manager.evaluators == {}

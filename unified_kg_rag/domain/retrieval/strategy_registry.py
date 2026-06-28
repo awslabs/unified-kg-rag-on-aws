@@ -9,7 +9,8 @@ enum-keyed registry. New strategies register themselves with
 strategy no longer requires editing dispatch code.
 
 This mirrors the declarative-factory pattern already used by
-``ParserFactory._loader_configs`` and ``EvaluationManager.EVALUATOR_MAPPING``.
+``ParserFactory._loader_configs`` and
+``EvaluationManager._resolve_evaluator_class``.
 """
 
 from __future__ import annotations
