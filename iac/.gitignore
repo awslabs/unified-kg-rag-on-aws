@@ -2,3 +2,4 @@
 cdk.out/
 *.pyc
 __pycache__/
+cdk.out.deploy/
