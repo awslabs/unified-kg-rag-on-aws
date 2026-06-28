@@ -189,6 +189,8 @@ The `DataIngestionPipeline` in `application/ingestion/pipeline.py` runs 12 stage
 
 When documents are added/changed/deleted, only the delta is processed instead of a full re-index.
 
+![Incremental Indexing](../assets/incremental_indexing.png)
+
 1. **Delta detection** (`domain/ingestion/delta_detector.py`): Builds `{doc_id: content_hash}` from a stable `doc_id` (based on path normalization) + content SHA-256 hash, and `DocStatusPort.diff()` classifies them as new/changed/unchanged/deleted.
 2. **Stale cleanup** (`IncrementalIndexer.prune_changed`): For changed documents, first removes existing artifacts that are *not shared* (so entities that disappear after re-extraction do not linger in the graph).
 3. **Delta upsert** (`IndexingManager.index_delta`): Neptune uses a Gremlin `coalesce(unfold, addV)` idempotent upsert; OpenSearch upserts by id into the live alias index. The relationship vector index is updated the same way.
