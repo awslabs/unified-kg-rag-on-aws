@@ -1339,6 +1339,26 @@ class DriftSearchConfig(BaseModel):
         le=1.0,
         description="Minimum improvement ratio required to continue iterations",
     )
+    enable_primer: bool = Field(
+        default=False,
+        description="Restructure DRIFT into MS GraphRAG's primer -> follow-up "
+        "flow: a HyDE primer drafts a hypothetical answer from the seed "
+        "community reports and decomposes the query into specific follow-up "
+        "sub-queries, each run as its own search iteration (instead of carrying "
+        "one mutating query forward). Off by default — the primer adds one LLM "
+        "call up front and turns the iteration budget into follow-up breadth.",
+    )
+    primer_model_id: LanguageModelId = Field(
+        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
+        description="Language model for the DRIFT primer (HyDE answer + "
+        "follow-up decomposition) when enable_primer is set.",
+    )
+    primer_follow_ups: int = Field(
+        default=3,
+        ge=1,
+        description="Number of follow-up sub-queries the DRIFT primer emits; "
+        "each becomes one follow-up search iteration (capped by max_iterations).",
+    )
 
 
 class TokenManagerConfig(BaseModel):
@@ -1562,13 +1582,13 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for corpus profiling during prompt tuning",
     )
-    extraction_examples_system: str | None = Field(
+    drift_primer_system: str | None = Field(
         default=None,
-        description="Custom system prompt for generating few-shot extraction examples during prompt tuning",
+        description="Custom system prompt for the DRIFT primer (HyDE answer + follow-up decomposition)",
     )
-    extraction_examples_human: str | None = Field(
+    drift_primer_human: str | None = Field(
         default=None,
-        description="Custom human prompt for generating few-shot extraction examples during prompt tuning",
+        description="Custom human prompt for the DRIFT primer (HyDE answer + follow-up decomposition)",
     )
     keyword_expansion_system: str | None = Field(
         default=None,

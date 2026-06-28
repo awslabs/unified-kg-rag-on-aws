@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import json
 import time
 from typing import Any
 
@@ -25,6 +26,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts import (
     ConvergenceAssessmentPrompt,
+    DriftPrimerPrompt,
     KeywordExpansionPrompt,
     QueryRefinementPrompt,
 )
@@ -78,6 +80,15 @@ class DriftSearchStrategy(BaseSearchStrategy):
             prompt_class=ConvergenceAssessmentPrompt,
             parser=str_output_parser,
         )
+        # The HyDE primer chain is only built when the primer path is enabled,
+        # so the default DRIFT flow constructs no extra chain.
+        if self.drift_config.enable_primer:
+            self.primer = setup_chain(
+                factory=factory,
+                model_id=self.drift_config.primer_model_id,
+                prompt_class=DriftPrimerPrompt,
+                parser=str_output_parser,
+            )
 
     async def asearch(self, query: SearchQuery) -> SearchResult:
         start_time = time.time()
@@ -99,14 +110,55 @@ class DriftSearchStrategy(BaseSearchStrategy):
             "..." if len(community_ids) > 5 else "",
         )
 
-        current_query = query.model_copy(deep=True)
-        all_results = []
+        all_results: list[RetrievalResult] = list(candidate_communities)
         seen_hashes: set[str] = set()
         metrics: list[dict[str, Any]] = []
-
-        all_results.extend(candidate_communities)
         self._update_seen_content(candidate_communities, seen_hashes)
 
+        if self.drift_config.enable_primer:
+            await self._primer_search(
+                query, candidate_communities, all_results, seen_hashes, metrics
+            )
+        else:
+            await self._iterative_search(query, all_results, seen_hashes, metrics)
+
+        final_results = self.hybrid_scorer.fuse_and_rerank_results(
+            {"results": all_results},
+            top_k=query.top_k,
+            retrieval_multiplier=query.retrieval_multiplier,
+            query=query.query,
+        )
+        processing_time = time.time() - start_time
+        self._record_search_metrics(processing_time, len(all_results), len(metrics))
+
+        logger.info(
+            "Search completed: %s iterations, %s results in %.3fs",
+            len(metrics),
+            len(final_results),
+            processing_time,
+        )
+
+        return SearchResult(
+            query=query,
+            results=final_results,
+            total_results=len(final_results),
+            search_strategy="drift_search",
+            processing_time=processing_time,
+            metadata={
+                "iterations_completed": len(metrics),
+                "iteration_metrics": metrics,
+            },
+        )
+
+    async def _iterative_search(
+        self,
+        query: SearchQuery,
+        all_results: list[RetrievalResult],
+        seen_hashes: set[str],
+        metrics: list[dict[str, Any]],
+    ) -> None:
+        """Original DRIFT loop: carry one mutating query forward each iteration."""
+        current_query = query.model_copy(deep=True)
         for iteration in range(self.drift_config.max_iterations):
             if await self._should_stop(iteration, metrics, query.query):
                 logger.info("Convergence achieved at iteration %s", iteration)
@@ -150,33 +202,94 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 )
                 break
 
-        final_results = self.hybrid_scorer.fuse_and_rerank_results(
-            {"results": all_results},
-            top_k=query.top_k,
-            retrieval_multiplier=query.retrieval_multiplier,
-            query=query.query,
-        )
-        processing_time = time.time() - start_time
-        self._record_search_metrics(processing_time, len(all_results), len(metrics))
+    async def _primer_search(
+        self,
+        query: SearchQuery,
+        candidate_communities: list[RetrievalResult],
+        all_results: list[RetrievalResult],
+        seen_hashes: set[str],
+        metrics: list[dict[str, Any]],
+    ) -> None:
+        """MS GraphRAG primer flow: HyDE primer -> per-follow-up local searches.
 
-        logger.info(
-            "Search completed: %s iterations, %s results in %.3fs",
-            len(metrics),
-            len(final_results),
-            processing_time,
-        )
+        The primer drafts a hypothetical answer from the seed community reports
+        and decomposes the query into specific follow-up sub-queries; each
+        follow-up is then run as its own search iteration (capped by
+        ``max_iterations``). Falls back to the iterative loop if the primer
+        yields no follow-up queries, so the strategy never returns seed-only.
+        """
+        follow_ups = await self._run_primer(query, candidate_communities)
+        if not follow_ups:
+            logger.info("Primer produced no follow-ups; using iterative loop")
+            await self._iterative_search(query, all_results, seen_hashes, metrics)
+            return
 
-        return SearchResult(
-            query=query,
-            results=final_results,
-            total_results=len(final_results),
-            search_strategy="drift_search",
-            processing_time=processing_time,
-            metadata={
-                "iterations_completed": len(metrics),
-                "iteration_metrics": metrics,
-            },
+        for iteration, follow_up in enumerate(
+            follow_ups[: self.drift_config.max_iterations]
+        ):
+            follow_up_query = query.model_copy(deep=True)
+            follow_up_query.query = follow_up
+            logger.info("Primer follow-up %s: '%s'", iteration, follow_up)
+
+            iteration_results = await self._execute_search_iteration(follow_up_query)
+            unique_new = self._filter_unique_results(iteration_results, seen_hashes)
+            self._update_seen_content(unique_new, seen_hashes)
+            all_results.extend(unique_new)
+
+            metrics.append(
+                {
+                    "iteration": iteration,
+                    "query": follow_up,
+                    "retrieved": len(iteration_results),
+                    "unique_new": len(unique_new),
+                    "source": "primer_follow_up",
+                }
+            )
+
+    async def _run_primer(
+        self, query: SearchQuery, candidate_communities: list[RetrievalResult]
+    ) -> list[str]:
+        """Run the HyDE primer and return its follow-up sub-queries."""
+        reports = "\n".join(
+            f"- {r.content[: self.drift_config.summary_char_limit]}"
+            for r in candidate_communities[: self.drift_config.initial_top_k]
         )
+        try:
+            raw = await self.primer.ainvoke(
+                {
+                    "query": query.query,
+                    "community_reports": reports or "(no community summaries found)",
+                    "num_follow_ups": self.drift_config.primer_follow_ups,
+                }
+            )
+            payload = self._parse_primer_json(raw)
+        except Exception as e:
+            if not self.ignore_errors:
+                raise
+            logger.error("DRIFT primer failed: %s", e)
+            return []
+
+        follow_ups = payload.get("follow_up_queries")
+        if not isinstance(follow_ups, list):
+            return []
+        return [str(f).strip() for f in follow_ups if str(f).strip()]
+
+    @staticmethod
+    def _parse_primer_json(raw: str) -> dict[str, Any]:
+        text = raw.strip()
+        if text.startswith("```"):
+            text = text.split("```", 2)[1] if "```" in text[3:] else text[3:]
+            if text.lstrip().startswith("json"):
+                text = text.lstrip()[4:]
+        start, end = text.find("{"), text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            text = text[start : end + 1]
+        try:
+            parsed = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            logger.warning("DRIFT primer JSON parse failed; no follow-ups")
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
 
     async def _find_candidate_communities(
         self, query: SearchQuery

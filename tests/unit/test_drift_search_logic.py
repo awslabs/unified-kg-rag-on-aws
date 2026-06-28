@@ -452,3 +452,84 @@ def test_record_search_metrics_populates_metrics() -> None:
         "retrieved_count": 11,
         "iterations_completed": 3,
     }
+
+
+# --------------------------------------------------------------------------- #
+# DRIFT primer -> follow-up (enable_primer)
+# --------------------------------------------------------------------------- #
+
+
+def _primer_strategy(*, primer_value=None, primer_raises=None, **kw):
+    strat = _bare_strategy(**kw)
+    strat.drift_config.enable_primer = True
+    strat.drift_config.primer_follow_ups = 3
+    if primer_value is not None or primer_raises is not None:
+        strat.primer = _AChain(value=primer_value, raises=primer_raises)
+    return strat
+
+
+def test_parse_primer_json_strips_fences_and_prose() -> None:
+    raw = '```json\n{"follow_up_queries": ["a", "b"], "score": 0.4}\n```'
+    parsed = DriftSearchStrategy._parse_primer_json(raw)
+    assert parsed["follow_up_queries"] == ["a", "b"]
+
+
+def test_parse_primer_json_malformed_returns_empty() -> None:
+    assert DriftSearchStrategy._parse_primer_json("not json at all") == {}
+
+
+async def test_run_primer_returns_follow_ups() -> None:
+    strat = _primer_strategy(
+        primer_value='{"intermediate_answer": "x", "score": 0.3, '
+        '"follow_up_queries": ["q1", " q2 ", ""]}'
+    )
+    follow_ups = await strat._run_primer(
+        SearchQuery(query="orig"), [_result("Community report A")]
+    )
+    # Whitespace trimmed and empties dropped.
+    assert follow_ups == ["q1", "q2"]
+
+
+async def test_run_primer_degrades_on_error_when_ignoring() -> None:
+    strat = _primer_strategy(
+        primer_raises=RuntimeError("bedrock down"), ignore_errors=True
+    )
+    assert await strat._run_primer(SearchQuery(query="q"), []) == []
+
+
+async def test_primer_search_runs_one_iteration_per_follow_up() -> None:
+    # Each follow-up sub-query becomes its own search iteration; the graph/doc
+    # fan-out is stubbed via _execute_search_iteration.
+    strat = _primer_strategy(
+        primer_value='{"follow_up_queries": ["fa", "fb"], "score": 0.2}'
+    )
+    executed: list[str] = []
+
+    async def _fake_iteration(q: SearchQuery):
+        executed.append(q.query)
+        return [_result(f"hit for {q.query}")]
+
+    strat._execute_search_iteration = _fake_iteration  # type: ignore[method-assign]
+
+    all_results: list = []
+    seen: set[str] = set()
+    metrics: list[dict] = []
+    await strat._primer_search(
+        SearchQuery(query="orig"), [], all_results, seen, metrics
+    )
+
+    assert executed == ["fa", "fb"]
+    assert {m["source"] for m in metrics} == {"primer_follow_up"}
+    assert len(all_results) == 2
+
+
+async def test_primer_search_falls_back_to_iterative_without_follow_ups() -> None:
+    strat = _primer_strategy(primer_value='{"follow_up_queries": [], "score": 0.9}')
+    called = {"iterative": False}
+
+    async def _fake_iterative(query, all_results, seen, metrics):
+        called["iterative"] = True
+
+    strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
+    await strat._primer_search(SearchQuery(query="q"), [], [], set(), [])
+    assert called["iterative"]

@@ -551,6 +551,45 @@ Create a comprehensive, well-structured synthesis that directly and completely a
 
 
 @dataclass(frozen=True)
+class DriftPrimerPrompt(BasePrompt):
+    prompt_key = "drift_primer"
+    """DRIFT primer: HyDE hypothetical answer + decomposed follow-up queries.
+
+    Ports MS GraphRAG's DRIFT primer step. Given the query and the most relevant
+    community reports, the model writes a hypothetical/intermediate answer
+    (HyDE), rates how well the reports already answer the query (0-1), and emits
+    a handful of specific follow-up sub-queries to drive the next, local search
+    round. Output is strict JSON so it parses without an LLM fixer.
+    """
+
+    input_variables = ["query", "community_reports", "num_follow_ups"]
+    output_variables = ["intermediate_answer", "score", "follow_up_queries"]
+
+    system_prompt_template = """You are a DRIFT search primer for knowledge-graph retrieval. Given a user
+query and summaries of the most relevant communities, you (1) draft a hypothetical intermediate answer from
+what the community summaries suggest, (2) score how completely those summaries already answer the query, and
+(3) propose specific follow-up sub-queries that a finer-grained local search should pursue next to fill the
+gaps.
+
+INSTRUCTIONS & CONSTRAINTS:
+1. Output MUST be a valid JSON object and nothing else — no markdown fences, no commentary.
+2. The JSON must contain exactly these keys:
+   - "intermediate_answer": a concise hypothetical answer (a few sentences) grounded in the summaries.
+   - "score": a number from 0.0 to 1.0 — how completely the summaries already answer the query.
+   - "follow_up_queries": an array of {num_follow_ups} specific sub-queries to explore next.
+3. The first character of your response must be {{ and the last must be }}.
+4. Follow-up queries must target concrete, under-covered aspects — not restatements of the original query.
+5. Base everything on the provided community summaries; do not invent facts not implied by them."""
+
+    human_prompt_template = """USER QUERY: "{query}"
+
+RELEVANT COMMUNITY SUMMARIES:
+{community_reports}
+
+Produce the DRIFT primer JSON ({num_follow_ups} follow-up queries):"""
+
+
+@dataclass(frozen=True)
 class QueryRefinementPrompt(BasePrompt):
     prompt_key = "query_refinement"
     input_variables = [
