@@ -142,6 +142,7 @@ def test_index_community_reports_prepare_doc_via_closure(indexer, mocker) -> Non
         name="Cluster",
         summary="A summary",
         full_content="Full body",
+        rating=6.5,
         rank=4,
     )
     indexer.index_community_reports([report])
@@ -154,6 +155,7 @@ def test_index_community_reports_prepare_doc_via_closure(indexer, mocker) -> Non
     assert doc["full_content"] == "Full body"
     assert doc["full_content_embedding"] == [0.3]
     assert doc["rank"] == 4
+    assert doc["rating"] == 6.5
 
 
 def test_prepare_claim_doc_shape(indexer) -> None:

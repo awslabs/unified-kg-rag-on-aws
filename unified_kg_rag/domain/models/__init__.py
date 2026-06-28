@@ -3,7 +3,7 @@
 from .base import Identified, Named
 from .cache import CacheEntry, CacheIndex, CacheStats, CacheStrategy
 from .community import Community, CommunityMetrics
-from .community_report import CommunityReport
+from .community_report import CommunityFinding, CommunityReport
 from .config import (
     ChunkingStrategy,
     Config,
@@ -70,6 +70,7 @@ __all__ = [
     "ChunkingStrategy",
     "Claim",
     "Community",
+    "CommunityFinding",
     "CommunityMetrics",
     "CommunityReport",
     "Config",

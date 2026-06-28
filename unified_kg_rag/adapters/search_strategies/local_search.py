@@ -80,6 +80,20 @@ class LocalSearchStrategy(BaseSearchStrategy):
         text_units = await self._retrieve_documents(text_unit_ids, query.suffix)
         all_results = {"graph_entities": expanded_entity_nodes, **text_units}
 
+        # MS GraphRAG local search builds context from entities + the community
+        # reports those entities belong to + in-network relationships + text
+        # units (+ claims). We mirror that: enrich the entity/text-unit core with
+        # a community-report section and a relationship section so a local query
+        # also sees the higher-level community synthesis and the relationship
+        # descriptions, not just raw entities and chunks.
+        community_reports = await self._retrieve_community_reports(query)
+        if community_reports:
+            all_results["community_reports"] = community_reports
+
+        relationships = await self._retrieve_relationships(query)
+        if relationships:
+            all_results["relationships"] = relationships
+
         # MS GraphRAG injects covariates (claims) into local-search context.
         # Gated strictly on claim extraction being enabled so the default path
         # (claims off) is unchanged: no extra retrieval is issued.
@@ -170,6 +184,69 @@ class LocalSearchStrategy(BaseSearchStrategy):
             return await self.document_retriever.aretrieve(search_query)
         except Exception as e:
             logger.error("Failed to retrieve claims: %s", e)
+            return []
+
+    async def _retrieve_community_reports(
+        self, query: SearchQuery
+    ) -> list[RetrievalResult]:
+        # Pull the community reports most relevant to the query so local context
+        # carries the community-level synthesis (mirrors MS GraphRAG local
+        # search). The community-reports index always exists on the GraphRAG
+        # path; degrade to no section on any retrieval error.
+        if not self.document_retriever:
+            return []
+
+        report_query = (
+            " ".join(query.entity_focus) if query.entity_focus else query.query
+        )
+        if not report_query:
+            return []
+
+        search_query = SearchQuery(
+            query=report_query,
+            search_type=query.search_type,
+            top_k=query.top_k,
+            index_prefixes=[
+                self.config.indexing.opensearch.community_reports_index_prefix
+            ],
+            suffix=query.suffix,
+        )
+
+        try:
+            return await self.document_retriever.aretrieve(search_query)
+        except Exception as e:
+            logger.error("Failed to retrieve community reports: %s", e)
+            return []
+
+    async def _retrieve_relationships(
+        self, query: SearchQuery
+    ) -> list[RetrievalResult]:
+        # Add a relationship section (relationship descriptions for the query).
+        # Gated on the relationship VECTOR index being built — for a GraphRAG-only
+        # deployment with build_relationship_vector_index=False the index is
+        # absent, so querying it is pure overhead.
+        if (
+            not self.document_retriever
+            or not self.config.indexing.opensearch.build_relationship_vector_index
+        ):
+            return []
+
+        rel_query = " ".join(query.entity_focus) if query.entity_focus else query.query
+        if not rel_query:
+            return []
+
+        search_query = SearchQuery(
+            query=rel_query,
+            search_type=query.search_type,
+            top_k=query.top_k,
+            index_prefixes=[self.config.indexing.opensearch.relationships_index_prefix],
+            suffix=query.suffix,
+        )
+
+        try:
+            return await self.document_retriever.aretrieve(search_query)
+        except Exception as e:
+            logger.error("Failed to retrieve relationships: %s", e)
             return []
 
     async def _expand_via_graph(

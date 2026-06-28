@@ -279,6 +279,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "full_content": report.full_content or "",
                 "full_content_embedding": embeddings[2],
                 "rank": report.rank or 1.0,
+                "rating": report.rating,
             }
 
         return self._index_item_type(
@@ -957,6 +958,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "full_content": {"type": "text", "analyzer": self.analyzer},
                 "full_content_embedding": self._get_knn_vector_mapping(),
                 "rank": {"type": "double"},
+                "rating": {"type": "double"},
                 "attributes": {"type": "object", "dynamic": True},
             }
         )

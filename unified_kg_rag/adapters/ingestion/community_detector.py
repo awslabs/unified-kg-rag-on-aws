@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import re
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -19,6 +20,7 @@ from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.models import (
     Community,
+    CommunityFinding,
     CommunityMetrics,
     CommunityReport,
     Config,
@@ -792,10 +794,10 @@ class CommunityDetector(BaseProcessor):
                 "summary", f"No summary generated for community {community.name}."
             )
         )
-        full_content = self._extract_text_from_result(
-            result.get(
-                "full_content", f"No report generated for community {community.name}."
-            )
+        findings = self._extract_findings(result)
+        rating = self._extract_rating(result)
+        rating_explanation = self._extract_text_from_result(
+            result.get("rating_explanation", "")
         )
 
         report_id = generate_stable_id(f"report:{community.id}")
@@ -816,7 +818,7 @@ class CommunityDetector(BaseProcessor):
             else f"Report for {community.name}"
         )
 
-        return CommunityReport(
+        report = CommunityReport(
             id=report_id,
             short_id=report_id[:8],
             name=report_name,
@@ -824,8 +826,11 @@ class CommunityDetector(BaseProcessor):
             community_id=community.id,
             summary=summary,
             summary_embedding=None,
-            full_content=full_content,
+            full_content="",
             full_content_embedding=None,
+            findings=findings,
+            rating=rating,
+            rating_explanation=rating_explanation,
             rank=self._compute_report_rank(community),
             size=community.size,
             period=community.period,
@@ -833,6 +838,14 @@ class CommunityDetector(BaseProcessor):
             created_at=current_time,
             updated_at=current_time,
         )
+        # Derive the free-text body from the structured fields so embeddings,
+        # global-search map-reduce, and display all stay consistent with the
+        # findings/rating without a second LLM call.
+        rendered = report.render_full_content()
+        report.full_content = (
+            rendered or f"No report generated for community {community.name}."
+        )
+        return report
 
     @staticmethod
     def _extract_text_from_result(value: Any) -> str:
@@ -843,3 +856,51 @@ class CommunityDetector(BaseProcessor):
                 return str(value["#text"])
             return str(value)
         return str(value)
+
+    @classmethod
+    def _extract_rating(cls, result: dict[str, Any]) -> float:
+        """Parse the 0-10 importance rating, tolerating noisy LLM output."""
+        raw = cls._extract_text_from_result(result.get("rating", "")).strip()
+        if not raw:
+            return 0.0
+        match = re.search(r"-?\d+(?:\.\d+)?", raw)
+        if not match:
+            return 0.0
+        try:
+            return max(0.0, min(10.0, float(match.group())))
+        except ValueError:
+            return 0.0
+
+    @classmethod
+    def _extract_findings(cls, result: dict[str, Any]) -> list[CommunityFinding]:
+        """Parse the <findings>/<finding> block into structured findings.
+
+        The XML parser collapses a single repeated child tag to a scalar and
+        multiple to a list, so normalize both ``{"finding": {...}}`` and
+        ``{"finding": [{...}, ...]}`` (and the rare bare-list) shapes.
+        """
+        findings_block = result.get("findings")
+        raw_findings: list[Any]
+        if isinstance(findings_block, dict):
+            inner = findings_block.get("finding", findings_block)
+            raw_findings = inner if isinstance(inner, list) else [inner]
+        elif isinstance(findings_block, list):
+            raw_findings = findings_block
+        else:
+            return []
+
+        findings: list[CommunityFinding] = []
+        for item in raw_findings:
+            if isinstance(item, dict):
+                summary = cls._extract_text_from_result(item.get("summary", "")).strip()
+                explanation = cls._extract_text_from_result(
+                    item.get("explanation", "")
+                ).strip()
+            else:
+                summary = cls._extract_text_from_result(item).strip()
+                explanation = ""
+            if summary or explanation:
+                findings.append(
+                    CommunityFinding(summary=summary, explanation=explanation)
+                )
+        return findings

@@ -610,20 +610,61 @@ class TestGenerateReportsCounting:
                 {
                     "community_name": "Cluster A",
                     "summary": "A summary",
-                    "full_content": "Full body",
+                    "rating": "7.5",
+                    "rating_explanation": "Central cluster",
+                    "findings": {
+                        "finding": [
+                            {"summary": "Finding one", "explanation": "Detail one"},
+                            {"summary": "Finding two", "explanation": "Detail two"},
+                        ]
+                    },
                 }
             ]
         )
         reports = cd.generate_reports([_community(["e1"])])
         assert len(reports) == 1
-        assert reports[0].community_id == "L0_C0"
-        assert reports[0].summary == "A summary"
-        assert reports[0].full_content == "Full body"
+        report = reports[0]
+        assert report.community_id == "L0_C0"
+        assert report.summary == "A summary"
+        assert report.rating == 7.5
+        assert report.rating_explanation == "Central cluster"
+        assert [f.summary for f in report.findings] == ["Finding one", "Finding two"]
+        # full_content is rendered deterministically from the structured fields.
+        assert "Finding one" in report.full_content
+        assert "Detail two" in report.full_content
+        assert "7.5/10" in report.full_content
+
+    def test_single_finding_normalized_to_list(self) -> None:
+        # The XML parser collapses one repeated child to a scalar dict; the
+        # detector must normalize it back to a one-element findings list.
+        cd = self._ready_detector(
+            [
+                {
+                    "community_name": "Solo",
+                    "summary": "s",
+                    "rating": "3",
+                    "findings": {
+                        "finding": {"summary": "Only", "explanation": "One detail"}
+                    },
+                }
+            ]
+        )
+        reports = cd.generate_reports([_community(["e1"])])
+        assert len(reports[0].findings) == 1
+        assert reports[0].findings[0].summary == "Only"
+        assert reports[0].rating == 3.0
 
     def test_empty_result_is_counted_not_silently_dropped(self) -> None:
         # One real result, one empty (None): only one report, no crash.
         cd = self._ready_detector(
-            [{"community_name": "A", "summary": "s", "full_content": "c"}, None]
+            [
+                {
+                    "community_name": "A",
+                    "summary": "s",
+                    "findings": {"finding": {"summary": "f", "explanation": "e"}},
+                },
+                None,
+            ]
         )
         reports = cd.generate_reports([_community(["e1"]), _community(["e1"])])
         assert len(reports) == 1

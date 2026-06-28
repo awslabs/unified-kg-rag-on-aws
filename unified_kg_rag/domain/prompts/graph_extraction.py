@@ -439,10 +439,15 @@ exact output format specified.
 - Strategic significance
 - Unique value proposition
 
-### 3. Full Analysis (length-dependent):
-- **short**: 6-8 focused paragraphs
-- **medium**: 10-12 balanced paragraphs
-- **long**: 15-18 comprehensive paragraphs
+### 3. Importance Rating (0.0-10.0):
+- A float reflecting the community's overall importance / impact severity
+- Justified in one sentence (rating_explanation)
+
+### 4. Findings (length-dependent count):
+- Each finding = a one-line summary + a multi-sentence explanation
+- **short**: 5-7 findings
+- **medium**: 7-10 findings
+- **long**: 10-15 findings
 
 ## Content Requirements:
 - Evidence-based insights referencing specific entities/relationships
@@ -455,8 +460,22 @@ exact output format specified.
 
 <community_name>[Descriptive 5-8 word community name]</community_name>
 <summary>[2-3 sentence executive summary of key insights]</summary>
-<full_content>[Complete analysis based on length specification, structured with clear paragraphs covering all analysis
-dimensions]</full_content>
+<rating>[A single number from 0.0 to 10.0 rating the community's overall importance / impact severity]</rating>
+<rating_explanation>[One sentence justifying the rating]</rating_explanation>
+<findings>
+  <finding>
+    <summary>[One-line headline for this insight]</summary>
+    <explanation>[Several sentences of evidence-based supporting detail, referencing specific entities/relationships]</explanation>
+  </finding>
+  <finding>
+    <summary>[Next insight headline]</summary>
+    <explanation>[Supporting detail]</explanation>
+  </finding>
+</findings>
+
+Emit one <finding> per distinct insight. Produce enough findings to satisfy the
+requested report length (short: 5-7, medium: 7-10, long: 10-15). Do NOT emit a
+<full_content> tag — the full report body is assembled from the findings.
 
 # ANALYSIS QUALITY STANDARDS:
 ✓ Lead with most impactful discoveries
@@ -507,10 +526,11 @@ dimensions]</full_content>
 ## OUTPUT SPECIFICATIONS:
 - Create memorable community name (5-8 words)
 - Write powerful executive summary (2-3 sentences)
-- Develop comprehensive analysis matching specified length
+- Assign an importance rating (0.0-10.0) with a one-sentence justification
+- Emit one finding per distinct insight; count matches the specified length
 - Include quantitative insights if statistics enabled
 - Highlight key entities if requested
-- Structure content with clear paragraphs and logical flow
+- Each finding: a one-line summary plus a multi-sentence, evidence-based explanation
 
 ## CRITICAL REMINDERS:
 - Use the exact XML format specified
