@@ -326,7 +326,11 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
     @staticmethod
     async def _execute_traversal(traversal: Traversal) -> list[Any]:
         try:
-            result: list[Any] = traversal.to_list()
+            # to_list() is a BLOCKING Gremlin round trip; running it directly in
+            # this coroutine would block the event loop and serialize the seed
+            # lookups that callers fan out via asyncio.gather. Offload it to a
+            # worker thread so the gather actually overlaps.
+            result: list[Any] = await asyncio.to_thread(traversal.to_list)
             return result
         except Exception as e:
             logger.error("Gremlin traversal execution failed: %s", e)

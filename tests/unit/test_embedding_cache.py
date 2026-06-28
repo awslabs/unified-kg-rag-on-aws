@@ -69,3 +69,29 @@ def test_cache_hit_rate_tracked(indexer) -> None:
     indexer._batch_embed(["a", "b"])  # 2 hits
     # 2 hits / 4 total lookups = 0.5
     assert indexer.embedding_cache_hit_rate == 0.5
+
+
+def test_batch_embed_does_not_flush_s3_per_call(indexer) -> None:
+    # The S3 cache must NOT be flushed inside _batch_embed (it is called once per
+    # extractor per item-type; flushing there read-merge-overwrites the whole
+    # growing S3 object many times per run). Flushing is deferred to
+    # _flush_embedding_cache at the item-type boundary.
+    s3 = MagicMock()
+    indexer._s3_embedding_cache = s3
+    indexer._batch_embed(["a", "b"])
+    indexer._batch_embed(["c", "d"])
+    s3.flush.assert_not_called()  # decoupled from per-batch embedding
+    s3.load.assert_called()  # load stays (idempotent, guarded by _loaded)
+
+
+def test_flush_embedding_cache_persists_once(indexer) -> None:
+    s3 = MagicMock()
+    indexer._s3_embedding_cache = s3
+    indexer._flush_embedding_cache()
+    s3.flush.assert_called_once()
+
+
+def test_flush_embedding_cache_noop_without_s3(indexer) -> None:
+    indexer._s3_embedding_cache = None
+    # Should not raise when the S3 tier is disabled.
+    indexer._flush_embedding_cache()

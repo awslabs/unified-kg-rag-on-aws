@@ -560,6 +560,7 @@ class OpenSearchIndexer(VectorIndexer):
                 )
                 total_stats.add_error(str(e), len(chunk_items))
 
+        self._flush_embedding_cache()
         return total_stats
 
     @staticmethod
@@ -663,6 +664,7 @@ class OpenSearchIndexer(VectorIndexer):
                 item_type_name,
             )
 
+        self._flush_embedding_cache()
         return total_stats
 
     def _generate_embeddings(
@@ -757,11 +759,22 @@ class OpenSearchIndexer(VectorIndexer):
                     for key, emb in pairs:
                         _store(key, emb)
 
-        # Persist any newly-computed vectors so the next run/phase reuses them.
+        # NOTE: the S3 cache is intentionally NOT flushed here. _batch_embed is
+        # called once per extractor per item-type, so flushing here would
+        # read-merge-overwrite the whole (growing) S3 object many times per run.
+        # Newly-computed vectors are held in the in-process tier and flushed once
+        # per item-type by _flush_embedding_cache() at the indexing boundary.
+        return result
+
+    def _flush_embedding_cache(self) -> None:
+        """Persist newly-computed vectors to the S3 tier (once per item-type).
+
+        Called at the end of an item-type's indexing rather than per embed batch,
+        so the full-object read-merge-write happens a handful of times per run
+        instead of dozens.
+        """
         if self._s3_embedding_cache is not None:
             self._s3_embedding_cache.flush()
-
-        return result
 
     @staticmethod
     def _prepare_documents(
