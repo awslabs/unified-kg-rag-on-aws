@@ -126,3 +126,29 @@ def test_delete_documents_cascades_orphan_relationship_ids(manager) -> None:
     os_indexer.delete_document_artifacts.assert_called_once_with(
         ["e_target"], "default", extra_relationship_ids=["r_orphan"]
     )
+
+
+def test_cross_run_merge_threads_entity_id_remap_to_relationships(manager) -> None:
+    # When the cross-run entity merge collapses two ids onto one survivor, the
+    # delta relationship endpoints must be remapped so edges point at the
+    # surviving entity id (the manager previously discarded the remap, leaving
+    # relationships dangling on a now-nonexistent id).
+    mgr, os_indexer, neptune_indexer = manager
+
+    # Existing entity 'e_canon' and a delta entity 'e_dup' that normalizes to the
+    # same name -> merge_entities collapses e_dup -> e_canon and returns a remap.
+    survivor = Entity(id="e_canon", name="acme corp", text_unit_ids=["t1"])
+    dup = Entity(id="e_dup", name="acme corp", text_unit_ids=["t2"])
+    neptune_indexer.read_entities.return_value = [survivor]
+    # No existing relationship rows read back — the remap path must still apply.
+    neptune_indexer.read_relationships.return_value = []
+
+    delta_rel = Relationship(
+        id="r1", source_id="e_dup", target_id="e_other", type="WORKS_AT"
+    )
+    merged_entities, merged_rels = mgr._merge_with_existing_graph([dup], [delta_rel])
+
+    # The relationship endpoint that referenced the merged-away id is remapped.
+    assert merged_rels is not None and len(merged_rels) == 1
+    assert merged_rels[0].source_id == "e_canon"
+    assert merged_rels[0].target_id == "e_other"

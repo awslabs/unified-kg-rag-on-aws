@@ -692,6 +692,12 @@ class CentralityConfig(BaseModel):
         ge=1,
         description="Sample size for betweenness calculation (None for all nodes)",
     )
+    betweenness_seed: int = Field(
+        default=42,
+        description="Random seed for sampled betweenness (only used when "
+        "betweenness_k is set). Fixed for reproducibility — sampled betweenness "
+        "picks random pivots, so without a seed centrality is non-deterministic.",
+    )
     eigenvector_max_iter: int = Field(
         default=1000,
         ge=1,

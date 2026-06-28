@@ -293,10 +293,11 @@ class IndexingManager:
         returns ``[]`` and this degenerates to the existing overwrite behaviour.
         """
         merged_entities = entities
+        entity_id_remap: dict[str, str] = {}
         if entities:
             existing = self.neptune_indexer.read_entities([e.id for e in entities])
             if existing:
-                merged_entities, _ = merge_entities(existing, entities)
+                merged_entities, entity_id_remap = merge_entities(existing, entities)
                 # The cross-run merge concatenates descriptions, so an entity
                 # seen across many runs can grow unbounded — re-summarize the
                 # over-threshold ones (no-op below the threshold / when disabled).
@@ -308,8 +309,16 @@ class IndexingManager:
             existing_rels = self.neptune_indexer.read_relationships(
                 [r.id for r in relationships]
             )
-            if existing_rels:
-                merged_relationships = merge_relationships(existing_rels, relationships)
+            # Even when no existing relationships are read back, delta endpoints
+            # must follow any entity-id collapse from the entity merge above —
+            # otherwise a remapped entity leaves its relationships pointing at a
+            # now-nonexistent id. Pass the remap through unconditionally.
+            if existing_rels or entity_id_remap:
+                merged_relationships = merge_relationships(
+                    existing_rels or [],
+                    relationships,
+                    entity_id_remap=entity_id_remap or None,
+                )
                 merged_relationships = (
                     self.description_summarizer.summarize_relationships(
                         merged_relationships or []

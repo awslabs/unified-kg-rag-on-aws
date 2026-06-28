@@ -103,6 +103,22 @@ class TestParseScore:
         reasoning = "The score is 0.85 overall."
         assert LangChainEvaluator._parse_score({"reasoning": reasoning}) == 0.85
 
+    def test_score_label_preferred_over_leading_number(self) -> None:
+        # A citation/year before the actual score must NOT be grabbed; the
+        # score-labeled number wins.
+        reasoning = "Per clause 1998 and figure 42, the score: 0.3 is fair."
+        assert LangChainEvaluator._parse_score({"reasoning": reasoning}) == 0.3
+
+    def test_ambiguous_multiple_numbers_no_label_returns_zero(self) -> None:
+        # No "score" label and several numbers -> refuse to guess (was: grabbed
+        # the first number, e.g. a year).
+        reasoning = "The contract from 2021 references 3 schedules and 95 percent."
+        assert LangChainEvaluator._parse_score({"reasoning": reasoning}) == 0.0
+
+    def test_single_standalone_number_still_used(self) -> None:
+        # Exactly one number and no label is unambiguous enough to use.
+        assert LangChainEvaluator._parse_score({"reasoning": "0.75"}) == 0.75
+
     def test_unparseable_returns_zero(self) -> None:
         assert LangChainEvaluator._parse_score({"reasoning": "no numbers here"}) == 0.0
 

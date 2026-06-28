@@ -100,7 +100,10 @@ class GraphAnalyzer:
         for node_id in self._graph.nodes():
             attrs = self._graph.nodes[node_id]
             if attrs.get("node_type") == "claim":
-                node_name = f"{attrs.get('source_name', '')} -> {attrs.get('type', str(node_id))} -> {attrs.get('target_name', '')}"
+                # Claim nodes carry Claim model fields (subject_name/object_name),
+                # not relationship-style source_name/target_name — reading the
+                # latter produced empty names on real data.
+                node_name = f"{attrs.get('subject_name', '')} -> {attrs.get('type', str(node_id))} -> {attrs.get('object_name', '')}"
             else:
                 node_name = attrs.get("name", str(node_id))
 
@@ -120,6 +123,8 @@ class GraphAnalyzer:
                 nx.betweenness_centrality,
                 # k is the pivot-sample size; networkx raises when k exceeds the
                 # node count, so clamp it. None means "use all nodes" (exact).
+                # A fixed seed is passed so sampled betweenness (k set) is
+                # reproducible; it is ignored by networkx when k is None (exact).
                 {
                     "k": (
                         min(
@@ -128,7 +133,8 @@ class GraphAnalyzer:
                         )
                         if self.analysis_config.centrality.betweenness_k
                         else None
-                    )
+                    ),
+                    "seed": self.analysis_config.centrality.betweenness_seed,
                 },
             ),
             "pagerank": (

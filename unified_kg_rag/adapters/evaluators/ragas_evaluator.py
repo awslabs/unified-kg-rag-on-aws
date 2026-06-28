@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, ClassVar
 
@@ -261,15 +262,17 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         ground_truth: str,
         **kwargs: Any,
     ) -> EvaluationReport:
+        coro = self.aevaluate_single(query, result, ground_truth, **kwargs)
         try:
-            loop = asyncio.get_running_loop()
-            return loop.run_until_complete(
-                self.aevaluate_single(query, result, ground_truth, **kwargs)
-            )
+            asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(
-                self.aevaluate_single(query, result, ground_truth, **kwargs)
-            )
+            # No running loop — safe to drive one ourselves.
+            return asyncio.run(coro)
+        # A loop is ALREADY running on this thread; run_until_complete would
+        # raise "This event loop is already running". Run the coroutine on a
+        # separate thread with its own loop and block for the result.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
 
     def validate_config(self) -> bool:
         unsupported_metrics = set(self.config.evaluation.ragas_metrics) - set(

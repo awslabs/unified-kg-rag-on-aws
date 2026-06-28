@@ -71,11 +71,14 @@ class TestCentrality:
 
     def test_claim_node_name_is_composed_triple(self) -> None:
         g = nx.Graph()
+        # Claim nodes carry Claim model fields (subject_name/object_name), the
+        # keys graph_builder writes via claim.model_dump() — NOT relationship-
+        # style source_name/target_name.
         g.add_node(
             "claim1",
             node_type="claim",
-            source_name="Alice",
-            target_name="Acme",
+            subject_name="Alice",
+            object_name="Acme",
             type="WORKS_AT",
         )
         g.add_node("b", name="Bob")

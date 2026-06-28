@@ -164,21 +164,41 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         if isinstance(reasoning, str) and reasoning.strip():
             try:
                 data = json.loads(reasoning)
-                if isinstance(data.get("score"), (int | float)):
+                # json.loads may yield a non-dict (a bare number/list/str); only
+                # a dict has a "score" key.
+                if isinstance(data, dict) and isinstance(
+                    data.get("score"), (int | float)
+                ):
                     return float(data["score"])
             except json.JSONDecodeError:
                 json_match = re.search(r"{.*}", reasoning, re.DOTALL)
                 if json_match:
                     try:
                         data = json.loads(json_match.group())
-                        if isinstance(data.get("score"), (int | float)):
+                        if isinstance(data, dict) and isinstance(
+                            data.get("score"), (int | float)
+                        ):
                             return float(data["score"])
                     except json.JSONDecodeError:
                         pass
 
-            match = re.search(r"(\d+\.?\d*)", reasoning)
-            if match:
-                return float(match.group(1))
+            # Prefer a score-LABELED number ("score: 0.8", "score is 0.8") so a
+            # bare first number in free-text reasoning (a citation, a year, a
+            # quantity) is not mistaken for the score.
+            labeled = re.search(r"score\D{0,8}(\d+\.?\d*)", reasoning, re.IGNORECASE)
+            if labeled:
+                return float(labeled.group(1))
+            # Last resort: a single standalone number is unambiguous; if there
+            # are multiple numbers, refuse to guess rather than grab the first.
+            numbers = re.findall(r"\d+\.?\d*", reasoning)
+            if len(numbers) == 1:
+                return float(numbers[0])
+            logger.warning(
+                "Ambiguous score in reasoning (%s numbers found), not guessing: '%s'",
+                len(numbers),
+                reasoning[:120],
+            )
+            return 0.0
 
         logger.warning(
             "Could not parse score from evaluation result: '%s'", eval_result

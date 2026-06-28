@@ -212,14 +212,16 @@ def test_empty_file_skipped_in_parse_mode(tmp_path: Path) -> None:
     assert loader.failed_files == [str(tmp_path / "empty.txt")]
 
 
-def test_tsv_advertised_but_unparseable_is_skipped(tmp_path: Path) -> None:
-    # Latent quirk: .tsv is in DEFAULT_SUPPORTED_EXTENSIONS but ParserFactory
-    # has no .tsv loader, so in parse mode the file is discovered then fails.
+def test_tsv_not_discovered_since_unparseable(tmp_path: Path) -> None:
+    # .tsv is no longer advertised (the ParserFactory has no .tsv loader), so a
+    # .tsv source is filtered out at discovery rather than discovered-then-failed.
     (tmp_path / "data.tsv").write_text("a\tb\n1\t2\n")
+    (tmp_path / "ok.txt").write_text("plain text that parses fine")
     loader = DirectoryLoader(tmp_path, config=Config(), parse_files=True)
     docs = loader.load()
-    assert docs == []
-    assert loader.failed_files == [str(tmp_path / "data.tsv")]
+    assert {d.file_name for d in docs} == {"ok.txt"}
+    # never discovered, so it is not counted as a parse failure either
+    assert str(tmp_path / "data.tsv") not in loader.failed_files
 
 
 @pytest.mark.skipif(
@@ -227,16 +229,15 @@ def test_tsv_advertised_but_unparseable_is_skipped(tmp_path: Path) -> None:
     reason="unstructured installed; .md is actually parseable",
 )
 def test_markdown_skipped_without_unstructured(tmp_path: Path) -> None:
-    # Without the optional `unstructured` dep, .md is not advertised by the
-    # ParserFactory, so a markdown source is gracefully skipped, not fatal.
+    # Without the optional `unstructured` dep, the ParserFactory does not
+    # advertise .md, so it is not in supported_extensions and a markdown source
+    # is filtered at discovery (not a parse failure); only the .txt survives.
     (tmp_path / "notes.md").write_text("# Heading\n\nSome markdown body.\n")
     (tmp_path / "ok.txt").write_text("plain text that parses fine")
     loader = DirectoryLoader(tmp_path, config=Config(), parse_files=True)
     docs = loader.load()
-    # .md is in DEFAULT_SUPPORTED_EXTENSIONS so it is discovered, but parsing
-    # fails (unsupported by the factory) and only the .txt survives.
     assert {d.file_name for d in docs} == {"ok.txt"}
-    assert str(tmp_path / "notes.md") in loader.failed_files
+    assert str(tmp_path / "notes.md") not in loader.failed_files
 
 
 # --------------------------------------------------------------------------- #

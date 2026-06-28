@@ -49,7 +49,11 @@ def compute_jaccard_similarity(
 
 
 class DirectoryLoader(BaseLoader):
-    DEFAULT_SUPPORTED_EXTENSIONS = {".csv", ".json", ".md", ".tsv", ".txt"}
+    # Only extensions the ParserFactory ALWAYS handles. .md/.html are added at
+    # runtime by the parser-extension union below WHEN the optional 'unstructured'
+    # package is installed; .tsv was advertised here but the parser has no .tsv
+    # loader, so a .tsv file passed the filter then failed to parse — dropped.
+    DEFAULT_SUPPORTED_EXTENSIONS = {".csv", ".json", ".txt"}
     DEFAULT_EXCLUDE_PATTERNS = {"**/.*", "**/*.pyc", "**/__pycache__/**"}
 
     def __init__(
