@@ -597,34 +597,17 @@ class CommunityDetector(BaseProcessor):
             logger.info("Generating reports for %s communities.", len(communities))
             start_time = time.time()
             graph_attributes = self._extract_attributes_from_graph()
-            report_inputs = [self._prepare_report_input(c) for c in communities]
 
-            report_results = self.batch_processor.execute_with_fallback(
-                items_to_process=report_inputs,
-                prepare_inputs_func=self._create_report_chain_inputs,
-                batch_func=self.report_generator.batch,
-                sequential_func=self.report_generator.invoke,
-                task_name="Community report generation",
-                run_config=self.config.processing.model_dump(),
-                show_progress=self.show_progress,
-            )
-
-            reports = []
-            failed = 0
-            for community, result in zip(communities, report_results, strict=True):
-                if result:
-                    report = self._create_community_report(
-                        community, result, graph_attributes
-                    )
-                    reports.append(report)
-                else:
-                    # Empty LLM result: count and log rather than silently
-                    # producing fewer reports while the run still 'succeeds'.
-                    failed += 1
-                    logger.warning(
-                        "No report generated for community '%s' (empty LLM result)",
-                        community.id,
-                    )
+            if (
+                self.community_detection_config.report_generation.enable_sub_community_rollup
+            ):
+                reports, failed = self._generate_reports_with_rollup(
+                    communities, graph_attributes
+                )
+            else:
+                reports, failed = self._generate_reports_flat(
+                    communities, graph_attributes
+                )
 
             if failed:
                 logger.warning(
@@ -643,6 +626,85 @@ class CommunityDetector(BaseProcessor):
             return []
 
         return reports
+
+    def _run_report_batch(
+        self,
+        report_inputs: list[dict[str, Any]],
+        communities: list[Community],
+        graph_attributes: dict[str, Any],
+    ) -> tuple[list[CommunityReport], int]:
+        """Run one batch of prepared report inputs through the LLM chain."""
+        report_results = self.batch_processor.execute_with_fallback(
+            items_to_process=report_inputs,
+            prepare_inputs_func=self._create_report_chain_inputs,
+            batch_func=self.report_generator.batch,
+            sequential_func=self.report_generator.invoke,
+            task_name="Community report generation",
+            run_config=self.config.processing.model_dump(),
+            show_progress=self.show_progress,
+        )
+
+        reports: list[CommunityReport] = []
+        failed = 0
+        for community, result in zip(communities, report_results, strict=True):
+            if result:
+                reports.append(
+                    self._create_community_report(community, result, graph_attributes)
+                )
+            else:
+                # Empty LLM result: count and log rather than silently producing
+                # fewer reports while the run still 'succeeds'.
+                failed += 1
+                logger.warning(
+                    "No report generated for community '%s' (empty LLM result)",
+                    community.id,
+                )
+        return reports, failed
+
+    def _generate_reports_flat(
+        self, communities: list[Community], graph_attributes: dict[str, Any]
+    ) -> tuple[list[CommunityReport], int]:
+        """Original behaviour: every community summarized independently."""
+        report_inputs = [self._prepare_report_input(c) for c in communities]
+        return self._run_report_batch(report_inputs, communities, graph_attributes)
+
+    def _generate_reports_with_rollup(
+        self, communities: list[Community], graph_attributes: dict[str, Any]
+    ) -> tuple[list[CommunityReport], int]:
+        """Bottom-up per-level generation with sub-community roll-up.
+
+        Communities are grouped by level and processed finest-first (level 0 =
+        leaf). Each level's reports accumulate into ``reports_by_id``, so when a
+        coarser parent's raw context overflows the token budget, the already-
+        generated child reports are available to substitute (MS GraphRAG's
+        local-vs-sub-community trade-off). Batching/fallback is preserved within
+        each level.
+        """
+
+        def _level(c: Community) -> int:
+            try:
+                return int(c.level)
+            except (TypeError, ValueError):
+                return 0
+
+        reports_by_id: dict[str, CommunityReport] = {}
+        all_reports: list[CommunityReport] = []
+        total_failed = 0
+
+        for level in sorted({_level(c) for c in communities}):
+            level_communities = [c for c in communities if _level(c) == level]
+            report_inputs = [
+                self._prepare_report_input(c, reports_by_id) for c in level_communities
+            ]
+            level_reports, failed = self._run_report_batch(
+                report_inputs, level_communities, graph_attributes
+            )
+            total_failed += failed
+            for report in level_reports:
+                reports_by_id[report.community_id] = report
+            all_reports.extend(level_reports)
+
+        return all_reports, total_failed
 
     def _compute_report_rank(self, community: Community) -> int:
         """Deterministic community-importance rank (no LLM call).
@@ -678,7 +740,11 @@ class CommunityDetector(BaseProcessor):
         present.sort(key=lambda eid: (-self.graph.degree(eid), str(eid)))
         return present[:max_entities]
 
-    def _prepare_report_input(self, community: Community) -> dict[str, Any]:
+    def _prepare_report_input(
+        self,
+        community: Community,
+        reports_by_id: dict[str, CommunityReport] | None = None,
+    ) -> dict[str, Any]:
         report_config = self.community_detection_config.report_generation
         token_budget = report_config.max_report_context_tokens
 
@@ -691,6 +757,7 @@ class CommunityDetector(BaseProcessor):
         entities: list[dict[str, Any]] = []
         selected_ids: list[str] = []
         used_tokens = 0
+        truncated = False
         for eid in candidate_ids:
             node = self.graph.nodes[eid]
             entity = {
@@ -703,6 +770,7 @@ class CommunityDetector(BaseProcessor):
             # Always admit the first (highest-degree) entity even if it alone
             # exceeds the budget, so a report is never left with no context.
             if entities and used_tokens + cost > token_budget:
+                truncated = True
                 break
             entities.append(entity)
             selected_ids.append(eid)
@@ -735,18 +803,69 @@ class CommunityDetector(BaseProcessor):
             }
             cost = estimate_token_count(self._format_relationship_line(rel))
             if used_tokens + cost > token_budget:
+                truncated = True
                 break
             relationships.append(rel)
             used_tokens += cost
+
+        # Sub-community roll-up: when this (parent) community's raw context was
+        # truncated and its child sub-communities already have reports, fold
+        # their report summaries in (MS GraphRAG parity) so the synthesis of the
+        # parts that did not fit is not lost. Bounded by its own token budget so
+        # the prompt stays roughly within 2x the raw budget in the overflow case.
+        sub_reports = ""
+        if truncated and reports_by_id:
+            sub_reports = self._build_sub_community_context(
+                community, reports_by_id, token_budget
+            )
 
         return {
             "community_id": community.id,
             "entities": entities,
             "relationships": relationships,
+            "sub_community_reports": sub_reports,
             **report_config.model_dump(
                 include={"content_length", "include_statistics", "include_key_entities"}
             ),
         }
+
+    def _build_sub_community_context(
+        self,
+        community: Community,
+        reports_by_id: dict[str, CommunityReport],
+        token_budget: int,
+    ) -> str:
+        """Pack child sub-community report summaries into a token budget.
+
+        Children are taken biggest-first (by report size, then id for stable
+        ordering) so the largest sub-communities — whose raw detail is most
+        likely to have overflowed the parent — are summarized first. Each entry
+        is the child's executive summary prefixed with its importance rating.
+        """
+        child_reports = [
+            reports_by_id[cid]
+            for cid in (community.children or [])
+            if cid in reports_by_id
+        ]
+        if not child_reports:
+            return ""
+
+        child_reports.sort(key=lambda r: (-(r.size or 0), r.id))
+
+        lines: list[str] = []
+        used = 0
+        for report in child_reports:
+            summary = (report.summary or report.full_content or "").strip()
+            if not summary:
+                continue
+            header = report.name or f"Sub-community {report.community_id}"
+            entry = f"- {header} (rating {report.rating:.1f}/10): {summary}"
+            cost = estimate_token_count(entry)
+            if lines and used + cost > token_budget:
+                break
+            lines.append(entry)
+            used += cost
+        return "\n".join(lines)
 
     @staticmethod
     def _format_entity_line(entity: dict[str, Any]) -> str:
@@ -773,6 +892,7 @@ class CommunityDetector(BaseProcessor):
                 "relationships": "\n".join(
                     cls._format_relationship_line(rel) for rel in r["relationships"]
                 ),
+                "sub_community_reports": r.get("sub_community_reports", ""),
                 "content_length": r["content_length"],
                 "include_statistics": str(r["include_statistics"]),
                 "include_key_entities": str(r["include_key_entities"]),

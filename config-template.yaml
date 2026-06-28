@@ -236,6 +236,12 @@ graph:
       content_length: "medium"
       include_statistics: true
       include_key_entities: true
+      # When a parent community's raw context would overflow the token budget,
+      # substitute summaries of its already-generated child sub-community reports
+      # for the lowest-priority raw context (MS GraphRAG roll-up) instead of
+      # truncating. Requires bottom-up per-level report generation. Set false to
+      # keep the flat, truncate-on-overflow behaviour.
+      enable_sub_community_rollup: true
 
   # Graph Visualization
   visualization:

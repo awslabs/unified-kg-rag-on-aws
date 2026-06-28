@@ -668,3 +668,148 @@ class TestGenerateReportsCounting:
         )
         reports = cd.generate_reports([_community(["e1"]), _community(["e1"])])
         assert len(reports) == 1
+
+
+class TestSubCommunityRollup:
+    def _detector(self):
+        cd = _detector(report=False)
+        cd.community_detection_config.report_generation.enabled = True
+        # generate_reports guards on a report_generator attribute existing.
+        cd.report_generator = object()
+        return cd
+
+    def test_build_sub_community_context_packs_children_biggest_first(self) -> None:
+        from unified_kg_rag.domain.models import CommunityReport
+
+        cd = self._detector()
+        parent = Community(
+            id="L1_C0",
+            name="Parent",
+            level="1",
+            parent="",
+            children=["L0_C0", "L0_C1"],
+            entity_ids=[],
+            text_unit_ids=[],
+            size=10,
+        )
+        reports_by_id = {
+            "L0_C0": CommunityReport(
+                id="r0",
+                community_id="L0_C0",
+                name="Small child",
+                summary="small summary",
+                rating=2.0,
+                size=2,
+            ),
+            "L0_C1": CommunityReport(
+                id="r1",
+                community_id="L0_C1",
+                name="Big child",
+                summary="big summary",
+                rating=9.0,
+                size=8,
+            ),
+        }
+        out = cd._build_sub_community_context(parent, reports_by_id, token_budget=4000)
+        # Biggest child (size 8) is packed first.
+        assert out.index("Big child") < out.index("Small child")
+        assert "9.0/10" in out and "big summary" in out
+
+    def test_build_sub_community_context_empty_without_children(self) -> None:
+        cd = self._detector()
+        parent = Community(
+            id="L1_C0",
+            name="Parent",
+            level="1",
+            parent="",
+            children=[],
+            entity_ids=[],
+            text_unit_ids=[],
+            size=1,
+        )
+        assert cd._build_sub_community_context(parent, {}, 4000) == ""
+
+    def test_rollup_processes_children_before_parents_and_substitutes(self) -> None:
+        # A parent (L1) whose raw context overflows, with one child (L0). With
+        # rollup on, the child is reported first and its summary is folded into
+        # the parent's prepared input (sub_community_reports non-empty).
+        cd = self._detector()
+        # Tiny budget so the parent's raw context overflows after one entity.
+        cd.community_detection_config.report_generation.max_report_context_tokens = 1
+
+        g = nx.Graph()
+        for i in range(4):
+            g.add_node(f"e{i}", name=f"Entity{i}", type="T", description="d" * 50)
+        g.add_edge("e0", "e1")
+        g.add_edge("e1", "e2")
+        cd.graph = g
+
+        child = Community(
+            id="L0_C0",
+            name="Child",
+            level="0",
+            parent="L1_C0",
+            children=[],
+            entity_ids=["e0", "e1"],
+            text_unit_ids=[],
+            size=2,
+        )
+        parent = Community(
+            id="L1_C0",
+            name="Parent",
+            level="1",
+            parent="",
+            children=["L0_C0"],
+            entity_ids=["e0", "e1", "e2", "e3"],
+            text_unit_ids=[],
+            size=4,
+        )
+
+        captured: list[dict] = []
+
+        def _fake_run_batch(report_inputs, communities, graph_attributes):
+            from unified_kg_rag.domain.models import CommunityReport
+
+            captured.extend(report_inputs)
+            reports = [
+                CommunityReport(
+                    id=f"r-{c.id}",
+                    community_id=c.id,
+                    name=c.name,
+                    summary=f"summary for {c.id}",
+                    rating=5.0,
+                    size=c.size,
+                )
+                for c in communities
+            ]
+            return reports, 0
+
+        cd._run_report_batch = _fake_run_batch  # type: ignore[method-assign]
+        reports = cd.generate_reports([parent, child])
+
+        assert {r.community_id for r in reports} == {"L0_C0", "L1_C0"}
+        # Child (level 0) prepared before parent (level 1).
+        prepared_ids = [ri["community_id"] for ri in captured]
+        assert prepared_ids.index("L0_C0") < prepared_ids.index("L1_C0")
+        # The parent's prepared input carries the child's rolled-up summary.
+        parent_input = next(ri for ri in captured if ri["community_id"] == "L1_C0")
+        assert "summary for L0_C0" in parent_input["sub_community_reports"]
+
+    def test_flat_path_when_rollup_disabled(self) -> None:
+        cd = self._detector()
+        cd.community_detection_config.report_generation.enable_sub_community_rollup = (
+            False
+        )
+        g = nx.Graph()
+        g.add_node("e0", name="E0", type="T", description="d")
+        cd.graph = g
+
+        called = {"flat": False, "rollup": False}
+        cd._generate_reports_flat = (  # type: ignore[method-assign]
+            lambda c, a: (called.__setitem__("flat", True) or ([], 0))
+        )
+        cd._generate_reports_with_rollup = (  # type: ignore[method-assign]
+            lambda c, a: (called.__setitem__("rollup", True) or ([], 0))
+        )
+        cd.generate_reports([_community(["e0"])])
+        assert called["flat"] and not called["rollup"]

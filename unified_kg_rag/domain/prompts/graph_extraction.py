@@ -407,6 +407,7 @@ class CommunityReportPrompt(BasePrompt):
         "community_id",
         "entities",
         "relationships",
+        "sub_community_reports",
         "content_length",
         "include_statistics",
         "include_key_entities",
@@ -506,6 +507,14 @@ requested report length (short: 5-7, medium: 7-10, long: 10-15). Do NOT emit a
 
 ## RELATIONSHIP DATA:
 {relationships}
+
+## SUB-COMMUNITY REPORTS:
+The following are summaries of finer-grained sub-communities nested within this
+community. When present, treat them as authoritative synthesis of the parts of
+this community whose raw entities/relationships are not listed above, and roll
+their insights up into this report. (Empty if this community has no summarized
+sub-communities.)
+{sub_community_reports}
 
 ## ANALYSIS REQUIREMENTS:
 1. **Purpose Identification**: Determine community's primary function and reason for existence

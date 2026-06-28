@@ -771,6 +771,15 @@ class ReportGenerationConfig(BaseModel):
     include_key_entities: bool = Field(
         default=True, description="Highlight key entities in community reports"
     )
+    enable_sub_community_rollup: bool = Field(
+        default=True,
+        description="When a parent community's raw entity/relationship context "
+        "would exceed max_report_context_tokens, substitute summaries of its "
+        "already-generated child sub-community reports for the lowest-priority "
+        "raw context (MS GraphRAG parity), instead of simply truncating. "
+        "Requires bottom-up per-level report generation (level 0 = finest "
+        "first). Set false to keep the flat, truncate-on-overflow behaviour.",
+    )
 
 
 class CommunityDetectionConfig(BaseModel):
