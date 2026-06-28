@@ -310,9 +310,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             ContextBuildingPrompt: self.config.search.context_building_model_id,
             AnswerGenerationPrompt: self.config.search.answer_generation_model_id,
         }
+        model_id = model_id_map.get(prompt_class)
+        if model_id is None:
+            raise ValueError(
+                f"No model id configured for prompt {prompt_class.__name__}; "
+                f"add it to _get_chain_for_prompt's model_id_map."
+            )
         return setup_chain(
             factory=self.factory,
-            model_id=model_id_map[prompt_class],
+            model_id=model_id,
             prompt_class=prompt_class,
             parser=parser,
             custom_prompts=self.config.custom_prompts,
