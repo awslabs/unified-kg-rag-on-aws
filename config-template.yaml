@@ -160,7 +160,7 @@ processing:
     max_rounds: 3
     convergence_threshold: 0.8
     quality_threshold: 0.9
-    min_improvement_threshold: 0.03
+    min_improvement_threshold: 0.05
     max_entities_per_prompt: 100
     max_relationships_per_prompt: 100
     # Scaling constants for the count-based quality/convergence estimates

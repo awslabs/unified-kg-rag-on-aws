@@ -252,7 +252,7 @@ missed on the first pass (quality vs. cost trade-off).
     max_rounds: 3
     convergence_threshold: 0.8
     quality_threshold: 0.9
-    min_improvement_threshold: 0.03
+    min_improvement_threshold: 0.05
     # ...count-based quality/convergence scaling constants
 ```
 

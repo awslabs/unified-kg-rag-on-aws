@@ -254,7 +254,7 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
     max_rounds: 3
     convergence_threshold: 0.8
     quality_threshold: 0.9
-    min_improvement_threshold: 0.03
+    min_improvement_threshold: 0.05
     # ...count-based quality/convergence scaling constants
 ```
 
