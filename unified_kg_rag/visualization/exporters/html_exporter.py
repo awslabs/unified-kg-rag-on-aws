@@ -154,7 +154,14 @@ class HTMLExporter:
                 ),
                 "clustering",
             ),
-            "Components": (f"{stats.num_connected_components:,}", "components"),
+            "Components": (
+                (
+                    f"{stats.num_connected_components:,}"
+                    if stats.num_connected_components is not None
+                    else "N/A"
+                ),
+                "components",
+            ),
             "Communities": (
                 (
                     f"{community_metrics.num_communities:,}"

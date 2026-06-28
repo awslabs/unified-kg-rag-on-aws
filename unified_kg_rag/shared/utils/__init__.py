@@ -6,6 +6,7 @@ from .common import (
     ensure_list,
     generate_stable_id,
     normalize_name,
+    parse_llm_json,
     safe_float_parse,
 )
 from .display import (
@@ -44,5 +45,6 @@ __all__ = [
     "ensure_list",
     "generate_stable_id",
     "normalize_name",
+    "parse_llm_json",
     "safe_float_parse",
 ]

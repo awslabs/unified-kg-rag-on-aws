@@ -116,8 +116,9 @@ class GraphVisualizationManager:
                 renderer_cls = get_renderer_class(name)
                 # Resolve each renderer's config block generically (viz_config
                 # attribute named after the renderer); a renderer without a
-                # dedicated config block gets None. No hardcoded renderer list.
-                renderer_config = getattr(self.viz_config, name, None)
+                # dedicated config block gets an empty dict so renderers can call
+                # ``.get(...)`` uniformly. No hardcoded renderer list.
+                renderer_config = getattr(self.viz_config, name, None) or {}
                 renderer_cls(renderer_config).render(context, outputs_dir)
             except Exception as e:
                 logger.warning("Renderer '%s' failed: %s", name, e)

@@ -869,9 +869,10 @@ Available override keys (each `_system` + `_human`): `graph_extraction`,
 `description_summarization`, `claim_extraction`, `graph_refinement`,
 `community_report`, `answer_generation`, `context_building`,
 `entity_extraction`, `keyword_expansion`, `query_refinement`,
+`drift_primer` (DRIFT primer, when `enable_primer` is set),
 `strategy_selection`, `keywords_extraction` (LightRAG dual-level),
-`global_map` (global-search map-reduce), plus the prompt-tuning prompts
-(`corpus_profile`, `extraction_examples`).
+`global_map` (global-search map-reduce), plus the prompt-tuning
+`corpus_profile` prompt.
 
 **Recommended flow:** run `run-prompt-tuning` to generate a starting point →
 review → merge the useful prompts + tune `entity_types` by hand → re-ingest.

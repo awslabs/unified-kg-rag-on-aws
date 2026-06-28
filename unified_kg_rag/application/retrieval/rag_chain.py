@@ -437,13 +437,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
     @staticmethod
     def _parse_keyword_json(raw: str) -> dict[str, Any]:
+        # Strict variant: unlike the shared degrade-to-{} parser, this RAISES on
+        # malformed JSON so that with ignore_errors=False a broken keyword
+        # extraction surfaces instead of silently yielding empty keyword lists.
         text = raw.strip()
-        # Strip a leading/trailing markdown code fence if present.
         if text.startswith("```"):
             text = text.split("```", 2)[1] if "```" in text[3:] else text[3:]
-            if text.lstrip().startswith("json"):
+            if text.lstrip().lower().startswith("json"):
                 text = text.lstrip()[4:]
-        # Isolate the JSON object.
         start, end = text.find("{"), text.rfind("}")
         if start != -1 and end != -1 and end > start:
             text = text[start : end + 1]

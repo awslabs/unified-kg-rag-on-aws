@@ -865,9 +865,10 @@ custom_prompts:
 `description_summarization`, `claim_extraction`, `graph_refinement`,
 `community_report`, `answer_generation`, `context_building`,
 `entity_extraction`, `keyword_expansion`, `query_refinement`,
+`drift_primer`(DRIFT primer, `enable_primer` 설정 시),
 `strategy_selection`, `keywords_extraction`(LightRAG 이중 레벨),
 `global_map`(글로벌 검색 map-reduce), 그리고 프롬프트 튜닝
-프롬프트(`corpus_profile`, `extraction_examples`).
+프롬프트(`corpus_profile`).
 
 **권장 흐름:** `run-prompt-tuning`을 실행해 시작점 생성 → 검토 → 유용한
 프롬프트 병합 + `entity_types`를 직접 튜닝 → 재인제스천.

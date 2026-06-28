@@ -120,8 +120,9 @@ def run_visualization(
     for name in renderer_names:
         renderer_cls = get_renderer_class(name)
         # Resolve config generically (no hardcoded renderer names) so a newly
-        # registered renderer works without editing this dispatch.
-        renderer_config = getattr(viz_config, name, None)
+        # registered renderer works without editing this dispatch. Default to an
+        # empty dict so renderers can call ``.get(...)`` even without a block.
+        renderer_config = getattr(viz_config, name, None) or {}
         try:
             paths = renderer_cls(renderer_config).render(context, output_dir)
             written.extend(paths)

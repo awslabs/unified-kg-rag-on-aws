@@ -1,7 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import json
 import time
 from typing import Any
 
@@ -32,7 +31,11 @@ from unified_kg_rag.domain.prompts import (
 )
 from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import compute_hash, safe_float_parse
+from unified_kg_rag.shared.utils import (
+    compute_hash,
+    parse_llm_json,
+    safe_float_parse,
+)
 
 logger = get_logger(__name__)
 
@@ -262,7 +265,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                     "num_follow_ups": self.drift_config.primer_follow_ups,
                 }
             )
-            payload = self._parse_primer_json(raw)
+            payload = parse_llm_json(raw)
         except Exception as e:
             if not self.ignore_errors:
                 raise
@@ -273,23 +276,6 @@ class DriftSearchStrategy(BaseSearchStrategy):
         if not isinstance(follow_ups, list):
             return []
         return [str(f).strip() for f in follow_ups if str(f).strip()]
-
-    @staticmethod
-    def _parse_primer_json(raw: str) -> dict[str, Any]:
-        text = raw.strip()
-        if text.startswith("```"):
-            text = text.split("```", 2)[1] if "```" in text[3:] else text[3:]
-            if text.lstrip().startswith("json"):
-                text = text.lstrip()[4:]
-        start, end = text.find("{"), text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            text = text[start : end + 1]
-        try:
-            parsed = json.loads(text)
-        except (json.JSONDecodeError, ValueError):
-            logger.warning("DRIFT primer JSON parse failed; no follow-ups")
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
 
     async def _find_candidate_communities(
         self, query: SearchQuery

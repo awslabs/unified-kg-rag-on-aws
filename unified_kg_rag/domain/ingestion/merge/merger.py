@@ -90,6 +90,19 @@ def merge_entities(
         # Frequency tracks the number of supporting text units (MS GraphRAG keeps
         # this separate from rank/degree, which reflects graph importance).
         existing.frequency = len(existing.text_unit_ids)
+        # Confidence and rank are monotonic in evidence: take the max so a more
+        # confident / higher-ranked delta reinforces the surviving entity. This
+        # matches the full-build resolver (max over the group), keeping a full
+        # rebuild and an incremental build convergent on these fields too — they
+        # feed report ranking and the confidence threshold filter.
+        existing.confidence = max(
+            existing.confidence if existing.confidence is not None else 0.0,
+            entity.confidence if entity.confidence is not None else 0.0,
+        )
+        existing.rank = max(
+            existing.rank if existing.rank is not None else 1,
+            entity.rank if entity.rank is not None else 1,
+        )
         if entity.type and not existing.type:
             existing.type = entity.type
 

@@ -13,7 +13,6 @@ than opaque runtime behaviour.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,7 +25,7 @@ from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
 from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
 from unified_kg_rag.domain.prompts import CorpusProfilePrompt
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import generate_stable_id
+from unified_kg_rag.shared.utils import generate_stable_id, parse_llm_json
 
 logger = get_logger(__name__)
 
@@ -103,18 +102,10 @@ class PromptTuner:
 
     @staticmethod
     def _parse_json(raw: str) -> dict[str, Any]:
-        text = raw.strip()
-        start, end = text.find("{"), text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            text = text[start : end + 1]
-        try:
-            parsed = json.loads(text)
-        except (json.JSONDecodeError, ValueError) as exc:
-            # A non-JSON or malformed LLM response degrades to the default
-            # profile rather than crashing the whole tuning run.
-            logger.warning("Corpus profile JSON parse failed; using default: %s", exc)
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
+        # Shared degrade-to-{} LLM-JSON parser: a non-JSON/malformed response
+        # yields {} so tuning falls back to the default profile rather than
+        # crashing the whole run.
+        return parse_llm_json(raw)
 
     MAX_EXAMPLES = 3
     EXAMPLE_CHUNK_CHARS = 1200

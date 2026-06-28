@@ -53,6 +53,23 @@ class TestMergeEntities:
         assert merged[0].frequency == 3
         assert merged[0].rank == 5
 
+    def test_confidence_and_rank_take_max_on_merge(self) -> None:
+        # Confidence/rank are monotonic in evidence and must converge with the
+        # full-build resolver (which takes max over the group), so a more
+        # confident / higher-ranked delta reinforces the survivor.
+        old = [_entity("e1", "Alice", confidence=0.6, rank=3)]
+        delta = [_entity("e9", "Alice", confidence=0.95, rank=8)]
+        merged, _ = merge_entities(old, delta)
+        assert merged[0].confidence == 0.95
+        assert merged[0].rank == 8
+
+    def test_confidence_rank_keep_old_when_delta_lower(self) -> None:
+        old = [_entity("e1", "Alice", confidence=0.9, rank=7)]
+        delta = [_entity("e9", "Alice", confidence=0.2, rank=1)]
+        merged, _ = merge_entities(old, delta)
+        assert merged[0].confidence == 0.9
+        assert merged[0].rank == 7
+
     def test_type_backfilled_when_old_missing(self) -> None:
         old = [_entity("e1", "Alice", type=None)]
         delta = [_entity("e9", "Alice", type="PERSON")]

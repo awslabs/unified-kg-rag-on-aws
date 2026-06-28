@@ -208,6 +208,23 @@ class TestClusterGraph:
         assert cluster.number_of_nodes() == 2
         assert cluster.number_of_edges() == 0
 
+    def test_coarsens_provided_source_graph_for_deeper_levels(self) -> None:
+        # Level >= 2 must coarsen the PREVIOUS cluster graph (integer-labeled
+        # nodes), not the original entity graph. Partition members here are
+        # cluster indices; the lookup must hit the passed source_graph.
+        cd = _detector()
+        cd.graph = nx.Graph()  # entity graph is irrelevant at this depth
+        prev_cluster = nx.Graph()
+        prev_cluster.add_edge(0, 2, weight=3.0)  # inter-supercluster edge
+        prev_cluster.add_edge(0, 1, weight=1.0)  # intra-supercluster, ignored
+        # Supercommunities over the previous cluster graph's nodes {0,1} and {2}.
+        partition = [{0, 1}, {2}]
+        cluster = cd._create_cluster_graph(partition, prev_cluster)
+        assert cluster.number_of_nodes() == 2
+        # The 0-2 edge crosses the two superclusters and survives with its weight.
+        assert cluster.number_of_edges() == 1
+        assert cluster[0][1]["weight"] == pytest.approx(3.0)
+
 
 class TestHierarchyProcessing:
     def test_single_level_creates_l0_communities(self) -> None:

@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import hashlib
+import json
 import re
 import unicodedata
 import uuid
@@ -92,3 +93,31 @@ def safe_float_parse(value: Any, default_value: float | None = None) -> float | 
         return float(value)
     except (ValueError, TypeError):
         return default_value
+
+
+def parse_llm_json(raw: str) -> dict[str, Any]:
+    """Best-effort parse of a JSON object from a noisy LLM response.
+
+    LLMs wrap JSON in markdown fences or surround it with prose; several call
+    sites (DRIFT primer, global-search map, keyword extraction, prompt tuning)
+    need the same forgiving extraction. Strips a leading ```/```json fence,
+    isolates the outermost ``{...}``, and parses it. Returns ``{}`` on any
+    failure (or non-object JSON) so callers degrade gracefully rather than crash.
+    """
+    if not raw:
+        return {}
+    text = raw.strip()
+    # Strip a leading/trailing markdown code fence if present.
+    if text.startswith("```"):
+        text = text.split("```", 2)[1] if "```" in text[3:] else text[3:]
+        if text.lstrip().lower().startswith("json"):
+            text = text.lstrip()[4:]
+    # Isolate the outermost JSON object.
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        text = text[start : end + 1]
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}

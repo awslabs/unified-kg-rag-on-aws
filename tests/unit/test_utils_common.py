@@ -11,6 +11,7 @@ from unified_kg_rag.shared.utils.common import (
     ensure_list,
     generate_stable_id,
     normalize_name,
+    parse_llm_json,
     safe_float_parse,
 )
 
@@ -108,6 +109,35 @@ class TestSafeFloatParse:
         self, value: object, default: float | None, expected: float | None
     ) -> None:
         assert safe_float_parse(value, default) == expected
+
+
+class TestParseLlmJson:
+    def test_plain_object(self) -> None:
+        assert parse_llm_json('{"a": 1}') == {"a": 1}
+
+    def test_strips_json_code_fence(self) -> None:
+        assert parse_llm_json('```json\n{"a": 1}\n```') == {"a": 1}
+
+    def test_strips_bare_code_fence(self) -> None:
+        assert parse_llm_json('```\n{"a": 1}\n```') == {"a": 1}
+
+    def test_isolates_object_from_prose(self) -> None:
+        assert parse_llm_json('here: {"a": 1} done') == {"a": 1}
+
+    def test_nested_braces_span(self) -> None:
+        assert parse_llm_json('{"a": {"b": 2}}') == {"a": {"b": 2}}
+
+    def test_malformed_returns_empty(self) -> None:
+        assert parse_llm_json("not json at all") == {}
+
+    def test_no_braces_returns_empty(self) -> None:
+        assert parse_llm_json("I cannot help") == {}
+
+    def test_non_dict_returns_empty(self) -> None:
+        assert parse_llm_json("[1, 2, 3]") == {}
+
+    def test_empty_string_returns_empty(self) -> None:
+        assert parse_llm_json("") == {}
 
 
 class TestGenerateStableId:

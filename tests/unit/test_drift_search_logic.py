@@ -468,16 +468,6 @@ def _primer_strategy(*, primer_value=None, primer_raises=None, **kw):
     return strat
 
 
-def test_parse_primer_json_strips_fences_and_prose() -> None:
-    raw = '```json\n{"follow_up_queries": ["a", "b"], "score": 0.4}\n```'
-    parsed = DriftSearchStrategy._parse_primer_json(raw)
-    assert parsed["follow_up_queries"] == ["a", "b"]
-
-
-def test_parse_primer_json_malformed_returns_empty() -> None:
-    assert DriftSearchStrategy._parse_primer_json("not json at all") == {}
-
-
 async def test_run_primer_returns_follow_ups() -> None:
     strat = _primer_strategy(
         primer_value='{"intermediate_answer": "x", "score": 0.3, '

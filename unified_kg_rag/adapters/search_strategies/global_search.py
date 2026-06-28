@@ -1,7 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import json
 import time
 from typing import Any
 
@@ -30,7 +29,11 @@ from unified_kg_rag.domain.prompts import (
 )
 from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import BatchProcessor, safe_float_parse
+from unified_kg_rag.shared.utils import (
+    BatchProcessor,
+    parse_llm_json,
+    safe_float_parse,
+)
 
 logger = get_logger(__name__)
 
@@ -520,21 +523,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         empty list on any parse failure (the caller degrades gracefully) so a
         single bad map response never aborts global search.
         """
-        try:
-            text = raw.strip()
-            if text.startswith("```"):
-                text = text.split("```", 2)[1] if "```" in text[3:] else text[3:]
-                if text.lstrip().lower().startswith("json"):
-                    text = text.lstrip()[4:]
-            start, end = text.find("{"), text.rfind("}")
-            if start == -1 or end == -1 or end <= start:
-                return []
-            payload = json.loads(text[start : end + 1])
-        except (json.JSONDecodeError, ValueError, TypeError) as e:
-            logger.warning("Failed to parse map key points: %s", e)
-            return []
-
-        if not isinstance(payload, dict):
+        payload = parse_llm_json(raw)
+        if not payload:
             return []
 
         points: list[_MapPoint] = []

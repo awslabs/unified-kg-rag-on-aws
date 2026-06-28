@@ -143,12 +143,19 @@ class CommunityDetector(BaseProcessor):
         max_levels = self.community_detection_config.max_levels
 
         current_partition = base_partition
+        # The graph to coarsen at the NEXT level. Level 1 coarsens the original
+        # entity graph; level >= 2 must coarsen the PREVIOUS level's cluster
+        # graph (whose nodes are previous-level community indices), because the
+        # partition members at level >= 2 are cluster indices, not entity ids.
+        current_graph = self.graph
 
         for level in range(1, max_levels):
             logger.info("Creating level %s communities...", level)
 
             try:
-                cluster_graph = self._create_cluster_graph(current_partition)
+                cluster_graph = self._create_cluster_graph(
+                    current_partition, current_graph
+                )
 
                 if cluster_graph.number_of_nodes() < 2:
                     logger.info(
@@ -184,6 +191,9 @@ class CommunityDetector(BaseProcessor):
 
                 partitions.append(next_partition)
                 current_partition = next_partition
+                # Coarsen the cluster graph we just built next, so deeper levels
+                # aggregate over the previous level rather than the entity graph.
+                current_graph = cluster_graph
 
             except Exception as e:
                 logger.error(
@@ -342,7 +352,14 @@ class CommunityDetector(BaseProcessor):
 
         return communities
 
-    def _create_cluster_graph(self, partition: list[set[str]]) -> nx.Graph:
+    def _create_cluster_graph(
+        self, partition: list[set[str]], source_graph: nx.Graph | None = None
+    ) -> nx.Graph:
+        # ``source_graph`` is the graph whose nodes the partition members refer
+        # to: the original entity graph at level 1, or the previous level's
+        # cluster graph at level >= 2. Defaults to the entity graph for the
+        # first coarsening / backward compatibility.
+        graph = source_graph if source_graph is not None else self.graph
         num_communities = len(partition)
         cluster_graph = nx.Graph()
 
@@ -356,7 +373,7 @@ class CommunityDetector(BaseProcessor):
 
         edge_weights: dict[tuple[int, int], float] = defaultdict(float)
 
-        for source, target, data in self.graph.edges(data=True):
+        for source, target, data in graph.edges(data=True):
             source_community = node_to_community.get(source)
             target_community = node_to_community.get(target)
 
