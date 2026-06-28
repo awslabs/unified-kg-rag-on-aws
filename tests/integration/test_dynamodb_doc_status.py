@@ -136,3 +136,30 @@ def test_diff_matches_fake(ddb_store: DynamoDBDocStatusStore) -> None:
     assert sorted(ddb_delta.changed) == sorted(fake_delta.changed) == ["edit"]
     assert sorted(ddb_delta.unchanged) == sorted(fake_delta.unchanged) == ["keep"]
     assert sorted(ddb_delta.deleted) == sorted(fake_delta.deleted) == ["gone"]
+
+
+def test_scan_fingerprints_returns_doc_id_and_hash_only(
+    ddb_store: DynamoDBDocStatusStore,
+) -> None:
+    # The projection-scan helper backing diff() returns just {doc_id: hash},
+    # even for records carrying full artifact-id lineage.
+    ddb_store.put(
+        DocStatusRecord(
+            doc_id="d1",
+            content_hash="h1",
+            entity_ids=["e1", "e2"],
+            relationship_ids=["r1"],
+            text_unit_ids=["t1"],
+        )
+    )
+    ddb_store.put(DocStatusRecord(doc_id="d2", content_hash="h2"))
+    assert ddb_store._scan_fingerprints() == {"d1": "h1", "d2": "h2"}
+
+
+def test_diff_after_projection_optimization_on_empty_table(
+    ddb_store: DynamoDBDocStatusStore,
+) -> None:
+    # Empty registry -> everything incoming is new, nothing deleted.
+    delta = ddb_store.diff({"a": "h1", "b": "h2"})
+    assert sorted(delta.new) == ["a", "b"]
+    assert delta.changed == [] and delta.unchanged == [] and delta.deleted == []

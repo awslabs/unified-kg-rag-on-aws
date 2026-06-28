@@ -100,13 +100,37 @@ class DynamoDBDocStatusStore:
                 records.append(self._deserialize(item))
         return records
 
+    def _scan_fingerprints(self) -> dict[str, str]:
+        """Scan only ``{doc_id: content_hash}`` for delta classification.
+
+        ``diff`` needs just the partition key and the content hash, so this uses
+        a ``ProjectionExpression`` to fetch those two attributes instead of
+        deserializing the full ``DocStatusRecord`` (content hash + six
+        artifact-id lists) for every row. On a table with many ``suffix``
+        partitions that is a large saving in payload and deserialization, with
+        no schema change. (A full ``scan`` is still required because deletion
+        detection needs the complete set of stored doc_ids.)
+        """
+        fingerprints: dict[str, str] = {}
+        paginator = self.client.get_paginator("scan")
+        for page in paginator.paginate(
+            TableName=self.table_name,
+            ProjectionExpression=f"{_PARTITION_KEY}, content_hash",
+        ):
+            for item in page.get("Items", []):
+                doc_id = item.get(_PARTITION_KEY, {}).get("S")
+                content_hash = item.get("content_hash", {}).get("S", "")
+                if doc_id is not None:
+                    fingerprints[doc_id] = content_hash
+        return fingerprints
+
     def diff(self, incoming: dict[str, str]) -> DocumentDelta:
         """Classify ``{doc_id: content_hash}`` against persisted state.
 
         Mirrors ``FakeDocStatusStore.diff`` exactly so the production and test
         implementations stay behaviourally identical.
         """
-        stored = {r.doc_id: r.content_hash for r in self.list_all()}
+        stored = self._scan_fingerprints()
         delta = DocumentDelta()
         for doc_id, content_hash in incoming.items():
             if doc_id not in stored:
