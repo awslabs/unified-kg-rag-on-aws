@@ -205,6 +205,19 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         )
         return 0.0
 
+    @staticmethod
+    def _clamp_score(score: float) -> float:
+        """Clamp an LLM-judge score to the [0,1] metric range.
+
+        The judge can emit an out-of-range value (a regex fallback grabbing a
+        year, a "5 out of 10" mis-scale, or a model that ignores the rubric);
+        an unclamped value would dominate the mean/max aggregate. RAGAS already
+        skips NaN — mirror that defensiveness here.
+        """
+        if score != score:  # NaN
+            return 0.0
+        return max(0.0, min(1.0, score))
+
     def _prepare_eval_args(
         self,
         metric_type: EvaluationMetricType,
@@ -288,6 +301,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             score = float(eval_result.get("score", 0.0))
         else:
             score = self._parse_score(eval_result)
+        score = self._clamp_score(score)
 
         raw_explanation = eval_result.get("reasoning", "")
         explanation = raw_explanation
@@ -366,6 +380,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             score = float(eval_result.get("score", 0.0))
         else:
             score = self._parse_score(eval_result)
+        score = self._clamp_score(score)
 
         raw_explanation = eval_result.get("reasoning", "")
         explanation = raw_explanation

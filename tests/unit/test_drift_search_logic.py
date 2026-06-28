@@ -468,23 +468,24 @@ def _primer_strategy(*, primer_value=None, primer_raises=None, **kw):
     return strat
 
 
-async def test_run_primer_returns_follow_ups() -> None:
+async def test_run_primer_returns_follow_ups_and_intermediate_answer() -> None:
     strat = _primer_strategy(
-        primer_value='{"intermediate_answer": "x", "score": 0.3, '
+        primer_value='{"intermediate_answer": "hypothetical", "score": 0.3, '
         '"follow_up_queries": ["q1", " q2 ", ""]}'
     )
-    follow_ups = await strat._run_primer(
+    follow_ups, intermediate = await strat._run_primer(
         SearchQuery(query="orig"), [_result("Community report A")]
     )
-    # Whitespace trimmed and empties dropped.
+    # Whitespace trimmed and empties dropped; HyDE answer returned too.
     assert follow_ups == ["q1", "q2"]
+    assert intermediate == "hypothetical"
 
 
 async def test_run_primer_degrades_on_error_when_ignoring() -> None:
     strat = _primer_strategy(
         primer_raises=RuntimeError("bedrock down"), ignore_errors=True
     )
-    assert await strat._run_primer(SearchQuery(query="q"), []) == []
+    assert await strat._run_primer(SearchQuery(query="q"), []) == ([], "")
 
 
 async def test_primer_search_runs_one_iteration_per_follow_up() -> None:
@@ -511,6 +512,25 @@ async def test_primer_search_runs_one_iteration_per_follow_up() -> None:
     assert executed == ["fa", "fb"]
     assert {m["source"] for m in metrics} == {"primer_follow_up"}
     assert len(all_results) == 2
+
+
+async def test_primer_search_seeds_intermediate_answer() -> None:
+    # The primer's HyDE intermediate_answer is seeded into all_results so it
+    # informs fusion/synthesis (not discarded).
+    strat = _primer_strategy(
+        primer_value='{"intermediate_answer": "HYDE seed answer", '
+        '"follow_up_queries": ["fa"], "score": 0.2}'
+    )
+
+    async def _fake_iteration(q: SearchQuery):
+        return [_result(f"hit for {q.query}")]
+
+    strat._execute_search_iteration = _fake_iteration  # type: ignore[method-assign]
+    all_results: list = []
+    await strat._primer_search(SearchQuery(query="orig"), [], all_results, set(), [])
+
+    seeds = [r for r in all_results if r.source == "drift_primer"]
+    assert len(seeds) == 1 and seeds[0].content == "HYDE seed answer"
 
 
 async def test_primer_search_falls_back_to_iterative_without_follow_ups() -> None:

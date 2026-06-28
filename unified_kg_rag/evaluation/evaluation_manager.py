@@ -374,6 +374,21 @@ class EvaluationManager:
 
         gt_list = [res.ground_truth for res in results]
 
+        # Graph-aware coverage is the project's headline differentiator over
+        # text-similarity eval, but it silently emits nothing when the dataset
+        # carries no expected_entities/relationships. Warn ONCE so a user does
+        # not believe coverage was measured when it was not (the per-query path
+        # just skips, producing zero metrics with no signal).
+        if EvaluatorType.GRAPH_AWARE in self.evaluators and not any(
+            gt.expected_entities or gt.expected_relationships for gt in ground_truths
+        ):
+            logger.warning(
+                "graph_aware evaluator is enabled but no dataset row supplies "
+                "expected_entities/expected_relationships — no coverage metric "
+                "will be reported. Add them to the evaluation dataset to measure "
+                "entity/relationship recall."
+            )
+
         for evaluator_type, evaluator in self.evaluators.items():
             try:
                 reports = await evaluator.aevaluate_batch(queries, results, gt_list)

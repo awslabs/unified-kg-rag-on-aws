@@ -82,6 +82,23 @@ class TestStripMarkdownCodeFence:
         assert LangChainEvaluator._strip_markdown_code_fence("  plain  ") == "plain"
 
 
+class TestClampScore:
+    def test_clamps_above_one(self) -> None:
+        # A regex fallback grabbing a year / a "5 out of 10" mis-scale must not
+        # dominate the aggregate.
+        assert LangChainEvaluator._clamp_score(5.0) == 1.0
+        assert LangChainEvaluator._clamp_score(2024.0) == 1.0
+
+    def test_clamps_below_zero(self) -> None:
+        assert LangChainEvaluator._clamp_score(-0.3) == 0.0
+
+    def test_passes_in_range(self) -> None:
+        assert LangChainEvaluator._clamp_score(0.42) == 0.42
+
+    def test_nan_becomes_zero(self) -> None:
+        assert LangChainEvaluator._clamp_score(float("nan")) == 0.0
+
+
 class TestParseScore:
     def test_numeric_score_field(self) -> None:
         assert LangChainEvaluator._parse_score({"score": 0.7}) == 0.7

@@ -221,7 +221,28 @@ class DriftSearchStrategy(BaseSearchStrategy):
         ``max_iterations``). Falls back to the iterative loop if the primer
         yields no follow-up queries, so the strategy never returns seed-only.
         """
-        follow_ups = await self._run_primer(query, candidate_communities)
+        follow_ups, intermediate_answer = await self._run_primer(
+            query, candidate_communities
+        )
+
+        # Seed the primer's hypothetical (HyDE) answer into the result set so it
+        # informs fusion + final synthesis (MS GraphRAG carries this forward
+        # rather than discarding it). Deduped like any other result.
+        if intermediate_answer:
+            seed = RetrievalResult(
+                content=intermediate_answer,
+                score=1.0,
+                source="drift_primer",
+                retriever_type="drift_primer",
+                metadata={"source": "primer_intermediate_answer"},
+            )
+            if (
+                seed.content
+                and compute_hash(seed.content, length=16) not in seen_hashes
+            ):
+                all_results.append(seed)
+                self._update_seen_content([seed], seen_hashes)
+
         if not follow_ups:
             logger.info("Primer produced no follow-ups; using iterative loop")
             await self._iterative_search(query, all_results, seen_hashes, metrics)
@@ -251,8 +272,14 @@ class DriftSearchStrategy(BaseSearchStrategy):
 
     async def _run_primer(
         self, query: SearchQuery, candidate_communities: list[RetrievalResult]
-    ) -> list[str]:
-        """Run the HyDE primer and return its follow-up sub-queries."""
+    ) -> tuple[list[str], str]:
+        """Run the HyDE primer; return (follow-up sub-queries, intermediate answer).
+
+        The ``intermediate_answer`` is the primer's hypothetical answer drafted
+        from the seed community summaries (HyDE). The caller seeds it into the
+        result set so it informs fusion/answer synthesis, matching MS GraphRAG's
+        DRIFT, which carries the primer answer forward rather than discarding it.
+        """
         reports = "\n".join(
             f"- {r.content[: self.drift_config.summary_char_limit]}"
             for r in candidate_communities[: self.drift_config.initial_top_k]
@@ -270,12 +297,16 @@ class DriftSearchStrategy(BaseSearchStrategy):
             if not self.ignore_errors:
                 raise
             logger.error("DRIFT primer failed: %s", e)
-            return []
+            return [], ""
 
-        follow_ups = payload.get("follow_up_queries")
-        if not isinstance(follow_ups, list):
-            return []
-        return [str(f).strip() for f in follow_ups if str(f).strip()]
+        raw_follow_ups = payload.get("follow_up_queries")
+        follow_ups = (
+            [str(f).strip() for f in raw_follow_ups if str(f).strip()]
+            if isinstance(raw_follow_ups, list)
+            else []
+        )
+        intermediate_answer = str(payload.get("intermediate_answer", "")).strip()
+        return follow_ups, intermediate_answer
 
     async def _find_candidate_communities(
         self, query: SearchQuery

@@ -89,6 +89,16 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         "AI" does not match inside "airport"). Space-less scripts (CJK) are not
         whitespace-tokenizable, so word matching would make coverage always 0 —
         for those, fall back to a normalized substring check on the raw text.
+
+        LIMITATION (CJK): the substring fallback has no morpheme boundary, so a
+        short expected entity can match inside a larger word (e.g. expected
+        "가나" matches within "가나상사"), which can *over-count* recall in the
+        multilingual case. We accept this rather than apply ASCII-style boundary
+        checks, because CJK attaches particles/suffixes directly to a word
+        (Korean "가나가", Japanese "トヨタは"), so a boundary check would instead
+        *under-count* legitimate mentions. Faithful matching here needs a
+        morphological segmenter (e.g. nori); recall is the only emitted metric,
+        so the bias is conservative-to-optimistic, not a correctness gate.
         """
         if cls._is_spaceless_script(phrase):
             cleaned = phrase.strip().lower()

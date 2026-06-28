@@ -19,6 +19,12 @@ def convert_langchain_to_document(
     combined_text = "\n\n".join(
         doc.page_content for doc in langchain_docs if doc.page_content
     )
+    # Strip a leading UTF-8 BOM (U+FEFF): loaders that decode as plain "utf-8"
+    # (not "utf-8-sig") leave the BOM in the text, so the same logical document
+    # with/without a BOM would hash to a different content-derived document_id
+    # and break incremental-indexing dedup. Normalize once, here, since this is
+    # the single source of both the id and the stored content.
+    combined_text = combined_text.lstrip("\ufeff")
 
     metadata = langchain_docs[0].metadata if langchain_docs else {}
     if index_value is not None:

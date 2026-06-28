@@ -142,6 +142,12 @@ class TextUnitTranslator:
                 e,
                 exc_info=True,
             )
+            # Count the whole batch as failed so a fully-failed language does not
+            # read as a quiet success: num_total_units was preset, so without
+            # this the success rate drops but num_failed_translations stays 0 and
+            # the "X units failed" summary warning never fires.
+            if self.stats is not None:
+                self.stats.num_failed_translations += len(text_units)
             return
 
         for text_unit, result in zip(text_units, translation_results, strict=True):

@@ -353,19 +353,23 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         tasks = [score_item(item) for item in all_communities]
         outcomes = await asyncio.gather(*tasks, return_exceptions=True)
 
+        relevance_threshold = self.global_search_config.relevance_threshold
         evaluated_items: list[tuple[RetrievalResult, float]] = []
         for original, outcome in zip(all_communities, outcomes, strict=True):
             if isinstance(outcome, BaseException):
                 if not self.ignore_errors:
                     raise outcome
                 logger.warning("Community scoring failed: %s", outcome)
-                # Keep the community as a candidate at its retrieval score so a
-                # transient scoring failure cannot silently drop a strong hit.
-                evaluated_items.append((original, original.score or 0.0))
+                # Admit the community ABOVE the threshold so a transient scoring
+                # failure cannot silently drop a strong hit. Its retrieval score
+                # is a raw RRF value (~1/(k+rank), e.g. 0.016) on a different
+                # scale than the 0-1 relevance the threshold filters on, so
+                # comparing it directly would drop it; assign the threshold value
+                # to keep it as a candidate (ranked by its retrieval score below).
+                evaluated_items.append((original, relevance_threshold))
             else:
                 evaluated_items.append(outcome)
 
-        relevance_threshold = self.global_search_config.relevance_threshold
         relevant_items = [
             item for item, score in evaluated_items if score >= relevance_threshold
         ]

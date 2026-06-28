@@ -118,6 +118,25 @@ class TestTranslateTextUnits:
         assert out == []
         assert fake.batch_calls == []  # nothing dispatched
 
+    def test_whole_batch_failure_counts_all_units_as_failed(self, mocker) -> None:
+        # A whole-language batch error must NOT read as a quiet success: every
+        # unit in the batch is counted failed so the success rate + "X failed"
+        # summary warning reflect reality.
+        tr, _ = _make_translator(mocker, target=LanguageCode.KO)
+        units = _units()
+        tr.stats = TranslationStats(num_total_units=len(units))
+
+        class _BoomProcessor:
+            def execute_with_fallback(self, *args, **kwargs):
+                raise RuntimeError("bedrock down")
+
+        # BatchProcessor is a frozen-ish pydantic model; swap the whole instance.
+        tr.batch_processor = _BoomProcessor()
+        tr._translate_text_units_batch(units, LanguageCode.KO)
+
+        assert tr.stats.num_failed_translations == len(units)
+        assert units[0].translated_texts is None
+
     def test_single_language_maps_results_back(self, mocker) -> None:
         tr, fake = _make_translator(mocker, target=LanguageCode.KO)
         units = _units()
