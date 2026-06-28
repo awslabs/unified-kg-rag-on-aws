@@ -461,3 +461,51 @@ def test_visualization_load_render_context_roundtrip(tmp_path) -> None:
     assert ctx.graph.number_of_edges() == 1
     assert "n1" in ctx.centrality
     assert ctx.layout == {"n1": [0.0, 0.0]}
+
+
+# --- run_rag_chain: RAGChainRunner._run_query execution path (AWS-free) ------
+
+
+async def test_rag_run_query_success_wraps_result(config, mocker) -> None:
+    from unittest.mock import AsyncMock
+
+    from unified_kg_rag.application.cli.run_rag_chain import RAGInput
+
+    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    args = _rag_parser().parse_args(["-q", "hi"])
+    runner = run_rag_chain.RAGChainRunner(args)
+    # Stub the chain so no AWS is touched; ainvoke returns a plain dict.
+    runner.rag_chain = mocker.MagicMock()
+    runner.rag_chain.ainvoke = AsyncMock(return_value={"answer": "A", "sources": []})
+
+    out = await runner._run_query(RAGInput(query="hi"))
+    assert out["success"] is True
+    assert out["answer"] == "A"
+
+
+async def test_rag_run_query_error_is_captured(config, mocker) -> None:
+    from unittest.mock import AsyncMock
+
+    from unified_kg_rag.application.cli.run_rag_chain import RAGInput
+
+    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    args = _rag_parser().parse_args(["-q", "hi"])
+    runner = run_rag_chain.RAGChainRunner(args)
+    runner.rag_chain = mocker.MagicMock()
+    runner.rag_chain.ainvoke = AsyncMock(side_effect=RuntimeError("boom"))
+
+    out = await runner._run_query(RAGInput(query="hi", conversation_id="c1"))
+    assert out["success"] is False
+    assert out["error"] == "boom"
+    assert out["conversation_id"] == "c1"  # preserved for the caller
+
+
+async def test_rag_run_query_raises_without_chain(config, mocker) -> None:
+    from unified_kg_rag.application.cli.run_rag_chain import RAGInput
+
+    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    args = _rag_parser().parse_args(["-q", "hi"])
+    runner = run_rag_chain.RAGChainRunner(args)
+    runner.rag_chain = None
+    with pytest.raises(RuntimeError, match="not initialized"):
+        await runner._run_query(RAGInput(query="hi"))
