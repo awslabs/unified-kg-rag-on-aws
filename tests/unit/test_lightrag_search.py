@@ -223,6 +223,77 @@ async def test_long_empty_keyword_query_does_not_fall_back(config: Config) -> No
     assert neptune_r.calls == []
 
 
+def test_relationship_endpoint_ids_collects_both_endpoints() -> None:
+    spec = get_strategy_spec(SearchStrategy.HYBRID)
+    cls = spec.strategy_class
+    rels = [
+        RetrievalResult(
+            content="r",
+            score=1.0,
+            source="rel-1",
+            retriever_type="document",
+            metadata={"source_id": "e1", "target_id": "e2"},
+        ),
+        RetrievalResult(
+            content="r",
+            score=1.0,
+            source="rel-2",
+            retriever_type="document",
+            metadata={"source_id": "e3"},  # missing target_id is tolerated
+        ),
+    ]
+    assert cls._relationship_endpoint_ids(rels) == ["e1", "e2", "e3"]
+
+
+class RelationshipEndpointRetriever:
+    """Returns relationship hits carrying endpoint ids (hl-only thematic query)."""
+
+    def __init__(self) -> None:
+        self.calls: list[SearchQuery] = []
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        self.calls.append(query)
+        return [
+            RetrievalResult(
+                content="rel",
+                score=1.0,
+                source="rel-1",
+                retriever_type="document",
+                metadata={"id": "rel-1", "source_id": "e1", "target_id": "e2"},
+            )
+        ]
+
+
+async def test_hl_only_query_seeds_graph_via_relationship_endpoints(
+    config: Config,
+) -> None:
+    # The documented fidelity fix: an hl-only (purely thematic) query — matched
+    # relationships but no matched entities — must still seed Neptune graph
+    # expansion via the relationships' endpoint entity ids.
+    spec = get_strategy_spec(SearchStrategy.HYBRID)
+    os_r = RelationshipEndpointRetriever()
+    neptune_r = FakeRetriever("graph")
+    strategy = spec.strategy_class(
+        config=config,
+        retrievers={
+            RetrieverRole.DOCUMENT.value: os_r,
+            RetrieverRole.GRAPH.value: neptune_r,
+        },
+    )
+    strategy.hybrid_scorer.fuse_and_rerank_results = (  # type: ignore[method-assign]
+        lambda results_dict, top_k, retrieval_multiplier=1, query=None: [
+            r for results in results_dict.values() for r in results
+        ]
+    )
+    # hl keywords only, no ll keywords -> no entity hits, only relationship hits.
+    await strategy.asearch(_query(SearchStrategy.HYBRID, hl_keywords=["theme"]))
+
+    # Neptune expansion was seeded from the relationship endpoints e1, e2.
+    assert len(neptune_r.calls) == 1
+    seeded = neptune_r.calls[0].filters.get("id")
+    assert set(seeded) == {"e1", "e2"}
+
+
 class FailingRetriever:
     """Always raises — exercises the per-source degradation branches."""
 

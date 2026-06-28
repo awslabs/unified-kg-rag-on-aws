@@ -259,16 +259,33 @@ class DirectoryLoader(BaseLoader):
                 if doc.content
             }
 
+            failures = 0
             for future in as_completed(tasks):
                 try:
                     if result := future.result():
                         minhashes[result[0]] = result[1]
                 except Exception as e:
+                    failures += 1
                     logger.warning(
                         "MinHash computation failed for document %s: %s",
                         tasks[future],
                         e,
                     )
+
+        # A document with no MinHash is silently excluded from the LSH index and
+        # can never be flagged as a duplicate, so a high failure rate means dedup
+        # quietly under-removes. Surface the aggregate at error level (not just
+        # per-doc warnings) so a half-failed pass does not read as successful.
+        if failures and tasks:
+            rate = failures / len(tasks)
+            log = logger.error if rate >= 0.1 else logger.warning
+            log(
+                "MinHash computation failed for %s/%s documents (%.0f%%); "
+                "those documents are excluded from deduplication",
+                failures,
+                len(tasks),
+                rate * 100,
+            )
 
         logger.debug("Computed MinHashes for %s documents", len(minhashes))
         return minhashes
