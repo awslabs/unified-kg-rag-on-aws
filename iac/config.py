@@ -36,7 +36,7 @@ Context keys (all optional; sensible defaults shown):
   use_cmk             False            customer-managed KMS key for at-rest
                                        encryption (S3/Neptune/OpenSearch/SNS/DDB)
   vpc_flow_logs       False            enable VPC flow logs (created VPC only)
-  deletion_protection False            protect Neptune/OpenSearch from deletion
+  deletion_protection dev:False/else:True  protect Neptune/OpenSearch from deletion
   bedrock_model_arns  None             scope Bedrock IAM to specific model ARNs
                                        (list); None => account/region foundation
                                        + inference-profile ARNs
@@ -132,6 +132,13 @@ class DeploymentConfig:
             return default
 
         env_name = str(ctx("env_name", "dev"))
+        # Destructive defaults are env-aware: a dev stack stays convenient
+        # (auto-destroy, no deletion protection), but any non-dev env defaults to
+        # PROD-SAFE (retain stateful stores on stack delete + deletion protection)
+        # so a stray `cdk destroy` cannot silently wipe the knowledge graph or the
+        # doc-status registry. Explicit `-c removal_destroy=`/`-c
+        # deletion_protection=` always override.
+        is_dev = env_name.lower() == "dev"
         network_mode = str(ctx("network_mode", "private")).lower()
         if network_mode not in ("private", "public"):
             raise ValueError(
@@ -155,11 +162,11 @@ class DeploymentConfig:
             guardrail_identifier=ctx("guardrail_identifier"),
             use_cmk=as_bool(ctx("use_cmk"), default=False),
             vpc_flow_logs=as_bool(ctx("vpc_flow_logs"), default=False),
-            deletion_protection=as_bool(ctx("deletion_protection"), default=False),
+            deletion_protection=as_bool(ctx("deletion_protection"), default=not is_dev),
             bedrock_model_arns=ctx("bedrock_model_arns"),
             alarm_email=ctx("alarm_email"),
             enable_cdk_nag=as_bool(ctx("enable_cdk_nag"), default=False),
             owner=str(ctx("owner", "aws-proserve")),
             cost_center=str(ctx("cost_center", "unified-kg-rag-on-aws")),
-            removal_destroy=as_bool(ctx("removal_destroy"), default=True),
+            removal_destroy=as_bool(ctx("removal_destroy"), default=is_dev),
         )
