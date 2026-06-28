@@ -411,16 +411,19 @@ intentional decision rather than an oversight:
   vocabulary is the pragmatic place to stop: it is revisited if and when a second
   backend pairing actually lands, at which point the refactor pays for itself.
 
-- **Incremental `diff()` does a full DynamoDB table scan per run.**
+- **Incremental `diff()` still scans the full DynamoDB table per run.**
   `DynamoDBDocStatusStore.diff()` scans the whole doc-status table to classify
   new/changed/unchanged *and* to compute `deleted` (deletion detection genuinely
-  needs the full set of stored ids). Cost is O(total docs across all suffixes),
-  not O(delta). This is acceptable for a single-corpus deployment but becomes a
-  real per-run cost when one table holds tens of thousands of `suffix`
-  (tenant/project) partitions. Reducing it requires either a GSI keyed by
-  `suffix` (so a run scopes its scan/query to its own partition) or a corpus
-  manifest — both a schema/redeploy change, deferred until that scale is real.
-  Pairs with the per-suffix OpenSearch index multiplication noted below.
+  needs the full set of stored ids), so cost is O(total docs across all
+  suffixes), not O(delta). The per-row payload is already minimized — the scan
+  uses a `ProjectionExpression` to fetch only `doc_id` + `content_hash` (not the
+  full record with its six artifact-id lists) — but the scan itself remains.
+  This is fine for a single-corpus deployment; with tens of thousands of
+  `suffix` (tenant/project) partitions in one table it is still a real per-run
+  cost. Eliminating the scan requires either a GSI keyed by `suffix` (so a run
+  scopes its query to its own partition) or a corpus manifest — both a
+  schema/redeploy change, deferred until that scale is real. Pairs with the
+  per-suffix OpenSearch index multiplication noted below.
 
 - **One physical OpenSearch index per `suffix` per artifact type.**
   Multi-tenant/versioned isolation uses a real index per `suffix`

@@ -404,14 +404,17 @@ fixtures/fakes/`의 인메모리 fake(`FakeGraphStore`/`FakeVectorStore`)가 인
   `ModelFactoryPort` DI seam 참조). 질의 모델 어휘는 멈추기에 합리적인 지점이며,
   두 번째 백엔드 페어링이 실재하면 그때 리팩터가 비용을 회수합니다.
 
-- **증분 `diff()`는 매 실행마다 DynamoDB 테이블 full scan을 합니다.**
+- **증분 `diff()`는 여전히 매 실행마다 DynamoDB 테이블 full scan을 합니다.**
   `DynamoDBDocStatusStore.diff()`는 new/changed/unchanged 분류와 `deleted` 계산을
   위해 doc-status 테이블 전체를 스캔합니다(삭제 감지는 저장된 전체 id 집합이
-  필요). 비용은 delta가 아니라 O(전체 문서 수)입니다. 단일 코퍼스 배포에는
-  무방하나, 한 테이블에 수만 개의 `suffix`(테넌트/프로젝트) 파티션이 있으면 실
-  실행 비용이 됩니다. 줄이려면 `suffix` 기반 GSI(실행이 자기 파티션만 스캔/쿼리)
-  또는 코퍼스 매니페스트가 필요 — 둘 다 스키마/재배포 변경이라 그 규모가 실재할
-  때로 미룹니다. 아래 OpenSearch 인덱스 증식과 같은 맥락.
+  필요). 비용은 delta가 아니라 O(전체 문서 수)입니다. 행당 페이로드는 이미
+  최소화돼 있습니다 — 스캔이 `ProjectionExpression`으로 `doc_id` + `content_hash`만
+  가져오고(6개 artifact-id 리스트를 포함한 전체 레코드를 역직렬화하지 않음) —
+  단 스캔 자체는 남습니다. 단일 코퍼스 배포에는 무방하나, 한 테이블에 수만 개의
+  `suffix`(테넌트/프로젝트) 파티션이 있으면 여전히 실 실행 비용이 됩니다. 스캔을
+  없애려면 `suffix` 기반 GSI(실행이 자기 파티션만 쿼리) 또는 코퍼스 매니페스트가
+  필요 — 둘 다 스키마/재배포 변경이라 그 규모가 실재할 때로 미룹니다. 아래
+  OpenSearch 인덱스 증식과 같은 맥락.
 
 - **`suffix`×아티팩트 타입마다 물리 OpenSearch 인덱스 1개.**
   멀티테넌트/버전 격리를 `suffix`별 실제 인덱스(`{prefix}-{suffix}`)로 합니다.
