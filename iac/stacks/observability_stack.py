@@ -11,7 +11,7 @@ topic.
 
 from __future__ import annotations
 
-from aws_cdk import Stack
+from aws_cdk import Duration, Stack
 from aws_cdk import aws_cloudwatch as cw
 from aws_cdk import aws_cloudwatch_actions as cw_actions
 from constructs import Construct
@@ -46,6 +46,31 @@ class ObservabilityStack(Stack):
             alarm_description="unified-kg-rag-on-aws ingestion pipeline had a failed execution",
         )
         failed_alarm.add_alarm_action(cw_actions.SnsAction(orchestration.alarm_topic))
+
+        # Alarm: any indexing failures -> SNS. A SUCCEEDED Step Functions run can
+        # still have silently dropped artifacts (extracted > 0 but indexed == 0,
+        # e.g. a backend write that erred per-item while the run continued). The
+        # SFN-failure alarm above does not catch that; this EMF metric does.
+        index_failed_alarm = cw.Alarm(
+            self,
+            "IndexingFailures",
+            metric=cw.Metric(
+                namespace=EMF_NAMESPACE,
+                metric_name="total_items_index_failed",
+                statistic="Sum",
+                period=Duration.minutes(5),
+            ),
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            # Don't page when the metric simply isn't reported (no run in window).
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+            alarm_description="unified-kg-rag-on-aws indexing reported failed items "
+            "(possible silent artifact drop despite a SUCCEEDED run)",
+        )
+        index_failed_alarm.add_alarm_action(
+            cw_actions.SnsAction(orchestration.alarm_topic)
+        )
 
         # Dashboard: execution health + a couple of EMF pipeline metrics.
         dashboard = cw.Dashboard(
