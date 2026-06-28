@@ -89,6 +89,22 @@ See `docs/design.md` §2 for the full layer map and dependency rule.
 - **Exceptions**: specific custom types from `shared/exceptions.py`; fail fast at
   boundaries; degrade gracefully only where recovery is meaningful.
 
+## No customer data (MANDATORY)
+
+This repo is destined for public/awslabs release. Customer-identifying or
+customer-confidential content MUST NEVER appear in application code, tests,
+evaluation datasets, fixtures, prompts, comments, docs, diagrams, or commit
+messages. This includes: customer/project names and codenames (e.g. internal
+engagement names), real contract figures/clauses, document filenames from a
+customer corpus, account ids, endpoints, and internal hostnames.
+
+- **Tests/fixtures/eval**: use neutral *synthetic* data (generic entities like
+  "Vendor"/"Buyer", made-up amounts). Never paste real customer text.
+- **Real-corpus E2E**: keep customer corpora out of the repo entirely — local
+  only, under the gitignored `.test-corpus-backup/`, synced to S3 at runtime.
+- **Before committing**: grep the diff for customer terms; if any slips into
+  history, a history scrub (squash/filter) is required before publish.
+
 ## Testing
 
 Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
@@ -100,8 +116,8 @@ Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
 - `pytest-asyncio` is in `asyncio_mode = "auto"` — `async def test_*` just works.
 - Property tests (`hypothesis`) cover invariants: hashing determinism, diff
   partition completeness, merge laws, fusion monotonicity.
-- Coverage gate ratchets up per milestone toward 80% (currently `--cov-fail-under=75`
-  in CI; 78% actual). Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
+- Coverage gate ratchets up per milestone toward 80% (currently `--cov-fail-under=78`
+  in CI). Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 
 ## Quality gate
 
