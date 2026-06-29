@@ -212,3 +212,6 @@ cdk.context.json
 
 # Local-only test corpus backup (customer data, never commit)
 .test-corpus-backup/
+
+# Internal launch runbook — internal code.aws.dev repo only, never published to awslabs
+PUBLISHING.md
