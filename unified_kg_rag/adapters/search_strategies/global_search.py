@@ -591,7 +591,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         )
         try:
             summary = await self.map_reducer.ainvoke(
-                {"summaries": synthesis_input, "query": query.query}
+                {
+                    "summaries": synthesis_input,
+                    "query": query.query,
+                    "target_language": self.target_language,
+                }
             )
         except Exception as e:
             if not self.ignore_errors:
@@ -618,7 +622,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         try:
             context = "\n\n---\n\n".join([r.content for r in results])
             summary = await self.map_reducer.ainvoke(
-                {"summaries": context, "query": query.query}
+                {
+                    "summaries": context,
+                    "query": query.query,
+                    "target_language": self.target_language,
+                }
             )
             summary_result = RetrievalResult(
                 content=summary,

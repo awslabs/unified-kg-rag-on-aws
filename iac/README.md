@@ -99,9 +99,10 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 
 ### Well-Architected
 
-The stacks apply WAF defaults out of the box — least-privilege IAM (Bedrock
-scoped to model/inference-profile ARNs, `neptune-db:connect`, domain-scoped
-`es:ESHttp*`), encryption in transit + at rest, Graviton instances, S3 cache
+The stacks apply WAF defaults out of the box — least-privilege IAM
+(`bedrock:InvokeModel` scoped to model/inference-profile ARNs, `neptune-db:connect`,
+domain-scoped `es:ESHttp*`), encryption in transit + at rest, Graviton instances,
+S3 cache
 lifecycle + access logs, Step Functions X-Ray tracing + execution logging,
 CloudWatch dashboard + failure alarm, and an SSL-only alarm topic. Production
 hardening is opt-in via the flags above. Validate with:
@@ -114,6 +115,14 @@ cdk synth -c enable_cdk_nag=true -c use_cmk=true \
 ```
 Both report zero AwsSolutions findings (accepted findings are documented in
 `iac/nag_suppressions.py`).
+
+> **A few Bedrock read actions use `Resource: "*"` by necessity**, not oversight:
+> `bedrock:Rerank` (authorizes against a different resource shape than
+> `InvokeModel` — scoping it to the model ARNs denies the call) and
+> `bedrock:ListInferenceProfiles` / `GetInferenceProfile` (account-level reads
+> with no resource scoping). These are read/inference-only actions; the
+> mutating/data path (`InvokeModel`) stays ARN-scoped. Each is documented inline
+> in `compute_stack.py` and in the cdk-nag suppressions.
 
 ## Usage
 

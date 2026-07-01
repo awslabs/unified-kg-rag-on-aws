@@ -396,7 +396,7 @@ search:
     method: "rrf"                   # rrf | weighted
     rrf_k: 60
     diversity_lambda: 0.5           # MMR: 1.0 = pure relevance, 0.0 = max diversity
-    fusion_weights: {}              # 소스별 가중치; method: weighted일 때만 사용 (전체 키 목록은 config-template.yaml 참고)
+    fusion_weights: {}              # 소스별 가중치; rrf·weighted 모두에서 각 버킷 기여도를 스케일(미설정 버킷은 1.0; config-template.yaml 참고)
 
   reranking:
     enabled: true

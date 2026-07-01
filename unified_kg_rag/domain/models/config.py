@@ -1103,6 +1103,16 @@ class IndexingConfig(BaseModel):
         "frequency/weight) before upsert, instead of overwriting. Requires a graph "
         "adapter that supports read-back; off by default.",
     )
+    cross_run_fuzzy_merge: bool = Field(
+        default=False,
+        description="Extend cross_run_merge with fuzzy entity resolution: match "
+        "delta entities against existing entity names by similarity (not just "
+        "exact normalized name), so near-duplicate surface forms ('Acme Corp' vs "
+        "'Acme Corporation') converge across incremental runs the way a full "
+        "rebuild groups them. Costs an entity-name projection per delta run; "
+        "requires cross_run_merge and a graph adapter that supports read-back. "
+        "Off by default.",
+    )
     neptune: NeptuneIndexingConfig = Field(
         default_factory=NeptuneIndexingConfig,
         description="Configuration settings for Neptune graph database indexing",

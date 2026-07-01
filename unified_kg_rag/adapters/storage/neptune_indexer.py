@@ -161,6 +161,37 @@ class NeptuneIndexer(GraphIndexer):
             )
             return []
 
+    def read_entity_names(self, suffix: str | None = None) -> list[tuple[str, str]]:
+        """Project ``(id, name)`` for all existing entities in the suffix's label.
+
+        Best-effort (``[]`` on error): powers cross-run *fuzzy* merge, which needs
+        old entities whose ids differ from a delta entity's. Requires real
+        Neptune; validated under the ``aws`` test marker.
+        """
+        try:
+            g = self.neptune_client.g
+            entity_label = self._get_name(
+                self.neptune_config.entity_label_prefix.capitalize(), suffix
+            )
+            rows = (
+                g.V()
+                .hasLabel(entity_label)
+                .project("id", "name")
+                .by("id")
+                .by("name")
+                .toList()
+            )
+            pairs: list[tuple[str, str]] = []
+            for row in rows:
+                if isinstance(row, dict) and "id" in row and "name" in row:
+                    pairs.append((str(row["id"]), str(row["name"])))
+            return pairs
+        except Exception as e:  # noqa: BLE001 - degrade to exact-name merge
+            logger.warning(
+                "read_entity_names failed (%s); fuzzy cross-run merge disabled", e
+            )
+            return []
+
     @staticmethod
     def _flatten_value_map(row: Any) -> dict[str, Any]:
         """Gremlin valueMap returns {key: [value]}; flatten single-element lists."""

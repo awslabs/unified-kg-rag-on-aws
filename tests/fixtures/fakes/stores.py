@@ -95,6 +95,10 @@ class FakeGraphStore(_Recorder):
         bucket = self.data.get("relationships", {})
         return [bucket[i] for i in ids if i in bucket]
 
+    def read_entity_names(self, suffix: str | None = None) -> list[tuple[str, str]]:
+        bucket = self.data.get("entities", {})
+        return [(e.id, e.name) for e in bucket.values()]
+
     def find_incident_relationship_ids(
         self, entity_ids: list[str], suffix: str | None = None
     ) -> list[str]:

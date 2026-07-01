@@ -395,7 +395,7 @@ search:
     method: "rrf"                   # rrf | weighted
     rrf_k: 60
     diversity_lambda: 0.5           # MMR: 1.0 = pure relevance, 0.0 = max diversity
-    fusion_weights: {}              # per-source weights; only used when method: weighted (see config-template.yaml for the full key set)
+    fusion_weights: {}              # per-source weights; scales each bucket's contribution under BOTH rrf and weighted (unset bucket defaults to 1.0; see config-template.yaml)
 
   reranking:
     enabled: true

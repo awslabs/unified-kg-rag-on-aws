@@ -501,7 +501,7 @@ Generate comprehensive keyword expansions for enhanced knowledge graph search \
 
 @dataclass(frozen=True)
 class MapReduceSummaryPrompt(BasePrompt):
-    input_variables = ["query", "summaries"]
+    input_variables = ["query", "summaries", "target_language"]
 
     system_prompt_template = """You are an expert information synthesizer specializing in creating comprehensive,
 authoritative responses from multiple information sources. Your goal is to integrate diverse summaries into a unified,
@@ -547,7 +547,8 @@ RESPONSE OPTIMIZATION:
 Information Summaries to Synthesize:
 {summaries}
 
-Create a comprehensive, well-structured synthesis that directly and completely answers the query:"""
+Create a comprehensive, well-structured synthesis that directly and completely answers the query.
+Write the synthesis in {target_language}:"""
 
 
 @dataclass(frozen=True)

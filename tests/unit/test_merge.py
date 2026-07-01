@@ -84,6 +84,75 @@ class TestMergeEntities:
         assert merged[0].text_unit_ids == ["t1"]
 
 
+class TestMergeEntitiesFuzzy:
+    """Fuzzy cross-run merge: near-duplicate surface forms converge onto the
+    existing entity when a FuzzyMatcher (built over old names) is supplied."""
+
+    @staticmethod
+    def _matcher(old_names: list[str]):
+        from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
+
+        return FuzzyMatcher(candidates=old_names, similarity_threshold=0.5)
+
+    def test_near_duplicate_collapses_onto_old_without_matcher_stays_split(
+        self,
+    ) -> None:
+        # Baseline: no matcher -> exact-name only -> two separate entities.
+        old = [_entity("e1", "Acme Corp", text_unit_ids=["t1"])]
+        delta = [_entity("e9", "Acme Corporation", text_unit_ids=["t2"])]
+        merged, remap = merge_entities(old, delta)
+        assert {e.name for e in merged} == {"Acme Corp", "Acme Corporation"}
+        assert remap == {}
+
+    def test_near_duplicate_collapses_onto_old_with_matcher(self) -> None:
+        old = [_entity("e1", "Acme Corporation", text_unit_ids=["t1"])]
+        delta = [_entity("e9", "Acme Corporatio", text_unit_ids=["t2"])]
+        merged, remap = merge_entities(
+            old, delta, fuzzy_matcher=self._matcher(["Acme Corporation"])
+        )
+        assert len(merged) == 1
+        assert merged[0].id == "e1"  # collapsed onto the existing entity id
+        assert remap == {"e9": "e1"}
+        assert set(merged[0].text_unit_ids) == {"t1", "t2"}
+
+    def test_dissimilar_delta_stays_separate_with_matcher(self) -> None:
+        old = [_entity("e1", "Acme Corporation")]
+        delta = [_entity("e9", "Globex Industries")]
+        merged, remap = merge_entities(
+            old, delta, fuzzy_matcher=self._matcher(["Acme Corporation"])
+        )
+        assert {e.name for e in merged} == {"Acme Corporation", "Globex Industries"}
+        assert remap == {}
+
+    def test_fuzzy_only_targets_old_never_delta_onto_delta(self) -> None:
+        # Two near-duplicate DELTA entities with no matching old must NOT be
+        # fuzzed together (matcher candidates are old names only) -> both kept.
+        old = [_entity("e1", "Zzzz Unrelated")]
+        delta = [
+            _entity("d1", "Acme Corporation"),
+            _entity("d2", "Acme Corporatio"),
+        ]
+        merged, remap = merge_entities(
+            old, delta, fuzzy_matcher=self._matcher(["Zzzz Unrelated"])
+        )
+        names = sorted(e.name for e in merged)
+        assert names == ["Acme Corporatio", "Acme Corporation", "Zzzz Unrelated"]
+        assert remap == {}
+
+    def test_fuzzy_merge_order_independent(self) -> None:
+        old = [_entity("e1", "Acme Corporation", text_unit_ids=["t0"])]
+        d_ab = [
+            _entity("d1", "Acme Corporatio", text_unit_ids=["t1"]),
+            _entity("d2", "Acme Corporation", text_unit_ids=["t2"]),
+        ]
+        m1, _ = merge_entities(old, d_ab, fuzzy_matcher=self._matcher(["Acme Corporation"]))
+        m2, _ = merge_entities(
+            old, list(reversed(d_ab)), fuzzy_matcher=self._matcher(["Acme Corporation"])
+        )
+        assert len(m1) == len(m2) == 1
+        assert set(m1[0].text_unit_ids) == set(m2[0].text_unit_ids) == {"t0", "t1", "t2"}
+
+
 class TestMergeRelationships:
     def test_new_relationship_appended(self) -> None:
         old = [Relationship(id="r1", source_id="e1", target_id="e2")]

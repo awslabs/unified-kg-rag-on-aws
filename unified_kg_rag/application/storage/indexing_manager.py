@@ -308,9 +308,20 @@ class IndexingManager:
         merged_entities = entities
         entity_id_remap: dict[str, str] = {}
         if entities:
-            existing = self.neptune_indexer.read_entities([e.id for e in entities])
+            existing_ids = {e.id for e in entities}
+            fuzzy_matcher = None
+            if self.config.indexing.cross_run_fuzzy_merge:
+                # Fuzzy merge needs old entities whose ids DIFFER from the delta's
+                # (exact-id read-back only surfaces normalized-name-equal ones).
+                # Project existing (id, name) per suffix, fuzzy-match delta names,
+                # and pull the matched olds into the read-back set.
+                fuzzy_matcher, fuzzy_old_ids = self._build_fuzzy_old_matcher(entities)
+                existing_ids |= fuzzy_old_ids
+            existing = self.neptune_indexer.read_entities(list(existing_ids))
             if existing:
-                merged_entities, entity_id_remap = merge_entities(existing, entities)
+                merged_entities, entity_id_remap = merge_entities(
+                    existing, entities, fuzzy_matcher=fuzzy_matcher
+                )
                 # The cross-run merge concatenates descriptions, so an entity
                 # seen across many runs can grow unbounded — re-summarize the
                 # over-threshold ones (no-op below the threshold / when disabled).
@@ -338,6 +349,40 @@ class IndexingManager:
                     )
                 )
         return merged_entities, merged_relationships
+
+    def _build_fuzzy_old_matcher(
+        self, entities: list[Entity]
+    ) -> tuple[Any, set[str]]:
+        """Build a FuzzyMatcher over existing entity names and find fuzzy hits.
+
+        Returns ``(matcher, old_ids)`` where ``matcher`` is built over all
+        existing entity names in the delta's suffix(es) and ``old_ids`` is the
+        set of existing entity ids whose name fuzzy-matches some delta name — so
+        the caller can read those olds back for merging. Returns ``(None, set())``
+        if no existing names can be projected (adapter without the capability),
+        degrading to exact-name merge.
+        """
+        from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
+
+        suffixes = self._discover_suffixes(entities)
+        id_by_name: dict[str, str] = {}
+        for suffix in suffixes:
+            for eid, name in self.neptune_indexer.read_entity_names(suffix):
+                id_by_name.setdefault(name, eid)
+        if not id_by_name:
+            return None, set()
+
+        matcher = FuzzyMatcher(
+            candidates=list(id_by_name.keys()),
+            resolution_method=self.config.processing.resolution_method.value,
+            similarity_threshold=self.config.processing.similarity_threshold,
+        )
+        old_ids: set[str] = set()
+        for entity in entities:
+            for name, _score in matcher.find_all_matches(entity.name):
+                if name in id_by_name:
+                    old_ids.add(id_by_name[name])
+        return matcher, old_ids
 
     def delete_documents(
         self, ids_by_suffix: dict[str, list[str]]

@@ -10,6 +10,8 @@ references stay stable.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.domain.models import (
@@ -20,6 +22,9 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils.common import normalize_name
+
+if TYPE_CHECKING:
+    from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
 
 logger = get_logger(__name__)
 
@@ -55,66 +60,122 @@ def _merge_descriptions(old: str | None, new: str | None) -> str | None:
     return "\n".join(deduped)
 
 
+def _merge_entity_fields(surviving: Entity, incoming: Entity) -> None:
+    """Fold ``incoming``'s evidence into ``surviving`` in place (id preserved).
+
+    Shared by the exact-name and fuzzy-match paths so both converge to the same
+    field semantics as the full-build resolver (``EntityResolver._merge_entities``):
+    description union, text-unit/community-id union, frequency = #text-units,
+    max confidence/rank, first-known type.
+    """
+    surviving.description = _merge_descriptions(
+        surviving.description, incoming.description
+    )
+    surviving.text_unit_ids = _dedupe_preserve_order(
+        (surviving.text_unit_ids or []) + (incoming.text_unit_ids or [])
+    )
+    surviving.community_ids = _dedupe_preserve_order(
+        (surviving.community_ids or []) + (incoming.community_ids or [])
+    )
+    # Frequency tracks the number of supporting text units (MS GraphRAG keeps
+    # this separate from rank/degree, which reflects graph importance).
+    surviving.frequency = len(surviving.text_unit_ids)
+    # Confidence and rank are monotonic in evidence: take the max so a more
+    # confident / higher-ranked delta reinforces the surviving entity. This
+    # matches the full-build resolver (max over the group), keeping a full
+    # rebuild and an incremental build convergent on these fields too — they
+    # feed report ranking and the confidence threshold filter.
+    surviving.confidence = max(
+        surviving.confidence if surviving.confidence is not None else 0.0,
+        incoming.confidence if incoming.confidence is not None else 0.0,
+    )
+    surviving.rank = max(
+        surviving.rank if surviving.rank is not None else 1,
+        incoming.rank if incoming.rank is not None else 1,
+    )
+    if incoming.type and not surviving.type:
+        surviving.type = incoming.type
+
+
 def merge_entities(
-    old: list[Entity], delta: list[Entity]
+    old: list[Entity],
+    delta: list[Entity],
+    fuzzy_matcher: FuzzyMatcher | None = None,
 ) -> tuple[list[Entity], dict[str, str]]:
     """Merge delta entities into old ones by normalized name.
 
     Returns the merged entity list and ``{delta_id: surviving_id}`` for entities
     that merged into an existing one (so relationships can be remapped).
+
+    When ``fuzzy_matcher`` is supplied (built over the *old* entity names), a
+    delta entity whose normalized name does not exactly match an old one is
+    additionally matched fuzzily against the old names — so near-duplicate
+    surface forms ("Acme Corp" vs "Acme Corporation") converge across runs the
+    way the full-build ``EntityResolver`` groups them, instead of accumulating
+    as separate entities. Without a matcher the merge is exact-name-only (its
+    long-standing behaviour). Fuzzy matches only ever collapse a delta onto an
+    *existing old* entity (never delta-onto-delta), which keeps the result
+    order-independent and idempotent.
     """
     by_key: dict[str, Entity] = {}
+    # Normalized old-name -> its by_key entry, so a fuzzy hit on an old name can
+    # find the surviving entity to merge into.
+    old_key_by_name: dict[str, str] = {}
     id_remap: dict[str, str] = {}
 
     for entity in old:
-        by_key[normalize_name(entity.name)] = entity.model_copy(deep=True)
+        key = normalize_name(entity.name)
+        by_key[key] = entity.model_copy(deep=True)
+        old_key_by_name[entity.name] = key
 
     for entity in delta:
         key = normalize_name(entity.name)
         existing = by_key.get(key)
+        if existing is None and fuzzy_matcher is not None:
+            existing = _find_fuzzy_old_match(
+                entity, fuzzy_matcher, old_key_by_name, by_key
+            )
         if existing is None:
             by_key[key] = entity.model_copy(deep=True)
             continue
 
         # Merge into the surviving (old) entity; keep its id.
         id_remap[entity.id] = existing.id
-        existing.description = _merge_descriptions(
-            existing.description, entity.description
-        )
-        existing.text_unit_ids = _dedupe_preserve_order(
-            (existing.text_unit_ids or []) + (entity.text_unit_ids or [])
-        )
-        existing.community_ids = _dedupe_preserve_order(
-            (existing.community_ids or []) + (entity.community_ids or [])
-        )
-        # Frequency tracks the number of supporting text units (MS GraphRAG keeps
-        # this separate from rank/degree, which reflects graph importance).
-        existing.frequency = len(existing.text_unit_ids)
-        # Confidence and rank are monotonic in evidence: take the max so a more
-        # confident / higher-ranked delta reinforces the surviving entity. This
-        # matches the full-build resolver (max over the group), keeping a full
-        # rebuild and an incremental build convergent on these fields too — they
-        # feed report ranking and the confidence threshold filter.
-        existing.confidence = max(
-            existing.confidence if existing.confidence is not None else 0.0,
-            entity.confidence if entity.confidence is not None else 0.0,
-        )
-        existing.rank = max(
-            existing.rank if existing.rank is not None else 1,
-            entity.rank if entity.rank is not None else 1,
-        )
-        if entity.type and not existing.type:
-            existing.type = entity.type
+        _merge_entity_fields(existing, entity)
 
     merged = list(by_key.values())
     logger.info(
-        "Merged entities: %d old + %d delta -> %d (%d merged by name)",
+        "Merged entities: %d old + %d delta -> %d (%d merged)",
         len(old),
         len(delta),
         len(merged),
         len(id_remap),
     )
     return merged, id_remap
+
+
+def _find_fuzzy_old_match(
+    entity: Entity,
+    fuzzy_matcher: FuzzyMatcher,
+    old_key_by_name: dict[str, str],
+    by_key: dict[str, Entity],
+) -> Entity | None:
+    """Return the best old entity fuzzy-matching ``entity``'s name, or None.
+
+    Considers only *old* candidate names (delta entities are never matcher
+    candidates), so the collapse target is stable regardless of delta ordering.
+    Ties break on the higher score, then the lexicographically smaller name, so
+    the choice is deterministic.
+    """
+    matches = [
+        (name, score)
+        for name, score in fuzzy_matcher.find_all_matches(entity.name)
+        if name in old_key_by_name
+    ]
+    if not matches:
+        return None
+    best_name, _ = max(matches, key=lambda m: (m[1], -len(m[0]), m[0]))
+    return by_key.get(old_key_by_name[best_name])
 
 
 def _relationship_weight(rel: Relationship, supporting_text_units: list[str]) -> float:

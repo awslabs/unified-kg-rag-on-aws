@@ -207,6 +207,17 @@ class GraphIndexer(BaseIndexer):
         :meth:`read_entities`."""
         return []
 
+    def read_entity_names(self, suffix: str | None = None) -> list[tuple[str, str]]:
+        """Project ``(id, name)`` for all existing entities (for fuzzy merge).
+
+        Used by cross-run *fuzzy* merge to find near-duplicate existing entities
+        whose ids differ from a delta entity's (exact-id read-back can only
+        surface entities that already normalize-equal a delta name). Default
+        returns ``[]`` (no projection) so adapters that cannot enumerate simply
+        skip fuzzy merge and fall back to exact-name matching. ``suffix`` scopes
+        the projection to one tenant/version's label."""
+        return []
+
     @abstractmethod
     def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
         """Delete vertices/edges by id (for removed/changed documents).

@@ -84,6 +84,33 @@ class TestReciprocalRankFusion:
         fused = scorer._reciprocal_rank_fusion({"a": [original]})
         assert fused[0] is not original
 
+    def test_default_weights_reproduce_plain_rrf(self) -> None:
+        # Default fusion_weights are all 1.0 (and an unconfigured bucket defaults
+        # to 1.0 too), so RRF scoring is unchanged from plain RRF.
+        scorer = _scorer()
+        assert all(w == 1.0 for w in scorer.fusion_config.fusion_weights.values())
+        k = scorer.fusion_config.rrf_k
+        fused = scorer._reciprocal_rank_fusion({"unconfigured_bucket": [_r("only", 0.9, "1")]})
+        assert fused[0].score == pytest.approx(1.0 / (k + 1))
+
+    def test_per_bucket_weight_scales_rrf_contribution(self) -> None:
+        # A configured per-bucket weight now applies under RRF too (previously it
+        # was silently ignored unless FusionMethod.WEIGHTED was selected).
+        config = Config()
+        config.search.reranking.enabled = False
+        config.search.fusion.fusion_weights = {"boosted": 3.0}  # "plain" defaults 1.0
+        scorer = HybridScorer(config)
+        k = scorer.fusion_config.rrf_k
+        result_map = {
+            "boosted": [_r("b", 0.5, "1")],
+            "plain": [_r("p", 0.9, "2")],
+        }
+        fused = scorer._reciprocal_rank_fusion(result_map)
+        by_content = {r.content: r.score for r in fused}
+        assert by_content["b"] == pytest.approx(3.0 / (k + 1))
+        assert by_content["p"] == pytest.approx(1.0 / (k + 1))
+        assert by_content["b"] > by_content["p"]
+
 
 class TestWeightedFusion:
     def test_per_source_weights_applied(self) -> None:

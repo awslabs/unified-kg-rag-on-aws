@@ -152,3 +152,39 @@ def test_cross_run_merge_threads_entity_id_remap_to_relationships(manager) -> No
     assert merged_rels is not None and len(merged_rels) == 1
     assert merged_rels[0].source_id == "e_canon"
     assert merged_rels[0].target_id == "e_other"
+
+
+def test_fuzzy_cross_run_merge_collapses_near_duplicate_entity(mocker) -> None:
+    # With cross_run_fuzzy_merge on, a delta entity whose name only FUZZILY
+    # matches an existing one (different id) must collapse onto the existing
+    # entity, not accumulate as a separate node.
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.domain.models import Config
+
+    os_indexer = mocker.MagicMock()
+    neptune_indexer = mocker.MagicMock()
+
+    existing = Entity(id="e_old", name="Acme Corporation", text_unit_ids=["t1"])
+    # The delta's id differs (derived from a different surface form), so exact-id
+    # read-back alone would miss it — the fuzzy name projection must find it.
+    neptune_indexer.read_entity_names.return_value = [("e_old", "Acme Corporation")]
+    neptune_indexer.read_entities.return_value = [existing]
+    neptune_indexer.read_relationships.return_value = []
+
+    config = Config()
+    config.indexing.cross_run_merge = True
+    config.indexing.cross_run_fuzzy_merge = True
+    mgr = IndexingManager(
+        config=config, vector_indexer=os_indexer, graph_indexer=neptune_indexer
+    )
+    # Keep the description summarizer a no-op (no Bedrock).
+    mgr._description_summarizer = mocker.MagicMock()
+    mgr._description_summarizer.summarize_entities.side_effect = lambda es: es
+    mgr._description_summarizer.summarize_relationships.side_effect = lambda rs: rs
+
+    delta = Entity(id="e_new", name="Acme Corporatio", text_unit_ids=["t2"])
+    merged_entities, _ = mgr._merge_with_existing_graph([delta], None)
+
+    assert merged_entities is not None and len(merged_entities) == 1
+    assert merged_entities[0].id == "e_old"
+    assert set(merged_entities[0].text_unit_ids) == {"t1", "t2"}

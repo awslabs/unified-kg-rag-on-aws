@@ -159,13 +159,20 @@ class HybridScorer(MetricsMixin):
         self, result_map: dict[str, list[RetrievalResult]]
     ) -> list[RetrievalResult]:
         k = self.fusion_config.rrf_k
+        weights = self.fusion_config.fusion_weights
         scores: dict[str, float] = defaultdict(float)
         objects: dict[str, RetrievalResult] = {}
 
-        for results in result_map.values():
+        for name, results in result_map.items():
+            # Weighted RRF: a per-bucket weight scales that source's rank
+            # contribution. Buckets without a configured weight default to 1.0,
+            # so an empty fusion_weights map reproduces plain RRF exactly — but a
+            # configured weight is now honored under RRF too (previously it was
+            # silently ignored unless FusionMethod.WEIGHTED was selected).
+            weight = weights.get(name, 1.0)
             for rank, result in enumerate(results, 1):
                 key = self._get_result_key(result)
-                scores[key] += 1.0 / (k + rank)
+                scores[key] += weight / (k + rank)
                 if key not in objects:
                     objects[key] = result.model_copy()
 

@@ -286,6 +286,12 @@ indexing:
   # (description/text_unit_ids/frequency/weight) before upsert instead of
   # overwriting. Requires a graph adapter that supports read-back. Off by default.
   cross_run_merge: false
+  # Extend cross_run_merge with fuzzy entity resolution: match delta entities
+  # against existing entity names by similarity (not just exact normalized name),
+  # so near-duplicate surface forms ("Acme Corp" vs "Acme Corporation") converge
+  # across incremental runs the way a full rebuild groups them. Costs an
+  # entity-name projection per delta run. Requires cross_run_merge. Off by default.
+  cross_run_fuzzy_merge: false
 
   # OpenSearch Indexing
   opensearch:
