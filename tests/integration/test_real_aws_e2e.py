@@ -134,3 +134,9 @@ def test_ingest_then_search_round_trip(live_config, tmp_path) -> None:
     chain = create_rag_chain(live_config)
     result = asyncio.run(chain.ainvoke(RAGInput(query="Where does Alice work?")))
     assert result is not None
+    # A round-trip that returns an empty/garbage answer would pass a bare
+    # `is not None`; assert the answer actually reflects the ingested corpus so
+    # this catches a silently-broken retrieval or generation path.
+    answer = getattr(result, "answer", "") or ""
+    assert "acme" in answer.lower(), f"expected 'Acme' in the answer, got: {answer!r}"
+    assert result.sources, "expected at least one supporting source"

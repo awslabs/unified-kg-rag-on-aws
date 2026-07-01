@@ -371,3 +371,78 @@ async def test_entity_traversal_honors_configured_max_hops(
     await retriever._traverse_from_entities(g, [{"id": "e1"}], SearchQuery(query="x"))
 
     assert captured.get("times") == configured_hops
+
+
+# --------------------------------------------------------------------------- #
+# _find_seeds_by_type (entity_focus vs text-search fallback)
+# --------------------------------------------------------------------------- #
+
+
+async def test_find_seeds_by_type_uses_entity_focus_when_present(
+    retriever, mocker
+) -> None:
+    # With entity_focus, seeds are found by exact name membership (P.within),
+    # not the text-search fallback.
+    calls: list[tuple] = []
+    g = mocker.MagicMock()
+    g.V.return_value = RecordingTraversal(calls)
+    captured: dict = {}
+
+    async def _fake_execute(traversal):
+        captured["executed"] = True
+        return []
+
+    object.__setattr__(retriever, "_execute_traversal", _fake_execute)
+    query = SearchQuery(query="ignored text", entity_focus=["Alice", "Bob"])
+
+    out = await retriever._find_seeds_by_type(g, query, is_community=False)
+
+    assert out == []
+    step_names = [c[0] for c in calls]
+    # A `has("name", P.within(...))` step is emitted for the focus names.
+    has_name = [c for c in calls if c[0] == "has" and c[1] and c[1][0] == "name"]
+    assert has_name, f"expected has('name', ...) in {step_names}"
+    assert captured.get("executed") is True
+
+
+async def test_find_seeds_by_type_text_search_fallback_without_focus(
+    retriever, mocker
+) -> None:
+    # No entity_focus -> falls back to a text-search filter over query terms via
+    # a .where(...) step (not a direct name-equality lookup).
+    calls: list[tuple] = []
+    g = mocker.MagicMock()
+    g.V.return_value = RecordingTraversal(calls)
+
+    async def _fake_execute(traversal):
+        return []
+
+    object.__setattr__(retriever, "_execute_traversal", _fake_execute)
+    query = SearchQuery(query="acme supply agreement")
+
+    await retriever._find_seeds_by_type(g, query, is_community=False)
+
+    step_names = [c[0] for c in calls]
+    assert "where" in step_names, f"expected a text-search where() in {step_names}"
+
+
+async def test_find_seeds_by_type_empty_query_terms_returns_empty(
+    retriever, mocker
+) -> None:
+    # No focus and a query with no word characters -> no seeds (and no traversal
+    # execution), rather than an unbounded label scan.
+    g = mocker.MagicMock()
+    g.V.return_value = RecordingTraversal([])
+    executed = {"called": False}
+
+    async def _fake_execute(traversal):
+        executed["called"] = True
+        return []
+
+    object.__setattr__(retriever, "_execute_traversal", _fake_execute)
+    query = SearchQuery(query="!!! ??? ...")
+
+    out = await retriever._find_seeds_by_type(g, query, is_community=False)
+
+    assert out == []
+    assert executed["called"] is False
