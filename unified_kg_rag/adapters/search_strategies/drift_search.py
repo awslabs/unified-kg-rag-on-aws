@@ -15,6 +15,7 @@ from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    is_fatal_retrieval_error,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -323,6 +324,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
         try:
             return await self.document_retriever.aretrieve(search_query)
         except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("Failed to find candidate communities: %s", e)
             return []
 
@@ -519,6 +522,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 if result.metadata or result.source
             ]
         except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("Failed to find candidate entities: %s", e)
             return []
 

@@ -30,6 +30,7 @@ import boto3
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    is_fatal_retrieval_error,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -196,6 +197,8 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             results = await self.document_retriever.aretrieve(search_query)
             return {"lightrag_entities": results}
         except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("Entity retrieval (ll_keywords) failed: %s", e)
             return {}
 
@@ -216,6 +219,8 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             results = await self.document_retriever.aretrieve(search_query)
             return {"lightrag_relationships": results}
         except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("Relationship retrieval (hl_keywords) failed: %s", e)
             return {}
 
@@ -236,6 +241,8 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             results = await self.document_retriever.aretrieve(search_query)
             return {"lightrag_chunks": results}
         except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("Chunk retrieval failed: %s", e)
             return {}
 

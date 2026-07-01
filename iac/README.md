@@ -23,8 +23,8 @@ environments are separated by account/region and tracked via the `env` tag.
 ### Resource naming
 
 Physical resources share a single lowercase `graphrag-<purpose>` scheme (no env
-segment — environments are separated by account/region), matching the account's
-convention (`example-alb-logs-…`, `example-state-…`):
+segment — environments are separated by account/region), following a common
+`<app>-<purpose>-…` convention (e.g. `myapp-alb-logs-…`, `myapp-state-…`):
 
 | Resource | Name |
 |---|---|
@@ -145,7 +145,10 @@ cdk deploy --all
 1. Build & push the app image to the created ECR repo (tag `latest`); the image
    must contain a `/app/config.yaml` with the deployed endpoints (or rely on the
    injected `NEPTUNE_ENDPOINT` / `OPENSEARCH_ENDPOINT` / `S3_BUCKET_NAME` /
-   `BEDROCK_REGION` env vars the app reads).
+   `BEDROCK_REGION` env vars the app reads). If you enable incremental indexing,
+   set `aws.dynamodb.table_name` to the table this stack created
+   (`graphrag-doc-status` in `dev`) so the app and the CloudWatch alarms track
+   the same table — the config template's default name differs.
 2. Start an ingestion run:
    ```bash
    aws stepfunctions start-execution \

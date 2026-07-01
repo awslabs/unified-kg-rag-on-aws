@@ -15,6 +15,11 @@ from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
 
+# Placeholder returned by build_context_string when no context sections survive
+# optimization. Callers short-circuit answer generation on this sentinel so the
+# LLM is never asked to answer from an empty context (which invites fabrication).
+EMPTY_CONTEXT_PLACEHOLDER = "No relevant information found."
+
 
 class SectionType(str, Enum):
     CLAIM = "claim"
@@ -237,7 +242,7 @@ class TokenManager(MetricsMixin):
     @staticmethod
     def build_context_string(optimized_context: OptimizedContext) -> str:
         if not optimized_context.sections:
-            return "No relevant information found."
+            return EMPTY_CONTEXT_PLACEHOLDER
 
         context_parts = []
         for section in optimized_context.sections:

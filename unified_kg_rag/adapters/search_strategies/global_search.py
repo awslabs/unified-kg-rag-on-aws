@@ -13,6 +13,7 @@ from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    is_fatal_retrieval_error,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
@@ -264,6 +265,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             ]
             return await self._retrieve_documents(search_query, index_prefixes)
         except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("OpenSearch retrieval failed: %s", e)
             return []
 
@@ -278,6 +281,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             search_query.index_prefixes = index_prefixes
             return await self.document_retriever.aretrieve(search_query)
         except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("OpenSearch retrieval failed: %s", e)
             return []
 
@@ -301,6 +306,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 timeout=self.global_search_config.graph_timeout_seconds,
             )
         except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("Neptune community retrieval failed: %s", e)
             return []
 

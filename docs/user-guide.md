@@ -40,6 +40,36 @@ codebase. The five console entry points (defined as `pyproject` scripts) are:
 | **Amazon S3** | Yes | Pipeline cache sync; optional embedding-cache persistence; document storage. |
 | **Amazon DynamoDB** | Only for incremental indexing | Document-status registry that diffs the corpus by content hash. |
 
+The framework connects to services that **already exist** — it never creates
+them. You have two ways to get there:
+
+- **Bring your own services.** If Neptune, OpenSearch, S3 (and optionally
+  DynamoDB) are already running, just record their endpoints in `config.yaml`
+  (§2.1 below) and skip ahead. Make sure Bedrock model access is enabled for the
+  model IDs you configure.
+- **Provision everything with the bundled CDK app.** The repo ships an optional,
+  Well-Architected AWS CDK app in [`iac/`](../iac/README.md) that stands up the
+  whole stack in one command — networking (VPC + endpoints), the Neptune cluster,
+  the OpenSearch domain, the DynamoDB doc-status table, the S3 cache bucket, an
+  ECS Fargate data plane, a Step Functions ingestion pipeline, and CloudWatch
+  observability, plus an optional region-pinned Bedrock Guardrail:
+
+  ```bash
+  cd iac
+  python -m venv .venv && . .venv/bin/activate
+  pip install -r requirements.txt
+
+  cdk synth              # preview — no AWS changes, no cost
+  cdk bootstrap          # once per account/region
+  cdk deploy --all       # creates billable resources (Neptune + OpenSearch are hourly)
+  ```
+
+  When the deploy finishes, copy the Neptune / OpenSearch / S3 endpoints from the
+  CloudFormation outputs into your `config.yaml`. `cdk destroy --all` tears the
+  `dev` profile back down. See [`iac/README.md`](../iac/README.md) for every
+  stack, all `-c key=value` knobs (VPC reuse, instance sizing, CMK, deletion
+  protection, cdk-nag), and the production-hardening checklist.
+
 ### Install
 
 ```bash
@@ -56,7 +86,8 @@ pip install -e .
 Optional extra: parsing **Markdown (.md)** and **HTML (.html)** requires the
 `unstructured` package. Without it, only `.pdf`, `.txt`, `.csv`, `.json` are
 parsed (the parser raises a clear error naming the missing package for
-`.md`/`.html`). Install it with your packaging tool if you need those formats.
+`.md`/`.html`). Install it with your package manager (`uv pip install unstructured`
+or `pip install unstructured`) if you need those formats.
 
 ### Authentication
 
@@ -105,7 +136,7 @@ aws:
   bedrock:
     region_name: "ap-northeast-2" # Bedrock can live in a different region
     assumed_role_arn: null
-    enable_global_profile: true   # use cross-region inference profiles
+    enable_global_profile: true   # use cross-region (global) Bedrock inference profiles for higher throughput/availability
     guardrail:                    # optional Bedrock Guardrails on every LLM call
       identifier: null            # set a guardrail ID/ARN to enable
       version: "DRAFT"
@@ -150,7 +181,7 @@ fixing:
 ```
 
 When an LLM returns malformed JSON for a structured stage, this re-asks a model
-to repair it instead of failing. Leave on.
+to repair it instead of failing the run. We recommend leaving it enabled.
 
 ### 2.3 `processing` — concurrency, chunking, translation, extraction
 
@@ -342,7 +373,9 @@ indexing:
     min_entity_importance: 0.5
 ```
 
-> The `*_index_prefix` keys are the index-name config names.
+> The `*_index_prefix` keys set the base name of each OpenSearch index. Any
+> suffix (`additional_suffix` here, or `--suffix` on the CLI) is appended to form
+> the final index name — useful for versioned or multi-tenant separation.
 
 ### 2.6 `search` — retrieval, fusion, reranking, per-strategy knobs
 
@@ -362,7 +395,7 @@ search:
     method: "rrf"                   # rrf | weighted
     rrf_k: 60
     diversity_lambda: 0.5           # MMR: 1.0 = pure relevance, 0.0 = max diversity
-    fusion_weights: { ... }         # only used when method: weighted
+    fusion_weights: {}              # per-source weights; only used when method: weighted (see config-template.yaml for the full key set)
 
   reranking:
     enabled: true
@@ -445,20 +478,20 @@ OpenSearch + Neptune.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | Directory of source documents (required to run) |
+| `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | Directory of source documents. Required to run; if the flag is omitted it falls back to the `GRAPHRAG_SOURCE_DIRECTORY` environment variable. |
 | `--target-directory` | source dir | Where parsed documents are written |
 | `--cache-directory` | `cache` | Pipeline cache + intermediate results |
 | `--force-rebuild` | off | Ignore all existing cache; rebuild from scratch |
 | `--s3-sync` | off | Sync cache to S3 (requires `--s3-bucket-name`) |
 | `--s3-bucket-name` | — | S3 bucket for cache sync |
 | `--s3-prefix` | `pipeline-runs` | S3 key prefix for cache files |
-| `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | Existing run to resume/inspect |
+| `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | Existing run to resume/inspect. If the flag is omitted it falls back to the `GRAPHRAG_PIPELINE_ID` environment variable. |
 | `--resume-from-stage` | — | Stage to resume from (requires `--pipeline-id`) |
 | `--verify-metadata` | off | Verify pipeline metadata integrity (needs `--pipeline-id`) |
 | `--repair-metadata` | off | Attempt metadata repair (needs `--pipeline-id`) |
 | `--continue-on-error` | off | Keep going when a stage errors |
 | `--enabled-stages` | all | Comma-separated stage list to run |
-| `--metrics-sink` | `none` | `none` or `cloudwatch` (EMF to stdout) |
+| `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout) |
 | `--config-path` | — | Path to `config.yaml` |
 
 ### The 12 pipeline stages
@@ -547,15 +580,15 @@ fall back to `default_analyzer`.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--query`, `-q` | — | Single query (mutually required with `--interactive`) |
+| `--query`, `-q` | — | Single query — provide this or `--interactive` (exactly one is required) |
 | `--interactive`, `-i` | off | Interactive chat (auto-enables memory) |
 | `--mode` | `rag` | `rag` (full generation) or `search` (retrieval only) |
 | `--conversation-id` | — | Continue an existing conversation |
 | `--use-memory` | off | Enable conversation memory (auto in interactive) |
 | `--suffix` | — | Index/label suffix for multi-tenant or versioned indices |
 | `--enable-thinking` | off | Enable model step-by-step reasoning |
-| `--search-strategy` | `auto` | `auto` `drift` `global` `local` `simple` `mix` `hybrid` `naive` |
-| `--search-type` | `hybrid` | `hybrid` `lexical` `vector` |
+| `--search-strategy` | `auto` | `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive` |
+| `--search-type` | `hybrid` | `hybrid`, `lexical`, `vector` |
 | `--top-k` | `10` | Max search results |
 | `--retrieval-multiplier` | `1` | Increase retrieval depth |
 | `--disable-query-processing` | off | Skip translation + entity extraction |

@@ -215,3 +215,7 @@ cdk.context.json
 
 # Internal launch runbook — internal code.aws.dev repo only, never published to awslabs
 PUBLISHING.md
+
+# Internal awslabs-publish artifacts (IP-review ticket, threat model, security
+# scans, review workflow) — internal only, never published to the public repo
+.awslabs/

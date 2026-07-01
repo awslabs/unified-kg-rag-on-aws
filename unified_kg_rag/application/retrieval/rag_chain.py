@@ -34,7 +34,10 @@ from unified_kg_rag.adapters.retrieval.base import (
     BaseSearchStrategy,
 )
 from unified_kg_rag.adapters.retrieval.memory_manager import get_memory_manager
-from unified_kg_rag.adapters.retrieval.token_manager import TokenManager
+from unified_kg_rag.adapters.retrieval.token_manager import (
+    EMPTY_CONTEXT_PLACEHOLDER,
+    TokenManager,
+)
 from unified_kg_rag.adapters.retrievers import NeptuneRetriever, OpenSearchRetriever
 
 # Importing the package executes each strategy module's @register_strategy
@@ -629,6 +632,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             return ""
 
     def _answer_generation_step(self, state: dict[str, Any]) -> Runnable:
+        # Never ask the LLM to answer from an empty/placeholder context: retrieval
+        # produced nothing, so generating anyway invites a confident hallucination
+        # with no supporting sources. Short-circuit to an explicit "cannot answer".
+        context = str(state.get("context") or "").strip()
+        if not context or context == EMPTY_CONTEXT_PLACEHOLDER:
+            return RunnableLambda(
+                lambda _: "I could not find relevant information in the "
+                "available data to answer this question."
+            )
+
         enable_thinking = state.get("enable_thinking", False)
         return self._get_chain_for_prompt(
             AnswerGenerationPrompt,

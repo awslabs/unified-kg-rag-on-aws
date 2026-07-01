@@ -56,12 +56,15 @@ class _FakeModelFactory:
 class _FakeRetriever:
     """Returns one fixed hit; records the queries it received."""
 
-    def __init__(self, tag: str) -> None:
+    def __init__(self, tag: str, *, empty: bool = False) -> None:
         self.tag = tag
+        self.empty = empty
         self.calls: list[SearchQuery] = []
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)
+        if self.empty:
+            return []
         return [
             RetrievalResult(
                 content=f"{self.tag}: Vendor and Buyer signed the supply agreement.",
@@ -73,9 +76,11 @@ class _FakeRetriever:
         ]
 
 
-def _make_chain(config: Config, mode: ChainMode) -> GraphRAGChain:
-    doc_retriever = _FakeRetriever("document")
-    graph_retriever = _FakeRetriever("graph")
+def _make_chain(
+    config: Config, mode: ChainMode, *, empty_retrieval: bool = False
+) -> GraphRAGChain:
+    doc_retriever = _FakeRetriever("document", empty=empty_retrieval)
+    graph_retriever = _FakeRetriever("graph", empty=empty_retrieval)
     chain = GraphRAGChain(
         config=config,
         mode=mode,
@@ -124,6 +129,26 @@ async def test_search_mode_round_trip_returns_results_without_llm_answer(
     # SEARCH mode skips answer generation; results still come back.
     result = out if isinstance(out, dict) else out.model_dump()
     assert result["search_results"]["total_results"] >= 1
+
+
+async def test_rag_mode_empty_retrieval_short_circuits_answer_generation(
+    config: Config,
+) -> None:
+    # When retrieval yields no context, the chain must NOT invoke the answer LLM
+    # (which would hallucinate); it returns an explicit "cannot answer" instead.
+    chain = _make_chain(config, ChainMode.RAG, empty_retrieval=True)
+    out = await chain.ainvoke(
+        RAGInput(
+            query="What does Vendor supply to Buyer?",
+            search_strategy=SearchStrategy.SIMPLE,
+            enable_query_processing=False,
+        )
+    )
+    assert isinstance(out, RAGOutput)
+    # The canned LLM answer must NOT appear; the refusal sentinel must.
+    assert out.answer != _CANNED_ANSWER
+    assert "could not find relevant information" in out.answer.lower()
+    assert out.sources == []
 
 
 async def test_rag_mode_local_strategy_uses_graph_and_document_roles(

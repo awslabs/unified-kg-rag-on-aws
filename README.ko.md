@@ -24,11 +24,11 @@
 - **시맨틱 검색**: Bedrock 임베딩 모델 기반 고품질 벡터 검색
 - **렉시컬 검색**: BM25 알고리즘 기반 정밀 키워드 매칭
 - **그래프 검색**: Neptune 지식 그래프 순회를 통한 연결성 분석
-- **결과 최적화**: RRF 융합 + Bedrock 리랭킹 모델
+- **결과 최적화**: RRF(Reciprocal Rank Fusion) 융합 + Bedrock 리랭킹 모델
 
 ### ♻️ 증분 인덱싱
 
-- **콘텐츠 해시 델타 감지**: DynamoDB 문서-상태 레지스트리가 신규/변경 문서만 재인덱싱하고 라이브 그래프에 멱등(idempotent) 병합
+- **콘텐츠 해시 델타 감지**: DynamoDB 문서-상태 레지스트리가 각 문서를 해시로 지문화하여, 재실행 시 신규/변경 문서만 재인덱싱하고 라이브 그래프에 멱등(idempotent) 병합
 - **삭제 계보(lineage)**: 문서 삭제 시 해당 문서만 *독점적으로* 소유한 아티팩트만 제거 (공유 엔티티는 보존)
 
 ### 🧠 고급 지식 그래프 처리
@@ -91,11 +91,12 @@
 - **Python 3.10 – 3.12** (uv 권장)
 - 적절한 권한으로 구성된 **AWS CLI**
 - 배포·접근 가능한 **AWS 서비스**: Amazon Bedrock(모델 액세스 활성화), Neptune 클러스터, OpenSearch 도메인, S3 버킷, (증분 인덱싱 시) DynamoDB
+  - 아직 서비스가 없다면 직접 프로비저닝하거나, 아래 [AWS 스택 프로비저닝(선택)](#-aws-스택-프로비저닝선택)의 CDK 앱을 사용하세요.
 
 ### 빠른 시작
 
 ```bash
-# 저장소 클론
+# 저장소 클론 (<repository-url>을 이 저장소의 Git URL로 교체하세요)
 git clone <repository-url>
 cd unified-kg-rag-on-aws
 
@@ -110,6 +111,53 @@ cp config-template.yaml config.yaml
 cp .env-template .env
 # .env에 OpenSearch 자격증명 입력 (IAM 인증 use_iam: true면 불필요)
 ```
+
+### 📦 AWS 스택 프로비저닝(선택)
+
+이 프레임워크는 **이미 존재하는** AWS 서비스에 연결할 뿐, 서비스를 직접 생성하지
+않습니다. 서비스를 준비하는 방법은 두 가지입니다.
+
+- **이미 서비스가 있다면?** 이 절은 건너뛰세요. Bedrock 리전과 Neptune /
+  OpenSearch / S3(및 선택적 DynamoDB) 엔드포인트를 `config.yaml`에 입력하고 바로
+  [사용법](#-사용법)으로 넘어가면 됩니다.
+- **처음부터 시작한다면?** 저장소에는 스택 전체를 프로비저닝해 주는 **선택적이고
+  모든 것이 갖춰진 AWS CDK 앱**이 [`iac/`](./iac/README.md)에 포함되어 있습니다 —
+  VPC + 엔드포인트, Neptune 클러스터, OpenSearch 도메인, DynamoDB 문서-상태 테이블,
+  S3 캐시 버킷, ECS Fargate 데이터 플레인, Step Functions 인제스천 파이프라인,
+  CloudWatch 대시보드/알람, 선택적 Bedrock Guardrail을 Well-Architected 기본값
+  (프라이빗 VPC 격리, KMS 저장 시 암호화, TLS 강제, 최소 권한 IAM)과 함께 생성합니다.
+
+CDK 앱 사용 흐름은 짧고 독립적입니다.
+
+```bash
+cd iac
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+
+# 무엇이 생성될지 확인 — AWS 변경/비용 없음:
+cdk synth
+
+# 해당 계정/리전에서 최초 1회만:
+cdk bootstrap
+
+# 전체 배포 (과금 리소스 생성 — 아래 비용 주의 참고):
+cdk deploy --all
+```
+
+배포가 끝나면 CloudFormation이 Neptune / OpenSearch / S3 출력값을 표시합니다. 이
+엔드포인트를 `config.yaml`에 복사하면 바로 [인덱싱·질의](#-사용법)를 시작할 수
+있습니다.
+
+> **💡 비용·정리 주의.** 배포하면 Neptune과 OpenSearch(둘 다 시간당 과금)가
+> 생성되며, `public` 네트워크 모드에서는 NAT 게이트웨이도 생성됩니다. 기본 `dev`
+> 프로파일에서는 `cdk destroy --all`로 모두 깔끔하게 정리됩니다. 프로덕션에서는
+> 하드닝 플래그(`use_cmk`, `deletion_protection`, 멀티-AZ 사이징, `vpc_flow_logs`
+> 등)를 먼저 검토하세요.
+
+전체 레퍼런스는 [`iac/README.md`](./iac/README.md)를 참고하세요 — 모든 스택,
+`-c key=value` 설정 옵션, VPC 재사용, 리전 고정 Bedrock Guardrail 2단계 배포,
+cdk-nag 검증, 스택 기동 후 Step Functions로 인제스천 실행을 시작하는 방법까지 모두
+담겨 있습니다.
 
 ---
 

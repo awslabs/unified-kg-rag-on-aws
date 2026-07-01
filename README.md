@@ -42,7 +42,7 @@ It reimplements two retrieval methodologies — Microsoft's GraphRAG ("From Loca
 - **Semantic Search**: High-quality vector search based on Amazon Bedrock embedding models
 - **Lexical Search**: Precise keyword matching using BM25 algorithm
 - **Relationship-based Search**: Connectivity analysis through knowledge graph traversal
-- **Result Optimization**: Enhanced search accuracy with RRF algorithm and Amazon Bedrock reranking models
+- **Result Optimization**: Enhanced search accuracy with the RRF (Reciprocal Rank Fusion) algorithm and Amazon Bedrock reranking models
 
 ### 🧠 **Advanced Knowledge Graph Processing**
 - **Precise Entity Resolution**: Automatic detection and integration of duplicate entities
@@ -59,8 +59,9 @@ caching, multilingual, and hybrid-scoring stack — only the retrieval algorithm
   extraction over an entity index + a relationship vector index + graph expansion
 
 ### ♻️ **Incremental Indexing**
-- **Content-hash delta detection**: a DynamoDB document-status registry re-indexes
-  only new/changed documents and merges into the live graph (idempotent upserts)
+- **Content-hash delta detection**: a DynamoDB document-status registry fingerprints
+  each document, so re-runs re-index only new/changed documents and merge into the
+  live graph (idempotent upserts)
 - **Deletion lineage**: removing a document deletes only its *exclusive* artifacts
 
 ### 🎯 **Comprehensive Evaluation Framework**
@@ -162,7 +163,7 @@ the optimal approach based on query analysis.
 
 **Mix / Hybrid Strategy**: Extracts high-level and low-level keywords
 (`KeywordsExtractionPrompt`), then queries the relationship vector index
-(high-level) + entity index (low-level) with Neptune neighbourhood expansion.
+(high-level) + entity index (low-level) with Neptune neighborhood expansion.
 `mix` additionally blends naive vector chunk retrieval. Both run through the
 same `HybridScorer` (lexical + semantic + graph, RRF + Bedrock rerank).
 
@@ -198,16 +199,17 @@ as a fast lexical/semantic fallback and for comparison evaluation.
 ### Prerequisites
 - **Python 3.10–3.12** (`uv` recommended)
 - **AWS CLI** configured with appropriate permissions
-- **AWS Services** deployed and accessible:
+- **AWS Services** deployed and accessible (provision them yourself, or use the
+  optional CDK app — see [Provision the AWS stack](#-provision-the-aws-stack-optional) below):
   - Amazon Bedrock (with model access enabled)
   - Amazon Neptune cluster
   - Amazon OpenSearch domain
   - Amazon S3 bucket
-  - Amazon DynamoDB (only for incremental indexing)
+  - Amazon DynamoDB (only if you want incremental indexing)
 
 ### Quick Start
 ```bash
-# Clone the repository
+# Clone the repository (replace <repository-url> with this repo's Git URL)
 git clone <repository-url>
 cd unified-kg-rag-on-aws
 
@@ -222,6 +224,54 @@ cp config-template.yaml config.yaml
 cp .env-template .env
 # Edit .env file with your OpenSearch credentials if not using IAM authentication
 ```
+
+### 📦 Provision the AWS stack (optional)
+
+The framework talks to **existing** AWS services — it does not create them. You
+have two ways to get those services in place:
+
+- **Already have them?** Skip this section. Just put your Bedrock region and your
+  Neptune / OpenSearch / S3 (and optional DynamoDB) endpoints into `config.yaml`
+  and go straight to [Usage](#-usage).
+- **Starting from scratch?** The repo ships an **optional, batteries-included AWS
+  CDK app** in [`iac/`](./iac/README.md) that provisions the entire stack for you
+  — VPC + endpoints, a Neptune cluster, an OpenSearch domain, the DynamoDB
+  doc-status table, an S3 cache bucket, an ECS Fargate data plane, a Step
+  Functions ingestion pipeline, CloudWatch dashboards/alarms, and an optional
+  Bedrock Guardrail — with Well-Architected defaults (private-VPC isolation, KMS
+  at-rest encryption, enforced TLS, least-privilege IAM).
+
+Using the CDK app is a short, self-contained flow:
+
+```bash
+cd iac
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+
+# See what would be created — no AWS changes, no cost:
+cdk synth
+
+# First time in this account/region only:
+cdk bootstrap
+
+# Deploy everything (creates billable resources — see the cost note below):
+cdk deploy --all
+```
+
+After the deploy finishes, CloudFormation prints the Neptune / OpenSearch / S3
+outputs — copy those endpoints into your `config.yaml`, and you're ready to
+[ingest and query](#-usage).
+
+> **💡 Heads-up on cost & teardown.** Deploying creates Neptune and OpenSearch
+> (both billed hourly) plus, in `public` network mode, NAT gateways. In the
+> default `dev` profile everything tears down cleanly with `cdk destroy --all`.
+> For production, review the hardening flags (`use_cmk`, `deletion_protection`,
+> Multi-AZ sizing, `vpc_flow_logs`, …) first.
+
+The [`iac/README.md`](./iac/README.md) is the full reference: every stack, all
+`-c key=value` configuration knobs, VPC reuse, the region-pinned Bedrock
+Guardrail two-step, cdk-nag validation, and how to kick off an ingestion run via
+Step Functions once the stack is up.
 
 ### Environment Configuration
 
@@ -272,7 +322,6 @@ run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --conf
 See the **[User Guide](./docs/user-guide.md)** for configuration, CLI flags, the
 Python API, and incremental indexing, and the **[Design Doc](./docs/design.md)**
 for architecture and algorithms.
-
 
 ## 🧪 Testing & Quality
 

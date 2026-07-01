@@ -26,7 +26,10 @@ def convert_langchain_to_document(
     # the single source of both the id and the stored content.
     combined_text = combined_text.lstrip("\ufeff")
 
-    metadata = langchain_docs[0].metadata if langchain_docs else {}
+    # Copy rather than alias the loader's metadata dict: page 0's raw_data below
+    # holds the same object as langchain_docs[0].metadata, so mutating the
+    # top-level metadata (e.g. the INDEX key) would otherwise leak into page 0.
+    metadata = dict(langchain_docs[0].metadata) if langchain_docs else {}
     if index_value is not None:
         metadata[Constants.INDEX.value] = index_value
     document_id = generate_stable_id(f"doc:{path.name}:{combined_text[:n_chars]}")

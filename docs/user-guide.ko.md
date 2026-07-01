@@ -10,7 +10,7 @@ AWS 네이티브 Knowledge Graph RAG 프레임워크입니다. 두 가지 검색
 
 - *무엇을 / 왜*와 1분 빠른 시작은 [README.md](../README.md)를 참고하세요.
 - *내부 구조 / 아키텍처*(헥사고날 레이어, 포트 & 어댑터, 의존성 규칙)는
-  기술 문서([docs/design.md](./design.md) 한국어 / [docs/design.md](./design.md)
+  기술 문서([docs/design.ko.md](./design.ko.md) 한국어 / [docs/design.md](./design.md)
   영어)를 참고하세요.
 
 아래 내용은 모두 코드베이스의 실제 CLI 플래그와 설정 키에 기반합니다. 다섯 개의
@@ -43,6 +43,35 @@ AWS 네이티브 Knowledge Graph RAG 프레임워크입니다. 두 가지 검색
 | **Amazon S3** | 예 | 파이프라인 캐시 동기화, 선택적 임베딩 캐시 영속화, 문서 저장. |
 | **Amazon DynamoDB** | 증분 인덱싱 시에만 | 콘텐츠 해시로 코퍼스를 diff하는 문서-상태 레지스트리. |
 
+이 프레임워크는 **이미 존재하는** 서비스에 연결할 뿐, 서비스를 직접 생성하지
+않습니다. 준비 방법은 두 가지입니다.
+
+- **기존 서비스 사용.** Neptune, OpenSearch, S3(및 선택적으로 DynamoDB)가 이미
+  실행 중이라면, 엔드포인트를 `config.yaml`(아래 §2.1)에 기록하고 이 절을 건너뛰면
+  됩니다. 설정한 모델 ID에 대해 Bedrock 모델 액세스가 활성화되어 있는지 확인하세요.
+- **번들 CDK 앱으로 전체 프로비저닝.** 저장소에는 스택 전체를 명령 한 번으로
+  세워 주는 선택적, Well-Architected AWS CDK 앱이 [`iac/`](../iac/README.md)에
+  포함되어 있습니다 — 네트워킹(VPC + 엔드포인트), Neptune 클러스터, OpenSearch
+  도메인, DynamoDB 문서-상태 테이블, S3 캐시 버킷, ECS Fargate 데이터 플레인,
+  Step Functions 인제스천 파이프라인, CloudWatch 관측성, 그리고 선택적 리전 고정
+  Bedrock Guardrail까지 생성합니다.
+
+  ```bash
+  cd iac
+  python -m venv .venv && . .venv/bin/activate
+  pip install -r requirements.txt
+
+  cdk synth              # 미리보기 — AWS 변경/비용 없음
+  cdk bootstrap          # 계정/리전당 최초 1회
+  cdk deploy --all       # 과금 리소스 생성 (Neptune + OpenSearch는 시간당 과금)
+  ```
+
+  배포가 끝나면 CloudFormation 출력값의 Neptune / OpenSearch / S3 엔드포인트를
+  `config.yaml`에 복사하세요. `cdk destroy --all`로 `dev` 프로파일을 다시 정리할 수
+  있습니다. 모든 스택, `-c key=value` 옵션(VPC 재사용, 인스턴스 사이징, CMK, 삭제
+  보호, cdk-nag), 프로덕션 하드닝 체크리스트는 [`iac/README.md`](../iac/README.md)를
+  참고하세요.
+
 ### 설치
 
 ```bash
@@ -59,7 +88,8 @@ pip install -e .
 선택적 추가 패키지: **Markdown(.md)** 및 **HTML(.html)** 파싱에는
 `unstructured` 패키지가 필요합니다. 이 패키지가 없으면 `.pdf`, `.txt`, `.csv`,
 `.json`만 파싱됩니다(파서는 `.md`/`.html`에 대해 누락된 패키지 이름을 명시하는
-명확한 에러를 발생시킵니다). 해당 포맷이 필요하면 패키징 도구로 설치하세요.
+명확한 에러를 발생시킵니다). 해당 포맷이 필요하면 패키지 매니저로 설치하세요
+(`uv pip install unstructured` 또는 `pip install unstructured`).
 
 ### 인증
 
@@ -108,7 +138,7 @@ aws:
   bedrock:
     region_name: "ap-northeast-2" # Bedrock can live in a different region
     assumed_role_arn: null
-    enable_global_profile: true   # use cross-region inference profiles
+    enable_global_profile: true   # 크로스 리전(글로벌) Bedrock 추론 프로파일 사용 — 처리량/가용성 향상
     guardrail:                    # optional Bedrock Guardrails on every LLM call
       identifier: null            # set a guardrail ID/ARN to enable
       version: "DRAFT"
@@ -152,8 +182,8 @@ fixing:
   fixing_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
 ```
 
-구조화된 스테이지에서 LLM이 잘못된 형식의 JSON을 반환하면, 실패시키는 대신
-모델에게 복구를 다시 요청합니다. 켜 둔 채로 두세요.
+구조화된 스테이지에서 LLM이 잘못된 형식의 JSON을 반환하면, 실행을 실패시키는 대신
+모델에게 복구를 다시 요청합니다. 켜 둔 채로 두는 것을 권장합니다.
 
 ### 2.3 `processing` — 동시성, 청킹, 번역, 추출
 
@@ -344,7 +374,9 @@ indexing:
     min_entity_importance: 0.5
 ```
 
-> `*_index_prefix` 키가 인덱스 이름 설정 키입니다.
+> `*_index_prefix` 키는 각 OpenSearch 인덱스의 기본 이름을 설정합니다. 접미사
+> (여기서는 `additional_suffix`, CLI에서는 `--suffix`)가 최종 인덱스 이름에
+> 덧붙습니다 — 버전 구분이나 멀티테넌트 분리에 유용합니다.
 
 ### 2.6 `search` — 검색, 융합, 리랭킹, 전략별 항목
 
@@ -364,7 +396,7 @@ search:
     method: "rrf"                   # rrf | weighted
     rrf_k: 60
     diversity_lambda: 0.5           # MMR: 1.0 = pure relevance, 0.0 = max diversity
-    fusion_weights: { ... }         # only used when method: weighted
+    fusion_weights: {}              # 소스별 가중치; method: weighted일 때만 사용 (전체 키 목록은 config-template.yaml 참고)
 
   reranking:
     enabled: true
@@ -447,20 +479,20 @@ evaluation:
 
 | 플래그 | 기본값 | 의미 |
 |---|---|---|
-| `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | 소스 문서 디렉터리 (실행에 필수) |
+| `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | 소스 문서 디렉터리. 실행에 필수이며, 플래그를 생략하면 `GRAPHRAG_SOURCE_DIRECTORY` 환경 변수로 대체됩니다. |
 | `--target-directory` | source dir | 파싱된 문서가 기록될 위치 |
 | `--cache-directory` | `cache` | 파이프라인 캐시 + 중간 결과 |
 | `--force-rebuild` | off | 기존 캐시를 모두 무시하고 처음부터 재구축 |
 | `--s3-sync` | off | 캐시를 S3에 동기화 (`--s3-bucket-name` 필요) |
 | `--s3-bucket-name` | — | 캐시 동기화용 S3 버킷 |
 | `--s3-prefix` | `pipeline-runs` | 캐시 파일의 S3 키 프리픽스 |
-| `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | 재개/검사할 기존 실행 |
+| `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | 재개/검사할 기존 실행. 플래그를 생략하면 `GRAPHRAG_PIPELINE_ID` 환경 변수로 대체됩니다. |
 | `--resume-from-stage` | — | 재개할 스테이지 (`--pipeline-id` 필요) |
 | `--verify-metadata` | off | 파이프라인 메타데이터 무결성 검증 (`--pipeline-id` 필요) |
 | `--repair-metadata` | off | 메타데이터 복구 시도 (`--pipeline-id` 필요) |
 | `--continue-on-error` | off | 스테이지 에러 시에도 계속 진행 |
 | `--enabled-stages` | all | 실행할 스테이지 목록(쉼표 구분) |
-| `--metrics-sink` | `none` | `none` 또는 `cloudwatch` (EMF를 stdout으로) |
+| `--metrics-sink` | `none` | `none`, 또는 `cloudwatch` (CloudWatch EMF — Embedded Metric Format — 메트릭을 stdout으로 출력) |
 | `--config-path` | — | `config.yaml` 경로 |
 
 ### 12개 파이프라인 스테이지
@@ -547,15 +579,15 @@ OpenSearch analyzer는 `indexing.opensearch.language_analyzers`(예: `ko: nori`)
 
 | 플래그 | 기본값 | 의미 |
 |---|---|---|
-| `--query`, `-q` | — | 단일 질의 (`--interactive`와 상호 필수) |
+| `--query`, `-q` | — | 단일 질의 — 이 옵션 또는 `--interactive` 중 정확히 하나가 필요합니다. |
 | `--interactive`, `-i` | off | 인터랙티브 채팅 (메모리 자동 활성화) |
 | `--mode` | `rag` | `rag`(전체 생성) 또는 `search`(검색만) |
 | `--conversation-id` | — | 기존 대화 이어가기 |
 | `--use-memory` | off | 대화 메모리 활성화 (인터랙티브에서는 자동) |
 | `--suffix` | — | 멀티테넌트 또는 버전별 인덱스용 인덱스/라벨 접미사 |
 | `--enable-thinking` | off | 모델의 단계별 추론 활성화 |
-| `--search-strategy` | `auto` | `auto` `drift` `global` `local` `simple` `mix` `hybrid` `naive` |
-| `--search-type` | `hybrid` | `hybrid` `lexical` `vector` |
+| `--search-strategy` | `auto` | `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive` |
+| `--search-type` | `hybrid` | `hybrid`, `lexical`, `vector` |
 | `--top-k` | `10` | 최대 검색 결과 수 |
 | `--retrieval-multiplier` | `1` | 검색 깊이 증가 |
 | `--disable-query-processing` | off | 번역 + 엔티티 추출 건너뛰기 |

@@ -8,6 +8,7 @@ import boto3
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    is_fatal_retrieval_error,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -152,6 +153,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
             results = await self.document_retriever.aretrieve(search_query)
             return [res.source for res in results if res.source]
         except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("Failed to find candidate entities: %s", e)
             return []
 
@@ -183,6 +186,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
         try:
             return await self.document_retriever.aretrieve(search_query)
         except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("Failed to retrieve claims: %s", e)
             return []
 
@@ -215,6 +220,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
         try:
             return await self.document_retriever.aretrieve(search_query)
         except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("Failed to retrieve community reports: %s", e)
             return []
 
@@ -246,6 +253,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
         try:
             return await self.document_retriever.aretrieve(search_query)
         except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("Failed to retrieve relationships: %s", e)
             return []
 
@@ -264,6 +273,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
         try:
             return await self.graph_retriever.aretrieve(search_query)
         except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("Neptune retrieval failed: %s", e)
             return []
 
@@ -308,6 +319,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
             results = await self.document_retriever.aretrieve(search_query)
             return {"text_units": results}
         except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("OpenSearch retrieval failed: %s", e)
             return {}
 

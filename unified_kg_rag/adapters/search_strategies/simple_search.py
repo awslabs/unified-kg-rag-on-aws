@@ -4,6 +4,7 @@ import time
 
 from unified_kg_rag.adapters.retrieval.base import (
     BaseSearchStrategy,
+    is_fatal_retrieval_error,
 )
 from unified_kg_rag.domain.models import (
     RetrievalResult,
@@ -77,6 +78,8 @@ class SimpleSearchStrategy(BaseSearchStrategy):
             )
             return {"opensearch_all": results} if results else {}
         except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("OpenSearch retrieval failed: %s", e)
             return {}
 
