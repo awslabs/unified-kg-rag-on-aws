@@ -100,6 +100,41 @@ def test_is_lightrag_mode(strategy, expected) -> None:
     assert GraphRAGChain._is_lightrag_mode({"resolved_strategy": strategy}) is expected
 
 
+# --- query-translation refusal guard (Issue F side observation) ----------
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "I appreciate your request, but I notice the text you provided...",
+        "I notice the text you provided is already in English.",
+        "There is no text to translate.",
+        "As an AI, I cannot translate this.",
+    ],
+)
+def test_translation_refusal_detected(candidate) -> None:
+    # LLM meta-output (not a translation) must be flagged so the caller falls
+    # back to the original query instead of searching for the commentary.
+    assert (
+        GraphRAGChain._looks_like_translation_refusal(candidate, "오다 노부나가")
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "candidate,original",
+    [
+        ("Tell me about Oda Nobunaga", "오다 노부나가"),  # a real translation
+        ("오다 노부나가", "오다 노부나가"),  # identical passthrough
+        ("The relationship between X and Y", "X와 Y의 관계"),
+    ],
+)
+def test_genuine_translation_not_flagged(candidate, original) -> None:
+    # A real translation (even one containing 'the') and an identical passthrough
+    # must NOT be treated as refusals.
+    assert GraphRAGChain._looks_like_translation_refusal(candidate, original) is False
+
+
 # --- RAGInput / ProcessedQuery / RAGOutput boundaries --------------------
 
 

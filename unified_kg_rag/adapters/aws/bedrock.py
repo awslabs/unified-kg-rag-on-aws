@@ -112,7 +112,9 @@ _EMBEDDING_MODEL_INFO: dict[EmbeddingModelId, EmbeddingModelInfo] = {
         # fallback; scaled from the token budget at ~4 chars/token. Under-stating
         # this (the old 512) would clamp every input to 512 tokens — far worse
         # than Titan's 8192 — silently truncating most documents.
-        dimensions=1024, max_sequence_length=512000, max_sequence_tokens=128000
+        dimensions=1024,
+        max_sequence_length=512000,
+        max_sequence_tokens=128000,
     ),
     # NOTE: add new models here
 }
@@ -270,6 +272,13 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
     # reports, extended thinking) but short enough that a hung socket doesn't
     # freeze a whole ProcessPool-parallel stage (e.g. claim extraction).
     BOTO_READ_TIMEOUT: ClassVar[int] = 300
+    # TCP connect timeout. Without this, a client whose endpoint is unreachable
+    # (e.g. a private/no-NAT VPC missing the relevant Bedrock interface endpoint,
+    # such as bedrock-agent-runtime for the Rerank API) blocks at the socket
+    # level effectively forever. A bounded connect timeout turns that hang into a
+    # prompt, retryable error — which callers that degrade gracefully (e.g. the
+    # hybrid scorer's rerank fallback to RRF-only) can actually catch.
+    BOTO_CONNECT_TIMEOUT: ClassVar[int] = 10
     BOTO_MAX_ATTEMPTS: ClassVar[int] = 5
     # "adaptive" adds client-side rate limiting on top of retries, which is
     # materially better for throttling-heavy Bedrock workloads than "standard".
@@ -280,8 +289,15 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
         # private _RetryDict that a local dict does not nominally satisfy.
         retries = {"max_attempts": self.BOTO_MAX_ATTEMPTS, "mode": self.BOTO_RETRY_MODE}
         if read_timeout is not None:
-            return BotoConfig(read_timeout=read_timeout, retries=retries)  # type: ignore[arg-type]
-        return BotoConfig(retries=retries)  # type: ignore[arg-type]
+            return BotoConfig(
+                connect_timeout=self.BOTO_CONNECT_TIMEOUT,
+                read_timeout=read_timeout,
+                retries=retries,  # type: ignore[arg-type]
+            )
+        return BotoConfig(
+            connect_timeout=self.BOTO_CONNECT_TIMEOUT,
+            retries=retries,  # type: ignore[arg-type]
+        )
 
     def __init__(
         self,

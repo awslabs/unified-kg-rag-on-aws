@@ -111,6 +111,13 @@ class NetworkingStack(Stack):
         interface_services = {
             "Bedrock": ec2.InterfaceVpcEndpointAwsService.BEDROCK,
             "BedrockRuntime": ec2.InterfaceVpcEndpointAwsService.BEDROCK_RUNTIME,
+            # The Bedrock Rerank API lives on bedrock-agent-runtime (it was added
+            # to the Agents/Knowledge-Bases runtime surface), NOT bedrock-runtime.
+            # Reranking is enabled by default, so without this endpoint every
+            # query hangs at the TCP level in private (no-NAT) mode — there is no
+            # route to the public endpoint. Required even when no Agents feature
+            # is used.
+            "BedrockAgentRuntime": ec2.InterfaceVpcEndpointAwsService.BEDROCK_AGENT_RUNTIME,
             "EcrApi": ec2.InterfaceVpcEndpointAwsService.ECR,
             "EcrDocker": ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER,
             "CwLogs": ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,

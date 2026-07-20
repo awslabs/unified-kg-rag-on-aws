@@ -6,7 +6,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, Callable, Iterator
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 import boto3
 from langchain_core.output_parsers import (
@@ -349,26 +349,40 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         original_query = inputs.get("query", "")
 
         try:
+            requested_language = inputs.get("target_language")
             target_language = (
-                inputs.get("target_language")
-                or self.config.processing.translation.target_language
+                requested_language or self.config.processing.translation.target_language
             )
 
-            translator = self._get_chain_for_prompt(
-                TranslationPrompt, StrOutputParser()
+            # Skip query translation when it would be a no-op: no explicit target
+            # was requested AND the corpus is same-language (mirrors the ingestion
+            # side's TranslationConfig.is_noop skip). This avoids paying an LLM
+            # call per query for e.g. an English-only or Japanese-only corpus, and
+            # — more importantly — avoids the failure mode where the translator
+            # LLM returns a meta-response ("I notice the text you...") for a query
+            # already in the target language, which would then be used verbatim as
+            # the search query.
+            skip_translation = (
+                requested_language is None
+                and self.config.processing.translation.is_noop
             )
+
             entity_extractor = self._get_chain_for_prompt(
                 EntityExtractionPrompt, CommaSeparatedListOutputParser()
             )
 
-            tasks = {
-                "translation": translator.ainvoke(
-                    {"query": original_query, "target_language": target_language}
-                ),
+            tasks: dict[str, Any] = {
                 "entities": entity_extractor.ainvoke(
                     {"query": original_query, "target_language": target_language}
                 ),
             }
+            if not skip_translation:
+                translator = self._get_chain_for_prompt(
+                    TranslationPrompt, StrOutputParser()
+                )
+                tasks["translation"] = translator.ainvoke(
+                    {"query": original_query, "target_language": target_language}
+                )
 
             results = await asyncio.gather(*tasks.values(), return_exceptions=True)
             results_map = dict(zip(tasks.keys(), results, strict=True))
@@ -379,6 +393,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                         logger.warning("Query translation failed: %s", translated_query)
                     else:
                         raise translated_query
+                translated_query = None
+            elif self._looks_like_translation_refusal(translated_query, original_query):
+                # The translator returned prose about the request instead of a
+                # translation (common when the query is already in the target
+                # language). Fall back to the original query rather than searching
+                # for the LLM's meta-response.
+                logger.warning(
+                    "Query translation looks like non-translation LLM output; "
+                    "falling back to the original query."
+                )
                 translated_query = None
 
             entity_data = results_map.get("entities", [])
@@ -418,6 +442,35 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     def _is_lightrag_mode(state: dict[str, Any]) -> bool:
         strategy = state.get("resolved_strategy")
         return strategy in LIGHTRAG_STRATEGIES
+
+    # Phrases that signal the model returned commentary about the request rather
+    # than a translation of it (seen when the query is already in the target
+    # language). Matched case-insensitively against the start of the response.
+    _TRANSLATION_REFUSAL_MARKERS: ClassVar[tuple[str, ...]] = (
+        "i appreciate",
+        "i notice",
+        "i'm sorry",
+        "i am sorry",
+        "i cannot",
+        "i can't",
+        "as an ai",
+        "it appears",
+        "the text you",
+        "there is no text",
+        "no text was provided",
+    )
+
+    @classmethod
+    def _looks_like_translation_refusal(cls, candidate: str, original: str) -> bool:
+        """Heuristic: does the 'translation' look like LLM meta-output, not a
+        translation? Only flags when the candidate differs from the original
+        (an identical passthrough is fine) and opens with a known refusal/notice
+        phrase, so genuine translations that merely contain such words mid-text
+        are not caught."""
+        text = candidate.strip().lower()
+        if not text or text == original.strip().lower():
+            return False
+        return text.startswith(cls._TRANSLATION_REFUSAL_MARKERS)
 
     async def _extract_dual_keywords(
         self, query: str, target_language: Any
