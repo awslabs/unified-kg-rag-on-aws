@@ -1211,23 +1211,37 @@ class IndexingStage(PipelineStage):
         )
 
     def _validate_backend_success(self, indexing_results: dict[str, Any]) -> None:
-        # 1) Per-index-type validation: fail if any individual index type completely failed
+        # 1) Per-index-type validation: fail if any individual index type failed
+        #    entirely (0 successes) OR exceeded the tolerated partial-failure rate.
+        #    The partial-failure gate is what stops a run where, say, most
+        #    relationship edges are dropped by a backend error from still being
+        #    reported as a successful pipeline (the write failures otherwise only
+        #    surface in per-stage stats and never affect stage/pipeline success).
+        max_failure_rate = self.config.indexing.max_failure_rate
         failed_index_types = []
         for key, stats in indexing_results.items():
-            if stats and stats.total_items > 0 and stats.successful_items == 0:
+            if not stats or stats.total_items <= 0:
+                continue
+            failure_rate = stats.failed_items / stats.total_items
+            fully_failed = stats.successful_items == 0
+            if fully_failed or failure_rate > max_failure_rate:
                 failed_index_types.append(key)
                 logger.error(
-                    "Index type '%s' completely failed: 0/%s items indexed successfully",
+                    "Index type '%s' failed: %s/%s items failed (%.1f%% > %.1f%% "
+                    "tolerated).",
                     key,
+                    stats.failed_items,
                     stats.total_items,
+                    failure_rate * 100,
+                    max_failure_rate * 100,
                 )
 
         if failed_index_types:
             error_msg = (
                 f"Indexing failed: {', '.join(failed_index_types)} "
-                f"completely failed to index any items. "
-                f"This indicates a critical configuration or connectivity issue. "
-                f"Check the logs above for specific error details."
+                f"exceeded the tolerated failure rate ({max_failure_rate:.0%}) or "
+                f"failed to index any items. This indicates a configuration or "
+                f"connectivity issue. Check the logs above for specific errors."
             )
             raise PipelineStageError(error_msg)
 

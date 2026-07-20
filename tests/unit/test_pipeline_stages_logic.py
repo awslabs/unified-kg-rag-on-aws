@@ -199,7 +199,11 @@ def test_stats_to_dict_falls_back_to_dunder_dict() -> None:
 # --- IndexingStage metric aggregation + backend validation ---------------
 
 
-def _indexing_stage(mocker, indexing_results: dict[str, IndexingStats]):
+def _indexing_stage(
+    mocker,
+    indexing_results: dict[str, IndexingStats],
+    max_failure_rate: float | None = None,
+):
     """Build an IndexingStage with its IndexingManager fully stubbed."""
     from unified_kg_rag.application.ingestion import pipeline_stages as ps
 
@@ -210,6 +214,8 @@ def _indexing_stage(mocker, indexing_results: dict[str, IndexingStats]):
 
     cfg = Config()
     cfg.indexing.reset = False
+    if max_failure_rate is not None:
+        cfg.indexing.max_failure_rate = max_failure_rate
     stage = ps.IndexingStage(config=cfg, boto_session=mocker.MagicMock())
     return stage, fake_mgr
 
@@ -223,7 +229,10 @@ def test_indexing_stage_computes_relationships_indexed_metric(mocker) -> None:
         ),
         "opensearch_text_units": IndexingStats(total_items=2, successful_items=2),
     }
-    stage, _mgr = _indexing_stage(mocker, results)
+    # This test exercises metric aggregation, not the failure gate; the 50%
+    # opensearch_relationships failure would otherwise trip the (default 20%)
+    # partial-failure gate. Disable the gate so metrics are tested in isolation.
+    stage, _mgr = _indexing_stage(mocker, results, max_failure_rate=1.0)
 
     input_count, total_indexed, metrics = stage._execute_core(_context())
 
@@ -283,13 +292,33 @@ def test_validate_backend_success_raises_on_backend_total_failure(mocker) -> Non
 
 
 def test_validate_backend_success_passes_with_partial_success(mocker) -> None:
-    stage, _mgr = _indexing_stage(mocker, {})
+    # Default gate is 20%; 3/5 (40% failed) trips it, so raise the tolerance to
+    # confirm a below-threshold partial failure still passes.
+    stage, _mgr = _indexing_stage(mocker, {}, max_failure_rate=0.5)
     results = {
-        "opensearch_entities": IndexingStats(total_items=5, successful_items=3),
+        "opensearch_entities": IndexingStats(
+            total_items=5, successful_items=3, failed_items=2
+        ),
         "neptune_entities": IndexingStats(total_items=5, successful_items=5),
     }
-    # No exception: every index type and backend has at least one success.
+    # No exception: 40% failure <= 50% tolerated, and every key has a success.
     stage._validate_backend_success(results)
+
+
+def test_validate_backend_success_raises_on_partial_failure_over_threshold(
+    mocker,
+) -> None:
+    # The silent-partial-failure gate: an index type with SOME successes but a
+    # failure rate above the tolerance must fail the stage (previously it would
+    # pass and the run was reported successful despite most writes failing).
+    stage, _mgr = _indexing_stage(mocker, {})  # default 20% tolerance
+    results = {
+        "neptune_relationships": IndexingStats(
+            total_items=100, successful_items=22, failed_items=78
+        ),
+    }
+    with pytest.raises(PipelineStageError, match="neptune_relationships"):
+        stage._validate_backend_success(results)
 
 
 def test_validate_backend_success_ignores_zero_total_items(mocker) -> None:

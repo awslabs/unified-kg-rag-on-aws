@@ -16,10 +16,33 @@ from unified_kg_rag.shared import get_logger
 logger = get_logger(__name__)
 
 
+# One FuzzyMatcher per worker process, populated once by the pool initializer.
+# ProcessPoolExecutor pickles every submit() argument and ships it to the worker
+# on each task; passing the matcher (its MinHash LSH tables + per-candidate
+# MinHashes run to tens of MB at scale) per task turned an O(ms) similarity
+# lookup into an O(0.8s) serialization transfer, so a real corpus (~18k entity
+# names => ~1.4 TB cumulative transfer) never finished. The initializer sends
+# the matcher ONCE per worker instead of once per task.
+_worker_fuzzy_matcher: FuzzyMatcher | None = None
+
+
+def _init_worker_fuzzy_matcher(fuzzy_matcher: FuzzyMatcher) -> None:
+    global _worker_fuzzy_matcher
+    _worker_fuzzy_matcher = fuzzy_matcher
+
+
 def find_all_matches_for_entity_task(
-    entity_name: str, fuzzy_matcher: FuzzyMatcher
+    entity_name: str, fuzzy_matcher: FuzzyMatcher | None = None
 ) -> list[str]:
-    match_result = fuzzy_matcher.find_all_matches(entity_name)
+    # Prefer the explicit argument (kept for direct/back-compat calls and tests);
+    # otherwise use the per-worker matcher installed by _init_worker_fuzzy_matcher.
+    matcher = fuzzy_matcher if fuzzy_matcher is not None else _worker_fuzzy_matcher
+    if matcher is None:
+        raise RuntimeError(
+            "FuzzyMatcher not initialized: pass one explicitly or run inside a "
+            "pool started with _init_worker_fuzzy_matcher"
+        )
+    match_result = matcher.find_all_matches(entity_name)
     return [match[0] for match in match_result]
 
 
@@ -156,11 +179,19 @@ class EntityResolver(BaseResolver):
             ProcessPoolExecutor if self.use_process_pool else ThreadPoolExecutor
         )
 
-        with executor_class(max_workers=self.max_workers) as executor:
+        # Send the matcher to each worker ONCE via the pool initializer, then
+        # submit only the (tiny) entity name per task. This holds for both the
+        # ProcessPoolExecutor (initializer runs once per process) and the
+        # ThreadPoolExecutor path (initializer runs once per thread; the matcher
+        # is shared in-process anyway). ThreadPoolExecutor accepts the same
+        # initializer/initargs signature.
+        with executor_class(
+            max_workers=self.max_workers,
+            initializer=_init_worker_fuzzy_matcher,
+            initargs=(fuzzy_matcher,),
+        ) as executor:
             future_to_name = {
-                executor.submit(
-                    find_all_matches_for_entity_task, name, fuzzy_matcher
-                ): name
+                executor.submit(find_all_matches_for_entity_task, name): name
                 for name in entity_names
             }
             for future in tqdm(

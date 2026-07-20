@@ -23,11 +23,23 @@ class TestEstimateTokenCount:
         assert estimate_token_count("the quick brown fox jumps") >= 5
 
     def test_spaceless_cjk_not_undercounted(self) -> None:
-        # Whitespace split would yield 1; the char-based floor must dominate so
-        # a long space-less CJK string is not counted as a single token.
+        # Whitespace split would yield 1 and a flat chars/4 would yield len/4
+        # (~4x too low). Dense CJK/Hangul chars must be counted at ~1 token each
+        # so an over-limit chunk is truncated before the embedding call rather
+        # than slipping past and failing with "Too many input tokens".
         text = "한국어문장입니다이것은긴문장이다"  # 16 chars, 0 spaces
-        assert estimate_token_count(text) == len(text) // 4
+        assert estimate_token_count(text) == len(text)
+        assert estimate_token_count(text) > len(text) // 4
         assert estimate_token_count(text) > len(text.split())
+
+    def test_latin_uses_char_over_four(self) -> None:
+        # Non-dense scripts stay at ~4 chars/token (word count floors it).
+        text = "the quick brown fox jumps over the lazy dog"
+        assert estimate_token_count(text) <= len(text) // 4 + len(text.split())
+
+    def test_mixed_script_adds_dense_and_sparse(self) -> None:
+        # 4 dense chars (~4 tokens) + 8 latin chars (~2 tokens) ~= 6.
+        assert estimate_token_count("한국어문 abcdefgh") >= 5
 
     def test_never_zero_for_nonempty(self) -> None:
         assert estimate_token_count("가") == 1

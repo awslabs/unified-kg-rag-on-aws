@@ -876,7 +876,10 @@ class OpenSearchIndexer(VectorIndexer):
             "method": {
                 "name": vs_config.get("name", "hnsw"),
                 "space_type": vs_config.get("space_type", "cosinesimil"),
-                "engine": vs_config.get("engine", "faiss"),
+                # lucene HNSW supports cosinesimil on all versions; faiss HNSW
+                # only supports it from OpenSearch 2.19. Default engine kept in
+                # sync with OpenSearchIndexingConfig.vector_search.
+                "engine": vs_config.get("engine", "lucene"),
                 "parameters": {
                     "ef_construction": vs_config.get("ef_construction", 128),
                     "m": vs_config.get("m", 24),

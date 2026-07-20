@@ -107,7 +107,12 @@ _EMBEDDING_MODEL_INFO: dict[EmbeddingModelId, EmbeddingModelInfo] = {
         dimensions=1024, max_sequence_length=2048, max_sequence_tokens=512
     ),
     EmbeddingModelId.EMBED_V4: EmbeddingModelInfo(
-        dimensions=1024, max_sequence_length=2048, max_sequence_tokens=512
+        # Cohere Embed v4 has a 128K-token context (NOT the 512 of Embed v3).
+        # max_sequence_length is a character ceiling for the char-based truncation
+        # fallback; scaled from the token budget at ~4 chars/token. Under-stating
+        # this (the old 512) would clamp every input to 512 tokens — far worse
+        # than Titan's 8192 — silently truncating most documents.
+        dimensions=1024, max_sequence_length=512000, max_sequence_tokens=128000
     ),
     # NOTE: add new models here
 }

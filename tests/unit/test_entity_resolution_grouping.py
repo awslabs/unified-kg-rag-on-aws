@@ -46,3 +46,51 @@ def test_distinct_names_each_present() -> None:
     ]
     groups = resolver._group_similar_entities(entities)
     assert {e.id for g in groups for e in g} == {"a", "b"}
+
+
+def test_matcher_passed_to_pool_via_initializer_not_per_task(mocker) -> None:
+    # Regression (perf): the FuzzyMatcher (tens of MB at scale) must be shipped
+    # to workers ONCE via the pool initializer, not pickled per submitted task.
+    # Assert the executor is constructed with initializer/initargs and that
+    # submit() is called with ONLY the entity name (no matcher argument).
+    import unified_kg_rag.domain.ingestion.graph_resolver as gr
+
+    resolver = _resolver()
+    resolver.show_progress = False
+
+    captured: dict = {}
+
+    class FakeExecutor:
+        def __init__(self, max_workers=None, initializer=None, initargs=None):
+            captured["initializer"] = initializer
+            captured["initargs"] = initargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def submit(self, fn, *args):
+            captured.setdefault("submit_args", []).append(args)
+
+            class _F:
+                def result(self_inner):
+                    return []
+
+            return _F()
+
+    mocker.patch.object(gr, "ThreadPoolExecutor", FakeExecutor)
+    mocker.patch.object(gr, "as_completed", lambda futs: list(futs))
+
+    resolver._group_similar_entities(
+        [Entity(id="a", name="Alpha"), Entity(id="b", name="Beta")]
+    )
+
+    # The matcher is handed to the pool initializer exactly once...
+    assert captured["initializer"] is gr._init_worker_fuzzy_matcher
+    assert captured["initargs"] is not None and len(captured["initargs"]) == 1
+    # ...and each submit carries only the (tiny) name, never the matcher.
+    assert all(
+        len(args) == 1 and isinstance(args[0], str) for args in captured["submit_args"]
+    )

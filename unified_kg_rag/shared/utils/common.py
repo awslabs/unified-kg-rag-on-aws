@@ -2,24 +2,78 @@
 # SPDX-License-Identifier: Apache-2.0
 import hashlib
 import json
+import os
 import re
 import unicodedata
 import uuid
 from multiprocessing import cpu_count
+from pathlib import Path
 from typing import Any
 
 # Fraction of CPUs to use for the default process/thread-pool worker count.
 _DEFAULT_WORKER_CPU_FRACTION = 0.8
 
 
+def _available_cpu_count() -> int:
+    """CPUs actually available to this process, respecting container limits.
+
+    ``multiprocessing.cpu_count()`` returns the host's physical core count and
+    ignores cgroup CPU quotas, so inside a container with ``--cpus 2`` (e.g. a
+    2-vCPU Fargate task) it can report the host's 7+ cores — over-sizing pools —
+    or, combined with the 0.8 fraction, mis-size them. We prefer, in order:
+
+    1. the cgroup v2 / v1 CPU quota (the real CFS ceiling the task runs under),
+    2. the CPU affinity mask (``os.sched_getaffinity``, respects cpusets),
+    3. ``cpu_count()`` as a last resort.
+    """
+    quota = _cgroup_cpu_quota()
+    if quota is not None and quota >= 1:
+        return quota
+    if hasattr(os, "sched_getaffinity"):
+        try:
+            affinity = len(os.sched_getaffinity(0))
+            if affinity >= 1:
+                return affinity
+        except OSError:
+            pass
+    return cpu_count()
+
+
+def _cgroup_cpu_quota() -> int | None:
+    """Whole CPUs permitted by the cgroup CFS quota, or None if unlimited/absent.
+
+    Reads cgroup v2 (``cpu.max`` = "<quota> <period>") then cgroup v1
+    (``cpu.cfs_quota_us`` / ``cpu.cfs_period_us``). Returns ``ceil(quota/period)``
+    rounded to at least 1, or None when no quota is set (``max`` / ``-1``) or the
+    files are unreadable (non-Linux, no cgroup mount).
+    """
+    try:
+        v2 = Path("/sys/fs/cgroup/cpu.max")
+        if v2.is_file():
+            quota_str, _, period_str = v2.read_text().strip().partition(" ")
+            if quota_str != "max":
+                quota, period = int(quota_str), int(period_str or "100000")
+                if quota > 0 and period > 0:
+                    return max(1, -(-quota // period))  # ceil division
+            return None
+        quota = int(Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").read_text().strip())
+        period = int(Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read_text().strip())
+        if quota > 0 and period > 0:
+            return max(1, -(-quota // period))
+    except (OSError, ValueError):
+        return None
+    return None
+
+
 def default_max_workers() -> int:
     """Default pool size for the ingestion stages' executors.
 
-    Single source of truth for the ``int(cpu_count() * 0.8)`` heuristic that was
-    duplicated across the loader/gleaner/claim-extractor/resolver/indexing
-    manager. Always at least 1.
+    Single source of truth for the ``* 0.8`` heuristic that was duplicated across
+    the loader/gleaner/claim-extractor/resolver/indexing manager. Uses the
+    container-aware CPU count (:func:`_available_cpu_count`) so a 2-vCPU Fargate
+    task does not size pools off the host's core count. Always at least 1.
     """
-    return max(1, int(cpu_count() * _DEFAULT_WORKER_CPU_FRACTION))
+    return max(1, int(_available_cpu_count() * _DEFAULT_WORKER_CPU_FRACTION))
 
 
 # Strip punctuation/symbols but KEEP letters, marks and digits of ANY script

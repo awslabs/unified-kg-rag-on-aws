@@ -9,21 +9,48 @@ from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
 
+# Codepoint ranges that tokenize at roughly ONE token per character (often more)
+# under BPE tokenizers: CJK ideographs + Japanese kana + Hangul + CJK
+# punctuation/full-width forms. A plain chars/4 estimate under-counts these ~4x,
+# which is exactly where embedding truncation silently failed on CJK corpora.
+_DENSE_SCRIPT_RANGES: tuple[tuple[int, int], ...] = (
+    (0x1100, 0x11FF),  # Hangul Jamo
+    (0x2E80, 0x2FDF),  # CJK radicals / Kangxi
+    (0x3000, 0x303F),  # CJK symbols and punctuation
+    (0x3040, 0x30FF),  # Hiragana + Katakana
+    (0x3400, 0x4DBF),  # CJK Extension A
+    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
+    (0xA960, 0xA97F),  # Hangul Jamo Extended-A
+    (0xAC00, 0xD7AF),  # Hangul Syllables
+    (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
+    (0xFF00, 0xFFEF),  # Half/full-width forms
+)
+
+
+def _is_dense_script_char(ch: str) -> bool:
+    cp = ord(ch)
+    return any(lo <= cp <= hi for lo, hi in _DENSE_SCRIPT_RANGES)
+
 
 def estimate_token_count(text: str) -> int:
     """Script-aware token-count estimate for the API-unavailable fallback.
 
-    A plain whitespace word count under-counts space-less scripts (CJK, Thai)
-    catastrophically — a whole Korean/Chinese sentence is ~1 "word" but many
-    tokens — which corrupts downstream token budgeting on the multilingual
-    corpora this project targets. We take the max of the whitespace word count
-    and a ~4-chars-per-token character estimate, so dense scripts are not
-    under-counted while space-delimited text is unaffected.
+    Bedrock's CountTokens API does not support embedding models, so embedding
+    truncation always lands on this estimate. A flat ~4-chars-per-token estimate
+    under-counts space-less dense scripts (CJK, kana, Hangul) ~4x — a whole
+    Korean/Japanese sentence is few "words" and few chars-over-4 but many tokens
+    — which let over-limit chunks slip past truncation and fail the embedding
+    call. We count dense-script characters at ~1 token each and the remaining
+    (largely Latin) text at ~4 chars/token, then floor with the whitespace word
+    count so space-delimited text is never under-counted.
     """
     if not text:
         return 0
+    dense_chars = sum(1 for ch in text if _is_dense_script_char(ch))
+    other_chars = len(text) - dense_chars
+    # ~1 token per dense-script char + ~4 chars per token for the rest.
+    char_estimate = dense_chars + (other_chars // 4)
     word_count = len(text.split())
-    char_estimate = len(text) // 4
     return max(word_count, char_estimate, 1)
 
 

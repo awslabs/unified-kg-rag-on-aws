@@ -100,26 +100,36 @@ def test_set_properties_list_uses_set_cardinality_and_drop(indexer) -> None:
     assert calls.count("property") == 3
 
 
-def test_upsert_relationship_drops_edge_by_id_before_readd(indexer) -> None:
-    calls: list[str] = []
+def test_upsert_relationship_drops_edge_by_id_before_readd(indexer, mocker) -> None:
+    # Per-edge write path: existing edges are dropped by id (batched) up front,
+    # then each edge is added as its OWN small traversal (not a sideEffect fan-out
+    # off one root — that shape made Neptune ~240x slower per edge). We record the
+    # steps issued on the shared g and the add-edge traversals built per edge.
+    drop_calls: list[str] = []
+    added_edges: list[str] = []
 
-    def fake_index_generic(items, name, prefix, clear, factory, **kw):
-        builder = factory("Entity", "Entity")
-        builder(RecordingTraversal(calls), items)
-        return None
+    indexer.neptune_client.g = RecordingTraversal(drop_calls)
+    # _execute_with_retries just iterates the traversal; stub it so no real
+    # traversal .iterate() is needed and count the per-edge add builds instead.
+    mocker.patch.object(indexer, "_execute_with_retries")
+    orig_build = indexer._build_add_edge_traversal
 
-    indexer._index_generic = fake_index_generic  # type: ignore[assignment]
+    def spy_build(g, rel, entity_label):
+        added_edges.append(rel.id)
+        return orig_build(g, rel, entity_label)
+
+    mocker.patch.object(indexer, "_build_add_edge_traversal", side_effect=spy_build)
+
     indexer.upsert_relationships(
-        [Relationship(id="r1", source_id="e1", target_id="e2")]
+        [
+            Relationship(id="r1", source_id="e1", target_id="e2"),
+            Relationship(id="r2", source_id="e2", target_id="e3"),
+        ]
     )
-    # Existing edges are dropped first, then each addE is fanned out from a
-    # single root via sideEffect (the addE lives inside the anonymous __ spawn
-    # passed to sideEffect, so it is not a call on the root recorder).
-    assert "drop" in calls
-    assert "sideEffect" in calls
-    # The root chain must NOT re-enter V()/E() between edges (the old chaining
-    # bug): after the initial drop, only inject + sideEffect drive the root.
-    assert calls.count("sideEffect") == 1
+    # Existing edges dropped by id before re-add (idempotency).
+    assert "drop" in drop_calls
+    # Each relationship is written as its own add-edge traversal.
+    assert added_edges == ["r1", "r2"]
 
 
 def test_edge_properties_never_use_cardinality(indexer) -> None:

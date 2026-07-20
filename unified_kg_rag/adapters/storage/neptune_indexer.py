@@ -29,6 +29,10 @@ logger = get_logger(__name__)
 
 
 class NeptuneIndexer(GraphIndexer):
+    # Emit a progress line every N edges during the per-edge relationship write
+    # so a large run (tens of thousands of edges) is distinguishable from a hang.
+    _PROGRESS_LOG_EVERY: int = 2000
+
     def __init__(self, config: Config) -> None:
         super().__init__(config)
         self.neptune_config = self.config.indexing.neptune
@@ -250,57 +254,10 @@ class NeptuneIndexer(GraphIndexer):
         )
 
     def index_relationships(self, relationships: list[Relationship]) -> IndexingStats:
-        def get_traversal_builder(label: str, entity_label: str) -> Callable:
-            def builder(
-                g: GraphTraversalSource, batch: list[Relationship]
-            ) -> GraphTraversal:
-                # Drop any pre-existing edges for this batch's ids first so a
-                # re-run (or overlap with a prior partial run) does not create
-                # duplicate parallel edges with the same id. Edges are not
-                # cleared by the entity label-clear, so without this the full
-                # index path is not idempotent (unlike upsert_relationships).
-                rel_ids = [rel.id for rel in batch]
-                g.E().has("id", P.within(rel_ids)).drop().iterate()
-
-                # Each addE() traversal terminates on the created edge, so the
-                # next edge must start from the source again (not from the prior
-                # edge's traversal — that raised "'GraphTraversal' object is not
-                # callable"). Fan each addE out via sideEffect from one root.
-                t: GraphTraversal = g.inject(1)
-                for rel in batch:
-                    props = self._build_vertex_properties(
-                        rel,
-                        {
-                            "source_name": rel.source_name,
-                            "target_name": rel.target_name,
-                            "weight": rel.weight,
-                            "description": rel.description,
-                            "rank": rel.rank,
-                            "text_unit_ids": rel.text_unit_ids,
-                        },
-                    )
-                    add_edge = (
-                        __.V()
-                        .hasLabel(entity_label)
-                        .has("id", rel.source_id)
-                        .addE(rel.type or "RELATED_TO")
-                        .to(__.V().hasLabel(entity_label).has("id", rel.target_id))
-                        .property("id", rel.id)
-                    )
-                    self._set_edge_properties_on_traversal(add_edge, props)
-                    t = t.sideEffect(add_edge)
-                return cast(GraphTraversal, t)
-
-            return builder
-
-        return self._index_generic(
-            relationships,
-            "Relationship",
-            self.neptune_config.entity_label_prefix.capitalize(),
-            "",
-            get_traversal_builder,
-            entity_label=self.neptune_config.entity_label_prefix.capitalize(),
-        )
+        # Full-index and incremental upsert now share one per-edge write path:
+        # both drop-by-id first (idempotency) then re-add, so there is no
+        # behavioural difference to justify two code paths.
+        return self._write_relationships(relationships)
 
     def index_communities(self, communities: list[Community]) -> IndexingStats:
         return self._index_communities(communities, upsert=False)
@@ -479,57 +436,104 @@ class NeptuneIndexer(GraphIndexer):
 
         Drops any existing edge with the same id before re-adding it, so the
         operation is repeatable without creating duplicate parallel edges.
+        Shares the per-edge write path with :meth:`index_relationships`.
         """
+        return self._write_relationships(relationships)
 
-        def get_traversal_builder(label: str, entity_label: str) -> Callable:
-            def builder(
-                g: GraphTraversalSource, batch: list[Relationship]
-            ) -> GraphTraversal:
-                # Drop any pre-existing edges for this batch's ids in one
-                # statement, then build a single chained add-edge traversal.
-                # Each edge MUST start from g.V() (the source), not from the
-                # previous edge's traversal: an addE() traversal ends on the
-                # created edge, so chaining `.V()`/`.E()` off it raised
-                # "'GraphTraversal' object is not callable". sideEffect lets us
-                # fan each addE out from the same source within one traversal.
-                rel_ids = [rel.id for rel in batch]
-                g.E().has("id", P.within(rel_ids)).drop().iterate()
+    def _build_add_edge_traversal(
+        self, g: GraphTraversalSource, rel: Relationship, entity_label: str
+    ) -> GraphTraversal:
+        """Build a single ``addE`` traversal for one relationship.
 
-                t: GraphTraversal = g.inject(1)
-                for rel in batch:
-                    props = self._build_vertex_properties(
-                        rel,
-                        {
-                            "source_name": rel.source_name,
-                            "target_name": rel.target_name,
-                            "weight": rel.weight,
-                            "description": rel.description,
-                            "rank": rel.rank,
-                            "text_unit_ids": rel.text_unit_ids,
-                        },
-                    )
-                    add_edge = (
-                        __.V()
-                        .hasLabel(entity_label)
-                        .has("id", rel.source_id)
-                        .addE(rel.type or "RELATED_TO")
-                        .to(__.V().hasLabel(entity_label).has("id", rel.target_id))
-                        .property("id", rel.id)
-                    )
-                    self._set_edge_properties_on_traversal(add_edge, props)
-                    t = t.sideEffect(add_edge)
-                return cast(GraphTraversal, t)
-
-            return builder
-
-        return self._index_generic(
-            relationships,
-            "Relationship",
-            self.neptune_config.entity_label_prefix.capitalize(),
-            "",
-            get_traversal_builder,
-            entity_label=self.neptune_config.entity_label_prefix.capitalize(),
+        Written per-edge on purpose. Fanning many edges out of one root via
+        ``sideEffect`` (the previous shape) makes Neptune evaluate a single giant
+        traversal whose per-edge cost is ~2 orders of magnitude higher than a
+        small standalone traversal (measured ~1.7 s/edge vs ~7 ms/edge on a real
+        cluster), so a real corpus's tens of thousands of edges effectively never
+        finished. Each edge as its own traversal keeps the cost linear.
+        """
+        props = self._build_vertex_properties(
+            rel,
+            {
+                "source_name": rel.source_name,
+                "target_name": rel.target_name,
+                "weight": rel.weight,
+                "description": rel.description,
+                "rank": rel.rank,
+                "text_unit_ids": rel.text_unit_ids,
+            },
         )
+        add_edge = (
+            g.V()
+            .hasLabel(entity_label)
+            .has("id", rel.source_id)
+            .addE(rel.type or "RELATED_TO")
+            .to(__.V().hasLabel(entity_label).has("id", rel.target_id))
+            .property("id", rel.id)
+        )
+        self._set_edge_properties_on_traversal(add_edge, props)
+        return cast(GraphTraversal, add_edge)
+
+    def _write_relationships(self, relationships: list[Relationship]) -> IndexingStats:
+        """Write relationship edges one small traversal per edge (idempotent).
+
+        For each suffix group: drop existing edges by id in batches (so re-runs
+        don't duplicate parallel edges), then add each edge as its own traversal.
+        Emits a progress log every ``_PROGRESS_LOG_EVERY`` edges so a large run is
+        distinguishable from a hang. A single failed edge is recorded and skipped
+        (does not abort the batch).
+        """
+        if not relationships:
+            return IndexingStats()
+
+        total_stats = IndexingStats()
+        grouped_items = self._group_items_by_suffix(relationships)
+
+        for suffix, rels in grouped_items.items():
+            stats = IndexingStats(total_items=len(rels))
+            start_time = time.time()
+            entity_label = self._get_name(
+                self.neptune_config.entity_label_prefix.capitalize(), suffix
+            )
+
+            logger.info(
+                "Indexing %s relationships for '%s'...", len(rels), entity_label
+            )
+
+            # Drop existing edges by id first (batched) for idempotency. Edges
+            # are not removed by the entity label-clear, so without this a re-run
+            # would create duplicate parallel edges with the same id.
+            for id_batch in self._batch_iterator([rel.id for rel in rels]):
+                try:
+                    self.neptune_client.g.E().has(
+                        "id", P.within(id_batch)
+                    ).drop().iterate()
+                except Exception as e:
+                    logger.warning("Failed dropping existing edge batch: %s", e)
+
+            for index, rel in enumerate(rels, start=1):
+                try:
+                    traversal = self._build_add_edge_traversal(
+                        self.neptune_client.g, rel, entity_label
+                    )
+                    self._execute_with_retries(traversal, "Relationship indexing")
+                    stats.add_success(1)
+                except Exception as e:
+                    stats.add_error(str(e))
+                    logger.warning("Failed indexing relationship '%s': %s", rel.id, e)
+                if index % self._PROGRESS_LOG_EVERY == 0:
+                    logger.info(
+                        "  ...%s/%s relationships written for '%s'",
+                        index,
+                        len(rels),
+                        entity_label,
+                    )
+
+            stats.processing_time = time.time() - start_time
+            total_stats.merge(stats)
+
+        self._log_indexing_summary("relationships", total_stats)
+        return total_stats
 
     def find_incident_relationship_ids(
         self, entity_ids: list[str], suffix: str | None = None

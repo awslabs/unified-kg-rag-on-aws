@@ -348,8 +348,14 @@ indexing:
       m: 24
       ef_search: 100
       space_type: "cosinesimil"
-      # faiss is the modern OpenSearch kNN engine; nmslib is deprecated.
-      engine: "faiss"
+      # Engine choice is constrained by space_type + OpenSearch version:
+      #   lucene HNSW  -> supports cosinesimil on all versions; max 1024 dims
+      #                   (covers the default Titan Embed V2 at 1024).
+      #   faiss  HNSW  -> supports only l2/innerproduct until OpenSearch 2.19;
+      #                   faiss + cosinesimil is REJECTED at index creation on
+      #                   2.13. For >1024-dim models, use engine: faiss with
+      #                   space_type: innerproduct (embeddings are normalized).
+      engine: "lucene"
 
   # Neptune Indexing
   neptune:

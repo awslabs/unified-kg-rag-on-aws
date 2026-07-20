@@ -1073,9 +1073,16 @@ class OpenSearchIndexingConfig(BaseModel):
     )
     vector_search: dict[str, Any] = Field(
         default_factory=lambda: {
-            # faiss is the modern OpenSearch kNN engine; nmslib is deprecated.
-            # Kept in sync with the index mapping default in OpenSearchIndexer.
-            "engine": "faiss",
+            # lucene HNSW natively supports the cosinesimil space type on all
+            # supported OpenSearch versions. faiss HNSW does NOT: it accepts only
+            # l2/innerproduct until OpenSearch 2.19 (cosine support) / 2.18
+            # (auto-normalization), so faiss + cosinesimil is rejected at index
+            # creation with a mapper_parsing_exception on 2.13. lucene HNSW caps
+            # at 1024 dimensions, which covers the default Titan Embed V2 (1024);
+            # for >1024-dim models set engine: faiss with space_type:
+            # innerproduct (normalized embeddings) instead. Kept in sync with the
+            # index mapping default in OpenSearchIndexer.
+            "engine": "lucene",
             "space_type": "cosinesimil",
             "ef_construction": 128,
             "m": 24,
@@ -1120,6 +1127,17 @@ class IndexingConfig(BaseModel):
     opensearch: OpenSearchIndexingConfig = Field(
         default_factory=OpenSearchIndexingConfig,
         description="Configuration settings for OpenSearch vector and text indexing",
+    )
+    max_failure_rate: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description="Maximum tolerated per-index-type write failure rate before "
+        "the indexing stage is marked FAILED. A fully-failed index type (0 "
+        "successes) always fails regardless of this value; this additionally "
+        "catches PARTIAL failures (e.g. most relationship edges dropped) that "
+        "would otherwise be reported as a successful run. Set to 1.0 to disable "
+        "the partial-failure gate (only total failures fail the stage).",
     )
 
 
