@@ -145,12 +145,16 @@ class TestMergeEntitiesFuzzy:
             _entity("d1", "Acme Corporatio", text_unit_ids=["t1"]),
             _entity("d2", "Acme Corporation", text_unit_ids=["t2"]),
         ]
-        m1, _ = merge_entities(old, d_ab, fuzzy_matcher=self._matcher(["Acme Corporation"]))
+        m1, _ = merge_entities(
+            old, d_ab, fuzzy_matcher=self._matcher(["Acme Corporation"])
+        )
         m2, _ = merge_entities(
             old, list(reversed(d_ab)), fuzzy_matcher=self._matcher(["Acme Corporation"])
         )
         assert len(m1) == len(m2) == 1
-        assert set(m1[0].text_unit_ids) == set(m2[0].text_unit_ids) == {"t0", "t1", "t2"}
+        assert (
+            set(m1[0].text_unit_ids) == set(m2[0].text_unit_ids) == {"t0", "t1", "t2"}
+        )
 
 
 class TestMergeRelationships:

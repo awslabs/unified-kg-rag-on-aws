@@ -261,6 +261,50 @@ def test_query_processing_branch_simple_query_passthrough(
     assert result.entities == []
 
 
+# --- _context_building_step history branch -------------------------------
+
+
+def _ctx_state(history: str) -> dict:
+    return {
+        "processed_query": ProcessedQuery(original_query="q", final_query="q"),
+        "search_results": _search_result(),
+        "history": history,
+    }
+
+
+def test_context_building_no_history_returns_raw_context(config: Config) -> None:
+    chain = GraphRAGChain(config=config)
+    out = chain._context_building_step(_ctx_state(""))
+    # No history -> the raw (token-optimized) search context is returned as-is,
+    # with no ContextBuildingPrompt LLM call.
+    assert isinstance(out, str)
+    assert out  # non-empty (the one result's content)
+
+
+def test_context_building_with_history_invokes_llm(config: Config) -> None:
+    chain = GraphRAGChain(config=config)
+
+    class _FakeBuilder:
+        def invoke(self, _inputs):
+            return "FOLDED-WITH-HISTORY"
+
+    chain._get_chain_for_prompt = lambda *a, **k: _FakeBuilder()  # type: ignore[assignment]
+    out = chain._context_building_step(_ctx_state("earlier turn"))
+    assert out == "FOLDED-WITH-HISTORY"
+
+
+def test_context_building_ignore_errors_degrades_to_empty(config: Config) -> None:
+    chain = GraphRAGChain(config=config)
+    chain.ignore_errors = True
+
+    def _boom(*a, **k):
+        raise RuntimeError("context builder down")
+
+    chain._get_chain_for_prompt = _boom  # type: ignore[assignment]
+    out = chain._context_building_step(_ctx_state("earlier turn"))
+    assert out == ""
+
+
 # --- _load_memory_step ---------------------------------------------------
 
 

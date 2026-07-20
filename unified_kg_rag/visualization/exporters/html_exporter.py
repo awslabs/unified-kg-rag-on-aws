@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 from datetime import UTC, datetime
+from html import escape as _html_escape
 from pathlib import Path
 from typing import Any
 
@@ -216,7 +217,13 @@ class HTMLExporter:
             for i, node_metrics in enumerate(sorted_nodes):
                 score = getattr(node_metrics, metric)
                 score_str = f"{score:.5f}" if score is not None else "N/A"
-                node_name = node_metrics.node_name or node_metrics.node_id
+                # Escape: node names are entity names extracted from the (untrusted)
+                # ingested corpus, so an entity literally named "<script>..." or
+                # "<img onerror=...>" would otherwise execute when the operator
+                # opens graph_analysis_report.html in a browser (stored XSS).
+                node_name = _html_escape(
+                    str(node_metrics.node_name or node_metrics.node_id)
+                )
                 rows += (
                     f"<tr><td>{i+1}</td><td>{node_name}</td><td>{score_str}</td></tr>"
                 )

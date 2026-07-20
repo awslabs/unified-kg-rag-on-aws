@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
+from aws_cdk import Annotations, CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_iam as iam
@@ -73,6 +73,16 @@ class StorageStack(Stack):
     # ------------------------------------------------------------- S3 cache
     def _resolve_cache_bucket(self) -> s3.IBucket:
         if self.config.cache_bucket_name:
+            # A name-only import: CDK cannot attach encryption, a TLS-only bucket
+            # policy, or block-public-access to it, and none of the guarantees the
+            # created-bucket branch below enforces are applied. Warn at synth so
+            # the operator knows the reused bucket must provide these itself.
+            Annotations.of(self).add_warning(
+                "Reusing an external cache bucket "
+                f"('{self.config.cache_bucket_name}'): CDK cannot enforce "
+                "encryption, enforce-SSL, or block-public-access on it. Ensure "
+                "the bucket has SSE and a TLS-only bucket policy before use."
+            )
             return s3.Bucket.from_bucket_name(
                 self, "CacheBucket", self.config.cache_bucket_name
             )
@@ -135,6 +145,10 @@ class StorageStack(Stack):
                 else dynamodb.TableEncryption.AWS_MANAGED
             ),
             encryption_key=self.kms_key,
+            # Parity with Neptune: protect the critical incremental-indexing
+            # lineage state from a direct DeleteTable API/console call in
+            # non-dev. (removal_policy=RETAIN only stops CloudFormation deletes.)
+            deletion_protection=self.config.deletion_protection,
             removal_policy=self.removal_policy,
         )
 
@@ -222,18 +236,22 @@ class StorageStack(Stack):
         # Resource-scoped access policy (added post-construction so it can
         # reference the domain's own ARN). Network access is already restricted
         # to the VPC + service SG; this requires IAM-signed requests AND scopes
-        # the resource to THIS domain's indices (not "*"), so the policy is
-        # least-privilege rather than account-wide. Principal stays
+        # the resource to THIS domain's indices (not "*"). Principal stays
         # AccountRootPrincipal — scoping it to the Fargate task role would create
         # a cross-stack circular dependency (the role lives in the compute stack
         # which depends on this one); the IAM caller still needs es:ESHttp* on
-        # the role, which is granted there.
+        # the role, which is granted there. To keep this from being an
+        # account-wide grant at the IAM layer (any account principal holding
+        # es:ESHttp* would otherwise be authorized), the statement is additionally
+        # conditioned on the request originating from THIS VPC — so only
+        # in-VPC, IAM-signed, resource-scoped callers are allowed.
         domain.add_access_policies(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
                 principals=[iam.AccountRootPrincipal()],
                 actions=["es:ESHttp*"],
                 resources=[f"{domain.domain_arn}/*"],
+                conditions={"StringEquals": {"aws:SourceVpc": self.vpc.vpc_id}},
             )
         )
         return domain

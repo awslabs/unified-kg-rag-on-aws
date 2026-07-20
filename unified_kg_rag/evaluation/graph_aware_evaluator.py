@@ -95,7 +95,7 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         "가나" matches within "가나상사"), which can *over-count* recall in the
         multilingual case. We accept this rather than apply ASCII-style boundary
         checks, because CJK attaches particles/suffixes directly to a word
-        (Korean "가나가", Japanese "トヨタは"), so a boundary check would instead
+        (Korean "가나가", Japanese "かなは"), so a boundary check would instead
         *under-count* legitimate mentions. Faithful matching here needs a
         morphological segmenter (e.g. nori); recall is the only emitted metric,
         so the bias is conservative-to-optimistic, not a correctness gate.

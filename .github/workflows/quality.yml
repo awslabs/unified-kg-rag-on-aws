@@ -79,3 +79,34 @@ jobs:
 
       - name: Integration suite (AWS-free)
         run: uv run pytest -m "integration and not aws" -q
+
+  iac:
+    # Synthesize the CDK app with cdk-nag enabled so the Well-Architected
+    # posture (and the curated nag_suppressions) is enforced in CI — an
+    # over-broad policy or public exposure introduced later fails here instead
+    # of shipping silently. app.synth() raises on any unsuppressed nag error.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install IaC dependencies
+        run: pip install -r iac/requirements.txt
+
+      - name: cdk synth with cdk-nag (fail on findings)
+        working-directory: iac
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python app.py -c enable_cdk_nag=true
+
+      - name: IaC assertion tests
+        working-directory: iac
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        # Only run if a test suite exists; keeps the job green before tests land.
+        run: |
+          pip install pytest
+          if [ -d tests ]; then python -m pytest tests -q; else echo "no iac/tests yet"; fi

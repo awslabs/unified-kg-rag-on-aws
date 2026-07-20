@@ -7,12 +7,15 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
-from tqdm import tqdm
 
 from unified_kg_rag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
 from unified_kg_rag.domain.models import Claim, Config, Entity
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import normalize_name
+
+# See graph_resolver: log progress every N items instead of pulling tqdm
+# (a terminal-UI dependency) into the technology-agnostic domain layer.
+_RESOLVE_PROGRESS_EVERY = 2000
 
 logger = get_logger(__name__)
 
@@ -209,12 +212,10 @@ class ClaimResolver(BaseResolver):
             }
 
             unresolved_count = 0
-            for future in tqdm(
-                as_completed(future_to_claim),
-                total=len(claims),
-                desc="Resolving Claims",
-                disable=not self.show_progress,
-            ):
+            total = len(claims)
+            for done, future in enumerate(as_completed(future_to_claim), start=1):
+                if self.show_progress and done % _RESOLVE_PROGRESS_EVERY == 0:
+                    logger.info("  ...resolved %s/%s claims", done, total)
                 original_claim = future_to_claim[future]
                 try:
                     resolved_claim = future.result()

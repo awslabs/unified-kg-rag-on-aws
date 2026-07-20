@@ -132,6 +132,40 @@ def test_upsert_relationship_drops_edge_by_id_before_readd(indexer, mocker) -> N
     assert added_edges == ["r1", "r2"]
 
 
+def test_write_relationships_isolates_a_failing_edge(indexer, mocker) -> None:
+    # Per-edge failure isolation (the behaviour IndexingConfig.max_failure_rate
+    # depends on): one failing edge is recorded as an error and skipped, the
+    # others still succeed, and stats.total_items counts the whole batch.
+    indexer.neptune_client.g = RecordingTraversal([])
+
+    calls = {"n": 0}
+
+    def flaky_execute(traversal, op):
+        calls["n"] += 1
+        if calls["n"] == 2:  # second edge fails
+            raise RuntimeError("neptune write rejected")
+
+    mocker.patch.object(indexer, "_execute_with_retries", side_effect=flaky_execute)
+
+    stats = indexer.upsert_relationships(
+        [
+            Relationship(id="r1", source_id="e1", target_id="e2"),
+            Relationship(id="r2", source_id="e2", target_id="e3"),
+            Relationship(id="r3", source_id="e3", target_id="e4"),
+        ]
+    )
+    assert stats.total_items == 3
+    assert stats.successful_items == 2
+    assert stats.failed_items == 1
+
+
+def test_write_relationships_empty_input_returns_empty_stats(indexer) -> None:
+    stats = indexer.upsert_relationships([])
+    assert stats.total_items == 0
+    assert stats.successful_items == 0
+    assert stats.failed_items == 0
+
+
 def test_edge_properties_never_use_cardinality(indexer) -> None:
     # Regression: Neptune raises "Cardinality specification may not be used with
     # Edge properties". _set_edge_properties_on_traversal must emit plain

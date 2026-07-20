@@ -6,8 +6,11 @@ from __future__ import annotations
 
 import pytest
 
+from unified_kg_rag.shared.utils import common as common_mod
 from unified_kg_rag.shared.utils.common import (
+    _cgroup_cpu_quota,
     compute_hash,
+    default_max_workers,
     ensure_list,
     generate_stable_id,
     normalize_name,
@@ -149,3 +152,67 @@ class TestGenerateStableId:
 
     def test_differs_by_namespace(self) -> None:
         assert generate_stable_id("x", "ns1") != generate_stable_id("x", "ns2")
+
+
+class TestCgroupCpuQuota:
+    """The cgroup CPU-quota parser (fix for the 2-vCPU Fargate resolver hang).
+
+    A mis-parse here re-introduces the original never-finishing resolver bug, so
+    the cgroup-v2 (cpu.max) and cgroup-v1 (cfs_quota_us/period_us) paths, the
+    ceil-division, and the 'max'/-1 unlimited handling are all pinned.
+    """
+
+    def _patch_v2(self, monkeypatch, content: str | None) -> None:
+        # Simulate cgroup v2 present (cpu.max) with `content`, or absent.
+        from pathlib import Path
+
+        real_is_file = Path.is_file
+        real_read_text = Path.read_text
+
+        def fake_is_file(self):  # noqa: ANN001
+            if str(self) == "/sys/fs/cgroup/cpu.max":
+                return content is not None
+            return real_is_file(self)
+
+        def fake_read_text(self, *a, **k):  # noqa: ANN001
+            if str(self) == "/sys/fs/cgroup/cpu.max" and content is not None:
+                return content
+            return real_read_text(self, *a, **k)
+
+        monkeypatch.setattr(Path, "is_file", fake_is_file)
+        monkeypatch.setattr(Path, "read_text", fake_read_text)
+
+    def test_v2_quota_ceils_to_whole_cpus(self, monkeypatch) -> None:
+        # 250000/100000 = 2.5 -> ceil -> 3
+        self._patch_v2(monkeypatch, "250000 100000")
+        assert _cgroup_cpu_quota() == 3
+
+    def test_v2_exact_two_cpus(self, monkeypatch) -> None:
+        self._patch_v2(monkeypatch, "200000 100000")
+        assert _cgroup_cpu_quota() == 2
+
+    def test_v2_unlimited_max_returns_none(self, monkeypatch) -> None:
+        self._patch_v2(monkeypatch, "max 100000")
+        assert _cgroup_cpu_quota() is None
+
+    def test_v2_sub_one_cpu_floors_to_at_least_one(self, monkeypatch) -> None:
+        # 50000/100000 = 0.5 -> ceil -> 1 (never 0).
+        self._patch_v2(monkeypatch, "50000 100000")
+        assert _cgroup_cpu_quota() == 1
+
+
+class TestDefaultMaxWorkers:
+    def test_always_at_least_one(self, monkeypatch) -> None:
+        # Even if the available CPU count resolves to 1, workers >= 1.
+        monkeypatch.setattr(common_mod, "_available_cpu_count", lambda: 1)
+        assert default_max_workers() == 1
+
+    def test_scales_by_fraction(self, monkeypatch) -> None:
+        # 10 CPUs * 0.8 = 8.
+        monkeypatch.setattr(common_mod, "_available_cpu_count", lambda: 10)
+        assert default_max_workers() == 8
+
+    def test_two_vcpu_does_not_degenerate_to_zero(self, monkeypatch) -> None:
+        # The regression: int(2 * 0.8) = 1 (a single worker), never 0.
+        monkeypatch.setattr(common_mod, "_available_cpu_count", lambda: 2)
+        assert default_max_workers() == 1

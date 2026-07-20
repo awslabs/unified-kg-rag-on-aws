@@ -32,8 +32,12 @@ def apply(stacks: dict[str, object], config: DeploymentConfig) -> None:
                 }
             ],
         )
-    NagSuppressions.add_stack_suppressions(
-        networking,
+    # Scope EC23 to the ServiceSg resource specifically (not the whole stack) so
+    # a genuine 0.0.0.0/0 ingress added to any OTHER security group in this stack
+    # is still flagged. The suppression is a false positive only for this SG's
+    # intra-SG self-reference, which cdk-nag can't resolve.
+    NagSuppressions.add_resource_suppressions(
+        networking.service_sg,
         [
             {
                 "id": "AwsSolutions-EC23",

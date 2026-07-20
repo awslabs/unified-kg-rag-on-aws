@@ -92,6 +92,18 @@ class S3CacheManager:
                     total_files += 1
                     relative_path = Path(s3_key).relative_to(base_prefix)
                     local_path = local_cache_dir / relative_path
+                    # Guard against path traversal: an S3 key containing '..'
+                    # segments (tampered/shared bucket) could otherwise resolve
+                    # outside local_cache_dir and overwrite arbitrary files.
+                    # relative_to() only strips the prefix; it does NOT normalize.
+                    resolved = local_path.resolve()
+                    cache_root = local_cache_dir.resolve()
+                    if not resolved.is_relative_to(cache_root):
+                        logger.warning(
+                            "Skipping S3 key '%s': resolves outside the cache dir",
+                            s3_key,
+                        )
+                        continue
                     local_path.parent.mkdir(parents=True, exist_ok=True)
 
                     success = self._download_cache_file(s3_key, local_path)

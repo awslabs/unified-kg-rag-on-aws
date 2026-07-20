@@ -40,11 +40,22 @@ class ComputeStack(Stack):
         self.kms_key = kms_key
         self.guardrail_identifier = guardrail_identifier
 
+        # Immutable tags (a pushed image can't silently replace an existing tag)
+        # preserve provenance/rollback and block a supply-chain tag-swap of the
+        # running artifact. This is only compatible with a pinned version tag —
+        # the mutable "latest" default (dev iteration) must stay MUTABLE so it
+        # can be re-pushed. So mutability tracks whether a real tag was pinned.
+        pinned_image = config.image_tag != "latest"
         self.repository = ecr.Repository(
             self,
             "Repo",
             repository_name=f"{config.prefix}-app",
             image_scan_on_push=True,
+            image_tag_mutability=(
+                ecr.TagMutability.IMMUTABLE
+                if pinned_image
+                else ecr.TagMutability.MUTABLE
+            ),
             lifecycle_rules=[ecr.LifecycleRule(max_image_count=10)],
         )
 
@@ -201,7 +212,9 @@ class ComputeStack(Stack):
             environment["BEDROCK_GUARDRAIL_IDENTIFIER"] = self.guardrail_identifier
         task_def.add_container(
             "app",
-            image=ecs.ContainerImage.from_ecr_repository(self.repository, "latest"),
+            image=ecs.ContainerImage.from_ecr_repository(
+                self.repository, self.config.image_tag
+            ),
             logging=ecs.LogDriver.aws_logs(
                 stream_prefix="app", log_group=self.log_group
             ),

@@ -350,9 +350,7 @@ class IndexingManager:
                 )
         return merged_entities, merged_relationships
 
-    def _build_fuzzy_old_matcher(
-        self, entities: list[Entity]
-    ) -> tuple[Any, set[str]]:
+    def _build_fuzzy_old_matcher(self, entities: list[Entity]) -> tuple[Any, set[str]]:
         """Build a FuzzyMatcher over existing entity names and find fuzzy hits.
 
         Returns ``(matcher, old_ids)`` where ``matcher`` is built over all

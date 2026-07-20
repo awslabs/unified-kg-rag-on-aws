@@ -20,8 +20,9 @@ Catalog:
   filesystem ``CacheManager`` in ``shared.cache_manager`` conforms structurally).
 
 Two further contracts are abstract *adapter bases* rather than pure ports —
-they construct infrastructure in ``__init__`` (HybridScorer/TokenManager, tqdm)
-— so they live beside their adapters but are re-exported here for discovery:
+they construct infrastructure in ``__init__`` (HybridScorer/TokenManager) — so
+they are NOT exported from this catalog; they live beside their adapters and are
+imported from there directly. Listed here only as a pointer:
 - ``BaseGraphRAGRetriever`` / ``BaseSearchStrategy``
   (``adapters.retrieval.base``; adapters: ``adapters.retrievers`` / ``adapters.search_strategies``).
 - ``BaseGraphRAGEvaluator`` (``evaluation.base``; adapters: ``adapters.evaluators``).

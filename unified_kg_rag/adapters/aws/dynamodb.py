@@ -165,6 +165,14 @@ class DynamoDBDocStatusStore:
             "community_ids": (
                 {"SS": record.community_ids} if record.community_ids else {"NULL": True}
             ),
+            "claim_ids": (
+                {"SS": record.claim_ids} if record.claim_ids else {"NULL": True}
+            ),
+            "community_report_ids": (
+                {"SS": record.community_report_ids}
+                if record.community_report_ids
+                else {"NULL": True}
+            ),
         }
         # Optional scalar string/int attributes.
         for attr in (
@@ -209,6 +217,8 @@ class DynamoDBDocStatusStore:
             relationship_ids=_str_set("relationship_ids"),
             text_unit_ids=_str_set("text_unit_ids"),
             community_ids=_str_set("community_ids"),
+            claim_ids=_str_set("claim_ids"),
+            community_report_ids=_str_set("community_report_ids"),
             error_info=_str("error_info"),
             created_at=_str("created_at"),
             updated_at=_str("updated_at"),

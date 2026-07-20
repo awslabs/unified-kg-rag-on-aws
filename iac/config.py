@@ -36,7 +36,7 @@ Context keys (all optional; sensible defaults shown):
   guardrail_identifier None            attach an existing Bedrock guardrail
   use_cmk             False            customer-managed KMS key for at-rest
                                        encryption (S3/Neptune/OpenSearch/SNS/DDB)
-  vpc_flow_logs       False            enable VPC flow logs (created VPC only)
+  vpc_flow_logs       dev:False/else:True  enable VPC flow logs (created VPC only)
   deletion_protection dev:False/else:True  protect Neptune/OpenSearch from deletion
   bedrock_model_arns  None             scope Bedrock IAM to specific model ARNs
                                        (list); None => account/region foundation
@@ -48,6 +48,7 @@ Context keys (all optional; sensible defaults shown):
   fargate_cpu         2048             task vCPU units (in-task ProcessPool
                                        extractors scale with vCPU count)
   fargate_memory      8192             task memory (MiB)
+  image_tag           latest           container image tag (pin a version for immutable ECR tags)
 
   # --- Governance (propagated as cost-allocation / ownership tags) ---
   owner               "aws-proserve"   `owner` tag on every resource
@@ -81,6 +82,10 @@ class DeploymentConfig:
     backup_retention_days: int
     fargate_cpu: int
     fargate_memory: int
+    # container image tag the Fargate task pulls. Default "latest" (mutable, for
+    # local/dev iteration); set to an immutable version tag or digest for
+    # non-dev, which also flips the ECR repo to immutable tags (provenance).
+    image_tag: str
     # security
     guardrail_identifier: str | None
     use_cmk: bool
@@ -188,9 +193,10 @@ class DeploymentConfig:
             backup_retention_days=int(ctx("backup_retention_days", 7)),
             fargate_cpu=int(ctx("fargate_cpu", 2048)),
             fargate_memory=int(ctx("fargate_memory", 8192)),
+            image_tag=ctx("image_tag", "latest") or "latest",
             guardrail_identifier=ctx("guardrail_identifier"),
             use_cmk=as_bool(ctx("use_cmk"), default=False),
-            vpc_flow_logs=as_bool(ctx("vpc_flow_logs"), default=False),
+            vpc_flow_logs=as_bool(ctx("vpc_flow_logs"), default=not is_dev),
             deletion_protection=as_bool(ctx("deletion_protection"), default=not is_dev),
             bedrock_model_arns=ctx("bedrock_model_arns"),
             alarm_email=ctx("alarm_email"),

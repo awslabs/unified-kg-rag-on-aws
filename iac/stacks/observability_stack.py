@@ -194,3 +194,50 @@ class ObservabilityStack(Stack):
             1,
             "DynamoDB doc-status table is throttling PutItem (write) requests",
         )
+
+        # Neptune: the primary graph store and the write target of every
+        # ingestion phase. Without these, Neptune degradation (CPU saturation
+        # during large edge writes, memory pressure, throttled Gremlin) is
+        # invisible until a pipeline run breaks. Metrics are read from the
+        # AWS/Neptune namespace keyed by the cluster id (stable across the
+        # neptune_alpha construct's API surface).
+        neptune_cluster = self.storage.neptune_cluster
+        neptune_dims = {
+            "DBClusterIdentifier": neptune_cluster.cluster_identifier,
+        }
+
+        def _neptune_metric(metric_name: str) -> cw.Metric:
+            return cw.Metric(
+                namespace="AWS/Neptune",
+                metric_name=metric_name,
+                dimensions_map=neptune_dims,
+                statistic="Average",
+                period=Duration.minutes(5),
+            )
+
+        _alarm(
+            "NeptuneHighCpu",
+            _neptune_metric("CPUUtilization"),
+            90,
+            "Neptune CPU utilization is high (>90%) — ingestion writes may stall",
+        )
+        _alarm(
+            "NeptuneLowFreeableMemory",
+            _neptune_metric("FreeableMemory"),
+            # bytes; ~512 MiB. Low freeable memory precedes query/write failures.
+            536870912,
+            "Neptune freeable memory is low (<512 MiB)",
+            comparison=cw.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
+        )
+        _alarm(
+            "NeptuneGremlinErrors",
+            cw.Metric(
+                namespace="AWS/Neptune",
+                metric_name="GremlinHttp5xx",
+                dimensions_map=neptune_dims,
+                statistic="Sum",
+                period=Duration.minutes(5),
+            ),
+            1,
+            "Neptune is returning Gremlin 5xx errors (write/query failures)",
+        )

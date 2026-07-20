@@ -23,6 +23,7 @@ from __future__ import annotations
 from aws_cdk import CfnOutput, Duration, Stack
 from aws_cdk import aws_ecs as ecs  # noqa: F401  (FargatePlatformVersion)
 from aws_cdk import aws_iam as iam
+from aws_cdk import aws_kms as kms
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_sns as sns
 from aws_cdk import aws_sns_subscriptions as subscriptions
@@ -77,11 +78,17 @@ class OrchestrationStack(Stack):
         self.compute = compute
         self.cache_bucket_name = cache_bucket_name
 
+        # Encrypt the topic at rest always: use the provided CMK when present,
+        # otherwise fall back to the AWS-managed SNS key (alias/aws/sns) so the
+        # default (no-CMK) configuration is still encrypted rather than plaintext.
+        topic_key = kms_key or kms.Alias.from_alias_name(
+            self, "SnsManagedKey", "alias/aws/sns"
+        )
         self.alarm_topic = sns.Topic(
             self,
             "PipelineAlarms",
             topic_name=f"{config.prefix}-pipeline-alarms",
-            master_key=kms_key,  # SSE for the topic when a CMK is provided
+            master_key=topic_key,
         )
         # Require TLS for all publishers (defense in depth).
         self.alarm_topic.add_to_resource_policy(

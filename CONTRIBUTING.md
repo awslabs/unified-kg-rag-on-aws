@@ -46,8 +46,9 @@ the full guide. In short:
   `adapters/search_strategies/__init__.py`.
 - **New storage / LLM backend** — implement the relevant port in
   `ports/` and register it; do not hardcode it into a manager's `__init__`.
-- **New evaluator** — subclass `BaseGraphRAGEvaluator`, add an
-  `EVALUATOR_MAPPING` entry and an `EvaluatorType` enum value.
+- **New evaluator** — subclass `BaseGraphRAGEvaluator`, add a branch in
+  `EvaluationManager._resolve_evaluator_class`, and add an `EvaluatorType` enum
+  value.
 - **New visualization renderer** — subclass `BaseRenderer`, decorate with
   `@register_renderer("name")`; the manager and `run-visualization` pick it up.
 - **New config section** — add a Pydantic `BaseModel`, attach via
@@ -87,7 +88,7 @@ mypy unified_kg_rag
 
 ### Testing
 - Write **unit tests** for new functionality
-- Keep coverage at or above the current CI gate (**63%**, ratcheting toward 80%
+- Keep coverage at or above the current CI gate (**78%**, ratcheting toward 80%
   per milestone — see `.github/workflows/quality.yml` `--cov-fail-under`)
 - Use **pytest** for testing framework
 - Prefer the port-based in-memory fakes in `tests/fixtures/fakes/` (e.g.

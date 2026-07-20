@@ -90,7 +90,9 @@ class TestReciprocalRankFusion:
         scorer = _scorer()
         assert all(w == 1.0 for w in scorer.fusion_config.fusion_weights.values())
         k = scorer.fusion_config.rrf_k
-        fused = scorer._reciprocal_rank_fusion({"unconfigured_bucket": [_r("only", 0.9, "1")]})
+        fused = scorer._reciprocal_rank_fusion(
+            {"unconfigured_bucket": [_r("only", 0.9, "1")]}
+        )
         assert fused[0].score == pytest.approx(1.0 / (k + 1))
 
     def test_per_bucket_weight_scales_rrf_contribution(self) -> None:

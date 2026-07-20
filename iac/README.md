@@ -83,9 +83,10 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `backup_retention_days` | `7` | Neptune automated backup retention |
 | `fargate_cpu` | `2048` | Fargate task vCPU units (in-task ProcessPool extractors scale with vCPU) |
 | `fargate_memory` | `8192` | Fargate task memory (MiB) |
+| `image_tag` | `latest` | container image tag the task pulls; pin a version tag to make ECR tags immutable |
 | `guardrail_identifier` | _(none)_ | **reuse** an existing Bedrock guardrail (else a baseline PII/prompt-attack guardrail is created and its id injected as `BEDROCK_GUARDRAIL_IDENTIFIER`) |
 | `use_cmk` | `false` | customer-managed KMS key for at-rest encryption (S3/Neptune/OpenSearch/SNS/DDB) |
-| `vpc_flow_logs` | `false` | enable VPC flow logs (created VPC only) |
+| `vpc_flow_logs` | `false` (dev) / `true` (non-dev) | enable VPC flow logs (created VPC only) |
 | `deletion_protection` | `false` | protect Neptune/OpenSearch from deletion |
 | `bedrock_model_arns` | _(none)_ | scope Bedrock IAM to specific model ARNs (list) |
 | `alarm_email` | _(none)_ | subscribe an email to the pipeline alarm topic |

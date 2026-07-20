@@ -7,13 +7,19 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
-from tqdm import tqdm
 
 from unified_kg_rag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
 from unified_kg_rag.domain.models import Config, Entity, Relationship
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
+
+# Emit a progress log line every N completed items in the resolver's parallel
+# loop. The resolver was historically the stage that could run for hours while
+# looking like a hang; periodic logging keeps "slow" distinguishable from
+# "stuck" without pulling a terminal progress-bar (tqdm) dependency into the
+# technology-agnostic domain layer.
+_RESOLVE_PROGRESS_EVERY = 2000
 
 
 # One FuzzyMatcher per worker process, populated once by the pool initializer.
@@ -194,13 +200,11 @@ class EntityResolver(BaseResolver):
                 executor.submit(find_all_matches_for_entity_task, name): name
                 for name in entity_names
             }
-            for future in tqdm(
-                as_completed(future_to_name),
-                total=len(entity_names),
-                desc="Resolving Entities",
-                disable=not self.show_progress,
-            ):
+            total = len(entity_names)
+            for done, future in enumerate(as_completed(future_to_name), start=1):
                 original_name = future_to_name[future]
+                if self.show_progress and done % _RESOLVE_PROGRESS_EVERY == 0:
+                    logger.info("  ...resolved %s/%s entities", done, total)
                 try:
                     matched_names = future.result()
                     for matched_name in matched_names:
