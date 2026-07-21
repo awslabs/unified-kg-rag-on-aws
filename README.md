@@ -5,7 +5,9 @@
 
 🤝 **[Contributing](./CONTRIBUTING.md)**
 
-![Knowledge Graph](./assets/interactive_graph.jpg)
+<p align="center">
+  <img src="./assets/profile.png" alt="Unified Knowledge Graph RAG on AWS" width="320">
+</p>
 
 An AWS-native knowledge graph RAG (Retrieval-Augmented Generation) framework that turns large multilingual document corpora into knowledge graphs and answers questions over them with multi-hop graph traversal.
 
@@ -381,6 +383,12 @@ This project is licensed under the Apache-2.0 License - see the [LICENSE](LICENS
 
 - [LightRAG: Simple and Fast Retrieval-Augmented Generation](https://arxiv.org/abs/2410.05779)
 - [HKUDS/LightRAG Library](https://github.com/HKUDS/LightRAG)
+
+## 🙏 Acknowledgments
+
+Thanks to **Jihyun Kang** for contributions to the project, and to
+**Yusuke Tanimiya** for a thorough review and real-corpus testing that
+strengthened the framework ahead of release. See [CONTRIBUTORS.md](CONTRIBUTORS.md).
 
 ## 🏢 About
 

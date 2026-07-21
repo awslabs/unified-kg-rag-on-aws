@@ -2,7 +2,9 @@
 
 🇬🇧 **[English README](./README.md)** · 🤝 **[기여 가이드](./CONTRIBUTING.md)**
 
-![Knowledge Graph](./assets/interactive_graph.jpg)
+<p align="center">
+  <img src="./assets/profile.png" alt="Unified Knowledge Graph RAG on AWS" width="320">
+</p>
 
 대규모 다국어 문서 코퍼스를 지식 그래프로 변환하고, 멀티홉 그래프 순회로 질의에 답하는 **AWS 네이티브 Knowledge Graph RAG 프레임워크**입니다.
 
@@ -233,3 +235,9 @@ Apache-2.0. [`LICENSE`](./LICENSE) 참고.
 
 - Microsoft GraphRAG: [*From Local to Global: A Graph RAG Approach to Query-Focused Summarization*](https://arxiv.org/abs/2404.16130) · [라이브러리](https://github.com/microsoft/graphrag)
 - LightRAG: [*Simple and Fast Retrieval-Augmented Generation*](https://arxiv.org/abs/2410.05779) · [라이브러리](https://github.com/HKUDS/LightRAG)
+
+## 🙏 감사의 말
+
+프로젝트에 기여해 주신 **강지현**님, 그리고 출시 전 꼼꼼한 리뷰와 실제 코퍼스
+테스트로 프레임워크를 한층 견고하게 만들어 주신 **Yusuke Tanimiya**님께 감사드립니다.
+[CONTRIBUTORS.md](CONTRIBUTORS.md)를 참고하세요.
