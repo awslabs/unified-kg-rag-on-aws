@@ -386,9 +386,10 @@ This project is licensed under the Apache-2.0 License - see the [LICENSE](LICENS
 
 ## 🙏 Acknowledgments
 
-Thanks to **Jihyun Kang** for contributions to the project, and to
-**Yusuke Tanimiya** for a thorough review and real-corpus testing that
-strengthened the framework ahead of release.
+Thanks to **Jihyun Kang** for significant contributions to the library's
+feature development and validation, and to **Yusuke Tanimiya** for a thorough
+review and real-corpus testing — both of which strengthened the framework ahead
+of release.
 
 ## 🏢 About
 
