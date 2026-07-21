@@ -692,6 +692,16 @@ class CentralityConfig(BaseModel):
         ge=1,
         description="Sample size for betweenness calculation (None for all nodes)",
     )
+    betweenness_auto_sample_threshold: int = Field(
+        default=2000,
+        ge=1,
+        description="When betweenness_k is None (exact) AND the graph has more "
+        "nodes than this, automatically switch to sampled betweenness (using "
+        "this value as the pivot-sample size) instead of exact all-pairs "
+        "shortest paths. Exact betweenness is O(V*E) and stalls on large real "
+        "graphs; sampling keeps the analysis phase bounded. Raise this to force "
+        "exact computation on larger graphs.",
+    )
     betweenness_seed: int = Field(
         default=42,
         description="Random seed for sampled betweenness (only used when "
@@ -826,6 +836,16 @@ class CommunityDetectionConfig(BaseModel):
         default_factory=lambda: [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0],
         description="Resolution values swept when auto_resolution is enabled; the "
         "one maximizing modularity is chosen.",
+    )
+    auto_resolution_max_nodes: int = Field(
+        default=10000,
+        ge=1,
+        description="Skip the auto_resolution sweep (which runs one full Leiden "
+        "partition + modularity computation per candidate, ~10x the base cost, "
+        "at every hierarchy level) when the graph exceeds this many nodes, and "
+        "use the fixed `resolution` instead. Prevents the sweep from dominating "
+        "the analysis phase on large graphs. Raise to force the sweep on bigger "
+        "graphs.",
     )
     report_generation: ReportGenerationConfig = Field(
         default_factory=ReportGenerationConfig,

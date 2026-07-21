@@ -247,7 +247,10 @@ class IndexingManager:
                 "opensearch_entities",
             ),
             IndexingTask(
-                self.opensearch_indexer.index_community_reports,
+                # Delta path MUST upsert, not index: index_community_reports does
+                # a full alias-swap that would wipe unchanged docs' reports (the
+                # delta only carries reports for the changed subgraph).
+                self.opensearch_indexer.upsert_community_reports,
                 [community_reports],
                 "opensearch_community_reports",
             ),

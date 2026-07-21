@@ -90,6 +90,15 @@ class CloudWatchEMFSink:
         if not numeric:
             return
         dims = dimensions or {}
+        # Emit BOTH the zero-dimension aggregate ([]) AND the keyed set (e.g.
+        # ['pipeline_id']). The aggregate is what dimensionless CloudWatch alarms
+        # and dashboard widgets query — without it, an alarm built on the bare
+        # metric (e.g. the silent-artifact-drop IndexingFailures alarm) sits in
+        # INSUFFICIENT_DATA forever because only the per-pipeline_id series is
+        # ever populated. Publishing multiple dimension sets is standard EMF.
+        dimension_sets: list[list[str]] = [[]]
+        if dims:
+            dimension_sets.append(list(dims.keys()))
         emf: dict[str, Any] = {
             "_aws": {
                 # Timestamp is a REQUIRED member of the EMF metadata object
@@ -99,7 +108,7 @@ class CloudWatchEMFSink:
                 "CloudWatchMetrics": [
                     {
                         "Namespace": namespace,
-                        "Dimensions": [list(dims.keys())] if dims else [[]],
+                        "Dimensions": dimension_sets,
                         "Metrics": [{"Name": k} for k in numeric],
                     }
                 ],

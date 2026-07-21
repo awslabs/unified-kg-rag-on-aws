@@ -267,21 +267,23 @@ class OpenSearchIndexer(VectorIndexer):
             prepare_doc_func=self._prepare_entity_doc,
         )
 
-    def index_community_reports(self, reports: list[CommunityReport]) -> IndexingStats:
-        def prepare_doc(report: CommunityReport, embeddings: tuple) -> dict[str, Any]:
-            return {
-                **self._prepare_common_doc_properties(report),
-                "community_id": report.community_id,
-                "name": report.name or "",
-                "name_embedding": embeddings[0],
-                "summary": report.summary or "",
-                "summary_embedding": embeddings[1],
-                "full_content": report.full_content or "",
-                "full_content_embedding": embeddings[2],
-                "rank": report.rank or 1.0,
-                "rating": report.rating,
-            }
+    def _prepare_community_report_doc(
+        self, report: CommunityReport, embeddings: tuple
+    ) -> dict[str, Any]:
+        return {
+            **self._prepare_common_doc_properties(report),
+            "community_id": report.community_id,
+            "name": report.name or "",
+            "name_embedding": embeddings[0],
+            "summary": report.summary or "",
+            "summary_embedding": embeddings[1],
+            "full_content": report.full_content or "",
+            "full_content_embedding": embeddings[2],
+            "rank": report.rank or 1.0,
+            "rating": report.rating,
+        }
 
+    def index_community_reports(self, reports: list[CommunityReport]) -> IndexingStats:
         return self._index_item_type(
             items=reports,
             item_type_name="community reports",
@@ -292,7 +294,30 @@ class OpenSearchIndexer(VectorIndexer):
                 lambda r: r.summary,
                 lambda r: r.full_content,
             ],
-            prepare_doc_func=prepare_doc,
+            prepare_doc_func=self._prepare_community_report_doc,
+        )
+
+    def upsert_community_reports(
+        self, reports: list[CommunityReport]
+    ) -> IndexingStats:
+        """Upsert community reports by id into the live index (delta semantics).
+
+        The full-build ``index_community_reports`` does an alias-swap that
+        REPLACES the whole index — fatal on an incremental run, where community
+        detection only produced reports for the delta subgraph, so a swap would
+        wipe every unchanged document's reports. Upsert-by-id preserves them.
+        """
+        return self._upsert_item_type(
+            items=reports,
+            item_type_name="community reports",
+            alias_prefix=self.opensearch_config.community_reports_index_prefix,
+            mapping_func=self._get_community_reports_mapping,
+            embedding_field_extractors=[
+                lambda r: r.name,
+                lambda r: r.summary,
+                lambda r: r.full_content,
+            ],
+            prepare_doc_func=self._prepare_community_report_doc,
         )
 
     def _text_unit_embedding_text(self, unit: TextUnit) -> str:

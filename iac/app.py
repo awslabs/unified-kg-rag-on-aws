@@ -38,6 +38,27 @@ env = cdk.Environment(account=account, region=deploy_region)
 bedrock_env = cdk.Environment(
     account=account, region=config.bedrock_region or deploy_region
 )
+
+# Guard: in private (no-NAT) mode the VPC Bedrock interface endpoints are created
+# in the DEPLOY region only, but the runtime clients call config.bedrock_region.
+# If those differ, the data plane has no network route to Bedrock and every
+# InvokeModel/embeddings/rerank call hangs. Fail fast at synth with a clear
+# message instead of shipping a stack that silently cannot reach Bedrock.
+if (
+    config.is_private
+    and config.bedrock_region
+    and deploy_region
+    and config.bedrock_region != deploy_region
+):
+    raise ValueError(
+        f"network_mode=private but bedrock_region ('{config.bedrock_region}') "
+        f"differs from the deploy region ('{deploy_region}'). In private mode "
+        "there is no route to Bedrock in another region (VPC endpoints are "
+        "created in the deploy region only), so runtime Bedrock calls would "
+        "hang. Either set bedrock_region to the deploy region, or use "
+        "network_mode=public (NAT) for cross-region Bedrock."
+    )
+
 stack_prefix = config.stack_prefix
 
 
@@ -106,6 +127,10 @@ for tag_key, tag_value in {
     cdk.Tags.of(app).add(tag_key, tag_value)
 
 # Well-Architected checks at synth time (opt-in: -c enable_cdk_nag=true).
+# NOTE: cdk-nag reports unsuppressed violations as error-level annotations that
+# cause a NON-ZERO exit only when synthesized via the `cdk` CLI (`cdk synth`);
+# a plain `python app.py` does NOT fail on them. CI therefore runs `cdk synth`
+# (see .github/workflows/quality.yml) so the nag check is an enforcing gate.
 if config.enable_cdk_nag:
     from cdk_nag import AwsSolutionsChecks
 

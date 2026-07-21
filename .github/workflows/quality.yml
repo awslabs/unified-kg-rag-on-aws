@@ -84,7 +84,9 @@ jobs:
     # Synthesize the CDK app with cdk-nag enabled so the Well-Architected
     # posture (and the curated nag_suppressions) is enforced in CI — an
     # over-broad policy or public exposure introduced later fails here instead
-    # of shipping silently. app.synth() raises on any unsuppressed nag error.
+    # of shipping silently. IMPORTANT: cdk-nag violations exit non-zero only via
+    # the `cdk` CLI (`cdk synth`); a plain `python app.py` does NOT fail on them,
+    # so this job must use the CLI for the gate to have teeth.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -93,14 +95,21 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4
+        with:
+          node-version: "20"
+
+      - name: Install AWS CDK CLI
+        run: npm install -g aws-cdk
+
       - name: Install IaC dependencies
         run: pip install -r iac/requirements.txt
 
-      - name: cdk synth with cdk-nag (fail on findings)
+      - name: cdk synth with cdk-nag (fails on any unsuppressed finding)
         working-directory: iac
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: python app.py -c enable_cdk_nag=true
+        run: cdk synth --all -c enable_cdk_nag=true -q
 
       - name: IaC assertion tests
         working-directory: iac

@@ -601,10 +601,15 @@ class NeptuneIndexer(GraphIndexer):
             try:
                 g = self.neptune_client.g
                 if entity_label and community_label:
-                    # Edges live between entity-label vertices; scope the edge and
-                    # vertex drops to this suffix's labels only.
-                    g.E().hasLabel(entity_label).has(
-                        "id", P.within(id_batch)
+                    # Scope the drop to this suffix. Edges are labeled by their
+                    # relationship type (e.g. RELATED_TO / MemberOf), NOT by the
+                    # entity label, so filtering edges with hasLabel(entity_label)
+                    # would match nothing and leak stale edges. Instead scope
+                    # edges by id AND by an endpoint vertex carrying this suffix's
+                    # entity label (where(outV().hasLabel(...))), which both
+                    # restricts to this tenant and matches real edges.
+                    g.E().has("id", P.within(id_batch)).where(
+                        __.outV().hasLabel(entity_label)
                     ).drop().iterate()
                     g.V().hasLabel(entity_label, community_label).has(
                         "id", P.within(id_batch)

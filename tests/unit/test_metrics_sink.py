@@ -45,7 +45,10 @@ def test_emf_emits_numeric_metrics_and_dimensions() -> None:
     cw = out["_aws"]["CloudWatchMetrics"][0]
     assert cw["Namespace"] == "unified_kg_rag/ingestion"
     assert {m["Name"] for m in cw["Metrics"]} == {"entities", "rate"}
-    assert cw["Dimensions"] == [["pipeline_id"]]
+    # Both the zero-dimension aggregate AND the keyed set are published, so that
+    # dimensionless CloudWatch alarms/widgets (which query the aggregate) are
+    # populated in addition to the per-pipeline_id series.
+    assert cw["Dimensions"] == [[], ["pipeline_id"]]
     assert out["entities"] == 42
     assert out["pipeline_id"] == "p1"
     assert "name" not in out  # non-numeric dropped

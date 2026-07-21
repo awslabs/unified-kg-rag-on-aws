@@ -211,6 +211,26 @@ class GraphExtractor(BaseProcessor):
                     text_unit.id,
                     str(e),
                 )
+                # Append a sentinel (empty input) rather than skipping, so the
+                # returned inputs stay 1:1 with text_units. execute_with_fallback
+                # returns results aligned to prepared inputs, and the downstream
+                # `zip(text_units, results, strict=True)` would otherwise raise on
+                # a length mismatch and crash the whole extraction stage (the same
+                # latent bug fixed in the gleaner). The empty input yields an
+                # empty extraction for that unit, which _process_extraction_results
+                # already handles.
+                inputs.append(
+                    {
+                        "input_text": "",
+                        "max_entities_per_chunk": str(
+                            graph_extraction_config.max_entities_per_chunk
+                        ),
+                        "max_relationships_per_chunk": str(
+                            graph_extraction_config.max_relationships_per_chunk
+                        ),
+                        "entity_types": entity_types_block,
+                    }
+                )
 
         if failed_preparations > 0:
             logger.warning(

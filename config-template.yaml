@@ -292,6 +292,12 @@ indexing:
   # across incremental runs the way a full rebuild groups them. Costs an
   # entity-name projection per delta run. Requires cross_run_merge. Off by default.
   cross_run_fuzzy_merge: false
+  # Maximum tolerated per-index-type write failure rate before the indexing
+  # stage is marked FAILED. A fully-failed index type (0 successes) always
+  # fails; this additionally catches PARTIAL failures (e.g. most relationship
+  # edges dropped) that would otherwise be reported as a successful run. Set to
+  # 1.0 to disable the partial-failure gate.
+  max_failure_rate: 0.2
 
   # OpenSearch Indexing
   opensearch:

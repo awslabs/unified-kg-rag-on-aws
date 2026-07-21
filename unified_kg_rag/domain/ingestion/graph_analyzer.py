@@ -123,17 +123,13 @@ class GraphAnalyzer:
                 nx.betweenness_centrality,
                 # k is the pivot-sample size; networkx raises when k exceeds the
                 # node count, so clamp it. None means "use all nodes" (exact).
-                # A fixed seed is passed so sampled betweenness (k set) is
-                # reproducible; it is ignored by networkx when k is None (exact).
+                # Exact betweenness is O(V*E) and stalls on large real graphs, so
+                # when k is unset AND the graph exceeds the auto-sample threshold
+                # we fall back to sampled betweenness (bounded runtime) instead
+                # of exact. A fixed seed makes sampled betweenness reproducible;
+                # it is ignored by networkx when k is None (exact).
                 {
-                    "k": (
-                        min(
-                            self.analysis_config.centrality.betweenness_k,
-                            self._graph.number_of_nodes(),
-                        )
-                        if self.analysis_config.centrality.betweenness_k
-                        else None
-                    ),
+                    "k": self._resolve_betweenness_k(),
                     "seed": self.analysis_config.centrality.betweenness_seed,
                 },
             ),
@@ -173,6 +169,32 @@ class GraphAnalyzer:
             "Centrality calculation completed for %s nodes", len(centrality_data)
         )
         return centrality_data
+
+    def _resolve_betweenness_k(self) -> int | None:
+        """Pivot-sample size for betweenness, with auto-sampling on big graphs.
+
+        - If ``betweenness_k`` is set, clamp it to the node count (networkx
+          raises when k > n).
+        - If it is None (exact), keep exact only while the graph is at/below the
+          auto-sample threshold; above it, switch to sampled betweenness (k =
+          threshold) so exact O(V*E) betweenness cannot stall the analysis phase
+          on a large real graph.
+        """
+        centrality = self.analysis_config.centrality
+        n = self._graph.number_of_nodes() if self._graph else 0
+        if centrality.betweenness_k:
+            return min(centrality.betweenness_k, n)
+        threshold = centrality.betweenness_auto_sample_threshold
+        if n > threshold:
+            logger.info(
+                "Graph has %s nodes (> %s); using sampled betweenness (k=%s) "
+                "instead of exact to bound runtime.",
+                n,
+                threshold,
+                threshold,
+            )
+            return threshold
+        return None
 
     def _compute_and_cache_centrality(
         self,

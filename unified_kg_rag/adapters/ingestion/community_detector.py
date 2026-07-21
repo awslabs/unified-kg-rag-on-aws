@@ -252,6 +252,22 @@ class CommunityDetector(BaseProcessor):
             logger.error("Error during Leiden partitioning: %s", e)
             return None
 
+    def _collect_community_text_unit_ids(self, node_ids: Any) -> list[str]:
+        """Union the source text-unit ids of a community's member entities.
+
+        Graph nodes carry the full entity dump (graph_builder adds each entity
+        with **entity.model_dump()), so each node's ``text_unit_ids`` is the list
+        of text units that mentioned it. Deduplicated + sorted for a stable,
+        reproducible community record.
+        """
+        collected: set[str] = set()
+        for nid in node_ids:
+            attrs = self.graph.nodes[nid] if nid in self.graph else {}
+            tu = attrs.get("text_unit_ids") or []
+            if isinstance(tu, (list, tuple, set)):
+                collected.update(str(t) for t in tu if t)
+        return sorted(collected)
+
     @staticmethod
     def _partition_dict_to_communities(
         partition_dict: dict[str, int],
@@ -264,6 +280,21 @@ class CommunityDetector(BaseProcessor):
     def _find_optimal_resolution(self, graph: nx.Graph) -> float:
         best_resolution = self.community_detection_config.resolution
         best_modularity = -1.0
+
+        # Size short-circuit: the sweep runs a full Leiden partition + modularity
+        # computation for EACH candidate (~10x the base cost) at every hierarchy
+        # level. On a large graph that dominates the analysis phase, so above the
+        # configured node cap we skip the sweep and use the fixed resolution.
+        max_nodes = self.community_detection_config.auto_resolution_max_nodes
+        if graph.number_of_nodes() > max_nodes:
+            logger.info(
+                "Graph has %s nodes (> %s); skipping the auto-resolution sweep "
+                "and using the fixed resolution %s.",
+                graph.number_of_nodes(),
+                max_nodes,
+                best_resolution,
+            )
+            return best_resolution
 
         resolution_candidates = (
             self.community_detection_config.auto_resolution_candidates
@@ -592,7 +623,12 @@ class CommunityDetector(BaseProcessor):
                 if (rel_id := self.graph.edges[source, target].get("id")) is not None
             ],
             covariate_ids={},
-            text_unit_ids=[],
+            # Union the member entities' source text units. Nodes are added with
+            # the full entity dump (graph_builder), so text_unit_ids is present.
+            # Without this the community's text_unit_ids stayed empty, so
+            # _enrich_text_units never tagged text units with community_ids and
+            # global search's community text-unit fusion bucket matched nothing.
+            text_unit_ids=self._collect_community_text_unit_ids(hier_comm.nodes),
             size=len(hier_comm.nodes),
             period=None,
             attributes=community_attributes,

@@ -68,7 +68,7 @@ caching, multilingual, and hybrid-scoring stack — only the retrieval algorithm
 
 ### 🎯 **Comprehensive Evaluation Framework**
 - **LangChain-based Evaluation**: RAG performance measurement through built-in evaluators
-- **RAGAS Metrics**: Answer faithfulness, relevancy, and context accuracy
+- **RAGAS Metrics**: answer correctness, answer relevancy, faithfulness, context precision, and context recall
 - **Graph-aware Evaluation**: entity/relationship coverage (recall of expected
   graph artifacts surfaced in the answer) against ground-truth expectations
   (deterministic, LLM-free, word-boundary matching)

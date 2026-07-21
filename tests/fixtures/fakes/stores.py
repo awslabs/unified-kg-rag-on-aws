@@ -165,6 +165,11 @@ class FakeVectorStore(_Recorder):
     def upsert_claims(self, items: list[Any] | None = None) -> IndexingStats:
         return self._put("claims", items)
 
+    def upsert_community_reports(
+        self, items: list[Any] | None = None
+    ) -> IndexingStats:
+        return self._put("community_reports", items)
+
     def delete_by_id(
         self, ids: list[str], prefix: str | None = None, suffix: str | None = None
     ) -> IndexingStats:

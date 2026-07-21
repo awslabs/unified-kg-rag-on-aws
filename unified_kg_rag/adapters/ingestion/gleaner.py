@@ -447,9 +447,18 @@ class GraphGleaner(BaseProcessor):
                 if unit.id in unit_to_input
             ]
 
+        # Only the units whose input prep succeeded are actually processed, and
+        # execute_with_fallback returns results 1:1 with THOSE inputs (not with
+        # the full text_units list). Zipping the full list against the shorter
+        # results with strict=True would raise and abort the whole stage — even
+        # under ignore_errors, because the zip is outside the try below. Align
+        # the zip to the prepared units so a single failed prep degrades to
+        # skipping that unit, not crashing the stage.
+        prepared_units = [u for u in text_units if u.id in unit_to_input]
+
         try:
             results = self.batch_processor.execute_with_fallback(
-                items_to_process=text_units,
+                items_to_process=prepared_units,
                 prepare_inputs_func=prepare_inputs_for_chunk,
                 batch_func=self.graph_refiner.batch,
                 sequential_func=self.graph_refiner.invoke,
@@ -469,7 +478,7 @@ class GraphGleaner(BaseProcessor):
             "accuracy": [],
         }
 
-        for item, result_data in zip(text_units, results, strict=True):
+        for item, result_data in zip(prepared_units, results, strict=True):
             new_entities, new_relationships, quality_scores = (
                 self._parse_refinement_output(
                     result_data.get("refinement_plan", {}), item, current_entities

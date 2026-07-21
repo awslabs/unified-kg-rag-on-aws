@@ -155,26 +155,42 @@ class IncrementalIndexer:
         """Return the documents requiring extraction this run (new + changed)."""
         return filter_documents_to_process(documents, delta)
 
-    def remove_obsolete_artifacts(self, doc_ids: list[str]) -> None:
+    def remove_obsolete_artifacts(self, doc_ids: list[str]) -> bool:
         """Delete artifacts belonging only to the given (deleted/changed) docs.
 
         Lineage is read from the registry; only ids not still referenced by a
         *surviving* document are removed, so shared artifacts are preserved.
         Removals are grouped by the suffix each document's artifacts were
         written under (multi-tenant/multi-index safe).
+
+        Returns True if every store delete reported no failures (or there was
+        nothing to remove). The store delete_by_id paths swallow exceptions into
+        error stats rather than raising, so the caller must inspect this result
+        before deleting the registry record — otherwise a transient delete
+        failure would orphan the artifacts (record gone, artifacts still live).
         """
         if not doc_ids:
-            return
+            return True
 
         obsolete_by_suffix = self._collect_exclusive_artifact_ids(doc_ids)
-        if obsolete_by_suffix:
-            total = sum(len(ids) for ids in obsolete_by_suffix.values())
-            logger.info(
-                "Removing %d artifacts for %d obsolete documents",
-                total,
-                len(doc_ids),
+        if not obsolete_by_suffix:
+            return True
+
+        total = sum(len(ids) for ids in obsolete_by_suffix.values())
+        logger.info(
+            "Removing %d artifacts for %d obsolete documents",
+            total,
+            len(doc_ids),
+        )
+        results = self.indexing_manager.delete_documents(obsolete_by_suffix)
+        failed = sum(s.failed_items for s in results.values() if s is not None)
+        if failed:
+            logger.warning(
+                "Artifact removal for obsolete docs had %d failures; caller "
+                "should not treat the removal as complete.",
+                failed,
             )
-            self.indexing_manager.delete_documents(obsolete_by_suffix)
+        return failed == 0
 
     def commit(
         self,
@@ -203,14 +219,57 @@ class IncrementalIndexer:
             community_reports=community_reports,
             claims=claims,
         )
-        self._record_processed(lineages, fingerprints)
+        # Only write the registry back if the delta actually landed. index_delta
+        # (via _run_indexing_phase) SWALLOWS per-task write errors into stats and
+        # never raises, so recording PROCESSED unconditionally would persist a
+        # doc's new content_hash + lineage even when its backend writes failed —
+        # the doc would then be classified `unchanged` on the next run and its
+        # missing artifacts never re-indexed. If any index type had items but
+        # zero successes (a hard write failure), skip the registry write-back so
+        # the affected docs are re-detected and retried next run.
+        if self._delta_writes_succeeded(results):
+            self._record_processed(lineages, fingerprints)
+        else:
+            logger.error(
+                "Delta indexing had a complete write failure for at least one "
+                "artifact type; NOT recording docs as PROCESSED so they are "
+                "retried on the next run. Stats: %s",
+                {k: (v.successful_items, v.failed_items) for k, v in results.items()},
+            )
         return results
 
+    @staticmethod
+    def _delta_writes_succeeded(results: dict[str, IndexingStats]) -> bool:
+        """False if any index type had items to write but zero successes.
+
+        Mirrors the per-index-type gate in IndexingStage._validate_backend_success
+        (a 0-success index type is a hard failure), applied here BEFORE the
+        registry write-back so a failed delta is not durably marked PROCESSED.
+        """
+        for stats in results.values():
+            if stats and stats.total_items > 0 and stats.successful_items == 0:
+                return False
+        return True
+
     def remove_deleted(self, delta: DocumentDelta) -> None:
-        """Remove artifacts and registry records for deleted documents."""
+        """Remove artifacts and registry records for deleted documents.
+
+        The registry record is only deleted when artifact removal fully
+        succeeded. If removal partially failed, the record is kept so the next
+        run retries the removal — deleting the record first would strand the
+        still-live artifacts with no lineage to ever clean them up (permanent
+        orphans).
+        """
         if not delta.deleted:
             return
-        self.remove_obsolete_artifacts(delta.deleted)
+        removed = self.remove_obsolete_artifacts(delta.deleted)
+        if not removed:
+            logger.warning(
+                "Keeping %d deleted-doc registry records because artifact "
+                "removal did not fully succeed; will retry next run.",
+                len(delta.deleted),
+            )
+            return
         for doc_id in delta.deleted:
             self.doc_status.delete(doc_id)
 
@@ -229,8 +288,12 @@ class IncrementalIndexer:
         self, doc_ids: list[str]
     ) -> dict[str, list[str]]:
         target = set(doc_ids)
-        # Artifact ids referenced by documents NOT being removed -> keep them.
-        retained: set[str] = set()
+        # Artifact ids referenced by SURVIVING documents -> keep them. Tracked
+        # PER SUFFIX: artifact ids are suffix-independent (an entity "Vendor"
+        # yields the same uuid5 id in every tenant), so a global retained set
+        # would let a surviving doc in tenant B suppress the deletion of the same
+        # id in tenant A. Only a same-suffix survivor should retain an id.
+        retained_by_suffix: dict[str, set[str]] = defaultdict(set)
         removing_by_suffix: dict[str, set[str]] = defaultdict(set)
         for record in self.doc_status.list_all():
             ids = (
@@ -244,11 +307,11 @@ class IncrementalIndexer:
             if record.doc_id in target:
                 removing_by_suffix[record.suffix].update(ids)
             else:
-                retained.update(ids)
+                retained_by_suffix[record.suffix].update(ids)
 
         result: dict[str, list[str]] = {}
         for suffix, suffix_ids in removing_by_suffix.items():
-            exclusive = sorted(suffix_ids - retained)
+            exclusive = sorted(suffix_ids - retained_by_suffix[suffix])
             if exclusive:
                 result[suffix] = exclusive
         return result

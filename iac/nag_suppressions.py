@@ -65,6 +65,13 @@ def apply(stacks: dict[str, object], config: DeploymentConfig) -> None:
                 "(HA) deployments; a single-node dev domain intentionally omits "
                 "them to control cost.",
             },
+            {
+                "id": "AwsSolutions-OS7",
+                "reason": "Zone Awareness is enabled automatically for multi-node "
+                "(HA) deployments (opensearch_count > 1, availability_zone_count "
+                "up to 2); a single-node dev domain intentionally omits it to "
+                "control cost. Set opensearch_count > 1 for production.",
+            },
             # CDK BucketDeployment/custom-resource Lambda roles are framework
             # generated; their managed policy + wildcard are not under our control.
             {
