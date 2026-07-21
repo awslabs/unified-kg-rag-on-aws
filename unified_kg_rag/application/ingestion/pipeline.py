@@ -768,9 +768,15 @@ class DataIngestionPipeline:
             "total_items_indexed": int(
                 self._get_stage_metric(context, "indexing", "total_indexed")
             ),
+            # Include a hard-failure sentinel: when the indexing stage RAISES
+            # (e.g. clear/initialize/connection error), its result carries no
+            # metrics, so "total_failed" reads 0 and the IndexingFailures alarm
+            # (which watches this metric) can never fire on a total indexing
+            # failure. Emit >=1 in that case so the alarm surfaces the crash.
             "total_items_index_failed": int(
                 self._get_stage_metric(context, "indexing", "total_failed")
-            ),
+            )
+            or (1 if self._stage_failed(context, "indexing") else 0),
             "relationships_indexed": int(
                 self._get_stage_metric(context, "indexing", "relationships_indexed")
             ),
@@ -829,6 +835,19 @@ class DataIngestionPipeline:
             if result.stage_name.lower().startswith(stage_name_prefix):
                 return float(result.metrics.get(metric_name, 0.0))
         return 0.0
+
+    @staticmethod
+    def _stage_failed(context: PipelineContext, stage_name_prefix: str) -> bool:
+        """True if the named stage ran and ended FAILED (crashed).
+
+        A crashed stage carries no metrics, so the metric-based failure counts
+        read 0; callers use this to still surface the failure (e.g. to the
+        IndexingFailures alarm).
+        """
+        for result in context.stage_results:
+            if result.stage_name.lower().startswith(stage_name_prefix):
+                return result.status == PipelineStageStatus.FAILED
+        return False
 
     @staticmethod
     def _log_pipeline_summary(context: PipelineContext) -> None:

@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import math
 import time
 from typing import Any
 
@@ -551,7 +552,16 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             if not description:
                 continue
             score = safe_float_parse(str(item.get("score", 0)), default_value=0.0)
-            score_int = int(score) if score is not None else 0
+            # Guard against non-finite scores BEFORE int(): the LLM map output is
+            # untrusted, and parse_llm_json (json.loads) accepts Infinity/-Infinity/
+            # NaN while a string like "1e999" overflows float() to inf. int(inf)
+            # raises OverflowError and int(nan) raises ValueError, which would
+            # abort the whole query. Coerce non-finite to 0 (below the relevance
+            # threshold, so the point is simply dropped).
+            if score is None or not math.isfinite(score):
+                score_int = 0
+            else:
+                score_int = int(score)
             score_int = max(0, min(100, score_int))
             points.append(_MapPoint(description=description, score=score_int))
         return points

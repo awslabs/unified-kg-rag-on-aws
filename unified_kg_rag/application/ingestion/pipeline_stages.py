@@ -1052,6 +1052,22 @@ class IndexingStage(PipelineStage):
 
         return DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
 
+    def _clear_doc_status_registry(self) -> None:
+        """Delete all records from the doc-status registry (reset path).
+
+        Uses the port's list_all + delete so no new port method is needed.
+        Best-effort: a registry-clear failure should not abort the reset run
+        (the graph/index were already cleared).
+        """
+        try:
+            store = self._build_doc_status_store()
+            records = store.list_all()
+            for record in records:
+                store.delete(record.doc_id)
+            logger.info("Cleared %s doc-status registry records on reset", len(records))
+        except Exception as e:  # noqa: BLE001 - reset cleanup is best-effort
+            logger.warning("Failed to clear doc-status registry on reset: %s", e)
+
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
@@ -1064,6 +1080,14 @@ class IndexingStage(PipelineStage):
             text_units = context.translated_units or context.text_units
             if not self.indexing_manager.clear_all_data(text_units=text_units):
                 raise RuntimeError("Failed to clear existing data before indexing")
+            # Also clear the DynamoDB doc-status registry. clear_all_data only
+            # wipes OpenSearch + Neptune; leaving stale content-hash lineage would
+            # make the NEXT incremental run classify re-ingested docs as
+            # "unchanged" (skipping them despite the graph having been wiped) and
+            # leave rows for docs no longer in the corpus. Only relevant when the
+            # registry is enabled (incremental mode).
+            if self.config.aws.dynamodb.enabled:
+                self._clear_doc_status_registry()
 
         if not self.indexing_manager.initialize():
             raise RuntimeError("Failed to initialize indexing pipeline")

@@ -1,9 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import re
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class FusionMethod(str, Enum):
@@ -103,6 +104,26 @@ class SearchQuery(BaseModel):
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Additional search query metadata"
     )
+
+    @field_validator("suffix")
+    @classmethod
+    def _validate_suffix(cls, value: str | None) -> str | None:
+        """Reject unsafe suffixes on the READ path.
+
+        The write side validates the suffix (BaseIndexer._validate_suffix_format),
+        but the query-path suffix flows verbatim into the OpenSearch index target
+        (`f"{prefix}-{suffix}"`). An unvalidated value enables index-name
+        injection / cross-tenant reads (e.g. "*", "other-tenant", or comma-joined
+        aliases). Enforce the same lowercase alnum/hyphen/underscore charset.
+        """
+        if value is None:
+            return None
+        if not re.match(r"^[a-z0-9_-]+$", value):
+            raise ValueError(
+                f"Invalid suffix '{value}': only lowercase letters, digits, "
+                "hyphens, and underscores are allowed."
+            )
+        return value
 
 
 class SearchResult(BaseModel):

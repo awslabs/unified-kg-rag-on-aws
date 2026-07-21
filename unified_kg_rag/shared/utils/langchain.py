@@ -81,15 +81,27 @@ class BatchProcessor(BaseModel):
         """
         if timeout_seconds <= 0:
             return func()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(func)
-            try:
-                return future.result(timeout=timeout_seconds)
-            except concurrent.futures.TimeoutError as exc:
-                # Don't wait on the doomed thread; let the daemon pool drop it.
-                raise TimeoutError(
-                    f"'{label}' exceeded the {timeout_seconds}s call timeout"
-                ) from exc
+        # NOT a `with` block: ThreadPoolExecutor.__exit__ calls
+        # shutdown(wait=True), which JOINS the worker thread — so on timeout it
+        # would block until the hung call actually returns (up to the full
+        # BOTO_READ_TIMEOUT), defeating the whole point of the timeout. Instead
+        # abandon the doomed thread with shutdown(wait=False, cancel_futures=True)
+        # so control returns to the caller immediately for the per-item fallback.
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(func)
+        try:
+            result = future.result(timeout=timeout_seconds)
+        except concurrent.futures.TimeoutError as exc:
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise TimeoutError(
+                f"'{label}' exceeded the {timeout_seconds}s call timeout"
+            ) from exc
+        except BaseException:
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        else:
+            pool.shutdown(wait=False)
+            return result
 
     def execute_with_fallback(
         self,

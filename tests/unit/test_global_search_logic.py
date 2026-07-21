@@ -375,3 +375,33 @@ async def test_retrieve_community_nodes_swallows_error() -> None:
     strat.config.indexing.neptune = SimpleNamespace(community_label_prefix="Community")
     out = await strat._retrieve_community_nodes(SearchQuery(query="q"), ["cid"])
     assert out == []
+
+
+# --- _parse_map_points robustness to non-finite LLM scores (R3 fix) ---
+
+
+def test_parse_map_points_handles_infinity_and_nan() -> None:
+    # parse_llm_json (json.loads) accepts Infinity/-Infinity/NaN, and "1e999"
+    # overflows float() to inf; int(inf)/int(nan) would crash the whole query.
+    # Non-finite scores must be coerced to 0 (dropped), not raise.
+    import json
+
+    raw = json.dumps(
+        {"points": [{"description": "a", "score": 5}, {"description": "b", "score": 1}]}
+    )
+    # Inject the non-standard literals json.dumps won't emit but json.loads reads.
+    raw_bad = '{"points": [{"description": "inf", "score": Infinity}, {"description": "nan", "score": NaN}, {"description": "ok", "score": 7}]}'
+
+    pts = GlobalSearchStrategy._parse_map_points(raw_bad)
+    scores = {p.description: p.score for p in pts}
+    assert scores["inf"] == 0  # coerced, not crashed
+    assert scores["nan"] == 0
+    assert scores["ok"] == 7
+    # And a normal payload still parses.
+    assert len(GlobalSearchStrategy._parse_map_points(raw)) == 2
+
+
+def test_parse_map_points_overflow_string_score() -> None:
+    raw = '{"points": [{"description": "big", "score": "1e999"}]}'
+    pts = GlobalSearchStrategy._parse_map_points(raw)
+    assert pts[0].score == 0  # 1e999 -> inf -> coerced to 0

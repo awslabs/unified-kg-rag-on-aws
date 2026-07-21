@@ -16,6 +16,7 @@ from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import (
     PipelineConfig,
     PipelineContext,
+    PipelineStageStatus,
     PipelineStageType,
 )
 from unified_kg_rag.shared import (
@@ -382,6 +383,21 @@ class IngestionPipelineRunner:
 
             if context:
                 display_pipeline_results(context)
+                # A soft stage failure stops the run but does NOT raise — the
+                # pipeline returns a context with status=FAILED. Without this
+                # check the CLI would print success and exit 0, so Step Functions
+                # (RUN_JOB, keyed on container exit code) marks the phase
+                # SUCCEEDED and the failure is invisible. Raise so main() exits
+                # non-zero and the failure surfaces.
+                if context.status == PipelineStageStatus.FAILED:
+                    failed = [
+                        r.stage_name
+                        for r in context.stage_results
+                        if r.status == PipelineStageStatus.FAILED
+                    ]
+                    raise PipelineExecutionError(
+                        f"Pipeline failed at stage(s): {', '.join(failed) or 'unknown'}"
+                    )
                 success_msg = "✓ Pipeline completed successfully!"
                 console.print(
                     Panel.fit(
