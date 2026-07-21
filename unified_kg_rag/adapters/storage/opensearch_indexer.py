@@ -297,9 +297,7 @@ class OpenSearchIndexer(VectorIndexer):
             prepare_doc_func=self._prepare_community_report_doc,
         )
 
-    def upsert_community_reports(
-        self, reports: list[CommunityReport]
-    ) -> IndexingStats:
+    def upsert_community_reports(self, reports: list[CommunityReport]) -> IndexingStats:
         """Upsert community reports by id into the live index (delta semantics).
 
         The full-build ``index_community_reports`` does an alias-swap that

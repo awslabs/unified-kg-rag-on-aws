@@ -272,9 +272,7 @@ class VectorIndexer(BaseIndexer):
         """Embed and index claim (covariate) descriptions as searchable vectors."""
 
     @abstractmethod
-    def upsert_community_reports(
-        self, reports: list[CommunityReport]
-    ) -> IndexingStats:
+    def upsert_community_reports(self, reports: list[CommunityReport]) -> IndexingStats:
         """Upsert community reports by id into the live index (delta).
 
         Distinct from index_community_reports (full alias-swap): the delta path
