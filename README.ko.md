@@ -240,4 +240,3 @@ Apache-2.0. [`LICENSE`](./LICENSE) 참고.
 
 프로젝트에 기여해 주신 **강지현**님, 그리고 출시 전 꼼꼼한 리뷰와 실제 코퍼스
 테스트로 프레임워크를 한층 견고하게 만들어 주신 **Yusuke Tanimiya**님께 감사드립니다.
-[CONTRIBUTORS.md](CONTRIBUTORS.md)를 참고하세요.

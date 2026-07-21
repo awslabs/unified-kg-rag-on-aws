@@ -388,7 +388,7 @@ This project is licensed under the Apache-2.0 License - see the [LICENSE](LICENS
 
 Thanks to **Jihyun Kang** for contributions to the project, and to
 **Yusuke Tanimiya** for a thorough review and real-corpus testing that
-strengthened the framework ahead of release. See [CONTRIBUTORS.md](CONTRIBUTORS.md).
+strengthened the framework ahead of release.
 
 ## 🏢 About
 

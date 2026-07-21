@@ -322,8 +322,7 @@ disposition before acting; pin or upgrade dependencies via `uv lock --upgrade`.
 ## 🙏 Recognition
 
 Contributors will be recognized in:
-- **CONTRIBUTORS.md** file
-- **Release notes** for significant contributions
+- **README acknowledgments** and **release notes** for significant contributions
 - **GitHub contributors** page
 
 Thank you for contributing to Unified Knowledge Graph RAG on AWS! 🚀
