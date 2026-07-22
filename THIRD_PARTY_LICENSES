@@ -1,0 +1,16 @@
+This project ports and adapts methodology from the following third-party
+open-source projects. Their source is NOT redistributed here (the local
+`references/` copies used during porting are git-ignored and excluded from the
+published repository); these attributions are provided as courtesy and to
+document provenance.
+
+--------------------------------------------------------------------------------
+microsoft/graphrag
+https://github.com/microsoft/graphrag
+MIT License — Copyright (c) Microsoft Corporation.
+
+--------------------------------------------------------------------------------
+HKUDS/LightRAG
+https://github.com/HKUDS/LightRAG
+MIT License — Copyright (c) 2025 LightRAG Team
+--------------------------------------------------------------------------------

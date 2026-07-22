@@ -1,0 +1,603 @@
+# GraphRAG Framework Configuration
+
+# AWS Configuration
+aws:
+  region_name: "ap-northeast-2"
+  profile_name: null
+
+  # Bedrock Configuration
+  bedrock:
+    region_name: "ap-northeast-2"
+    assumed_role_arn: null
+    enable_global_profile: true
+    # Amazon Bedrock Guardrails (WAF security pillar). Disabled unless an
+    # identifier is set; when set, every LLM call enforces the guardrail's
+    # content/PII/grounding policies on prompts and completions.
+    guardrail:
+      identifier: null # Guardrail ID or ARN, e.g. "abcd1234efgh"
+      version: "DRAFT" # "DRAFT" or a published version number
+      trace: false # Emit guardrail trace for auditing/observability
+
+  # Neptune Configuration
+  neptune:
+    endpoint: # Add endpoint here
+    port: 8182
+    use_iam: true
+    # Gremlin connection pool size (max concurrent in-flight requests over the
+    # websocket). Set >= indexing.neptune.index_concurrency so concurrent write
+    # batches are not serialized on a single connection.
+    pool_size: 4
+
+  # OpenSearch Configuration
+  opensearch:
+    endpoint: # Add endpoint here
+    port: 443
+    use_ssl: true
+    verify_certs: true
+    use_iam: false
+    # SigV4 signing service name for IAM auth. "es" for Amazon OpenSearch Service
+    # (managed domains); "aoss" for OpenSearch Serverless collections.
+    sigv4_service_name: "es"
+
+  # S3 Configuration
+  s3:
+    bucket_name: # Add bucket name here
+    encryption:
+      encryption_type: "AES256"
+      kms_key_id: null
+  # DynamoDB document-status registry for incremental indexing. When enabled,
+  # each indexing run diffs the corpus against this table (by content hash) and
+  # only re-indexes new/changed documents, merging into the live graph.
+  dynamodb:
+    enabled: false
+    # If you provisioned the stack with the bundled CDK app (iac/), set this to
+    # the table it created — "graphrag-doc-status" (dev) — otherwise the app
+    # auto-creates a separate table your CloudWatch dashboards won't be watching.
+    table_name: "unified-kg-rag-on-aws-doc-status"
+    create_table_if_missing: true
+    billing_mode: "PAY_PER_REQUEST"
+
+# Global Output Fixing Configuration (auto-repair malformed model responses)
+fixing:
+  enabled: true
+  fixing_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+
+# Data Processing Configuration
+processing:
+  # LLM stages are Bedrock-I/O-bound (CPU/memory near-idle during them), so
+  # concurrency can be well above the CPU count. max_concurrency = concurrent
+  # LLM calls within a batch; chunk_concurrency = how many mini-batch chunks run
+  # at once (overlaps their network waits instead of serial chunk-by-chunk).
+  max_concurrency: 20
+  chunk_concurrency: 4
+  batch_size: 10
+  max_retries: 3
+  ignore_errors: false
+  deduplicate: false
+  resolution_method: "minhash"
+  similarity_threshold: 0.6
+
+  # Document Parsing
+  document_parsing:
+    source_directory: # Add source directory here
+    target_directory: null
+    index_value: null
+
+  # Text Chunking
+  chunking:
+    chunker_type: "intelligent"
+    chunking_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    content_type: "markdown"
+    min_chunk_size: 5000
+    max_chunk_size: 50000
+    chunk_overlap: 500
+    pre_chunk_size: 50000
+    pre_chunk_overlap: 500
+    fallback_chunk_size: 50000
+    max_marker_miss_rate: 0.1
+
+  # Translation
+  translation:
+    # Run the translation stage. Even when true, translation is skipped as a
+    # no-op when source_language == target_language and there are no
+    # additional_target_languages (e.g. an English-only corpus pays no LLM cost).
+    enabled: true
+    translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    # Predominant source language of the corpus (used only for the no-op skip).
+    source_language: "en"
+    target_language: "en"
+    additional_target_languages: null
+
+  # Graph Extraction
+  graph_extraction:
+    extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    max_entities_per_chunk: 50
+    max_relationships_per_chunk: 50
+    entity_confidence_threshold: 0.0
+    # Domain entity categories injected into the extraction prompt's
+    # {entity_types} slot. Override to adapt to a domain WITHOUT rewriting the
+    # whole prompt — each item is "LABEL: short description" (description
+    # optional). Empty list lets the model choose any relevant types.
+    # e.g. for biomedical: ["GENE: ...", "DISEASE: ...", "DRUG: ...", "TRIAL: ..."]
+    entity_types:
+      - "PERSON: Names, individuals, roles, titles"
+      - "ORGANIZATION: Companies, institutions, departments, groups"
+      - "LOCATION: Places, addresses, geographic areas, facilities"
+      - "CONCEPT: Ideas, theories, methodologies, frameworks, principles"
+      - "OBJECT: Documents, tools, products, systems, technologies"
+      - "EVENT: Meetings, projects, activities, processes, incidents"
+      - "TEMPORAL: Dates, time periods, schedules, deadlines"
+    # Re-summarize over-long merged descriptions with an LLM (parity with MS
+    # GraphRAG summarize_descriptions / LightRAG _handle_entity_relation_summary).
+    # Merging an entity seen in many chunks concatenates one fragment per chunk,
+    # so a popular entity's description grows unbounded; this collapses any
+    # description over the token threshold into one coherent summary. Cheap
+    # (below-threshold) entities never reach the LLM.
+    description_summarization:
+      enabled: true
+      # Summarization is mechanical, so a cheap/fast model is the default.
+      summary_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+      # Only re-summarize when the merged description exceeds this many tokens.
+      force_summary_threshold_tokens: 600
+      # Target length (tokens) of the produced summary.
+      max_summary_tokens: 256
+
+    # Provenance grounding — hallucination guard. The extraction prompt asks the
+    # model to emit a verbatim source_text span per entity; when enabled, an
+    # entity whose span is NOT found in its source chunk (verbatim or by token
+    # overlap) is treated as hallucinated (the model invented it from domain
+    # priors) and dropped or confidence-penalized. OFF by default: it depends on
+    # the model emitting spans and is conservative (never deletes on weak signal),
+    # but it is the defense against corpus-absent entities polluting the index.
+    entity_grounding:
+      enabled: false
+      action: "drop" # "drop" removes ungrounded entities; "penalize" scales confidence
+      penalty_factor: 0.5 # confidence multiplier when action == "penalize"
+      min_span_tokens: 4 # spans shorter than this are treated as grounded (too short to judge)
+      min_overlap_ratio: 0.6 # non-verbatim spans need this token-overlap fraction to count as grounded
+
+  # Gleaning (Iterative Information Extraction)
+  gleaning:
+    enabled: true
+    graph_refinement_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    max_rounds: 3
+    convergence_threshold: 0.8
+    quality_threshold: 0.9
+    min_improvement_threshold: 0.05
+    max_entities_per_prompt: 100
+    max_relationships_per_prompt: 100
+    # Scaling constants for the count-based quality/convergence estimates
+    # (defaults shown; tune per corpus scale rather than hardcoding).
+    quality_completeness_weight: 0.6
+    initial_quality_entity_scale: 50
+    initial_quality_relationship_scale: 100
+    convergence_change_scale: 20
+
+  # Claim Extraction
+  claim_extraction:
+    # OFF by default: enabling costs an LLM call per text unit. When ON, local
+    # search retrieves matching claims from the claims index and injects them
+    # into its context (MS GraphRAG covariates), and simple search includes the
+    # claims index in its sweep. Claims subject/object are still not linked into
+    # the entity graph.
+    enabled: false
+    extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    max_entities_per_prompt: 100
+
+# Graph Configuration
+graph:
+  # Graph Analysis
+  analysis:
+    # Centrality calculations
+    centrality:
+      calculate_degree: true
+      calculate_betweenness: true
+      calculate_pagerank: true
+      calculate_closeness: false
+      calculate_eigenvector: false
+      pagerank_alpha: 0.85
+      pagerank_max_iter: 100
+      betweenness_k: null
+      eigenvector_max_iter: 1000
+      eigenvector_tol: 0.001
+
+    # Graph statistics
+    statistics:
+      calculate_density: true
+      calculate_clustering: true
+      calculate_diameter: false
+      calculate_components: true
+
+  # Community Detection
+  community_detection:
+    # Run Leiden community detection + LLM community-report generation during
+    # indexing. Required for GraphRAG global/drift search. Set false for a
+    # lighter LightRAG-only ingestion (mix/hybrid/naive need only entities,
+    # relationships, and the relationship vector index) — skips the Leiden pass
+    # and all community-report LLM calls.
+    enabled: true
+    resolution: 1.0
+    random_state: 42
+    max_levels: 5
+    trials: 3
+    extra_forced_iterations: 2
+    min_community_size: 3
+    # When true, sweep auto_resolution_candidates and keep the resolution that
+    # maximizes modularity (the static `resolution` above is used when false).
+    auto_resolution: true
+    auto_resolution_candidates: [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0]
+
+    # Community report generation
+    report_generation:
+      enabled: true
+      report_generation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+      max_entities_per_report: 50
+      # Token budget for the entity/relationship context packed into a report
+      # prompt. Entities are degree-sorted (most-connected first) and packed up
+      # to this budget; truncation drops the least-important entities first.
+      max_report_context_tokens: 4000
+      content_length: "medium"
+      include_statistics: true
+      include_key_entities: true
+      # When a parent community's raw context would overflow the token budget,
+      # substitute summaries of its already-generated child sub-community reports
+      # for the lowest-priority raw context (MS GraphRAG roll-up) instead of
+      # truncating. Requires bottom-up per-level report generation. Set false to
+      # keep the flat, truncate-on-overflow behaviour.
+      enable_sub_community_rollup: true
+
+  # Graph Visualization
+  visualization:
+    enabled: true
+    outputs_directory: "outputs/visualization"
+    embedding_method: "node2vec"
+    layout_method: "umap"
+
+    # Node embeddings come from Bedrock (the model determines dimensionality).
+    # Only 'bedrock_model_id' is honored here; when unset, the OpenSearch
+    # embedding model is reused. Set embedding_method: "none" to skip embeddings
+    # and fall back to a spring layout.
+    embeddings: {}
+    # embeddings:
+    #   bedrock_model_id: "amazon.titan-embed-text-v2:0"
+
+    # Dimensionality-reduction layout hyperparameters, keyed by method.
+    layout:
+      umap:
+        n_neighbors: 15
+        min_dist: 0.1
+      tsne: {}
+      pca: {}
+
+    # Interactive (pyvis) renderer settings.
+    interactive:
+      physics_enabled: false
+
+    # Static (Bokeh) renderer settings.
+    static:
+      figure_width: 900
+      figure_height: 600
+
+# Indexing Configuration
+indexing:
+  reset: false
+  additional_suffix: null
+  # On incremental (delta) runs, union the delta with existing graph state
+  # (description/text_unit_ids/frequency/weight) before upsert instead of
+  # overwriting. Requires a graph adapter that supports read-back. Off by default.
+  cross_run_merge: false
+  # Extend cross_run_merge with fuzzy entity resolution: match delta entities
+  # against existing entity names by similarity (not just exact normalized name),
+  # so near-duplicate surface forms ("Acme Corp" vs "Acme Corporation") converge
+  # across incremental runs the way a full rebuild groups them. Costs an
+  # entity-name projection per delta run. Requires cross_run_merge. Off by default.
+  cross_run_fuzzy_merge: false
+  # Maximum tolerated per-index-type write failure rate before the indexing
+  # stage is marked FAILED. A fully-failed index type (0 successes) always
+  # fails; this additionally catches PARTIAL failures (e.g. most relationship
+  # edges dropped) that would otherwise be reported as a successful run. Set to
+  # 1.0 to disable the partial-failure gate.
+  max_failure_rate: 0.2
+
+  # OpenSearch Indexing
+  opensearch:
+    embedding_model_id: "amazon.titan-embed-text-v2:0"
+    embedding_dimension: null
+    refresh_after_batch: true
+    # Persist the content-hash embedding cache to S3 so unchanged text is not
+    # re-embedded across separate runs/phases (each Fargate phase is a fresh
+    # process). Requires aws.s3.bucket_name. Off by default.
+    persist_embedding_cache: false
+    embedding_cache_s3_key: "embedding-cache/cache.json"
+    text_units_index_prefix: "graphrag-text-units"
+    entities_index_prefix: "graphrag-entities"
+    community_reports_index_prefix: "graphrag-community-reports"
+    # Build the relationship VECTOR index (embeds Relationship.description). Only
+    # LightRAG high-level keyword retrieval (mix/hybrid) consumes it; GraphRAG
+    # (auto/drift/global/local/simple) never does. Set false for a GraphRAG-only
+    # deployment to skip the relationship embeddings — symmetric with
+    # graph.community_detection.enabled (the LightRAG-only escape hatch). The
+    # Neptune relationship EDGES are always built regardless (both methodologies
+    # traverse them for graph expansion); this toggles only the vector index.
+    build_relationship_vector_index: true
+    # Relationship vector index name prefix (used when the above is true).
+    relationships_index_prefix: "graphrag-relationships"
+    # Claim (covariate) vector index — makes extracted claims searchable.
+    claims_index_prefix: "graphrag-claims"
+    # OpenSearch search pipeline that fuses lexical + vector results (created on
+    # initialize); its normalization/combination weights come from search.hybrid.
+    hybrid_search_pipeline_name: "graphrag-hybrid-search-pipeline"
+    # Text analyzer per language code (extend without code changes); unlisted
+    # languages use default_analyzer.
+    default_analyzer: "standard"
+    language_analyzers:
+      en: "english"
+      ko: "nori"
+    # Query clause budget — keep max_total_clauses under the cluster's
+    # indices.query.bool.max_clause_count.
+    max_query_size: 100
+    terms_batch_size: 150
+    max_total_clauses: 600
+    reserved_clauses: 300
+
+    # Index settings (applied at index creation)
+    index_settings:
+      number_of_shards: 1
+      number_of_replicas: 0
+      # Search-visibility latency vs indexing throughput; raise (e.g. "30s" or
+      # "-1" to disable) for faster bulk loads, then reset for live querying.
+      refresh_interval: "1s"
+
+    # Vector search settings
+    vector_search:
+      ef_construction: 128
+      m: 24
+      ef_search: 100
+      space_type: "cosinesimil"
+      # Engine choice is constrained by space_type + OpenSearch version:
+      #   lucene HNSW  -> supports cosinesimil on all versions; max 1024 dims
+      #                   (covers the default Titan Embed V2 at 1024).
+      #   faiss  HNSW  -> supports only l2/innerproduct until OpenSearch 2.19;
+      #                   faiss + cosinesimil is REJECTED at index creation on
+      #                   2.13. For >1024-dim models, use engine: faiss with
+      #                   space_type: innerproduct (embeddings are normalized).
+      engine: "lucene"
+
+  # Neptune Indexing
+  neptune:
+    entity_label_prefix: "Entity"
+    community_label_prefix: "Community"
+    batch_size: 100
+    # Concurrent write batches submitted to Neptune. 1 (default) = sequential
+    # indexing; >1 fans batches over a thread pool, multiplexed across the
+    # Gremlin connection pool (size aws.neptune.pool_size to match). Each batch
+    # accumulates its own stats, merged on completion.
+    index_concurrency: 1
+    max_retries: 3
+    retry_delay_seconds: 2
+    property_max_length: 1000
+    # Graph-traversal tuning for retrieval (neighbor expansion). max_hops is
+    # honored directly by the retriever (NeptuneIndexingConfig default 3).
+    max_hops: 3
+    max_results_per_hop: 50
+    min_entity_importance: 0.5
+
+# Search Configuration
+search:
+  translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+  entity_extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+  strategy_selection_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+  context_building_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+  answer_generation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+
+  # Hybrid search weights
+  hybrid:
+    lexical_weight: 0.5
+    vector_weight: 0.5
+
+  # Fusion Configuration
+  fusion:
+    method: "rrf"
+    rrf_k: 60
+    # MMR: 1.0 = pure relevance (filtering skipped), 0.0 = maximum diversity.
+    diversity_lambda: 0.5
+    # Per-source-bucket weights, only applied when method is "weighted" (the
+    # default "rrf" ignores them). Keys are the retrieval source buckets the
+    # strategies emit; a bucket without a key defaults to 1.0.
+    fusion_weights:
+      graph_entities: 1.0
+      text_units: 1.0
+      lightrag_entities: 1.0
+      lightrag_relationships: 1.0
+      lightrag_chunks: 1.0
+      opensearch_all: 1.0
+      opensearch_community_reports: 1.0
+      opensearch_candidate_community_reports: 1.0
+      opensearch_expanded_community_reports: 1.0
+      results: 1.0
+
+  # Reranking Configuration
+  reranking:
+    enabled: true
+    rerank_model_id: "cohere.rerank-v3-5:0"
+    top_k: 100
+
+  # LightRAG dual-level keyword search (mix/hybrid/naive modes)
+  lightrag_search:
+    # When keyword extraction yields nothing, a query shorter than this falls
+    # back to using the raw query as a low-level keyword (0 disables the gate).
+    raw_query_fallback_max_len: 50
+
+  # Global Search Configuration
+  global_search:
+    community_relevance_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    map_reduce_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    max_communities: 10
+    relevance_threshold: 0.5
+    use_dynamic_selection: true
+    enable_map_reduce: true
+    # Timeout (seconds) for the Neptune community-graph retrieval; raise for very
+    # large graphs or slow clusters.
+    graph_timeout_seconds: 30.0
+    # Upper bound on text units pulled into the global-search context.
+    max_text_units: 100
+    # Minimum community results before map-reduce synthesis kicks in; below
+    # this the results are returned directly (the non-map-reduce path).
+    map_reduce_min_results: 3
+    # MS GraphRAG map-reduce knobs. MAP rates community-report key points
+    # (0-100) for the query, FILTER+RANK drops low-scored points, PACK fits the
+    # ranked points into a token budget, REDUCE synthesizes the answer from them.
+    # Map model is cheap by default (rating is cheap).
+    map_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    # Community reports packed into one map LLM call (calls run concurrently).
+    map_batch_size: 2
+    # Drop map key points whose 0-100 score is at or below this (0 keeps any
+    # positive score).
+    map_relevance_threshold: 0
+    # Token budget for the ranked key points fed to the reduce step.
+    max_map_reduce_tokens: 8000
+
+  local_search:
+    # Drop graph-expanded entities appearing in more than this many text units
+    # (too generic to be discriminative for local search).
+    entity_frequency_threshold: 20
+
+  # Drift Search Configuration
+  drift_search:
+    enable_query_refinement: true
+    enable_keyword_extraction: true
+    query_refinement_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    keyword_expansion_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    convergence_assessment_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    max_iterations: 3
+    initial_top_k: 5
+    summary_length: 5
+    # Per-result character budget when summarizing retrieved content into the
+    # evolved DRIFT query (caps how much of each result feeds the next iteration).
+    summary_char_limit: 200
+    n_entities: 5
+    convergence_threshold: 0.1
+    improvement_threshold: 0.05
+    # MS GraphRAG primer -> follow-up flow. When true, a HyDE primer drafts a
+    # hypothetical answer from the seed community reports and decomposes the
+    # query into specific follow-up sub-queries, each run as its own search
+    # iteration (instead of carrying one mutating query forward). Off by default:
+    # adds one LLM call up front and turns the iteration budget into follow-up
+    # breadth.
+    enable_primer: false
+    primer_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    primer_follow_ups: 3
+
+  # Token Manager Configuration
+  token_manager:
+    max_context_tokens: 200000
+    token_count_cache_size: 1024
+
+# Memory Configuration
+memory:
+  max_conversations: 100
+  max_messages_per_conversation: 20
+  max_conversation_age_hours: 168
+
+# Cache Configuration
+cache:
+  ttl_seconds: 86400  # cache entry TTL in seconds; null = never expire
+  chunking:
+    enabled: true
+    chunk_size: 1000
+    max_file_size_mb: 50
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  log_format: "structured"
+  log_to_file: true
+  log_file_path: "logs/log.txt"
+
+# Evaluation Configuration
+evaluation:
+  outputs_directory: "outputs/evaluation"
+  embedding_model_id: "amazon.titan-embed-text-v2:0"
+  evaluation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+  enabled_evaluators:
+    - langchain
+    - ragas
+    # - graph_aware  # deterministic, LLM-free entity/relationship coverage
+    #                (= recall of expected graph artifacts; precision/F1 are
+    #                intentionally not emitted). Requires `expected_entities` /
+    #                `expected_relationships` in the evaluation dataset.
+  langchain_metrics:
+    - correctness
+    - partial_correctness
+  ragas_metrics:
+    - answer_correctness
+    - answer_relevancy
+    - context_precision
+    - context_recall
+    - faithfulness
+  max_context_tokens: 8192
+  save_detailed_results: true
+
+# Custom Prompts Configuration
+custom_prompts:
+  # Graph Extraction Prompts
+  graph_extraction_system: null
+  graph_extraction_human: null
+
+  # Description Summarization Prompts (over-long merged descriptions)
+  description_summarization_system: null
+  description_summarization_human: null
+
+  # Claim Extraction Prompts
+  claim_extraction_system: null
+  claim_extraction_human: null
+
+  # Graph Refinement Prompts
+  graph_refinement_system: null
+  graph_refinement_human: null
+
+  # Community Report Prompts
+  community_report_system: null
+  community_report_human: null
+
+  # Global-search MAP-step Prompts (rates each community report's key points
+  # against the query in the map-reduce path).
+  global_map_system: null
+  global_map_human: null
+
+  # Answer Generation Prompts
+  answer_generation_system: null
+  answer_generation_human: null
+
+  # Context Building Prompts
+  context_building_system: null
+  context_building_human: null
+
+  # Entity Extraction Prompts
+  entity_extraction_system: null
+  entity_extraction_human: null
+
+  # Keyword Expansion Prompts
+  keyword_expansion_system: null
+  keyword_expansion_human: null
+
+  # Query Refinement Prompts
+  query_refinement_system: null
+  query_refinement_human: null
+
+  # Strategy Selection Prompts
+  strategy_selection_system: null
+  strategy_selection_human: null
+
+  # Dual-level (high/low) Keyword Extraction Prompts (LightRAG mix/hybrid modes)
+  keywords_extraction_system: null
+  keywords_extraction_human: null
+
+  # Prompt-tuning Prompts (run-prompt-tuning): corpus profiling that produces
+  # domain-adapted custom_prompts (few-shot examples are now generated by running
+  # the real GraphExtractor over sampled chunks, so they need no prompt override).
+  corpus_profile_system: null
+  corpus_profile_human: null
+  # DRIFT primer (search.drift_search.enable_primer)
+  drift_primer_system: null
+  drift_primer_human: null

@@ -1,0 +1,128 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Justified cdk-nag (AwsSolutions) suppressions.
+
+Applied only when -c enable_cdk_nag=true. Each suppression documents WHY the
+finding is accepted; everything else is fixed in the stacks. Kept centralized so
+the rationale is reviewable in one place.
+"""
+
+from __future__ import annotations
+
+from cdk_nag import NagSuppressions
+
+from iac.config import DeploymentConfig
+
+
+def apply(stacks: dict[str, object], config: DeploymentConfig) -> None:
+    networking = stacks["networking"]
+    storage = stacks["storage"]
+    compute = stacks["compute"]
+    orchestration = stacks["orchestration"]
+
+    # --- Networking ---
+    if not config.vpc_flow_logs:
+        NagSuppressions.add_stack_suppressions(
+            networking,
+            [
+                {
+                    "id": "AwsSolutions-VPC7",
+                    "reason": "Flow logs are config-gated (vpc_flow_logs); enable "
+                    "for prod. The private data plane has no internet egress.",
+                }
+            ],
+        )
+    # Scope EC23 to the ServiceSg resource specifically (not the whole stack) so
+    # a genuine 0.0.0.0/0 ingress added to any OTHER security group in this stack
+    # is still flagged. The suppression is a false positive only for this SG's
+    # intra-SG self-reference, which cdk-nag can't resolve.
+    NagSuppressions.add_resource_suppressions(
+        networking.service_sg,
+        [
+            {
+                "id": "AwsSolutions-EC23",
+                "reason": "False positive: the SG ingress is intra-SG (same "
+                "security group), not 0.0.0.0/0; the rule cannot resolve the "
+                "self-reference intrinsic and errors out.",
+            }
+        ],
+    )
+
+    # --- Storage / OpenSearch ---
+    NagSuppressions.add_stack_suppressions(
+        storage,
+        [
+            {
+                "id": "AwsSolutions-OS3",
+                "reason": "IP allowlisting is not applicable to a VPC-bound "
+                "OpenSearch domain — network access is already restricted to the "
+                "VPC + service security group, and the access policy requires "
+                "IAM-signed (es:ESHttp*) requests.",
+            },
+            {
+                "id": "AwsSolutions-OS4",
+                "reason": "Dedicated master nodes are enabled for multi-node "
+                "(HA) deployments; a single-node dev domain intentionally omits "
+                "them to control cost.",
+            },
+            {
+                "id": "AwsSolutions-OS7",
+                "reason": "Zone Awareness is enabled automatically for multi-node "
+                "(HA) deployments (opensearch_count > 1, availability_zone_count "
+                "up to 2); a single-node dev domain intentionally omits it to "
+                "control cost. Set opensearch_count > 1 for production.",
+            },
+            # CDK BucketDeployment/custom-resource Lambda roles are framework
+            # generated; their managed policy + wildcard are not under our control.
+            {
+                "id": "AwsSolutions-IAM4",
+                "appliesTo": [
+                    "Policy::arn:<AWS::Partition>:iam::aws:policy/"
+                    "service-role/AWSLambdaBasicExecutionRole"
+                ],
+                "reason": "CDK-generated custom-resource Lambda execution role.",
+            },
+            {
+                "id": "AwsSolutions-IAM5",
+                "reason": "CDK-generated custom-resource roles and the S3/KMS "
+                "grants use action/resource wildcards scoped to specific ARNs "
+                "(bucket/*, key) which the rule still flags; not under our control "
+                "or already least-privilege for the resource.",
+            },
+        ],
+    )
+
+    # --- Compute ---
+    NagSuppressions.add_stack_suppressions(
+        compute,
+        [
+            {
+                "id": "AwsSolutions-ECS2",
+                "reason": "Container env vars carry only non-secret service "
+                "endpoints/region/bucket names; no credentials or secrets are "
+                "passed via the environment.",
+            },
+            {
+                "id": "AwsSolutions-IAM5",
+                "reason": "Bedrock model invocation is scoped to foundation-model "
+                "+ inference-profile ARNs (a model wildcard is required to call "
+                "any approved model); the bedrock:List/GetInferenceProfile read "
+                "actions used by the cross-region resolver have no resource-level "
+                "scoping and so use '*'; Neptune/OpenSearch use resource '/*' "
+                "under the specific cluster/domain ARN.",
+            },
+        ],
+    )
+
+    # --- Orchestration ---
+    NagSuppressions.add_stack_suppressions(
+        orchestration,
+        [
+            {
+                "id": "AwsSolutions-IAM5",
+                "reason": "The Step Functions execution role's ECS RunTask + "
+                "PassRole + logs permissions are generated by the EcsRunTask "
+                "integration and scoped to this task definition/role.",
+            }
+        ],
+    )

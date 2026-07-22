@@ -1,0 +1,121 @@
+name: quality
+
+# Lint / format / import-order / type-check / tests + coverage.
+# Mirrors the pre-commit gate; runs on PRs and pushes to the default branch.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Ruff (lint)
+        run: uv run ruff check unified_kg_rag tests
+
+      - name: Black (format check)
+        run: uv run black --check unified_kg_rag tests
+
+      - name: isort (import order)
+        run: uv run isort --check-only unified_kg_rag tests
+
+      - name: mypy (type check)
+        run: uv run mypy unified_kg_rag
+
+      - name: pytest + coverage
+        # The `aws` marker gates tests needing real AWS services; excluded in CI.
+        # The coverage floor tracks the actual ratchet (currently ~79%) so new
+        # untested code cannot silently regress coverage; raise toward 80%.
+        run: >-
+          uv run pytest -m "not aws"
+          --cov=unified_kg_rag --cov-report=term-missing
+          --cov-report=xml:coverage.xml --junitxml=report.xml
+          --cov-fail-under=78
+
+      - name: Upload coverage + test report
+        # Surface coverage.xml / report.xml as artifacts for inspection on each run.
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-and-report
+          path: |
+            coverage.xml
+            report.xml
+          if-no-files-found: ignore
+
+  markers:
+    # Verify the property and integration suites pass in isolation, so a suite
+    # that is accidentally excluded from the default selection can't rot unseen.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Property suite
+        run: uv run pytest -m "property" -q
+
+      - name: Integration suite (AWS-free)
+        run: uv run pytest -m "integration and not aws" -q
+
+  iac:
+    # Synthesize the CDK app with cdk-nag enabled so the Well-Architected
+    # posture (and the curated nag_suppressions) is enforced in CI — an
+    # over-broad policy or public exposure introduced later fails here instead
+    # of shipping silently. IMPORTANT: cdk-nag violations exit non-zero only via
+    # the `cdk` CLI (`cdk synth`); a plain `python app.py` does NOT fail on them,
+    # so this job must use the CLI for the gate to have teeth.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4
+        with:
+          node-version: "20"
+
+      - name: Install AWS CDK CLI
+        run: npm install -g aws-cdk
+
+      - name: Install IaC dependencies
+        run: pip install -r iac/requirements.txt
+
+      - name: cdk synth with cdk-nag (fails on any unsuppressed finding)
+        working-directory: iac
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: cdk synth --all -c enable_cdk_nag=true -q
+
+      - name: IaC assertion tests
+        working-directory: iac
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        # Only run if a test suite exists; keeps the job green before tests land.
+        run: |
+          pip install pytest
+          if [ -d tests ]; then python -m pytest tests -q; else echo "no iac/tests yet"; fi
