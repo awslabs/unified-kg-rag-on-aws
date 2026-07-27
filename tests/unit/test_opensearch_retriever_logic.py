@@ -394,3 +394,45 @@ def test_extract_content_translated_suppresses_raw_text(retriever, config) -> No
 def test_extract_content_uses_raw_text_when_no_translation(retriever) -> None:
     content = retriever._extract_content({"text": "raw body"})
     assert "raw body" in content
+
+
+# Relationship hits must name their endpoints, mirroring
+# upstream LightRAG's `{"entity1", "entity2", "description"}` relations_context.
+# Without the names a relationship line is unresolvable text, and widening the
+# relationship stream to upstream's top_k=40 then multiplies noise instead of
+# signal (measured: it made mix token-F1 fall, not rise).
+
+
+def test_extract_content_names_relationship_endpoints(retriever) -> None:
+    content = retriever._extract_content(
+        {
+            "source_name": "erik erikson",
+            "target_name": "joan erikson",
+            "type": "spouse",
+            "description": "Marriage relationship",
+        }
+    )
+    assert "Relationship: erik erikson -[spouse]-> joan erikson" in content
+    assert "Description: Marriage relationship" in content
+
+
+def test_extract_content_relationship_without_a_type_still_names_endpoints(
+    retriever,
+) -> None:
+    content = retriever._extract_content(
+        {"source_name": "a", "target_name": "b", "description": "d"}
+    )
+    assert "Relationship: a -> b" in content
+
+
+def test_extract_content_relationship_with_one_missing_endpoint(retriever) -> None:
+    # A half-populated edge is still more useful named than anonymous.
+    content = retriever._extract_content({"source_name": "a", "description": "d"})
+    assert "Relationship: a -> unknown" in content
+
+
+def test_extract_content_non_relationship_hit_gets_no_relationship_line(
+    retriever,
+) -> None:
+    content = retriever._extract_content({"name": "Alice", "description": "researcher"})
+    assert "Relationship:" not in content

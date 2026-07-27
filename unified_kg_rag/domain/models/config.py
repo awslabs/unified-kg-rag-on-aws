@@ -1318,12 +1318,59 @@ class GlobalSearchConfig(BaseModel):
     )
 
 
+class LocalSearchQuotaConfig(BaseModel):
+    """Reserved fusion slots per section type, as multiples of the query's top_k.
+
+    Without reserved slots a single type (usually entities, which arrive with many
+    near-tie fusion scores) takes the whole flat top_k cut and crowds out the
+    document chunks that carry the answer. MS GraphRAG's local search assembles
+    its context the same way — proportional per-section budgets rather than one
+    ranked list — with ``top_k_entities``/``top_k_relationships`` defaulting to 10.
+
+    Each entry is ``max(multiplier * top_k, floor)``, so the shape holds as the
+    caller's top_k scales while a small top_k still admits enough of each type.
+    """
+
+    text_multiplier: float = Field(
+        default=2.0, gt=0.0, description="Chunk slots as a multiple of top_k"
+    )
+    text_floor: int = Field(
+        default=20, ge=1, description="Minimum chunk slots regardless of top_k"
+    )
+    entity_multiplier: float = Field(
+        default=1.0, gt=0.0, description="Entity slots as a multiple of top_k"
+    )
+    entity_floor: int = Field(
+        default=10, ge=1, description="Minimum entity slots regardless of top_k"
+    )
+    relationship_multiplier: float = Field(
+        default=1.0, gt=0.0, description="Relationship slots as a multiple of top_k"
+    )
+    relationship_floor: int = Field(
+        default=10, ge=1, description="Minimum relationship slots regardless of top_k"
+    )
+    community_multiplier: float = Field(
+        default=0.5, gt=0.0, description="Community report slots as a multiple of top_k"
+    )
+    community_floor: int = Field(
+        default=2, ge=1, description="Minimum community report slots"
+    )
+    claim_multiplier: float = Field(
+        default=0.5, gt=0.0, description="Claim slots as a multiple of top_k"
+    )
+    claim_floor: int = Field(default=2, ge=1, description="Minimum claim slots")
+
+
 class LocalSearchConfig(BaseModel):
     entity_frequency_threshold: int = Field(
         default=20,
         ge=1,
         description="Drop graph-expanded entities appearing in more than this "
         "many text units (too generic to be discriminative for local search).",
+    )
+    type_quota: LocalSearchQuotaConfig = Field(
+        default_factory=LocalSearchQuotaConfig,
+        description="Reserved fusion slots per section type",
     )
 
 
@@ -1409,6 +1456,72 @@ class DriftSearchConfig(BaseModel):
     )
 
 
+class ContextTypeBudgetConfig(BaseModel):
+    """Per-section-type share of the answer context window.
+
+    Both upstream methodologies split the context window into per-type
+    sub-budgets and pack each type independently, so document chunks (which hold
+    the multi-hop answer) are guaranteed representation instead of competing in a
+    flat greedy fill of near-tie fusion scores: MS GraphRAG's ``mixed_context``
+    packs community / entity / text-unit sections against independent budgets
+    (``community_prop`` 0.15, ``text_unit_prop`` 0.5 by default), and LightRAG's
+    ``_apply_token_truncation`` trims entities / relations / chunks against
+    separate token limits (6000 / 8000 out of a 30000 window).
+
+    Shares are relative weights, not fractions: they are renormalized over the
+    section types actually present in a query's candidate set, so an absent type
+    does not shrink the usable window. Raise ``text`` to favour verbatim source
+    passages, raise ``community`` to favour high-level synthesis.
+    """
+
+    text: float = Field(
+        default=0.50, ge=0.0, description="Relative share for document chunk sections"
+    )
+    entity: float = Field(
+        default=0.20, ge=0.0, description="Relative share for graph entity sections"
+    )
+    relationship: float = Field(
+        default=0.13,
+        ge=0.0,
+        description="Relative share for graph relationship sections",
+    )
+    community: float = Field(
+        default=0.10,
+        ge=0.0,
+        description="Relative share for community report sections",
+    )
+    claim: float = Field(
+        default=0.07,
+        ge=0.0,
+        description="Relative share for claim (covariate) sections",
+    )
+    general: float = Field(
+        default=0.10,
+        ge=0.0,
+        description="Relative share for untyped sections — global search's "
+        "map-reduce synthesis and drift search's primer answer land here.",
+    )
+
+    @model_validator(mode="after")
+    def validate_at_least_one_positive_share(self) -> "ContextTypeBudgetConfig":
+        if not any(
+            share > 0.0
+            for share in (
+                self.text,
+                self.entity,
+                self.relationship,
+                self.community,
+                self.claim,
+                self.general,
+            )
+        ):
+            raise ValueError(
+                "At least one context type budget share must be greater than zero; "
+                "all-zero shares would leave every answer context empty."
+            )
+        return self
+
+
 class TokenManagerConfig(BaseModel):
     max_context_tokens: int = Field(
         default=200000,
@@ -1419,6 +1532,16 @@ class TokenManagerConfig(BaseModel):
         default=1024,
         ge=1,
         description="Maximum number of entries in the LRU cache for Bedrock token counting",
+    )
+    type_budgets: ContextTypeBudgetConfig = Field(
+        default_factory=ContextTypeBudgetConfig,
+        description="Per-section-type shares of the context window",
+    )
+    min_truncated_section_tokens: int = Field(
+        default=64,
+        ge=1,
+        description="A section truncated below this many tokens is dropped rather "
+        "than emitted as an unusable fragment of evidence.",
     )
 
 
@@ -1431,6 +1554,34 @@ class LightRAGSearchConfig(BaseModel):
             "length is below this (0 disables the gate) falls back to using the raw "
             "query as a low-level keyword, mirroring LightRAG. Longer queries skip "
             "the fallback to avoid an over-broad graph scan."
+        ),
+    )
+    kg_stream_top_k: int = Field(
+        default=40,
+        ge=1,
+        description=(
+            "Width of the entity and relationship vector queries (LightRAG's "
+            "`QueryParam.top_k`, default 40). Separate from the chunk width: "
+            "collapsing both onto the caller's single top_k starves the graph "
+            "streams. Acts as a floor — a caller asking for a larger top_k gets it."
+        ),
+    )
+    chunk_stream_top_k: int = Field(
+        default=20,
+        ge=1,
+        description=(
+            "Width of the chunk stream, and the cap on the merged chunk pool "
+            "(LightRAG's `QueryParam.chunk_top_k`, default 20). Acts as a floor "
+            "against the caller's top_k."
+        ),
+    )
+    related_chunk_number: int = Field(
+        default=5,
+        ge=1,
+        description=(
+            "Chunks allocated per matched entity/relationship when following "
+            "`text_unit_ids` lineage (LightRAG's `related_chunk_number`). Slots are "
+            "distributed on a decreasing gradient so the last match still gets one."
         ),
     )
 

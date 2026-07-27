@@ -300,3 +300,19 @@ class TestLeanContextStrings:
         manager = _graph_aware_manager(config)
         out = manager.create_lean_context_strings([{"source": "s1", "score": 0.5}])
         assert "s1" in out[0]
+
+    def test_content_is_kept_for_vector_results(self, config: Config) -> None:
+        # A vector-retriever result carries its text in `content` and nothing else. It
+        # must NOT degrade to the id+score minimal-info fallback, or the top-scoring
+        # results reach RAGAS / Recall@k with no text to match against.
+        out = _graph_aware_manager(config).create_lean_context_strings(
+            [
+                {
+                    "content": "Miquette Giraudy is a keyboardist.",
+                    "source": "s1",
+                    "score": 0.9,
+                }
+            ]
+        )
+        assert "Miquette Giraudy" in out[0]
+        assert "s1" not in out[0]

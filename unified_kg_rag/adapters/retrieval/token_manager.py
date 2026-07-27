@@ -189,23 +189,165 @@ class TokenManager(MetricsMixin):
             metadata=result.metadata or {},
         )
 
-    @staticmethod
+    # Both upstreams (MS GraphRAG `mixed_context`, LightRAG
+    # `_apply_token_truncation`) split the context window into PER-TYPE
+    # sub-budgets and pack each type independently, so text chunks (which hold the
+    # multi-hop answer) are guaranteed representation and can't be crowded out by a
+    # flat greedy fill of near-tie RRF scores. The shares themselves are
+    # configurable (`search.token_manager.type_budgets`); this maps the enum onto
+    # that model's field names so a new SectionType is a compile-time concern
+    # rather than a silent zero share.
+    _BUDGET_FIELDS: ClassVar[dict[SectionType, str]] = {
+        SectionType.TEXT: "text",
+        SectionType.ENTITY: "entity",
+        SectionType.RELATIONSHIP: "relationship",
+        SectionType.CLAIM: "claim",
+        SectionType.COMMUNITY: "community",
+        SectionType.GENERAL: "general",
+    }
+
+    def _type_budget_shares(
+        self, present: list[SectionType]
+    ) -> dict[SectionType, float]:
+        configured = self.config.type_budgets
+        return {
+            t: float(getattr(configured, self._BUDGET_FIELDS[t], 0.0)) for t in present
+        }
+
+    def _type_budgets(
+        self, present: list[SectionType], token_budget: int
+    ) -> dict[SectionType, int]:
+        # Renormalize the shares over the types actually present, so an absent type
+        # does not silently shrink the window. If every present type is configured
+        # to 0.0, fall back to equal shares rather than emitting an empty context
+        # for the whole query — a share of zero should express "deprioritize", not
+        # "discard the only evidence there is".
+        shares = self._type_budget_shares(present)
+        total = sum(shares.values())
+        if total <= 0.0:
+            shares = dict.fromkeys(present, 1.0)
+            total = float(len(present)) or 1.0
+        return {t: int(token_budget * s / total) for t, s in shares.items()}
+
     def _select_optimal_sections(
-        sections: list[ContextSection], token_budget: int
+        self, sections: list[ContextSection], token_budget: int
     ) -> list[ContextSection]:
-        sorted_sections = sorted(sections, key=lambda s: s.priority, reverse=True)
-        selected_sections = []
-        used_tokens = 0
+        # The per-type budget is a HARD CAP, not a floor.
+        #
+        # This used to pack each type to its sub-budget and then run a second pass
+        # that pooled ALL unused budget and offered it to the leftover sections of
+        # ANY type by raw priority. Because PRIORITY_MULTIPLIERS favors TEXT (1.3)
+        # and every leftover competed in one global pool, whichever type happened to
+        # have the most/highest-scoring leftovers absorbed the entire remainder. That
+        # made the configured shares advisory rather than binding: one type could
+        # take most of the window against a 0.10 share, and once chunk candidates
+        # carried real descending rank scores TEXT evicted the community and entity
+        # sections almost entirely.
+        #
+        # Neither upstream pools: MS GraphRAG's mixed_context builds the community /
+        # local / text sections against three INDEPENDENT strict token budgets
+        # (community_prop, 1 - community_prop - text_unit_prop, text_unit_prop);
+        # LightRAG truncates entities / relations / chunks against separate per-type
+        # limits. Mirror that: each type is packed only against its own cap, and no
+        # type can ever cross into another's share by out-scoring it.
+        by_type: dict[SectionType, list[ContextSection]] = {}
+        for s in sections:
+            if s.token_count > 0:
+                by_type.setdefault(s.section_type, []).append(s)
+        if not by_type:
+            return []
+        for lst in by_type.values():
+            lst.sort(key=lambda s: s.priority, reverse=True)
 
-        for section in sorted_sections:
-            if section.token_count == 0:
-                continue
+        # ONE pass, no leftover re-offering. A type that cannot fill its share
+        # (e.g. only 8 chunk candidates survive local search's entity ceiling)
+        # leaves the remainder UNUSED — exactly as MS GraphRAG leaves an unfilled
+        # text_unit_prop share unused rather than handing it to community reports.
+        # Re-offering the remainder to whichever type still has candidates was
+        # measured to reproduce the original defect verbatim: community reports
+        # kept 0.66 of the window because they were the only type with candidates
+        # left. Renormalization over PRESENT types (in _type_budgets) is the only
+        # redistribution, and it is static — it cannot depend on how many
+        # candidates a type happens to have.
+        budgets = self._type_budgets(list(by_type), token_budget)
+        selected: list[ContextSection] = []
+        for stype, lst in by_type.items():
+            cap = budgets[stype]
+            sub_used = 0
+            for section in lst:
+                room = cap - sub_used
+                if room <= 0:
+                    break
+                if section.token_count <= room:
+                    selected.append(section)
+                    sub_used += section.token_count
+                    continue
+                # The section overflows the remaining share. Upstream's rows are
+                # table rows, so it simply stops; ours are whole retrieved items,
+                # and a single community report routinely exceeds a 10% share —
+                # dropping the type outright cost 5 gold contexts and shrank the
+                # window from 29k to 8.8k chars. Truncate the FIRST overflowing
+                # section to fit instead, so every type with candidates is
+                # represented, then stop this type (the budget is now spent).
+                head = self._truncate_to_tokens(section, room)
+                if head is not None:
+                    selected.append(head)
+                break
 
-            if used_tokens + section.token_count <= token_budget:
-                selected_sections.append(section)
-                used_tokens += section.token_count
+        if selected:
+            return selected
 
-        return selected_sections
+        # Last resort: every present type's renormalized share came out below the
+        # truncation floor, so no type could seat even one item — yet the window
+        # itself has room for a whole section. That happens when the window is
+        # small relative to the number of present types (shares divide, the floor
+        # does not). Returning nothing here would hand the generator an empty
+        # context while evidence that fits was on the table, so seat the single
+        # highest-priority section instead. This cannot reintroduce the
+        # crowding-out defect above: it only runs when the per-type pass selected
+        # nothing at all, and it seats exactly one section.
+        ranked = sorted(
+            (s for lst in by_type.values() for s in lst),
+            key=lambda s: s.priority,
+            reverse=True,
+        )
+        for section in ranked:
+            if section.token_count <= token_budget:
+                return [section]
+        head = self._truncate_to_tokens(ranked[0], token_budget)
+        return [head] if head is not None else []
+
+    def _truncate_to_tokens(
+        self, section: ContextSection, max_tokens: int
+    ) -> ContextSection | None:
+        """Cut a section's content down to roughly ``max_tokens``, or None if the
+        budget is too small to carry anything meaningful.
+
+        Cuts on a whitespace boundary using the section's own measured
+        tokens-per-character ratio: this runs inside the packing loop, so a real
+        token count per candidate prefix would mean an extra Bedrock count_tokens
+        round trip per section. The ratio is exact enough for a budget cap, and the
+        result is deliberately conservative (floor + an explicit ellipsis marker).
+        """
+        if (
+            max_tokens < self.config.min_truncated_section_tokens
+            or section.token_count <= 0
+        ):
+            return None
+        chars_per_token = len(section.content) / section.token_count
+        keep_chars = int(max_tokens * chars_per_token)
+        if keep_chars <= 0:
+            return None
+        head = section.content[:keep_chars].rsplit(" ", 1)[0].rstrip()
+        if not head:
+            return None
+        return section.model_copy(
+            update={
+                "content": f"{head} …",
+                "token_count": max_tokens,
+                "metadata": {**section.metadata, "truncated": True},
+            }
+        )
 
     @staticmethod
     def _calculate_quality_score(
@@ -241,15 +383,41 @@ class TokenManager(MetricsMixin):
 
     @staticmethod
     def build_context_string(optimized_context: OptimizedContext) -> str:
+        # Group sections by type under labeled
+        # headers (mirrors LightRAG's Entities/Relationships/Chunks blocks and MS's
+        # sectioned tables) instead of a flat per-item "Source Type/Priority" dump.
+        # The Priority float was meaningless prompt noise; dropped. Text chunks carry
+        # a citable [id]; the answer prompt can reference them.
         if not optimized_context.sections:
             return EMPTY_CONTEXT_PLACEHOLDER
 
-        context_parts = []
-        for section in optimized_context.sections:
-            header = (
-                f"## Source Type: {section.section_type.value.upper()} "
-                f"(Source ID: {section.source_id}, Priority: {section.priority:.2f})"
-            )
-            context_parts.append(f"{header}\n{section.content}")
+        order = [
+            SectionType.TEXT,
+            SectionType.ENTITY,
+            SectionType.RELATIONSHIP,
+            SectionType.CLAIM,
+            SectionType.COMMUNITY,
+            SectionType.GENERAL,
+        ]
+        labels = {
+            SectionType.TEXT: "Document Chunks",
+            SectionType.ENTITY: "Knowledge Graph — Entities",
+            SectionType.RELATIONSHIP: "Knowledge Graph — Relationships",
+            SectionType.CLAIM: "Claims",
+            SectionType.COMMUNITY: "Community Reports",
+            SectionType.GENERAL: "Other Context",
+        }
+        grouped: dict[SectionType, list[ContextSection]] = {}
+        for s in optimized_context.sections:
+            grouped.setdefault(s.section_type, []).append(s)
 
-        return "\n\n---\n\n".join(context_parts).strip()
+        blocks: list[str] = []
+        for stype in order:
+            items = grouped.get(stype)
+            if not items:
+                continue
+            lines = [f"##### {labels[stype]}"]
+            for s in items:
+                lines.append(f"[{s.source_id}] {s.content}")
+            blocks.append("\n".join(lines))
+        return "\n\n".join(blocks).strip()

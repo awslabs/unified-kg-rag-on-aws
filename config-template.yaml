@@ -427,6 +427,14 @@ search:
     # When keyword extraction yields nothing, a query shorter than this falls
     # back to using the raw query as a low-level keyword (0 disables the gate).
     raw_query_fallback_max_len: 50
+    # Two separate retrieval widths, as in LightRAG: the entity/relationship
+    # vector queries are sized independently of the chunk stream. Both act as
+    # floors — a larger caller top_k wins.
+    kg_stream_top_k: 40
+    chunk_stream_top_k: 20
+    # Chunks allocated per matched entity/relationship when following text-unit
+    # lineage (slots decrease across matches so the last match still gets one).
+    related_chunk_number: 5
 
   # Global Search Configuration
   global_search:
@@ -461,6 +469,20 @@ search:
     # Drop graph-expanded entities appearing in more than this many text units
     # (too generic to be discriminative for local search).
     entity_frequency_threshold: 20
+    # Reserved fusion slots per section type, as max(multiplier * top_k, floor).
+    # Without reserved slots one type takes the whole flat top_k cut and crowds
+    # out the document chunks that carry the answer.
+    type_quota:
+      text_multiplier: 2.0
+      text_floor: 20
+      entity_multiplier: 1.0
+      entity_floor: 10
+      relationship_multiplier: 1.0
+      relationship_floor: 10
+      community_multiplier: 0.5
+      community_floor: 2
+      claim_multiplier: 0.5
+      claim_floor: 2
 
   # Drift Search Configuration
   drift_search:
@@ -492,6 +514,19 @@ search:
   token_manager:
     max_context_tokens: 200000
     token_count_cache_size: 1024
+    # A section truncated below this many tokens is dropped rather than emitted
+    # as an unusable fragment.
+    min_truncated_section_tokens: 64
+    # Relative shares of the context window per section type. Each type is packed
+    # against its own share only, so no type can crowd out another; shares are
+    # renormalized over the types actually present in a query's candidates.
+    type_budgets:
+      text: 0.50
+      entity: 0.20
+      relationship: 0.13
+      community: 0.10
+      claim: 0.07
+      general: 0.10
 
 # Memory Configuration
 memory:

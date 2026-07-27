@@ -706,8 +706,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     def _format_output_step(state: dict[str, Any]) -> RAGOutput:
         sr: SearchResult = state["search_results"]
         sr.search_strategy = state["resolved_strategy"].value
+        # `content` carries the retrieved TEXT. Omitting it made every vector-retriever
+        # result serialise to {"source": <uuid>, "score": <f>} only (its metadata holds
+        # no description/name), so `retrieved_contexts` opened with ~20 text-free
+        # entries: any consumer that truncates to top-k saw no text at all. That
+        # silently zeroed offline context-recall scoring AND starved the RAGAS context
+        # metrics for the highest-scoring results. Retrieval and generation are
+        # unaffected — this is what gets REPORTED, not what gets retrieved.
         sources = [
-            r.model_dump(include={"source", "score", "metadata"}) for r in sr.results
+            r.model_dump(include={"content", "source", "score", "metadata"})
+            for r in sr.results
         ]
 
         metadata = {

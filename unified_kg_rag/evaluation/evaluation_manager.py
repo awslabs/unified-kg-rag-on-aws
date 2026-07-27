@@ -265,6 +265,10 @@ class EvaluationManager:
         desired_fields = [
             "description",
             "full_content",
+            # `content` is RetrievalResult's text field — the vector retriever populates
+            # it and nothing else, so without it those results fell through to
+            # _create_minimal_info and were stored as id+score with no text.
+            "content",
             "name",
             "summary",
             translated_key,

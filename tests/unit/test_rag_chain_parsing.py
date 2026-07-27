@@ -226,9 +226,15 @@ def test_format_output_step_builds_rag_output() -> None:
     assert out.metadata["total_results"] == 1
     # carried-over metadata from the SearchResult is merged in.
     assert out.metadata["extra"] == 1
-    # sources project only source/score/metadata.
+    # sources project content/source/score/metadata. `content` is required: a vector
+    # result carries its text there and nowhere else, so dropping it left the
+    # highest-scoring sources with no text for RAGAS / recall scoring to match on.
     assert out.sources[0]["source"] == "doc-1"
-    assert set(out.sources[0].keys()) == {"source", "score", "metadata"}
+    assert out.sources[0]["content"] == "c1"
+    assert set(out.sources[0].keys()) == {"content", "source", "score", "metadata"}
+    # retriever_type / chunk_id stay out — the projection is still explicit, not a
+    # full model_dump.
+    assert "retriever_type" not in out.sources[0]
 
 
 def test_format_search_output_step_returns_serializable_dict() -> None:
