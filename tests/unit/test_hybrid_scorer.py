@@ -55,14 +55,46 @@ class TestNormalizeScores:
 
 
 class TestReciprocalRankFusion:
+    # Fusion blends a per-stream min-max-normalized NATIVE
+    # score into the RRF score, scaled to one RRF adjacent-rank step so it only
+    # orders items within an RRF-rank neighborhood (plain RRF made every item in a
+    # stream nearly indistinguishable, which let token_manager fill quota slots with
+    # the wrong item). So the expected score is now RRF + native_scale *
+    # native_norm, and the assertions below carry that term explicitly rather than
+    # asserting plain RRF. The scale is derived from `rrf_k`, not a fixed constant,
+    # so it stays correct for a reconfigured k — this helper mirrors that identity.
+    @staticmethod
+    def _expected(k: int, rrf: float, native_norm: float) -> float:
+        native_scale = 1.0 / (k + 1) - 1.0 / (k + 2)
+        return rrf + native_scale * native_norm
+
+    def test_native_blend_never_outweighs_one_rrf_rank_step(self) -> None:
+        # The contract the scale exists to hold: a maximally-favoured native score
+        # (1.0) may not lift a rank-2 item above a rank-1 item, at any configured k.
+        for k in (1, 10, 60, 500):
+            config = Config()
+            config.search.reranking.enabled = False
+            config.search.fusion.rrf_k = k
+            scorer = HybridScorer(config)
+            fused = scorer._reciprocal_rank_fusion(
+                {"src": [_r("first", 0.9, "1"), _r("second", 0.8, "2")]}
+            )
+            by_content = {r.content: r.score for r in fused}
+            assert by_content["first"] > by_content["second"], k
+
     def test_higher_rank_contributes_more(self) -> None:
         scorer = _scorer()
         k = scorer.fusion_config.rrf_k
         result_map = {"src": [_r("first", 0.9, "1"), _r("second", 0.8, "2")]}
         fused = scorer._reciprocal_rank_fusion(result_map)
         by_content = {r.content: r.score for r in fused}
-        assert by_content["first"] == pytest.approx(1.0 / (k + 1))
-        assert by_content["second"] == pytest.approx(1.0 / (k + 2))
+        # Two items in one stream min-max normalize to 1.0 (top) and 0.0 (bottom).
+        assert by_content["first"] == pytest.approx(
+            self._expected(k, 1.0 / (k + 1), 1.0)
+        )
+        assert by_content["second"] == pytest.approx(
+            self._expected(k, 1.0 / (k + 2), 0.0)
+        )
         assert by_content["first"] > by_content["second"]
 
     def test_cross_source_contributions_accumulate(self) -> None:
@@ -76,7 +108,8 @@ class TestReciprocalRankFusion:
         }
         fused = scorer._reciprocal_rank_fusion(result_map)
         assert len(fused) == 1
-        assert fused[0].score == pytest.approx(2.0 / (k + 1))
+        # A degenerate-range (single-item) stream normalizes to 0.5; RRF still accumulates.
+        assert fused[0].score == pytest.approx(self._expected(k, 2.0 / (k + 1), 0.5))
 
     def test_fused_object_is_a_copy(self) -> None:
         scorer = _scorer()
@@ -86,14 +119,15 @@ class TestReciprocalRankFusion:
 
     def test_default_weights_reproduce_plain_rrf(self) -> None:
         # Default fusion_weights are all 1.0 (and an unconfigured bucket defaults
-        # to 1.0 too), so RRF scoring is unchanged from plain RRF.
+        # to 1.0 too), so the RRF *term* is the unweighted 1/(k+rank) — the native
+        # blend above is the only other contribution.
         scorer = _scorer()
         assert all(w == 1.0 for w in scorer.fusion_config.fusion_weights.values())
         k = scorer.fusion_config.rrf_k
         fused = scorer._reciprocal_rank_fusion(
             {"unconfigured_bucket": [_r("only", 0.9, "1")]}
         )
-        assert fused[0].score == pytest.approx(1.0 / (k + 1))
+        assert fused[0].score == pytest.approx(self._expected(k, 1.0 / (k + 1), 0.5))
 
     def test_per_bucket_weight_scales_rrf_contribution(self) -> None:
         # A configured per-bucket weight now applies under RRF too (previously it
@@ -109,8 +143,10 @@ class TestReciprocalRankFusion:
         }
         fused = scorer._reciprocal_rank_fusion(result_map)
         by_content = {r.content: r.score for r in fused}
-        assert by_content["b"] == pytest.approx(3.0 / (k + 1))
-        assert by_content["p"] == pytest.approx(1.0 / (k + 1))
+        # Each bucket holds one item, so both normalize to native 0.5; the weight
+        # scaling applies to the RRF term, which is what this test is about.
+        assert by_content["b"] == pytest.approx(self._expected(k, 3.0 / (k + 1), 0.5))
+        assert by_content["p"] == pytest.approx(self._expected(k, 1.0 / (k + 1), 0.5))
         assert by_content["b"] > by_content["p"]
 
 
@@ -176,6 +212,57 @@ class TestFuseAndRerank:
         scorer.fuse_and_rerank_results({"a": [_r("x", 1.0, "1")]}, top_k=5)
         metrics = scorer.get_metrics()
         assert metrics["metrics"]["final_fused_count"] == 1
+
+
+class TestTypeQuota:
+    """A per-type quota is a cap as well as a floor.
+
+    Upstream LightRAG truncates the MERGED chunk pool to `chunk_top_k` before it
+    reaches the context, so a `text` quota of 20 must not grow to 40 just because
+    the two chunk streams together offered 40 candidates.
+    """
+
+    @staticmethod
+    def _typed(rtype: str, n: int, base: float) -> list[RetrievalResult]:
+        return [
+            RetrievalResult(
+                content=f"{rtype}-{i}",
+                score=base - i * 0.001,
+                source="s",
+                retriever_type=rtype,
+            )
+            for i in range(n)
+        ]
+
+    def test_over_quota_leftovers_do_not_backfill_their_own_type(self) -> None:
+        ranked = self._typed("text", 40, 0.9) + self._typed("entity", 60, 0.5)
+        out = HybridScorer._select_with_type_quota(
+            ranked, top_k=10, per_type_quota={"text": 20, "entity": 40}
+        )
+        counts: dict[str, int] = {}
+        for r in out:
+            counts[r.retriever_type] = counts.get(r.retriever_type, 0) + 1
+        assert counts == {"text": 20, "entity": 40}
+
+    def test_the_highest_scoring_items_of_each_type_are_the_ones_kept(self) -> None:
+        ranked = self._typed("text", 5, 0.9)
+        out = HybridScorer._select_with_type_quota(
+            ranked, top_k=2, per_type_quota={"text": 2}
+        )
+        assert [r.content for r in out] == ["text-0", "text-1"]
+
+    def test_types_without_a_quota_entry_still_backfill(self) -> None:
+        # A quota dict names the streams it bounds; anything else keeps the old
+        # behavior of filling the remaining budget by score.
+        ranked = self._typed("text", 2, 0.9) + self._typed("claim", 5, 0.5)
+        out = HybridScorer._select_with_type_quota(
+            ranked, top_k=6, per_type_quota={"text": 2}
+        )
+        counts: dict[str, int] = {}
+        for r in out:
+            counts[r.retriever_type] = counts.get(r.retriever_type, 0) + 1
+        assert counts["text"] == 2
+        assert counts["claim"] == 4  # budget max(top_k=6, quota sum=2) - 2 text
 
 
 class TestDiversityFiltering:

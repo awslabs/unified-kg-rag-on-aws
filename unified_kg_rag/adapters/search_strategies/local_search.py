@@ -10,6 +10,7 @@ from unified_kg_rag.adapters.retrieval.base import (
     BaseSearchStrategy,
     is_fatal_retrieval_error,
 )
+from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -36,6 +37,37 @@ class LocalSearchStrategy(BaseSearchStrategy):
     ):
         super().__init__(config, retrievers, boto_session, **kwargs)
         self.entity_focus_multiplier = entity_focus_multiplier
+
+    def _per_type_quota(self, top_k: int) -> dict[str, int]:
+        """Reserved fusion slots per section type, from configured shares of top_k."""
+        quota_config = self.config.search.local_search.type_quota
+        shares: list[tuple[SectionType, float, int]] = [
+            (SectionType.TEXT, quota_config.text_multiplier, quota_config.text_floor),
+            (
+                SectionType.ENTITY,
+                quota_config.entity_multiplier,
+                quota_config.entity_floor,
+            ),
+            (
+                SectionType.RELATIONSHIP,
+                quota_config.relationship_multiplier,
+                quota_config.relationship_floor,
+            ),
+            (
+                SectionType.COMMUNITY,
+                quota_config.community_multiplier,
+                quota_config.community_floor,
+            ),
+            (
+                SectionType.CLAIM,
+                quota_config.claim_multiplier,
+                quota_config.claim_floor,
+            ),
+        ]
+        return {
+            section_type.value: max(int(multiplier * top_k), floor)
+            for section_type, multiplier, floor in shares
+        }
 
     async def asearch(self, query: SearchQuery) -> SearchResult:
         start_time = time.time()
@@ -70,7 +102,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
             "..." if len(expanded_entity_ids) > 5 else "",
         )
 
-        text_unit_ids = self._get_ids(filtered_entity_nodes, "text_unit_ids")
+        text_unit_ids = self._rank_text_unit_ids(filtered_entity_nodes)
         logger.debug(
             "Found %s text units: '%s%s'",
             len(text_unit_ids),
@@ -102,11 +134,19 @@ class LocalSearchStrategy(BaseSearchStrategy):
         if claims:
             all_results["claims"] = claims
 
+        # The same divergences as mix apply to local (shared fuse path).
+        # Give each section type its own quota so the diversity filter + fusion don't
+        # collapse the candidate set to top_k before assembly (was dropping gold KG
+        # items), and rerank ONLY text chunks so content-vs-query reranking doesn't bury
+        # multi-hop bridge entities/relations. Mirrors MS local's proportional,
+        # per-section context assembly.
         final_results = self.hybrid_scorer.fuse_and_rerank_results(
             all_results,
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,
             query=query.query,
+            per_type_quota=self._per_type_quota(query.top_k),
+            rerank_only_types={SectionType.TEXT.value},
         )
 
         processing_time = time.time() - start_time
@@ -278,14 +318,68 @@ class LocalSearchStrategy(BaseSearchStrategy):
             logger.error("Neptune retrieval failed: %s", e)
             return []
 
+    @classmethod
+    def _rank_text_unit_ids(cls, entity_nodes: list[RetrievalResult]) -> list[str]:
+        # Chunk candidates used to come from
+        # `_get_ids(nodes, "text_unit_ids")`, which unions them into a SET — so
+        # all ordering was lost, and `_retrieve_documents` then fetches them by
+        # id filter with `query=""` (an ID batch fetch, no relevance score). The
+        # chunk stream therefore reached fusion in arbitrary order with score 0,
+        # and whatever the per-type quota sliced off was an arbitrary subset.
+        # That is invisible while expansion is narrow and every chunk is
+        # on-topic, but it makes widening the expansion actively harmful: a
+        # measured 5x more chunks came with 4x LESS gold in the context.
+        #
+        # MS GraphRAG local ranks candidate text units by how many distinct
+        # query-relevant entities reference them, with the entity's own rank as
+        # the tiebreak, before applying its text-unit budget. Mirror that here:
+        # score each chunk by (number of referencing entities, best referencing
+        # entity score) and return ids in descending order, so downstream
+        # truncation keeps the chunks with the most graph support.
+        hit_count: dict[str, int] = {}
+        best_score: dict[str, float] = {}
+        for node in entity_nodes:
+            ids = node.metadata.get("text_unit_ids") or []
+            if isinstance(ids, str):
+                ids = [ids]
+            if not isinstance(ids, list):
+                continue
+            score = node.score or 0.0
+            for raw_id in ids:
+                unit_id = str(raw_id)
+                hit_count[unit_id] = hit_count.get(unit_id, 0) + 1
+                if score > best_score.get(unit_id, float("-inf")):
+                    best_score[unit_id] = score
+        return sorted(
+            hit_count,
+            key=lambda unit_id: (hit_count[unit_id], best_score.get(unit_id, 0.0)),
+            reverse=True,
+        )
+
     @staticmethod
+    def _text_unit_count(node: RetrievalResult) -> int:
+        # Neptune's `_clean_property_map` unwraps any
+        # single-element value_map list into a bare scalar, so an entity that
+        # appears in EXACTLY ONE text unit arrives with `text_unit_ids` as a str
+        # (a 36-char UUID), not a list. `len()` on that counted CHARACTERS (36),
+        # which exceeds every sane frequency threshold, so the most specific
+        # entities in the graph — the multi-hop bridge nodes that occur in a
+        # single document — were silently dropped by the frequency filter, which
+        # also starved the text-unit fan-out those entities feed.
+        ids = node.metadata.get("text_unit_ids") or []
+        if isinstance(ids, str):
+            return 1
+        return len(ids)
+
+    @classmethod
     def _filter_entities(
+        cls,
         expanded_entity_nodes: list[RetrievalResult],
         frequency_threshold: int,
     ) -> list[RetrievalResult]:
         filtered_nodes = []
         for node in expanded_entity_nodes:
-            text_unit_count = len(node.metadata.get("text_unit_ids", []))
+            text_unit_count = cls._text_unit_count(node)
             if 0 < text_unit_count <= frequency_threshold or text_unit_count == 0:
                 filtered_nodes.append(node)
 
@@ -317,12 +411,37 @@ class LocalSearchStrategy(BaseSearchStrategy):
 
         try:
             results = await self.document_retriever.aretrieve(search_query)
-            return {"text_units": results}
+            return {"text_units": self._restore_rank(results, text_unit_ids)}
         except Exception as e:
             if is_fatal_retrieval_error(e):
                 raise
             logger.error("OpenSearch retrieval failed: %s", e)
             return {}
+
+    @staticmethod
+    def _restore_rank(
+        results: list[RetrievalResult], ranked_ids: list[str]
+    ) -> list[RetrievalResult]:
+        # This lookup is an ID-batch FETCH (`query=""`,
+        # LEXICAL, pure id filter), so OpenSearch returns the batch in index
+        # order with no meaningful relevance score — 1915 of 2355 emitted
+        # contexts carried score 0.0. That threw away the graph-support ranking
+        # computed in `_rank_text_unit_ids`. Re-impose it here, and project it
+        # into `score` as a normalized descending value so the shared fusion /
+        # per-type-quota path (which sorts by score) preserves it instead of
+        # tie-breaking arbitrarily.
+        if not results or not ranked_ids:
+            return results
+        rank_of = {unit_id: i for i, unit_id in enumerate(ranked_ids)}
+        fallback = len(ranked_ids)
+        ordered = sorted(results, key=lambda r: rank_of.get(str(r.source), fallback))
+        total = len(ordered)
+        rescored: list[RetrievalResult] = []
+        for position, result in enumerate(ordered):
+            scored = result.model_copy()
+            scored.score = (total - position) / total
+            rescored.append(scored)
+        return rescored
 
     def _record_search_metrics(
         self,

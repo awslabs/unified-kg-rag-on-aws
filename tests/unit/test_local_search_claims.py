@@ -60,7 +60,7 @@ def _make_strategy(config: Config):
     )
     # Stub the shared scorer to flatten the source dict (avoid Bedrock).
     strategy.hybrid_scorer.fuse_and_rerank_results = (  # type: ignore[method-assign]
-        lambda results_dict, top_k, retrieval_multiplier=1, query=None: [
+        lambda results_dict, top_k, retrieval_multiplier=1, query=None, **_kw: [
             r for results in results_dict.values() for r in results
         ]
     )

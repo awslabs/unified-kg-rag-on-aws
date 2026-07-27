@@ -553,6 +553,24 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         if translated_text := source.get(translated_key):
             content_parts.append(translated_text)
 
+        # A relationship hit MUST name its endpoints.
+        # Upstream LightRAG renders every relation as
+        # `{"entity1": src, "entity2": tgt, "description": ...}` (operate.py
+        # `relations_context`), so the reader can always tell what is related to
+        # what. We indexed `source_name`/`target_name` (opensearch_indexer.py:371)
+        # but never rendered them, emitting bare fragments like
+        # "Description: Date of birth relationship" — text naming neither endpoint,
+        # which the reader cannot resolve. That is why widening the relationship
+        # stream made scores WORSE instead of better: it multiplied unusable lines.
+        src_name = source.get("source_name")
+        tgt_name = source.get("target_name")
+        if src_name or tgt_name:
+            rel_type = source.get("type")
+            arrow = f" -[{rel_type}]-> " if rel_type else " -> "
+            content_parts.append(
+                f"Relationship: {src_name or 'unknown'}{arrow}{tgt_name or 'unknown'}"
+            )
+
         if description := source.get("description"):
             content_parts.append(f"Description: {description}")
 

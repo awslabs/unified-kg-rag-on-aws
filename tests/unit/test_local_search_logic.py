@@ -158,6 +158,17 @@ def test_filter_entities_missing_metadata_treated_as_zero() -> None:
     assert len(kept) == 1
 
 
+def test_filter_entities_counts_unwrapped_single_id_as_one() -> None:
+    # NeptuneRetriever._clean_property_map unwraps a single-element value_map list
+    # into a bare scalar, so an entity appearing in exactly ONE text unit arrives
+    # with text_unit_ids as a str. len() on that counted 36 CHARACTERS and dropped
+    # the entity — precisely the single-document bridge nodes multi-hop needs.
+    uuid = "8c1f2a70-1111-2222-3333-444455556666"
+    nodes = [_result("single", metadata={"text_unit_ids": uuid})]
+    kept = LocalSearchStrategy._filter_entities(nodes, frequency_threshold=20)
+    assert [n.source for n in kept] == ["single"]
+
+
 # --------------------------------------------------------------------------- #
 # _find_candidate_entities
 # --------------------------------------------------------------------------- #
@@ -296,3 +307,67 @@ def test_record_search_metrics_populates_metrics() -> None:
         "entity_count": 3,
         "text_unit_count": 9,
     }
+
+
+# --------------------------------------------------------------------------- #
+# _rank_text_unit_ids / _restore_rank  (chunk candidates must be ranked)
+# --------------------------------------------------------------------------- #
+
+
+def test_rank_text_unit_ids_orders_by_entity_support() -> None:
+    # "shared" is referenced by two entities, "solo" by one -> shared ranks first.
+    nodes = [
+        _result("e1", score=0.4, metadata={"text_unit_ids": ["shared", "solo"]}),
+        _result("e2", score=0.9, metadata={"text_unit_ids": ["shared"]}),
+    ]
+    assert LocalSearchStrategy._rank_text_unit_ids(nodes)[0] == "shared"
+
+
+def test_rank_text_unit_ids_breaks_ties_by_best_entity_score() -> None:
+    nodes = [
+        _result("e1", score=0.2, metadata={"text_unit_ids": ["low"]}),
+        _result("e2", score=0.8, metadata={"text_unit_ids": ["high"]}),
+    ]
+    assert LocalSearchStrategy._rank_text_unit_ids(nodes) == ["high", "low"]
+
+
+def test_rank_text_unit_ids_handles_unwrapped_single_id() -> None:
+    # Neptune unwraps a single-element value_map list into a bare str.
+    uuid = "8c1f2a70-1111-2222-3333-444455556666"
+    nodes = [_result("e1", score=0.5, metadata={"text_unit_ids": uuid})]
+    assert LocalSearchStrategy._rank_text_unit_ids(nodes) == [uuid]
+
+
+def test_rank_text_unit_ids_dedups_across_entities() -> None:
+    nodes = [
+        _result("e1", score=0.5, metadata={"text_unit_ids": ["a", "b"]}),
+        _result("e2", score=0.5, metadata={"text_unit_ids": ["a"]}),
+    ]
+    assert sorted(LocalSearchStrategy._rank_text_unit_ids(nodes)) == ["a", "b"]
+
+
+def test_restore_rank_reorders_fetched_batch_to_ranked_order() -> None:
+    # The id-batch fetch returns index order; the graph-support ranking must win.
+    fetched = [_result("c3"), _result("c1"), _result("c2")]
+    out = LocalSearchStrategy._restore_rank(fetched, ["c1", "c2", "c3"])
+    assert [r.source for r in out] == ["c1", "c2", "c3"]
+
+
+def test_restore_rank_projects_descending_scores() -> None:
+    fetched = [_result("c2", score=0.0), _result("c1", score=0.0)]
+    out = LocalSearchStrategy._restore_rank(fetched, ["c1", "c2"])
+    # Scores must be strictly descending so downstream sorting is not arbitrary.
+    assert out[0].score > out[1].score
+    assert out[0].source == "c1"
+
+
+def test_restore_rank_puts_unranked_ids_last() -> None:
+    fetched = [_result("unknown"), _result("c1")]
+    out = LocalSearchStrategy._restore_rank(fetched, ["c1"])
+    assert [r.source for r in out] == ["c1", "unknown"]
+
+
+def test_restore_rank_empty_inputs_are_passthrough() -> None:
+    assert LocalSearchStrategy._restore_rank([], ["c1"]) == []
+    fetched = [_result("c1")]
+    assert LocalSearchStrategy._restore_rank(fetched, []) == fetched
