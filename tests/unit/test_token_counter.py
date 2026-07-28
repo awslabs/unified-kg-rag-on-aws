@@ -55,7 +55,14 @@ def test_count_tokens_degrades_to_script_aware_estimate(mocker) -> None:
 
 
 class FakeBedrockClient:
-    """Returns a fixed token count proportional to character length."""
+    """Returns a fixed token count proportional to character length.
+
+    Mirrors the real CountTokens wire shape: the payload nests under ``input``
+    and the response key is ``inputTokens``. An earlier fake accepted a
+    top-level ``converse=`` and returned ``totalTokens``, which matched the
+    (wrong) call the adapter made — so the tests passed while every real call
+    failed and silently degraded to the estimate.
+    """
 
     def __init__(self, chars_per_token: int = 4) -> None:
         self.chars_per_token = chars_per_token
@@ -63,8 +70,12 @@ class FakeBedrockClient:
 
     def count_tokens(self, **kwargs) -> dict:
         self.calls += 1
-        text = kwargs["converse"]["messages"][0]["content"][0]["text"]
-        return {"totalTokens": max(1, len(text) // self.chars_per_token)}
+        if "converse" in kwargs:
+            raise AssertionError(
+                "'converse' must be nested under 'input', not passed top-level"
+            )
+        text = kwargs["input"]["converse"]["messages"][0]["content"][0]["text"]
+        return {"inputTokens": max(1, len(text) // self.chars_per_token)}
 
 
 class FailingClient:
@@ -96,6 +107,26 @@ def test_degrades_to_word_count_on_api_failure() -> None:
     counter = BedrockTokenCounter("model", FailingClient())
     # No exception propagates; degrades to whitespace word count.
     assert counter.count_tokens("one two three four") == 4
+
+
+def test_request_uses_documented_count_tokens_wire_shape() -> None:
+    # Regression: the request must nest 'converse' under 'input' and read
+    # 'inputTokens' back. Getting either wrong is invisible at runtime — the
+    # failure is swallowed by the estimate fallback — so pin the shape here.
+    captured: dict[str, object] = {}
+
+    class _Recorder:
+        def count_tokens(self, **kwargs: object) -> dict:
+            captured.update(kwargs)
+            return {"inputTokens": 7}
+
+    counter = BedrockTokenCounter("model-x", _Recorder())
+    assert counter.count_tokens("hello") == 7
+    assert captured["modelId"] == "model-x"
+    assert "converse" not in captured
+    payload = captured["input"]
+    assert isinstance(payload, dict)
+    assert payload["converse"]["messages"][0]["content"][0]["text"] == "hello"
 
 
 def test_truncate_converges_under_limit() -> None:

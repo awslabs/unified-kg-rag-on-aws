@@ -36,7 +36,9 @@ def estimate_token_count(text: str) -> int:
     """Script-aware token-count estimate for the API-unavailable fallback.
 
     Bedrock's CountTokens API does not support embedding models, so embedding
-    truncation always lands on this estimate. A flat ~4-chars-per-token estimate
+    truncation always lands on this estimate. Nor does it support every language
+    model: Claude 5 (and Opus 4.8) reject it on ``bedrock-runtime``, so context
+    budgeting for those models lands here too. A flat ~4-chars-per-token estimate
     under-counts space-less dense scripts (CJK, kana, Hangul) ~4x — a whole
     Korean/Japanese sentence is few "words" and few chars-over-4 but many tokens
     — which let over-limit chunks slip past truncation and fail the embedding
@@ -140,15 +142,21 @@ class BedrockTokenCounter:
         return truncated, final_count
 
     def _call_bedrock_count_tokens(self, text: str) -> int:
+        # The request nests the payload under `input` and the response returns
+        # `inputTokens`. A top-level `converse=` raises ParamValidationError and
+        # `totalTokens` raises KeyError — both were silently swallowed by the
+        # estimate fallback, so every count degraded rather than failing loudly.
         response = self._client.count_tokens(
             modelId=self.model_id,
-            converse={
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [{"text": text}],
-                    }
-                ]
+            input={
+                "converse": {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [{"text": text}],
+                        }
+                    ]
+                }
             },
         )
-        return int(response["totalTokens"])
+        return int(response["inputTokens"])
