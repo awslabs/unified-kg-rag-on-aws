@@ -70,8 +70,62 @@ class LanguageModelInfo(BaseModel):
     )
     supports_1m_context_window: bool = Field(
         default=False,
-        description="Whether the model supports 1M context window.",
+        description=(
+            "Whether the model can reach a 1M context window via the "
+            "'context-1m-2025-08-07' beta opt-in. Requires "
+            "aws.bedrock.enable_1m_context; without it the effective window is "
+            "context_window_size. Use native_1m_context_window for models where "
+            "1M needs no opt-in."
+        ),
     )
+    adaptive_thinking_only: bool = Field(
+        default=False,
+        description=(
+            "Whether the model accepts only adaptive thinking. Claude 4.7+ rejects "
+            "the manual {'type': 'enabled', 'budget_tokens': N} shape with a 400; "
+            "thinking depth is steered by 'effort' instead of a token budget. "
+            "These models also think by default — Sonnet 5 / Fable 5 cannot be "
+            "turned off at all — so their requests always carry the adaptive "
+            "config, which is what lets 'effort' through."
+        ),
+    )
+    supports_sampling_params: bool = Field(
+        default=True,
+        description=(
+            "Whether temperature/top_p/top_k are accepted. Claude 4.7+ removed "
+            "them and returns a 400 for non-default values; the documented "
+            "migration path is to omit them and steer behaviour by prompting."
+        ),
+    )
+    native_1m_context_window: bool = Field(
+        default=False,
+        description=(
+            "Whether the 1M context window is the default and needs no beta "
+            "opt-in header. True for Claude 5, where 1M is both default and max."
+        ),
+    )
+    requires_inference_profile: bool = Field(
+        default=False,
+        description=(
+            "Whether the model is INFERENCE_PROFILE-only (no ON_DEMAND). Newer "
+            "Claude models ship without on-demand throughput, so invoking the "
+            "bare model id fails — a cross-region profile must resolve."
+        ),
+    )
+
+    BETA_1M_CONTEXT_WINDOW_SIZE: ClassVar[int] = 1000000
+
+    def effective_context_window(self, enable_1m_context: bool = False) -> int:
+        """Context window the model will actually honour for a request.
+
+        ``context_window_size`` is the baseline. Models that reach 1M only
+        through the beta opt-in report that baseline until the opt-in is on, so
+        a caller sizing a token budget must ask here rather than reading the
+        field directly — otherwise the budget ignores an enabled 1M window.
+        """
+        if enable_1m_context and self.supports_1m_context_window:
+            return max(self.context_window_size, self.BETA_1M_CONTEXT_WINDOW_SIZE)
+        return self.context_window_size
 
 
 class RerankModelInfo(BaseModel):
@@ -120,6 +174,38 @@ _EMBEDDING_MODEL_INFO: dict[EmbeddingModelId, EmbeddingModelInfo] = {
 }
 
 _LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
+    # --- Claude 5 -------------------------------------------------------
+    # 1M context is the default (and the maximum), so no beta opt-in header.
+    # Both take adaptive thinking only and reject sampling parameters.
+    LanguageModelId.CLAUDE_V5_SONNET: LanguageModelInfo(
+        context_window_size=1000000,
+        max_output_tokens=128000,
+        supports_prompt_caching=True,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        adaptive_thinking_only=True,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+    ),
+    LanguageModelId.CLAUDE_V5_OPUS: LanguageModelInfo(
+        context_window_size=1000000,
+        max_output_tokens=128000,
+        supports_prompt_caching=True,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        adaptive_thinking_only=True,
+        # Opus 5 also accepts {'type': 'disabled'}, but only at effort <= high.
+        # We always send adaptive, so that cap never applies.
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+    ),
+    # Claude Fable 5 is deliberately NOT offered: it requires the account's
+    # data-retention mode to be 'provider_data_share' (Data Retention API only,
+    # no console UI), so a selectable entry would fail for most accounts with
+    # "data retention mode 'default' is not available for this model". Its
+    # pricing also exceeds the Opus tier.
     LanguageModelId.CLAUDE_V3_HAIKU: LanguageModelInfo(
         context_window_size=200000,
         max_output_tokens=4096,
@@ -204,6 +290,16 @@ _RERANK_MODEL_INFO: dict[str, RerankModelInfo] = {
     ),
     # NOTE: add new models here
 }
+
+
+def get_language_model_info(model_id: LanguageModelId) -> LanguageModelInfo | None:
+    """Capability record for a language model, or None if unregistered.
+
+    Public read accessor for the capability table so callers that need a
+    model's limits without constructing a factory (which opens a boto client)
+    don't reach into the private dict.
+    """
+    return _LANGUAGE_MODEL_INFO.get(model_id)
 
 
 ModelIdT = TypeVar("ModelIdT")
@@ -533,6 +629,12 @@ class BedrockLanguageModelFactory(
     DEFAULT_TOP_K: ClassVar[int] = 50
     DEFAULT_THINKING_BUDGET_TOKENS: ClassVar[int] = 2048
     DEFAULT_LATENCY_MODE: ClassVar[str] = "normal"
+    # Effort replaces budget_tokens on adaptive-thinking models. "high" is the
+    # Bedrock default; "medium" trades some depth for tokens and latency.
+    DEFAULT_EFFORT: ClassVar[str] = "high"
+    VALID_EFFORTS: ClassVar[frozenset[str]] = frozenset(
+        {"low", "medium", "high", "xhigh", "max"}
+    )
 
     def _get_boto_service_name(self) -> str:
         return "bedrock-runtime"
@@ -558,6 +660,18 @@ class BedrockLanguageModelFactory(
             enable_global_profile=self.config.aws.bedrock.enable_global_profile,
         )
         is_cross_region = resolved_model_id != model_id.value
+        if model_info.requires_inference_profile and not is_cross_region:
+            # Claude 4.6+ ships INFERENCE_PROFILE-only (no ON_DEMAND throughput),
+            # so the bare model id is not invocable. Resolution silently falls
+            # back to it, which would surface later as an opaque Bedrock error —
+            # fail here with the actual remedy instead.
+            raise LanguageModelError(
+                f"Model '{model_id.value}' is only available through a "
+                f"cross-region inference profile, but none resolved in region "
+                f"'{self.region_name}'. Enable aws.bedrock.enable_global_profile, "
+                f"grant bedrock:ListInferenceProfiles, or choose a region where "
+                f"a profile for this model exists."
+            )
         model_config = self._build_model_config(
             model_info, resolved_model_id, is_cross_region, **kwargs
         )
@@ -578,28 +692,46 @@ class BedrockLanguageModelFactory(
         **kwargs: Any,
     ) -> dict[str, Any]:
         enable_thinking = kwargs.get("enable_thinking", False)
-        supports_1m_context_window = kwargs.get("supports_1m_context_window", False)
-        temperature = kwargs.get("temperature", self.DEFAULT_TEMPERATURE)
-        final_temperature = (
-            1.0
-            if self._should_enable_thinking(enable_thinking, model_info)
-            else temperature
-        )
-        if final_temperature != temperature:
-            logger.debug("Adjusting temperature to 1.0 for thinking mode")
         final_max_tokens = self._validate_max_tokens(
             kwargs.get("max_tokens"), model_info
         )
-        config = self._build_base_config(resolved_model_id, is_cross_region, **kwargs)
-        if is_cross_region:
-            config.update(
-                {"max_tokens": final_max_tokens, "temperature": final_temperature}
+        config = self._build_base_config(
+            resolved_model_id, is_cross_region, model_info, **kwargs
+        )
+        token_params: dict[str, Any] = {"max_tokens": final_max_tokens}
+        if model_info.supports_sampling_params:
+            temperature = kwargs.get("temperature", self.DEFAULT_TEMPERATURE)
+            # Thinking models sample at a fixed temperature of 1.0.
+            final_temperature = (
+                1.0
+                if self._should_enable_thinking(enable_thinking, model_info)
+                else temperature
             )
+            if final_temperature != temperature:
+                logger.debug("Adjusting temperature to 1.0 for thinking mode")
+            token_params["temperature"] = final_temperature
         else:
-            config["model_kwargs"].update(
-                {"max_tokens": final_max_tokens, "temperature": final_temperature}
+            # Claude 4.7+ removed temperature/top_p/top_k; sending any of them
+            # returns a 400. Behaviour is steered by prompting and 'effort'.
+            logger.debug(
+                "Omitting sampling parameters for '%s' (unsupported by model)",
+                resolved_model_id,
             )
-        if supports_1m_context_window and model_info.supports_1m_context_window:
+        if is_cross_region:
+            config.update(token_params)
+        else:
+            config["model_kwargs"].update(token_params)
+        if model_info.native_1m_context_window:
+            # 1M is the default window on Claude 5 — the beta opt-in header
+            # that older models need is unnecessary (and misleading) here.
+            logger.debug(
+                "Model '%s' has a native 1M context window; skipping beta header",
+                resolved_model_id,
+            )
+        elif (
+            self.config.aws.bedrock.enable_1m_context
+            and model_info.supports_1m_context_window
+        ):
             if is_cross_region:
                 config.setdefault("additional_model_request_fields", {}).update(
                     {"anthropic_beta": ["context-1m-2025-08-07"]}
@@ -613,7 +745,11 @@ class BedrockLanguageModelFactory(
         return config
 
     def _build_base_config(
-        self, resolved_model_id: str, is_cross_region: bool, **kwargs: Any
+        self,
+        resolved_model_id: str,
+        is_cross_region: bool,
+        model_info: LanguageModelInfo,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         config = {
             "model_id": resolved_model_id,
@@ -631,11 +767,14 @@ class BedrockLanguageModelFactory(
         }
         if is_cross_region:
             config.update(common_params)
-        else:
+        elif model_info.supports_sampling_params:
             config["model_kwargs"] = {
                 "top_k": kwargs.get("top_k", self.DEFAULT_TOP_K),
                 **common_params,
             }
+        else:
+            # top_k is a sampling parameter; Claude 4.7+ rejects it.
+            config["model_kwargs"] = dict(common_params)
         return config
 
     def _apply_model_features(
@@ -656,18 +795,43 @@ class BedrockLanguageModelFactory(
                 "Applied performance optimization (latency_mode='%s')", latency
             )
         if self._should_enable_thinking(enable_think, model_info):
-            budget = kwargs.get(
-                "thinking_budget_tokens", self.DEFAULT_THINKING_BUDGET_TOKENS
-            )
-            think_config = {"thinking": {"type": "enabled", "budget_tokens": budget}}
+            think_config = self._build_thinking_config(model_info, **kwargs)
             if is_cross_region:
                 config.setdefault("additional_model_request_fields", {}).update(
                     think_config
                 )
             else:
                 config.setdefault("model_kwargs", {}).update(think_config)
-            logger.debug("Applied thinking mode (budget_tokens=%d)", budget)
         self._apply_guardrail(config, is_cross_region)
+
+    def _build_thinking_config(
+        self, model_info: LanguageModelInfo, **kwargs: Any
+    ) -> dict[str, Any]:
+        """Assemble the reasoning request fields for a model.
+
+        Adaptive-thinking models (Claude 4.7+) reject the manual
+        ``{"type": "enabled", "budget_tokens": N}`` shape with a 400 and steer
+        depth via ``effort`` instead. ``effort`` must sit in its own
+        ``output_config`` object — nesting it inside ``thinking`` raises a
+        ``ValidationException``.
+        """
+        if not model_info.adaptive_thinking_only:
+            budget = kwargs.get(
+                "thinking_budget_tokens", self.DEFAULT_THINKING_BUDGET_TOKENS
+            )
+            logger.debug("Applied extended thinking (budget_tokens=%d)", budget)
+            return {"thinking": {"type": "enabled", "budget_tokens": budget}}
+        effort = kwargs.get("effort") or self.config.aws.bedrock.effort
+        if effort not in self.VALID_EFFORTS:
+            raise LanguageModelError(
+                f"Invalid effort level '{effort}'. "
+                f"Valid levels: {sorted(self.VALID_EFFORTS)}"
+            )
+        logger.debug("Applied adaptive thinking (effort='%s')", effort)
+        return {
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": effort},
+        }
 
     def _apply_guardrail(self, config: dict[str, Any], is_cross_region: bool) -> None:
         """Attach Bedrock Guardrails to the model when configured.
@@ -724,7 +888,14 @@ class BedrockLanguageModelFactory(
 
     @staticmethod
     def _should_enable_thinking(enable: bool, model_info: LanguageModelInfo) -> bool:
-        return enable and model_info.supports_thinking
+        if not model_info.supports_thinking:
+            return False
+        # Adaptive-thinking models think by default (and Sonnet 5 / Fable 5
+        # reject {'type': 'disabled'} outright), so their requests always carry
+        # the adaptive config regardless of the caller's flag — that block is
+        # also what carries the configured effort level, which would otherwise
+        # be silently dropped.
+        return enable or model_info.adaptive_thinking_only
 
 
 class BedrockRerankWrapper(BaseBedrockWrapper, BedrockRerank):

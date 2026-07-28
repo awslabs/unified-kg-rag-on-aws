@@ -10,6 +10,17 @@ aws:
     region_name: "ap-northeast-2"
     assumed_role_arn: null
     enable_global_profile: true
+    # Opt into the 1M-token context window on models that offer it as a beta
+    # (Sonnet 4/4.5, Opus 4/4.1/4.5). Off by default — long-context requests are
+    # billed at a premium there. Claude 5 has a native 1M window and ignores
+    # this. Turning it on also widens the derived retrieval context budget.
+    enable_1m_context: false
+    # Reasoning effort for adaptive-thinking models (Claude 4.7 and later),
+    # which replaced the fixed thinking token budget. One of: low, medium,
+    # high (default), xhigh, max. Lower levels trade reasoning depth for cost
+    # and latency; xhigh/max are only accepted by some models (e.g. Opus 5).
+    # Ignored by older models, which still use thinking_budget_tokens.
+    effort: "high"
     # Amazon Bedrock Guardrails (WAF security pillar). Disabled unless an
     # identifier is set; when set, every LLM call enforces the guardrail's
     # content/PII/grounding policies on prompts and completions.
@@ -60,7 +71,7 @@ aws:
 # Global Output Fixing Configuration (auto-repair malformed model responses)
 fixing:
   enabled: true
-  fixing_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+  fixing_model_id: "anthropic.claude-sonnet-5"
 
 # Data Processing Configuration
 processing:
@@ -110,7 +121,7 @@ processing:
 
   # Graph Extraction
   graph_extraction:
-    extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    extraction_model_id: "anthropic.claude-sonnet-5"
     max_entities_per_chunk: 50
     max_relationships_per_chunk: 50
     entity_confidence_threshold: 0.0
@@ -159,7 +170,7 @@ processing:
   # Gleaning (Iterative Information Extraction)
   gleaning:
     enabled: true
-    graph_refinement_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    graph_refinement_model_id: "anthropic.claude-sonnet-5"
     max_rounds: 3
     convergence_threshold: 0.8
     quality_threshold: 0.9
@@ -181,7 +192,7 @@ processing:
     # claims index in its sweep. Claims subject/object are still not linked into
     # the entity graph.
     enabled: false
-    extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    extraction_model_id: "anthropic.claude-sonnet-5"
     max_entities_per_prompt: 100
 
 # Graph Configuration
@@ -230,7 +241,7 @@ graph:
     # Community report generation
     report_generation:
       enabled: true
-      report_generation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+      report_generation_model_id: "anthropic.claude-sonnet-5"
       max_entities_per_report: 50
       # Token budget for the entity/relationship context packed into a report
       # prompt. Entities are degree-sorted (most-connected first) and packed up
@@ -385,10 +396,10 @@ indexing:
 # Search Configuration
 search:
   translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
-  entity_extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
-  strategy_selection_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
-  context_building_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
-  answer_generation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+  entity_extraction_model_id: "anthropic.claude-sonnet-5"
+  strategy_selection_model_id: "anthropic.claude-sonnet-5"
+  context_building_model_id: "anthropic.claude-sonnet-5"
+  answer_generation_model_id: "anthropic.claude-sonnet-5"
 
   # Hybrid search weights
   hybrid:
@@ -512,7 +523,14 @@ search:
 
   # Token Manager Configuration
   token_manager:
-    max_context_tokens: 200000
+    # Prompt-side context budget. Leave null to derive it from the answer
+    # model's own window minus its output reservation and the headroom below —
+    # a hardcoded number overflows a smaller model's window and wastes a larger
+    # one. An explicit value is honoured but clamped to what the model accepts.
+    max_context_tokens: null
+    # Share of the window held back for the system prompt, question, history,
+    # and token-estimation error when deriving the budget above.
+    context_window_headroom_ratio: 0.1
     token_count_cache_size: 1024
     # A section truncated below this many tokens is dropped rather than emitted
     # as an unusable fragment.
@@ -553,7 +571,7 @@ logging:
 evaluation:
   outputs_directory: "outputs/evaluation"
   embedding_model_id: "amazon.titan-embed-text-v2:0"
-  evaluation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+  evaluation_model_id: "anthropic.claude-sonnet-5"
   enabled_evaluators:
     - langchain
     - ragas

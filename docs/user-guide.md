@@ -137,6 +137,8 @@ aws:
     region_name: "ap-northeast-2" # Bedrock can live in a different region
     assumed_role_arn: null
     enable_global_profile: true   # use cross-region (global) Bedrock inference profiles for higher throughput/availability
+    enable_1m_context: false      # opt into the 1M window on models where it's a beta (premium billing); Claude 5 is native 1M
+    effort: "high"                # reasoning depth for adaptive-thinking models: low | medium | high | xhigh | max
     guardrail:                    # optional Bedrock Guardrails on every LLM call
       identifier: null            # set a guardrail ID/ARN to enable
       version: "DRAFT"
@@ -172,12 +174,37 @@ aws:
 > Guardrail must exist in `bedrock.region_name` (the region LLM calls go to),
 > not necessarily `region_name`.
 
+#### Model selection notes
+
+Defaults are `anthropic.claude-sonnet-5` for reasoning-heavy stages and
+`anthropic.claude-haiku-4-5-...` for light ones (summarization, translation,
+keyword extraction). Three things differ for Claude 4.7-and-later models:
+
+- **Inference profiles are mandatory.** They ship without `ON_DEMAND`
+  throughput, so the bare model id is not invocable — a cross-region profile
+  must resolve. Keep `enable_global_profile: true` and grant
+  `bedrock:ListInferenceProfiles`; the adapter fails fast with the remedy if no
+  profile resolves. Note that in `ap-northeast-2` only `global.` profiles exist
+  for Claude 5 (no `apac.`), so disabling the global profile leaves no path.
+- **`effort` replaces the thinking token budget.** `thinking_budget_tokens` is
+  ignored for these models (the old `budget_tokens` request shape is rejected
+  with a 400); set `bedrock.effort` instead. Claude Sonnet 5 always thinks, so
+  `--enable-thinking` is a no-op for it — depth is `effort` only.
+- **Sampling parameters are dropped.** `temperature`/`top_k` are not accepted
+  and are omitted from requests automatically; steer behaviour by prompting.
+
+`anthropic.claude-fable-5` is intentionally not among the selectable models: it
+requires the account's data-retention mode to be `provider_data_share` (Data
+Retention API only — no console UI), so it would fail on most accounts with
+*"data retention mode 'default' is not available for this model"*, and its
+pricing exceeds the Opus tier.
+
 ### 2.2 `fixing` — auto-repair malformed model output
 
 ```yaml
 fixing:
   enabled: true
-  fixing_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+  fixing_model_id: "anthropic.claude-sonnet-5"
 ```
 
 When an LLM returns malformed JSON for a structured stage, this re-asks a model
@@ -240,7 +267,7 @@ most impactful domain-adaptation knob (see §9). Each item is
 
 ```yaml
   graph_extraction:
-    extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    extraction_model_id: "anthropic.claude-sonnet-5"
     max_entities_per_chunk: 50
     max_relationships_per_chunk: 50
     entity_confidence_threshold: 0.0
@@ -279,7 +306,7 @@ missed on the first pass (quality vs. cost trade-off).
 ```yaml
   gleaning:
     enabled: true
-    graph_refinement_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    graph_refinement_model_id: "anthropic.claude-sonnet-5"
     max_rounds: 3
     convergence_threshold: 0.8
     quality_threshold: 0.9
@@ -294,7 +321,7 @@ When ON, `local` search injects matching claims (MS GraphRAG covariates) and
 ```yaml
   claim_extraction:
     enabled: false
-    extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    extraction_model_id: "anthropic.claude-sonnet-5"
     max_entities_per_prompt: 100
 ```
 
@@ -326,7 +353,7 @@ graph:
     auto_resolution: true
     report_generation:              # LLM-generated community summaries (used by global search)
       enabled: true
-      report_generation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+      report_generation_model_id: "anthropic.claude-sonnet-5"
       max_entities_per_report: 50
       max_report_context_tokens: 4000
 
@@ -382,10 +409,10 @@ indexing:
 ```yaml
 search:
   translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
-  entity_extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
-  strategy_selection_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"   # the `auto` router
-  context_building_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
-  answer_generation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"    # the answer LLM
+  entity_extraction_model_id: "anthropic.claude-sonnet-5"
+  strategy_selection_model_id: "anthropic.claude-sonnet-5"   # the `auto` router
+  context_building_model_id: "anthropic.claude-sonnet-5"
+  answer_generation_model_id: "anthropic.claude-sonnet-5"    # the answer LLM
 
   hybrid:
     lexical_weight: 0.5
@@ -422,8 +449,20 @@ search:
     initial_top_k: 5
 
   token_manager:
-    max_context_tokens: 200000
+    max_context_tokens: null        # null => derive from the answer model's window
+    context_window_headroom_ratio: 0.1
 ```
+
+> **Context budget is derived, not fixed.** With `max_context_tokens: null`
+> (the default) the retrieval context budget is computed from
+> `search.answer_generation_model_id`'s own context window, minus that model's
+> output reservation and the headroom ratio. This keeps the two in agreement: a
+> single hardcoded number either overflows a 200K model's window (the window
+> must hold the prompt *and* the answer) or leaves most of a 1M window unused.
+> An explicit value is still honoured, but is clamped to what the model can
+> accept — a warning names the clamp when that happens. Enabling
+> `aws.bedrock.enable_1m_context` widens the derived budget on models whose 1M
+> window is a beta opt-in.
 
 ### 2.7 `memory`, `cache`, `logging`
 
@@ -451,7 +490,7 @@ logging:
 ```yaml
 evaluation:
   outputs_directory: "outputs/evaluation"
-  evaluation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+  evaluation_model_id: "anthropic.claude-sonnet-5"
   enabled_evaluators:
     - langchain
     - ragas

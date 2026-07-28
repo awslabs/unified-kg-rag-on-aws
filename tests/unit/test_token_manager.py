@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from unified_kg_rag.adapters.aws.bedrock import get_language_model_info
 from unified_kg_rag.adapters.retrieval import token_manager as tm_module
 from unified_kg_rag.adapters.retrieval.token_manager import (
     ContextSection,
@@ -21,15 +22,24 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
     SectionType,
     TokenManager,
 )
-from unified_kg_rag.domain.models import Config, RetrievalResult
+from unified_kg_rag.domain.models import Config, LanguageModelId, RetrievalResult
 from unified_kg_rag.domain.models.config import ContextTypeBudgetConfig
 
 pytestmark = pytest.mark.unit
 
 
-def _make_manager(mocker, max_context_tokens: int = 200000) -> TokenManager:
+def _make_manager(
+    mocker,
+    max_context_tokens: int | None = None,
+    answer_model_id: LanguageModelId | None = None,
+    enable_1m_context: bool = False,
+) -> TokenManager:
     """Build a TokenManager with Bedrock/boto wiring stubbed and a deterministic
-    word-count token counter (1 token per whitespace-delimited word)."""
+    word-count token counter (1 token per whitespace-delimited word).
+
+    ``max_context_tokens=None`` (the default) exercises the production path where
+    the budget is derived from the answer model's context window.
+    """
     mocker.patch.object(tm_module, "boto3")
     mocker.patch.object(tm_module, "get_assumed_role_boto_session")
 
@@ -39,6 +49,9 @@ def _make_manager(mocker, max_context_tokens: int = 200000) -> TokenManager:
 
     config = Config()
     config.search.token_manager.max_context_tokens = max_context_tokens
+    config.aws.bedrock.enable_1m_context = enable_1m_context
+    if answer_model_id is not None:
+        config.search.answer_generation_model_id = answer_model_id
     return TokenManager(config)
 
 
@@ -46,6 +59,74 @@ def _r(content: str, score: float, retriever_type: str, source: str) -> Retrieva
     return RetrievalResult(
         content=content, score=score, retriever_type=retriever_type, source=source
     )
+
+
+class TestContextBudgetDerivation:
+    """The prompt budget must track the answer model's real context window.
+
+    A hardcoded budget silently overflows a smaller model's window (the old
+    default of 200000 left no room for a 200K model's 64K output reservation)
+    and wastes a larger one.
+    """
+
+    def test_derives_from_model_window_when_unset(self, mocker) -> None:
+        # Sonnet 5: 1M window - 128K output, less 10% headroom.
+        mgr = _make_manager(mocker, answer_model_id=LanguageModelId.CLAUDE_V5_SONNET)
+        assert mgr._max_context_tokens == int((1000000 - 128000) * 0.9)
+
+    def test_smaller_window_gets_smaller_budget(self, mocker) -> None:
+        mgr = _make_manager(mocker, answer_model_id=LanguageModelId.CLAUDE_V4_5_SONNET)
+        assert mgr._max_context_tokens == int((200000 - 64000) * 0.9)
+
+    def test_derived_budget_leaves_room_for_output(self, mocker) -> None:
+        # The invariant the old hardcoded 200000 violated on every 200K model.
+        for model_id in (
+            LanguageModelId.CLAUDE_V4_5_SONNET,
+            LanguageModelId.CLAUDE_V4_5_HAIKU,
+            LanguageModelId.CLAUDE_V3_HAIKU,
+            LanguageModelId.CLAUDE_V5_SONNET,
+        ):
+            mgr = _make_manager(mocker, answer_model_id=model_id)
+            info = get_language_model_info(model_id)
+            assert info is not None
+            assert (
+                mgr._max_context_tokens + info.max_output_tokens
+                <= info.context_window_size
+            ), model_id
+
+    def test_explicit_budget_over_window_is_clamped(self, mocker) -> None:
+        mgr = _make_manager(
+            mocker,
+            max_context_tokens=200000,
+            answer_model_id=LanguageModelId.CLAUDE_V4_5_SONNET,
+        )
+        assert mgr._max_context_tokens == int((200000 - 64000) * 0.9)
+
+    def test_explicit_budget_within_window_is_honoured(self, mocker) -> None:
+        mgr = _make_manager(
+            mocker,
+            max_context_tokens=50000,
+            answer_model_id=LanguageModelId.CLAUDE_V5_SONNET,
+        )
+        assert mgr._max_context_tokens == 50000
+
+    def test_1m_opt_in_widens_budget_for_beta_model(self, mocker) -> None:
+        narrow = _make_manager(
+            mocker, answer_model_id=LanguageModelId.CLAUDE_V4_5_SONNET
+        )
+        wide = _make_manager(
+            mocker,
+            answer_model_id=LanguageModelId.CLAUDE_V4_5_SONNET,
+            enable_1m_context=True,
+        )
+        assert wide._max_context_tokens > narrow._max_context_tokens
+        assert wide._max_context_tokens == int((1000000 - 64000) * 0.9)
+
+    def test_caller_max_tokens_cannot_exceed_model_budget(self, mocker) -> None:
+        mgr = _make_manager(mocker, answer_model_id=LanguageModelId.CLAUDE_V4_5_SONNET)
+        huge = [_r(" ".join(["w"] * 500), 0.9, "text", f"s{i}") for i in range(200)]
+        out = mgr.optimize_context(huge, query="q", max_tokens=10_000_000)
+        assert out.total_tokens <= mgr._max_context_tokens
 
 
 class TestCountTokens:

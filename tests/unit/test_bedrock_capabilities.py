@@ -29,7 +29,7 @@ from unified_kg_rag.domain.models import (
     EmbeddingModelId,
     LanguageModelId,
 )
-from unified_kg_rag.shared import EmbeddingModelError
+from unified_kg_rag.shared import EmbeddingModelError, LanguageModelError
 
 pytestmark = pytest.mark.unit
 
@@ -154,6 +154,202 @@ def test_should_enable_thinking() -> None:
     assert BedrockLanguageModelFactory._should_enable_thinking(True, thinks) is True
     assert BedrockLanguageModelFactory._should_enable_thinking(False, thinks) is False
     assert BedrockLanguageModelFactory._should_enable_thinking(True, no_think) is False
+
+
+def test_should_enable_thinking_for_adaptive_only_model() -> None:
+    # Adaptive-thinking models think by default (Sonnet 5 / Fable 5 reject
+    # {'type': 'disabled'} outright), and the adaptive block is what carries
+    # the effort level — so it must be emitted even without an opt-in.
+    adaptive = LanguageModelInfo(
+        context_window_size=1,
+        max_output_tokens=1,
+        supports_thinking=True,
+        adaptive_thinking_only=True,
+    )
+    assert BedrockLanguageModelFactory._should_enable_thinking(False, adaptive) is True
+
+
+# --- Claude 5 request shaping ---------------------------------------------
+
+
+def test_claude_v5_models_declare_adaptive_only_and_no_sampling() -> None:
+    factory = _lang_factory()
+    for model_id in (
+        LanguageModelId.CLAUDE_V5_SONNET,
+        LanguageModelId.CLAUDE_V5_OPUS,
+    ):
+        info = factory.get_model_info(model_id)
+        assert info is not None, model_id
+        assert info.adaptive_thinking_only is True, model_id
+        assert info.supports_sampling_params is False, model_id
+        assert info.native_1m_context_window is True, model_id
+        assert info.context_window_size == 1000000, model_id
+        assert info.max_output_tokens == 128000, model_id
+
+
+def test_thinking_config_adaptive_puts_effort_outside_thinking() -> None:
+    # Nesting 'effort' inside 'thinking' is a ValidationException on Bedrock;
+    # it belongs in a sibling 'output_config' object.
+    factory = _lang_factory()
+    info = factory.get_model_info(LanguageModelId.CLAUDE_V5_SONNET)
+    assert info is not None
+    out = factory._build_thinking_config(info)
+    assert out["thinking"] == {"type": "adaptive"}
+    assert out["output_config"] == {"effort": "high"}
+    assert "budget_tokens" not in out["thinking"]
+    assert "effort" not in out["thinking"]
+
+
+def test_thinking_config_legacy_model_keeps_budget_tokens() -> None:
+    factory = _lang_factory()
+    info = factory.get_model_info(LanguageModelId.CLAUDE_V4_5_SONNET)
+    assert info is not None
+    out = factory._build_thinking_config(info, thinking_budget_tokens=4096)
+    assert out == {"thinking": {"type": "enabled", "budget_tokens": 4096}}
+    assert "output_config" not in out
+
+
+def test_thinking_config_effort_from_config_and_override() -> None:
+    config = Config()
+    config.aws.bedrock.effort = "low"
+    factory = _lang_factory(config)
+    info = factory.get_model_info(LanguageModelId.CLAUDE_V5_OPUS)
+    assert info is not None
+    assert factory._build_thinking_config(info)["output_config"] == {"effort": "low"}
+    # A per-call override wins over the config default.
+    assert factory._build_thinking_config(info, effort="max")["output_config"] == {
+        "effort": "max"
+    }
+
+
+def test_thinking_config_rejects_invalid_effort() -> None:
+    factory = _lang_factory()
+    info = factory.get_model_info(LanguageModelId.CLAUDE_V5_SONNET)
+    assert info is not None
+    with pytest.raises(LanguageModelError, match="Invalid effort level"):
+        factory._build_thinking_config(info, effort="ludicrous")
+
+
+def test_base_config_omits_top_k_for_claude_v5() -> None:
+    factory = _lang_factory()
+    v5 = factory.get_model_info(LanguageModelId.CLAUDE_V5_SONNET)
+    legacy = factory.get_model_info(LanguageModelId.CLAUDE_V4_5_SONNET)
+    assert v5 is not None and legacy is not None
+    v5_cfg = factory._build_base_config("m", False, v5)
+    assert "top_k" not in v5_cfg["model_kwargs"]
+    legacy_cfg = factory._build_base_config("m", False, legacy)
+    assert legacy_cfg["model_kwargs"]["top_k"] == factory.DEFAULT_TOP_K
+
+
+def test_model_config_omits_temperature_for_claude_v5() -> None:
+    factory = _lang_factory()
+    info = factory.get_model_info(LanguageModelId.CLAUDE_V5_SONNET)
+    assert info is not None
+    cfg = factory._build_model_config(info, "apac.anthropic.claude-sonnet-5", True)
+    assert "temperature" not in cfg
+    assert "top_k" not in cfg
+    # Adaptive thinking is emitted even without enable_thinking (always-on).
+    fields = cfg["additional_model_request_fields"]
+    assert fields["thinking"] == {"type": "adaptive"}
+    assert fields["output_config"] == {"effort": "high"}
+
+
+def _config_with_1m(enabled: bool) -> Config:
+    config = Config()
+    config.aws.bedrock.enable_1m_context = enabled
+    return config
+
+
+def test_model_config_skips_1m_beta_header_for_claude_v5() -> None:
+    # 1M is the default window on Claude 5; the beta opt-in header older
+    # models need must not be sent even when the opt-in is on.
+    factory = _lang_factory(_config_with_1m(True))
+    info = factory.get_model_info(LanguageModelId.CLAUDE_V5_SONNET)
+    assert info is not None
+    cfg = factory._build_model_config(info, "apac.anthropic.claude-sonnet-5", True)
+    assert "anthropic_beta" not in cfg.get("additional_model_request_fields", {})
+
+
+def test_model_config_1m_beta_header_follows_config_flag() -> None:
+    # The 1M opt-in is a config flag: previously it was a kwarg no caller ever
+    # passed, so the header could never be sent at all.
+    legacy_id = "apac.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    on = _lang_factory(_config_with_1m(True))
+    info = on.get_model_info(LanguageModelId.CLAUDE_V4_5_SONNET)
+    assert info is not None
+    cfg = on._build_model_config(info, legacy_id, True)
+    assert cfg["additional_model_request_fields"]["anthropic_beta"] == [
+        "context-1m-2025-08-07"
+    ]
+
+    off = _lang_factory(_config_with_1m(False))
+    cfg_off = off._build_model_config(info, legacy_id, True)
+    assert "anthropic_beta" not in cfg_off.get("additional_model_request_fields", {})
+
+
+def test_effective_context_window_tracks_1m_opt_in() -> None:
+    factory = _lang_factory()
+    beta = factory.get_model_info(LanguageModelId.CLAUDE_V4_5_SONNET)
+    native = factory.get_model_info(LanguageModelId.CLAUDE_V5_SONNET)
+    plain = factory.get_model_info(LanguageModelId.CLAUDE_V4_5_HAIKU)
+    assert beta is not None and native is not None and plain is not None
+    # Beta-gated: baseline until the opt-in is on.
+    assert beta.effective_context_window(False) == 200000
+    assert beta.effective_context_window(True) == 1000000
+    # Native 1M is already the declared window.
+    assert native.effective_context_window(False) == 1000000
+    # No 1M support: the flag must not inflate the window.
+    assert plain.effective_context_window(True) == 200000
+
+
+def test_model_config_keeps_temperature_for_legacy_model() -> None:
+    factory = _lang_factory()
+    info = factory.get_model_info(LanguageModelId.CLAUDE_V4_5_SONNET)
+    assert info is not None
+    cfg = factory._build_model_config(
+        info, "apac.anthropic.claude-sonnet-4-5-20250929-v1:0", True
+    )
+    assert cfg["temperature"] == factory.DEFAULT_TEMPERATURE
+
+
+def test_build_cross_region_model_id_handles_suffixless_v5_id() -> None:
+    # Claude 5 ids carry no date/revision suffix; prefixing must still work.
+    out = BedrockCrossRegionModelHelper._build_cross_region_model_id(
+        LanguageModelId.CLAUDE_V5_SONNET, "ap-northeast-2"
+    )
+    assert out == "apac.anthropic.claude-sonnet-5"
+
+
+def test_get_model_raises_when_profile_only_model_has_no_profile(mocker) -> None:
+    # Claude 5 is INFERENCE_PROFILE-only: the bare id is not invocable. When
+    # resolution falls back to it, fail with the remedy rather than letting an
+    # opaque Bedrock error surface on the first call.
+    factory = _lang_factory()
+    mocker.patch.object(
+        bedrock_mod.BedrockCrossRegionModelHelper,
+        "get_cross_region_model_id",
+        return_value=LanguageModelId.CLAUDE_V5_SONNET.value,
+    )
+    with pytest.raises(LanguageModelError, match="cross-region inference profile"):
+        factory.get_model(LanguageModelId.CLAUDE_V5_SONNET)
+
+
+def test_get_model_allows_on_demand_model_without_profile(mocker) -> None:
+    # Legacy ON_DEMAND models must still work when no profile resolves.
+    factory = _lang_factory()
+    mocker.patch.object(
+        bedrock_mod.BedrockCrossRegionModelHelper,
+        "get_cross_region_model_id",
+        return_value=LanguageModelId.CLAUDE_V3_HAIKU.value,
+    )
+    sentinel = object()
+
+    class _FakeChatBedrock:  # needs __name__ for the debug log
+        def __new__(cls, **kwargs: Any) -> Any:
+            return sentinel
+
+    mocker.patch.object(bedrock_mod, "ChatBedrock", _FakeChatBedrock)
+    assert factory.get_model(LanguageModelId.CLAUDE_V3_HAIKU) is sentinel
 
 
 def test_should_enable_performance_optimization() -> None:
