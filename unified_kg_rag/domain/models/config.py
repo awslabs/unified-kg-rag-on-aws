@@ -3,7 +3,7 @@
 import math
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
@@ -77,6 +77,11 @@ class EmbeddingModelId(str, Enum):
 
 
 class LanguageModelId(str, Enum):
+    # Claude 5 ids carry no date suffix and no ':0' revision, unlike every
+    # earlier generation. Cross-region resolution still applies the same
+    # 'us.'/'apac.'/'global.' inference-profile prefixes.
+    CLAUDE_V5_SONNET = "anthropic.claude-sonnet-5"
+    CLAUDE_V5_OPUS = "anthropic.claude-opus-5"
     CLAUDE_V3_HAIKU = "anthropic.claude-3-haiku-20240307-v1:0"
     CLAUDE_V3_SONNET = "anthropic.claude-3-sonnet-20240229-v1:0"
     CLAUDE_V3_OPUS = "anthropic.claude-3-opus-20240229-v1:0"
@@ -135,6 +140,24 @@ class BedrockConfig(BaseModel):
     )
     enable_global_profile: bool = Field(
         default=True, description="Enable global profile for Bedrock service"
+    )
+    enable_1m_context: bool = Field(
+        default=False,
+        description=(
+            "Opt into the 1M-token context window on models that support it as "
+            "a beta (Claude Sonnet 4 / 4.5, Opus 4 / 4.1 / 4.5). Off by default: "
+            "long-context requests are billed at a premium on those models. "
+            "Claude 5 has a native 1M window and ignores this flag. Enabling it "
+            "also widens the derived retrieval context budget."
+        ),
+    )
+    effort: Literal["low", "medium", "high", "xhigh", "max"] = Field(
+        default="high",
+        description=(
+            "Reasoning effort for adaptive-thinking models (Claude 4.7+), which "
+            "replaces the fixed thinking token budget. 'xhigh'/'max' are only "
+            "accepted by some models; lower levels trade depth for cost/latency."
+        ),
     )
     guardrail: GuardrailConfig = Field(
         default_factory=GuardrailConfig,
@@ -270,7 +293,7 @@ class FixingConfig(BaseModel):
         default=True, description="Enable automatic fixing of malformed model responses"
     )
     fixing_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_SONNET,
         description="Language model for output correction",
     )
 
@@ -465,7 +488,7 @@ class EntityGroundingConfig(BaseModel):
 
 class GraphExtractionConfig(BaseModel):
     extraction_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_SONNET,
         description="Language model for entity and relationship extraction",
     )
     max_entities_per_chunk: int = Field(
@@ -512,7 +535,7 @@ class GleaningConfig(BaseModel):
         default=True, description="Enable gleaning for improved extraction"
     )
     graph_refinement_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_SONNET,
         description="Language model for graph refinement",
     )
     max_rounds: int = Field(default=3, ge=1, description="Maximum gleaning rounds")
@@ -582,7 +605,7 @@ class ClaimExtractionConfig(BaseModel):
         "(DataIngestionPipeline._initialize_stages).",
     )
     extraction_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_SONNET,
         description="Language model for claim extraction",
     )
     max_entities_per_prompt: int = Field(
@@ -755,7 +778,7 @@ class ReportGenerationConfig(BaseModel):
         default=True, description="Enable automatic community report generation"
     )
     report_generation_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_SONNET,
         description="Language model for community report generation",
     )
     max_entities_per_report: int = Field(
@@ -1523,10 +1546,26 @@ class ContextTypeBudgetConfig(BaseModel):
 
 
 class TokenManagerConfig(BaseModel):
-    max_context_tokens: int = Field(
-        default=200000,
+    max_context_tokens: int | None = Field(
+        default=None,
         ge=1024,
-        description="Maximum number of tokens allowed in the context window for optimal performance",
+        description=(
+            "Prompt-side context budget in tokens. Leave null (recommended) to "
+            "derive it from the answer model's own context window minus its "
+            "output reservation — a hardcoded value silently overflows a smaller "
+            "model's window and wastes a larger one. An explicit value is "
+            "honoured but clamped to what the model can actually accept."
+        ),
+    )
+    context_window_headroom_ratio: float = Field(
+        default=0.1,
+        gt=0.0,
+        lt=1.0,
+        description=(
+            "Fraction of the answer model's context window held back when "
+            "deriving max_context_tokens, covering the system prompt, the "
+            "question, conversation history, and tokenizer estimation error."
+        ),
     )
     token_count_cache_size: int = Field(
         default=1024,
@@ -1592,19 +1631,19 @@ class SearchConfig(BaseModel):
         description="Language model identifier used for translating queries into the target language",
     )
     entity_extraction_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_SONNET,
         description="Language model identifier used for extracting named entities from user queries",
     )
     strategy_selection_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_SONNET,
         description="Language model identifier used for automatically selecting the optimal search strategy",
     )
     context_building_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_SONNET,
         description="Language model identifier used for building and structuring contextual information",
     )
     answer_generation_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_SONNET,
         description="Language model identifier used for generating final answers from retrieved context",
     )
     hybrid: HybridConfig = Field(
@@ -1835,7 +1874,7 @@ class EvaluationConfig(BaseModel):
         description="Embedding model identifier for evaluation",
     )
     evaluation_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_SONNET,
         description="Language model identifier used for evaluation",
     )
     enabled_evaluators: list[EvaluatorType] = Field(

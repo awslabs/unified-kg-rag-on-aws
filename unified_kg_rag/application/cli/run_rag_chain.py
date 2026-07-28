@@ -79,7 +79,11 @@ class CommandLineInterface:
         parser.add_argument(
             "--enable-thinking",
             action="store_true",
-            help="Enable thinking mode for language model reasoning and step-by-step problem solving",
+            help=(
+                "Enable thinking mode for language model reasoning and step-by-step "
+                "problem solving. No-op for models that always think (Claude Sonnet 5, "
+                "Fable 5); tune their depth with aws.bedrock.effort in the config"
+            ),
         )
         parser.add_argument(
             "--search-strategy",

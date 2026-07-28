@@ -139,6 +139,8 @@ aws:
     region_name: "ap-northeast-2" # Bedrock can live in a different region
     assumed_role_arn: null
     enable_global_profile: true   # 크로스 리전(글로벌) Bedrock 추론 프로파일 사용 — 처리량/가용성 향상
+    enable_1m_context: false      # 1M 창이 베타인 모델에서 옵트인(장문 요금 프리미엄); Claude 5는 네이티브 1M
+    effort: "high"                # 적응형 사고 모델의 추론 깊이: low | medium | high | xhigh | max
     guardrail:                    # optional Bedrock Guardrails on every LLM call
       identifier: null            # set a guardrail ID/ARN to enable
       version: "DRAFT"
@@ -174,12 +176,36 @@ aws:
 > `region_name`이 아니라 `bedrock.region_name`(LLM 호출이 전달되는 리전)에
 > 존재해야 합니다.
 
+#### 모델 선택 주의사항
+
+기본값은 추론 비중이 큰 단계에 `anthropic.claude-sonnet-5`, 경량 단계(요약·번역·
+키워드 추출)에 `anthropic.claude-haiku-4-5-...`입니다. Claude 4.7 이후 모델은 세
+가지가 다릅니다.
+
+- **추론 프로파일이 필수입니다.** `ON_DEMAND` 처리량 없이 출시되므로 순수 모델
+  ID로는 호출할 수 없고 크로스 리전 프로파일이 반드시 해석돼야 합니다.
+  `enable_global_profile: true`를 유지하고 `bedrock:ListInferenceProfiles` 권한을
+  부여하세요. 프로파일이 없으면 어댑터가 해결 방법과 함께 즉시 실패합니다.
+  특히 `ap-northeast-2`에는 Claude 5용 `global.` 프로파일만 존재하고 `apac.`은
+  없으므로, 글로벌 프로파일을 끄면 사용 경로가 없습니다.
+- **`effort`가 사고 토큰 예산을 대체합니다.** 이 모델들에서는
+  `thinking_budget_tokens`가 무시됩니다(기존 `budget_tokens` 형식은 400으로
+  거부됨). 대신 `bedrock.effort`를 설정하세요. Claude Sonnet 5는 사고를 끌 수 없어
+  `--enable-thinking`이 무의미하며, 깊이는 `effort`로만 조절합니다.
+- **샘플링 파라미터가 제거됩니다.** `temperature`/`top_k`는 수용되지 않으므로
+  요청에서 자동 생략됩니다. 동작 제어는 프롬프트로 하세요.
+
+`anthropic.claude-fable-5`는 의도적으로 선택 가능한 모델에서 제외했습니다. 계정의
+데이터 보존 모드가 `provider_data_share`여야 하는데(Data Retention API로만 설정
+가능 — 콘솔 UI 없음) 대부분의 계정에서는 *"data retention mode 'default' is not
+available for this model"*로 실패하며, 단가도 Opus 티어를 넘습니다.
+
 ### 2.2 `fixing` — 잘못된 형식의 모델 출력 자동 복구
 
 ```yaml
 fixing:
   enabled: true
-  fixing_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+  fixing_model_id: "anthropic.claude-sonnet-5"
 ```
 
 구조화된 스테이지에서 LLM이 잘못된 형식의 JSON을 반환하면, 실행을 실패시키는 대신
@@ -243,7 +269,7 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 
 ```yaml
   graph_extraction:
-    extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    extraction_model_id: "anthropic.claude-sonnet-5"
     max_entities_per_chunk: 50
     max_relationships_per_chunk: 50
     entity_confidence_threshold: 0.0
@@ -280,7 +306,7 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 ```yaml
   gleaning:
     enabled: true
-    graph_refinement_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    graph_refinement_model_id: "anthropic.claude-sonnet-5"
     max_rounds: 3
     convergence_threshold: 0.8
     quality_threshold: 0.9
@@ -295,7 +321,7 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 ```yaml
   claim_extraction:
     enabled: false
-    extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    extraction_model_id: "anthropic.claude-sonnet-5"
     max_entities_per_prompt: 100
 ```
 
@@ -327,7 +353,7 @@ graph:
     auto_resolution: true
     report_generation:              # LLM-generated community summaries (used by global search)
       enabled: true
-      report_generation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+      report_generation_model_id: "anthropic.claude-sonnet-5"
       max_entities_per_report: 50
       max_report_context_tokens: 4000
 
@@ -383,10 +409,10 @@ indexing:
 ```yaml
 search:
   translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
-  entity_extraction_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
-  strategy_selection_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"   # the `auto` router
-  context_building_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
-  answer_generation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"    # the answer LLM
+  entity_extraction_model_id: "anthropic.claude-sonnet-5"
+  strategy_selection_model_id: "anthropic.claude-sonnet-5"   # the `auto` router
+  context_building_model_id: "anthropic.claude-sonnet-5"
+  answer_generation_model_id: "anthropic.claude-sonnet-5"    # the answer LLM
 
   hybrid:
     lexical_weight: 0.5
@@ -423,8 +449,18 @@ search:
     initial_top_k: 5
 
   token_manager:
-    max_context_tokens: 200000
+    max_context_tokens: null        # null => 답변 모델의 창 크기에서 자동 도출
+    context_window_headroom_ratio: 0.1
 ```
+
+> **컨텍스트 예산은 고정값이 아니라 도출값입니다.** `max_context_tokens: null`
+> (기본값)이면 검색 컨텍스트 예산을 `search.answer_generation_model_id`의 컨텍스트
+> 창에서 해당 모델의 출력 예약분과 헤드룸 비율을 뺀 값으로 계산합니다. 이렇게 해야
+> 두 값이 어긋나지 않습니다 — 하드코딩된 단일 숫자는 200K 모델의 창을 넘기거나
+> (창이 프롬프트와 답변을 **함께** 담아야 하므로) 1M 창의 대부분을 놀리게 됩니다.
+> 명시값도 존중되지만 모델이 수용 가능한 한도로 클램프되며, 그때 경고 로그가
+> 남습니다. `aws.bedrock.enable_1m_context`를 켜면 1M 창이 베타 옵트인인 모델에서
+> 도출 예산이 함께 넓어집니다.
 
 ### 2.7 `memory`, `cache`, `logging`
 
@@ -452,7 +488,7 @@ logging:
 ```yaml
 evaluation:
   outputs_directory: "outputs/evaluation"
-  evaluation_model_id: "anthropic.claude-sonnet-4-5-20250929-v1:0"
+  evaluation_model_id: "anthropic.claude-sonnet-5"
   enabled_evaluators:
     - langchain
     - ragas
