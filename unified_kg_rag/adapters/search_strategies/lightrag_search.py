@@ -279,18 +279,23 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 if endpoints:
                     results_by_source.update(endpoints)
 
+            # KG-grounded chunks: follow text_unit_ids lineage from the matched
+            # entities/relationships to their source chunks. BOTH KG modes do this —
+            # upstream `hybrid` builds its context from entities + relations + the
+            # chunks those reference (`_find_related_text_unit_from_entities` /
+            # `_from_relations`), which is why upstream hybrid's context is ~190 text
+            # items. Gating this on mix left hybrid with NO chunk stream at all, so it
+            # abstained on 55/100 MuSiQue queries. What `mix` adds on top is the
+            # separate naive VECTOR chunk query, not the lineage chunks.
+            #
+            # For mix the naive vector chunks are fetched FIRST and passed to the
+            # lineage selection as `exclude`, because upstream merges the three chunk
+            # streams round-robin under one `seen_chunk_ids` set with the vector stream
+            # taking precedence (operate.py `_merge_chunks`). Selecting the lineage
+            # chunks blind to that set spent 37% of the KG chunk budget re-fetching
+            # chunks the vector query had already delivered.
+            vector_chunk_ids: set[str] = set()
             if mode == SearchStrategy.MIX.value:
-                # KG-grounded chunks: follow text_unit_ids lineage from the
-                # matched entities/relationships to their source chunks, then
-                # blend a naive vector chunk query.
-                #
-                # The naive vector chunks are fetched
-                # FIRST and passed to the lineage selection as `exclude`, because
-                # upstream merges the three chunk streams round-robin under one
-                # `seen_chunk_ids` set with the vector stream taking precedence
-                # (operate.py `_merge_chunks`). Selecting the lineage chunks
-                # blind to that set spent 37% of the KG chunk budget re-fetching
-                # chunks the vector query had already delivered.
                 results_by_source.update(await self._retrieve_chunks(query))
                 vector_chunk_ids = {
                     cid
@@ -299,14 +304,14 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                     )
                     if cid
                 }
-                linked = await self._retrieve_linked_chunks(
-                    query,
-                    results_by_source.get("lightrag_entities", []),
-                    results_by_source.get("lightrag_relationships", []),
-                    exclude=vector_chunk_ids,
-                )
-                if linked:
-                    results_by_source.update(linked)
+            linked = await self._retrieve_linked_chunks(
+                query,
+                results_by_source.get("lightrag_entities", []),
+                results_by_source.get("lightrag_relationships", []),
+                exclude=vector_chunk_ids,
+            )
+            if linked:
+                results_by_source.update(linked)
 
         # Keep entities/relationships/chunks as separate streams
         # with reserved slots (LightRAG uses ~40 entities / 20 chunks), instead of
@@ -315,7 +320,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         # answer lives in them; entities/relationships get the rest. Non-mix modes and
         # the no-quota path are unchanged.
         per_type_quota = None
-        if mode == SearchStrategy.MIX.value:
+        if mode in (SearchStrategy.MIX.value, SearchStrategy.HYBRID.value):
             k = query.top_k
             # The quota has to match upstream's TWO widths (see the module comment on
             # kg_stream_top_k / chunk_stream_top_k), otherwise widening the vector
@@ -356,7 +361,9 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         # multi-hop bridge entities/relations whose description lacks the question's
         # surface terms (LightRAG reranks chunks only).
         rerank_only_types = (
-            {SectionType.TEXT.value} if mode == SearchStrategy.MIX.value else None
+            {SectionType.TEXT.value}
+            if mode in (SearchStrategy.MIX.value, SearchStrategy.HYBRID.value)
+            else None
         )
         final_results = self.hybrid_scorer.fuse_and_rerank_results(
             results_by_source,
