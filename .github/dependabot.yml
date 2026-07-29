@@ -1,0 +1,63 @@
+# Dependabot version updates. Security *alerts* are already enabled on the
+# repository and have been driving the fix(deps) history, but alerts only fire
+# for dependencies whose version is pinned: everything in uv.lock is, while
+# iac/requirements.txt declares ranges only, so its packages reach the
+# dependency graph with no version and are never matched against an advisory.
+# Scheduled version updates cover that gap and keep the SHA-pinned workflow
+# actions moving, which no other path can do.
+version: 2
+
+updates:
+  # Application runtime + dev dependencies (pyproject.toml, uv.lock).
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "fix(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      # One PR per weekly batch of non-breaking bumps keeps main's history
+      # readable; majors stay separate so they get their own review.
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # CDK app. Kept out of the root lock on purpose: it is deployment tooling that
+  # ships nothing and shares no runtime with the package, so keeping it separate
+  # avoids coupling the app's resolution to the CDK dependency tree (notably
+  # aws-cdk.aws-neptune-alpha's exact `typeguard` pin). The cost of that
+  # separation is that these ranges are unpinned and therefore invisible to
+  # security alerts; `increase-if-necessary` lets Dependabot raise a floor when
+  # -- and only when -- the existing range cannot admit the fixed version.
+  - package-ecosystem: "pip"
+    directory: "/iac"
+    versioning-strategy: "increase-if-necessary"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "fix(deps)"
+    groups:
+      aws-cdk:
+        # aws-cdk-lib and aws-cdk.aws-neptune-alpha are released in lockstep and
+        # the alpha module pins an exact aws-cdk-lib version, so bumping one
+        # without the other cannot resolve.
+        patterns: ["aws-cdk*", "constructs"]
+
+  # Workflow actions are pinned to commit SHAs (see .github/workflows/*.yml), so
+  # they are invisible to every other update path.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions:
+        patterns: ["*"]
