@@ -35,7 +35,7 @@ dependencies = [
     # <4.0.0 ceiling held ragas back to 0.3.2, which imports a module that
     # langchain-community removed in 0.4 — see the ragas floor below.
     "datasets>=4.0.0",
-    "datasketch>=1.6.5",
+    "datasketch>=2.0.0",
     "graspologic>=3.4.1",
     "gremlinpython>=3.8.1,<3.9.0",
     # LangChain 1.x. The floors are the releases that carry the fixes for
