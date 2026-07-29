@@ -109,7 +109,7 @@ dev = [
 docs = [
     "mkdocs>=1.5.0",
     "mkdocs-material>=9.0.0",
-    "mkdocstrings[python]>=0.24.0",
+    "mkdocstrings[python]>=1.0.6",
 ]
 # Optional: enables .md/.markdown/.html/.htm source parsing (heavy transitive
 # deps, so not installed by default). The ParserFactory registers those formats
