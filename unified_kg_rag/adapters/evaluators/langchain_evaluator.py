@@ -8,8 +8,8 @@ from datetime import datetime
 from typing import Any
 
 import boto3
-from langchain.evaluation import load_evaluator
-from langchain.evaluation.schema import EvaluatorType as LCEvaluatorType
+from langchain_classic.evaluation import load_evaluator
+from langchain_classic.evaluation.schema import EvaluatorType as LCEvaluatorType
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.prompts import PromptTemplate
 

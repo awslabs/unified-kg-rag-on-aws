@@ -31,15 +31,30 @@ dependencies = [
     "aws-assume-role-lib>=2.10.0",
     "bokeh>=3.7.3",
     "boto3>=1.38.45",
-    "datasets>=2.14.0,<4.0.0",
+    # Only used for `Dataset.from_dict` in the ragas evaluator. The previous
+    # <4.0.0 ceiling held ragas back to 0.3.2, which imports a module that
+    # langchain-community removed in 0.4 — see the ragas floor below.
+    "datasets>=4.0.0",
     "datasketch>=1.6.5",
     "graspologic>=3.4.1",
     "gremlinpython>=3.6.3,<3.7.0",
-    "langchain>=0.3.26,<1.0.0",
-    "langchain-aws>=0.2.27,<1.0.0",
-    "langchain-community>=0.3.27,<1.0.0",
-    "langchain-core>=0.3.68,<1.0.0",
-    "langchain-text-splitters>=0.3.9",
+    # LangChain 1.x. The floors are the releases that carry the fixes for
+    # GHSA-qh6h-p6c9-ff54 (langchain-core path traversal), GHSA-gr75-jv2w-4656
+    # (langchain loader path traversal), GHSA-fv5p-p927-qmxr (splitter SSRF) and
+    # GHSA-2g6r-c272-w58r; none of them were backported to 0.3.x, so the old
+    # `<1.0.0` ceiling made them unreachable. langchain-classic supplies the
+    # legacy `langchain.*` modules that 1.x removed (evaluation, memory,
+    # OutputFixingParser) and is a direct import, so it is declared here.
+    "langchain>=1.3.9,<2.0.0",
+    "langchain-aws>=1.0.0,<2.0.0",
+    "langchain-classic>=1.0.0,<2.0.0",
+    # Held at 0.3.x: ragas imports langchain_community.chat_models.vertexai
+    # unconditionally, and 0.4 removed that module — 0.4 also puts the whole
+    # package into sunset, so the document loaders used by the parser should move
+    # to standalone packages rather than follow it forward.
+    "langchain-community>=0.3.27,<0.4.0",
+    "langchain-core>=1.2.22,<2.0.0",
+    "langchain-text-splitters>=1.1.2,<2.0.0",
     "llvmlite>=0.43.0",
     "lxml>=6.0.0",
     "nest-asyncio>=1.6.0",
@@ -53,7 +68,10 @@ dependencies = [
     "python-dotenv>=1.1.1",
     "pyvis>=0.3.2",
     "pyyaml>=6.0.2",
-    "ragas>=0.3.0",
+    # ragas 0.3.2 imports langchain_community.chat_models.vertexai, removed in
+    # community 0.4, so it cannot coexist with LangChain 1.x. Every ragas that
+    # can requires datasets>=4.0.0.
+    "ragas>=0.4.3,<0.5.0",
     "rapidfuzz>=3.13.0",
     "rich>=14.0.0",
     "scikit-learn>=1.7.1",
