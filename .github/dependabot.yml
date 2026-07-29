@@ -32,6 +32,11 @@ updates:
       # loaders move off langchain-community (it is in sunset as of 0.4).
       - dependency-name: "langchain-community"
         versions: [">=0.4.0"]
+      # Repeated from the /iac entry on purpose: this ecosystem also picks up
+      # iac/requirements.txt (it proposed the cdk-nag 3.0 and constructs bumps
+      # against that file), so an ignore only on /iac would not stop it.
+      - dependency-name: "cdk-nag"
+        versions: [">=3.0.0"]
 
   # CDK app. Kept out of the root lock on purpose: it is deployment tooling that
   # ships nothing and shares no runtime with the package, so keeping it separate
