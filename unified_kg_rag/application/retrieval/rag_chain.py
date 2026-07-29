@@ -218,14 +218,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         self.chain = self._build_chain()
 
     def _build_chain(self) -> Runnable:
-        # RunnableLambda accepts coroutine functions at runtime; the stubs only
-        # type the sync-callable overload.
         base_chain: Runnable = (
-            RunnableLambda(self._resolve_strategy)  # type: ignore[arg-type]
+            RunnableLambda(self._resolve_strategy)
             | RunnablePassthrough.assign(
                 processed_query=self._query_processing_branch()
             )
-            | RunnableLambda(self._load_memory_step)  # type: ignore[arg-type]
+            | RunnableLambda(self._load_memory_step)
             | RunnablePassthrough.assign(search_results=self._search_step)
         )
 

@@ -8,7 +8,7 @@ from typing import Any
 
 import boto3
 from botocore.config import Config as BotoConfig
-from langchain.text_splitter import (
+from langchain_text_splitters import (
     HTMLHeaderTextSplitter,
     MarkdownHeaderTextSplitter,
     RecursiveCharacterTextSplitter,

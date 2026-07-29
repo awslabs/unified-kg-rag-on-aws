@@ -3,7 +3,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 import boto3
 import pandas as pd
@@ -12,6 +12,7 @@ from datasets import Dataset
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseLanguageModel
 from ragas import evaluate
+from ragas.dataset_schema import EvaluationResult as RagasEvaluationResult
 from ragas.metrics import (
     answer_correctness,
     answer_relevancy,
@@ -223,7 +224,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
 
         try:
             eval_dataset = Dataset.from_dict(dataset_dict)
-            ragas_result_df = await asyncio.to_thread(
+            ragas_result = await asyncio.to_thread(
                 evaluate,
                 dataset=eval_dataset,
                 metrics=metrics_to_use,
@@ -233,9 +234,11 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 show_progress=self.show_progress,
                 batch_size=self.config.processing.batch_size,
             )
-            return self._parse_ragas_reports(
-                ragas_result_df.to_pandas(), queries, results
-            )
+            # ragas types `evaluate` as returning `RagasEvaluationResult |
+            # Executor`; the Executor branch is only taken when the caller passes
+            # return_executor=True, which this call never does.
+            ragas_result = cast(RagasEvaluationResult, ragas_result)
+            return self._parse_ragas_reports(ragas_result.to_pandas(), queries, results)
         except Exception as e:
             if not self.ignore_errors:
                 raise

@@ -10,7 +10,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import tenacity
-from langchain.output_parsers import XMLOutputParser
+from langchain_core.output_parsers import XMLOutputParser
 from langchain_core.runnables import RunnableConfig
 from lxml import etree
 from pydantic import BaseModel, Field

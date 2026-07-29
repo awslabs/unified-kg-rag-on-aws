@@ -9,7 +9,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 import nest_asyncio
-from langchain.schema.runnable import Runnable
+from langchain_core.runnables import Runnable
 from rich.panel import Panel
 from rich.table import Table
 

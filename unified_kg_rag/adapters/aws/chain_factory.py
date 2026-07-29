@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from langchain.output_parsers import OutputFixingParser
+from langchain_classic.output_parsers import OutputFixingParser
 from langchain_core.messages import SystemMessage
 from langchain_core.output_parsers import BaseOutputParser
 from langchain_core.prompts import (
