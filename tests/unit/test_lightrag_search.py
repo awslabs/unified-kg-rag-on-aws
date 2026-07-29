@@ -487,9 +487,13 @@ class TestUpstreamTwoRetrievalWidths:
         assert widths[os_config.relationships_index_prefix] == 25
         assert widths[os_config.text_units_index_prefix] == 12
 
-    async def test_non_mix_modes_keep_a_flat_width(self, config: Config) -> None:
-        # HYBRID has no chunk blend and no quota; only mix is realigned here, so the
-        # other modes must be untouched by this fix.
+    async def test_hybrid_gets_the_same_quota_as_mix(self, config: Config) -> None:
+        # HYBRID runs the same three streams as mix (ll->entities, hl->relationships,
+        # KG-linked chunks); mix only adds the naive VECTOR chunk blend on top. Gating
+        # the quota on mix alone left hybrid taking a flat top_k cut — 10 contexts
+        # against upstream hybrid's 188 — and abstaining on 55/100 MuSiQue queries for
+        # lack of evidence (F1 .236 vs upstream .567). The previous version of this test
+        # asserted that no-quota behaviour as intended, which encoded the defect.
         strategy, _, _ = _make_strategy(config)
         captured: dict = {}
 
@@ -503,7 +507,28 @@ class TestUpstreamTwoRetrievalWidths:
                 SearchStrategy.HYBRID, ll_keywords=["a"], hl_keywords=["b"], top_k=10
             )
         )
+        quota = captured.get("per_type_quota")
+        assert quota is not None
+        assert quota["text"] == config.search.lightrag_search.chunk_stream_top_k
+        assert quota["entity"] >= config.search.lightrag_search.kg_stream_top_k
+        assert quota["relationship"] >= config.search.lightrag_search.kg_stream_top_k
+        # And the rerank stays scoped to chunks, as for mix.
+        assert captured.get("rerank_only_types") == {"text"}
+
+    async def test_naive_keeps_a_flat_width(self, config: Config) -> None:
+        # naive retrieves ONE stream (vector chunks), so there is nothing to reserve
+        # slots against and a flat top_k is correct.
+        strategy, _, _ = _make_strategy(config)
+        captured: dict = {}
+
+        def _fake_fuse(results_dict, top_k, retrieval_multiplier=1, query=None, **kw):
+            captured.update(kw)
+            return [r for results in results_dict.values() for r in results]
+
+        strategy.hybrid_scorer.fuse_and_rerank_results = _fake_fuse  # type: ignore[method-assign]
+        await strategy.asearch(_query(SearchStrategy.NAIVE, top_k=10))
         assert captured.get("per_type_quota") is None
+        assert captured.get("rerank_only_types") is None
 
     def test_linked_chunk_pool_is_bounded_by_the_chunk_width(self) -> None:
         # The lineage pool is a CHUNK stream, so it follows chunk_top_k (20), not the
@@ -1095,3 +1120,62 @@ class TestEndpointSeedingIsPreserved:
         assert set(neptune_r.calls[0].filters["id"]) == {"e1", "e2"}
         # ...and also emitted as their own entity candidates.
         assert captured["sources"]["lightrag_endpoint_entities"]
+
+
+class TestHybridHasAChunkStream:
+    """Upstream `hybrid` builds context from entities + relations + THEIR chunks.
+
+    `_find_related_text_unit_from_entities` / `_from_relations` run for hybrid too —
+    upstream hybrid's context measured ~190 text items. What `mix` adds is the
+    separate naive VECTOR chunk query. Gating the lineage chunks on mix left hybrid
+    with no chunk stream at all, and it abstained on 55/100 MuSiQue queries.
+    """
+
+    @staticmethod
+    def _lineage_strategy(config: Config, strategy: SearchStrategy):
+        spec = get_strategy_spec(strategy)
+        st = spec.strategy_class(
+            config=config,
+            retrievers={
+                RetrieverRole.DOCUMENT.value: LineageRetriever(),
+                RetrieverRole.GRAPH.value: FakeRetriever("graph"),
+            },
+        )
+        captured: dict = {}
+
+        def _fake_fuse(results_dict, top_k, retrieval_multiplier=1, query=None, **kw):
+            captured["sources"] = results_dict
+            captured.update(kw)
+            return [r for results in results_dict.values() for r in results]
+
+        st.hybrid_scorer.fuse_and_rerank_results = _fake_fuse  # type: ignore[method-assign]
+        return st, captured
+
+    async def test_hybrid_retrieves_kg_linked_chunks(self, config: Config) -> None:
+        st, captured = self._lineage_strategy(config, SearchStrategy.HYBRID)
+        await st.asearch(
+            _query(SearchStrategy.HYBRID, ll_keywords=["a"], hl_keywords=["b"])
+        )
+        sources = captured["sources"]
+        assert any(
+            "linked" in key for key in sources
+        ), f"hybrid produced no KG-linked chunk stream: {sorted(sources)}"
+
+    async def test_hybrid_does_not_run_the_naive_vector_blend(
+        self, config: Config
+    ) -> None:
+        # That blend is what distinguishes mix from hybrid upstream.
+        st, captured = self._lineage_strategy(config, SearchStrategy.HYBRID)
+        await st.asearch(
+            _query(SearchStrategy.HYBRID, ll_keywords=["a"], hl_keywords=["b"])
+        )
+        assert "lightrag_chunks" not in captured["sources"]
+
+    async def test_mix_still_runs_both_chunk_streams(self, config: Config) -> None:
+        st, captured = self._lineage_strategy(config, SearchStrategy.MIX)
+        await st.asearch(
+            _query(SearchStrategy.MIX, ll_keywords=["a"], hl_keywords=["b"])
+        )
+        sources = captured["sources"]
+        assert "lightrag_chunks" in sources
+        assert any("linked" in key for key in sources)
