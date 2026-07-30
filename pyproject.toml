@@ -30,7 +30,7 @@ dependencies = [
     "asyncio-throttle>=1.0.2",
     "aws-assume-role-lib>=2.10.0",
     "bokeh>=3.9.2",
-    "boto3>=1.43.58",
+    "boto3>=1.43.59",
     # Only used for `Dataset.from_dict` in the ragas evaluator. The previous
     # <4.0.0 ceiling held ragas back to 0.3.2, which imports a module that
     # langchain-community removed in 0.4 — see the ragas floor below.
@@ -110,7 +110,7 @@ dev = [
     "ruff>=0.16.0",
     # boto3 type stubs (mypy only): boto3-stubs covers the top-level boto3
     # package; types-boto3 covers the per-service clients used under TYPE_CHECKING.
-    "boto3-stubs~=1.43.58",
+    "boto3-stubs~=1.43.59",
     "types-boto3[full]>=1.43.58",
 ]
 docs = [
@@ -293,6 +293,6 @@ dev = [
     "ruff>=0.16.0",
     # boto3 type stubs (mypy only): boto3-stubs covers the top-level boto3
     # package; types-boto3 covers the per-service clients used under TYPE_CHECKING.
-    "boto3-stubs~=1.43.58",
+    "boto3-stubs~=1.43.59",
     "types-boto3[full]>=1.43.58",
 ]
