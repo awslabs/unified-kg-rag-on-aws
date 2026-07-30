@@ -32,6 +32,13 @@ updates:
       # loaders move off langchain-community (it is in sunset as of 0.4).
       - dependency-name: "langchain-community"
         versions: [">=0.4.0"]
+      # 3.8 added the `discard()` step and sends `Cardinality.single` writes
+      # through it; Neptune rejects the step, so every graph write fails and an
+      # ingest indexes 0 entities. This bump WAS merged and only a real-AWS run
+      # caught it — the fake Neptune client in the unit suite cannot. Raise when
+      # Neptune's engine supports TinkerPop 3.8.
+      - dependency-name: "gremlinpython"
+        versions: [">=3.8.0"]
       # Repeated from the /iac entry on purpose: this ecosystem also picks up
       # iac/requirements.txt (it proposed the cdk-nag 3.0 and constructs bumps
       # against that file), so an ignore only on /iac would not stop it.
