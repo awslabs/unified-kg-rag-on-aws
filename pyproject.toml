@@ -134,7 +134,10 @@ only-include = ["unified_kg_rag", "README.md", "LICENSE", "pyproject.toml"]
 
 [tool.black]
 line-length = 88
-target-version = ['py311', 'py312']
+# Match requires-python's floor. These were py311, which let ruff's pyupgrade
+# rewrite `timezone.utc` to the 3.11-only `datetime.UTC` and broke every install
+# on the declared minimum.
+target-version = ['py310', 'py311', 'py312']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -160,7 +163,10 @@ skip_gitignore = true
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+# Must track requires-python's floor: pyupgrade (UP) rewrites code to the target
+# version's idioms, so py311 here actively introduced 3.11-only syntax into a
+# package that claims 3.10 support.
+target-version = "py310"
 
 [tool.ruff.lint]
 select = [
@@ -190,7 +196,9 @@ ignore = [
 "tests/**/*.py" = ["B018"]
 
 [tool.mypy]
-python_version = "3.11"
+# Type-check against the oldest supported interpreter, so stdlib symbols added
+# after it are reported here rather than at a user's import time.
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

@@ -59,6 +59,28 @@ jobs:
             report.xml
           if-no-files-found: ignore
 
+  oldest-python:
+    # The quality job runs one interpreter, so nothing checked the LOWER bound of
+    # requires-python. It was broken: html_exporter imported `datetime.UTC`, which
+    # is 3.11+, so every install on the declared minimum failed at import. Run the
+    # suite on the floor to keep that bound honest.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.10"
+
+      - name: Sync dependencies
+        # --frozen: resolve nothing, install exactly what the committed lock
+        # pins, so this also proves the lock itself is installable on the floor.
+        run: uv sync --python 3.10 --frozen --extra dev
+
+      - name: pytest
+        run: uv run --python 3.10 --frozen pytest -m "not aws" -q
+
   markers:
     # Verify the property and integration suites pass in isolation, so a suite
     # that is accidentally excluded from the default selection can't rot unseen.
