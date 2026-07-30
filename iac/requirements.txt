@@ -5,5 +5,5 @@
 # requirement outright and cannot resolve backwards into the affected range.
 aws-cdk-lib>=2.253.0,<3.0.0
 aws-cdk.aws-neptune-alpha>=2.262.1a0
-constructs>=10.7.1,<11.0.0
+constructs>=10.7.2,<11.0.0
 cdk-nag>=2.27.0,<3.0.0
