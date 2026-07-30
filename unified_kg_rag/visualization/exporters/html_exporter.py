@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from html import escape as _html_escape
 from pathlib import Path
 from typing import Any
@@ -98,7 +98,9 @@ class HTMLExporter:
         centrality_html, centrality_js = self._render_centrality(
             data.get("centrality_data") or {}
         )
-        report_date = datetime.now(tz=UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+        # `datetime.UTC` is 3.11+; this package supports 3.10 (see
+        # requires-python), where only `timezone.utc` exists.
+        report_date = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
         return f"""
         <body>
