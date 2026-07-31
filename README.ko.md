@@ -1,5 +1,8 @@
 # Unified Knowledge Graph RAG on AWS
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10--3.12-blue.svg)](https://www.python.org/downloads/)
+
 🇬🇧 **[English README](./README.md)** · 🤝 **[기여 가이드](./CONTRIBUTING.md)**
 
 <p align="center">
@@ -9,6 +12,25 @@
 대규모 다국어 문서 코퍼스를 지식 그래프로 변환하고, 멀티홉 그래프 순회로 질의에 답하는 **AWS 네이티브 Knowledge Graph RAG 프레임워크**입니다.
 
 두 검색 방법론 — Microsoft GraphRAG(*"From Local to Global: A Graph RAG Approach to Query-Focused Summarization"*)와 LightRAG(*"Simple and Fast Retrieval-Augmented Generation"*) — 를 단일 AWS 네이티브 스택(Bedrock, Neptune, OpenSearch, S3, DynamoDB) 위에 재구현했습니다. 두 방법론은 질의마다 선택 가능하며 동일한 인제스천·인덱싱·캐싱·다국어·하이브리드 검색 인프라를 공유합니다.
+
+> **핵심 요약**
+> - **두 방법론, 하나의 스택.** GraphRAG 커뮤니티 요약(`auto`/`drift`/`global`/`local`/`simple`)과 LightRAG 이중 레벨 키워드(`mix`/`hybrid`/`naive`)를 `search_strategy`로 질의마다 선택합니다.
+> - **증분 인덱싱.** DynamoDB 문서-상태 레지스트리(`aws.dynamodb`)가 콘텐츠 해시로 코퍼스를 비교해 신규/변경 문서만 재인덱싱하고 라이브 그래프에 병합합니다(멱등 upsert; 삭제 시 해당 문서 독점 아티팩트만 제거).
+> - **프롬프트 튜닝.** `run-prompt-tuning`이 코퍼스를 프로파일링(도메인/언어/페르소나/엔티티 타입)해 도메인 적응 `custom_prompts`를 생성합니다.
+> - **독립 시각화 & 그래프 인식 평가.** `run-visualization`은 재인제스천 없이 렌더하고, `graph_aware` 평가자는 엔티티/관계 커버리지를 채점합니다.
+> - **헥사고날 아키텍처.** 포트 & 어댑터 + 레지스트리로 스토리지 백엔드·검색 전략·평가자·렌더러를 교체 가능하게 만듭니다. [`docs/design.ko.md`](./docs/design.ko.md) 참고.
+
+## 📋 목차
+
+- [✨ 핵심 특징](#-핵심-특징)
+- [🏛️ 아키텍처 개요](#-아키텍처-개요)
+- [🚀 설치](#-설치)
+- [📖 사용법](#-사용법)
+- [🧪 테스트 & 품질](#-테스트--품질)
+- [🔒 보안 & 면책](#-보안--면책)
+- [🤝 기여](#-기여)
+- [📄 라이선스](#-라이선스)
+- [📚 참고문헌](#-참고문헌)
 
 ---
 
@@ -70,6 +92,8 @@
 
 ### 인제스천 파이프라인 (12단계)
 
+![인제스천 파이프라인](./assets/ingestion_pipeline.png)
+
 문서 파싱 → 로딩 → 청킹 → (번역) → 그래프 추출 → (gleaning) → 그래프 해석 → (claim 추출/해석) → 그래프 분석 → 커뮤니티 탐지 → 인덱싱
 
 - **핵심 기능**: 증분 인덱싱(콘텐츠 해시 델타+병합), 재개 가능 파이프라인(스테이지 체크포인트), S3 캐시 동기화, 병렬 처리
@@ -77,12 +101,48 @@
 
 ### 검색 파이프라인
 
+![검색 파이프라인](./assets/retrieval_pipeline.png)
+
 전략 해석(AUTO 라우팅) → 질의 처리(번역·엔티티/키워드 추출) → 대화 메모리 → 검색(전략별) → 컨텍스트 빌드 → 답변 생성
 
 - **융합/재랭킹**: RRF, 다양성 필터링, Bedrock 리랭킹, 토큰 예산 관리
 - **검색 전략**은 추상 역할(GRAPH/DOCUMENT)로 백엔드를 주입받아 백엔드 무관하게 동작
 
-자세한 컴포넌트·데이터 흐름·알고리즘은 **[기술 문서](./docs/design.ko.md)**를 참고하세요.
+#### 전략별 동작
+
+**GraphRAG (커뮤니티 요약)**
+
+- **simple** — 그래프 순회 없는 OpenSearch 직접 검색(벡터 + 키워드). 가장 빠르며
+  단순 사실 조회에 적합합니다.
+- **local** — 엔티티 중심. 질의 엔티티를 식별해 Neptune 그래프를 순회하여 관련
+  엔티티·관계를 찾고, 커뮤니티 리포트 섹션과 관계 섹션으로 보강한 뒤 벡터/키워드
+  결과와 결합합니다. 특정 엔티티·개념의 상세 분석에 최적입니다.
+- **global** — 커뮤니티 탐지 결과를 활용한 광범위 커버리지. 동적으로 선택된
+  커뮤니티에 map-reduce를 적용해 대규모 정보를 종합합니다. 고수준 통찰과 주제
+  분석에 가장 좋습니다.
+- **drift** — 초기 검색 후 결과를 바탕으로 질의를 반복 정제하며 컨텍스트를
+  확장하고, 수렴 판정으로 무한 루프를 막습니다. 탐색이 필요한 복잡·다면적 질문에
+  탁월합니다.
+- **auto** — 질의 분석으로 위 전략 중 최적을 LLM이 라우팅합니다.
+
+**LightRAG (이중 레벨 키워드)**
+
+- **mix / hybrid** — 고수준·저수준 키워드를 추출(`KeywordsExtractionPrompt`)해
+  관계 벡터 인덱스(고수준) + 엔티티 인덱스(저수준)를 조회하고 Neptune 이웃 확장을
+  수행합니다. `mix`는 여기에 naive 벡터 청크 검색을 추가로 블렌딩합니다. 둘 다
+  동일한 `HybridScorer`(렉시컬 + 시맨틱 + 그래프, RRF + Bedrock 리랭크)를 거칩니다.
+- **naive** — 순수 벡터 청크 검색. LightRAG 베이스라인으로, 빠른 폴백과 비교
+  평가에 유용합니다.
+
+#### 컴포넌트 구성
+
+- **이중 리트리버**: Neptune(관계 순회·엔티티 중심 검색) + OpenSearch(벡터 유사도·BM25 키워드)
+- **융합/랭킹**: RRF로 리트리버 간 점수 결합, 다양성 필터링으로 중복 감소,
+  Bedrock 모델로 컨텍스트 인식 리랭킹, 렉시컬·시맨틱 가중 하이브리드 스코어링
+- **컨텍스트 최적화**: 모델 한도 내 동적 컨텍스트 사이징, 관련성 기반 우선순위
+  선택, 멀티턴 질의를 위한 대화 메모리 통합과 엔티티 추적
+
+자세한 컴포넌트·데이터 흐름·알고리즘은 [**기술 문서**](./docs/design.ko.md)를 참고하세요.
 
 ---
 
@@ -161,6 +221,27 @@ cdk deploy --all
 cdk-nag 검증, 스택 기동 후 Step Functions로 인제스천 실행을 시작하는 방법까지 모두
 담겨 있습니다.
 
+### 환경 변수 설정
+
+OpenSearch 클러스터가 IAM 대신 username/password 인증을 사용한다면 `.env` 파일을
+만드세요.
+
+```bash
+cp .env-template .env
+```
+
+그리고 `.env`에 OpenSearch 자격증명을 입력합니다.
+
+```bash
+# OpenSearch 인증 (config.yaml에서 use_iam이 false인 경우에만 필요)
+OPENSEARCH_USERNAME=your_opensearch_username
+OPENSEARCH_PASSWORD=your_opensearch_password
+```
+
+**참고**: `.env` 파일은 `config.yaml`의 OpenSearch 설정에서 `use_iam: false`인
+경우에만 필요합니다. IAM 인증(`use_iam: true`)을 쓴다면 이 단계는 건너뛰어도
+됩니다.
+
 ---
 
 ## 📖 사용법
@@ -188,7 +269,7 @@ run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --conf
 
 **전략 선택** — GraphRAG: `simple`(직접 벡터/렉시컬), `local`(엔티티 중심), `global`(커뮤니티 요약, map-reduce), `drift`(점진 탐색), `auto`(LLM 라우터). LightRAG: `mix` / `hybrid` / `naive`(이중 레벨 키워드).
 
-설정·CLI 플래그·Python API·증분 인덱싱은 **[사용자 가이드](./docs/user-guide.ko.md)**, 아키텍처·알고리즘은 **[설계 문서](./docs/design.ko.md)**를 참고하세요.
+설정·CLI 플래그·Python API·증분 인덱싱은 [**사용자 가이드**](./docs/user-guide.ko.md), 아키텍처·알고리즘은 [**설계 문서**](./docs/design.ko.md)를 참고하세요.
 
 ---
 
@@ -203,7 +284,8 @@ uv run mypy unified_kg_rag
 
 - `aws` 마커는 실제 AWS 서비스가 필요한 테스트를 분리하며 CI에서 제외됩니다.
 - DynamoDB/S3는 `moto`, Neptune/OpenSearch는 포트 기반 in-memory fake로 테스트합니다.
-- CI(`.github/workflows/`): ruff/black/isort/mypy + pytest+coverage 게이트, ASH 보안 스캔.
+- CI(`.github/workflows/`): ruff/black/isort/mypy + pytest+coverage 게이트, 그리고
+  비차단(non-blocking) ASH 보안 스캔.
 
 ---
 
@@ -241,3 +323,8 @@ Apache-2.0. [`LICENSE`](./LICENSE) 참고.
 라이브러리 기능 개발과 검증에 크게 기여해 주신 **강지현**님, 그리고 출시 전
 꼼꼼한 리뷰와 실제 코퍼스 테스트를 진행해 주신 **Yusuke Tanimiya**님께
 감사드립니다. 두 분의 기여로 프레임워크가 한층 견고해졌습니다.
+
+## 🏢 소개
+
+AWS가 awslabs 조직에서 유지관리합니다. Apache-2.0 라이선스로 배포됩니다.
+기여를 환영합니다 — [`CONTRIBUTING.md`](./CONTRIBUTING.md)를 참고하세요.

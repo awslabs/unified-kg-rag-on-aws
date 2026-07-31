@@ -1,5 +1,7 @@
 # Unified Knowledge Graph RAG on AWS — Technical Documentation
 
+> 🇰🇷 한국어판: [docs/design.ko.md](./design.ko.md)
+
 This document is a **design reference for contributors and advanced users**, covering the architecture, algorithms, data model, and operational aspects of the `unified-kg-rag-on-aws` library. For the "what/why" and a quick start, see [README.md](../README.md); for "how to use it," see the [User Guide](user-guide.md); for contribution/extension conventions, see [CLAUDE.md](../CLAUDE.md).
 
 ## Table of Contents
@@ -125,6 +127,18 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 This pattern follows the same philosophy as the existing `ParserFactory._loader_configs` (declarative parser registration).
 
+> Write-path note: the registries cover the **read / evaluation / render / parse**
+> paths. On the write path, `IndexingManager` deliberately composes **two fixed
+> backends** (Neptune + OpenSearch) rather than iterating a registry — those two
+> stores (graph DB + vector/lexical search) are constitutive of the framework,
+> not runtime-swappable choices, and the per-backend fan-out (entities to both
+> stores, entities-before-edges phasing, the orphan-edge cascade) is deliberate
+> domain knowledge rather than arbitrary dispatch. So a new search strategy,
+> evaluator, or renderer is added by registration alone, while replacing a
+> write-side store means implementing the `GraphIndexer` / `VectorIndexer` port
+> and injecting it (`IndexingManager(vector_indexer=…, graph_indexer=…)`). The
+> read path is already generalized through the `RetrieverRole` → builder map.
+
 ### 2.4 Dependency Rule Verification Status
 
 Verified with grep: `domain/` does not import `adapters`/`application` at runtime, and neither does `ports/`. One compile-time-only exception remains — `domain/retrieval/strategy_registry.py` references `adapters.retrieval.base.BaseSearchStrategy` under `TYPE_CHECKING` (because the registry stores strategy subclasses). Extracting pure strategy/retriever ports would also remove this type-level reference; it is left in place as a deliberate boundary (see "Deliberate Design Boundaries" at the end of this document).
@@ -222,14 +236,14 @@ The `GraphRAGChain` (an LCEL Runnable) in `application/retrieval/rag_chain.py` p
 
 #### 6.1.1 Global search map-reduce (`global_search.py`)
 
-When `enable_map_reduce` is set and results are at least `map_reduce_min_results`, it follows MS GraphRAG's canonical map-reduce; otherwise it returns a direct concat-reduce.
+When `enable_map_reduce` is set and results are at least `map_reduce_min_results`, it follows MS GraphRAG's canonical map-reduce. Below `map_reduce_min_results` the retrieved results **pass through unchanged** — no synthesis stage runs at all, because a handful of community reports do not need a map-reduce to be summarized.
 
 1. **MAP** — Community reports are batched in groups of `map_batch_size`, and for each batch `GlobalMapPrompt` asks the LLM to extract key points and score query relevance from **0-100**. Batches are run concurrently via `BatchProcessor`, with per-item graceful fallback.
 2. **FILTER+RANK** — Drops points at or below `map_relevance_threshold` and sorts by score in descending order (`_filter_and_rank_points`).
 3. **PACK** — Packs the top points up to the `max_map_reduce_tokens` token budget (based on `token_manager.count_tokens`, `_pack_points_within_budget`).
 4. **REDUCE** — Synthesizes the final answer from the packed points (with relevance annotations) via `MapReduceSummaryPrompt` (`_reduce_from_points`). The result is prepended to the results as a `synthesized_summary` `RetrievalResult`.
 
-Robustness: Even if the map response comes wrapped in code fences or prose, `_parse_map_points` extracts the JSON, and a single batch's parse failure is ignored. If the map stage produces no useful points at all or everything is filtered out by the threshold, it gracefully degrades to the legacy `_concat_reduce` so global search does not hard-fail.
+Robustness: Even if the map response comes wrapped in code fences or prose, `_parse_map_points` extracts the JSON, and a single batch's parse failure is ignored. `_concat_reduce` is the degradation path for two specific failures — the map stage yielding no usable points at all (every batch failed to parse), or the threshold filtering out every point — so global search still synthesizes an answer instead of hard-failing. It is not the below-threshold path.
 
 ### 6.2 LightRAG Methodology (`lightrag_search.py`)
 
