@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10--3.12-blue.svg)](https://www.python.org/downloads/)
 
-🤝 **[Contributing](./CONTRIBUTING.md)**
+🇰🇷 **[한국어 README](./README.ko.md)** · 🤝 **[Contributing](./CONTRIBUTING.md)**
 
 <p align="center">
   <img src="./assets/profile.png" alt="Unified Knowledge Graph RAG on AWS" width="320">
@@ -23,7 +23,7 @@ It reimplements two retrieval methodologies — Microsoft's GraphRAG ("From Loca
 ## 📋 Table of Contents
 
 - [✨ Features & Advantages](#-features--advantages)
-- [🏛️ Architecture Overview](#️-architecture-overview)
+- [🏛️ Architecture Overview](#-architecture-overview)
 - [🚀 Installation](#-installation)
 - [📖 Usage](#-usage)
 - [🧪 Testing & Quality](#-testing--quality)
@@ -65,13 +65,16 @@ caching, multilingual, and hybrid-scoring stack — only the retrieval algorithm
   each document, so re-runs re-index only new/changed documents and merge into the
   live graph (idempotent upserts)
 - **Deletion lineage**: removing a document deletes only its *exclusive* artifacts
+  (entities shared with surviving documents are preserved)
 
 ### 🎯 **Comprehensive Evaluation Framework**
-- **LangChain-based Evaluation**: RAG performance measurement through built-in evaluators
+- **LangChain-based Evaluation**: `correctness` and `partial_correctness` via built-in evaluators
 - **RAGAS Metrics**: answer correctness, answer relevancy, faithfulness, context precision, and context recall
 - **Graph-aware Evaluation**: entity/relationship coverage (recall of expected
   graph artifacts surfaced in the answer) against ground-truth expectations
-  (deterministic, LLM-free, word-boundary matching)
+  (deterministic, LLM-free, word-boundary matching). Precision/F1 are
+  intentionally not emitted — a free-text answer cannot be enumerated into a
+  closed set of entities, so a false-positive count would be meaningless.
 
 ### 🔧 **User Support**
 - **Domain-specific Prompts**: customizable per-prompt overrides via config
@@ -360,6 +363,10 @@ without your own additional security testing, threat modeling, and hardening.**
 ## 🤝 Contributing
 
 We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
+
+For extension recipes (adding a search strategy, storage backend, evaluator, or
+renderer), see [CONTRIBUTING.md](CONTRIBUTING.md) and [CLAUDE.md](CLAUDE.md) —
+most extensions are a registry registration and need no dispatch-code edits.
 
 ## 📄 License
 

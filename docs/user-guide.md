@@ -1,5 +1,7 @@
 # Unified Knowledge Graph RAG on AWS — User Guide
 
+> 🇰🇷 한국어판: [docs/user-guide.ko.md](./user-guide.ko.md)
+
 This is the practical, how-to-use guide for **unified-kg-rag-on-aws** — an AWS-native
 knowledge-graph RAG framework that builds knowledge graphs from large,
 multilingual document corpora and answers questions over them. It reimplements
