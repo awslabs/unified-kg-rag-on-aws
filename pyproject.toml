@@ -111,7 +111,7 @@ dev = [
     # boto3 type stubs (mypy only): boto3-stubs covers the top-level boto3
     # package; types-boto3 covers the per-service clients used under TYPE_CHECKING.
     "boto3-stubs~=1.43.59",
-    "types-boto3[full]>=1.43.58",
+    "types-boto3[full]>=1.43.60",
 ]
 docs = [
     "mkdocs>=1.5.0",
@@ -294,5 +294,5 @@ dev = [
     # boto3 type stubs (mypy only): boto3-stubs covers the top-level boto3
     # package; types-boto3 covers the per-service clients used under TYPE_CHECKING.
     "boto3-stubs~=1.43.59",
-    "types-boto3[full]>=1.43.58",
+    "types-boto3[full]>=1.43.60",
 ]
