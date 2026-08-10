@@ -4706,16 +4706,16 @@ wheels = [
 
 [[package]]
 name = "types-boto3"
-version = "1.43.60"
+version = "1.43.66"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore-stubs" },
     { name = "types-s3transfer" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/86/fd/87b6f3b9096fce334ef2be4073ad38f47e30fd7003349fd918c1b8a5c243/types_boto3-1.43.60.tar.gz", hash = "sha256:18d77b8bef9bfd7557961fa85851189c0cddc7fcda9120b59629e468887f210c", size = 103771, upload-time = "2026-07-30T20:11:21.288Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9d/c2/8bda0681f6124146326726d1306533b27f0b55c97b706dc591464643ff40/types_boto3-1.43.66.tar.gz", hash = "sha256:15728d2450b8de6328cef6eb2b8d63e966480827e5f12b7b9f2de5a0e837e984", size = 104070, upload-time = "2026-08-07T00:17:47.109Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/31/d50bc58c5c34764e36dc926b43950d08f9e4ba23c58e715496dced976972/types_boto3-1.43.60-py3-none-any.whl", hash = "sha256:322b36e1431e38eb593ba6fb889c2b495eae4f6c3725163822e9c3e7b9da85ed", size = 70987, upload-time = "2026-07-30T20:11:17.956Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/d5/02e7345195472cf8d824b4512b522520ad39ccce052c1e389ba013f296f9/types_boto3-1.43.66-py3-none-any.whl", hash = "sha256:c2049b8f4e4e94a840efbd6842102562119b92af5e2857c1107aa4e07333c1b5", size = 71183, upload-time = "2026-08-07T00:17:42.912Z" },
 ]
 
 [package.optional-dependencies]
@@ -4944,7 +4944,7 @@ requires-dist = [
     { name = "structlog", specifier = ">=25.4.0" },
     { name = "tenacity", specifier = ">=9.1.2" },
     { name = "tqdm", specifier = ">=4.70.0" },
-    { name = "types-boto3", extras = ["full"], marker = "extra == 'dev'", specifier = ">=1.43.60" },
+    { name = "types-boto3", extras = ["full"], marker = "extra == 'dev'", specifier = ">=1.43.66" },
     { name = "umap-learn", specifier = ">=0.5.6" },
     { name = "unstructured", marker = "extra == 'unstructured'", specifier = ">=0.14.0" },
 ]
@@ -4964,7 +4964,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=4.1.0" },
     { name = "pytest-mock", specifier = ">=3.12.0" },
     { name = "ruff", specifier = ">=0.16.1" },
-    { name = "types-boto3", extras = ["full"], specifier = ">=1.43.60" },
+    { name = "types-boto3", extras = ["full"], specifier = ">=1.43.66" },
 ]
 
 [[package]]
