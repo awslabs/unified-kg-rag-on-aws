@@ -216,5 +216,8 @@ cdk.context.json
 # Local-only publishing runbook — not part of the published project
 PUBLISHING.md
 
+# Local-only benchmark report
+docs/benchmarks.md
+
 # Local-only publish-prep artifacts — not part of the published project
 .awslabs/
