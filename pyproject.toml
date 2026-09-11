@@ -121,6 +121,15 @@ docs = [
 # Optional: enables .md/.markdown/.html/.htm source parsing (heavy transitive
 # deps, so not installed by default). The ParserFactory registers those formats
 # only when this is importable; .txt/.csv/.json/.pdf work without it.
+#
+# The floor deliberately stays below the fix for GHSA-4mvj-m6j5-pmf7 (SSRF in
+# unstructured's URL-based partitioning, fixed in 0.24.0): that release requires
+# Python >=3.11 and so cannot be resolved under this project's requires-python
+# floor of 3.10. The exposure is accepted because the vulnerable entry point is
+# URL partitioning, which this package never reaches — the only loaders it
+# registers from unstructured are UnstructuredMarkdownLoader and
+# UnstructuredHTMLLoader, both of which read a local filesystem path. Raise the
+# floor to >=0.24.0 whenever the Python 3.10 floor is dropped.
 unstructured = [
     "unstructured>=0.14.0",
 ]
