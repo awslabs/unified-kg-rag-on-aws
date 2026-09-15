@@ -13,6 +13,8 @@
 
 두 검색 방법론 — Microsoft GraphRAG(*"From Local to Global: A Graph RAG Approach to Query-Focused Summarization"*)와 LightRAG(*"Simple and Fast Retrieval-Augmented Generation"*) — 를 단일 AWS 네이티브 스택(Bedrock, Neptune, OpenSearch, S3, DynamoDB) 위에 재구현했습니다. 두 방법론은 질의마다 선택 가능하며 동일한 인제스천·인덱싱·캐싱·다국어·하이브리드 검색 인프라를 공유합니다.
 
+이 프로젝트가 [AWS Open Source Blog에 소개되었습니다](https://aws.amazon.com/ko/blogs/opensource/unified-knowledge-graph-rag-on-aws-graphrag-and-lightrag-on-one-stack/). 아키텍처, GraphRAG·LightRAG 검색 방식과 벤치마크 결과를 확인할 수 있습니다.
+
 > **핵심 요약**
 > - **두 방법론, 하나의 스택.** GraphRAG 커뮤니티 요약(`auto`/`drift`/`global`/`local`/`simple`)과 LightRAG 이중 레벨 키워드(`mix`/`hybrid`/`naive`)를 `search_strategy`로 질의마다 선택합니다.
 > - **증분 인덱싱.** DynamoDB 문서-상태 레지스트리(`aws.dynamodb`)가 콘텐츠 해시로 코퍼스를 비교해 신규/변경 문서만 재인덱싱하고 라이브 그래프에 병합합니다(멱등 upsert; 삭제 시 해당 문서 독점 아티팩트만 제거).
