@@ -13,6 +13,8 @@ An AWS-native knowledge graph RAG (Retrieval-Augmented Generation) framework tha
 
 It reimplements two retrieval methodologies — Microsoft's GraphRAG ("From Local to Global: A Graph RAG Approach to Query-Focused Summarization") and LightRAG ("Simple and Fast Retrieval-Augmented Generation") — over a single AWS-native stack. The two are selectable per query and share one ingestion, indexing, caching, multilingual, and hybrid (lexical + semantic + graph) search infrastructure; only the retrieval algorithm differs.
 
+Read the [AWS Open Source Blog introduction](https://aws.amazon.com/ko/blogs/opensource/unified-knowledge-graph-rag-on-aws-graphrag-and-lightrag-on-one-stack/) for an overview of the architecture, GraphRAG and LightRAG retrieval, and benchmark results.
+
 > **Highlights**
 > - **Two methodologies, one stack.** GraphRAG community-summary (`auto`/`drift`/`global`/`local`/`simple`) and LightRAG dual-level keyword (`mix`/`hybrid`/`naive`), chosen per query via `search_strategy`.
 > - **Incremental indexing.** The DynamoDB document-status registry (`aws.dynamodb`) diffs a corpus by content hash and re-indexes only new/changed documents, merging into the live graph (idempotent upserts; deletions remove a document's exclusive artifacts).
