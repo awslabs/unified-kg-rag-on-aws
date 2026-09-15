@@ -352,12 +352,41 @@ specified.
             <text_evidence>[Exact quote from source text]</text_evidence>
         </issue>
 
+        <issue>
+            <issue_type>ENTITY_CORRECTION</issue_type>
+            <details>
+                <name>[Existing entity name, exactly as it appears in CURRENT ENTITIES]</name>
+                <corrected_name>[Corrected name, or repeat <name> when only the type is wrong]</corrected_name>
+                <corrected_type>[Corrected entity type]</corrected_type>
+                <description>[Corrected description; omit to keep the existing one]</description>
+            </details>
+            <justification>[Why the current value is factually wrong]</justification>
+            <text_evidence>[Exact quote from source text]</text_evidence>
+        </issue>
+
+        <issue>
+            <issue_type>RELATIONSHIP_CORRECTION</issue_type>
+            <details>
+                <source>[Existing source entity name, exactly as listed]</source>
+                <target>[Existing target entity name, exactly as listed]</target>
+                <type>[Existing relationship type, exactly as listed]</type>
+                <corrected_source>[Correct source entity name; swap with <target> when the direction is reversed]</corrected_source>
+                <corrected_target>[Correct target entity name]</corrected_target>
+                <corrected_type>[Corrected relationship type]</corrected_type>
+                <description>[Corrected description; omit to keep the existing one]</description>
+            </details>
+            <justification>[Why the current value is factually wrong]</justification>
+            <text_evidence>[Exact quote from source text]</text_evidence>
+        </issue>
+
         </identified_issues>
 </refinement_plan>
 
 # CRITICAL REQUIREMENTS:
 ✓ Base ALL recommendations on explicit textual evidence
 ✓ For relationships, entity names in <source> and <target> must exactly match current entities or new extractions
+✓ For corrections, <name> / <source> / <target> / <type> must identify something in the CURRENT lists exactly — a correction matching nothing is discarded
+✓ A RELATIONSHIP_CORRECTION may fix the type, the direction, or the description; to attach an edge to a DIFFERENT pair of entities, emit MISSING_RELATIONSHIP instead
 ✓ Provide exact quotes from source text
 ✓ Focus only on high-impact improvements
 ✓ Use specified XML format with no additional text
@@ -377,7 +406,8 @@ improvement recommendations.
 
 ## ANALYSIS REQUIREMENTS:
 1. **Quality Assessment**: Provide completeness and accuracy scores (0.0-1.0)
-2. **Gap Analysis**: Identify missing entities and relationships with evidence
+2. **Gap Analysis**: Identify missing entities and relationships with evidence, plus
+   corrections for entities or relationships whose name, type or direction is wrong
 3. **Name Consistency**: Use entity names that exactly match current or new extractions
 4. **Evidence-Based**: Include exact quotes from source text
 5. **High-Impact Focus**: Prioritize improvements that significantly enhance understanding

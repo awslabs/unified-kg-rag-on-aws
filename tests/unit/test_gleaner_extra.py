@@ -277,6 +277,239 @@ class TestParseRefinementOutput:
 
 
 # --------------------------------------------------------------------------- #
+# ENTITY_CORRECTION / RELATIONSHIP_CORRECTION issues
+# --------------------------------------------------------------------------- #
+class TestCorrectionIssues:
+    """Corrections the refinement prompt asks for must reach the graph.
+
+    ``GraphRefinementPrompt`` instructs the model to emit ENTITY_CORRECTION and
+    RELATIONSHIP_CORRECTION issues; the dispatch branched only on the two
+    MISSING_* types, so every correction was discarded for every chunk of every
+    run. Corrections mutate the entity/relationship the round already carries,
+    so these tests assert on the input objects.
+    """
+
+    UNIT = TextUnit(id="t1", text="acme corp is a company based in seattle.")
+
+    @staticmethod
+    def _plan(*issues: dict) -> dict:
+        return {"identified_issues": {"issue": list(issues)}}
+
+    @staticmethod
+    def _entity_correction(**details: str) -> dict:
+        return {"issue_type": "ENTITY_CORRECTION", "details": details}
+
+    @staticmethod
+    def _relationship_correction(**details: str) -> dict:
+        return {"issue_type": "RELATIONSHIP_CORRECTION", "details": details}
+
+    def test_entity_type_correction_applied(self, gleaner) -> None:
+        entity = _ent("e1", "acme corp")
+        entity.type = "PERSON"
+        ents, rels, _ = gleaner._parse_refinement_output(
+            self._plan(
+                self._entity_correction(name="acme corp", corrected_type="ORGANIZATION")
+            ),
+            self.UNIT,
+            [entity],
+        )
+        assert entity.type == "ORGANIZATION"
+        # A correction is not a new artifact.
+        assert ents == [] and rels == []
+
+    def test_entity_rename_normalizes_and_keeps_the_id(self, gleaner) -> None:
+        entity = _ent("e1", "acme")
+        entity.name_embedding = [0.1, 0.2]
+        gleaner._parse_refinement_output(
+            self._plan(
+                self._entity_correction(name="acme", corrected_name="Acme Corporation")
+            ),
+            self.UNIT,
+            [entity],
+        )
+        # Extracted names are normalized, so a corrected one must be too.
+        assert entity.name == "acme corporation"
+        # Relationships reference the id; re-deriving it would orphan them.
+        assert entity.id == "e1"
+        # The stored embedding described the old name.
+        assert entity.name_embedding is None
+
+    def test_entity_correction_for_unknown_name_is_dropped(self, gleaner) -> None:
+        entity = _ent("e1", "acme corp")
+        entity.type = "PERSON"
+        gleaner._parse_refinement_output(
+            self._plan(
+                self._entity_correction(
+                    name="never extracted", corrected_type="ORGANIZATION"
+                )
+            ),
+            self.UNIT,
+            [entity],
+        )
+        assert entity.type == "PERSON"
+
+    def test_relationship_type_correction_applied(self, gleaner) -> None:
+        rel = Relationship(
+            id="r1",
+            source_id="e1",
+            target_id="e2",
+            source_name="acme corp",
+            target_name="seattle",
+            type="EMPLOYS",
+        )
+        gleaner._parse_refinement_output(
+            self._plan(
+                self._relationship_correction(
+                    source="acme corp",
+                    target="seattle",
+                    type="EMPLOYS",
+                    corrected_type="LOCATED_IN",
+                )
+            ),
+            self.UNIT,
+            [],
+            [rel],
+        )
+        assert rel.type == "LOCATED_IN"
+
+    def test_reversed_direction_swaps_ids_and_names_together(self, gleaner) -> None:
+        rel = Relationship(
+            id="r1",
+            source_id="e-seattle",
+            target_id="e-acme",
+            source_name="seattle",
+            target_name="acme corp",
+            type="LOCATED_IN",
+        )
+        gleaner._parse_refinement_output(
+            self._plan(
+                self._relationship_correction(
+                    source="seattle",
+                    target="acme corp",
+                    corrected_source="acme corp",
+                    corrected_target="seattle",
+                )
+            ),
+            self.UNIT,
+            [],
+            [rel],
+        )
+        assert (rel.source_id, rel.source_name) == ("e-acme", "acme corp")
+        assert (rel.target_id, rel.target_name) == ("e-seattle", "seattle")
+
+    def test_relationship_correction_for_unknown_edge_is_dropped(self, gleaner) -> None:
+        rel = Relationship(
+            id="r1",
+            source_id="e1",
+            target_id="e2",
+            source_name="acme corp",
+            target_name="seattle",
+            type="EMPLOYS",
+        )
+        gleaner._parse_refinement_output(
+            self._plan(
+                self._relationship_correction(
+                    source="nobody", target="nowhere", corrected_type="LOCATED_IN"
+                )
+            ),
+            self.UNIT,
+            [],
+            [rel],
+        )
+        assert rel.type == "EMPLOYS"
+
+    def test_ambiguous_pair_without_a_current_type_is_dropped(self, gleaner) -> None:
+        # Two edges join the same pair; with no stated current type there is no
+        # way to tell which one the correction means, so neither is touched.
+        shared = {
+            "source_id": "e1",
+            "target_id": "e2",
+            "source_name": "acme corp",
+            "target_name": "seattle",
+        }
+        first = Relationship(id="r1", type="EMPLOYS", **shared)
+        second = Relationship(id="r2", type="FOUNDED_IN", **shared)
+        gleaner._parse_refinement_output(
+            self._plan(
+                self._relationship_correction(
+                    source="acme corp", target="seattle", corrected_type="LOCATED_IN"
+                )
+            ),
+            self.UNIT,
+            [],
+            [first, second],
+        )
+        assert (first.type, second.type) == ("EMPLOYS", "FOUNDED_IN")
+
+    def test_current_type_disambiguates_a_multi_edge_pair(self, gleaner) -> None:
+        shared = {
+            "source_id": "e1",
+            "target_id": "e2",
+            "source_name": "acme corp",
+            "target_name": "seattle",
+        }
+        first = Relationship(id="r1", type="EMPLOYS", **shared)
+        second = Relationship(id="r2", type="FOUNDED_IN", **shared)
+        gleaner._parse_refinement_output(
+            self._plan(
+                self._relationship_correction(
+                    source="acme corp",
+                    target="seattle",
+                    type="FOUNDED_IN",
+                    corrected_type="LOCATED_IN",
+                )
+            ),
+            self.UNIT,
+            [],
+            [first, second],
+        )
+        assert (first.type, second.type) == ("EMPLOYS", "LOCATED_IN")
+
+    def test_ungrounded_correction_dropped_when_grounding_enabled(
+        self, gleaner
+    ) -> None:
+        # The hallucination guard covers corrections too, not just additions.
+        gleaner.extraction_config.entity_grounding.enabled = True
+        entity = _ent("e1", "acme corp")
+        entity.type = "PERSON"
+        issue = self._entity_correction(name="acme corp", corrected_type="ORGANIZATION")
+        issue["text_evidence"] = "A clause that appears nowhere in the chunk."
+        gleaner._parse_refinement_output(self._plan(issue), self.UNIT, [entity])
+        assert entity.type == "PERSON"
+
+    def test_correction_survives_a_full_gleaning_round(self, gleaner, mocker) -> None:
+        # End-to-end through glean_graph: the corrected entity is the one the
+        # stage returns, so the correction reaches the graph the pipeline indexes.
+        seed = _ent("e1", "acme corp")
+        seed.type = "PERSON"
+        gleaner.graph_refiner = mocker.Mock()
+        gleaner.graph_refiner.batch.return_value = [
+            {
+                "refinement_plan": {
+                    "quality_scores": {
+                        "completeness_score": 0.9,
+                        "accuracy_score": 0.9,
+                    },
+                    "identified_issues": {
+                        "issue": self._entity_correction(
+                            name="acme corp", corrected_type="ORGANIZATION"
+                        )
+                    },
+                }
+            }
+        ]
+
+        entities, _, _ = gleaner.glean_graph(
+            text_units=[self.UNIT],
+            initial_entities=[seed],
+            initial_relationships=[],
+        )
+        corrected = next(e for e in entities if e.name == "acme corp")
+        # The round's duplicate merge lowercases the winning type.
+        assert (corrected.type or "").upper() == "ORGANIZATION"
+
+
+# --------------------------------------------------------------------------- #
 # GleaningStats derived properties
 # --------------------------------------------------------------------------- #
 class TestGleaningStats:

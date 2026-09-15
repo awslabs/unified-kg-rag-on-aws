@@ -23,3 +23,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
 - CLIs: `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
   `run-prompt-tuning`.
 - CDK deployment stack (`iac/`) with Well-Architected security defaults.
+
+### Fixed
+- The gleaner now applies the `ENTITY_CORRECTION` and `RELATIONSHIP_CORRECTION`
+  issues `GraphRefinementPrompt` asks for (wrong entity name or type, wrong
+  relationship type or direction). Issue dispatch branched only on the two
+  `MISSING_*` types, so every correction the model returned was discarded, and
+  gleaning could only ever add to the graph, never fix it. The prompt now also
+  specifies the `<details>` shape for both correction types, which it previously
+  requested without defining.
