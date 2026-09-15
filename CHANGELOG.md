@@ -23,3 +23,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
 - CLIs: `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
   `run-prompt-tuning`.
 - CDK deployment stack (`iac/`) with Well-Architected security defaults.
+
+### Fixed
+- RRF fusion now accumulates a cross-store match. The fusion key was derived
+  from a hash of the rendered content, and the graph and vector stores render
+  the same artifact differently, so an entity present in both produced two keys
+  and graph/vector rank agreement was never rewarded.

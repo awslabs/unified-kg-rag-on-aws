@@ -330,8 +330,36 @@ class HybridScorer(MetricsMixin):
 
     @staticmethod
     def _get_result_key(result: RetrievalResult) -> str:
+        """Fusion identity for one retrieved artifact.
+
+        RRF's entire value is cross-stream rank REINFORCEMENT: an artifact that
+        both the graph stream and the vector stream rank must accumulate BOTH
+        contributions. Keying on a hash of the RENDERED content defeated that,
+        because the two stores render the same artifact differently — the graph
+        path builds "Entity: X / Description: ... / Path: ..."
+        (`NeptuneRetriever._build_content`) while the vector path builds
+        "Description: ... / Title: X" (`OpenSearchRetriever._extract_content`).
+        One entity present in both stores therefore produced two keys and never
+        fused, so graph/vector agreement — the signal the hybrid retriever
+        exists to exploit — was never rewarded.
+
+        Key on the stable artifact id instead. Both retrievers already put it in
+        `source` (`NeptuneRetriever._create_retrieval_result` uses the node
+        `id`; `OpenSearchRetriever._parse_hit` uses the document `id`), so the
+        same artifact yields one key across stores regardless of rendering.
+        `retriever_type` qualifies the key so two artifacts of DIFFERENT kinds
+        that happen to share an id are not merged; it is derived from the same
+        `SectionType` on both paths, so it does not re-split a cross-store
+        match. Results without a usable id keep the content hash, which stops
+        every unattributed result from collapsing into a single bucket.
+        """
+        # `NeptuneRetriever` stringifies a missing node id into the literal
+        # "None", so an absent id must be recognised in string form too.
+        source = (result.source or "").strip()
+        if source and source != "None":
+            return f"{result.retriever_type}-id-{source}"
         content_hash = compute_hash(result.content, length=16)
-        return f"{result.source or 'unknown'}-{content_hash}"
+        return f"{result.retriever_type}-hash-{content_hash}"
 
     def _apply_diversity_filtering(
         self,

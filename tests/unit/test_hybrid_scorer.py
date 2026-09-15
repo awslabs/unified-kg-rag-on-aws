@@ -185,6 +185,97 @@ class TestResultKey:
             _r("same", 0.1, "s2")
         )
 
+    def test_same_id_different_artifact_kind_stays_distinct(self) -> None:
+        # The id is only unique within an artifact kind, so the key is qualified
+        # by `retriever_type` — an entity and a text unit that share an id are
+        # two artifacts, not one.
+        scorer = _scorer()
+        entity = RetrievalResult(
+            content="x", score=1.0, source="shared-id", retriever_type="entity"
+        )
+        text_unit = RetrievalResult(
+            content="x", score=1.0, source="shared-id", retriever_type="text"
+        )
+        assert scorer._get_result_key(entity) != scorer._get_result_key(text_unit)
+
+    @pytest.mark.parametrize("missing_id", [None, "", "None"])
+    def test_results_without_an_id_fall_back_to_content_hash(
+        self, missing_id: str | None
+    ) -> None:
+        # Without an id there is nothing stable to key on, so distinct content
+        # must stay distinct rather than collapsing into one "unknown" bucket.
+        # `NeptuneRetriever` stringifies an absent node id to "None", so that
+        # spelling counts as missing too.
+        scorer = _scorer()
+        first = RetrievalResult(
+            content="one", score=1.0, source=missing_id, retriever_type="entity"
+        )
+        second = RetrievalResult(
+            content="two", score=1.0, source=missing_id, retriever_type="entity"
+        )
+        assert scorer._get_result_key(first) != scorer._get_result_key(second)
+
+
+class TestCrossStoreRankReinforcement:
+    """RRF must reward graph/vector AGREEMENT on the same artifact.
+
+    The two stores render one entity differently, so keying fusion on a hash of
+    the rendered content split it into two items and the reinforcement RRF
+    exists to provide never happened between the graph and vector streams.
+    """
+
+    @staticmethod
+    def _graph_hit(entity_id: str, name: str, score: float) -> RetrievalResult:
+        # Rendering shape of NeptuneRetriever._build_content.
+        return RetrievalResult(
+            content=f"Entity: {name}\nDescription: {name} description\nPath: {name} -> Other",
+            score=score,
+            source=entity_id,
+            retriever_type="entity",
+        )
+
+    @staticmethod
+    def _vector_hit(entity_id: str, name: str, score: float) -> RetrievalResult:
+        # Rendering shape of OpenSearchRetriever._extract_content.
+        return RetrievalResult(
+            content=f"Description: {name} description\n\nTitle: {name}",
+            score=score,
+            source=entity_id,
+            retriever_type="entity",
+        )
+
+    def test_entity_found_by_both_stores_outscores_entity_found_by_one(self) -> None:
+        scorer = _scorer()
+        fused = scorer._reciprocal_rank_fusion(
+            {
+                # The graph stream ranks the shared entity first, while the
+                # vector stream ranks it BELOW an entity only that store
+                # returned — so cross-store agreement is the only signal that
+                # can lift the shared entity to the top.
+                "graph": [self._graph_hit("e-shared", "Shared", 0.9)],
+                "vector": [
+                    self._vector_hit("e-vector-only", "VectorOnly", 0.9),
+                    self._vector_hit("e-shared", "Shared", 0.8),
+                ],
+            }
+        )
+
+        # Two artifacts went in, two come out: the graph and vector renderings
+        # of "e-shared" are one entity, not two results.
+        assert len(fused) == 2
+        by_source = {r.source: r.score or 0.0 for r in fused}
+        assert by_source["e-shared"] > by_source["e-vector-only"]
+
+    def test_distinct_entities_are_not_merged(self) -> None:
+        scorer = _scorer()
+        fused = scorer._reciprocal_rank_fusion(
+            {
+                "graph": [self._graph_hit("e-1", "One", 0.9)],
+                "vector": [self._vector_hit("e-2", "Two", 0.9)],
+            }
+        )
+        assert {r.source for r in fused} == {"e-1", "e-2"}
+
 
 class TestFuseAndRerank:
     def test_unknown_fusion_method_raises(self) -> None:
