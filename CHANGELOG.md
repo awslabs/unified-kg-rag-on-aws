@@ -23,3 +23,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
 - CLIs: `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
   `run-prompt-tuning`.
 - CDK deployment stack (`iac/`) with Well-Architected security defaults.
+
+### Fixed
+- Ingestion stage-result cache keys now carry a fingerprint of the inputs that
+  determine a stage's output (its config subtree, model id, and prompt
+  overrides, cumulative over the upstream stages it consumes). A changed prompt,
+  model, or processing rule previously resumed from stale stage output unless
+  the run used `--force-rebuild`, a new `pipeline_id`, or hit a TTL expiry.

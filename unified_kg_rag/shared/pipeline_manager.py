@@ -10,6 +10,7 @@ from unified_kg_rag.domain.models import (
     Claim,
     Community,
     CommunityReport,
+    Config,
     Document,
     Entity,
     PipelineContext,
@@ -22,6 +23,7 @@ from unified_kg_rag.domain.models import (
 
 from .exceptions import PipelineResumeError, PipelineStateError
 from .logging import get_logger
+from .utils.cache_keys import stage_cache_key
 
 if TYPE_CHECKING:
     from unified_kg_rag.ports.cache import CachePort
@@ -367,9 +369,17 @@ class PipelineResumeManager:
         "translated_units": TextUnit,
     }
 
-    def __init__(self, state_manager: PipelineStateManager) -> None:
+    def __init__(
+        self, state_manager: PipelineStateManager, config: Config | None = None
+    ) -> None:
         self.state_manager = state_manager
         self.cache_manager = state_manager.cache_manager
+        # Cache keys carry a fingerprint of the config that produced the stage
+        # output, so resuming needs the same config the save path used. Omitting
+        # it falls back to framework defaults, which fingerprints to a different
+        # key for any customised run — a cache miss (recompute), never a stale
+        # hit.
+        self.config = config or Config()
 
     def determine_resume_strategy(
         self, pipeline_id: str, explicit_stage: str | None = None
@@ -517,7 +527,7 @@ class PipelineResumeManager:
             try:
                 model_class = self.CONTEXT_ATTR_TO_MODEL.get(context_attr)
                 data: Any = self.cache_manager.load_stage_result(
-                    cache_key=context_attr,
+                    cache_key=stage_cache_key(self.config, stage_type, context_attr),
                     pipeline_id=pipeline_id,
                     data_type=model_class if model_class else None,
                 )
@@ -559,7 +569,10 @@ class PipelineResumeManager:
                     stage_type = PipelineStageType(stage_name)
                     cache_mapping = self.STAGE_CACHE_MAPPING.get(stage_type, {})
 
-                    for cache_key, _ in cache_mapping.items():
+                    for context_attr, _ in cache_mapping.items():
+                        cache_key = stage_cache_key(
+                            self.config, stage_type, context_attr
+                        )
                         if not self.cache_manager.cache_exists(cache_key, pipeline_id):
                             error_msg = (
                                 f"Missing cache for completed stage '{stage_name}', "

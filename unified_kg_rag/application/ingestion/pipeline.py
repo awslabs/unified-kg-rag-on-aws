@@ -52,7 +52,7 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.cache_manager import CacheStrategy
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
-from unified_kg_rag.shared.utils import compute_hash
+from unified_kg_rag.shared.utils import compute_hash, stage_cache_key
 
 logger = get_logger(__name__)
 T = TypeVar("T", bound=BaseModel)
@@ -192,7 +192,9 @@ class DataIngestionPipeline:
             enable_chunking=chunking_config.enabled,
         )
         self.state_manager = PipelineStateManager(self.cache_manager)
-        self.resume_manager = PipelineResumeManager(self.state_manager)
+        # The resume manager must reconstruct the same input-fingerprinted cache
+        # keys the save path writes, so it needs the same config.
+        self.resume_manager = PipelineResumeManager(self.state_manager, self.config)
 
         self.s3_cache_manager: S3CacheManager | None = None
         if self.pipeline_config.s3_sync_enabled:
@@ -644,9 +646,12 @@ class DataIngestionPipeline:
                     context_attr,
                 )
 
+                # The key carries a fingerprint of the inputs that produced this
+                # output, so a changed prompt/model/config reads as a miss on the
+                # next run instead of silently resuming from stale output.
                 cache_entry = self.cache_manager.save_stage_result(
                     data=data_to_save,
-                    cache_key=context_attr,
+                    cache_key=stage_cache_key(self.config, stage_type, context_attr),
                     stage_name=stage_name,
                     pipeline_id=context.pipeline_id,
                     metadata={
