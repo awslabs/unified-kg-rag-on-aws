@@ -281,6 +281,10 @@ class OpenSearchIndexer(VectorIndexer):
             "full_content_embedding": embeddings[2],
             "rank": report.rank or 1.0,
             "rating": report.rating,
+            # Lineage back to the sources the report was summarized from, so a
+            # retrieved report can be cited and filtered by origin.
+            "text_unit_ids": list(report.text_unit_ids or []),
+            "document_ids": list(report.document_ids or []),
         }
 
     def index_community_reports(self, reports: list[CommunityReport]) -> IndexingStats:
@@ -993,6 +997,11 @@ class OpenSearchIndexer(VectorIndexer):
                 "full_content_embedding": self._get_knn_vector_mapping(),
                 "rank": {"type": "double"},
                 "rating": {"type": "double"},
+                # Additive: an index created before these fields existed maps
+                # them as keyword via the base mapping's strings_as_keywords
+                # dynamic template, so an upsert into it stays compatible.
+                "text_unit_ids": {"type": "keyword"},
+                "document_ids": {"type": "keyword"},
                 "attributes": {"type": "object", "dynamic": True},
             }
         )

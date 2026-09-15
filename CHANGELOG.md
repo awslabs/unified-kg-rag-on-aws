@@ -23,3 +23,6 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
 - CLIs: `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
   `run-prompt-tuning`.
 - CDK deployment stack (`iac/`) with Well-Architected security defaults.
+- Community reports now carry `text_unit_ids` and `document_ids` source lineage,
+  indexed as keyword fields, so a retrieved report can be cited back to the
+  chunks and documents it summarizes and filtered by source document.

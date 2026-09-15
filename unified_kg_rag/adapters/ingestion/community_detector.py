@@ -24,6 +24,7 @@ from unified_kg_rag.domain.models import (
     CommunityMetrics,
     CommunityReport,
     Config,
+    TextUnit,
 )
 from unified_kg_rag.domain.prompts import CommunityReportPrompt
 from unified_kg_rag.shared import GraphError, get_logger
@@ -636,7 +637,22 @@ class CommunityDetector(BaseProcessor):
             updated_at=datetime.now(),
         )
 
-    def generate_reports(self, communities: list[Community]) -> list[CommunityReport]:
+    def generate_reports(
+        self,
+        communities: list[Community],
+        text_units: list[TextUnit] | None = None,
+    ) -> list[CommunityReport]:
+        """Generate one report per community.
+
+        Args:
+            communities: Communities to summarize.
+            text_units: The corpus's text units, used to resolve each report's
+                source documents. Omit to leave ``document_ids`` empty; the
+                report's ``text_unit_ids`` are recorded either way.
+
+        Returns:
+            One report per community that produced a non-empty LLM result.
+        """
         report_config = self.community_detection_config.report_generation
         if not report_config.enabled or not hasattr(self, "report_generator"):
             logger.info("Community report generation is disabled")
@@ -662,6 +678,8 @@ class CommunityDetector(BaseProcessor):
                     communities, graph_attributes
                 )
 
+            self._attach_report_lineage(reports, communities, text_units)
+
             if failed:
                 logger.warning(
                     "%s of %s community reports had no result", failed, len(communities)
@@ -679,6 +697,39 @@ class CommunityDetector(BaseProcessor):
             return []
 
         return reports
+
+    @staticmethod
+    def _attach_report_lineage(
+        reports: list[CommunityReport],
+        communities: list[Community],
+        text_units: list[TextUnit] | None,
+    ) -> None:
+        """Record which text units and documents each report was summarized from.
+
+        A report is the only artifact in the index with no pointer back to its
+        sources, so a retrieved report cannot be cited or filtered by origin.
+        Detection already unions its member entities' ``text_unit_ids`` onto the
+        Community, so the report inherits them; the source documents come from
+        those text units.
+
+        Args:
+            reports: Reports to annotate, mutated in place.
+            communities: The communities the reports were generated from.
+            text_units: Corpus text units; omit to leave ``document_ids`` empty.
+        """
+        unit_to_documents = {
+            unit.id: list(unit.document_ids or []) for unit in (text_units or [])
+        }
+        community_units = {c.id: list(c.text_unit_ids or []) for c in communities}
+
+        for report in reports:
+            unit_ids = community_units.get(report.community_id, [])
+            report.text_unit_ids = unit_ids
+            document_ids: set[str] = set()
+            for unit_id in unit_ids:
+                document_ids.update(unit_to_documents.get(unit_id, ()))
+            # Sorted for a stable, reproducible record.
+            report.document_ids = sorted(document_ids)
 
     def _run_report_batch(
         self,
