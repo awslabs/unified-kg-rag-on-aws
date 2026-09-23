@@ -171,6 +171,10 @@ class TestResumeRoundTrip:
         )
 
         restored = self._restore(changed_config, cache_manager)
+        # Pins the key-level miss only: restore_pipeline_context is asked for
+        # the stage directly, bypassing determine_resume_strategy, which is what
+        # keeps a run from continuing on this empty context (see
+        # test_resume_point_follows_cache for the orchestration-level cases).
         assert restored.entities == []
 
     def test_integrity_check_reports_the_stale_entry_as_missing(self, tmp_path) -> None:

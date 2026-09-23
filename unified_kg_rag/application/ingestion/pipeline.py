@@ -634,7 +634,12 @@ class DataIngestionPipeline:
             saved_outputs = []
             for _, (_, context_attr) in self.STAGE_OUTPUT_MAPPING[stage_type].items():
                 data_to_save = getattr(context, context_attr, None)
-                if not data_to_save:
+                # An empty list is still this stage's output under these
+                # inputs (translation is off by default and completes with no
+                # translated units). It is saved so that the resume can tell
+                # "produced nothing" from "not in the cache" and does not
+                # rewind to this stage on every run.
+                if data_to_save is None:
                     logger.debug(
                         "No data found for context attribute: %s", context_attr
                     )

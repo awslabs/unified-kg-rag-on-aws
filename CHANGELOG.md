@@ -30,3 +30,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   overrides, cumulative over the upstream stages it consumes). A changed prompt,
   model, or processing rule previously resumed from stale stage output unless
   the run used `--force-rebuild`, a new `pipeline_id`, or hit a TTL expiry.
+  The resume point follows the cache, not the recorded status: an auto resume
+  starts at the first completed stage whose output the cache no longer holds
+  under the current inputs and recomputes it and every stage downstream; an
+  explicit `--resume-from-stage` whose prerequisite is missing fails before any
+  stage runs, naming the stage to resume from. Caches written before this
+  change (keys without a fingerprint) carry no record of their inputs and are
+  treated as a miss: the run logs the legacy key it found and recomputes from
+  that stage once. A completed stage that produced an empty output now caches
+  it, so "produced nothing" is distinguishable from "not cached".

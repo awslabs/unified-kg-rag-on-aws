@@ -296,7 +296,8 @@ def test_update_context_status_running_when_mixed_incomplete() -> None:
 def test_determine_resume_strategy_auto_resumes_at_first_incomplete(
     tmp_path,
 ) -> None:
-    state = PipelineStateManager(_StubCacheManager(tmp_path))
+    cache = _StubCacheManager(tmp_path)
+    state = PipelineStateManager(cache)
     ctx = _context(
         "pid",
         [
@@ -305,6 +306,33 @@ def test_determine_resume_strategy_auto_resumes_at_first_incomplete(
         ],
     )
     state.save_pipeline_metadata(ctx)
+    # A completed stage only counts if the cache still holds its output.
+    cache.store[_key("documents", "document_loading")] = []
+    resume = PipelineResumeManager(state)
+
+    start, completed = resume.determine_resume_strategy("pid")
+    assert start == "text_chunking"
+    assert completed == ["document_loading"]
+
+
+def test_determine_resume_strategy_rewinds_to_first_unbacked_stage(
+    tmp_path,
+) -> None:
+    # text_chunking is recorded completed but its output is not in the cache
+    # under the current inputs, so the resume starts there, not at the first
+    # non-completed stage, and drops it from the stages to restore.
+    cache = _StubCacheManager(tmp_path)
+    state = PipelineStateManager(cache)
+    ctx = _context(
+        "pid",
+        [
+            _stage_result("document_loading", "completed"),
+            _stage_result("text_chunking", "completed"),
+            _stage_result("graph_extraction", "failed"),
+        ],
+    )
+    state.save_pipeline_metadata(ctx)
+    cache.store[_key("documents", "document_loading")] = []
     resume = PipelineResumeManager(state)
 
     start, completed = resume.determine_resume_strategy("pid")
@@ -313,6 +341,32 @@ def test_determine_resume_strategy_auto_resumes_at_first_incomplete(
 
 
 def test_determine_resume_strategy_explicit_stage(tmp_path) -> None:
+    cache = _StubCacheManager(tmp_path)
+    state = PipelineStateManager(cache)
+    ctx = _context(
+        "pid",
+        [
+            _stage_result("document_parsing", "completed"),
+            _stage_result("document_loading", "completed"),
+        ],
+    )
+    state.save_pipeline_metadata(ctx)
+    cache.store[_key("documents", "document_loading")] = []
+    resume = PipelineResumeManager(state)
+
+    start, completed = resume.determine_resume_strategy(
+        "pid", explicit_stage="graph_extraction"
+    )
+    assert start == "graph_extraction"
+    assert completed == ["document_parsing", "document_loading"]
+
+
+def test_determine_resume_strategy_explicit_stage_fails_on_unbacked_prerequisite(
+    tmp_path,
+) -> None:
+    # An explicit resume cannot move its own start point (a phased run may not
+    # have the upstream stage in its window), so a prerequisite the cache no
+    # longer backs is an error that names the stage to resume from.
     state = PipelineStateManager(_StubCacheManager(tmp_path))
     ctx = _context(
         "pid",
@@ -324,11 +378,8 @@ def test_determine_resume_strategy_explicit_stage(tmp_path) -> None:
     state.save_pipeline_metadata(ctx)
     resume = PipelineResumeManager(state)
 
-    start, completed = resume.determine_resume_strategy(
-        "pid", explicit_stage="graph_extraction"
-    )
-    assert start == "graph_extraction"
-    assert completed == ["document_parsing", "document_loading"]
+    with pytest.raises(PipelineResumeError, match="document_loading"):
+        resume.determine_resume_strategy("pid", explicit_stage="graph_extraction")
 
 
 def test_determine_resume_strategy_wraps_load_error(tmp_path) -> None:

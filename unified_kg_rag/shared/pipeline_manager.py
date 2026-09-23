@@ -51,6 +51,13 @@ _CANONICAL_STAGE_ORDER: tuple[str, ...] = (
 )
 
 
+def _canonical_index(stage_name: str) -> int:
+    """Position of a stage in the canonical order; unknown stages sort last."""
+    if stage_name in _CANONICAL_STAGE_ORDER:
+        return _CANONICAL_STAGE_ORDER.index(stage_name)
+    return len(_CANONICAL_STAGE_ORDER)
+
+
 class PipelineStateManager:
     PIPELINE_METADATA_FILE = "pipeline_metadata.json"
     EXCLUDED_DATA_FIELDS = {
@@ -236,12 +243,7 @@ class PipelineStateManager:
             merged[result.stage_name] = result
 
         context.stage_results = sorted(
-            merged.values(),
-            key=lambda r: (
-                _CANONICAL_STAGE_ORDER.index(r.stage_name)
-                if r.stage_name in _CANONICAL_STAGE_ORDER
-                else len(_CANONICAL_STAGE_ORDER)
-            ),
+            merged.values(), key=lambda r: _canonical_index(r.stage_name)
         )
 
     @staticmethod
@@ -395,11 +397,23 @@ class PipelineResumeManager:
             stage_results = metadata.get("stage_results", [])
 
             if explicit_stage:
-                result = self._handle_explicit_stage_resume(
+                start_stage, completed_stages = self._handle_explicit_stage_resume(
                     stage_results, explicit_stage
                 )
             else:
-                result = self._handle_auto_resume(stage_results)
+                start_stage, completed_stages = self._handle_auto_resume(stage_results)
+
+            # A recorded "completed" only stands for output the cache still
+            # holds. Cache keys carry a fingerprint of the inputs that produced
+            # the output, so a changed model or prompt (or a cache written
+            # under the pre-fingerprint keys) leaves the status in place while
+            # the output becomes unreachable. Scheduling from the status alone
+            # would then start downstream of the stale stage on an empty
+            # context, so the resume point is derived from what the cache
+            # verifiably holds.
+            result = self._verify_completed_stages_against_cache(
+                pipeline_id, start_stage, completed_stages, explicit_stage
+            )
 
             logger.info(
                 "Resume strategy determined - Start from: '%s', Load %s completed stages",
@@ -408,6 +422,8 @@ class PipelineResumeManager:
             )
             return result
 
+        except PipelineResumeError:
+            raise
         except Exception as e:
             logger.error(
                 "Failed to determine resume strategy for pipeline '%s': %s",
@@ -469,6 +485,105 @@ class PipelineResumeManager:
             )
 
         return resume_stage, completed_stages
+
+    def _verify_completed_stages_against_cache(
+        self,
+        pipeline_id: str,
+        start_stage: str,
+        completed_stages: list[str],
+        explicit_stage: str | None,
+    ) -> tuple[str, list[str]]:
+        """Keep only the completed prefix whose output the cache still holds.
+
+        Walks the completed stages in canonical order and stops at the first
+        one with no cached output under the current inputs. An auto resume
+        moves its start back to that stage, so it and every stage downstream
+        of it are recomputed. An explicit resume names its start and, in a
+        phased run, may not have the upstream stages in its window, so it
+        fails here instead of running downstream stages on an empty context.
+        """
+        for stage_name in sorted(completed_stages, key=_canonical_index):
+            missing = self._missing_cache_keys(pipeline_id, stage_name)
+            if not missing:
+                continue
+
+            self._log_unbacked_stage(pipeline_id, stage_name, missing)
+
+            if explicit_stage:
+                missing_keys = ", ".join(f"'{key}'" for _, key in missing)
+                message = (
+                    f"Cannot resume from '{explicit_stage}': upstream stage "
+                    f"'{stage_name}' is recorded completed, but the cache does not "
+                    f"hold its output under the current inputs (missing "
+                    f"{missing_keys}). Resume from '{stage_name}' to recompute it, "
+                    f"or force a rebuild."
+                )
+                logger.error(message)
+                raise PipelineResumeError(message)
+
+            verified = [
+                name
+                for name in completed_stages
+                if _canonical_index(name) < _canonical_index(stage_name)
+            ]
+            logger.warning(
+                "Rewinding resume point from '%s' to '%s': it and every stage "
+                "downstream of it will be recomputed",
+                start_stage,
+                stage_name,
+            )
+            return stage_name, verified
+
+        return start_stage, completed_stages
+
+    def _missing_cache_keys(
+        self, pipeline_id: str, stage_name: str
+    ) -> list[tuple[str, str]]:
+        """List ``(context_attr, cache_key)`` for each output of ``stage_name``
+        the cache does not hold under the current inputs.
+
+        A stage with no cache mapping (document_parsing, indexing) produces
+        nothing the resume reads back, so there is nothing to verify.
+        """
+        try:
+            stage_type = PipelineStageType(stage_name)
+        except ValueError:
+            return []
+
+        missing = []
+        for context_attr in self.STAGE_CACHE_MAPPING.get(stage_type, {}):
+            cache_key = stage_cache_key(self.config, stage_type, context_attr)
+            if not self.cache_manager.cache_exists(cache_key, pipeline_id):
+                missing.append((context_attr, cache_key))
+        return missing
+
+    def _log_unbacked_stage(
+        self, pipeline_id: str, stage_name: str, missing: list[tuple[str, str]]
+    ) -> None:
+        for context_attr, cache_key in missing:
+            # Before keys carried an input fingerprint, the key was the bare
+            # attribute name. Such an entry records nothing about the inputs
+            # that produced it, so it cannot be checked against the current
+            # configuration: it is a miss, and the stage is recomputed once.
+            if self.cache_manager.cache_exists(context_attr, pipeline_id):
+                logger.warning(
+                    "Stage '%s' is recorded completed and its output is cached "
+                    "under the pre-fingerprint key '%s', which carries no record "
+                    "of the inputs that produced it; treating it as a miss "
+                    "(expected key '%s')",
+                    stage_name,
+                    context_attr,
+                    cache_key,
+                )
+            else:
+                logger.warning(
+                    "Stage '%s' is recorded completed, but the cache holds no '%s' "
+                    "for it under the current inputs (key '%s'): the inputs "
+                    "changed since it ran, or the cache is incomplete",
+                    stage_name,
+                    context_attr,
+                    cache_key,
+                )
 
     def restore_pipeline_context(
         self, pipeline_id: str, completed_stages: list[str]
@@ -562,26 +677,17 @@ class PipelineResumeManager:
             return False, [str(e)]
 
         for result in metadata.get("stage_results", []):
-            if result.get("status") == "completed":
-                stage_name = result["stage_name"]
+            if result.get("status") != "completed":
+                continue
 
-                try:
-                    stage_type = PipelineStageType(stage_name)
-                    cache_mapping = self.STAGE_CACHE_MAPPING.get(stage_type, {})
-
-                    for context_attr, _ in cache_mapping.items():
-                        cache_key = stage_cache_key(
-                            self.config, stage_type, context_attr
-                        )
-                        if not self.cache_manager.cache_exists(cache_key, pipeline_id):
-                            error_msg = (
-                                f"Missing cache for completed stage '{stage_name}', "
-                                f"key: '{cache_key}'"
-                            )
-                            errors.append(error_msg)
-                            logger.warning(error_msg)
-                except ValueError:
-                    continue
+            stage_name = result["stage_name"]
+            for _, cache_key in self._missing_cache_keys(pipeline_id, stage_name):
+                error_msg = (
+                    f"Missing cache for completed stage '{stage_name}', "
+                    f"key: '{cache_key}'"
+                )
+                errors.append(error_msg)
+                logger.warning(error_msg)
 
         is_valid = not errors
         logger.info(
