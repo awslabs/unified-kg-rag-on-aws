@@ -272,12 +272,16 @@ class HybridScorer(MetricsMixin):
         # cross-stream fusion still comes from RRF rank; within-stream discrimination
         # is restored by the native component (scaled small so it breaks ties/orders
         # within a rank neighborhood without dominating the cross-stream RRF signal).
+        buckets = {
+            name: self._once_per_bucket(results) for name, results in result_map.items()
+        }
+
         native_norm: dict[str, float] = {}
-        for results in result_map.values():
+        for results in buckets.values():
             for r in self._normalize_scores(results):
                 native_norm[self._get_result_key(r)] = r.score or 0.0
 
-        for name, results in result_map.items():
+        for name, results in buckets.items():
             weight = weights.get(name, 1.0)
             for rank, result in enumerate(results, 1):
                 key = self._get_result_key(result)
@@ -316,7 +320,7 @@ class HybridScorer(MetricsMixin):
                     sorted(weights),
                 )
             weight = weights.get(name, 1.0)
-            for result in results:
+            for result in self._once_per_bucket(results):
                 key = self._get_result_key(result)
                 scores[key] += (result.score or 0.0) * weight
                 if key not in objects:
@@ -327,6 +331,32 @@ class HybridScorer(MetricsMixin):
                 objects[key].score = score
 
         return list(objects.values())
+
+    @classmethod
+    def _once_per_bucket(cls, results: list[RetrievalResult]) -> list[RetrievalResult]:
+        """Keep the first occurrence of each artifact identity within one bucket.
+
+        Fusion sums one contribution per bucket an artifact appears in; that is
+        the cross-stream reinforcement it exists for. A retriever leg is one
+        query over one index, so an id cannot repeat within it and the rule
+        holds implicitly. DRIFT breaks the assumption: it concatenates every
+        iteration into a single bucket and dedupes by RENDERED content
+        (`DriftSearchStrategy._filter_unique_results`), so an entity reached
+        over two different paths renders two `Path:` lines and arrives twice.
+        Summing both let repetition outrank rank — an item at ranks 2 and 3 beat
+        the item at rank 1. Repetition within a bucket is not a signal, so the
+        artifact keeps its best position there and later occurrences are
+        dropped before ranks are assigned.
+        """
+        seen: set[str] = set()
+        unique: list[RetrievalResult] = []
+        for result in results:
+            key = cls._get_result_key(result)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(result)
+        return unique
 
     @staticmethod
     def _get_result_key(result: RetrievalResult) -> str:

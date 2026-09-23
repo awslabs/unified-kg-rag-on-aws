@@ -28,4 +28,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
 - RRF fusion now accumulates a cross-store match. The fusion key was derived
   from a hash of the rendered content, and the graph and vector stores render
   the same artifact differently, so an entity present in both produced two keys
-  and graph/vector rank agreement was never rewarded.
+  and graph/vector rank agreement was never rewarded. An artifact now counts
+  once per fusion bucket, at its best rank there: DRIFT concatenates every
+  iteration into one bucket and dedupes by rendered content, so an entity
+  reached over two paths arrived twice and its repetition outranked rank 1.
