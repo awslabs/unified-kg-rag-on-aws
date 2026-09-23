@@ -3,14 +3,16 @@
 """Community-report source lineage (AWS-free).
 
 A community report was the only indexed artifact with no pointer back to the
-text units and documents it summarizes, so a retrieved report could not be cited
-or filtered by origin. These tests follow the lineage the whole way: community
+text units and documents of its community, so a retrieved report could not be
+filtered by origin. These tests follow the lineage the whole way: community
 detection attaches it, the OpenSearch indexer writes it, and the retriever hands
-it back on the parsed hit.
+it back on the parsed hit. The lineage is community membership provenance, not
+the exact report input and not citation support; one test pins that contract.
 """
 
 from __future__ import annotations
 
+import networkx as nx
 import pytest
 
 import unified_kg_rag.adapters.ingestion.community_detector as detector_module
@@ -122,6 +124,53 @@ class TestAttachReportLineage:
         )
         assert report.text_unit_ids == []
         assert report.document_ids == []
+
+    def test_lineage_is_community_membership_not_report_input(self) -> None:
+        """Pins the contract: lineage is the union over the community's members,
+        not the subset of entities that reached the report prompt.
+
+        `max_entities_per_report=1` lets only `e1` (from `d1`) into the prompt,
+        yet the report still records `d2` because `e2` is a community member.
+        This is deliberate: membership provenance is what a consumer needs to
+        filter reports by source or re-summarize per reader; it is not a
+        citation. Do not "fix" this to match the prompt input.
+        """
+        config = Config()
+        report_config = config.graph.community_detection.report_generation
+        report_config.enabled = False  # no LLM chain
+        report_config.max_entities_per_report = 1
+        detector = CommunityDetector(config, show_progress=False)
+
+        graph = nx.Graph()
+        graph.add_node("e1", name="E1", type="ORG", text_unit_ids=["t1"])
+        graph.add_node("e2", name="E2", type="ORG", text_unit_ids=["t2"])
+        graph.add_node("e3", name="E3", type="ORG", text_unit_ids=["t1"])
+        graph.add_edge("e1", "e2")
+        graph.add_edge("e1", "e3")  # e1 has the highest degree, so it is kept
+        detector.graph = graph
+
+        community = Community(
+            id="c1",
+            name="Community c1",
+            level="0",
+            parent="",
+            children=[],
+            entity_ids=["e1", "e2"],
+            relationship_ids=[],
+            text_unit_ids=detector._collect_community_text_unit_ids(["e1", "e2"]),
+        )
+        units = [
+            TextUnit(id="t1", text="a", document_ids=["d1"]),
+            TextUnit(id="t2", text="b", document_ids=["d2"]),
+        ]
+
+        prompt_input = detector._prepare_report_input(community)
+        assert [e["id"] for e in prompt_input["entities"]] == ["e1"]
+
+        report = _report("c1")
+        CommunityDetector._attach_report_lineage([report], [community], units)
+        assert sorted(report.text_unit_ids or []) == ["t1", "t2"]
+        assert sorted(report.document_ids or []) == ["d1", "d2"]
 
 
 class TestGenerateReportsAttachesLineage:

@@ -647,8 +647,9 @@ class CommunityDetector(BaseProcessor):
         Args:
             communities: Communities to summarize.
             text_units: The corpus's text units, used to resolve each report's
-                source documents. Omit to leave ``document_ids`` empty; the
-                report's ``text_unit_ids`` are recorded either way.
+                candidate source documents (community membership provenance,
+                see ``_attach_report_lineage``). Omit to leave ``document_ids``
+                empty; the report's ``text_unit_ids`` are recorded either way.
 
         Returns:
             One report per community that produced a non-empty LLM result.
@@ -704,13 +705,21 @@ class CommunityDetector(BaseProcessor):
         communities: list[Community],
         text_units: list[TextUnit] | None,
     ) -> None:
-        """Record which text units and documents each report was summarized from.
+        """Record each report's candidate source text units and documents.
 
         A report is the only artifact in the index with no pointer back to its
-        sources, so a retrieved report cannot be cited or filtered by origin.
-        Detection already unions its member entities' ``text_unit_ids`` onto the
-        Community, so the report inherits them; the source documents come from
-        those text units.
+        sources, so a retrieved report cannot be filtered by origin. Detection
+        already unions its member entities' ``text_unit_ids`` onto the Community,
+        so the report inherits them; the source documents come from those units.
+
+        This is community MEMBERSHIP provenance, not report-input provenance.
+        ``_prepare_report_input`` caps the prompt at ``max_entities_per_report``
+        and a token budget, and the lineage deliberately ignores that cap: a
+        community with ``e1`` from ``d1`` and ``e2`` from ``d2`` records
+        ``document_ids=["d1", "d2"]`` even when only ``e1`` reached the prompt.
+        The fields therefore may name material omitted from the report and do
+        not establish sentence-level citation support; they exist so a consumer
+        can filter reports by source or re-summarize them per reader.
 
         Args:
             reports: Reports to annotate, mutated in place.

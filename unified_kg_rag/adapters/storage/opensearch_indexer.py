@@ -281,8 +281,11 @@ class OpenSearchIndexer(VectorIndexer):
             "full_content_embedding": embeddings[2],
             "rank": report.rank or 1.0,
             "rating": report.rating,
-            # Lineage back to the sources the report was summarized from, so a
-            # retrieved report can be cited and filtered by origin.
+            # Community membership provenance (candidate sources of the report's
+            # community), so a retrieved report can be filtered by origin. Not
+            # report-input provenance and not citation support: the union may
+            # include material the prompt's entity cap left out. Reports indexed
+            # before these fields existed index them as [] until regenerated.
             "text_unit_ids": list(report.text_unit_ids or []),
             "document_ids": list(report.document_ids or []),
         }
