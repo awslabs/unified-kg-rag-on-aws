@@ -361,6 +361,10 @@ class GraphGleaner(BaseProcessor):
         merged_relationships = self._update_relationships_after_merge(
             combined_relationships, {e.id for e in merged_entities}, entity_id_map
         )
+        # Runs after every correction and the merge, so it sees the final id ->
+        # name mapping for the round; an ENTITY_CORRECTION rename or a merge that
+        # re-pointed an edge would otherwise leave the edge naming the old entity.
+        self._sync_relationship_endpoint_names(merged_relationships, merged_entities)
 
         # Clamp to >= 0: a round that only discovers entities/relationships which
         # merge into existing ones (or whose edges are dropped as orphaned) can
@@ -1006,6 +1010,35 @@ class GraphGleaner(BaseProcessor):
             )
 
         return final_relationships
+
+    @staticmethod
+    def _sync_relationship_endpoint_names(
+        relationships: list[Relationship], entities: list[Entity]
+    ) -> None:
+        """Rewrite each edge's endpoint names from the final entity id -> name map.
+
+        ``source_name`` / ``target_name`` are denormalised copies of the entity
+        names, and the refinement prompt and the indexers read those copies
+        rather than resolving the id. An ENTITY_CORRECTION renames an entity in
+        place and keeps its id, and a merge re-points an edge at the surviving
+        entity's id; neither touches the copies, so once both have run the names
+        are re-derived from the ids the edge references.
+        """
+        name_by_id = {entity.id: entity.name for entity in entities}
+        resynced = 0
+        for rel in relationships:
+            source_name = name_by_id.get(rel.source_id, rel.source_name)
+            target_name = name_by_id.get(rel.target_id, rel.target_name)
+            if (source_name, target_name) != (rel.source_name, rel.target_name):
+                rel.source_name, rel.target_name = source_name, target_name
+                resynced += 1
+
+        if resynced > 0:
+            logger.debug(
+                "Resynced endpoint names on %s relationships after entity "
+                "corrections/merges",
+                resynced,
+            )
 
     def _calculate_convergence_score(
         self,

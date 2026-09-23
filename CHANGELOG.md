@@ -31,4 +31,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   `MISSING_*` types, so every correction the model returned was discarded, and
   gleaning could only ever add to the graph, never fix it. The prompt now also
   specifies the `<details>` shape for both correction types, which it previously
-  requested without defining.
+  requested without defining. After a round's corrections and duplicate merge,
+  every relationship's `source_name` / `target_name` is rewritten from the final
+  entity id-to-name mapping, so a renamed or merged entity is named the same on
+  its edges (which the indexers read) as on the node.
