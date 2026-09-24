@@ -8,6 +8,8 @@ from __future__ import annotations
 import pytest
 
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
+from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
+from unified_kg_rag.adapters.search_strategies.drift_search import DriftSearchStrategy
 from unified_kg_rag.domain.models import Config, FusionMethod, RetrievalResult
 
 pytestmark = pytest.mark.unit
@@ -183,6 +185,200 @@ class TestResultKey:
         scorer = _scorer()
         assert scorer._get_result_key(_r("same", 0.1, "s1")) != scorer._get_result_key(
             _r("same", 0.1, "s2")
+        )
+
+    def test_same_id_different_artifact_kind_stays_distinct(self) -> None:
+        # The id is only unique within an artifact kind, so the key is qualified
+        # by `retriever_type` — an entity and a text unit that share an id are
+        # two artifacts, not one.
+        scorer = _scorer()
+        entity = RetrievalResult(
+            content="x", score=1.0, source="shared-id", retriever_type="entity"
+        )
+        text_unit = RetrievalResult(
+            content="x", score=1.0, source="shared-id", retriever_type="text"
+        )
+        assert scorer._get_result_key(entity) != scorer._get_result_key(text_unit)
+
+    @pytest.mark.parametrize("missing_id", [None, "", "None"])
+    def test_results_without_an_id_fall_back_to_content_hash(
+        self, missing_id: str | None
+    ) -> None:
+        # Without an id there is nothing stable to key on, so distinct content
+        # must stay distinct rather than collapsing into one "unknown" bucket.
+        # `NeptuneRetriever` stringifies an absent node id to "None", so that
+        # spelling counts as missing too.
+        scorer = _scorer()
+        first = RetrievalResult(
+            content="one", score=1.0, source=missing_id, retriever_type="entity"
+        )
+        second = RetrievalResult(
+            content="two", score=1.0, source=missing_id, retriever_type="entity"
+        )
+        assert scorer._get_result_key(first) != scorer._get_result_key(second)
+
+
+class TestCrossStoreRankReinforcement:
+    """RRF must reward graph/vector AGREEMENT on the same artifact.
+
+    The two stores render one entity differently, so keying fusion on a hash of
+    the rendered content split it into two items and the reinforcement RRF
+    exists to provide never happened between the graph and vector streams.
+    """
+
+    @staticmethod
+    def _graph_hit(entity_id: str, name: str, score: float) -> RetrievalResult:
+        # Rendering shape of NeptuneRetriever._build_content.
+        return RetrievalResult(
+            content=f"Entity: {name}\nDescription: {name} description\nPath: {name} -> Other",
+            score=score,
+            source=entity_id,
+            retriever_type="entity",
+        )
+
+    @staticmethod
+    def _vector_hit(entity_id: str, name: str, score: float) -> RetrievalResult:
+        # Rendering shape of OpenSearchRetriever._extract_content.
+        return RetrievalResult(
+            content=f"Description: {name} description\n\nTitle: {name}",
+            score=score,
+            source=entity_id,
+            retriever_type="entity",
+        )
+
+    def test_entity_found_by_both_stores_outscores_entity_found_by_one(self) -> None:
+        scorer = _scorer()
+        fused = scorer._reciprocal_rank_fusion(
+            {
+                # The graph stream ranks the shared entity first, while the
+                # vector stream ranks it BELOW an entity only that store
+                # returned — so cross-store agreement is the only signal that
+                # can lift the shared entity to the top.
+                "graph": [self._graph_hit("e-shared", "Shared", 0.9)],
+                "vector": [
+                    self._vector_hit("e-vector-only", "VectorOnly", 0.9),
+                    self._vector_hit("e-shared", "Shared", 0.8),
+                ],
+            }
+        )
+
+        # Two artifacts went in, two come out: the graph and vector renderings
+        # of "e-shared" are one entity, not two results.
+        assert len(fused) == 2
+        by_source = {r.source: r.score or 0.0 for r in fused}
+        assert by_source["e-shared"] > by_source["e-vector-only"]
+
+    def test_distinct_entities_are_not_merged(self) -> None:
+        scorer = _scorer()
+        fused = scorer._reciprocal_rank_fusion(
+            {
+                "graph": [self._graph_hit("e-1", "One", 0.9)],
+                "vector": [self._vector_hit("e-2", "Two", 0.9)],
+            }
+        )
+        assert {r.source for r in fused} == {"e-1", "e-2"}
+
+
+class TestOneContributionPerBucket:
+    """An artifact counts once per fusion bucket, however often it appears there.
+
+    A retriever leg is one query over one index, so an id cannot repeat within
+    it and per-leg dedupe is implicit. DRIFT is different: it concatenates every
+    iteration into ONE bucket and dedupes by rendered content, so the same
+    entity reached over two different paths renders two different `Path:` lines,
+    survives `_filter_unique_results` twice, and reaches fusion twice in the
+    same bucket. Under the id key that is one identity, and summing both
+    occurrences let repetition outrank rank. Reinforcement across buckets is
+    the point of RRF and must stay; repetition within a bucket is not a signal.
+    """
+
+    @staticmethod
+    def _graph_hit(
+        entity_id: str, name: str, score: float, path: list[str]
+    ) -> RetrievalResult:
+        # Mirrors NeptuneRetriever._create_retrieval_result: the real renderer
+        # for the content, the node id in `source`, and the entity section type.
+        node_data = {"id": entity_id, "name": name, "description": f"{name} desc"}
+        path_data = [{"name": [p]} for p in path]
+        return RetrievalResult(
+            content=NeptuneRetriever._build_content(
+                node_data, path_data, is_community=False
+            ),
+            score=score,
+            source=entity_id,
+            retriever_type="entity",
+        )
+
+    def _drift_bucket(self) -> list[RetrievalResult]:
+        """One DRIFT bucket, built the way `asearch` builds `all_results`."""
+        best = self._graph_hit("e-best", "Best", 1.0, ["Seed", "Best"])
+        repeat_a = self._graph_hit("e-repeat", "Repeat", 0.5, ["Seed", "Repeat"])
+        repeat_b = self._graph_hit("e-repeat", "Repeat", 0.5, ["Other", "Repeat"])
+        best_again = self._graph_hit("e-best", "Best", 1.0, ["Seed", "Best"])
+
+        seen: set[str] = set()
+        bucket: list[RetrievalResult] = []
+        for iteration_results in ([best, repeat_a], [repeat_b, best_again]):
+            unique = DriftSearchStrategy._filter_unique_results(iteration_results, seen)
+            DriftSearchStrategy._update_seen_content(unique, seen)
+            bucket.extend(unique)
+
+        # The content dedupe dropped the identical re-rendering of `best` and
+        # kept the differently-pathed re-rendering of `repeat`: rank 1 `best`,
+        # ranks 2 and 3 `repeat`.
+        assert [r.source for r in bucket] == ["e-best", "e-repeat", "e-repeat"]
+        assert bucket[1].content != bucket[2].content
+        return bucket
+
+    def test_drift_repeat_does_not_outrank_best_under_rrf(self) -> None:
+        config = Config()
+        config.search.reranking.enabled = False
+        config.search.fusion.method = FusionMethod.RRF
+        scorer = HybridScorer(config)
+        k = config.search.fusion.rrf_k
+
+        out = scorer.fuse_and_rerank_results(
+            {"results": self._drift_bucket()}, top_k=10
+        )
+
+        assert [r.source for r in out] == ["e-best", "e-repeat"]
+        by_source = {r.source: r.score or 0.0 for r in out}
+        native_scale = 1.0 / (k + 1) - 1.0 / (k + 2)
+        # `best`: rank 1 plus the full native blend (it is the bucket's max).
+        assert by_source["e-best"] == pytest.approx(1.0 / (k + 1) + native_scale)
+        # `repeat`: its best rank in the bucket, once — not 1/(k+2) + 1/(k+3).
+        assert by_source["e-repeat"] == pytest.approx(1.0 / (k + 2))
+
+    def test_drift_repeat_does_not_outrank_best_under_weighted(self) -> None:
+        config = Config()
+        config.search.reranking.enabled = False
+        config.search.fusion.method = FusionMethod.WEIGHTED
+        scorer = HybridScorer(config)
+
+        # Pre-normalised so the sum is visible: two 0.6 occurrences would make
+        # 1.2 and beat the 1.0 item if both were counted.
+        best = self._graph_hit("e-best", "Best", 1.0, ["Seed", "Best"])
+        repeat_a = self._graph_hit("e-repeat", "Repeat", 0.6, ["Seed", "Repeat"])
+        repeat_b = self._graph_hit("e-repeat", "Repeat", 0.6, ["Other", "Repeat"])
+        fused = scorer._weighted_fusion({"results": [best, repeat_a, repeat_b]})
+
+        by_source = {r.source: r.score or 0.0 for r in fused}
+        assert by_source["e-best"] == pytest.approx(1.0)
+        assert by_source["e-repeat"] == pytest.approx(0.6)
+        assert by_source["e-best"] > by_source["e-repeat"]
+
+    def test_same_artifact_in_two_buckets_still_reinforces(self) -> None:
+        # The dedupe is per bucket: the cross-store case that keying on the id
+        # exists for keeps accumulating one contribution from each bucket.
+        scorer = _scorer()
+        k = scorer.fusion_config.rrf_k
+        hit = self._graph_hit("e-shared", "Shared", 0.9, ["Seed", "Shared"])
+        fused = scorer._reciprocal_rank_fusion(
+            {"graph": [hit.model_copy()], "vector": [hit.model_copy()]}
+        )
+        assert len(fused) == 1
+        assert fused[0].score == pytest.approx(
+            2.0 / (k + 1) + (1.0 / (k + 1) - 1.0 / (k + 2)) * 0.5
         )
 
 

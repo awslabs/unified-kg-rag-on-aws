@@ -272,12 +272,16 @@ class HybridScorer(MetricsMixin):
         # cross-stream fusion still comes from RRF rank; within-stream discrimination
         # is restored by the native component (scaled small so it breaks ties/orders
         # within a rank neighborhood without dominating the cross-stream RRF signal).
+        buckets = {
+            name: self._once_per_bucket(results) for name, results in result_map.items()
+        }
+
         native_norm: dict[str, float] = {}
-        for results in result_map.values():
+        for results in buckets.values():
             for r in self._normalize_scores(results):
                 native_norm[self._get_result_key(r)] = r.score or 0.0
 
-        for name, results in result_map.items():
+        for name, results in buckets.items():
             weight = weights.get(name, 1.0)
             for rank, result in enumerate(results, 1):
                 key = self._get_result_key(result)
@@ -316,7 +320,7 @@ class HybridScorer(MetricsMixin):
                     sorted(weights),
                 )
             weight = weights.get(name, 1.0)
-            for result in results:
+            for result in self._once_per_bucket(results):
                 key = self._get_result_key(result)
                 scores[key] += (result.score or 0.0) * weight
                 if key not in objects:
@@ -328,10 +332,64 @@ class HybridScorer(MetricsMixin):
 
         return list(objects.values())
 
+    @classmethod
+    def _once_per_bucket(cls, results: list[RetrievalResult]) -> list[RetrievalResult]:
+        """Keep the first occurrence of each artifact identity within one bucket.
+
+        Fusion sums one contribution per bucket an artifact appears in; that is
+        the cross-stream reinforcement it exists for. A retriever leg is one
+        query over one index, so an id cannot repeat within it and the rule
+        holds implicitly. DRIFT breaks the assumption: it concatenates every
+        iteration into a single bucket and dedupes by RENDERED content
+        (`DriftSearchStrategy._filter_unique_results`), so an entity reached
+        over two different paths renders two `Path:` lines and arrives twice.
+        Summing both let repetition outrank rank — an item at ranks 2 and 3 beat
+        the item at rank 1. Repetition within a bucket is not a signal, so the
+        artifact keeps its best position there and later occurrences are
+        dropped before ranks are assigned.
+        """
+        seen: set[str] = set()
+        unique: list[RetrievalResult] = []
+        for result in results:
+            key = cls._get_result_key(result)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(result)
+        return unique
+
     @staticmethod
     def _get_result_key(result: RetrievalResult) -> str:
+        """Fusion identity for one retrieved artifact.
+
+        RRF's entire value is cross-stream rank REINFORCEMENT: an artifact that
+        both the graph stream and the vector stream rank must accumulate BOTH
+        contributions. Keying on a hash of the RENDERED content defeated that,
+        because the two stores render the same artifact differently — the graph
+        path builds "Entity: X / Description: ... / Path: ..."
+        (`NeptuneRetriever._build_content`) while the vector path builds
+        "Description: ... / Title: X" (`OpenSearchRetriever._extract_content`).
+        One entity present in both stores therefore produced two keys and never
+        fused, so graph/vector agreement — the signal the hybrid retriever
+        exists to exploit — was never rewarded.
+
+        Key on the stable artifact id instead. Both retrievers already put it in
+        `source` (`NeptuneRetriever._create_retrieval_result` uses the node
+        `id`; `OpenSearchRetriever._parse_hit` uses the document `id`), so the
+        same artifact yields one key across stores regardless of rendering.
+        `retriever_type` qualifies the key so two artifacts of DIFFERENT kinds
+        that happen to share an id are not merged; it is derived from the same
+        `SectionType` on both paths, so it does not re-split a cross-store
+        match. Results without a usable id keep the content hash, which stops
+        every unattributed result from collapsing into a single bucket.
+        """
+        # `NeptuneRetriever` stringifies a missing node id into the literal
+        # "None", so an absent id must be recognised in string form too.
+        source = (result.source or "").strip()
+        if source and source != "None":
+            return f"{result.retriever_type}-id-{source}"
         content_hash = compute_hash(result.content, length=16)
-        return f"{result.source or 'unknown'}-{content_hash}"
+        return f"{result.retriever_type}-hash-{content_hash}"
 
     def _apply_diversity_filtering(
         self,
