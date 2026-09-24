@@ -20,10 +20,12 @@ from typing import Any
 import pytest
 
 from unified_kg_rag.domain.models import (
+    Config,
     Entity,
     PipelineContext,
     PipelineStageResult,
     PipelineStageStatus,
+    PipelineStageType,
 )
 from unified_kg_rag.shared.exceptions import (
     PipelineResumeError,
@@ -33,6 +35,7 @@ from unified_kg_rag.shared.pipeline_manager import (
     PipelineResumeManager,
     PipelineStateManager,
 )
+from unified_kg_rag.shared.utils import stage_cache_key
 
 pytestmark = pytest.mark.unit
 
@@ -65,6 +68,15 @@ class _StubCacheManager:
 
     def cache_exists(self, cache_key: str, pipeline_id: str) -> bool:
         return cache_key in self.store
+
+
+def _key(context_attr: str, stage_name: str) -> str:
+    """The cache key the save path writes for a default-config run.
+
+    Stage-result keys carry a fingerprint of the config that produced them, so a
+    changed prompt/model reads as a miss instead of a stale hit.
+    """
+    return stage_cache_key(Config(), PipelineStageType(stage_name), context_attr)
 
 
 def _stage_result(name: str, status: str = "completed") -> PipelineStageResult:
@@ -284,7 +296,8 @@ def test_update_context_status_running_when_mixed_incomplete() -> None:
 def test_determine_resume_strategy_auto_resumes_at_first_incomplete(
     tmp_path,
 ) -> None:
-    state = PipelineStateManager(_StubCacheManager(tmp_path))
+    cache = _StubCacheManager(tmp_path)
+    state = PipelineStateManager(cache)
     ctx = _context(
         "pid",
         [
@@ -293,6 +306,33 @@ def test_determine_resume_strategy_auto_resumes_at_first_incomplete(
         ],
     )
     state.save_pipeline_metadata(ctx)
+    # A completed stage only counts if the cache still holds its output.
+    cache.store[_key("documents", "document_loading")] = []
+    resume = PipelineResumeManager(state)
+
+    start, completed = resume.determine_resume_strategy("pid")
+    assert start == "text_chunking"
+    assert completed == ["document_loading"]
+
+
+def test_determine_resume_strategy_rewinds_to_first_unbacked_stage(
+    tmp_path,
+) -> None:
+    # text_chunking is recorded completed but its output is not in the cache
+    # under the current inputs, so the resume starts there, not at the first
+    # non-completed stage, and drops it from the stages to restore.
+    cache = _StubCacheManager(tmp_path)
+    state = PipelineStateManager(cache)
+    ctx = _context(
+        "pid",
+        [
+            _stage_result("document_loading", "completed"),
+            _stage_result("text_chunking", "completed"),
+            _stage_result("graph_extraction", "failed"),
+        ],
+    )
+    state.save_pipeline_metadata(ctx)
+    cache.store[_key("documents", "document_loading")] = []
     resume = PipelineResumeManager(state)
 
     start, completed = resume.determine_resume_strategy("pid")
@@ -301,6 +341,32 @@ def test_determine_resume_strategy_auto_resumes_at_first_incomplete(
 
 
 def test_determine_resume_strategy_explicit_stage(tmp_path) -> None:
+    cache = _StubCacheManager(tmp_path)
+    state = PipelineStateManager(cache)
+    ctx = _context(
+        "pid",
+        [
+            _stage_result("document_parsing", "completed"),
+            _stage_result("document_loading", "completed"),
+        ],
+    )
+    state.save_pipeline_metadata(ctx)
+    cache.store[_key("documents", "document_loading")] = []
+    resume = PipelineResumeManager(state)
+
+    start, completed = resume.determine_resume_strategy(
+        "pid", explicit_stage="graph_extraction"
+    )
+    assert start == "graph_extraction"
+    assert completed == ["document_parsing", "document_loading"]
+
+
+def test_determine_resume_strategy_explicit_stage_fails_on_unbacked_prerequisite(
+    tmp_path,
+) -> None:
+    # An explicit resume cannot move its own start point (a phased run may not
+    # have the upstream stage in its window), so a prerequisite the cache no
+    # longer backs is an error that names the stage to resume from.
     state = PipelineStateManager(_StubCacheManager(tmp_path))
     ctx = _context(
         "pid",
@@ -312,11 +378,8 @@ def test_determine_resume_strategy_explicit_stage(tmp_path) -> None:
     state.save_pipeline_metadata(ctx)
     resume = PipelineResumeManager(state)
 
-    start, completed = resume.determine_resume_strategy(
-        "pid", explicit_stage="graph_extraction"
-    )
-    assert start == "graph_extraction"
-    assert completed == ["document_parsing", "document_loading"]
+    with pytest.raises(PipelineResumeError, match="document_loading"):
+        resume.determine_resume_strategy("pid", explicit_stage="graph_extraction")
 
 
 def test_determine_resume_strategy_wraps_load_error(tmp_path) -> None:
@@ -356,9 +419,10 @@ def test_restore_pipeline_context_loads_cached_stage_data(tmp_path) -> None:
     )
     state.save_pipeline_metadata(ctx)
 
-    # Seed the cache with what graph_extraction would have produced.
-    cache.store["entities"] = [Entity(id="e1", name="A")]
-    cache.store["relationships"] = []
+    # Seed the cache with what graph_extraction would have produced, under the
+    # input-fingerprinted key the save path writes.
+    cache.store[_key("entities", "graph_extraction")] = [Entity(id="e1", name="A")]
+    cache.store[_key("relationships", "graph_extraction")] = []
 
     resume = PipelineResumeManager(state)
     restored = resume.restore_pipeline_context("pid", ["graph_extraction"])
@@ -408,8 +472,8 @@ def test_validate_integrity_passes_when_all_cache_present(tmp_path) -> None:
         _context("pid", [_stage_result("graph_extraction", "completed")])
     )
     # graph_extraction maps to context attrs "entities" + "relationships".
-    cache.store["entities"] = [Entity(id="e1", name="A")]
-    cache.store["relationships"] = []
+    cache.store[_key("entities", "graph_extraction")] = [Entity(id="e1", name="A")]
+    cache.store[_key("relationships", "graph_extraction")] = []
     resume = PipelineResumeManager(state)
 
     ok, errors = resume.validate_pipeline_integrity("pid")

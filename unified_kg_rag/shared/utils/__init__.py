@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+from .cache_keys import stage_cache_key, stage_input_fingerprint
 from .common import (
     compute_hash,
     default_max_workers,
@@ -47,4 +48,6 @@ __all__ = [
     "normalize_name",
     "parse_llm_json",
     "safe_float_parse",
+    "stage_cache_key",
+    "stage_input_fingerprint",
 ]

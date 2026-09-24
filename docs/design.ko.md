@@ -192,6 +192,8 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 
 **구조화된 커뮤니티 리포트(MS GraphRAG 동등성)**: 리포트 프롬프트는 구조화된 결과를 생성합니다 — 요약(`summary`), 중요도 등급 `rating`(0-10)과 한 문장 근거 `rating_explanation`, 그리고 `findings` 리스트(각 항목은 한 줄 `summary` + 여러 문장 `explanation`)입니다(`CommunityReport.findings`/`rating`, `CommunityFinding`). 임베딩·global map-reduce·표시에 쓰이는 자유 텍스트 `full_content`는 이 구조화 필드에서 **결정적으로 렌더링**되므로(`CommunityReport.render_full_content`) 추가 LLM 호출이 없고 임베딩/검색 경로는 그대로입니다. `rating`은 중요도 기반 랭킹을 위해 커뮤니티 리포트 OpenSearch 문서에도 색인됩니다.
 
+**커뮤니티 리포트 계보(stage 11)**: 각 리포트는 `text_unit_ids`와 `document_ids`를 가지며, 커뮤니티 리포트 OpenSearch 문서에 keyword 필드로 색인됩니다(`CommunityDetector._attach_report_lineage`). 이는 **커뮤니티 멤버십 출처(provenance)**입니다: 멤버 엔티티들의 `text_unit_ids` 합집합과, 그 텍스트 단위들이 속한 문서입니다. 리포트 입력의 출처는 아닙니다 — `max_entities_per_report`와 토큰 예산 때문에 프롬프트에서 제외된 멤버의 소스도 계보에는 남습니다 — 그리고 문장 단위 인용 근거를 제공하지 않습니다. 소스 문서 기준으로 리포트를 필터링하거나 커뮤니티를 독자별로 다시 요약하는 데 쓰기 위한 필드입니다. 스키마만으로는 필드가 생기기 전에 색인된 리포트가 채워지지 않으며, 리포트 생성과 색인을 다시 실행하기 전까지 두 필드는 빈 리스트로 색인됩니다.
+
 **파이프라인 인프라**: 스테이지 체크포인트 기반 재개(`shared/pipeline_manager.py`), S3 캐시 동기화(`adapters/aws/s3_cache.py`), `continue_on_error` 토글, 스테이지별 캐시(`shared/cache_manager.py`). 번역 스테이지는 `TranslationConfig.is_noop`(source==target & 추가 언어 없음)이면 비용 없이 스킵합니다. LLM 출력 파싱은 `FixingConfig` 기반 output-fixing 파서를 일관되게 사용합니다. 파이프라인은 `close()`로 인덱서/클라이언트 자원을 해제하며, `run-ingestion` CLI가 `finally`에서 호출합니다(§8.6).
 
 **일반화 적용 사례**:
