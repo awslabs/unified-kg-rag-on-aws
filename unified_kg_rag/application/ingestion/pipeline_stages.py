@@ -975,7 +975,11 @@ class CommunityDetectionStage(PipelineStage):
 
         self.detector(context.knowledge_graph)
         community_objects = self.detector.generate_community_objects()
-        community_reports = self.detector.generate_reports(community_objects)
+        # Text units resolve each report's source documents (report lineage).
+        community_reports = self.detector.generate_reports(
+            community_objects,
+            text_units=context.text_units or context.translated_units,
+        )
         metrics_obj = self.detector.get_community_metrics()
 
         context.communities = community_objects

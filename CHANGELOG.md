@@ -23,8 +23,23 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
 - CLIs: `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
   `run-prompt-tuning`.
 - CDK deployment stack (`iac/`) with Well-Architected security defaults.
+- Community reports now carry `text_unit_ids` and `document_ids`, indexed as
+  keyword fields, so reports can be filtered by source document. These are the
+  candidate sources associated with the community's members (community
+  membership provenance): they may include material `max_entities_per_report`
+  or the token budget kept out of the report prompt, and they do not establish
+  sentence-level citation support. The schema alone does not backfill existing
+  reports: those index both fields as empty lists until report generation and
+  indexing are re-run (for example `run-ingestion --force-rebuild`).
 
 ### Fixed
+- RRF fusion now accumulates a cross-store match. The fusion key was derived
+  from a hash of the rendered content, and the graph and vector stores render
+  the same artifact differently, so an entity present in both produced two keys
+  and graph/vector rank agreement was never rewarded. An artifact now counts
+  once per fusion bucket, at its best rank there: DRIFT concatenates every
+  iteration into one bucket and dedupes by rendered content, so an entity
+  reached over two paths arrived twice and its repetition outranked rank 1.
 - Ingestion stage-result cache keys now carry a fingerprint of the inputs that
   determine a stage's output (its config subtree, model id, and prompt
   overrides, cumulative over the upstream stages it consumes). A changed prompt,
