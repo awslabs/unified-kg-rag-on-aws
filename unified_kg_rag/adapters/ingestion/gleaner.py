@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from datetime import datetime
 from functools import partial
 from typing import Any
 
@@ -27,6 +28,7 @@ from unified_kg_rag.shared.utils import (
     BatchProcessor,
     default_max_workers,
     ensure_list,
+    normalize_name,
 )
 
 logger = get_logger(__name__)
@@ -359,6 +361,10 @@ class GraphGleaner(BaseProcessor):
         merged_relationships = self._update_relationships_after_merge(
             combined_relationships, {e.id for e in merged_entities}, entity_id_map
         )
+        # Runs after every correction and the merge, so it sees the final id ->
+        # name mapping for the round; an ENTITY_CORRECTION rename or a merge that
+        # re-pointed an edge would otherwise leave the edge naming the old entity.
+        self._sync_relationship_endpoint_names(merged_relationships, merged_entities)
 
         # Clamp to >= 0: a round that only discovers entities/relationships which
         # merge into existing ones (or whose edges are dropped as orphaned) can
@@ -478,10 +484,15 @@ class GraphGleaner(BaseProcessor):
             "accuracy": [],
         }
 
+        # This loop is serial, so a correction may mutate an entity or
+        # relationship carried by the round in place without racing another chunk.
         for item, result_data in zip(prepared_units, results, strict=True):
             new_entities, new_relationships, quality_scores = (
                 self._parse_refinement_output(
-                    result_data.get("refinement_plan", {}), item, current_entities
+                    result_data.get("refinement_plan", {}),
+                    item,
+                    current_entities,
+                    current_relationships,
                 )
             )
             all_new_entities.extend(new_entities)
@@ -532,6 +543,7 @@ class GraphGleaner(BaseProcessor):
         result_data: dict[str, Any] | list[Any],
         unit: TextUnit,
         existing_entities: list[Entity],
+        existing_relationships: list[Relationship] | None = None,
     ) -> tuple[list[Entity], list[Relationship], dict[str, float]]:
         new_entities: list[Entity] = []
         new_relationships: list[Relationship] = []
@@ -575,6 +587,7 @@ class GraphGleaner(BaseProcessor):
                     current_and_new_entities,
                     new_entities,
                     new_relationships,
+                    existing_relationships or [],
                 )
 
             if new_entities or new_relationships:
@@ -627,6 +640,7 @@ class GraphGleaner(BaseProcessor):
         current_and_new_entities: list[Entity],
         new_entities: list[Entity],
         new_relationships: list[Relationship],
+        current_relationships: list[Relationship] | None = None,
     ) -> None:
         details = issue.get("details", {})
         issue_type = issue.get("issue_type", "").upper()
@@ -669,6 +683,208 @@ class GraphGleaner(BaseProcessor):
             if rel:
                 (rel.attributes or {}).pop("_source_text", None)
                 new_relationships.append(rel)
+        elif issue_type == "ENTITY_CORRECTION":
+            self._apply_entity_correction(details, current_and_new_entities, unit)
+        elif issue_type == "RELATIONSHIP_CORRECTION":
+            self._apply_relationship_correction(
+                details, current_relationships or [], unit
+            )
+        else:
+            # Every type the refinement prompt asks for must have a branch here.
+            # Falling through silently is how ENTITY_CORRECTION and
+            # RELATIONSHIP_CORRECTION were discarded for every chunk of every run.
+            logger.warning(
+                "Ignoring gleaner issue of unhandled type '%s' in chunk '%s'",
+                issue_type or "<missing>",
+                unit.short_id,
+            )
+
+    @staticmethod
+    def _clean_text(value: Any) -> str | None:
+        return value.strip() or None if isinstance(value, str) else None
+
+    @classmethod
+    def _matches(cls, left: Any, right: Any) -> bool:
+        """Case- and whitespace-insensitive comparison of two optional names."""
+        left_clean, right_clean = cls._clean_text(left), cls._clean_text(right)
+        if left_clean is None or right_clean is None:
+            return False
+        return left_clean.casefold() == right_clean.casefold()
+
+    def _apply_entity_correction(
+        self, details: dict[str, Any], entities: list[Entity], unit: TextUnit
+    ) -> bool:
+        """Apply an ENTITY_CORRECTION to the existing entity it names.
+
+        The corrected entity is mutated in place, so the correction reaches the
+        graph through the same list the round already carries. ``id`` is
+        deliberately left alone: relationships reference it, and re-deriving it
+        from a corrected name would orphan every edge touching this entity.
+
+        Args:
+            details: The issue's ``<details>`` payload.
+            entities: Entities visible to this chunk (existing plus newly added).
+            unit: The text unit being refined, for log attribution.
+
+        Returns:
+            True when at least one field changed.
+        """
+        name = self._clean_text(details.get("name"))
+        entity = next((e for e in entities if self._matches(e.name, name)), None)
+        if entity is None:
+            logger.info(
+                "Dropping ENTITY_CORRECTION in chunk '%s': no current entity named "
+                "'%s'",
+                unit.short_id,
+                name,
+            )
+            return False
+
+        corrected: list[str] = []
+        # Extracted names go through normalize_name; a corrected one must too, or
+        # the graph would carry two spellings of the same entity.
+        corrected_name = normalize_name(
+            self._clean_text(details.get("corrected_name")) or ""
+        )
+        if corrected_name and corrected_name != entity.name:
+            entity.name = corrected_name
+            # The stored embedding described the old name.
+            entity.name_embedding = None
+            corrected.append("name")
+
+        corrected_type = self._clean_text(details.get("corrected_type"))
+        if corrected_type and corrected_type != entity.type:
+            entity.type = corrected_type
+            corrected.append("type")
+
+        description = self._clean_text(details.get("description"))
+        if description and description != entity.description:
+            entity.description = description
+            entity.description_embedding = None
+            corrected.append("description")
+
+        if not corrected:
+            logger.debug(
+                "ENTITY_CORRECTION for '%s' in chunk '%s' proposed no change",
+                entity.name,
+                unit.short_id,
+            )
+            return False
+
+        entity.updated_at = datetime.now()
+        logger.info(
+            "Applied ENTITY_CORRECTION to '%s' in chunk '%s' (%s)",
+            entity.name,
+            unit.short_id,
+            ", ".join(corrected),
+        )
+        return True
+
+    def _apply_relationship_correction(
+        self,
+        details: dict[str, Any],
+        relationships: list[Relationship],
+        unit: TextUnit,
+    ) -> bool:
+        """Apply a RELATIONSHIP_CORRECTION to the existing edge it names.
+
+        Scope matches what the prompt asks for: a wrong type, a reversed
+        direction, or a wrong description. Re-pointing an edge at a different
+        pair of entities is not a correction and is rejected — that is a
+        MISSING_RELATIONSHIP plus a deletion, which this stage cannot express.
+
+        Args:
+            details: The issue's ``<details>`` payload.
+            relationships: The relationships carried into this gleaning round.
+            unit: The text unit being refined, for log attribution.
+
+        Returns:
+            True when at least one field changed.
+        """
+        source, target = details.get("source"), details.get("target")
+        relationship = self._find_relationship(
+            relationships, source, target, details.get("type")
+        )
+        if relationship is None:
+            logger.info(
+                "Dropping RELATIONSHIP_CORRECTION in chunk '%s': no single current "
+                "relationship '%s' -> '%s'",
+                unit.short_id,
+                source,
+                target,
+            )
+            return False
+
+        corrected: list[str] = []
+        corrected_type = self._clean_text(details.get("corrected_type"))
+        if corrected_type and corrected_type != relationship.type:
+            relationship.type = corrected_type
+            corrected.append("type")
+
+        # A reversal is the corrected endpoints naming the current pair the other
+        # way round. Both ids and names move together, or the edge would point at
+        # one entity while claiming to name another.
+        if self._matches(
+            details.get("corrected_source"), relationship.target_name
+        ) and self._matches(details.get("corrected_target"), relationship.source_name):
+            relationship.source_id, relationship.target_id = (
+                relationship.target_id,
+                relationship.source_id,
+            )
+            relationship.source_name, relationship.target_name = (
+                relationship.target_name,
+                relationship.source_name,
+            )
+            corrected.append("direction")
+
+        description = self._clean_text(details.get("description"))
+        if description and description != relationship.description:
+            relationship.description = description
+            relationship.description_embedding = None
+            corrected.append("description")
+
+        if not corrected:
+            logger.debug(
+                "RELATIONSHIP_CORRECTION for '%s' -> '%s' in chunk '%s' proposed no "
+                "change",
+                relationship.source_name,
+                relationship.target_name,
+                unit.short_id,
+            )
+            return False
+
+        relationship.updated_at = datetime.now()
+        logger.info(
+            "Applied RELATIONSHIP_CORRECTION to '%s' -> '%s' in chunk '%s' (%s)",
+            relationship.source_name,
+            relationship.target_name,
+            unit.short_id,
+            ", ".join(corrected),
+        )
+        return True
+
+    @classmethod
+    def _find_relationship(
+        cls,
+        relationships: list[Relationship],
+        source: Any,
+        target: Any,
+        current_type: Any = None,
+    ) -> Relationship | None:
+        """Resolve the edge a correction names, or None when it is ambiguous."""
+        candidates = [
+            rel
+            for rel in relationships
+            if cls._matches(rel.source_name, source)
+            and cls._matches(rel.target_name, target)
+        ]
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        # A pair can carry several edges; the stated current type disambiguates.
+        typed = [rel for rel in candidates if cls._matches(rel.type, current_type)]
+        return typed[0] if len(typed) == 1 else None
 
     @staticmethod
     def _merge_duplicate_entities(
@@ -794,6 +1010,35 @@ class GraphGleaner(BaseProcessor):
             )
 
         return final_relationships
+
+    @staticmethod
+    def _sync_relationship_endpoint_names(
+        relationships: list[Relationship], entities: list[Entity]
+    ) -> None:
+        """Rewrite each edge's endpoint names from the final entity id -> name map.
+
+        ``source_name`` / ``target_name`` are denormalised copies of the entity
+        names, and the refinement prompt and the indexers read those copies
+        rather than resolving the id. An ENTITY_CORRECTION renames an entity in
+        place and keeps its id, and a merge re-points an edge at the surviving
+        entity's id; neither touches the copies, so once both have run the names
+        are re-derived from the ids the edge references.
+        """
+        name_by_id = {entity.id: entity.name for entity in entities}
+        resynced = 0
+        for rel in relationships:
+            source_name = name_by_id.get(rel.source_id, rel.source_name)
+            target_name = name_by_id.get(rel.target_id, rel.target_name)
+            if (source_name, target_name) != (rel.source_name, rel.target_name):
+                rel.source_name, rel.target_name = source_name, target_name
+                resynced += 1
+
+        if resynced > 0:
+            logger.debug(
+                "Resynced endpoint names on %s relationships after entity "
+                "corrections/merges",
+                resynced,
+            )
 
     def _calculate_convergence_score(
         self,

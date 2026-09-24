@@ -54,3 +54,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   treated as a miss: the run logs the legacy key it found and recomputes from
   that stage once. A completed stage that produced an empty output now caches
   it, so "produced nothing" is distinguishable from "not cached".
+- The gleaner now applies the `ENTITY_CORRECTION` and `RELATIONSHIP_CORRECTION`
+  issues `GraphRefinementPrompt` asks for (wrong entity name or type, wrong
+  relationship type or direction). Issue dispatch branched only on the two
+  `MISSING_*` types, so every correction the model returned was discarded, and
+  gleaning could only ever add to the graph, never fix it. The prompt now also
+  specifies the `<details>` shape for both correction types, which it previously
+  requested without defining. After a round's corrections and duplicate merge,
+  every relationship's `source_name` / `target_name` is rewritten from the final
+  entity id-to-name mapping, so a renamed or merged entity is named the same on
+  its edges (which the indexers read) as on the node.

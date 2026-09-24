@@ -24,6 +24,7 @@ from unified_kg_rag.adapters.ingestion.gleaner import (
     format_relationships_with_limit_task,
     prepare_input_task,
 )
+from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
 
 pytestmark = pytest.mark.unit
@@ -274,6 +275,400 @@ class TestParseRefinementOutput:
         }
         ents, _, _ = gleaner._parse_refinement_output(plan, unit, [])
         assert len(ents) == 1
+
+
+# --------------------------------------------------------------------------- #
+# ENTITY_CORRECTION / RELATIONSHIP_CORRECTION issues
+# --------------------------------------------------------------------------- #
+class TestCorrectionIssues:
+    """Corrections the refinement prompt asks for must reach the graph.
+
+    ``GraphRefinementPrompt`` instructs the model to emit ENTITY_CORRECTION and
+    RELATIONSHIP_CORRECTION issues; the dispatch branched only on the two
+    MISSING_* types, so every correction was discarded for every chunk of every
+    run. Corrections mutate the entity/relationship the round already carries,
+    so these tests assert on the input objects.
+    """
+
+    UNIT = TextUnit(id="t1", text="acme corp is a company based in seattle.")
+
+    @staticmethod
+    def _plan(*issues: dict) -> dict:
+        return {"identified_issues": {"issue": list(issues)}}
+
+    @staticmethod
+    def _entity_correction(**details: str) -> dict:
+        return {"issue_type": "ENTITY_CORRECTION", "details": details}
+
+    @staticmethod
+    def _relationship_correction(**details: str) -> dict:
+        return {"issue_type": "RELATIONSHIP_CORRECTION", "details": details}
+
+    def test_entity_type_correction_applied(self, gleaner) -> None:
+        entity = _ent("e1", "acme corp")
+        entity.type = "PERSON"
+        ents, rels, _ = gleaner._parse_refinement_output(
+            self._plan(
+                self._entity_correction(name="acme corp", corrected_type="ORGANIZATION")
+            ),
+            self.UNIT,
+            [entity],
+        )
+        assert entity.type == "ORGANIZATION"
+        # A correction is not a new artifact.
+        assert ents == [] and rels == []
+
+    def test_entity_rename_normalizes_and_keeps_the_id(self, gleaner) -> None:
+        entity = _ent("e1", "acme")
+        entity.name_embedding = [0.1, 0.2]
+        gleaner._parse_refinement_output(
+            self._plan(
+                self._entity_correction(name="acme", corrected_name="Acme Corporation")
+            ),
+            self.UNIT,
+            [entity],
+        )
+        # Extracted names are normalized, so a corrected one must be too.
+        assert entity.name == "acme corporation"
+        # Relationships reference the id; re-deriving it would orphan them.
+        assert entity.id == "e1"
+        # The stored embedding described the old name.
+        assert entity.name_embedding is None
+
+    def test_entity_correction_for_unknown_name_is_dropped(self, gleaner) -> None:
+        entity = _ent("e1", "acme corp")
+        entity.type = "PERSON"
+        gleaner._parse_refinement_output(
+            self._plan(
+                self._entity_correction(
+                    name="never extracted", corrected_type="ORGANIZATION"
+                )
+            ),
+            self.UNIT,
+            [entity],
+        )
+        assert entity.type == "PERSON"
+
+    def test_relationship_type_correction_applied(self, gleaner) -> None:
+        rel = Relationship(
+            id="r1",
+            source_id="e1",
+            target_id="e2",
+            source_name="acme corp",
+            target_name="seattle",
+            type="EMPLOYS",
+        )
+        gleaner._parse_refinement_output(
+            self._plan(
+                self._relationship_correction(
+                    source="acme corp",
+                    target="seattle",
+                    type="EMPLOYS",
+                    corrected_type="LOCATED_IN",
+                )
+            ),
+            self.UNIT,
+            [],
+            [rel],
+        )
+        assert rel.type == "LOCATED_IN"
+
+    def test_reversed_direction_swaps_ids_and_names_together(self, gleaner) -> None:
+        rel = Relationship(
+            id="r1",
+            source_id="e-seattle",
+            target_id="e-acme",
+            source_name="seattle",
+            target_name="acme corp",
+            type="LOCATED_IN",
+        )
+        gleaner._parse_refinement_output(
+            self._plan(
+                self._relationship_correction(
+                    source="seattle",
+                    target="acme corp",
+                    corrected_source="acme corp",
+                    corrected_target="seattle",
+                )
+            ),
+            self.UNIT,
+            [],
+            [rel],
+        )
+        assert (rel.source_id, rel.source_name) == ("e-acme", "acme corp")
+        assert (rel.target_id, rel.target_name) == ("e-seattle", "seattle")
+
+    def test_relationship_correction_for_unknown_edge_is_dropped(self, gleaner) -> None:
+        rel = Relationship(
+            id="r1",
+            source_id="e1",
+            target_id="e2",
+            source_name="acme corp",
+            target_name="seattle",
+            type="EMPLOYS",
+        )
+        gleaner._parse_refinement_output(
+            self._plan(
+                self._relationship_correction(
+                    source="nobody", target="nowhere", corrected_type="LOCATED_IN"
+                )
+            ),
+            self.UNIT,
+            [],
+            [rel],
+        )
+        assert rel.type == "EMPLOYS"
+
+    def test_ambiguous_pair_without_a_current_type_is_dropped(self, gleaner) -> None:
+        # Two edges join the same pair; with no stated current type there is no
+        # way to tell which one the correction means, so neither is touched.
+        shared = {
+            "source_id": "e1",
+            "target_id": "e2",
+            "source_name": "acme corp",
+            "target_name": "seattle",
+        }
+        first = Relationship(id="r1", type="EMPLOYS", **shared)
+        second = Relationship(id="r2", type="FOUNDED_IN", **shared)
+        gleaner._parse_refinement_output(
+            self._plan(
+                self._relationship_correction(
+                    source="acme corp", target="seattle", corrected_type="LOCATED_IN"
+                )
+            ),
+            self.UNIT,
+            [],
+            [first, second],
+        )
+        assert (first.type, second.type) == ("EMPLOYS", "FOUNDED_IN")
+
+    def test_current_type_disambiguates_a_multi_edge_pair(self, gleaner) -> None:
+        shared = {
+            "source_id": "e1",
+            "target_id": "e2",
+            "source_name": "acme corp",
+            "target_name": "seattle",
+        }
+        first = Relationship(id="r1", type="EMPLOYS", **shared)
+        second = Relationship(id="r2", type="FOUNDED_IN", **shared)
+        gleaner._parse_refinement_output(
+            self._plan(
+                self._relationship_correction(
+                    source="acme corp",
+                    target="seattle",
+                    type="FOUNDED_IN",
+                    corrected_type="LOCATED_IN",
+                )
+            ),
+            self.UNIT,
+            [],
+            [first, second],
+        )
+        assert (first.type, second.type) == ("EMPLOYS", "LOCATED_IN")
+
+    def test_ungrounded_correction_dropped_when_grounding_enabled(
+        self, gleaner
+    ) -> None:
+        # The hallucination guard covers corrections too, not just additions.
+        gleaner.extraction_config.entity_grounding.enabled = True
+        entity = _ent("e1", "acme corp")
+        entity.type = "PERSON"
+        issue = self._entity_correction(name="acme corp", corrected_type="ORGANIZATION")
+        issue["text_evidence"] = "A clause that appears nowhere in the chunk."
+        gleaner._parse_refinement_output(self._plan(issue), self.UNIT, [entity])
+        assert entity.type == "PERSON"
+
+    def test_correction_survives_a_full_gleaning_round(self, gleaner, mocker) -> None:
+        # End-to-end through glean_graph: the corrected entity is the one the
+        # stage returns, so the correction reaches the graph the pipeline indexes.
+        seed = _ent("e1", "acme corp")
+        seed.type = "PERSON"
+        gleaner.graph_refiner = mocker.Mock()
+        gleaner.graph_refiner.batch.return_value = [
+            {
+                "refinement_plan": {
+                    "quality_scores": {
+                        "completeness_score": 0.9,
+                        "accuracy_score": 0.9,
+                    },
+                    "identified_issues": {
+                        "issue": self._entity_correction(
+                            name="acme corp", corrected_type="ORGANIZATION"
+                        )
+                    },
+                }
+            }
+        ]
+
+        entities, _, _ = gleaner.glean_graph(
+            text_units=[self.UNIT],
+            initial_entities=[seed],
+            initial_relationships=[],
+        )
+        corrected = next(e for e in entities if e.name == "acme corp")
+        # The round's duplicate merge lowercases the winning type.
+        assert (corrected.type or "").upper() == "ORGANIZATION"
+
+    # -- endpoint names after a rename ------------------------------------- #
+    # An edge carries a denormalised copy of each endpoint's name, and the
+    # indexer writes that copy rather than resolving the id. Renaming an entity
+    # in place therefore has to be followed by rewriting the copies, or the
+    # graph the stage hands on names one thing on the node and another on the
+    # edge. These run the whole round, with only the model's answer mocked.
+
+    def _glean_one_round(
+        self,
+        gleaner,
+        mocker,
+        entities: list[Entity],
+        relationships: list[Relationship],
+        *issues: dict,
+    ) -> tuple[list[Entity], list[Relationship]]:
+        gleaner.graph_refiner = mocker.Mock()
+        gleaner.graph_refiner.batch.return_value = [
+            {
+                "refinement_plan": {
+                    "quality_scores": {
+                        "completeness_score": 0.9,
+                        "accuracy_score": 0.9,
+                    },
+                    "identified_issues": {"issue": list(issues)},
+                }
+            }
+        ]
+        entities, relationships, _ = gleaner.glean_graph(
+            text_units=[self.UNIT],
+            initial_entities=entities,
+            initial_relationships=relationships,
+        )
+        return entities, relationships
+
+    @staticmethod
+    def _assert_indexed_endpoint_names_match_entities(
+        entities: list[Entity], relationships: list[Relationship]
+    ) -> None:
+        # Assert on the document the indexer builds, since that is where the
+        # denormalised name is read, not on the model field alone.
+        name_by_id = {e.id: e.name for e in entities}
+        for rel in relationships:
+            doc = OpenSearchIndexer._prepare_relationship_doc(rel, ([],))
+            assert doc["source_name"] == name_by_id[rel.source_id]
+            assert doc["target_name"] == name_by_id[rel.target_id]
+
+    def test_rename_resyncs_the_source_endpoint_name_in_a_full_round(
+        self, gleaner, mocker
+    ) -> None:
+        edge = Relationship(
+            id="r1",
+            source_id="e1",
+            target_id="e2",
+            source_name="acme",
+            target_name="seattle",
+            type="LOCATED_IN",
+        )
+        entities, relationships = self._glean_one_round(
+            gleaner,
+            mocker,
+            [_ent("e1", "acme"), _ent("e2", "seattle")],
+            [edge],
+            self._entity_correction(name="acme", corrected_name="Acme Corporation"),
+        )
+        renamed = next(e for e in entities if e.id == "e1")
+        assert renamed.name != "acme"
+        (out,) = relationships
+        # The id was kept, so the edge is still attached; the name must follow.
+        assert (out.source_id, out.target_id) == ("e1", "e2")
+        assert out.source_name == renamed.name
+        assert out.target_name == "seattle"
+        self._assert_indexed_endpoint_names_match_entities(entities, relationships)
+
+    def test_rename_resyncs_the_target_endpoint_name_in_a_full_round(
+        self, gleaner, mocker
+    ) -> None:
+        edge = Relationship(
+            id="r1",
+            source_id="e1",
+            target_id="e2",
+            source_name="jane roe",
+            target_name="acme",
+            type="WORKS_FOR",
+        )
+        entities, relationships = self._glean_one_round(
+            gleaner,
+            mocker,
+            [_ent("e1", "jane roe"), _ent("e2", "acme")],
+            [edge],
+            self._entity_correction(name="acme", corrected_name="Acme Corporation"),
+        )
+        renamed = next(e for e in entities if e.id == "e2")
+        (out,) = relationships
+        assert (out.source_id, out.target_id) == ("e1", "e2")
+        assert out.source_name == "jane roe"
+        assert out.target_name == renamed.name
+        self._assert_indexed_endpoint_names_match_entities(entities, relationships)
+
+    def test_rename_that_merges_into_an_existing_entity_resyncs_the_remapped_edge(
+        self, gleaner, mocker
+    ) -> None:
+        # A rename can make two entities share a name, at which point the round's
+        # duplicate merge re-points every edge at the surviving id. The edge must
+        # then carry the survivor's name, not the one it was extracted under.
+        canonical = _ent("e1", "acme corporation")
+        edge = Relationship(
+            id="r1",
+            source_id="e2",
+            target_id="e3",
+            source_name="acme",
+            target_name="seattle",
+            type="LOCATED_IN",
+        )
+        entities, relationships = self._glean_one_round(
+            gleaner,
+            mocker,
+            [canonical, _ent("e2", "acme"), _ent("e3", "seattle")],
+            [edge],
+            self._entity_correction(name="acme", corrected_name="Acme Corporation"),
+        )
+        assert {e.id for e in entities} == {"e1", "e3"}
+        (out,) = relationships
+        assert (out.source_id, out.target_id) == ("e1", "e3")
+        assert out.source_name == canonical.name
+        self._assert_indexed_endpoint_names_match_entities(entities, relationships)
+
+    def test_reversed_edge_takes_the_renamed_endpoint_on_its_new_side(
+        self, gleaner, mocker
+    ) -> None:
+        # Reversal swaps ids and names together; a rename in the same round must
+        # then land on the side the swapped id now occupies, not the old one.
+        edge = Relationship(
+            id="r1",
+            source_id="e-seattle",
+            target_id="e-acme",
+            source_name="seattle",
+            target_name="acme corp",
+            type="LOCATED_IN",
+        )
+        entities, relationships = self._glean_one_round(
+            gleaner,
+            mocker,
+            [_ent("e-acme", "acme corp"), _ent("e-seattle", "seattle")],
+            [edge],
+            self._relationship_correction(
+                source="seattle",
+                target="acme corp",
+                corrected_source="acme corp",
+                corrected_target="seattle",
+            ),
+            self._entity_correction(
+                name="acme corp", corrected_name="Acme Corporation"
+            ),
+        )
+        renamed = next(e for e in entities if e.id == "e-acme")
+        assert renamed.name != "acme corp"
+        (out,) = relationships
+        assert (out.source_id, out.source_name) == ("e-acme", renamed.name)
+        assert (out.target_id, out.target_name) == ("e-seattle", "seattle")
+        self._assert_indexed_endpoint_names_match_entities(entities, relationships)
 
 
 # --------------------------------------------------------------------------- #
