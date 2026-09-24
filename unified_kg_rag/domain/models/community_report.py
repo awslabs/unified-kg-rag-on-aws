@@ -55,6 +55,30 @@ class CommunityReport(Named):
         None, description="The size of the report (Amount of text units)"
     )
     period: str | None = Field(None, description="The period of the report")
+    # `default=` (not a positional default) so the fields are genuinely optional
+    # at construction: existing call sites that predate them keep type-checking.
+    #
+    # Both fields record community MEMBERSHIP provenance, not report-input
+    # provenance: they are the union over every member entity, so they may name
+    # text units and documents that `max_entities_per_report` or the token
+    # budget kept out of the report prompt, and they do not establish
+    # sentence-level citation support. That is the useful contract: it is what a
+    # consumer needs to filter reports by source or re-summarize them per reader.
+    text_unit_ids: list[str] | None = Field(
+        default=None,
+        description="Candidate source text units associated with this report's "
+        "community (the union of its member entities' text_unit_ids). Community "
+        "membership provenance: may include units omitted from the report prompt "
+        "by input limits such as max_entities_per_report, and does not establish "
+        "sentence-level citation support",
+    )
+    document_ids: list[str] | None = Field(
+        default=None,
+        description="Candidate source documents of the community's text units. "
+        "Community membership provenance for filtering reports by source "
+        "document; may include documents omitted from the report prompt, and does "
+        "not establish sentence-level citation support",
+    )
 
     def render_full_content(self) -> str:
         """Render a human/embedding-friendly report body from structured fields.

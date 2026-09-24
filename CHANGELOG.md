@@ -23,3 +23,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
 - CLIs: `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
   `run-prompt-tuning`.
 - CDK deployment stack (`iac/`) with Well-Architected security defaults.
+- Community reports now carry `text_unit_ids` and `document_ids`, indexed as
+  keyword fields, so reports can be filtered by source document. These are the
+  candidate sources associated with the community's members (community
+  membership provenance): they may include material `max_entities_per_report`
+  or the token budget kept out of the report prompt, and they do not establish
+  sentence-level citation support. The schema alone does not backfill existing
+  reports: those index both fields as empty lists until report generation and
+  indexing are re-run (for example `run-ingestion --force-rebuild`).
