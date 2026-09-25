@@ -80,7 +80,8 @@ dependencies = [
     # can requires datasets>=4.0.0.
     "ragas>=0.4.3,<0.5.0",
     "rapidfuzz>=3.13.0",
-    "rich>=15.0.0",
+    # Instructor (via ragas) requires Rich <15 for OpenAI 2.x compatibility.
+    "rich>=14.3.3,<15.0.0",
     "scikit-learn>=1.7.1",
     "structlog>=25.4.0",
     "tenacity>=9.1.2",
@@ -122,17 +123,16 @@ docs = [
 # deps, so not installed by default). The ParserFactory registers those formats
 # only when this is importable; .txt/.csv/.json/.pdf work without it.
 #
-# The floor deliberately stays below the fix for GHSA-4mvj-m6j5-pmf7 (SSRF in
-# unstructured's URL-based partitioning, fixed in 0.24.0): that release requires
-# Python >=3.11 and so cannot be resolved under this project's requires-python
-# floor of 3.10. The exposure is accepted because the vulnerable entry point is
-# URL partitioning, which this package never reaches — the only loaders it
-# registers from unstructured are UnstructuredMarkdownLoader and
-# UnstructuredHTMLLoader, both of which read a local filesystem path. Raise the
-# floor to >=0.24.0 whenever the Python 3.10 floor is dropped.
+# Patched URL partitioning requires Python 3.11+. Keep the core package usable
+# on Python 3.10 without resolving an older, vulnerable optional parser.
 unstructured = [
-    "unstructured>=0.14.0",
+    "unstructured[md]>=0.24.0; python_version >= '3.11'",
 ]
+
+[tool.uv]
+# Ragas pulls in this package transitively; earlier releases allow SSRF through
+# image token counting (GHSA-r7w7-9xr2-qq2r).
+constraint-dependencies = ["langchain-openai>=1.1.14"]
 
 [project.urls]
 Repository = "https://github.com/awslabs/unified-kg-rag-on-aws"

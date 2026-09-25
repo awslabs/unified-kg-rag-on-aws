@@ -88,8 +88,12 @@ pip install -e .
 선택적 추가 패키지: **Markdown(.md)** 및 **HTML(.html)** 파싱에는
 `unstructured` 패키지가 필요합니다. 이 패키지가 없으면 `.pdf`, `.txt`, `.csv`,
 `.json`만 파싱됩니다(파서는 `.md`/`.html`에 대해 누락된 패키지 이름을 명시하는
-명확한 에러를 발생시킵니다). 해당 포맷이 필요하면 패키지 매니저로 설치하세요
-(`uv pip install unstructured` 또는 `pip install unstructured`).
+명확한 에러를 발생시킵니다). Python 3.11 또는 3.12에서
+`uv sync --extra unstructured` 또는 `pip install -e '.[unstructured]'`로
+설치하세요. 이 추가 패키지는 URL 파싱의 SSRF 취약점을 수정하고 NLTK 의존성을
+제거한 `unstructured>=0.24.0`을 사용합니다. Python 3.10에서는 이 추가 패키지를
+선택해도 파서가 설치되지 않습니다. PDF/TXT/CSV/JSON을 사용하거나,
+Markdown/HTML 지원이 필요하면 Python 버전을 올리세요.
 
 ### 인증
 

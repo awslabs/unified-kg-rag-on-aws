@@ -88,8 +88,11 @@ pip install -e .
 Optional extra: parsing **Markdown (.md)** and **HTML (.html)** requires the
 `unstructured` package. Without it, only `.pdf`, `.txt`, `.csv`, `.json` are
 parsed (the parser raises a clear error naming the missing package for
-`.md`/`.html`). Install it with your package manager (`uv pip install unstructured`
-or `pip install unstructured`) if you need those formats.
+`.md`/`.html`). On Python 3.11 or 3.12, install the patched parser with
+`uv sync --extra unstructured` or `pip install -e '.[unstructured]'`.
+The extra requires `unstructured>=0.24.0`, which fixes URL-partitioning SSRF
+and no longer depends on NLTK. On Python 3.10 the extra does not install a parser;
+use PDF/TXT/CSV/JSON, or upgrade Python for Markdown/HTML support.
 
 ### Authentication
 

@@ -13,6 +13,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  optional-parsers:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install patched optional parsers
+        run: uv sync --frozen --extra dev --extra unstructured
+      - name: Check optional parsing and private URL rejection
+        run: uv run --frozen pytest tests/unit/test_optional_parser_security.py -q
+
   quality:
     runs-on: ubuntu-latest
     steps:
