@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on
+  Python 3.11+ (GHSA-4mvj-m6j5-pmf7). The updated dependency removes NLTK and
+  its unpatched model-artifact path traversal (GHSA-8mgp-746c-j5xp) from the
+  lockfile. Python 3.10 retains core formats but no longer installs this extra.
+- Constrain the transitive `langchain-openai` dependency to `>=1.1.14` for its
+  image-token-counting SSRF fix (GHSA-r7w7-9xr2-qq2r).
+
 Initial public release preparation. This is an AWS-native, open-source reference
 framework that unifies the GraphRAG and LightRAG retrieval methodologies on
 Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
