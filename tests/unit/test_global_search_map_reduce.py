@@ -109,10 +109,13 @@ def _strategy(
         reducer if reducer is not None else _reducer("SYNTHESIZED ANSWER")
     )
     strat.token_manager = _TokenCounter(cost=token_cost)
-    # Real BatchProcessor with batch_size=1 (one prepared input per LLM call).
+    # The stub assigns outputs in call order, so run chunks serially.
+    # Chunk concurrency and result ordering have dedicated BatchProcessor tests.
     from unified_kg_rag.shared.utils import BatchProcessor
 
-    strat.batch_processor = BatchProcessor(batch_size=1, max_concurrency=4)
+    strat.batch_processor = BatchProcessor(
+        batch_size=1, max_concurrency=4, chunk_concurrency=1
+    )
     return strat
 
 
@@ -143,11 +146,16 @@ async def test_map_phase_batches_reports_per_call() -> None:
     await strat._run_map_phase(_communities(3), SearchQuery(query="q"))
     # Two prepared inputs were sent (one per batch); each carries query/lang.
     assert len(strat.map_rater.batch_inputs) == 2
-    first = strat.map_rater.batch_inputs[0]
-    assert first["query"] == "q"
-    assert first["target_language"] == "English"
+    first, second = strat.map_rater.batch_inputs
+    for batch in (first, second):
+        assert batch["query"] == "q"
+        assert batch["target_language"] == "English"
     # The first batch packs two reports into one "reports" string.
     assert "cid-0" in first["reports"] and "cid-1" in first["reports"]
+    assert "cid-2" not in first["reports"]
+    # The remaining report gets its own call.
+    assert "cid-2" in second["reports"]
+    assert "cid-0" not in second["reports"] and "cid-1" not in second["reports"]
 
 
 # --------------------------------------------------------------------------- #
