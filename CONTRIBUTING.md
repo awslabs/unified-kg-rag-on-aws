@@ -88,8 +88,8 @@ mypy unified_kg_rag
 
 ### Testing
 - Write **unit tests** for new functionality
-- Keep coverage at or above the current CI gate (**78%**, ratcheting toward 80%
-  per milestone — see `.github/workflows/quality.yml` `--cov-fail-under`)
+- Keep coverage at or above the current CI gate (**84%**, ratcheted up with
+  measured coverage — see `.github/workflows/quality.yml` `--cov-fail-under`)
 - Use **pytest** for testing framework
 - Prefer the port-based in-memory fakes in `tests/fixtures/fakes/` (e.g.
   `FakeDocStatusStore`) over ad-hoc boto3 mocking; use `moto` when an adapter
@@ -148,17 +148,17 @@ Example:
 ```python
 def extract_entities(text: str, model_id: str) -> list[Entity]:
     """Extract entities from text using specified LLM model.
-    
+
     Args:
         text: Input text to process
         model_id: Bedrock model identifier for entity extraction
-        
+
     Returns:
         List of extracted Entity objects with names and types
-        
+
     Raises:
         ExtractionError: If entity extraction fails
-        
+
     Example:
         >>> entities = extract_entities("John works at AWS", "claude-3")
         >>> print(entities[0].name)
