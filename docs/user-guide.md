@@ -889,9 +889,32 @@ metric) are written to the outputs directory.
 ## 7. Visualization (`run-visualization`)
 
 This is a **standalone** renderer that draws from an already-exported
-visualization-data JSON (produced during ingestion by
-`GraphVisualizationManager.export_visualization_data`). It does **not** re-run
-ingestion or touch AWS.
+visualization-data JSON. It does **not** re-run ingestion or touch AWS.
+
+When `graph.visualization.enabled` is `true`, the community-detection stage of
+`run-ingestion` renders the visualizations and also writes
+`visualization_data.json` into `graph.visualization.outputs_directory`
+(default `outputs/visualization/visualization_data.json`). That file is the
+`--data-path` input. It holds the graph nodes/edges, the computed `layout`, the
+community hierarchy, and centrality; vector attributes (`embedding`,
+`*_embedding`) are omitted to keep the file small.
+
+Layout and error behaviour:
+
+- `embedding_method: "none"` uses a spring layout and never constructs a
+  Bedrock embedding client.
+- `embedding_method: "node2vec"` embeds each node's `name: description` with
+  Bedrock and reduces it with `layout_method`. If embedding fails, the
+  visualization step fails when `processing.ignore_errors` is `false` (ingestion
+  itself continues and logs the failure). With `ignore_errors: true` it logs an
+  ERROR, falls back to a topology-only spring layout, and records
+  `"layout_degraded": true` in `visualization_data.json`.
+- Edge width/opacity in the interactive graph is scaled relative to the graph's
+  own weight range (log-scaled, then min-max normalised), so 1-10 strength
+  scores and merged counts are both distinguishable.
+- Only files a renderer actually wrote are reported (an earlier run's file of
+  the same name is removed first). If nothing is rendered (e.g. an empty graph),
+  `run-visualization` logs an error and exits with status `1`.
 
 ### CLI flags (verified)
 

@@ -9,6 +9,7 @@ manager and the standalone CLI drive them through the registry.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from unified_kg_rag.shared import get_logger
@@ -20,6 +21,22 @@ from .static import StaticRenderer
 logger = get_logger(__name__)
 
 
+def _render_file(path: Path, draw: Callable[[str], None]) -> list[Path]:
+    """Run ``draw(path)`` and report ``path`` only if it actually wrote it.
+
+    The concrete renderers return early (writing nothing) for empty inputs. A
+    previous run's file at ``path`` is removed first (it would be overwritten
+    anyway), so an existing file afterwards always reflects this render and
+    the output directory never mixes stale and fresh artifacts.
+    """
+    path.unlink(missing_ok=True)
+    draw(str(path))
+    if not path.is_file():
+        logger.warning("Renderer produced no output for '%s'", path.name)
+        return []
+    return [path]
+
+
 @register_renderer("interactive")
 class InteractiveRendererAdapter(BaseRenderer):
     """pyvis interactive network + community hierarchy."""
@@ -28,18 +45,20 @@ class InteractiveRendererAdapter(BaseRenderer):
         renderer = InteractiveRenderer(self.config)
         written: list[Path] = []
 
-        graph_path = output_dir / "interactive_graph.html"
-        renderer.create_network_visualization(
-            context.graph, context.layout, str(graph_path)
+        written += _render_file(
+            output_dir / "interactive_graph.html",
+            lambda p: renderer.create_network_visualization(
+                context.graph, context.layout, p
+            ),
         )
-        written.append(graph_path)
 
         if context.community_hierarchy:
-            hierarchy_path = output_dir / "community_hierarchy.html"
-            renderer.create_community_hierarchy(
-                context.community_hierarchy, str(hierarchy_path)
+            written += _render_file(
+                output_dir / "community_hierarchy.html",
+                lambda p: renderer.create_community_hierarchy(
+                    context.community_hierarchy, p
+                ),
             )
-            written.append(hierarchy_path)
 
         return written
 
@@ -52,22 +71,23 @@ class StaticRendererAdapter(BaseRenderer):
         renderer = StaticRenderer(self.config)
         written: list[Path] = []
 
-        degree_path = output_dir / "degree_distribution.html"
-        renderer.plot_degree_distribution(context.graph, str(degree_path))
-        written.append(degree_path)
+        written += _render_file(
+            output_dir / "degree_distribution.html",
+            lambda p: renderer.plot_degree_distribution(context.graph, p),
+        )
 
         if context.centrality:
-            centrality_path = output_dir / "centrality_comparison.html"
-            renderer.plot_centrality_comparison(
-                context.centrality, str(centrality_path)
+            written += _render_file(
+                output_dir / "centrality_comparison.html",
+                lambda p: renderer.plot_centrality_comparison(context.centrality, p),
             )
-            written.append(centrality_path)
 
         if context.communities:
-            community_path = output_dir / "community_size_distribution.html"
-            renderer.plot_community_size_distribution(
-                context.communities, str(community_path)
+            written += _render_file(
+                output_dir / "community_size_distribution.html",
+                lambda p: renderer.plot_community_size_distribution(
+                    context.communities, p
+                ),
             )
-            written.append(community_path)
 
         return written

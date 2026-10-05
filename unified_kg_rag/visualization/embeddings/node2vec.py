@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from unified_kg_rag.adapters.aws import BedrockEmbeddingModelFactory
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import EmbeddingModelError, get_logger
 
 logger = get_logger(__name__)
 
@@ -21,6 +21,11 @@ class NodeEmbeddings(BaseModel):
     )
     embeddings: dict[str, np.ndarray] = Field(
         description="Mapping of node identifiers to their corresponding high-dimensional embedding vectors"
+    )
+    degraded: bool = Field(
+        default=False,
+        description="True when embedding generation failed and the result must "
+        "not be used for a semantic layout",
     )
 
     class Config:
@@ -90,10 +95,6 @@ class BedrockNodeEmbedder:
                 text = f"{name}: {description}".strip()
                 texts_to_embed.append(text)
 
-            if not texts_to_embed:
-                logger.warning("No text content found in nodes to generate embeddings.")
-                return self._generate_random_embeddings(graph)
-
             embeddings_list = self.embedding_model.embed_documents(texts_to_embed)
 
             embeddings_dict = {
@@ -118,15 +119,18 @@ class BedrockNodeEmbedder:
             )
 
         except Exception as e:
+            # Random vectors would yield a meaningless layout that looks valid,
+            # so never substitute them. Follow the error policy: fail fast, or
+            # (ignore_errors) return an explicitly degraded, empty result that
+            # the caller replaces with a topology-based layout.
+            if not self.config.processing.ignore_errors:
+                raise EmbeddingModelError(
+                    f"Failed to generate node embeddings for visualization: {e}"
+                ) from e
             logger.error(
-                "Failed to generate Bedrock embeddings: %s. Falling back to random embeddings.",
+                "Failed to generate node embeddings for visualization: %s. "
+                "The layout will be DEGRADED (no semantic positioning).",
                 e,
                 exc_info=True,
             )
-            return self._generate_random_embeddings(graph)
-
-    def _generate_random_embeddings(self, graph: nx.Graph) -> NodeEmbeddings:
-        logger.warning("Using random embeddings as a fallback.")
-        nodes = [str(node) for node in graph.nodes()]
-        embeddings = {node: np.random.normal(0, 1, self.dimensions) for node in nodes}
-        return NodeEmbeddings(nodes=nodes, embeddings=embeddings)
+            return NodeEmbeddings(nodes=[], embeddings={}, degraded=True)
