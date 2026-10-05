@@ -41,6 +41,18 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   indexing are re-run (for example `run-ingestion --force-rebuild`).
 
 ### Fixed
+- `custom_prompts` overrides for community reports
+  (`community_report_system`/`_human`), conversation-memory entity extraction
+  (`entity_extraction_*`) and the DRIFT query refinement, keyword expansion and
+  primer steps (`query_refinement_*`, `keyword_expansion_*`, `drift_primer_*`)
+  now take effect. Those chains were built without the overrides, so the
+  built-in prompts were always used.
+- Ingestion no longer writes parsed `<stem>.json` files into the source
+  directory, where the loading stage misread raw files as JSON and a re-run
+  ingested the previous output as new documents. The loading stage reuses the
+  parsed documents directly, and the JSON export now happens only when
+  `processing.document_parsing.target_directory` (or `--target-directory`) is
+  set to a directory other than the source directory.
 - Bedrock embedding calls now retry transient model errors
   (`ModelErrorException`, `ModelNotReadyException`, and service-side 5xx or
   throttling that outlast botocore's own retries) with bounded exponential
@@ -52,13 +64,24 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   per item.
 - Query-time LLM calls (strategy routing, query entity and keyword extraction,
   translation, context building, answer generation, the global-search
-  relevance and reduce steps, the DRIFT steps, and conversation-memory entity
-  extraction) now retry transient Bedrock errors such as HTTP 424
+  relevance, map and reduce steps, the DRIFT steps, and conversation-memory
+  entity extraction) now retry transient Bedrock errors such as HTTP 424
   `ModelErrorException`. A single transient model fault previously failed the
-  whole query, or silently degraded it under `ignore_errors`. The retry is
-  bounded (3 attempts, 20s budget by default) and configurable under
-  `search.llm_retry`; non-transient errors still fail fast, and ingestion
-  chains keep their existing `BatchProcessor` retry without a second layer.
+  whole query, or silently degraded it under `ignore_errors`. Non-transient
+  errors still fail fast. `setup_chain` derives the retry from
+  `model_purpose`, so ingestion chains keep their existing `BatchProcessor`
+  retry without a second layer.
+- Ingestion LLM stages no longer retry permanent Bedrock errors such as
+  `AccessDeniedException`, `ValidationException` or `ResourceNotFoundException`
+  with backoff; those fail the item on the first attempt. Transient Bedrock
+  errors, call timeouts and unparseable model output are still retried with
+  backoff.
+- With `fixing.enabled` (the default), XML output that no recovery step can
+  parse now reaches the output-fixing model, which previously never ran.
+- Embedding and query-time LLM calls share one transient-error retry policy,
+  `aws.bedrock.transient_retry` (5 attempts, 60s budget per call by default).
+  The `search.llm_retry` key used earlier in this release cycle is still
+  accepted and maps to it.
 - RRF fusion now accumulates a cross-store match. The fusion key was derived
   from a hash of the rendered content, and the graph and vector stores render
   the same artifact differently, so an entity present in both produced two keys

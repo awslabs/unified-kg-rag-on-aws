@@ -110,14 +110,13 @@ def test_embed_error_with_ignore_errors_is_marked_degraded(
     embedder = _failing_embedder(config, mocker)
     with caplog.at_level(logging.ERROR):
         out = embedder.generate_embeddings(_one_node_graph())
-    # No random substitute: an explicitly degraded, empty result.
-    assert out.degraded is True
+    # No random substitute: an empty result the layout treats as degraded.
     assert out.nodes == [] and out.embeddings == {}
     assert any("DEGRADED" in r.getMessage() for r in caplog.records)
 
 
-def test_successful_embeddings_are_not_degraded(embedder) -> None:
-    assert embedder.generate_embeddings(_one_node_graph()).degraded is False
+def test_successful_embeddings_are_not_empty(embedder) -> None:
+    assert embedder.generate_embeddings(_one_node_graph()).embeddings
 
 
 def test_unsupported_model_raises(config: Config) -> None:

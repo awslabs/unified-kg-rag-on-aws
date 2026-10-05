@@ -212,7 +212,8 @@ aws:
 > 동작을 유지하려면 `apply_to: "all"`로 설정합니다. 질의가 아닌 작업에서
 > `setup_chain`으로 체인을 만들거나 `get_model`을 직접 호출하는 사용자 코드는
 > `model_purpose=ModelPurpose.INGESTION`(또는 `EVALUATION`)을 넘겨야 합니다.
-> 지정하지 않은 호출은 `QUERY`로 간주해 Guardrail이 계속 적용됩니다.
+> 지정하지 않은 호출은 `QUERY`로 간주해 Guardrail이 계속 적용되고, `setup_chain`이
+> 질의 시점의 일시적 오류 재시도도 함께 적용합니다.
 
 > **S3 캐시 암호화:** 기본값 `encryption_type: "BUCKET_DEFAULT"`는 객체별 SSE
 > 헤더를 보내지 않으므로 S3가 버킷의 기본 암호화를 적용합니다. CDK 스택에서
@@ -319,12 +320,12 @@ processing:
     index_value: null
 ```
 
-> **파싱 결과 위치:** `document_parsing` 스테이지는 확인용으로 파싱한 파일마다
-> `<stem>.json`을 하나씩 기록합니다. `target_directory`를 지정하지 않으면(기본값)
-> 소스 코퍼스가 아니라 `<cache-directory>/parsed_documents/<pipeline-id>/`에
-> 기록합니다. `target_directory`(또는 `--target-directory`)를 명시하면 그 위치를
-> 그대로 사용하지만, 소스 디렉터리 자체로 지정할 수는 없습니다. 소스 디렉터리 안에
-> 있는 대상 디렉터리와 캐시 디렉터리는 소스 파일 탐색에서 제외합니다. 이 JSON은 확인용일
+> **파싱 결과 내보내기:** `document_parsing` 스테이지의 결과를 확인하려면
+> `target_directory`를 지정하거나 `--target-directory`를 넘깁니다. 그러면 파싱한
+> 파일마다 `<stem>.json`을 그 위치에 하나씩 기록합니다. `target_directory`를
+> 지정하지 않으면(기본값) 내보내지 않습니다. 소스 디렉터리 자체로는 지정할 수
+> 없습니다. 소스 디렉터리 안에 있는 대상 디렉터리와 캐시 디렉터리는 소스 파일
+> 탐색에서 제외합니다. 이 JSON은 확인용일
 > 뿐이며, `document_loading`은 이 디렉터리를 읽지 않고 파싱 스테이지의 결과(재개 시에는
 > 해당 스테이지 캐시)를 그대로 사용합니다.
 
@@ -617,7 +618,7 @@ evaluation:
 | 플래그 | 기본값 | 의미 |
 |---|---|---|
 | `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | 소스 문서 디렉터리. 실행에 필수이며, 플래그를 생략하면 `GRAPHRAG_SOURCE_DIRECTORY` 환경 변수로 대체됩니다. |
-| `--target-directory` | `<cache-directory>/parsed_documents/<pipeline-id>` | 파싱된 문서를 JSON으로 내보낼 위치(소스 디렉터리는 지정 불가) |
+| `--target-directory` | 없음(내보내지 않음) | 파싱된 문서를 확인용 JSON으로 내보낼 위치(소스 디렉터리는 지정 불가) |
 | `--cache-directory` | `cache` | 파이프라인 캐시 + 중간 결과 |
 | `--force-rebuild` | off | 기존 캐시를 모두 무시하고 처음부터 재구축 |
 | `--s3-sync` | off | 캐시를 S3에 동기화 (`--s3-bucket-name` 필요) |

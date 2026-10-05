@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from tqdm import tqdm
 
 from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
+from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.aws.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
@@ -119,7 +120,9 @@ class ClaimExtractor(BaseProcessor):
         self.max_workers = max_workers or default_max_workers()
         self.use_process_pool = use_process_pool
         self.show_progress = show_progress
-        self.batch_processor = BatchProcessor()
+        self.batch_processor = BatchProcessor(
+            is_transient_error=is_transient_bedrock_error
+        )
 
         self.factory = BedrockLanguageModelFactory(
             config=config,
