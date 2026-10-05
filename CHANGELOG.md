@@ -43,8 +43,6 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
 ### Changed
 Retrieval and indexing defaults changed for latency, cost, and upstream parity.
 Each previous behaviour stays available through the setting in parentheses.
-- Local search expands matched entities one hop and ranks their own chunks
-  first (`indexing.neptune.max_hops: 3` restores three hops).
 - `mix`/`hybrid` run independent retrievals concurrently; the multi-hop Neptune
   expansion is opt-in (`search.lightrag_search.enable_graph_expansion: true`).
 - DRIFT searches the original query first, fuses with the local per-type quota,

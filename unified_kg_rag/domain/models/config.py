@@ -1097,15 +1097,9 @@ class NeptuneIndexingConfig(BaseModel):
         description="Maximum character length for Neptune property values",
     )
     max_hops: int = Field(
-        default=1,
+        default=3,
         ge=1,
-        description=(
-            "Maximum number of hops for graph traversal queries. Default 1: MS "
-            "GraphRAG local search and LightRAG both expand matched entities by "
-            "one hop. Each extra hop multiplies the neighbourhood (up to "
-            "max_results_per_hop per hop) with entities increasingly unrelated "
-            "to the query, which dilute the ranked context."
-        ),
+        description="Maximum number of hops for graph traversal queries",
     )
     max_results_per_hop: int = Field(
         default=50,

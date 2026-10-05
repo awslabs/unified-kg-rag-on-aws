@@ -184,8 +184,7 @@ async def test_find_candidate_entities_no_entity_focus_falls_back_to_query() -> 
     retriever = _StubRetriever([_result("e1")])
     strat = _bare_strategy(retrievers={"document": retriever})
     query = SearchQuery(query="q", entity_focus=[], top_k=5)
-    out = await strat._find_candidate_entities(query)
-    assert [r.source for r in out] == ["e1"]
+    assert await strat._find_candidate_entities(query) == ["e1"]
     sent = retriever.last_query
     assert sent is not None
     assert sent.query == "q"
@@ -229,8 +228,8 @@ async def test_find_candidate_entities_returns_sources_and_top_k() -> None:
     )
     query = SearchQuery(query="q", entity_focus=["Alice", "Bob"])
     out = await strat._find_candidate_entities(query)
-    # Drops the result with no source; keeps the rest, in relevance order.
-    assert [r.source for r in out] == ["e1", "e2"]
+    # Drops the result with no source; keeps the rest.
+    assert out == ["e1", "e2"]
     # top_k = len(entity_focus) * multiplier = 2 * 3.
     sent = retriever.last_query
     assert sent is not None
@@ -359,34 +358,12 @@ def test_rank_text_unit_ids_orders_by_entity_support() -> None:
     assert LocalSearchStrategy._rank_text_unit_ids(nodes)[0] == "shared"
 
 
-def test_rank_text_unit_ids_breaks_ties_by_citing_entity_rank() -> None:
-    # Ties go to the chunk whose best citing entity comes first in the ranked
-    # input; raw scores are ignored because the input mixes entity-index hits
-    # and graph-expansion nodes scored on different scales.
+def test_rank_text_unit_ids_breaks_ties_by_best_entity_score() -> None:
     nodes = [
-        _result("e1", score=0.2, metadata={"text_unit_ids": ["first"]}),
-        _result("e2", score=0.8, metadata={"text_unit_ids": ["second"]}),
+        _result("e1", score=0.2, metadata={"text_unit_ids": ["low"]}),
+        _result("e2", score=0.8, metadata={"text_unit_ids": ["high"]}),
     ]
-    assert LocalSearchStrategy._rank_text_unit_ids(nodes) == ["first", "second"]
-
-
-def test_rank_text_unit_ids_counts_duplicate_ids_once_per_entity() -> None:
-    nodes = [
-        _result("e1", metadata={"text_unit_ids": ["dup", "dup"]}),
-        _result("e2", metadata={"text_unit_ids": ["a"]}),
-        _result("e3", metadata={"text_unit_ids": ["a"]}),
-    ]
-    assert LocalSearchStrategy._rank_text_unit_ids(nodes) == ["a", "dup"]
-
-
-def test_merge_entity_nodes_keeps_primary_first_and_dedups_by_id() -> None:
-    primary = [_result("e1"), _result("e2")]
-    secondary = [
-        _result("x", metadata={"id": "e2"}),
-        _result("x3", metadata={"id": "e3"}),
-    ]
-    merged = LocalSearchStrategy._merge_entity_nodes(primary, secondary)
-    assert [r.source for r in merged] == ["e1", "e2", "x3"]
+    assert LocalSearchStrategy._rank_text_unit_ids(nodes) == ["high", "low"]
 
 
 def test_rank_text_unit_ids_handles_unwrapped_single_id() -> None:

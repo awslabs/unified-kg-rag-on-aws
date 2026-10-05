@@ -437,10 +437,8 @@ indexing:
     retry_delay_seconds: 2
     property_max_length: 1000
     # Graph-traversal tuning for retrieval (neighbor expansion). max_hops is
-    # honored directly by the retriever. Default 1 = one-hop expansion of the
-    # matched entities, as in MS GraphRAG local search and LightRAG; more hops
-    # grow the neighbourhood with entities less related to the query.
-    max_hops: 1
+    # honored directly by the retriever (NeptuneIndexingConfig default 3).
+    max_hops: 3
     max_results_per_hop: 50
     min_entity_importance: 0.5
 

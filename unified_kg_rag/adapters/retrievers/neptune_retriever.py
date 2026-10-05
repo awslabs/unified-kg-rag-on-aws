@@ -28,7 +28,7 @@ logger = get_logger(__name__)
 
 class NeptuneRetriever(BaseGraphRAGRetriever):
     SEED_NODE_LIMIT: ClassVar[int] = 10
-    DEFAULT_MAX_HOPS: ClassVar[int] = 1
+    DEFAULT_MAX_HOPS: ClassVar[int] = 3
 
     def __init__(
         self,
@@ -341,16 +341,13 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             hops,
         )
 
-        # emit() BEFORE repeat() also emits the seeds themselves (loop 0); with
-        # emit() after repeat() only the neighbours reached by >=1 hop came
-        # back, so a directly matched entity was missing from its own expansion.
         traversal = (
             g.V()
             .hasLabel(entity_label)
             .has("id", P.within(seed_ids))
-            .emit()
             .repeat(__.both().dedup().limit(self._max_results_per_hop))
             .times(hops)
+            .emit()
             .dedup()
             .hasLabel(entity_label)
             .limit(query.top_k * query.retrieval_multiplier)

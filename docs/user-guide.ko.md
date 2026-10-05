@@ -493,7 +493,7 @@ indexing:
   neptune:
     batch_size: 100
     index_concurrency: 1            # >1 fans write batches over a thread pool
-    max_hops: 1                     # neighbor-expansion depth at retrieval time
+    max_hops: 3                     # neighbor-expansion depth at retrieval time
     max_results_per_hop: 50
     min_entity_importance: 0.5
 ```

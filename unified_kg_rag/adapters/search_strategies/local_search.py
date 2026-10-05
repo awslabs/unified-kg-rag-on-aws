@@ -46,8 +46,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
             ", ".join(query.entity_focus),
         )
 
-        candidate_entities = await self._find_candidate_entities(query)
-        candidate_entity_ids = [str(res.source) for res in candidate_entities]
+        candidate_entity_ids = await self._find_candidate_entities(query)
         logger.debug(
             "Found %s candidate entities: '%s%s'",
             len(candidate_entity_ids),
@@ -58,9 +57,9 @@ class LocalSearchStrategy(BaseSearchStrategy):
         expanded_entity_nodes = await self._expand_via_graph(
             query, candidate_entity_ids
         )
-        frequency_threshold = self.config.search.local_search.entity_frequency_threshold
         filtered_entity_nodes = self._filter_entities(
-            expanded_entity_nodes, frequency_threshold=frequency_threshold
+            expanded_entity_nodes,
+            frequency_threshold=self.config.search.local_search.entity_frequency_threshold,
         )
 
         expanded_entity_ids = self._get_ids(filtered_entity_nodes, "id")
@@ -71,18 +70,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
             "..." if len(expanded_entity_ids) > 5 else "",
         )
 
-        # The matched entities' own chunks are the most direct evidence, so text
-        # units are ranked over the matched entities first and their graph
-        # neighbours after (MS GraphRAG local ranks text units by the rank of
-        # the selected entities that cite them). Ranking only the expanded set
-        # lost the seeds' chunks whenever the traversal did not return them.
-        ranking_entities = self._merge_entity_nodes(
-            self._filter_entities(
-                candidate_entities, frequency_threshold=frequency_threshold
-            ),
-            filtered_entity_nodes,
-        )
-        text_unit_ids = self._rank_text_unit_ids(ranking_entities)
+        text_unit_ids = self._rank_text_unit_ids(filtered_entity_nodes)
         logger.debug(
             "Found %s text units: '%s%s'",
             len(text_unit_ids),
@@ -158,10 +146,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
             },
         )
 
-    async def _find_candidate_entities(
-        self, query: SearchQuery
-    ) -> list[RetrievalResult]:
-        """Entity-index hits for the query, in relevance order (sourceless dropped)."""
+    async def _find_candidate_entities(self, query: SearchQuery) -> list[str]:
         if not self.document_retriever:
             return []
 
@@ -190,7 +175,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
         results = await self._safe_aretrieve(
             self.document_retriever, search_query, "Candidate entity lookup"
         )
-        return [res for res in results if res.source]
+        return [res.source for res in results if res.source]
 
     async def _retrieve_claims(self, query: SearchQuery) -> list[RetrievalResult]:
         # Only consume the claims (covariate) index when extraction is enabled;
@@ -283,49 +268,42 @@ class LocalSearchStrategy(BaseSearchStrategy):
             self.document_retriever, search_query, "Relationships retrieval"
         )
 
-    @staticmethod
-    def _merge_entity_nodes(
-        primary: list[RetrievalResult], secondary: list[RetrievalResult]
-    ) -> list[RetrievalResult]:
-        """``primary`` then the ``secondary`` nodes not already in it (by id)."""
-        merged: list[RetrievalResult] = []
-        seen: set[str] = set()
-        for node in [*primary, *secondary]:
-            node_id = str(node.metadata.get("id") or node.source or "")
-            if not node_id or node_id in seen:
-                continue
-            seen.add(node_id)
-            merged.append(node)
-        return merged
-
     @classmethod
     def _rank_text_unit_ids(cls, entity_nodes: list[RetrievalResult]) -> list[str]:
-        """Text-unit ids ordered by entity support, then by citing-entity rank.
-
-        ``entity_nodes`` must be in rank order (best first). A chunk cited by
-        more of the selected entities ranks higher; ties go to the chunk whose
-        best citing entity ranks higher. This mirrors MS GraphRAG local, which
-        orders candidate text units by the selected entities that reference
-        them before applying its text-unit budget. Ranking by list position
-        rather than ``score`` keeps the order meaningful when the list mixes
-        entity-index hits and graph-expansion nodes, whose scores are on
-        different scales. The ids are later fetched by an id filter (no
-        relevance score), so this order is the only ranking they carry.
-        """
+        # Chunk candidates used to come from
+        # `_get_ids(nodes, "text_unit_ids")`, which unions them into a SET — so
+        # all ordering was lost, and `_retrieve_documents` then fetches them by
+        # id filter with `query=""` (an ID batch fetch, no relevance score). The
+        # chunk stream therefore reached fusion in arbitrary order with score 0,
+        # and whatever the per-type quota sliced off was an arbitrary subset.
+        # That is invisible while expansion is narrow and every chunk is
+        # on-topic, but it makes widening the expansion actively harmful: a
+        # measured 5x more chunks came with 4x LESS gold in the context.
+        #
+        # MS GraphRAG local ranks candidate text units by how many distinct
+        # query-relevant entities reference them, with the entity's own rank as
+        # the tiebreak, before applying its text-unit budget. Mirror that here:
+        # score each chunk by (number of referencing entities, best referencing
+        # entity score) and return ids in descending order, so downstream
+        # truncation keeps the chunks with the most graph support.
         hit_count: dict[str, int] = {}
-        best_rank: dict[str, int] = {}
-        for rank, node in enumerate(entity_nodes):
+        best_score: dict[str, float] = {}
+        for node in entity_nodes:
             ids = node.metadata.get("text_unit_ids") or []
             if isinstance(ids, str):
                 ids = [ids]
             if not isinstance(ids, list):
                 continue
-            for raw_id in dict.fromkeys(str(raw) for raw in ids):
-                hit_count[raw_id] = hit_count.get(raw_id, 0) + 1
-                best_rank.setdefault(raw_id, rank)
+            score = node.score or 0.0
+            for raw_id in ids:
+                unit_id = str(raw_id)
+                hit_count[unit_id] = hit_count.get(unit_id, 0) + 1
+                if score > best_score.get(unit_id, float("-inf")):
+                    best_score[unit_id] = score
         return sorted(
             hit_count,
-            key=lambda unit_id: (-hit_count[unit_id], best_rank[unit_id]),
+            key=lambda unit_id: (hit_count[unit_id], best_score.get(unit_id, 0.0)),
+            reverse=True,
         )
 
     @staticmethod
