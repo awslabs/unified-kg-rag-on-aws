@@ -159,7 +159,7 @@ The `domain/models/` package contains pure Pydantic models with no infrastructur
 
 **Lineage is the core data.** Entities/relationships record the `text_unit_ids` they appeared in at extraction time, and this authoritative data replaces the (old) token-overlap heuristic, judging "is this entity related to this text unit?" accurately and language-independently.
 
-**Entity IDs and multilingual support**: Entity/relationship IDs are hashes of the normalized name. `normalize_name` (`shared/utils/common.py`) applies NFKC + casefold, then **preserves letters/digits of all scripts** (`\w`, `re.UNICODE`) and removes only punctuation. As a result, Korean, CJK, and accented names also get unique IDs (ASCII-only normalization would collapse non-Latin names to empty strings, collapsing the graph). Non-empty input is never collapsed to an empty ID.
+**Entity names, IDs, and multilingual support**: `Entity.name` (and relationship `source_name`/`target_name`) keeps the *display form* the source used, only trimmed and whitespace-collapsed (`clean_display_name`), so retrieval context and community reports can quote "$1,000 penalty", "Section 4.2", or "C++" verbatim. Identity is a separate key: entity/relationship IDs are hashes of `entity_key(name)` (`shared/utils/common.py`), which applies NFKC + casefold, treats `_`/`-` as spaces, drops quote marks and commas, collapses whitespace, and strips trailing sentence punctuation, but **keeps every other symbol and the letters/digits of all scripts**. Case, whitespace, and quote variants of one name ("ACME  Corp." / "Acme Corp") therefore share an ID, while "C++" and "C#" no longer collide, and Korean, CJK, and accented names get unique IDs. A non-empty name never yields an empty key. Exact-name matching (extraction endpoint lookup, gleaner merges, claim resolution, incremental `merge_entities`) and the fuzzy matcher's shingles use the same key; the punctuation-stripping `normalize_name` is kept only for token-level similarity. **Changing the key changes every ID: graphs indexed before this scheme must be fully re-indexed** (incremental indexing would otherwise add new-ID duplicates next to the old entities).
 
 ---
 
@@ -216,7 +216,7 @@ When documents are added/changed/deleted, only the delta is processed instead of
 4. **Deletion propagation** (`remove_deleted`): Removes only the *exclusive* artifacts of deleted documents via `delete_by_id` (preserving shared entities). Targets the text-unit, entity, and relationship indices alike.
 5. **Registry update**: Records processed documents into `DocStatusRecord` as `DocumentLineage` (per-document artifact ids + suffix).
 
-**Merge semantics** (`domain/ingestion/merge/merger.py`, ported from MS GraphRAG `update/*`): Entities merge by normalized name (concatenating descriptions, union of `text_unit_ids`, recomputing `frequency`, preserving existing ids + remap); relationships merge by (source, target) (averaging weight); communities append by id-offset.
+**Merge semantics** (`domain/ingestion/merge/merger.py`, ported from MS GraphRAG `update/*`): Entities merge by identity key (`entity_key`; concatenating descriptions, union of `text_unit_ids`, recomputing `frequency`, preserving existing ids + remap); relationships merge by (source, target) (averaging weight); communities append by id-offset.
 
 Enable with: `config.aws.dynamodb.enabled = true`.
 
@@ -306,7 +306,7 @@ Each retriever build opens a Neptune WebSocket + thread pool and OpenSearch (a)s
 ### 8.7 Multilingual Processing
 
 - **OpenSearch analyzers**: The language→analyzer mapping is exposed via config (`indexing.opensearch.language_analyzers`, default `{"en": "english", "ko": "nori"}`) so it can be extended without code changes. nori (the Korean morphological analyzer) is built into OpenSearch Service. Languages without a mapping fall back to `default_analyzer`.
-- **Entity ID normalization**: `normalize_name` (`shared/utils/common.py`) applies NFKC + casefold, then preserves letters/digits of all scripts (`\w`, `re.UNICODE`) and removes only punctuation → Korean, CJK, and accented names also get unique IDs (§3). Non-empty input is not collapsed to an empty ID.
+- **Entity ID normalization**: IDs hash `entity_key` (`shared/utils/common.py`): NFKC + casefold, symbols and letters/digits of all scripts preserved, only quotes/commas/trailing punctuation dropped → Korean, CJK, and accented names get unique IDs and "C++"/"C#" stay distinct, while `Entity.name` keeps the display form (§3). Non-empty input is not collapsed to an empty ID.
 - **Translation skip**: When `TranslationConfig.is_noop` (source_language == target_language and no additional target languages), the translation stage is skipped in its entirety at no cost (`pipeline_stages.py:541`).
 - **Encoding auto-detection**: When the text parser hits a `UnicodeDecodeError` on a non-UTF-8 file, it detects the encoding via `charset-normalizer` and retries with an explicit `encoding=` (`parser.py:89`). LangChain's `autodetect_encoding=True` (which pulls in the extra `chardet` dependency) is intentionally not used.
 

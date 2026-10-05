@@ -26,9 +26,10 @@ from unified_kg_rag.domain.prompts import GraphRefinementPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
     BatchProcessor,
+    clean_display_name,
     default_max_workers,
     ensure_list,
-    normalize_name,
+    entity_key,
 )
 
 logger = get_logger(__name__)
@@ -676,9 +677,7 @@ class GraphGleaner(BaseProcessor):
                 new_entities.append(entity)
                 current_and_new_entities.append(entity)
         elif issue_type == "MISSING_RELATIONSHIP":
-            entity_name_to_id = {
-                entity.name: entity.id for entity in current_and_new_entities
-            }
+            entity_name_to_id = self.build_entity_key_index(current_and_new_entities)
             rel = self.parse_relationship_data(details, unit, entity_name_to_id)
             if rel:
                 (rel.attributes or {}).pop("_source_text", None)
@@ -705,11 +704,15 @@ class GraphGleaner(BaseProcessor):
 
     @classmethod
     def _matches(cls, left: Any, right: Any) -> bool:
-        """Case- and whitespace-insensitive comparison of two optional names."""
+        """Compare two optional names by identity key (see ``entity_key``).
+
+        Case-, whitespace-, quote- and trailing-punctuation-insensitive, so the
+        LLM's "ACME Corp." matches the stored display name "Acme Corp".
+        """
         left_clean, right_clean = cls._clean_text(left), cls._clean_text(right)
         if left_clean is None or right_clean is None:
             return False
-        return left_clean.casefold() == right_clean.casefold()
+        return entity_key(left_clean) == entity_key(right_clean)
 
     def _apply_entity_correction(
         self, details: dict[str, Any], entities: list[Entity], unit: TextUnit
@@ -741,9 +744,9 @@ class GraphGleaner(BaseProcessor):
             return False
 
         corrected: list[str] = []
-        # Extracted names go through normalize_name; a corrected one must too, or
-        # the graph would carry two spellings of the same entity.
-        corrected_name = normalize_name(
+        # Extracted names keep their display form (clean_display_name); a
+        # corrected one gets the same cleaning so both spellings are comparable.
+        corrected_name = clean_display_name(
             self._clean_text(details.get("corrected_name")) or ""
         )
         if corrected_name and corrected_name != entity.name:
@@ -896,7 +899,9 @@ class GraphGleaner(BaseProcessor):
         merged_names = []
 
         for entity in entities:
-            key = entity.name.lower()
+            # Same identity key as the entity id, so display variants
+            # ("Acme Corp" / "ACME Corp.") merge while "C++" / "C#" do not.
+            key = entity_key(entity.name)
             if key not in entities_map:
                 entities_map[key] = entity
                 type_counts[key] = {}
