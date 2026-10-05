@@ -49,6 +49,18 @@ aws:
       #           merge into one entity) and a prompt-attack filter can block
       #           instruction-like corpus text (that chunk yields no entities).
       apply_to: "query"
+    # Retry on transient Bedrock errors that botocore does not retry, such as
+    # HTTP 424 ModelErrorException. Applies to every embedding request and to
+    # query-time LLM calls (strategy routing, query entity/keyword extraction,
+    # translation, context building, answer generation, global/DRIFT steps).
+    # Validation/access errors still fail fast. Ingestion LLM calls are
+    # retried by their batch processor instead. The former search.llm_retry
+    # key is still accepted and maps here.
+    transient_retry:
+      max_attempts: 5  # total attempts per call; 1 disables the retry
+      base_delay_seconds: 2.0  # first backoff ceiling; doubles with jitter
+      max_delay_seconds: 16.0
+      max_total_seconds: 60.0  # wall-clock retry budget per call
 
   # Neptune Configuration
   neptune:
@@ -120,11 +132,11 @@ processing:
   # Document Parsing
   document_parsing:
     source_directory: # Add source directory here
-    # Where parsed documents are exported as <stem>.json (inspection only; the
-    # loading stage reuses the parsed documents in memory). null = the
-    # pipeline-owned <cache-directory>/parsed_documents/<pipeline-id>/. Must not
-    # be the source directory: .json is a parseable source format, so output
-    # there would be re-ingested as new documents on the next run.
+    # Set a directory to export each parsed document as <stem>.json for
+    # inspection (or pass --target-directory); null = no export. The loading
+    # stage reuses the parsed documents in memory and never reads the export.
+    # Must not be the source directory: .json is a parseable source format, so
+    # output there would be re-ingested as new documents on the next run.
     target_directory: null
     index_value: null
 
@@ -586,17 +598,6 @@ search:
       community: 0.10
       claim: 0.07
       general: 0.10
-
-  # Retry for query-time LLM calls (strategy routing, query entity/keyword
-  # extraction, translation, context building, answer generation, global/DRIFT
-  # steps) on transient Bedrock errors that botocore does not retry, such as
-  # HTTP 424 ModelErrorException. Validation/access errors still fail fast.
-  # Ingestion LLM calls use processing.max_retries instead.
-  llm_retry:
-    max_attempts: 3  # total attempts per call; 1 disables the retry
-    base_delay_seconds: 1.0  # first backoff ceiling; doubles with jitter
-    max_delay_seconds: 8.0
-    max_total_seconds: 20.0  # wall-clock retry budget per call
 
 # Memory Configuration
 memory:
