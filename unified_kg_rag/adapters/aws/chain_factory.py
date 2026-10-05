@@ -13,7 +13,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from langchain_classic.output_parsers import OutputFixingParser
-from langchain_core.messages import SystemMessage
 from langchain_core.output_parsers import BaseOutputParser
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -43,26 +42,25 @@ def _build_chat_prompt(
     LangChain message templates is a backend concern. When prompt caching is
     enabled, the system message carries an ephemeral cache_control marker.
     """
-    messages: list[Any]
+    system_template: str | list[str | dict[str, Any]]
     if enable_prompt_cache:
-        system_msg = SystemMessage(
-            content=[
-                {
-                    "type": "text",
-                    "text": resolved.system_prompt_template,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ]
-        )
-        messages = [
-            system_msg,
-            HumanMessagePromptTemplate.from_template(resolved.human_prompt_template),
+        # A templated content block (not a literal SystemMessage) so system-side
+        # placeholders such as {entity_types} are substituted and escaped braces
+        # render exactly as in the non-cache path; LangChain keeps extra block
+        # keys, so the cache_control marker survives formatting.
+        system_template = [
+            {
+                "type": "text",
+                "text": resolved.system_prompt_template,
+                "cache_control": {"type": "ephemeral"},
+            }
         ]
     else:
-        messages = [
-            SystemMessagePromptTemplate.from_template(resolved.system_prompt_template),
-            HumanMessagePromptTemplate.from_template(resolved.human_prompt_template),
-        ]
+        system_template = resolved.system_prompt_template
+    messages = [
+        SystemMessagePromptTemplate.from_template(system_template),
+        HumanMessagePromptTemplate.from_template(resolved.human_prompt_template),
+    ]
     return ChatPromptTemplate.from_messages(messages)
 
 
