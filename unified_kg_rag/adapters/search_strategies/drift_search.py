@@ -70,18 +70,21 @@ class DriftSearchStrategy(BaseSearchStrategy):
             model_id=self.drift_config.query_refinement_model_id,
             prompt_class=QueryRefinementPrompt,
             parser=str_output_parser,
+            custom_prompts=self.config.custom_prompts,
         )
         self.keyword_expander = setup_chain(
             factory=factory,
             model_id=self.drift_config.keyword_expansion_model_id,
             prompt_class=KeywordExpansionPrompt,
             parser=CommaSeparatedListOutputParser(),
+            custom_prompts=self.config.custom_prompts,
         )
         self.convergence_assessor = setup_chain(
             factory=factory,
             model_id=self.drift_config.convergence_assessment_model_id,
             prompt_class=ConvergenceAssessmentPrompt,
             parser=str_output_parser,
+            custom_prompts=self.config.custom_prompts,
         )
         # The HyDE primer chain is only built when the primer path is enabled,
         # so the default DRIFT flow constructs no extra chain.
@@ -91,6 +94,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 model_id=self.drift_config.primer_model_id,
                 prompt_class=DriftPrimerPrompt,
                 parser=str_output_parser,
+                custom_prompts=self.config.custom_prompts,
             )
 
     async def asearch(self, query: SearchQuery) -> SearchResult:

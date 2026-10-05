@@ -53,6 +53,7 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
             factory=factory,
             prompt_class=EntityExtractionPrompt,
             parser=CommaSeparatedListOutputParser(),
+            custom_prompts=self.config.custom_prompts,
         )
 
     def add_message(self, message: BaseMessage) -> None:

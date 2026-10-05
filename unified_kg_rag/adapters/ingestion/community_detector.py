@@ -103,6 +103,7 @@ class CommunityDetector(BaseProcessor):
                 model_id=self.community_detection_config.report_generation.report_generation_model_id,
                 prompt_class=CommunityReportPrompt,
                 parser=parser,
+                custom_prompts=self.config.custom_prompts,
             )
 
     def __call__(self, graph: nx.Graph) -> "CommunityDetector":

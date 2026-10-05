@@ -79,6 +79,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             model_id=self.global_search_config.community_relevance_model_id,
             prompt_class=CommunityRelevancePrompt,
             parser=str_output_parser,
+            custom_prompts=config.custom_prompts,
         )
         # MAP step: rate community-report key points (0-100) for the query. Cheap
         # model by default since rating is cheap. StrOutputParser + a robust JSON
@@ -96,6 +97,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             model_id=self.global_search_config.map_reduce_model_id,
             prompt_class=MapReduceSummaryPrompt,
             parser=str_output_parser,
+            custom_prompts=config.custom_prompts,
         )
         # One prepared input per map LLM call (each input already packs
         # ``map_batch_size`` reports), so BatchProcessor's own batch_size is 1;

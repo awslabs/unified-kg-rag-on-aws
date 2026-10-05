@@ -615,6 +615,7 @@ class IntelligentTextChunker(BaseChunker):
             model_id=self.chunking_config.chunking_model_id,
             prompt_class=TextChunkingPrompt,
             parser=robust_xml_output_parser,
+            custom_prompts=self.config.custom_prompts,
         )
 
         self.pre_splitter = self._create_splitter(

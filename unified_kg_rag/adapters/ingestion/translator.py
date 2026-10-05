@@ -92,6 +92,7 @@ class TextUnitTranslator:
             model_id=self.translation_config.translation_model_id,
             prompt_class=TextTranslationPrompt,
             parser=StrOutputParser(),
+            custom_prompts=config.custom_prompts,
         )
 
     def translate_text_units(self, text_units: list[TextUnit]) -> list[TextUnit]:

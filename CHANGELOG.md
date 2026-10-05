@@ -41,6 +41,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   indexing are re-run (for example `run-ingestion --force-rebuild`).
 
 ### Fixed
+- `custom_prompts` overrides for community reports
+  (`community_report_system`/`_human`), conversation-memory entity extraction
+  (`entity_extraction_*`) and the DRIFT query refinement, keyword expansion and
+  primer steps (`query_refinement_*`, `keyword_expansion_*`, `drift_primer_*`)
+  now take effect. Those chains were built without the overrides, so the
+  built-in prompts were always used.
 - Ingestion no longer writes parsed `<stem>.json` files into the source
   directory, where the loading stage misread raw files as JSON and a re-run
   ingested the previous output as new documents. The loading stage reuses the
