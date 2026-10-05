@@ -101,9 +101,18 @@ class S3CacheManager:
                     s3_key = obj.get("Key")
                     if not s3_key:
                         continue
+                    # S3 "folder markers" (zero-byte keys ending in '/', created
+                    # by the console or some sync tools) are not cache files;
+                    # downloading one onto a directory path would fail the sync.
+                    if s3_key.endswith("/"):
+                        logger.debug("Skipping S3 folder marker '%s'", s3_key)
+                        continue
+                    relative_path = Path(s3_key).relative_to(base_prefix)
+                    if relative_path == Path("."):
+                        logger.debug("Skipping S3 folder marker '%s'", s3_key)
+                        continue
 
                     total_files += 1
-                    relative_path = Path(s3_key).relative_to(base_prefix)
                     local_path = local_cache_dir / relative_path
                     # Guard against path traversal: an S3 key containing '..'
                     # segments (tampered/shared bucket) could otherwise resolve

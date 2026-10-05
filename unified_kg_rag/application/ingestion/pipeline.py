@@ -41,6 +41,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.shared import (
+    CacheSyncError,
     PipelineExecutionError,
     PipelineResumeError,
     PipelineResumeManager,
@@ -747,7 +748,19 @@ class DataIngestionPipeline:
         self.state_manager.save_pipeline_metadata(context)
 
         if self.pipeline_config.s3_sync_enabled:
-            self._sync_cache_with_s3(context.pipeline_id, "upload")
+            try:
+                self._sync_cache_with_s3(context.pipeline_id, "upload")
+            except CacheSyncError:
+                # The stages (and indexing) already ran; the failure is only the
+                # checkpoint upload. Log the summary before failing the run so
+                # operators can see what was processed and indexed.
+                logger.error(
+                    "S3 cache upload failed after the pipeline stages finished "
+                    "for '%s'; the summary below shows what this run processed",
+                    context.pipeline_id,
+                )
+                self._log_pipeline_summary(context)
+                raise
 
         self._log_pipeline_summary(context)
 

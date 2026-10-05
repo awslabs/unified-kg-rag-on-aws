@@ -10,6 +10,8 @@ the NEXT phase fail with a misleading "missing stage" error.
 from __future__ import annotations
 
 import logging
+import time
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,6 +23,7 @@ from moto import mock_aws
 from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models.pipeline import PipelineContext, PipelineStageStatus
 from unified_kg_rag.shared import AWSServiceError, CacheSyncError
 from unified_kg_rag.shared.exceptions import PipelineExecutionError
 
@@ -143,6 +146,29 @@ def test_download_with_no_remote_cache_is_not_an_error(s3_setup, tmp_path) -> No
     assert _manager(config, session).sync_pipeline_from_s3("fresh", tmp_path) == {}
 
 
+@pytest.mark.parametrize("marker", ["cache/pid/", "cache/pid/stageA/"])
+def test_download_skips_folder_marker_keys(s3_setup, tmp_path, marker) -> None:
+    # Console-created "folders" are zero-byte keys ending in '/'; they are not
+    # cache files and must not fail (or be counted by) the sync.
+    config, session = s3_setup
+    mgr = _manager(config, session)
+    src = tmp_path / "src"
+    _write_cache(src, ["stageA/a.json"])
+    mgr.sync_pipeline_to_s3("pid", src)
+    session.client("s3").put_object(Bucket=_BUCKET, Key=marker, Body=b"")
+
+    dest = tmp_path / "dest"
+    results = mgr.sync_pipeline_from_s3("pid", dest)
+    assert results == {"stageA": True}
+    assert (dest / "stageA" / "a.json").read_text(encoding="utf-8") == "{}"
+
+
+def test_download_with_only_folder_marker_is_empty(s3_setup, tmp_path) -> None:
+    config, session = s3_setup
+    session.client("s3").put_object(Bucket=_BUCKET, Key="cache/pid/", Body=b"")
+    assert _manager(config, session).sync_pipeline_from_s3("pid", tmp_path) == {}
+
+
 # --- pipeline wiring ---------------------------------------------------------
 
 
@@ -187,3 +213,29 @@ def test_cli_exits_non_zero_on_sync_failure(mocker) -> None:
     with pytest.raises(SystemExit) as exc:
         cli.main()
     assert exc.value.code == 1
+
+
+def test_upload_failure_after_stages_logs_summary_then_raises(
+    tmp_path, mocker, caplog
+) -> None:
+    pipe = _pipeline_with_failing_sync(tmp_path, mocker)
+    pipe.state_manager = mocker.MagicMock()
+    mocker.patch.object(pipe, "_create_pipeline_metrics")
+    mocker.patch.object(pipe, "_emit_metrics")
+    context = PipelineContext(
+        pipeline_id="pid",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=tmp_path,
+    )
+
+    with caplog.at_level(logging.INFO), pytest.raises(CacheSyncError):
+        pipe._finalize_pipeline_execution(context, time.time())
+
+    text = caplog.text
+    assert "S3 cache upload failed after the pipeline stages finished" in text
+    assert "PIPELINE SUMMARY" in text
+    assert "Pipeline ID: pid" in text
+    # Pipeline metadata was persisted locally before the upload was attempted.
+    pipe.state_manager.save_pipeline_metadata.assert_called_once_with(context)
