@@ -9,17 +9,18 @@
   <img src="./assets/profile.png" alt="Unified Knowledge Graph RAG on AWS" width="320">
 </p>
 
-An AWS-native knowledge graph RAG (Retrieval-Augmented Generation) framework that turns large, multilingual document corpora into a knowledge graph on Amazon Neptune and Amazon OpenSearch Service and answers questions over it with Amazon Bedrock. It reimplements Microsoft GraphRAG and LightRAG on one shared stack, so you choose the retrieval methodology per query rather than per deployment.
+An AWS-native knowledge graph RAG (Retrieval-Augmented Generation) framework that turns large, multilingual document corpora into a knowledge graph on Amazon Neptune and Amazon OpenSearch Service and answers questions over it with Amazon Bedrock, using multi-hop graph traversal to reason across document boundaries. It reimplements Microsoft GraphRAG and LightRAG on one shared stack, so you choose the retrieval methodology per query rather than per deployment. Running both methodologies on one stack, triple-hybrid search, incremental indexing, and multilingual processing are deliberate enhancements over the source papers.
 
 Read the [AWS Open Source Blog introduction](https://aws.amazon.com/ko/blogs/opensource/unified-knowledge-graph-rag-on-aws-graphrag-and-lightrag-on-one-stack/) for an overview of the architecture, both retrieval methodologies, and benchmark results.
 
 ## Why this framework
 
-- **Two methodologies on one AWS stack.** GraphRAG (community summaries) and LightRAG (dual-level keywords) share ingestion, indexing, caching, and search infrastructure; only the retrieval algorithm differs, selected per query.
+- **Two methodologies on one AWS stack.** GraphRAG (community summaries) and LightRAG (dual-level keywords) share ingestion, indexing, caching, and search infrastructure; only the retrieval algorithm differs, selected per query. Every answer returns the sources that were actually placed in the model's context.
 - **Triple-hybrid search.** BM25 lexical search, vector semantic search, and Neptune graph traversal are fused with Reciprocal Rank Fusion (RRF) and reranked with a Bedrock rerank model.
 - **Incremental indexing.** With `aws.dynamodb` enabled, a content-hash registry re-indexes only new or changed documents and merges them into the live graph. Deleting a document removes only the artifacts no other document shares.
 - **Multilingual.** Optional translation at indexing and query time, per-language OpenSearch analyzers (for example `nori` for Korean), and multilingual keyword extraction, for both methodologies.
 - **Prompt tuning.** `run-prompt-tuning` profiles a sample of your corpus (domain, language, persona, entity types) and writes domain-adapted `custom_prompts`.
+- **Graph-aware evaluation and standalone visualization.** `run-eval` adds deterministic entity and relationship coverage to LangChain and RAGAS metrics, and `run-visualization` renders an exported graph without re-ingesting.
 - **Pluggable hexagonal design.** Storage and model backends sit behind ports; search strategies, evaluators, and renderers register through registries, so you extend the framework without editing dispatch code.
 
 ## Architecture
@@ -125,7 +126,7 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for developmen
 
 ## License
 
-This project is licensed under the Apache-2.0 License. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache-2.0 License. See the [LICENSE](LICENSE) file for details. Maintained by AWS under the awslabs organization.
 
 ## Acknowledgments
 

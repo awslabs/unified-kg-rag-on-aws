@@ -9,17 +9,18 @@
   <img src="./assets/profile.png" alt="Unified Knowledge Graph RAG on AWS" width="320">
 </p>
 
-대규모 다국어 문서 코퍼스를 Amazon Neptune과 Amazon OpenSearch Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프에 대한 질문에 답하는 AWS 네이티브 지식 그래프 RAG(검색 증강 생성) 프레임워크입니다. Microsoft GraphRAG와 LightRAG를 하나의 공통 스택 위에 다시 구현했기 때문에, 검색 방법론을 배포 단위가 아니라 질의 단위로 고를 수 있습니다.
+대규모 다국어 문서 코퍼스를 Amazon Neptune과 Amazon OpenSearch Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프에 대한 질문에 답하는 AWS 네이티브 지식 그래프 RAG(검색 증강 생성) 프레임워크입니다. 멀티홉 그래프 순회로 여러 문서에 걸친 추론을 수행합니다. Microsoft GraphRAG와 LightRAG를 하나의 공통 스택 위에 다시 구현했기 때문에, 검색 방법론을 배포 단위가 아니라 질의 단위로 고를 수 있습니다. 하나의 스택에서 두 방법론 운영, 3중 하이브리드 검색, 증분 인덱싱, 다국어 처리는 원 논문을 의도적으로 확장한 부분입니다.
 
 전체 아키텍처, 두 검색 방법론과 벤치마크 결과는 [AWS Open Source Blog 소개 글](https://aws.amazon.com/ko/blogs/opensource/unified-knowledge-graph-rag-on-aws-graphrag-and-lightrag-on-one-stack/)에서 볼 수 있습니다.
 
 ## 이 프레임워크를 쓰는 이유
 
-- **하나의 AWS 스택에서 두 방법론 사용.** GraphRAG(커뮤니티 요약)와 LightRAG(이중 수준 키워드)가 인제스천, 인덱싱, 캐싱, 검색 인프라를 공유하고 검색 알고리즘만 다릅니다. 방법론은 질의마다 선택합니다.
+- **하나의 AWS 스택에서 두 방법론 사용.** GraphRAG(커뮤니티 요약)와 LightRAG(이중 수준 키워드)가 인제스천, 인덱싱, 캐싱, 검색 인프라를 공유하고 검색 알고리즘만 다릅니다. 방법론은 질의마다 선택합니다. 모든 답변에는 실제로 모델 컨텍스트에 들어간 출처가 함께 반환됩니다.
 - **3중 하이브리드 검색.** BM25 어휘 검색, 벡터 의미 검색, Neptune 그래프 순회 결과를 RRF(Reciprocal Rank Fusion)로 합치고 Bedrock 재순위 모델로 다시 정렬합니다.
 - **증분 인덱싱.** `aws.dynamodb`를 켜면 콘텐츠 해시 레지스트리가 새 문서와 변경된 문서만 다시 인덱싱해 운영 중인 그래프에 병합합니다. 문서를 삭제하면 다른 문서와 공유하지 않는 산출물만 제거합니다.
 - **다국어 지원.** 인덱싱과 질의 시점의 선택적 번역, 언어별 OpenSearch 분석기(예: 한국어 `nori`), 다국어 키워드 추출을 두 방법론 모두에 적용합니다.
 - **프롬프트 튜닝.** `run-prompt-tuning`이 코퍼스 표본을 분석(도메인, 언어, 페르소나, 엔티티 유형)해 도메인에 맞춘 `custom_prompts`를 생성합니다.
+- **그래프 인식 평가와 독립 시각화.** `run-eval`은 LangChain·RAGAS 지표에 결정적인 엔티티·관계 커버리지 지표를 더하고, `run-visualization`은 다시 인제스천하지 않고 내보낸 그래프를 렌더링합니다.
 - **교체 가능한 헥사고날 설계.** 스토리지와 모델 백엔드는 포트 뒤에 두고, 검색 전략·평가기·렌더러는 레지스트리로 등록합니다. 따라서 디스패치 코드를 고치지 않고 기능을 확장할 수 있습니다.
 
 ## 아키텍처
@@ -125,7 +126,7 @@ cdk deploy --all   # 과금 리소스 생성
 
 ## 라이선스
 
-이 프로젝트는 Apache-2.0 라이선스로 배포됩니다. 자세한 내용은 [LICENSE](./LICENSE) 파일을 참고하세요.
+이 프로젝트는 Apache-2.0 라이선스로 배포됩니다. 자세한 내용은 [LICENSE](./LICENSE) 파일을 참고하세요. AWS가 awslabs 조직에서 유지관리합니다.
 
 ## 감사의 말
 

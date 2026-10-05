@@ -777,6 +777,12 @@ Interactive mode auto-enables memory. In-session commands:
 For single-shot multi-turn from the CLI, reuse the same `--conversation-id` with
 `--use-memory`. Memory limits are under the `memory` config section.
 
+Memory also tracks entities across turns: after each user message an LLM call
+(`search.entity_extraction_model_id`) extracts the entities it mentions, and the
+most relevant ones from earlier turns are added to the next query's entity focus.
+A follow-up such as "what about its suppliers?" therefore still retrieves around
+the entity named in an earlier turn.
+
 ---
 
 ## 5. Incremental indexing
