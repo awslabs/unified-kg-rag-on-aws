@@ -52,7 +52,9 @@ class _SyncBatchChain:
         self._outputs = list(outputs)
         self.batch_inputs: list[dict] = []
 
-    def batch(self, inputs: list[dict], config: Any = None) -> list[str]:
+    def batch(
+        self, inputs: list[dict], config: Any = None, return_exceptions: bool = False
+    ) -> list[str]:
         self.batch_inputs.extend(inputs)
         out = self._outputs[: len(inputs)]
         self._outputs = self._outputs[len(inputs) :]
