@@ -351,6 +351,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             prompt_class=prompt_class,
             parser=parser,
             custom_prompts=self.config.custom_prompts,
+            retry=self.config.search.llm_retry,
             **kwargs,
         )
 

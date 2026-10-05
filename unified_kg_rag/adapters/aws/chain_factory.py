@@ -10,6 +10,9 @@ backend-agnostic ``RobustXMLOutputParser`` stays in ``shared.utils.langchain``.
 
 from __future__ import annotations
 
+import asyncio
+import time
+from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING, Any
 
 from langchain_classic.output_parsers import OutputFixingParser
@@ -19,8 +22,9 @@ from langchain_core.prompts import (
     HumanMessagePromptTemplate,
     SystemMessagePromptTemplate,
 )
-from langchain_core.runnables import Runnable
+from langchain_core.runnables import Runnable, RunnableConfig
 
+from unified_kg_rag.adapters.aws.bedrock_retry import next_transient_retry_delay
 from unified_kg_rag.domain.models import LanguageModelId, ModelPurpose
 from unified_kg_rag.domain.prompts import BasePrompt, ResolvedPrompt
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
@@ -28,7 +32,10 @@ from unified_kg_rag.shared import GraphRAGException, get_logger
 from unified_kg_rag.shared.utils.langchain import RobustXMLOutputParser
 
 if TYPE_CHECKING:
-    from unified_kg_rag.domain.models.config import CustomPromptConfig
+    from unified_kg_rag.domain.models.config import (
+        CustomPromptConfig,
+        QueryLLMRetryConfig,
+    )
 
 logger = get_logger(__name__)
 
@@ -62,6 +69,132 @@ def _build_chat_prompt(
         HumanMessagePromptTemplate.from_template(resolved.human_prompt_template),
     ]
     return ChatPromptTemplate.from_messages(messages)
+
+
+class TransientRetryRunnable(Runnable[Any, Any]):
+    """Retry a chain on transient Bedrock errors (predicate-based ``with_retry``).
+
+    LangChain's ``Runnable.with_retry`` only matches exception *types*, but a
+    transient Bedrock fault is a ``botocore.exceptions.ClientError`` whose
+    error code decides retryability (424 ``ModelErrorException`` yes,
+    ``ValidationException`` no). This wrapper applies
+    :func:`~unified_kg_rag.adapters.aws.bedrock_retry.is_transient_bedrock_error`
+    with the same bounded backoff as the embedding path. Non-transient errors
+    and exhausted retries re-raise the original exception unchanged.
+
+    ``batch``/``abatch`` use the base-class per-input ``invoke``/``ainvoke``, so
+    each input is retried independently. Streaming retries only while no chunk
+    has been emitted; once output reached the caller a failure propagates.
+    """
+
+    def __init__(
+        self, bound: Runnable[Any, Any], *, operation: str, retry: QueryLLMRetryConfig
+    ) -> None:
+        self.bound = bound
+        self.operation = operation
+        self.retry = retry
+
+    @property
+    def InputType(self) -> Any:  # noqa: N802 - LangChain API name
+        return self.bound.InputType
+
+    @property
+    def OutputType(self) -> Any:  # noqa: N802 - LangChain API name
+        return self.bound.OutputType
+
+    def _delay(
+        self, exc: BaseException, attempt: int, started_at: float
+    ) -> float | None:
+        return next_transient_retry_delay(
+            exc,
+            operation=self.operation,
+            attempt=attempt,
+            started_at=started_at,
+            max_attempts=self.retry.max_attempts,
+            base_delay=self.retry.base_delay_seconds,
+            max_delay=self.retry.max_delay_seconds,
+            max_total_seconds=self.retry.max_total_seconds,
+        )
+
+    def invoke(
+        self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
+    ) -> Any:
+        started_at = time.monotonic()
+        attempt = 1
+        while True:
+            try:
+                return self.bound.invoke(input, config, **kwargs)
+            except Exception as exc:
+                delay = self._delay(exc, attempt, started_at)
+                if delay is None:
+                    raise
+                time.sleep(delay)
+                attempt += 1
+
+    async def ainvoke(
+        self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
+    ) -> Any:
+        started_at = time.monotonic()
+        attempt = 1
+        while True:
+            try:
+                return await self.bound.ainvoke(input, config, **kwargs)
+            except Exception as exc:
+                delay = self._delay(exc, attempt, started_at)
+                if delay is None:
+                    raise
+                await asyncio.sleep(delay)
+                attempt += 1
+
+    def stream(
+        self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
+    ) -> Iterator[Any]:
+        started_at = time.monotonic()
+        attempt = 1
+        while True:
+            emitted = False
+            try:
+                for chunk in self.bound.stream(input, config, **kwargs):
+                    emitted = True
+                    yield chunk
+                return
+            except Exception as exc:
+                delay = None if emitted else self._delay(exc, attempt, started_at)
+                if delay is None:
+                    raise
+                time.sleep(delay)
+                attempt += 1
+
+    async def astream(
+        self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
+    ) -> AsyncIterator[Any]:
+        started_at = time.monotonic()
+        attempt = 1
+        while True:
+            emitted = False
+            try:
+                async for chunk in self.bound.astream(input, config, **kwargs):
+                    emitted = True
+                    yield chunk
+                return
+            except Exception as exc:
+                delay = None if emitted else self._delay(exc, attempt, started_at)
+                if delay is None:
+                    raise
+                await asyncio.sleep(delay)
+                attempt += 1
+
+
+def with_transient_retry(
+    runnable: Runnable[Any, Any],
+    *,
+    operation: str,
+    retry: QueryLLMRetryConfig | None,
+) -> Runnable[Any, Any]:
+    """Wrap ``runnable`` in :class:`TransientRetryRunnable` unless retry is off."""
+    if retry is None or retry.max_attempts <= 1:
+        return runnable
+    return TransientRetryRunnable(runnable, operation=operation, retry=retry)
 
 
 def create_robust_xml_output_parser(
@@ -103,6 +236,7 @@ def setup_chain(
     parser: BaseOutputParser,
     custom_prompts: CustomPromptConfig | None = None,
     model_purpose: ModelPurpose = ModelPurpose.QUERY,
+    retry: QueryLLMRetryConfig | None = None,
     **kwargs: Any,
 ) -> Runnable:
     """Build ``prompt | llm | parser``.
@@ -111,6 +245,11 @@ def setup_chain(
     and evaluation call sites must pass it explicitly so query-only policies
     (guardrails with ``apply_to: query``) are not applied to them. The default
     ``QUERY`` keeps an unmarked call site on the guarded, conservative side.
+
+    ``retry`` is for query-time chains only: it wraps the whole chain in a
+    transient-Bedrock-error retry. Leave it ``None`` for ingestion chains,
+    which ``BatchProcessor`` already retries; wrapping those too would
+    multiply the attempts.
     """
     try:
         llm = factory.get_model(
@@ -124,7 +263,7 @@ def setup_chain(
         prompt = _build_chat_prompt(resolved, enable_prompt_cache)
         chain: Runnable = prompt | llm | parser
         logger.debug("Successfully created LLM chain with model: '%s'", model_id.value)
-        return chain
+        return with_transient_retry(chain, operation=prompt_class.__name__, retry=retry)
     except Exception as e:
         logger.error("Failed to setup LLM chain with model '%s': %s", model_id.value, e)
         raise GraphRAGException(
