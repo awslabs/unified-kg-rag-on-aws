@@ -11,6 +11,7 @@ from unified_kg_rag.adapters.aws.bedrock import (
     BedrockLanguageModelFactory,
     BedrockRerankModelFactory,
 )
+from unified_kg_rag.domain.models.config import Config
 from unified_kg_rag.ports import ModelFactoryPort
 
 pytestmark = pytest.mark.unit
@@ -38,11 +39,31 @@ def test_boto_config_sets_bounded_connect_timeout(factory_cls) -> None:
     # Rerank API) into a prompt, catchable error instead of an indefinite block.
     # _boto_config is pure (no network / no __init__), so build via __new__.
     factory = factory_cls.__new__(factory_cls)
+    factory.config = Config()
     cfg = factory._boto_config(read_timeout=300)
     assert cfg.connect_timeout == factory_cls.BOTO_CONNECT_TIMEOUT
     assert cfg.connect_timeout is not None and cfg.connect_timeout <= 30
     # Also holds when no read_timeout is passed.
     assert factory._boto_config().connect_timeout == factory_cls.BOTO_CONNECT_TIMEOUT
+
+
+@pytest.mark.parametrize("factory_cls", _FACTORIES)
+@pytest.mark.parametrize(
+    ("max_concurrency", "chunk_concurrency", "expected"),
+    [(20, 4, 80), (1, 1, 10), (100, 10, 200)],
+)
+def test_boto_config_sizes_connection_pool_to_concurrency(
+    factory_cls, max_concurrency: int, chunk_concurrency: int, expected: int
+) -> None:
+    # Ingestion runs max_concurrency x chunk_concurrency concurrent Bedrock calls
+    # through one client; botocore's default pool of 10 would discard and
+    # re-open connections. Floor 10 (botocore default), cap 200.
+    factory = factory_cls.__new__(factory_cls)
+    factory.config = Config()
+    factory.config.processing.max_concurrency = max_concurrency
+    factory.config.processing.chunk_concurrency = chunk_concurrency
+    assert factory._boto_config(read_timeout=300).max_pool_connections == expected
+    assert factory._boto_config().max_pool_connections == expected
 
 
 def test_rerank_factory_targets_agent_runtime_endpoint() -> None:
