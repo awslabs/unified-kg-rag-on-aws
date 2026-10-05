@@ -21,7 +21,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     create_rag_chain,
 )
 from unified_kg_rag.domain.models import Constants, SearchStrategy, SearchType
-from unified_kg_rag.shared import get_config, get_logger
+from unified_kg_rag.shared import get_config, get_logger, setup_logging
 from unified_kg_rag.shared.utils import console, display_ascii_art
 
 ROOT_DIRECTORY = Path(__file__).resolve().parent.parent
@@ -81,8 +81,9 @@ class CommandLineInterface:
             action="store_true",
             help=(
                 "Enable thinking mode for language model reasoning and step-by-step "
-                "problem solving. No-op for models that always think (Claude Sonnet 5, "
-                "Fable 5); tune their depth with aws.bedrock.effort in the config"
+                "problem solving. No-op for models that always reason (Claude 4.7+ / "
+                "5.x, OpenAI GPT); tune their depth with aws.bedrock.effort in the "
+                "config"
             ),
         )
         parser.add_argument(
@@ -146,6 +147,11 @@ class RAGChainRunner:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.config = get_config(Path(args.config_path) if args.config_path else None)
+        # JSON mode keeps stdout machine-parseable (pipeable to jq): the banner,
+        # status lines and logs all go to stderr; only the JSON goes to stdout.
+        json_output = args.output_format == "json"
+        console.stderr = json_output
+        setup_logging(self.config, stream=sys.stderr if json_output else None)
         self.rag_chain: GraphRAGChain | None = None
         self.interactive_commands: dict[str, Callable] = {
             "help": self._handle_help,
@@ -206,7 +212,7 @@ class RAGChainRunner:
 
                 result = await self._run_query(rag_input)
                 if self.args.output_format == "json":
-                    print(json.dumps(result, indent=2, ensure_ascii=False))
+                    print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
                 else:
                     self._print_result(result, self.args.verbose)
 

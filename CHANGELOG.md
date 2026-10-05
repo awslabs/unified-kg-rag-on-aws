@@ -64,7 +64,7 @@ Each previous behaviour stays available through the setting in parentheses.
   (`processing.gleaning.max_rounds: 3`).
 - AUTO routes among local/mix/global/drift with Haiku
   (`search.auto_routable_strategies: [simple, local, global, drift]`,
-  `search.strategy_selection_model_id: anthropic.claude-sonnet-5`).
+  `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).
 
 ### Fixed
 - Bedrock embedding calls now retry transient model errors

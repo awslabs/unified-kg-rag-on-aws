@@ -79,7 +79,7 @@ git clone <repository-url>
 cd unified-kg-rag-on-aws
 
 # uv (recommended)
-uv sync --extra dev
+uv sync
 
 # or pip
 pip install -e .
@@ -94,6 +94,14 @@ pip install -e .
 제거한 `unstructured>=0.24.0`을 사용합니다. Python 3.10에서는 이 추가 패키지를
 선택해도 파서가 설치되지 않습니다. PDF/TXT/CSV/JSON을 사용하거나,
 Markdown/HTML 지원이 필요하면 Python 버전을 올리세요.
+
+배포용 컨테이너 이미지(`docker/Dockerfile`)는 이 추가 패키지가 약 200MB(spaCy 등)를
+더하므로 기본적으로 포함하지 않습니다. 따라서 Step Functions로 `.md`/`.html` 파일을
+수집하면 "No supported files found" 오류로 실패합니다. 해당 파일을 지원 포맷으로
+변환하거나, 추가 패키지를 넣어 이미지를 빌드하세요:
+`docker build --build-arg UV_EXTRAS="--extra unstructured" -f docker/Dockerfile .`.
+이미지에는 엔드포인트가 없는 `docker/config.yaml`이 포함되며, 엔드포인트는 CDK
+compute 스택이 환경 변수로 주입합니다.
 
 ### 인증
 
@@ -224,9 +232,27 @@ aws:
 
 #### 모델 선택 주의사항
 
-기본값은 추론 비중이 큰 단계에 `anthropic.claude-sonnet-5`, 경량 단계(요약·번역·
-키워드 추출)에 `anthropic.claude-haiku-4-5-...`입니다. Claude 4.7 이후 모델은 세
-가지가 다릅니다.
+기본값은 추론 비중이 큰 단계에 `anthropic.claude-sonnet-5-5`(Claude Sonnet 5.5),
+경량 단계(요약·번역·키워드 추출)에 `anthropic.claude-haiku-4-5-...`입니다. 모든
+`*_model_id`에는 기존 Claude 3.x/4.x ID와 함께 다음 모델을 지정할 수 있습니다.
+
+| 모델 ID | 공급자 | 컨텍스트 / 최대 출력 | 추론 제어 |
+| --- | --- | --- | --- |
+| `anthropic.claude-sonnet-5-5`(기본값) | Anthropic | 1M / 128K | adaptive, 항상 켜짐. `effort` low–max |
+| `anthropic.claude-opus-5-5` | Anthropic | 1M / 128K | adaptive, 항상 켜짐. `effort` low–max |
+| `anthropic.claude-sonnet-5`, `anthropic.claude-opus-5` | Anthropic | 1M / 128K | adaptive, 항상 켜짐. `effort` |
+| `anthropic.claude-opus-4-8`, `anthropic.claude-opus-4-7` | Anthropic | 1M / 128K | adaptive, 항상 켜짐. `effort` low–max |
+| `anthropic.claude-opus-4-6-v1` | Anthropic | 1M / 128K | 선택(`--enable-thinking`), adaptive. `effort` low/medium/high/max |
+| `anthropic.claude-sonnet-4-6` | Anthropic | 1M / 64K | 선택, adaptive. `effort` low/medium/high/max |
+| `openai.gpt-6.1-sol` | OpenAI | 1M / 131K | `reasoning.effort` low–max, 항상 켜짐 |
+| `openai.gpt-6-astra`, `openai.gpt-6-sol`, `openai.gpt-6-luna` | OpenAI | 1.05M / 128K | `reasoning.effort` low–max, 항상 켜짐 |
+| `openai.gpt-5.6-sol`, `openai.gpt-5.6-terra`, `openai.gpt-5.6-luna` | OpenAI | 1.05M / 128K | `reasoning.effort` low–max, 항상 켜짐 |
+| `openai.gpt-5.5`, `openai.gpt-5.4` | OpenAI | 1.05M / 128K | `reasoning.effort` low–max, 항상 켜짐 |
+
+모두 추론 프로파일 전용입니다. OpenAI는 독점 GPT 모델만 지원하며 오픈 웨이트
+`gpt-oss` 모델은 제외했습니다.
+
+Claude 4.7 이후 모델은 세 가지가 다릅니다.
 
 - **추론 프로파일이 필수입니다.** `ON_DEMAND` 처리량 없이 출시되므로 순수 모델
   ID로는 호출할 수 없고 크로스 리전 프로파일이 반드시 해석돼야 합니다.
@@ -236,22 +262,36 @@ aws:
   없으므로, 글로벌 프로파일을 끄면 사용 경로가 없습니다.
 - **`effort`가 사고 토큰 예산을 대체합니다.** 이 모델들에서는
   `thinking_budget_tokens`가 무시됩니다(기존 `budget_tokens` 형식은 400으로
-  거부됨). 대신 `bedrock.effort`를 설정하세요. Claude Sonnet 5는 사고를 끌 수 없어
-  `--enable-thinking`이 무의미하며, 깊이는 `effort`로만 조절합니다.
+  거부됨). 대신 `bedrock.effort`를 설정하세요. Claude Sonnet 5.5는 사고를 끌 수
+  없어 `--enable-thinking`이 무의미하며, 깊이는 `effort`로만 조절합니다.
+  모델이 받지 않는 수준(예: Opus·Sonnet 4.6의 `xhigh`)은 즉시 실패합니다.
 - **샘플링 파라미터가 제거됩니다.** `temperature`/`top_k`는 수용되지 않으므로
   요청에서 자동 생략됩니다. 동작 제어는 프롬프트로 하세요.
 
-`anthropic.claude-fable-5`는 의도적으로 선택 가능한 모델에서 제외했습니다. 계정의
-데이터 보존 모드가 `provider_data_share`여야 하는데(Data Retention API로만 설정
-가능 — 콘솔 UI 없음) 대부분의 계정에서는 *"data retention mode 'default' is not
-available for this model"*로 실패하며, 단가도 Opus 티어를 넘습니다.
+OpenAI GPT 모델은 Claude와 다음이 다릅니다.
+
+- 항상 `us.`/`global.` 추론 프로파일에서 Converse API로 호출합니다. `apac.`/`eu.`
+  지역 프로파일이 없으므로 미국 외 리전에서는 `enable_global_profile: true`를
+  유지하세요. `bedrock.effort`는
+  `reasoning: {effort: ...}`로 전달됩니다(평면 필드 `reasoning_effort`는 거부됨).
+  GPT-5.6과 GPT-6.x는 `effort: low`에서도 짧은 프롬프트 응답에 약 10~25초가
+  걸렸으므로 타임아웃과 동시성을 이에 맞춰 설정하세요.
+- Anthropic 전용 필드(`thinking`, `output_config`, `anthropic_beta`, `\n\nHuman:`
+  중지 시퀀스)를 보내지 않으며 샘플링 파라미터도 생략합니다.
+- 명시적 프롬프트 캐시 마커를 보내지 않습니다. 이 모델들은 Converse에서 암묵적
+  캐싱만 지원합니다. Bedrock CountTokens도 지원하지 않으므로 검색 컨텍스트 예산은
+  로컬 토큰 추정치를 사용합니다.
+
+Claude Fable 5 / 5.1은 제공하지 않습니다. 기본값이 아닌 계정 데이터 보존 모드
+(Data Retention API로만 설정)가 필요하며, 기본 모드 계정에서는 모든 호출이
+`data retention mode 'default' is not available for this model`로 거부됩니다.
 
 ### 2.2 `fixing` — 잘못된 형식의 모델 출력 자동 복구
 
 ```yaml
 fixing:
   enabled: true
-  fixing_model_id: "anthropic.claude-sonnet-5"
+  fixing_model_id: "anthropic.claude-sonnet-5-5"
 ```
 
 구조화된 스테이지에서 LLM이 잘못된 형식의 JSON을 반환하면, 실행을 실패시키는 대신
@@ -324,7 +364,7 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 
 ```yaml
   graph_extraction:
-    extraction_model_id: "anthropic.claude-sonnet-5"
+    extraction_model_id: "anthropic.claude-sonnet-5-5"
     max_entities_per_chunk: 50
     max_relationships_per_chunk: 50
     entity_confidence_threshold: 0.0
@@ -361,7 +401,7 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 ```yaml
   gleaning:
     enabled: true
-    graph_refinement_model_id: "anthropic.claude-sonnet-5"
+    graph_refinement_model_id: "anthropic.claude-sonnet-5-5"
     max_rounds: 3
     convergence_threshold: 0.8
     quality_threshold: 0.9
@@ -376,7 +416,7 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 ```yaml
   claim_extraction:
     enabled: false
-    extraction_model_id: "anthropic.claude-sonnet-5"
+    extraction_model_id: "anthropic.claude-sonnet-5-5"
     max_entities_per_prompt: 100
 ```
 
@@ -408,15 +448,17 @@ graph:
     auto_resolution: true
     report_generation:              # LLM-generated community summaries (used by global search)
       enabled: true
-      report_generation_model_id: "anthropic.claude-sonnet-5"
+      report_generation_model_id: "anthropic.claude-sonnet-5-5"
       max_entities_per_report: 50
       max_report_context_tokens: 4000
 
   visualization:
     enabled: true
-    outputs_directory: "outputs/visualization"
+    # outputs_directory: 미설정 -> <cache dir>/<pipeline_id>/visualization
     embedding_method: "node2vec"
     layout_method: "umap"           # umap | tsne | pca
+    interactive:
+      max_nodes: 2000               # 연결 수 기준 상위 N개 노드, 0/null = 제한 없음
 ```
 
 ### 2.5 `indexing` — OpenSearch & Neptune 쓰기 측
@@ -445,7 +487,8 @@ indexing:
       m: 24
       ef_search: 100
       space_type: "cosinesimil"
-      engine: "faiss"               # faiss is the modern kNN engine (nmslib deprecated)
+      engine: "lucene"              # 모든 버전에서 cosinesimil 지원, 최대 1024차원
+                                    # (config-template.yaml의 엔진 설명 참고)
 
   neptune:
     batch_size: 100
@@ -464,11 +507,11 @@ indexing:
 ```yaml
 search:
   translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
-  entity_extraction_model_id: "anthropic.claude-sonnet-5"
+  entity_extraction_model_id: "anthropic.claude-sonnet-5-5"
   strategy_selection_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"   # the `auto` router
   auto_routable_strategies: ["local", "mix", "global", "drift"]  # `auto`가 고를 수 있는 전략
-  context_building_model_id: "anthropic.claude-sonnet-5"
-  answer_generation_model_id: "anthropic.claude-sonnet-5"    # the answer LLM
+  context_building_model_id: "anthropic.claude-sonnet-5-5"
+  answer_generation_model_id: "anthropic.claude-sonnet-5-5"    # the answer LLM
 
   hybrid:
     lexical_weight: 0.5
@@ -544,13 +587,16 @@ logging:
 ```yaml
 evaluation:
   outputs_directory: "outputs/evaluation"
-  evaluation_model_id: "anthropic.claude-sonnet-5"
+  evaluation_model_id: "anthropic.claude-sonnet-5-5"
   enabled_evaluators:
     - langchain
     - ragas
     # - graph_aware                # opt-in; needs expected_entities/relationships
+    # - retrieval                  # opt-in; needs reference_sources
+    # - answer_match               # opt-in; needs answer (or metadata.answer_aliases)
   langchain_metrics: [correctness, partial_correctness]
   ragas_metrics: [answer_correctness, answer_relevancy, context_precision, context_recall, faithfulness]
+  retrieval_k: 5                   # cutoff for the retrieval evaluator's hit@k / recall@k
   save_detailed_results: true
 ```
 
@@ -769,6 +815,11 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 CLI에서 단발 멀티턴을 하려면 동일한 `--conversation-id`를 `--use-memory`와 함께
 재사용하세요. 메모리 제한은 `memory` 설정 섹션 아래에 있습니다.
 
+메모리는 대화 턴 사이의 엔티티도 추적합니다. 사용자 메시지마다 LLM
+(`search.entity_extraction_model_id`)이 언급된 엔티티를 추출하고, 이전 턴에서 나온
+주요 엔티티를 다음 질의의 엔티티 초점에 더합니다. 그래서 "그 회사의 공급업체는?"
+같은 후속 질문도 앞선 턴에서 언급한 엔티티를 중심으로 검색합니다.
+
 ---
 
 ## 5. 증분 인덱싱
@@ -824,6 +875,7 @@ aws:
 | `--search-type` | `hybrid` | 검색 방법 |
 | `--top-k` | `10` | 최대 결과 수 |
 | `--retrieval-multiplier` | `1` | 검색 깊이 |
+| `--max-failure-rate` | `1.0` | 답변 생성에 실패한 질문의 비율이 이 값(0.0-1.0)을 넘으면 0이 아닌 코드로 종료. 모든 질문이 실패한 실행은 항상 0이 아닌 코드로 종료 |
 | `--verbose`, `-v` | off | 디버그 로깅 |
 | `--config-path` | — | `config.yaml` 경로 |
 
@@ -837,12 +889,25 @@ aws:
   `context_precision`, `context_recall`, `faithfulness`).
 - **`graph_aware`** — 결정적이고 **LLM 불필요**한 엔티티/관계 **커버리지 =
   recall**: 기대되는 그래프 아티팩트 중 몇 개가 생성된 답변에 나타나는지(대소문자
-  무관 부분 문자열 매칭). 데이터셋에 `expected_entities` /
-  `expected_relationships`가 필요합니다. **precision과 F1은 의도적으로
+  무관 단어 단위 매칭, 띄어쓰기 없는 CJK 텍스트는 부분 문자열 매칭).
+  `{"source": "A", "target": "B"}` 또는 `"A -> B"` 형식의 관계는 답변이 양 끝
+  엔티티를 모두 언급하면 매칭으로 보고, 그 밖의 문자열은 구문 그대로 나타나야
+  합니다. 데이터셋에 `expected_entities` / `expected_relationships`가 필요합니다. **precision과 F1은 의도적으로
   미산출**됩니다 — 자유 텍스트 답변에서 모든 엔티티를 열거하는 것은 신뢰성 있게
   불가능하므로, precision/F1을 보고하는 것은 recall 신호에 다른 이름표만
   붙이는 셈이기 때문입니다. (`enabled_evaluators`에서 `graph_aware`의 주석을
   해제하여 opt-in.)
+- **`retrieval`** — 결정적이고 LLM 불필요: 답변 모델이 본 소스에 정답 문서가
+  포함됐는지를 `reference_sources`와 비교해 `hit_at_k`, `recall_at_k`(k =
+  `evaluation.retrieval_k`, 기본값 5), `mrr`(보고된 전체 소스 기준)로 산출합니다.
+  참조와 소스는 파일 이름의 stem이 대소문자 무관하게 같거나(디렉터리와 확장자
+  무시: `docs/Terms.pdf` = `terms.pdf` = `terms`), 참조가 소스의 문서 ID와 같으면
+  매칭됩니다. `reference_sources`가 없거나 문서 ID/파일 이름을 가진 소스가 하나도
+  없으면 건너뜁니다.
+- **`answer_match`** — 결정적이고 LLM 불필요한 SQuAD 방식 `exact_match`와
+  `token_f1`(소문자화, 문장 부호와 영어 관사 제거)을 `answer`와 선택 항목
+  `metadata.answer_aliases`에 대해 계산하고 최댓값을 씁니다. 토큰 F1은 공백으로
+  나누므로 중국어/일본어 텍스트에서는 exact match와 같아집니다.
 
 ### 평가 데이터 포맷
 
@@ -860,8 +925,11 @@ aws:
     "difficulty": "easy",
     "reference_sources": ["doc1.pdf", "doc2.txt"],
     "expected_entities": ["AI", "machine learning", "data processing"],
-    "expected_relationships": ["AI enables machine learning"],
-    "metadata": { "search_strategy": "global" }
+    "expected_relationships": [
+      { "source": "AI", "target": "machine learning" },
+      "machine learning -> data processing"
+    ],
+    "metadata": { "search_strategy": "global", "answer_aliases": ["AI and ML"] }
   },
   {
     "id": "q2",
@@ -871,7 +939,10 @@ aws:
 ```
 
 항목별 `metadata`(예: `search_strategy`)는 해당 질문에 대해 CLI 기본값을
-오버라이드합니다. `id`는 `query_id`로 줄 수도 있습니다.
+오버라이드합니다. `id`는 `query_id`로 줄 수도 있습니다. 파일은 질문을 실행하기
+전에 검증합니다. 데이터셋이 비었거나, 배열이 아니거나, `question`이 없거나, ID가
+중복되거나, 필드 타입이 틀리거나, RAG 체인이 거부할 `metadata` 값(예: 알 수 없는
+`search_strategy`)이 있으면 항목 인덱스와 ID를 담은 오류로 실행을 멈춥니다.
 
 ### 예시
 
@@ -884,8 +955,19 @@ run-eval --eval-data-path my_eval_data.json \
   --search-strategy global --search-type vector --config-path config.yaml
 ```
 
-결과(질의별 상세 + 지표별 평균/중앙값/표준편차/최소/최대 요약)는 출력
-디렉터리에 기록됩니다.
+결과는 출력 디렉터리에 `evaluation_{results,reports,summary}_<timestamp>.json`으로
+기록되며, 답변한 모든 질문이 같은 전략을 썼다면 파일 이름이
+`..._<strategy>_<timestamp>.json`이 됩니다. 요약에는 지표별
+평균/중앙값/표준편차/최소/최대/개수(`metric_statistics`)와 scored/failed/skipped
+개수(`metric_outcomes`)에 더해 다음이 담깁니다.
+
+- `grouped_statistics` — 같은 통계를 `search_strategy`(실제로 사용한 전략이며
+  `auto`에서는 질문마다 다를 수 있음), `category`, `difficulty`별로 나눈 값.
+- `run_manifest` — CLI 인자, 모델 ID(답변 생성, 평가 judge/임베딩), 패키지 버전,
+  데이터셋 경로와 sha256, UTC 타임스탬프. 두 실행을 비교할 때 사용합니다.
+
+각 결과에는 `retrieved_source_ids`(보고된 소스별 문서 ID와 파일 이름, 순위 순)도
+기록됩니다.
 
 ---
 
@@ -896,9 +978,13 @@ run-eval --eval-data-path my_eval_data.json \
 
 `graph.visualization.enabled`가 `true`이면 `run-ingestion`의 커뮤니티 탐지
 단계가 시각화를 렌더링하면서 `graph.visualization.outputs_directory`에
-`visualization_data.json`도 기록합니다(기본값
-`outputs/visualization/visualization_data.json`). 이 파일이 `--data-path`
-입력입니다. 그래프 노드·엣지, 계산된 `layout`, 커뮤니티 계층, 중심성을 담으며,
+`visualization_data.json`도 기록합니다. 이 값을 설정하지 않으면(기본값)
+인제스천은 `<cache.local_directory>/<pipeline_id>/visualization/`에 기록하므로,
+S3 캐시 동기화를 켜면 `visualization_data.json`이 캐시와 함께 업로드됩니다(동기화는
+`.json` 파일만 복사하므로 HTML은 `run-visualization`으로 로컬에서 다시
+렌더링합니다). 이 파일이 `--data-path` 입력입니다. 인터랙티브 그래프는 브라우저에서
+열 수 있도록 연결 수 기준 상위 `interactive.max_nodes`개 노드(기본 2000)만
+남깁니다. 그래프 노드·엣지, 계산된 `layout`, 커뮤니티 계층, 중심성을 담으며,
 파일 크기를 줄이기 위해 벡터 속성(`embedding`, `*_embedding`)은 제외합니다.
 
 레이아웃과 오류 처리:
@@ -951,7 +1037,7 @@ run-visualization --data-path visualization_data.json --renderers interactive --
 
 | 플래그 | 기본값 | 의미 |
 |---|---|---|
-| `--source-directory` | **필수** | 텍스트 문서 디렉터리 (`.txt`, `.md`, `.markdown`); `--source-dir`도 별칭으로 허용 |
+| `--source-directory` | **필수** | 문서 디렉터리 (`.txt`/`.md`/`.markdown`과 `run-ingestion`이 파싱하는 모든 포맷, 예: `.pdf`); `--source-dir`도 별칭으로 허용 |
 | `--output` | `tuned_prompts.yaml` | 출력 YAML 경로 |
 | `--max-docs` | `20` | 샘플링할 최대 문서 수 |
 | `--config-path` | — | `config.yaml` 경로 |
@@ -962,8 +1048,9 @@ run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --conf
 
 출력 YAML에는 `custom_prompts` 블록(과 감지된 도메인이 담긴 `profile`)이
 포함됩니다. **검토한 후** 원하는 프롬프트를 `config.yaml`의 `custom_prompts:`
-아래로 복사하세요. 프로파일링에는 일반 텍스트 포맷(`.txt`/`.md`/`.markdown`)만
-읽는다는 점에 유의하세요.
+아래로 복사하세요. 일반 텍스트 파일은 그대로 읽고, 그 밖의 포맷(PDF, CSV, JSON,
+`ParserFactory.register_loader`로 등록한 포맷)은 인제스션과 같은 로더로 파싱합니다.
+파싱에 실패한 파일은 경고를 남기고 건너뜁니다.
 
 ---
 

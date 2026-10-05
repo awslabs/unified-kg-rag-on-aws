@@ -16,24 +16,41 @@ from pathlib import Path
 
 import yaml
 
+from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.application.prompts.tuner import PromptTuner
-from unified_kg_rag.shared import get_config, get_logger
+from unified_kg_rag.domain.models import Config
+from unified_kg_rag.shared import get_config, get_logger, setup_logging
 
 logger = get_logger(__name__)
 
+# Read as-is: plain text needs no loader (and .md would otherwise require the
+# optional `unstructured` package). Every other format goes through the same
+# ParserFactory loaders as ingestion (PDF, CSV, JSON, registered custom ones).
 _TEXT_SUFFIXES = {".txt", ".md", ".markdown"}
 
 
-def load_corpus_texts(source_dir: Path, max_docs: int) -> list[str]:
-    """Read plain-text documents from ``source_dir`` (up to ``max_docs``)."""
+def load_corpus_texts(
+    source_dir: Path, max_docs: int, config: Config | None = None
+) -> list[str]:
+    """Read up to ``max_docs`` documents from ``source_dir`` as text."""
+    config = config or Config()
+    supported = _TEXT_SUFFIXES | set(ParserFactory.get_supported_extensions())
     texts: list[str] = []
     for path in sorted(source_dir.rglob("*")):
-        if path.suffix.lower() not in _TEXT_SUFFIXES:
+        suffix = path.suffix.lower()
+        if not path.is_file() or suffix not in supported:
             continue
         try:
-            texts.append(path.read_text(encoding="utf-8"))
+            if suffix in _TEXT_SUFFIXES:
+                text = path.read_text(encoding="utf-8")
+            else:
+                document = ParserFactory.create_parser(path, config).parse_file(path)
+                text = (document.content.text if document.content else None) or ""
         except Exception as e:
             logger.warning("Could not read %s: %s", path, e)
+            continue
+        if text.strip():
+            texts.append(text)
         if len(texts) >= max_docs:
             break
     return texts
@@ -51,7 +68,10 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="source_directory",
         required=True,
         type=Path,
-        help="Directory of text documents (.txt/.md) to sample",
+        help=(
+            "Directory of documents to sample (.txt/.md plus every format "
+            "run-ingestion parses, e.g. .pdf)"
+        ),
     )
     parser.add_argument(
         "--output", type=Path, default=Path("tuned_prompts.yaml"), help="Output YAML"
@@ -69,8 +89,9 @@ def main() -> int:
     args = _build_parser().parse_args()
     try:
         config = get_config(args.config_path)
+        setup_logging(config)
 
-        texts = load_corpus_texts(args.source_directory, args.max_docs)
+        texts = load_corpus_texts(args.source_directory, args.max_docs, config)
         if not texts:
             logger.error("No text documents found under '%s'", args.source_directory)
             return 1

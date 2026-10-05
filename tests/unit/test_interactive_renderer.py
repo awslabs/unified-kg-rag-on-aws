@@ -76,6 +76,21 @@ class TestNetworkVisualization:
         InteractiveRenderer({}).create_network_visualization(_graph(), layout, str(out))
         assert out.exists()
 
+    def test_max_nodes_keeps_top_nodes_by_degree(self, tmp_path: Path, mocker) -> None:
+        renderer = InteractiveRenderer({"max_nodes": 2})
+        add_nodes = mocker.spy(renderer, "_add_nodes")
+        renderer.create_network_visualization(_graph(), {}, str(tmp_path / "g.html"))
+        rendered = add_nodes.call_args.args[1]
+        # e2 (degree 2) is kept; one of the degree-1 nodes fills the second slot.
+        assert rendered.number_of_nodes() == 2
+        assert "e2" in rendered
+
+    def test_max_nodes_zero_disables_cap(self, tmp_path: Path, mocker) -> None:
+        renderer = InteractiveRenderer({"max_nodes": 0})
+        add_nodes = mocker.spy(renderer, "_add_nodes")
+        renderer.create_network_visualization(_graph(), {}, str(tmp_path / "g.html"))
+        assert add_nodes.call_args.args[1].number_of_nodes() == 3
+
     def test_empty_graph_writes_nothing(self, tmp_path: Path) -> None:
         out = tmp_path / "graph.html"
         InteractiveRenderer({}).create_network_visualization(nx.Graph(), {}, str(out))

@@ -245,7 +245,7 @@ class ClaimExtractor(BaseProcessor):
                 as_completed(future_to_unit),
                 total=len(text_units),
                 desc="Preparing Claim Inputs",
-                disable=not self.show_progress,
+                disable=None if self.show_progress else True,
             ):
                 unit = future_to_unit[future]
                 try:

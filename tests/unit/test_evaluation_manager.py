@@ -36,6 +36,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.evaluation.evaluation_manager import GraphAwareEvaluator
+from unified_kg_rag.shared import EvaluationException
 
 pytestmark = pytest.mark.unit
 
@@ -100,21 +101,51 @@ class TestLoadData:
         queries, _ = EvaluationManager.load_data(path)
         assert [q.query_id for q in queries] == ["qq", "ii", "q_2"]
 
-    def test_skips_items_without_question(self, tmp_path) -> None:
+    @pytest.mark.parametrize(
+        ("payload", "match"),
+        [
+            ({"questions": []}, "must be a JSON array"),
+            ([], "contains no queries"),
+            ([{"question": "ok"}, "not a dict"], "index 1: expected an object"),
+            ([{"id": "a1", "answer": "x"}], "index 0 \\(query_id 'a1'\\).*question"),
+            ([{"question": "  "}], "question"),
+            ([{"question": "q", "metadata": []}], "'metadata' must be an object"),
+            (
+                [{"question": "q"}, {"id": "q_0", "question": "r"}],
+                "duplicate query_id 'q_0'",
+            ),
+            (
+                [{"id": "s1", "question": "q", "metadata": {"search_strategy": "x"}}],
+                "(?s)query_id 's1'.*search_strategy",
+            ),
+            (
+                [{"id": "t1", "question": "q", "expected_entities": "Vendor"}],
+                "(?s)query_id 't1'.*expected_entities",
+            ),
+        ],
+    )
+    def test_invalid_dataset_fails_fast_with_location(
+        self, tmp_path, payload, match
+    ) -> None:
+        path = tmp_path / "data.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.raises(EvaluationException, match=match):
+            EvaluationManager.load_data(path)
+
+    def test_base_metadata_is_validated_too(self, tmp_path) -> None:
+        path = tmp_path / "data.json"
+        path.write_text(json.dumps([{"question": "q"}]), encoding="utf-8")
+        with pytest.raises(EvaluationException, match="top_k"):
+            EvaluationManager.load_data(path, base_metadata={"top_k": "many"})
+
+    def test_non_rag_metadata_keys_pass_through(self, tmp_path) -> None:
         path = tmp_path / "data.json"
         path.write_text(
-            json.dumps(
-                [
-                    {"question": "ok", "answer": "a"},
-                    {"answer": "no question"},  # skipped
-                    "not a dict",  # skipped
-                ]
-            ),
+            json.dumps([{"question": "q", "metadata": {"answer_aliases": ["x"]}}]),
             encoding="utf-8",
         )
-        queries, gts = EvaluationManager.load_data(path)
-        assert len(queries) == 1
-        assert queries[0].question == "ok"
+        queries, _ = EvaluationManager.load_data(path)
+        assert queries[0].metadata["answer_aliases"] == ["x"]
 
     def test_ground_truth_built_from_expected_only(self, tmp_path) -> None:
         # No textual answer, but expected_entities present -> still build a GT.
@@ -537,7 +568,7 @@ class TestSummaryBackwardCompat:
                 }
             ]
         )
-        assert out == [str({"content": "Vendor ships parts…"})]
+        assert out == ["Vendor ships parts…"]
 
     def test_truncated_flag_in_metadata_only_is_honoured(self, config: Config) -> None:
         out = _graph_aware_manager(config).create_lean_context_strings(
@@ -548,16 +579,113 @@ class TestSummaryBackwardCompat:
                 }
             ]
         )
-        assert out == [str({"content": "short"})]
+        assert out == ["short"]
 
-    def test_untruncated_source_keeps_metadata_fields(self, config: Config) -> None:
+    def test_untruncated_source_uses_content_without_duplication(
+        self, config: Config
+    ) -> None:
+        # `content` already embeds the report's name/summary; re-adding the
+        # metadata fields would hand RAGAS the same text twice.
+        content = "Report: Vendor network\nSummary: Vendor supplies Buyer."
         out = _graph_aware_manager(config).create_lean_context_strings(
             [
                 {
-                    "content": "c",
+                    "content": content,
                     "truncated": False,
-                    "metadata": {"truncated": False, "description": "d"},
+                    "metadata": {
+                        "truncated": False,
+                        "name": "Vendor network",
+                        "summary": "Vendor supplies Buyer.",
+                        "full_content": "Vendor supplies Buyer.",
+                    },
                 }
             ]
         )
-        assert "description" in out[0] and "content" in out[0]
+        assert out == [content]
+
+    def test_empty_content_falls_back_to_metadata_fields(self, config: Config) -> None:
+        out = _graph_aware_manager(config).create_lean_context_strings(
+            [{"content": "", "metadata": {"description": "d"}}]
+        )
+        assert "description" in out[0]
+
+    def test_truncated_without_content_is_minimal_info(self, config: Config) -> None:
+        out = _graph_aware_manager(config).create_lean_context_strings(
+            [{"source": "r1", "truncated": True, "metadata": {"summary": "long"}}]
+        )
+        assert out == [str({"source": "r1"})]
+
+
+class TestComparability:
+    async def _run(self, config: Config, strategies: dict[str, str]):
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        chain = _FakeChain(
+            {
+                q: _rag_output("Vendor", {"search_strategy": s, "processing_time": 1})
+                for q, s in strategies.items()
+            }
+        )
+        manager = EvaluationManager(config, rag_chain=chain)
+        queries = [
+            EvaluationQuery(
+                query_id=f"q{i}",
+                question=q,
+                category="lookup" if i % 2 == 0 else None,
+                difficulty="easy",
+            )
+            for i, q in enumerate(strategies)
+        ]
+        gts = [
+            EvaluationGroundTruth(query_id="q0", ground_truth="Vendor"),
+            EvaluationGroundTruth(query_id="q1", ground_truth="Buyer"),
+        ]
+        return manager, *await manager.evaluate_dataset(
+            queries, gts, show_progress=False
+        )
+
+    async def test_grouped_by_actual_strategy_category_difficulty(
+        self, config: Config
+    ) -> None:
+        _, _, _, summary = await self._run(config, {"A?": "local", "B?": "global"})
+        grouped = summary.grouped_statistics
+        assert grouped["search_strategy"]["local"]["exact_match"]["mean"] == 1.0
+        assert grouped["search_strategy"]["global"]["exact_match"]["mean"] == 0.0
+        assert set(grouped["category"]) == {"lookup"}  # None is not a group
+        assert grouped["difficulty"]["easy"]["exact_match"]["count"] == 2
+
+    async def test_filenames_carry_single_strategy(self, config, tmp_path) -> None:
+        manager, results, reports, summary = await self._run(
+            config, {"A?": "local", "B?": "local"}
+        )
+        manager.save_results(results, reports, summary, tmp_path / "one")
+        assert all("_local_" in f.name for f in (tmp_path / "one").iterdir())
+
+        manager, results, reports, summary = await self._run(
+            config, {"A?": "local", "B?": "global"}
+        )
+        manager.save_results(results, reports, summary, tmp_path / "mixed")
+        names = [f.name for f in (tmp_path / "mixed").iterdir()]
+        assert names and not any("local" in n or "global" in n for n in names)
+
+    def test_run_manifest(self, config: Config, tmp_path) -> None:
+        import hashlib
+
+        data = tmp_path / "eval.json"
+        data.write_bytes(b'[{"question": "q"}]')
+        config.evaluation.enabled_evaluators = [EvaluatorType.GRAPH_AWARE]
+        manager = EvaluationManager(config, rag_chain=object())
+        manifest = manager.build_run_manifest(
+            data, {"eval_data_path": data, "top_k": 5}
+        )
+        assert (
+            manifest["dataset"]["sha256"]
+            == hashlib.sha256(data.read_bytes()).hexdigest()
+        )
+        assert manifest["cli_args"] == {"eval_data_path": str(data), "top_k": 5}
+        assert manifest["models"]["answer_generation"] == (
+            config.search.answer_generation_model_id.value
+        )
+        assert manifest["models"]["evaluation_judge"] is None  # no LLM judge
+        assert manifest["enabled_evaluators"] == ["graph_aware"]
+        assert manifest["package_version"] and manifest["created_at"]
+        json.dumps(manifest)  # serializable as-is

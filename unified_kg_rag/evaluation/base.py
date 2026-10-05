@@ -110,7 +110,7 @@ class BaseEvaluator(ABC):
             asyncio.as_completed(tasks),
             total=len(tasks),
             desc=f"Async Evaluating with '{self.evaluator_type.value}'",
-            disable=not self.show_progress,
+            disable=None if self.show_progress else True,
         )
 
         for future in progress_bar:

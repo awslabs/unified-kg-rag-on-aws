@@ -63,7 +63,8 @@ stack_prefix = config.stack_prefix
 
 
 def stack_id(name: str) -> str:
-    # PascalCase stack ids (GraphRagNetwork, ...) — no env prefix.
+    # PascalCase stack ids: GraphRag<Name> in dev, GraphRag<Env><Name> otherwise
+    # (see DeploymentConfig.stack_prefix).
     return f"{stack_prefix}{name}"
 
 

@@ -7,8 +7,10 @@ Bedrock Guardrail.
 
 ## Stacks
 
-Stack ids are PascalCase with a `GraphRag` prefix and no env segment;
-environments are separated by account/region and tracked via the `env` tag.
+Stack ids are PascalCase with a `GraphRag` prefix. The default `dev` env keeps
+the bare ids below (`GraphRagNetwork`, …); any other `env_name` adds an env
+segment (`-c env_name=prod` → `GraphRagProdNetwork`, …) so several environments
+can coexist in one account/region. Every resource also carries an `env` tag.
 
 | Stack | Resources |
 |---|---|
@@ -16,15 +18,16 @@ environments are separated by account/region and tracked via the `env` tag.
 | `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (VPC, encrypted), DynamoDB doc-status table, S3 cache bucket |
 | `GraphRagCompute` | ECR repo, ECS cluster, Fargate task definition + least-privilege task role |
 | `GraphRagOrchestration` | Step Functions state machine — 4 resumable phases on Fargate + retries + SNS alarms |
-| `GraphRagObservability` | CloudWatch dashboard + alarms: pipeline-failure, silent indexing-failure (EMF), and store health (OpenSearch cluster-red / free-storage / JVM pressure, DynamoDB write throttling) → SNS. Synth warns if `alarm_email` is unset (alarms would have no subscriber) |
+| `GraphRagObservability` | CloudWatch dashboard + alarms: pipeline-failure, silent indexing-failure and extraction-failure (EMF), and store health (OpenSearch cluster-red / free-storage / JVM pressure, DynamoDB write throttling) → SNS. Synth warns if `alarm_email` is unset (alarms would have no subscriber) |
 | `GraphRagSecurity` | Shared customer-managed KMS key (optional, `use_cmk`) |
 | `GraphRagGuardrail` | Bedrock Guardrail, **pinned to `bedrock_region`** (creates and keeps a baseline PII/prompt-attack guardrail; empty with `create_guardrail=false`) |
 
 ### Resource naming
 
-Physical resources share a single lowercase `graphrag-<purpose>` scheme (no env
-segment — environments are separated by account/region), following a common
-`<app>-<purpose>-…` convention (e.g. `myapp-alb-logs-…`, `myapp-state-…`):
+Physical resources share a single lowercase `<prefix>-<purpose>` scheme,
+following a common `<app>-<purpose>-…` convention. The prefix is `graphrag` in
+the default `dev` env and `<env>-graphrag` otherwise (e.g. `prod-graphrag-doc-status`),
+so physical names do not collide across environments. Names below are for `dev`:
 
 | Resource | Name |
 |---|---|
@@ -110,13 +113,13 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `guardrail_identifier` | _(none)_ | guardrail id the compute task **uses**, injected as `BEDROCK_GUARDRAIL_IDENTIFIER`. The created guardrail's id is **not** injected automatically: pass the `GuardrailIdentifier` output of `GraphRagGuardrail` here (two-step flow above), or an external id with `create_guardrail=false`. Unset = no guardrail on the task |
 | `use_cmk` | `false` | customer-managed KMS key for at-rest encryption (S3/Neptune/OpenSearch/SNS/DDB) |
 | `vpc_flow_logs` | `false` (dev) / `true` (non-dev) | enable VPC flow logs (created VPC only) |
-| `deletion_protection` | `false` | protect Neptune/OpenSearch from deletion |
+| `deletion_protection` | `false` (dev) / `true` (non-dev) | protect Neptune/OpenSearch from deletion |
 | `bedrock_model_arns` | _(none)_ | scope Bedrock IAM to specific model ARNs (list) |
 | `alarm_email` | _(none)_ | subscribe an email to the pipeline alarm topic |
 | `enable_cdk_nag` | `false` | run cdk-nag AwsSolutions (Well-Architected) checks at synth |
 | `owner` | `aws-proserve` | `owner` tag applied to every resource |
 | `cost_center` | `unified-kg-rag-on-aws` | `cost-center` tag applied to every resource |
-| `removal_destroy` | `true` | `DESTROY` (dev) vs `RETAIN` (prod) on stack deletion |
+| `removal_destroy` | `true` (dev) / `false` (non-dev) | `DESTROY` vs `RETAIN` stateful resources on stack deletion |
 
 > Every resource is tagged `project=unified-kg-rag-on-aws`, `env=<env_name>`,
 > `managed-by=cdk`, `owner`, and `cost-center` for cost allocation and ownership.
@@ -134,11 +137,14 @@ hardening is opt-in via the flags above. Validate with:
 ```bash
 cdk synth -c enable_cdk_nag=true                       # dev
 cdk synth -c enable_cdk_nag=true -c use_cmk=true \
-  -c vpc_flow_logs=true -c neptune_instances=2 \
+  -c vpc_flow_logs=true -c neptune_instances=2 -c opensearch_count=2 \
   -c deletion_protection=true -c removal_destroy=false  # prod-hardened
 ```
-Both report zero AwsSolutions findings (accepted findings are documented in
-`iac/nag_suppressions.py`).
+Both report zero AwsSolutions findings, and CI runs both. Accepted findings are
+documented in `iac/nag_suppressions.py`: `AwsSolutions-IAM5` is suppressed per
+role for the listed wildcards only (`appliesTo`), so a new wildcard fails the
+synth, and the OpenSearch HA findings (OS4/OS7) are accepted only for a
+single-node domain.
 
 > **A few Bedrock read actions use `Resource: "*"` by necessity**, not oversight:
 > `bedrock:Rerank` (authorizes against a different resource shape than
@@ -171,27 +177,34 @@ cdk deploy --all
 
 > **Cost / approval:** deploying creates Neptune + OpenSearch (hourly billed) and
 > NAT gateways in `public` mode. `removal_destroy=true` (dev default) tears
-> everything down on `cdk destroy --all`; set `removal_destroy=false` for prod.
+> everything down on `cdk destroy --all`; non-dev envs default to
+> `removal_destroy=false` and `deletion_protection=true`.
 
 ## After deploy
 
-1. Build & push the app image to the created ECR repo (tag `latest`); the image
-   must contain a `/app/config.yaml` with the deployed endpoints (or rely on the
-   injected `NEPTUNE_ENDPOINT` / `OPENSEARCH_ENDPOINT` / `S3_BUCKET_NAME` /
-   `BEDROCK_REGION` env vars the app reads). The task also injects
+1. Build & push the app image (`docker/Dockerfile`, build context = repo root)
+   to the created ECR repo (tag `latest`). The image bakes in the tracked,
+   endpoint-free `docker/config.yaml` as `/app/config.yaml`; the deployed
+   endpoints come from the injected `NEPTUNE_ENDPOINT` / `OPENSEARCH_ENDPOINT` /
+   `S3_BUCKET_NAME` / `BEDROCK_REGION` env vars the app reads. The task also injects
    `GRAPHRAG_DOC_STATUS_TABLE` (the table this stack created,
    `graphrag-doc-status` in `dev`) and `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false`,
    which override `aws.dynamodb.table_name` / `create_table_if_missing`, so the
-   app and the CloudWatch alarms track the same IaC-managed table. Incremental
-   indexing still needs `aws.dynamodb.enabled: true` in `config.yaml`.
+   app and the CloudWatch alarms track the same IaC-managed table. The image
+   config sets `aws.dynamodb.enabled: true`, so ingestion runs incrementally.
    S3 cache uploads default to the bucket's own encryption
    (`aws.s3.encryption.encryption_type: BUCKET_DEFAULT`), so `use_cmk=true`
    objects are encrypted with the CMK.
-2. Start an ingestion run:
+2. Upload the corpus under a prefix of the cache bucket and start an ingestion run:
    ```bash
    aws stepfunctions start-execution \
      --state-machine-arn <…-ingestion arn> \
-     --input '{"source_directory":"/data/docs","pipeline_id":"run-001","config_path":"/app/config.yaml"}'
+     --input '{"source_directory":"s3://<cache-bucket>/<corpus-prefix>/","pipeline_id":"run-001"}'
    ```
-   (`source_directory` / `pipeline_id` are passed to the tasks as
-   `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID`.)
+   The input takes exactly these two keys, passed to every phase as
+   `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID`. Each phase runs in a
+   fresh Fargate task, so `source_directory` must be an `s3://` URI: the
+   container entrypoint (`docker/entrypoint.sh`) syncs it to local scratch
+   before running the CLI. The config file is fixed at `/app/config.yaml` in
+   the image. The task role is granted read/write on the cache bucket only;
+   to read a corpus from another bucket, grant the role access to it.

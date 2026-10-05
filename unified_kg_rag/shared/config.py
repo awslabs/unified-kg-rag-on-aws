@@ -2,17 +2,44 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
 import os
+import types
 from pathlib import Path
+from typing import Any, Union, get_args, get_origin
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import SecretStr, ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 
 from unified_kg_rag.domain.models import Config
 
 # Stdlib logger (not get_logger): this module is imported by the logging setup,
 # so reaching back through get_logger -> get_config would risk a circular import.
 _logger = logging.getLogger(__name__)
+
+
+def _nested_model(annotation: Any) -> type[BaseModel] | None:
+    """The BaseModel behind ``Model`` / ``Model | None`` (not dict/list values)."""
+    if get_origin(annotation) not in (None, Union, types.UnionType):
+        return None
+    for candidate in get_args(annotation) or (annotation,):
+        if isinstance(candidate, type) and issubclass(candidate, BaseModel):
+            return candidate
+    return None
+
+
+def warn_unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> None:
+    """Warn on config keys the model does not define (pydantic drops them)."""
+    if not isinstance(data, dict):
+        return
+    for key, value in data.items():
+        path = f"{prefix}{key}"
+        field = model.model_fields.get(key)
+        if field is None:
+            _logger.warning("Unknown config key '%s' is ignored", path)
+            continue
+        nested = _nested_model(field.annotation)
+        if nested is not None:
+            warn_unknown_keys(value, nested, f"{path}.")
 
 
 class ConfigLoader:
@@ -47,6 +74,7 @@ class ConfigLoader:
             with open(self.config_path, encoding="utf-8") as file:
                 config_data = yaml.safe_load(file)
 
+            warn_unknown_keys(config_data, Config)
             self._config = Config(**config_data)
             self._apply_environment_overrides()
             return self._config

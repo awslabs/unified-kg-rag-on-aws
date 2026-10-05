@@ -79,7 +79,7 @@ git clone <repository-url>
 cd unified-kg-rag-on-aws
 
 # uv (recommended)
-uv sync --extra dev
+uv sync
 
 # or pip
 pip install -e .
@@ -93,6 +93,14 @@ parsed (the parser raises a clear error naming the missing package for
 The extra requires `unstructured>=0.24.0`, which fixes URL-partitioning SSRF
 and no longer depends on NLTK. On Python 3.10 the extra does not install a parser;
 use PDF/TXT/CSV/JSON, or upgrade Python for Markdown/HTML support.
+
+The deployed container image (`docker/Dockerfile`) leaves this extra out by
+default because it adds about 200 MB (spaCy and friends), so a Step Functions
+ingest of `.md`/`.html` files fails with "No supported files found". Either
+convert those files to a supported format, or build the image with the extra:
+`docker build --build-arg UV_EXTRAS="--extra unstructured" -f docker/Dockerfile .`.
+The image bakes in `docker/config.yaml`, which holds no endpoints; the CDK
+compute stack injects them as environment variables.
 
 ### Authentication
 
@@ -224,9 +232,28 @@ aws:
 
 #### Model selection notes
 
-Defaults are `anthropic.claude-sonnet-5` for reasoning-heavy stages and
-`anthropic.claude-haiku-4-5-...` for light ones (summarization, translation,
-keyword extraction). Three things differ for Claude 4.7-and-later models:
+Defaults are `anthropic.claude-sonnet-5-5` (Claude Sonnet 5.5) for
+reasoning-heavy stages and `anthropic.claude-haiku-4-5-...` for light ones
+(summarization, translation, keyword extraction). Any `*_model_id` accepts the
+models below in addition to the older Claude 3.x/4.x ids:
+
+| Model id | Provider | Context / max output | Reasoning control |
+| --- | --- | --- | --- |
+| `anthropic.claude-sonnet-5-5` (default) | Anthropic | 1M / 128K | adaptive, always on; `effort` low–max |
+| `anthropic.claude-opus-5-5` | Anthropic | 1M / 128K | adaptive, always on; `effort` low–max |
+| `anthropic.claude-sonnet-5`, `anthropic.claude-opus-5` | Anthropic | 1M / 128K | adaptive, always on; `effort` |
+| `anthropic.claude-opus-4-8`, `anthropic.claude-opus-4-7` | Anthropic | 1M / 128K | adaptive, always on; `effort` low–max |
+| `anthropic.claude-opus-4-6-v1` | Anthropic | 1M / 128K | opt-in (`--enable-thinking`), adaptive; `effort` low/medium/high/max |
+| `anthropic.claude-sonnet-4-6` | Anthropic | 1M / 64K | opt-in, adaptive; `effort` low/medium/high/max |
+| `openai.gpt-6.1-sol` | OpenAI | 1M / 131K | `reasoning.effort` low–max, always on |
+| `openai.gpt-6-astra`, `openai.gpt-6-sol`, `openai.gpt-6-luna` | OpenAI | 1.05M / 128K | `reasoning.effort` low–max, always on |
+| `openai.gpt-5.6-sol`, `openai.gpt-5.6-terra`, `openai.gpt-5.6-luna` | OpenAI | 1.05M / 128K | `reasoning.effort` low–max, always on |
+| `openai.gpt-5.5`, `openai.gpt-5.4` | OpenAI | 1.05M / 128K | `reasoning.effort` low–max, always on |
+
+All of these are inference-profile-only. Only OpenAI's proprietary GPT models
+are offered; the open-weight `gpt-oss` models are not.
+
+Three things differ for Claude 4.7-and-later models:
 
 - **Inference profiles are mandatory.** They ship without `ON_DEMAND`
   throughput, so the bare model id is not invocable — a cross-region profile
@@ -236,23 +263,38 @@ keyword extraction). Three things differ for Claude 4.7-and-later models:
   for Claude 5 (no `apac.`), so disabling the global profile leaves no path.
 - **`effort` replaces the thinking token budget.** `thinking_budget_tokens` is
   ignored for these models (the old `budget_tokens` request shape is rejected
-  with a 400); set `bedrock.effort` instead. Claude Sonnet 5 always thinks, so
-  `--enable-thinking` is a no-op for it — depth is `effort` only.
+  with a 400); set `bedrock.effort` instead. Claude Sonnet 5.5 always thinks, so
+  `--enable-thinking` is a no-op for it — depth is `effort` only. A level the
+  model does not accept (e.g. `xhigh` on Opus or Sonnet 4.6) fails fast.
 - **Sampling parameters are dropped.** `temperature`/`top_k` are not accepted
   and are omitted from requests automatically; steer behaviour by prompting.
 
-`anthropic.claude-fable-5` is intentionally not among the selectable models: it
-requires the account's data-retention mode to be `provider_data_share` (Data
-Retention API only — no console UI), so it would fail on most accounts with
-*"data retention mode 'default' is not available for this model"*, and its
-pricing exceeds the Opus tier.
+OpenAI GPT models differ from Claude in these ways:
+
+- They always go through the Converse API on a `us.`/`global.` inference
+  profile (no `apac.`/`eu.` geo profiles; keep `enable_global_profile: true`
+  outside the US). `bedrock.effort` is sent as
+  `reasoning: {effort: ...}` (the flat `reasoning_effort` field is rejected).
+  GPT-5.6 and GPT-6.x answered a trivial prompt in roughly 10-25 s even at
+  `effort: low`, so size timeouts and concurrency accordingly.
+- No Anthropic-only fields are sent (`thinking`, `output_config`,
+  `anthropic_beta`, the `\n\nHuman:` stop sequence), and sampling parameters
+  are omitted.
+- Explicit prompt-cache markers are not sent: Converse supports only implicit
+  caching for these models. Bedrock CountTokens does not support them, so the
+  retrieval context budget uses the local token estimate.
+
+Claude Fable 5 / 5.1 are not offered: they need a non-default account
+data-retention mode (Data Retention API only), and accounts on the default mode
+get `data retention mode 'default' is not available for this model` on every
+call.
 
 ### 2.2 `fixing` — auto-repair malformed model output
 
 ```yaml
 fixing:
   enabled: true
-  fixing_model_id: "anthropic.claude-sonnet-5"
+  fixing_model_id: "anthropic.claude-sonnet-5-5"
 ```
 
 When an LLM returns malformed JSON for a structured stage, this re-asks a model
@@ -325,7 +367,7 @@ most impactful domain-adaptation knob (see §9). Each item is
 
 ```yaml
   graph_extraction:
-    extraction_model_id: "anthropic.claude-sonnet-5"
+    extraction_model_id: "anthropic.claude-sonnet-5-5"
     max_entities_per_chunk: 50
     max_relationships_per_chunk: 50
     entity_confidence_threshold: 0.0
@@ -364,7 +406,7 @@ missed on the first pass (quality vs. cost trade-off).
 ```yaml
   gleaning:
     enabled: true
-    graph_refinement_model_id: "anthropic.claude-sonnet-5"
+    graph_refinement_model_id: "anthropic.claude-sonnet-5-5"
     max_rounds: 3
     convergence_threshold: 0.8
     quality_threshold: 0.9
@@ -379,7 +421,7 @@ When ON, `local` search injects matching claims (MS GraphRAG covariates) and
 ```yaml
   claim_extraction:
     enabled: false
-    extraction_model_id: "anthropic.claude-sonnet-5"
+    extraction_model_id: "anthropic.claude-sonnet-5-5"
     max_entities_per_prompt: 100
 ```
 
@@ -411,15 +453,17 @@ graph:
     auto_resolution: true
     report_generation:              # LLM-generated community summaries (used by global search)
       enabled: true
-      report_generation_model_id: "anthropic.claude-sonnet-5"
+      report_generation_model_id: "anthropic.claude-sonnet-5-5"
       max_entities_per_report: 50
       max_report_context_tokens: 4000
 
   visualization:
     enabled: true
-    outputs_directory: "outputs/visualization"
+    # outputs_directory: unset -> <cache dir>/<pipeline_id>/visualization
     embedding_method: "node2vec"
     layout_method: "umap"           # umap | tsne | pca
+    interactive:
+      max_nodes: 2000               # top-N nodes by degree; 0/null = no cap
 ```
 
 ### 2.5 `indexing` — OpenSearch & Neptune write side
@@ -448,7 +492,8 @@ indexing:
       m: 24
       ef_search: 100
       space_type: "cosinesimil"
-      engine: "faiss"               # faiss is the modern kNN engine (nmslib deprecated)
+      engine: "lucene"              # cosinesimil works on every version; max 1024 dims
+                                    # (see the engine note in config-template.yaml)
 
   neptune:
     batch_size: 100
@@ -467,11 +512,11 @@ indexing:
 ```yaml
 search:
   translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
-  entity_extraction_model_id: "anthropic.claude-sonnet-5"
+  entity_extraction_model_id: "anthropic.claude-sonnet-5-5"
   strategy_selection_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"   # the `auto` router
   auto_routable_strategies: ["local", "mix", "global", "drift"]  # what `auto` may pick
-  context_building_model_id: "anthropic.claude-sonnet-5"
-  answer_generation_model_id: "anthropic.claude-sonnet-5"    # the answer LLM
+  context_building_model_id: "anthropic.claude-sonnet-5-5"
+  answer_generation_model_id: "anthropic.claude-sonnet-5-5"    # the answer LLM
 
   hybrid:
     lexical_weight: 0.5
@@ -549,13 +594,16 @@ logging:
 ```yaml
 evaluation:
   outputs_directory: "outputs/evaluation"
-  evaluation_model_id: "anthropic.claude-sonnet-5"
+  evaluation_model_id: "anthropic.claude-sonnet-5-5"
   enabled_evaluators:
     - langchain
     - ragas
     # - graph_aware                # opt-in; needs expected_entities/relationships
+    # - retrieval                  # opt-in; needs reference_sources
+    # - answer_match               # opt-in; needs answer (or metadata.answer_aliases)
   langchain_metrics: [correctness, partial_correctness]
   ragas_metrics: [answer_correctness, answer_relevancy, context_precision, context_recall, faithfulness]
+  retrieval_k: 5                   # cutoff for the retrieval evaluator's hit@k / recall@k
   save_detailed_results: true
 ```
 
@@ -777,6 +825,12 @@ Interactive mode auto-enables memory. In-session commands:
 For single-shot multi-turn from the CLI, reuse the same `--conversation-id` with
 `--use-memory`. Memory limits are under the `memory` config section.
 
+Memory also tracks entities across turns: after each user message an LLM call
+(`search.entity_extraction_model_id`) extracts the entities it mentions, and the
+most relevant ones from earlier turns are added to the next query's entity focus.
+A follow-up such as "what about its suppliers?" therefore still retrieves around
+the entity named in an earlier turn.
+
 ---
 
 ## 5. Incremental indexing
@@ -835,6 +889,7 @@ a graph adapter that supports read-back. Off by default.
 | `--search-type` | `hybrid` | Search method |
 | `--top-k` | `10` | Max results |
 | `--retrieval-multiplier` | `1` | Retrieval depth |
+| `--max-failure-rate` | `1.0` | Exit non-zero when the fraction of queries whose answer generation failed exceeds this (0.0-1.0). A run where every query failed always exits non-zero |
 | `--verbose`, `-v` | off | Debug logging |
 | `--config-path` | — | Path to `config.yaml` |
 
@@ -848,11 +903,26 @@ Selected via `evaluation.enabled_evaluators`:
   `context_precision`, `context_recall`, `faithfulness`).
 - **`graph_aware`** — deterministic, **LLM-free** entity/relationship
   **coverage = recall**: of the expected graph artifacts, how many appear in the
-  generated answer (case-insensitive substring match). Needs `expected_entities`
-  / `expected_relationships` in the dataset. **Precision and F1 are deliberately
+  generated answer (case-insensitive whole-word match; substring match for
+  space-less CJK text). A relationship given as `{"source": "A", "target": "B"}`
+  or `"A -> B"` counts when the answer mentions both endpoints; any other string
+  must appear as a phrase. Needs `expected_entities` / `expected_relationships`
+  in the dataset. **Precision and F1 are deliberately
   NOT emitted** — enumerating every entity in a free-text answer isn't reliably
   possible, so reporting precision/F1 would only re-label the recall signal.
   (Opt in by uncommenting `graph_aware` in `enabled_evaluators`.)
+- **`retrieval`** — deterministic, LLM-free: did the sources the answer model saw
+  include the gold documents? `hit_at_k`, `recall_at_k` (k =
+  `evaluation.retrieval_k`, default 5) and `mrr` (over all reported sources)
+  against `reference_sources`. A reference matches a source when their
+  file-name stems are equal, case-insensitively (directories and extensions are
+  ignored: `docs/Terms.pdf` = `terms.pdf` = `terms`), or when it equals a
+  source's document id. Skipped when a query has no `reference_sources` or no
+  source carries a document id / file name.
+- **`answer_match`** — deterministic, LLM-free SQuAD-style `exact_match` and
+  `token_f1` (lowercase, punctuation and English articles removed) against
+  `answer` and optional `metadata.answer_aliases`, taking the max. Token F1
+  splits on whitespace, so for Chinese/Japanese text it degrades to exact match.
 
 ### Eval data format
 
@@ -870,8 +940,11 @@ the `graph_aware` evaluator.
     "difficulty": "easy",
     "reference_sources": ["doc1.pdf", "doc2.txt"],
     "expected_entities": ["AI", "machine learning", "data processing"],
-    "expected_relationships": ["AI enables machine learning"],
-    "metadata": { "search_strategy": "global" }
+    "expected_relationships": [
+      { "source": "AI", "target": "machine learning" },
+      "machine learning -> data processing"
+    ],
+    "metadata": { "search_strategy": "global", "answer_aliases": ["AI and ML"] }
   },
   {
     "id": "q2",
@@ -881,7 +954,10 @@ the `graph_aware` evaluator.
 ```
 
 Per-item `metadata` (e.g. `search_strategy`) overrides the CLI defaults for that
-question. `id` may also be given as `query_id`.
+question. `id` may also be given as `query_id`. The file is validated before any
+query runs: an empty dataset, a non-array file, a missing `question`, a
+duplicate id, a wrong field type, or a `metadata` value the RAG chain rejects
+(e.g. an unknown `search_strategy`) stops the run with the item index and id.
 
 ### Examples
 
@@ -894,8 +970,21 @@ run-eval --eval-data-path my_eval_data.json \
   --search-strategy global --search-type vector --config-path config.yaml
 ```
 
-Results (per-query details + a summary with mean/median/stdev/min/max per
-metric) are written to the outputs directory.
+Results are written to the outputs directory as
+`evaluation_{results,reports,summary}_<timestamp>.json`; when every answered
+query used the same strategy the name becomes `..._<strategy>_<timestamp>.json`.
+The summary holds, per metric, mean/median/stdev/min/max/count
+(`metric_statistics`) and scored/failed/skipped counts (`metric_outcomes`), plus:
+
+- `grouped_statistics` — the same statistics split by `search_strategy` (the
+  strategy actually used, which varies per query under `auto`), `category` and
+  `difficulty`.
+- `run_manifest` — CLI arguments, model ids (answer generation, evaluation
+  judge/embedding), package version, dataset path + sha256, and a UTC timestamp,
+  so two runs can be compared.
+
+Each result also records `retrieved_source_ids`: per reported source, in rank
+order, the document ids and file names it carries.
 
 ---
 
@@ -906,9 +995,14 @@ visualization-data JSON. It does **not** re-run ingestion or touch AWS.
 
 When `graph.visualization.enabled` is `true`, the community-detection stage of
 `run-ingestion` renders the visualizations and also writes
-`visualization_data.json` into `graph.visualization.outputs_directory`
-(default `outputs/visualization/visualization_data.json`). That file is the
-`--data-path` input. It holds the graph nodes/edges, the computed `layout`, the
+`visualization_data.json` into `graph.visualization.outputs_directory`. When
+that is unset (the default), ingestion writes to
+`<cache.local_directory>/<pipeline_id>/visualization/`, so with S3 cache sync
+enabled `visualization_data.json` is uploaded with the cache (the sync copies
+`.json` files only; re-render the HTML locally with `run-visualization`). That
+file is the `--data-path` input. The interactive graph keeps only the top
+`interactive.max_nodes` nodes by degree (default 2000) so large graphs still
+render in a browser. It holds the graph nodes/edges, the computed `layout`, the
 community hierarchy, and centrality; vector attributes (`embedding`,
 `*_embedding`) are omitted to keep the file small.
 
@@ -962,7 +1056,7 @@ persona / entity types) via Bedrock, and writes a domain-adapted
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--source-directory` | **required** | Directory of text documents (`.txt`, `.md`, `.markdown`); `--source-dir` is accepted as an alias |
+| `--source-directory` | **required** | Directory of documents (`.txt`/`.md`/`.markdown` plus every format `run-ingestion` parses, e.g. `.pdf`); `--source-dir` is accepted as an alias |
 | `--output` | `tuned_prompts.yaml` | Output YAML path |
 | `--max-docs` | `20` | Max documents to sample |
 | `--config-path` | — | Path to `config.yaml` |
@@ -973,8 +1067,10 @@ run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --conf
 
 The output YAML contains a `custom_prompts` block (and a `profile` with the
 detected domain). **Review it**, then copy the prompts you want into your
-`config.yaml` under `custom_prompts:`. Note it only reads plain-text formats
-(`.txt`/`.md`/`.markdown`) for profiling.
+`config.yaml` under `custom_prompts:`. Plain-text files are read as-is; other
+formats (PDF, CSV, JSON, custom `ParserFactory.register_loader` formats) go
+through the same loaders as ingestion. Files that fail to parse are skipped
+with a warning.
 
 ---
 
