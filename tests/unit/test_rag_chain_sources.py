@@ -12,6 +12,8 @@ provenance (document ids / chunk id / type / score) is kept, and no
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 from typing import Any
 
 import pytest
@@ -93,7 +95,12 @@ def _run_context_and_format(
     chain: GraphRAGChain, state: dict[str, Any]
 ) -> tuple[OptimizedContext, RAGOutput]:
     state["optimized_context"] = chain._context_optimization_step(state)
-    state["context"] = chain._context_building_step(state)
+    context = chain._context_building_step(state)
+    # The step may be sync or async depending on the context-building path;
+    # accept both so this helper does not pin that implementation detail.
+    if inspect.isawaitable(context):
+        context = asyncio.run(context)
+    state["context"] = context
     return state["optimized_context"], GraphRAGChain._format_output_step(state)
 
 
