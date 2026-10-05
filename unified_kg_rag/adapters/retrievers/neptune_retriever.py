@@ -341,22 +341,16 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             hops,
         )
 
-        # Return the seeds themselves alongside their neighbours: with only
-        # repeat().emit(), a directly matched entity was missing from its own
-        # expansion. union(identity(), ...) instead of emit() before repeat():
-        # Neptune does not optimize the emit-first form and it hit the query
-        # time limit (120 s) on a ~900-entity graph, while this form returns in
-        # under a second.
+        # emit() BEFORE repeat() also emits the seeds themselves (loop 0); with
+        # emit() after repeat() only the neighbours reached by >=1 hop came
+        # back, so a directly matched entity was missing from its own expansion.
         traversal = (
             g.V()
             .hasLabel(entity_label)
             .has("id", P.within(seed_ids))
-            .union(
-                __.identity(),
-                __.repeat(__.both().dedup().limit(self._max_results_per_hop))
-                .times(hops)
-                .emit(),
-            )
+            .emit()
+            .repeat(__.both().dedup().limit(self._max_results_per_hop))
+            .times(hops)
             .dedup()
             .hasLabel(entity_label)
             .limit(query.top_k * query.retrieval_multiplier)

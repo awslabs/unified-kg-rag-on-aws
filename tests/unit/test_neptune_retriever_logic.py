@@ -340,31 +340,39 @@ async def test_entity_traversal_honors_configured_max_hops(
     # ignored). The configured value must be used directly.
     object.__setattr__(retriever, "_max_hops", configured_hops)
 
-    # Build against a real, connectionless traversal source and inspect the
-    # bytecode: the hop count lives inside the anonymous repeat() traversal.
-    from gremlin_python.structure.graph import Graph
+    captured: dict[str, int] = {}
 
-    captured: dict[str, object] = {}
+    class FluentTraversal:
+        """Records every step; .times() captures its arg."""
 
-    async def _fake_execute(traversal):
-        captured["bytecode"] = str(traversal.bytecode)
+        def times(self, n, *a, **k):
+            captured["times"] = n
+            return self
+
+        def __getattr__(self, name):
+            return lambda *a, **k: self
+
+    g = mocker.MagicMock()
+    g.V.return_value = FluentTraversal()
+
+    # Patch via object.__setattr__ (not mocker.patch.object): the retriever is a
+    # __new__-constructed pydantic model whose attribute deletion at teardown
+    # raises, so set bound replacements directly.
+    async def _fake_execute(_traversal):
         return []
 
     object.__setattr__(retriever, "_apply_filters", lambda t, f, *_: t)
     object.__setattr__(retriever, "_with_projection", lambda t: t)
     object.__setattr__(retriever, "_execute_traversal", _fake_execute)
 
-    await retriever._traverse_from_entities(
-        Graph().traversal(), [{"id": "e1"}], SearchQuery(query="x")
-    )
+    await retriever._traverse_from_entities(g, [{"id": "e1"}], SearchQuery(query="x"))
 
-    assert f"['times', {configured_hops}]" in str(captured["bytecode"])
+    assert captured.get("times") == configured_hops
 
 
 async def test_entity_traversal_emits_seeds(retriever, mocker) -> None:
-    # The seeds must be part of the expansion result, not only the nodes
-    # reached by >= 1 hop. They are added with union(identity(), ...): the
-    # emit()-before-repeat() form is not optimized by Neptune and times out.
+    # emit() must precede repeat() so the seed entities themselves are part of
+    # the expansion result, not only the nodes reached by >= 1 hop.
     calls: list[tuple] = []
     g = mocker.MagicMock()
     g.V.return_value = RecordingTraversal(calls)
@@ -379,8 +387,7 @@ async def test_entity_traversal_emits_seeds(retriever, mocker) -> None:
     await retriever._traverse_from_entities(g, [{"id": "e1"}], SearchQuery(query="x"))
 
     steps = [name for name, _ in calls]
-    assert "union" in steps
-    assert "emit" not in steps[: steps.index("union")]
+    assert steps.index("emit") < steps.index("repeat")
 
 
 def test_default_max_hops_is_one_hop() -> None:
