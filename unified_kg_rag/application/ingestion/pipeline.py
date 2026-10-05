@@ -273,6 +273,10 @@ class DataIngestionPipeline:
                     kwargs["boto_session"] = self.boto_session
                 if stage_type == PipelineStageType.DOCUMENT_PARSING:
                     kwargs["target_directory"] = self.target_directory
+                if stage_type in (
+                    PipelineStageType.DOCUMENT_PARSING,
+                    PipelineStageType.COMMUNITY_DETECTION,
+                ):
                     kwargs["cache_directory"] = Path(
                         self.pipeline_config.local_directory
                     )

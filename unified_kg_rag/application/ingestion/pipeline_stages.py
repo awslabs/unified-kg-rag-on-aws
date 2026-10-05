@@ -1020,9 +1020,21 @@ class CommunityDetectionStage(PipelineStage):
         self,
         config: Config,
         boto_session: boto3.Session | None = None,
+        cache_directory: Path | None = None,
     ):
         super().__init__(PipelineStageType.COMMUNITY_DETECTION, config, boto_session)
         self.detector = CommunityDetector(config, boto_session=self.boto_session)
+        self.cache_directory = Path(cache_directory) if cache_directory else None
+
+    def _visualization_outputs_dir(self, context: PipelineContext) -> Path | None:
+        # Unset outputs_directory -> the pipeline's cache dir, which the S3 cache
+        # sync uploads (a deployed task's local outputs/ is lost on exit).
+        if (
+            self.config.graph.visualization.outputs_directory
+            or not self.cache_directory
+        ):
+            return None
+        return self.cache_directory / context.pipeline_id / "visualization"
 
     @staticmethod
     def _get_detection_stats_dict(metrics_obj: CommunityMetrics) -> dict[str, Any]:
@@ -1081,6 +1093,7 @@ class CommunityDetectionStage(PipelineStage):
                     config=self.config,
                     graph_analyzer=analyzer,
                     community_detector=self.detector,
+                    outputs_dir=self._visualization_outputs_dir(context),
                     boto_session=self.boto_session,
                 )
 

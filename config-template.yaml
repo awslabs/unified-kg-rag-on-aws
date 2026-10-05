@@ -290,7 +290,11 @@ graph:
   # Graph Visualization
   visualization:
     enabled: true
-    outputs_directory: "outputs/visualization"
+    # Unset (default): ingestion writes to <cache dir>/<pipeline_id>/visualization,
+    # so visualization_data.json is uploaded with the S3 cache sync (the sync
+    # copies .json only; re-render the HTML with run-visualization). Set a path
+    # to write elsewhere.
+    # outputs_directory: "outputs/visualization"
     embedding_method: "node2vec"
     layout_method: "umap"
 
@@ -313,6 +317,9 @@ graph:
     # Interactive (pyvis) renderer settings.
     interactive:
       physics_enabled: false
+      # Keep only the top-N nodes by degree in interactive_graph.html; larger
+      # pages do not render usably in a browser. 0 or null disables the cap.
+      max_nodes: 2000
 
     # Static (Bokeh) renderer settings.
     static:

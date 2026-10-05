@@ -941,9 +941,12 @@ class VisualizationConfig(BaseModel):
     enabled: bool = Field(
         default=True, description="Enable or disable the entire visualization pipeline."
     )
-    outputs_directory: str | Path = Field(
-        default="outputs/visualization",
-        description="Directory to save visualization files.",
+    outputs_directory: str | Path | None = Field(
+        default=None,
+        description="Directory to save visualization files. When unset, "
+        "ingestion writes to '<cache.local_directory>/<pipeline_id>/visualization' "
+        "so visualization_data.json is synced to S3 with the cache; other callers "
+        "fall back to 'outputs/visualization'.",
     )
     embedding_method: str = Field(
         default="node2vec",

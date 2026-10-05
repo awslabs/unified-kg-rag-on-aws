@@ -417,9 +417,11 @@ graph:
 
   visualization:
     enabled: true
-    outputs_directory: "outputs/visualization"
+    # outputs_directory: unset -> <cache dir>/<pipeline_id>/visualization
     embedding_method: "node2vec"
     layout_method: "umap"           # umap | tsne | pca
+    interactive:
+      max_nodes: 2000               # top-N nodes by degree; 0/null = no cap
 ```
 
 ### 2.5 `indexing` — OpenSearch & Neptune write side
@@ -905,9 +907,14 @@ visualization-data JSON. It does **not** re-run ingestion or touch AWS.
 
 When `graph.visualization.enabled` is `true`, the community-detection stage of
 `run-ingestion` renders the visualizations and also writes
-`visualization_data.json` into `graph.visualization.outputs_directory`
-(default `outputs/visualization/visualization_data.json`). That file is the
-`--data-path` input. It holds the graph nodes/edges, the computed `layout`, the
+`visualization_data.json` into `graph.visualization.outputs_directory`. When
+that is unset (the default), ingestion writes to
+`<cache.local_directory>/<pipeline_id>/visualization/`, so with S3 cache sync
+enabled `visualization_data.json` is uploaded with the cache (the sync copies
+`.json` files only; re-render the HTML locally with `run-visualization`). That
+file is the `--data-path` input. The interactive graph keeps only the top
+`interactive.max_nodes` nodes by degree (default 2000) so large graphs still
+render in a browser. It holds the graph nodes/edges, the computed `layout`, the
 community hierarchy, and centrality; vector attributes (`embedding`,
 `*_embedding`) are omitted to keep the file small.
 
