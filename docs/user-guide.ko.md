@@ -745,8 +745,40 @@ run-rag --query "..." --mode search --output-format json --config-path config.ya
 run-rag --query "..." --verbose --config-path config.yaml
 
 # Attribute filters
-run-rag --query "..." --filters category:research entity_type:person --config-path config.yaml
+run-rag --query "..." --filters attr_category:research type:PERSON --config-path config.yaml
 ```
+
+필터는 OpenSearch에서 `term`/`terms`/`range` 절로, Neptune에서 `has` 단계로
+변환됩니다. 각 저장소는 인덱서가 기록하는 필드를 받습니다.
+
+| 저장소 | 필터 가능 필드 |
+|---|---|
+| Text unit | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.<path>` |
+| Entity | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
+| Relationship | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids` |
+| Claim | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text` |
+| Community report | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `attr_<key>`, `attributes.<path>` |
+| Neptune entity 정점 | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids` |
+| Neptune community 정점 | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
+
+`attr_<key>`는 문서 속성입니다. 문서 `filters` 메타데이터의 `<key>` 항목이
+`attr_<key>`로 색인됩니다. 정확한 필터링에는 완전 일치 필드(keyword 또는 숫자)를
+사용하십시오. `description`처럼 분석되는 텍스트 필드에 대한 `term` 필터는 소문자
+단일 토큰과 일치합니다. 범위 필터는 Python API에서 `{"gte": ..., "lte": ...}`로
+지정합니다.
+
+각 필터는 해당 필드를 선언한 저장소에만 적용되므로 `type:PERSON`은 entity, claim,
+Neptune entity만 좁히고 text unit에는 적용되지 않습니다. `attr_<key>`와
+`attributes.<path>`는 이를 선언한 모든 인덱스에 적용되므로 문서에 해당 속성이 없는
+인덱스는 그 필터에 대해 결과를 반환하지 않습니다. Neptune은 `attr_<key>`를 비교하지
+않습니다(정점은 속성을 JSON 속성 하나로 저장합니다). 그래프 확장은 OpenSearch에서
+이미 필터링된 entity에서 시작합니다.
+
+선택한 전략이 읽는 어떤 저장소도 선언하지 않은 필터 키(예: 이전 예시의 `category`,
+`entity_type`)는 `InvalidFilterError`를 발생시키며, 오류 메시지에 필터 가능 키
+목록이 포함됩니다. 이전 릴리스는 이런 키를 조용히 무시하고 필터링되지 않은 결과를
+반환했습니다. 스키마는 `unified_kg_rag/adapters/storage/filter_schema.py`에
+정의되어 있습니다.
 
 ### 인터랙티브 모드 & 대화 메모리
 

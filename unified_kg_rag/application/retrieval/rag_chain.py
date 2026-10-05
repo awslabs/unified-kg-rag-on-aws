@@ -53,6 +53,7 @@ from unified_kg_rag.adapters.search_strategies import (  # noqa: F401
     LocalSearchStrategy,
     SimpleSearchStrategy,
 )
+from unified_kg_rag.adapters.storage.filter_schema import union_filter_fields
 from unified_kg_rag.domain.models import (
     Config,
     LanguageModelId,
@@ -75,7 +76,7 @@ from unified_kg_rag.domain.prompts import (
 )
 from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import InvalidFilterError, get_logger
 from unified_kg_rag.shared.utils import strip_embedding_fields
 
 logger = get_logger(__name__)
@@ -591,6 +592,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # `_search_step` overwrite it between assignment and `await`, executing
         # one query against another query's strategy (silent cross-contamination).
         strategy_instance = self._get_strategy_instance(state["resolved_strategy"])
+        if state.get("filters"):
+            self._validate_filter_keys(
+                state["filters"], list(strategy_instance.retrievers.values())
+            )
         processed: ProcessedQuery = state["processed_query"]
         # Ordered dedupe (not set()) so the joined entity query, and hence its
         # embedding, is reproducible across processes.
@@ -617,6 +622,31 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             metadata=metadata,
         )
         return await strategy_instance.asearch(search_query)
+
+    @staticmethod
+    def _validate_filter_keys(
+        filters: dict[str, Any] | None, retrievers: list[BaseGraphRAGRetriever]
+    ) -> None:
+        """Reject caller filter keys that no retriever of the strategy declares.
+
+        Each retriever applies a key only to the indexes / labels that declare
+        it, so an undeclared key would be dropped everywhere and the query would
+        silently run unfiltered. A retriever without a declared schema accepts
+        every key.
+        """
+        if not filters:
+            return
+        schemas = [r.filter_fields() for r in retrievers]
+        if any(schema is None for schema in schemas):
+            return
+        declared = union_filter_fields(s for s in schemas if s is not None)
+        unknown = sorted(key for key in filters if not declared.declares(key))
+        if unknown:
+            raise InvalidFilterError(
+                f"Unknown filter key(s): {', '.join(unknown)}. No index this "
+                "search strategy reads has these fields, so the filter would "
+                f"be ignored. Filterable keys: {', '.join(declared.describe())}."
+            )
 
     def _get_strategy_instance(
         self, strategy_type: SearchStrategy

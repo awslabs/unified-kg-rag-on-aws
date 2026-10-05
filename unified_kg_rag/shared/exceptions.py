@@ -37,6 +37,10 @@ class EmbeddingModelError(ModelError):
     pass
 
 
+class InvalidFilterError(GraphRAGException, ValueError):
+    """A caller search filter names a key no target index or label declares."""
+
+
 class LanguageModelError(ModelError):
     pass
 
