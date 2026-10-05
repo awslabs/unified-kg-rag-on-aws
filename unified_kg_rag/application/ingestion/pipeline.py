@@ -402,6 +402,12 @@ class DataIngestionPipeline:
         return f"pipeline-{directory_hash}-{timestamp}"
 
     def _sync_cache_with_s3(self, pipeline_id: str, direction: str) -> None:
+        """Download (before) or upload (after) the run's cache via S3.
+
+        A failed or partial sync raises ``CacheSyncError``; ``run()`` turns it
+        into ``PipelineExecutionError`` and the CLI exits non-zero, so a phased
+        Step Functions run fails at the phase that lost its checkpoint.
+        """
         if not self.s3_cache_manager:
             logger.info("S3 cache manager not available, skipping sync")
             return
