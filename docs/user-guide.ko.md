@@ -224,9 +224,27 @@ aws:
 
 #### 모델 선택 주의사항
 
-기본값은 추론 비중이 큰 단계에 `anthropic.claude-sonnet-5`, 경량 단계(요약·번역·
-키워드 추출)에 `anthropic.claude-haiku-4-5-...`입니다. Claude 4.7 이후 모델은 세
-가지가 다릅니다.
+기본값은 추론 비중이 큰 단계에 `anthropic.claude-sonnet-5-5`(Claude Sonnet 5.5),
+경량 단계(요약·번역·키워드 추출)에 `anthropic.claude-haiku-4-5-...`입니다. 모든
+`*_model_id`에는 기존 Claude 3.x/4.x ID와 함께 다음 모델을 지정할 수 있습니다.
+
+| 모델 ID | 공급자 | 컨텍스트 / 최대 출력 | 추론 제어 |
+| --- | --- | --- | --- |
+| `anthropic.claude-sonnet-5-5`(기본값) | Anthropic | 1M / 128K | adaptive, 항상 켜짐. `effort` low–max |
+| `anthropic.claude-opus-5-5` | Anthropic | 1M / 128K | adaptive, 항상 켜짐. `effort` low–max |
+| `anthropic.claude-sonnet-5`, `anthropic.claude-opus-5` | Anthropic | 1M / 128K | adaptive, 항상 켜짐. `effort` |
+| `anthropic.claude-opus-4-8`, `anthropic.claude-opus-4-7` | Anthropic | 1M / 128K | adaptive, 항상 켜짐. `effort` low–max |
+| `anthropic.claude-opus-4-6-v1` | Anthropic | 1M / 128K | 선택(`--enable-thinking`), adaptive. `effort` low/medium/high/max |
+| `anthropic.claude-sonnet-4-6` | Anthropic | 1M / 64K | 선택, adaptive. `effort` low/medium/high/max |
+| `openai.gpt-6.1-sol` | OpenAI | 1M / 131K | `reasoning.effort` low–max, 항상 켜짐 |
+| `openai.gpt-6-astra`, `openai.gpt-6-sol`, `openai.gpt-6-luna` | OpenAI | 1.05M / 128K | `reasoning.effort` low–max, 항상 켜짐 |
+| `openai.gpt-5.6-sol`, `openai.gpt-5.6-terra`, `openai.gpt-5.6-luna` | OpenAI | 1.05M / 128K | `reasoning.effort` low–max, 항상 켜짐 |
+| `openai.gpt-5.5`, `openai.gpt-5.4` | OpenAI | 1.05M / 128K | `reasoning.effort` low–max, 항상 켜짐 |
+
+모두 추론 프로파일 전용입니다. OpenAI는 독점 GPT 모델만 지원하며 오픈 웨이트
+`gpt-oss` 모델은 제외했습니다.
+
+Claude 4.7 이후 모델은 세 가지가 다릅니다.
 
 - **추론 프로파일이 필수입니다.** `ON_DEMAND` 처리량 없이 출시되므로 순수 모델
   ID로는 호출할 수 없고 크로스 리전 프로파일이 반드시 해석돼야 합니다.
@@ -236,22 +254,36 @@ aws:
   없으므로, 글로벌 프로파일을 끄면 사용 경로가 없습니다.
 - **`effort`가 사고 토큰 예산을 대체합니다.** 이 모델들에서는
   `thinking_budget_tokens`가 무시됩니다(기존 `budget_tokens` 형식은 400으로
-  거부됨). 대신 `bedrock.effort`를 설정하세요. Claude Sonnet 5는 사고를 끌 수 없어
-  `--enable-thinking`이 무의미하며, 깊이는 `effort`로만 조절합니다.
+  거부됨). 대신 `bedrock.effort`를 설정하세요. Claude Sonnet 5.5는 사고를 끌 수
+  없어 `--enable-thinking`이 무의미하며, 깊이는 `effort`로만 조절합니다.
+  모델이 받지 않는 수준(예: Opus·Sonnet 4.6의 `xhigh`)은 즉시 실패합니다.
 - **샘플링 파라미터가 제거됩니다.** `temperature`/`top_k`는 수용되지 않으므로
   요청에서 자동 생략됩니다. 동작 제어는 프롬프트로 하세요.
 
-`anthropic.claude-fable-5`는 의도적으로 선택 가능한 모델에서 제외했습니다. 계정의
-데이터 보존 모드가 `provider_data_share`여야 하는데(Data Retention API로만 설정
-가능 — 콘솔 UI 없음) 대부분의 계정에서는 *"data retention mode 'default' is not
-available for this model"*로 실패하며, 단가도 Opus 티어를 넘습니다.
+OpenAI GPT 모델은 Claude와 다음이 다릅니다.
+
+- 항상 `us.`/`global.` 추론 프로파일에서 Converse API로 호출합니다. `apac.`/`eu.`
+  지역 프로파일이 없으므로 미국 외 리전에서는 `enable_global_profile: true`를
+  유지하세요. `bedrock.effort`는
+  `reasoning: {effort: ...}`로 전달됩니다(평면 필드 `reasoning_effort`는 거부됨).
+  GPT-5.6과 GPT-6.x는 `effort: low`에서도 짧은 프롬프트 응답에 약 10~25초가
+  걸렸으므로 타임아웃과 동시성을 이에 맞춰 설정하세요.
+- Anthropic 전용 필드(`thinking`, `output_config`, `anthropic_beta`, `\n\nHuman:`
+  중지 시퀀스)를 보내지 않으며 샘플링 파라미터도 생략합니다.
+- 명시적 프롬프트 캐시 마커를 보내지 않습니다. 이 모델들은 Converse에서 암묵적
+  캐싱만 지원합니다. Bedrock CountTokens도 지원하지 않으므로 검색 컨텍스트 예산은
+  로컬 토큰 추정치를 사용합니다.
+
+Claude Fable 5 / 5.1은 제공하지 않습니다. 기본값이 아닌 계정 데이터 보존 모드
+(Data Retention API로만 설정)가 필요하며, 기본 모드 계정에서는 모든 호출이
+`data retention mode 'default' is not available for this model`로 거부됩니다.
 
 ### 2.2 `fixing` — 잘못된 형식의 모델 출력 자동 복구
 
 ```yaml
 fixing:
   enabled: true
-  fixing_model_id: "anthropic.claude-sonnet-5"
+  fixing_model_id: "anthropic.claude-sonnet-5-5"
 ```
 
 구조화된 스테이지에서 LLM이 잘못된 형식의 JSON을 반환하면, 실행을 실패시키는 대신
@@ -324,7 +356,7 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 
 ```yaml
   graph_extraction:
-    extraction_model_id: "anthropic.claude-sonnet-5"
+    extraction_model_id: "anthropic.claude-sonnet-5-5"
     max_entities_per_chunk: 50
     max_relationships_per_chunk: 50
     entity_confidence_threshold: 0.0
@@ -361,7 +393,7 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 ```yaml
   gleaning:
     enabled: true
-    graph_refinement_model_id: "anthropic.claude-sonnet-5"
+    graph_refinement_model_id: "anthropic.claude-sonnet-5-5"
     max_rounds: 3
     convergence_threshold: 0.8
     quality_threshold: 0.9
@@ -376,7 +408,7 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 ```yaml
   claim_extraction:
     enabled: false
-    extraction_model_id: "anthropic.claude-sonnet-5"
+    extraction_model_id: "anthropic.claude-sonnet-5-5"
     max_entities_per_prompt: 100
 ```
 
@@ -408,7 +440,7 @@ graph:
     auto_resolution: true
     report_generation:              # LLM-generated community summaries (used by global search)
       enabled: true
-      report_generation_model_id: "anthropic.claude-sonnet-5"
+      report_generation_model_id: "anthropic.claude-sonnet-5-5"
       max_entities_per_report: 50
       max_report_context_tokens: 4000
 
@@ -464,10 +496,10 @@ indexing:
 ```yaml
 search:
   translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
-  entity_extraction_model_id: "anthropic.claude-sonnet-5"
-  strategy_selection_model_id: "anthropic.claude-sonnet-5"   # the `auto` router
-  context_building_model_id: "anthropic.claude-sonnet-5"
-  answer_generation_model_id: "anthropic.claude-sonnet-5"    # the answer LLM
+  entity_extraction_model_id: "anthropic.claude-sonnet-5-5"
+  strategy_selection_model_id: "anthropic.claude-sonnet-5-5"   # the `auto` router
+  context_building_model_id: "anthropic.claude-sonnet-5-5"
+  answer_generation_model_id: "anthropic.claude-sonnet-5-5"    # the answer LLM
 
   hybrid:
     lexical_weight: 0.5
@@ -543,7 +575,7 @@ logging:
 ```yaml
 evaluation:
   outputs_directory: "outputs/evaluation"
-  evaluation_model_id: "anthropic.claude-sonnet-5"
+  evaluation_model_id: "anthropic.claude-sonnet-5-5"
   enabled_evaluators:
     - langchain
     - ragas
