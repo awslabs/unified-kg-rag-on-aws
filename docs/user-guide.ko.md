@@ -402,7 +402,7 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
   gleaning:
     enabled: true
     graph_refinement_model_id: "anthropic.claude-sonnet-5-5"
-    max_rounds: 3
+    max_rounds: 1                   # later rounds re-glean only units that gained items
     convergence_threshold: 0.8
     quality_threshold: 0.9
     min_improvement_threshold: 0.05
