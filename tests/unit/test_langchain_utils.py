@@ -28,6 +28,10 @@ from unified_kg_rag.shared.utils.langchain import (
 
 pytestmark = pytest.mark.unit
 
+# Retries still run, but without the production backoff (30s multiplier, 120s
+# cap) that made the failure-path tests sleep for minutes.
+_NO_BACKOFF: dict[str, Any] = {"retry_multiplier": 1.0, "retry_max_wait": 0}
+
 
 # --------------------------------------------------------------------------- #
 # BatchProcessor.execute_with_fallback
@@ -135,7 +139,9 @@ class TestExecuteWithFallback:
     def test_sequential_fallback_fills_empty_dict_on_item_failure(self) -> None:
         # Batch fails -> sequential path; one item raises and is back-filled with
         # {} so positional zip alignment downstream is preserved.
-        bp = BatchProcessor(batch_size=10, chunk_concurrency=1, call_timeout_seconds=0)
+        bp = BatchProcessor(
+            batch_size=10, chunk_concurrency=1, call_timeout_seconds=0, **_NO_BACKOFF
+        )
 
         def batch(inputs, config=None):  # noqa: ANN001, ARG001
             raise RuntimeError("batch boom")
@@ -269,7 +275,7 @@ class TestAExecuteWithFallback:
         # as an empty-dict sentinel (NOT dropped) so the result list stays
         # positionally aligned with the inputs — callers zip it back with
         # strict=True and a dropped item would abort the whole run.
-        bp = BatchProcessor(batch_size=10, max_concurrency=2)
+        bp = BatchProcessor(batch_size=10, max_concurrency=2, **_NO_BACKOFF)
 
         async def batch(inputs, config=None):  # noqa: ANN001, ARG001
             raise RuntimeError("async batch boom")
