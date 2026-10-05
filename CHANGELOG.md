@@ -64,6 +64,8 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   with backoff; those fail the item on the first attempt. Transient Bedrock
   errors, call timeouts and unparseable model output are still retried with
   backoff.
+- With `fixing.enabled` (the default), XML output that no recovery step can
+  parse now reaches the output-fixing model, which previously never ran.
 - Embedding and query-time LLM calls share one transient-error retry policy,
   `aws.bedrock.transient_retry` (5 attempts, 60s budget per call by default).
   The `search.llm_retry` key used earlier in this release cycle is still
