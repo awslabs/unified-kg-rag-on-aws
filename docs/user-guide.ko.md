@@ -296,12 +296,12 @@ processing:
     chunker_type: "intelligent"     # intelligent | simple
     chunking_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     content_type: "markdown"
-    min_chunk_size: 5000
-    max_chunk_size: 50000
+    min_chunk_size: 1000
+    max_chunk_size: 8000            # must fit the embedding/rerank input
     chunk_overlap: 500
     pre_chunk_size: 50000
     pre_chunk_overlap: 500
-    fallback_chunk_size: 50000
+    fallback_chunk_size: 4800
     max_marker_miss_rate: 0.1
 ```
 

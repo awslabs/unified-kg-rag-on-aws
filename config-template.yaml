@@ -129,12 +129,18 @@ processing:
     chunker_type: "intelligent"
     chunking_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     content_type: "markdown"
-    min_chunk_size: 5000
-    max_chunk_size: 50000
+    # Chunks are embedded whole and reranked as one document, so max_chunk_size
+    # must fit Titan Text Embeddings V2 (8,192 tokens) and Cohere Rerank 3.5
+    # (4,096 tokens/document): 8000 chars fits Titan even at ~1 char/token (CJK)
+    # and is ~2K English tokens. fallback_chunk_size 4800 ~= 1,200 English
+    # tokens, the MS GraphRAG / LightRAG default chunk size. pre_chunk_size is
+    # the intelligent chunker's LLM window and is not embedded.
+    min_chunk_size: 1000
+    max_chunk_size: 8000
     chunk_overlap: 500
     pre_chunk_size: 50000
     pre_chunk_overlap: 500
-    fallback_chunk_size: 50000
+    fallback_chunk_size: 4800
     max_marker_miss_rate: 0.1
 
   # Translation

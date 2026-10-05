@@ -386,26 +386,51 @@ class ChunkingConfig(BaseModel):
         description="Content format for processing",
     )
     min_chunk_size: int = Field(
-        default=5000, ge=1, description="Minimum chunk size in characters"
+        default=1000,
+        ge=1,
+        description=(
+            "Minimum chunk size in characters; shorter pieces are merged into a "
+            "neighbour. Default 1,000 (~250 English tokens) keeps headings and "
+            "short trailing paragraphs from becoming chunks of their own."
+        ),
     )
     max_chunk_size: int = Field(
-        default=50000,
+        default=8000,
         ge=1,
-        description="Maximum chunk size in characters",
+        description=(
+            "Maximum chunk size in characters. Every chunk is embedded whole and "
+            "reranked as one document, so it must fit the embedding model's "
+            "input (Titan Text Embeddings V2: 8,192 tokens) and the reranker's "
+            "per-document limit (Cohere Rerank 3.5: 4,096 tokens), or its tail "
+            "is never embedded or reranked. Default 8,000 fits Titan V2 even at "
+            "~1 character per token (CJK scripts) and is ~2K tokens of English, "
+            "inside the reranker limit."
+        ),
     )
     chunk_overlap: int = Field(
         default=500, ge=0, description="Chunk overlap in characters"
     )
     pre_chunk_size: int = Field(
-        default=50000, ge=1, description="Pre-chunk size in characters"
+        default=50000,
+        ge=1,
+        description=(
+            "Pre-chunk size in characters: the window the intelligent chunker's "
+            "LLM picks boundaries in. Not embedded itself (its chunks are capped "
+            "by max_chunk_size), so it is sized for the chunking model's prompt."
+        ),
     )
     pre_chunk_overlap: int = Field(
         default=500, ge=0, description="Pre-chunk overlap in characters"
     )
     fallback_chunk_size: int = Field(
-        default=50000,
+        default=4800,
         ge=1,
-        description="Fallback chunk size when intelligent chunking fails",
+        description=(
+            "Target chunk size for the size-based splitter (the simple chunker, "
+            "and intelligent chunking when the LLM fails or a chunk exceeds "
+            "max_chunk_size). Default 4,800 characters ~= 1,200 English tokens, "
+            "the default chunk size of MS GraphRAG and LightRAG."
+        ),
     )
     max_marker_miss_rate: float = Field(
         default=0.1,

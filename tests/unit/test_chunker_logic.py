@@ -588,3 +588,12 @@ class TestIntelligentChunkerPipeline:
         chunks = [Doc(page_content="a" * 50), Doc(page_content="b" * 3)]
         out = intelligent_chunker._merge_structured_chunks(chunks)
         assert out  # oversized first chunk is re-split via pre_splitter
+
+
+def test_default_chunk_sizes_fit_the_embedding_input() -> None:
+    # Chunks are embedded whole: even at ~1 char/token (CJK) the default cap
+    # must stay inside Titan Text Embeddings V2's 8,192-token input.
+    chunking = Config().processing.chunking
+    assert chunking.max_chunk_size <= 8192
+    assert chunking.min_chunk_size < chunking.fallback_chunk_size
+    assert chunking.fallback_chunk_size < chunking.max_chunk_size
