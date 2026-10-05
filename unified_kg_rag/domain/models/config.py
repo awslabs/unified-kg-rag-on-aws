@@ -1838,6 +1838,15 @@ class LoggingConfig(BaseModel):
         max_length=255,
         description="Log file path",
     )
+    library_levels: dict[str, str] = Field(
+        default_factory=lambda: {
+            "langchain_aws": "WARNING",
+            "botocore": "WARNING",
+            "urllib3": "WARNING",
+        },
+        description="Per-logger levels for chatty third-party libraries "
+        "(logger name -> level)",
+    )
 
 
 class CustomPromptConfig(BaseModel):

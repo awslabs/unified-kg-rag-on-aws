@@ -607,6 +607,12 @@ logging:
   log_format: "structured"
   log_to_file: true
   log_file_path: "logs/log.txt"
+  # Per-logger levels for chatty third-party libraries (langchain_aws logs an
+  # INFO line per model call). Setting this map REPLACES the defaults below.
+  library_levels:
+    langchain_aws: "WARNING"
+    botocore: "WARNING"
+    urllib3: "WARNING"
 
 # Evaluation Configuration
 evaluation:

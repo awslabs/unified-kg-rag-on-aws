@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import boto3
+from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from unified_kg_rag.adapters.ingestion.chunker import ChunkerFactory
 from unified_kg_rag.adapters.ingestion.claim_extractor import ClaimExtractor
@@ -103,6 +104,7 @@ class PipelineStage(ABC):
         """
 
     def execute(self, context: PipelineContext) -> PipelineStageResult:
+        tokens = bind_contextvars(stage=self.name)
         logger.info("Starting stage: '%s'", self.name)
         start_time = datetime.now()
 
@@ -139,6 +141,8 @@ class PipelineStage(ABC):
             return self._create_result(
                 PipelineStageStatus.FAILED, start_time, end_time, error_message=str(e)
             )
+        finally:
+            reset_contextvars(**tokens)
 
     @abstractmethod
     def _execute_core(

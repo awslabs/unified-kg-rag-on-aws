@@ -7,6 +7,7 @@ from typing import Any, TypeVar
 
 import boto3
 from pydantic import BaseModel
+from structlog.contextvars import bound_contextvars
 
 from unified_kg_rag.adapters.aws import S3CacheManager
 from unified_kg_rag.application.ingestion.pipeline_stages import (
@@ -528,8 +529,9 @@ class DataIngestionPipeline:
         self, context: PipelineContext, start_stage_name: str | None
     ) -> None:
         total_start_time = time.time()
-        self._execute_pipeline_stages(context, start_stage_name)
-        self._finalize_pipeline_execution(context, total_start_time)
+        with bound_contextvars(pipeline_id=context.pipeline_id):
+            self._execute_pipeline_stages(context, start_stage_name)
+            self._finalize_pipeline_execution(context, total_start_time)
 
     def _execute_pipeline_stages(
         self, context: PipelineContext, start_stage_name: str | None
