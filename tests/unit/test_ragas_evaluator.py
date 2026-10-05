@@ -31,7 +31,12 @@ pytestmark = pytest.mark.unit
 
 
 def _make_evaluator(
-    mocker, *, ragas_metrics=None, max_context_tokens=8192, evaluation_model_id=None
+    mocker,
+    *,
+    ragas_metrics=None,
+    max_context_tokens=8192,
+    evaluation_model_id=None,
+    ragas_max_contexts=20,
 ):
     """Build a RagasEvaluator with all Bedrock/boto wiring patched out.
 
@@ -53,6 +58,7 @@ def _make_evaluator(
 
     config = Config()
     config.evaluation.max_context_tokens = max_context_tokens
+    config.evaluation.ragas_max_contexts = ragas_max_contexts
     if ragas_metrics is not None:
         config.evaluation.ragas_metrics = ragas_metrics
     if evaluation_model_id is not None:
@@ -113,6 +119,37 @@ class TestTruncateContexts:
             [_result(contexts=["a b"]), _result(contexts=["c"])]
         )
         assert out == [["a b"], ["c"]]
+
+    def test_count_cap_keeps_top_ranked_contexts(self, mocker) -> None:
+        ev, _ = _make_evaluator(mocker, ragas_max_contexts=2)
+        out = ev._truncate_contexts([_result(contexts=["r1", "r2", "r3", "r4"])])
+        assert out == [["r1", "r2"]]
+
+    def test_count_cap_none_disables(self, mocker) -> None:
+        ev, _ = _make_evaluator(mocker, ragas_max_contexts=None)
+        contexts = [f"c{i}" for i in range(50)]
+        out = ev._truncate_contexts([_result(contexts=contexts)])
+        assert out == [contexts]
+
+    def test_count_cap_applies_before_token_budget(self, mocker) -> None:
+        # Without the count cap the oversized 3rd context would be truncated
+        # into the leftover budget (400 - 60 > buffer) and kept as a fragment;
+        # capped at 2, it never reaches the token step.
+        ev, _ = _make_evaluator(mocker, max_context_tokens=400, ragas_max_contexts=2)
+        first = " ".join(["a"] * 30)
+        second = " ".join(["b"] * 30)
+        third = " ".join(["c"] * 300)
+        out = ev._truncate_contexts([_result(contexts=[first, second, third])])
+        assert out == [[first, second]]
+
+    def test_token_budget_still_binds_under_count_cap(self, mocker) -> None:
+        ev, _ = _make_evaluator(mocker, max_context_tokens=200, ragas_max_contexts=5)
+        first = " ".join(["w"] * 72)
+        out = ev._truncate_contexts([_result(contexts=[first, "x y", "z"])])
+        assert out == [[first]]
+
+    def test_default_cap_is_twenty(self) -> None:
+        assert Config().evaluation.ragas_max_contexts == 20
 
 
 class TestParseRagasReports:

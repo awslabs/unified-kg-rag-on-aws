@@ -176,12 +176,16 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
 
     def _truncate_contexts(self, results: list[EvaluationResult]) -> list[list[str]]:
         max_tokens = self.config.evaluation.max_context_tokens
+        # Reported sources are in retrieval-rank order, so slicing keeps the
+        # top-ranked ones. Context precision makes one judge call per context,
+        # so the count — not just the token total — must be bounded.
+        max_contexts = self.config.evaluation.ragas_max_contexts
 
         processed_contexts = []
         for result in results:
             safe_contexts = []
             current_tokens = 0
-            for context in result.retrieved_contexts:
+            for context in result.retrieved_contexts[:max_contexts]:
                 context_token_count = self._token_counter.count_tokens(context)
 
                 if (

@@ -508,3 +508,53 @@ def test_extract_content_non_relationship_hit_gets_no_relationship_line(
 ) -> None:
     content = retriever._extract_content({"name": "Alice", "description": "researcher"})
     assert "Relationship:" not in content
+
+
+class _CountingEmbedder:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def aembed_query(self, text: str) -> list[float]:
+        self.calls.append(text)
+        return [float(len(text)), 1.0]
+
+
+async def test_query_embeddings_are_cached_per_text(retriever) -> None:
+    # Local search embeds the same entity-focus text for several indices; it
+    # must hit the embedding model once.
+    from collections import OrderedDict
+
+    from unified_kg_rag.domain.models import SearchType
+
+    embedder = _CountingEmbedder()
+    object.__setattr__(retriever, "_embedding_model", embedder)
+    object.__setattr__(retriever, "_query_embedding_cache", OrderedDict())
+
+    fields = ["text_embedding"]
+    first = await retriever._get_query_vector("Vendor Buyer", SearchType.HYBRID, fields)
+    again = await retriever._get_query_vector("Vendor Buyer", SearchType.VECTOR, fields)
+    other = await retriever._get_query_vector("Invoice", SearchType.HYBRID, fields)
+
+    assert first == again
+    assert other != first
+    assert embedder.calls == ["Vendor Buyer", "Invoice"]
+
+
+async def test_query_embedding_cache_is_bounded(retriever, monkeypatch) -> None:
+    from collections import OrderedDict
+
+    from unified_kg_rag.domain.models import SearchType
+
+    embedder = _CountingEmbedder()
+    object.__setattr__(retriever, "_embedding_model", embedder)
+    object.__setattr__(retriever, "_query_embedding_cache", OrderedDict())
+    monkeypatch.setattr(OpenSearchRetriever, "QUERY_EMBEDDING_CACHE_SIZE", 2)
+
+    fields = ["text_embedding"]
+    for text in ["a", "b", "a", "c"]:  # "a" refreshed, so "b" is evicted
+        await retriever._get_query_vector(text, SearchType.VECTOR, fields)
+    await retriever._get_query_vector("a", SearchType.VECTOR, fields)
+    await retriever._get_query_vector("b", SearchType.VECTOR, fields)
+
+    assert embedder.calls == ["a", "b", "c", "b"]
+    assert len(retriever._query_embedding_cache) == 2

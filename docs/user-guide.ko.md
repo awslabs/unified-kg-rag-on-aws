@@ -244,8 +244,8 @@ aws:
 
 | 등급 | 역할(`*_model_id` 키) |
 | --- | --- |
-| `default` | `fixing.fixing_model_id`, `processing.graph_extraction.extraction_model_id`, `processing.gleaning.graph_refinement_model_id`, `processing.claim_extraction.extraction_model_id`, `graph.community_detection.report_generation.report_generation_model_id`, `search.{entity_extraction,strategy_selection,context_building,answer_generation}_model_id`, `evaluation.evaluation_model_id` |
-| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.translation_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{query_refinement,keyword_expansion,convergence_assessment,primer}_model_id` |
+| `default` | `fixing.fixing_model_id`, `processing.graph_extraction.extraction_model_id`, `processing.gleaning.graph_refinement_model_id`, `processing.claim_extraction.extraction_model_id`, `graph.community_detection.report_generation.report_generation_model_id`, `search.{entity_extraction,context_building,answer_generation}_model_id`, `evaluation.evaluation_model_id` |
+| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.{translation,strategy_selection}_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{query_refinement,keyword_expansion,convergence_assessment,primer}_model_id` |
 
 ```yaml
 aws:
@@ -393,12 +393,12 @@ processing:
   chunking:
     chunker_type: "intelligent"     # intelligent | simple
     content_type: "markdown"
-    min_chunk_size: 5000
-    max_chunk_size: 50000
+    min_chunk_size: 1000
+    max_chunk_size: 8000            # must fit the embedding/rerank input
     chunk_overlap: 500
     pre_chunk_size: 50000
     pre_chunk_overlap: 500
-    fallback_chunk_size: 50000
+    fallback_chunk_size: 4800
     max_marker_miss_rate: 0.1
 ```
 
@@ -455,7 +455,7 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 ```yaml
   gleaning:
     enabled: true
-    max_rounds: 3
+    max_rounds: 3                   # 이후 라운드는 항목이 늘어난 단위만 다시 gleaning
     convergence_threshold: 0.8
     quality_threshold: 0.9
     min_improvement_threshold: 0.05
@@ -557,6 +557,7 @@ indexing:
 
 ```yaml
 search:
+  auto_routable_strategies: ["local", "mix", "global", "drift"]  # `auto`가 고를 수 있는 전략
   hybrid:
     lexical_weight: 0.5
     vector_weight: 0.5
@@ -577,7 +578,7 @@ search:
 
   global_search:
     max_communities: 10
-    use_dynamic_selection: true
+    use_dynamic_selection: false
     enable_map_reduce: true
     max_map_reduce_tokens: 8000
 
@@ -591,19 +592,19 @@ search:
     initial_top_k: 5
 
   token_manager:
-    max_context_tokens: null        # null => 답변 모델의 창 크기에서 자동 도출
+    max_context_tokens: 30000       # null => 답변 모델의 창 크기에서 자동 도출
     context_window_headroom_ratio: 0.1
 ```
 
-> **컨텍스트 예산은 고정값이 아니라 도출값입니다.** `max_context_tokens: null`
-> (기본값)이면 검색 컨텍스트 예산을 `search.answer_generation_model_id`의 컨텍스트
-> 창에서 답변 요청의 출력 예약분(`max_tokens`, `aws.bedrock.default_max_output_tokens`
-> 참고)과 헤드룸 비율을 뺀 값으로 계산합니다. 이렇게 해야
-> 두 값이 어긋나지 않습니다 — 하드코딩된 단일 숫자는 200K 모델의 창을 넘기거나
-> (창이 프롬프트와 답변을 **함께** 담아야 하므로) 1M 창의 대부분을 놀리게 됩니다.
-> 명시값도 존중되지만 모델이 수용 가능한 한도로 클램프되며, 그때 경고 로그가
-> 남습니다. `aws.bedrock.enable_1m_context`를 켜면 1M 창이 베타 옵트인인 모델에서
-> 도출 예산이 함께 넓어집니다.
+> **컨텍스트 예산.** 기본값 `max_context_tokens: 30000`은 upstream LightRAG의 전체
+> 컨텍스트 예산과 같습니다(MS GraphRAG는 12000). 1M 토큰 답변 모델의 창에서 도출하면
+> 예산이 약 785K 토큰이 되어 실제로 제한이 걸리지 않으므로, 유형별 예산과 우선순위가
+> 아무것도 잘라 내지 않습니다. 이 값은 항상 `search.answer_generation_model_id`가 출력
+> 예약분(답변 요청의 `max_tokens`, `aws.bedrock.default_max_output_tokens` 참고)과 함께
+> 수용할 수 있는 한도로 클램프되며, 그때 경고 로그가 남습니다.
+> `max_context_tokens: null`이면 해당 모델의 컨텍스트 창에서 같은 출력 예약분과 헤드룸
+> 비율을 뺀 값으로 예산을 도출하며, `aws.bedrock.enable_1m_context`를 켜면 1M 창이 베타
+> 옵트인인 모델에서 도출 예산이 함께 넓어집니다.
 
 ### 2.7 `memory`, `cache`, `logging`
 
@@ -799,13 +800,13 @@ OpenSearch analyzer는 `indexing.opensearch.language_analyzers`(예: `ko: nori`)
 | `local` | 특정 엔티티/개념에 대한 상세 질문 | 질의 엔티티 추출 → 이웃/관계를 위한 Neptune 그래프 순회 → 벡터/키워드 결과와 결합. 활성화 시 claim(covariate) 주입. |
 | `global` | 광범위하고 주제적인, "주요 주제가 무엇인가" 류의 질문 | 커뮤니티 리포트 + 동적으로 선택된 커뮤니티에 대한 map-reduce 사용. 고수준 종합에 최적. |
 | `drift` | 탐색이 필요한 복잡하고 다면적인 질문 | 라운드 간 수렴 감지를 동반한 반복적 질의 정제/확장. |
-| `auto` | 모를 때 / 일반 용도 (기본값) | LLM 라우터(`search.strategy_selection_model_id`)가 질의로부터 최적 전략 선택. |
+| `auto` | 모를 때 / 일반 용도 (기본값) | LLM 라우터(`search.strategy_selection_model_id`)가 질의로부터 `search.auto_routable_strategies`(기본값 local, mix, global, drift) 중 최적 전략 선택. |
 
 **LightRAG (이중 레벨 키워드):**
 
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
-| `mix` | 일반 LightRAG 용도; 그래프 + 청크 균형 | 저수준 키워드 → 엔티티 인덱스, 고수준 키워드 → 관계 인덱스, Neptune 확장, **추가로** naive 벡터 청크 검색을 섞음. |
+| `mix` | 일반 LightRAG 용도; 그래프 + 청크 균형 | 저수준 키워드 → 엔티티 인덱스, 고수준 키워드 → 관계 인덱스, 1홉 연결 관계·끝점 엔티티 확장(Neptune 다중 홉 확장은 `search.lightrag_search.enable_graph_expansion`으로 선택), **추가로** naive 벡터 청크 검색을 섞음. |
 | `hybrid` | 키워드 기반 그래프 질문 | `mix`와 동일하나 추가 naive 청크 혼합 없음. |
 | `naive` | 빠른 베이스라인 / 비교 평가 | 순수 벡터 청크 검색, 그래프 없음. LightRAG 베이스라인. |
 
@@ -835,8 +836,47 @@ run-rag --query "..." --mode search --output-format json --config-path config.ya
 run-rag --query "..." --verbose --config-path config.yaml
 
 # Attribute filters
-run-rag --query "..." --filters category:research entity_type:person --config-path config.yaml
+run-rag --query "..." --filters attr_category:research type:PERSON --config-path config.yaml
 ```
+
+필터는 OpenSearch에서 `term`/`terms`/`range` 절로, Neptune에서 `has` 단계로
+변환됩니다. 각 저장소는 인덱서가 기록하는 필드를 받습니다.
+
+| 저장소 | 필터 가능 필드 |
+|---|---|
+| Text unit | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.<path>` |
+| Entity | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
+| Relationship | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids` |
+| Claim | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text` |
+| Community report | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `attr_<key>`, `attributes.<path>` |
+| Neptune entity 정점 | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>`(있는 경우에만) |
+| Neptune community 정점 | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
+
+OpenSearch에서 `attr_<key>`는 문서 속성입니다. 문서 `filters` 메타데이터의
+`<key>` 항목이 `attr_<key>`로 색인됩니다. Neptune entity 정점의 `attr_<key>`는
+entity 자체에서 추출한 속성(예: `attr_role`)입니다. 정확한 필터링에는 완전 일치 필드(keyword 또는 숫자)를
+사용하십시오. `description`처럼 분석되는 텍스트 필드에 대한 `term` 필터는 소문자
+단일 토큰과 일치합니다. 범위 필터는 Python API에서 `{"gte": ..., "lte": ...}`로
+지정합니다.
+
+각 필터는 해당 필드를 선언한 저장소에만 적용되므로 `type:PERSON`은 entity, claim,
+Neptune entity만 좁히고 text unit에는 적용되지 않습니다. 두 저장소는
+`attr_<key>`를 다르게 적용합니다.
+
+- OpenSearch는 text unit, entity, community report에 `attr_<key>`와
+  `attributes.<path>`를 엄격하게 적용합니다. 해당 속성이 없는 문서는 제외되므로
+  보통 문서 속성이 없는 community report는 속성 필터 질의에서 빠집니다. 이는 의도한
+  동작(fail-closed)으로, 속성 필터가 확인할 수 없는 내용을 반환하지 않게 합니다.
+- Neptune은 entity 정점에 `attr_<key>`를 속성이 있는 경우에만 적용합니다. 속성이
+  일치하거나 해당 속성이 없는 정점은 통과합니다. 따라서 `attr_category` 같은 문서
+  속성 필터는 그래프 확장을 비우지 않고, `attr_role:buyer` 같은 entity 속성 필터는
+  역할이 다른 entity를 제외합니다. 그 밖의 키는 두 저장소 모두 엄격하게 적용합니다.
+
+선택한 전략이 읽는 어떤 저장소도 선언하지 않은 필터 키(예: 이전 예시의 `category`,
+`entity_type`)는 `InvalidFilterError`를 발생시키며, 오류 메시지에 필터 가능 키
+목록이 포함됩니다. 이전 릴리스는 이런 키를 조용히 무시하고 필터링되지 않은 결과를
+반환했습니다. 스키마는 `unified_kg_rag/adapters/storage/filter_schema.py`에
+정의되어 있습니다.
 
 ### 인터랙티브 모드 & 대화 메모리
 
@@ -929,7 +969,14 @@ aws:
 - **`langchain`** — LangChain 기반 텍스트 유사도(`langchain_metrics`:
   `correctness`, `partial_correctness`). `answer` 정답이 필요합니다.
 - **`ragas`** — RAGAS 지표(`answer_correctness`, `answer_relevancy`,
-  `context_precision`, `context_recall`, `faithfulness`).
+  `context_precision`, `context_recall`, `faithfulness`). 판정 모델은 질의마다
+  순위 상위 소스를 최대 `evaluation.ragas_max_contexts`개(기본값 20, `null`이면
+  제한 없음)까지만 채점하며, 이 제한은 `max_context_tokens` 예산보다 먼저
+  적용됩니다. `context_precision`은 컨텍스트마다 판정 호출을 한 번씩 하므로 비용이
+  컨텍스트 수에 비례합니다. 소스를 100개 이상 보고하는 전략(예: LightRAG `mix`)은
+  제한이 없으면 `ragas_timeout`에 걸립니다. 답변 모델이 본 컨텍스트는 그대로이고
+  판정 모델이 채점하는 범위만 줄어들므로, 컨텍스트 지표는 사실상
+  `context_precision@N` / `context_recall@N`입니다.
 - **`graph_aware`** — 결정적이고 **LLM 불필요**한 엔티티/관계 **커버리지 =
   recall**: 기대되는 그래프 아티팩트 중 몇 개가 생성된 답변에 나타나는지(대소문자
   무관 단어 단위 매칭, 띄어쓰기 없는 CJK 텍스트는 부분 문자열 매칭).

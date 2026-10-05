@@ -7,7 +7,8 @@ unified-kg-rag-on-aws's *shared* infrastructure rather than as a separate, reduc
 
 - low-level keywords (``ll_keywords``) -> entities index (lexical + vector),
 - high-level keywords (``hl_keywords``) -> relationships index (lexical + vector),
-- the entity hits are expanded through Neptune graph traversal,
+- the entity hits are expanded one hop to their incident relationships and
+  the relationship hits to their endpoint entities (both from OpenSearch),
 - ``mix`` additionally pulls the source chunks referenced by the matched
   entities/relationships (following ``text_unit_ids`` lineage, allocating slots
   per hit by weighted polling so every match keeps at least one chunk, and
@@ -44,7 +45,10 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SearchType,
 )
-from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
+from unified_kg_rag.domain.retrieval.strategy_registry import (
+    QueryInput,
+    register_strategy,
+)
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -124,21 +128,29 @@ def _pick_by_weighted_polling(
 
 
 # NAIVE is vector-chunk-only (no graph), so it declares DOCUMENT-only roles;
-# MIX/HYBRID need graph expansion and take the default (DOCUMENT, GRAPH). The
-# shared class can't carry one required_roles for all three, so NAIVE registers
-# separately -- otherwise every naive query builds an unused Neptune retriever.
-@register_strategy(SearchStrategy.MIX)
-@register_strategy(SearchStrategy.HYBRID)
+# MIX/HYBRID keep the default (DOCUMENT, GRAPH) so the opt-in multi-hop graph
+# expansion (`search.lightrag_search.enable_graph_expansion`) has a GRAPH
+# retriever. The shared class can't carry one required_roles for all three, so
+# NAIVE registers separately -- otherwise every naive query builds an unused
+# Neptune retriever.
+@register_strategy(
+    SearchStrategy.MIX, query_inputs=frozenset({QueryInput.DUAL_KEYWORDS})
+)
+@register_strategy(
+    SearchStrategy.HYBRID, query_inputs=frozenset({QueryInput.DUAL_KEYWORDS})
+)
 @register_strategy(SearchStrategy.NAIVE, required_roles=(RetrieverRole.DOCUMENT,))
 class LightRAGSearchStrategy(BaseSearchStrategy):
     """Dual-level keyword retrieval (LightRAG) over the shared hybrid stack.
 
     The same class serves three modes, distinguished by the resolved
-    :class:`SearchStrategy` passed via ``query.metadata['lightrag_mode']``
-    (default ``mix``):
+    :class:`SearchStrategy` passed via ``query.metadata['search_strategy']``
+    (the chain sets it; ``query.metadata['lightrag_mode']`` is still read for
+    direct callers; default ``mix``):
 
     - ``naive``: vector chunk retrieval only (no graph).
-    - ``hybrid``: ll->entities + hl->relationships + graph expansion.
+    - ``hybrid``: ll->entities + hl->relationships + one-hop cross-type
+      expansion + the chunks those items cite.
     - ``mix``: hybrid graph retrieval blended with naive chunk retrieval.
 
     Backends are accessed only through the abstract GRAPH / DOCUMENT retriever
@@ -179,7 +191,9 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         return self._os_config.max_query_size
 
     def _mode(self, query: SearchQuery) -> str:
-        return str(query.metadata.get("lightrag_mode", SearchStrategy.MIX.value))
+        metadata = query.metadata
+        mode = metadata.get("search_strategy") or metadata.get("lightrag_mode")
+        return str(mode or SearchStrategy.MIX.value)
 
     def _apply_keyword_fallback(self, query: SearchQuery) -> SearchQuery:
         """Force the raw query as a low-level keyword when both lists are empty.
@@ -214,103 +228,8 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         if mode == SearchStrategy.NAIVE.value:
             results_by_source.update(await self._retrieve_chunks(query))
         else:
-            # hybrid / mix: dual-level keyword retrieval + graph expansion.
             query = self._apply_keyword_fallback(query)
-            if query.ll_keywords:
-                results_by_source.update(await self._retrieve_entities(query))
-            if query.hl_keywords:
-                results_by_source.update(await self._retrieve_relationships(query))
-
-            # Seed graph expansion from BOTH the low-level entity hits and the
-            # endpoints of the high-level relationship hits. Without the latter,
-            # an hl-only (purely thematic/global) query — relationships but no
-            # entities — gets no graph expansion and no entity grounding, which
-            # diverges from LightRAG (its global mode reaches entities via the
-            # matched relationships' endpoints).
-            seed_entity_ids = list(
-                dict.fromkeys(
-                    self._get_ids(results_by_source.get("lightrag_entities", []), "id")
-                    + self._relationship_endpoint_ids(
-                        results_by_source.get("lightrag_relationships", [])
-                    )
-                )
-            )
-            if seed_entity_ids:
-                expanded = await self._expand_via_graph(query, seed_entity_ids)
-                if expanded:
-                    results_by_source["graph_entities"] = expanded
-
-            # Cross-type expansion, both directions. `_relationship_endpoint_ids`
-            # above already covers relation -> endpoint entity (upstream
-            # `_find_most_related_entities_from_relationships`); this covers
-            # entity -> incident edge (`_find_most_related_edges_from_entities`),
-            # which had no counterpart at all and left the relationship stream at
-            # a third of upstream's width.
-            entity_hits = results_by_source.get("lightrag_entities", [])
-            if entity_hits:
-                incident = await self._retrieve_incident_relationships(
-                    query,
-                    entity_hits,
-                    known_relationships=results_by_source.get(
-                        "lightrag_relationships", []
-                    ),
-                )
-                if incident:
-                    results_by_source.update(incident)
-
-            # Upstream's global side derives its ENTITY
-            # context from the matched relationships' endpoints
-            # (`_find_most_related_entities_from_relationships`, fetched with
-            # `get_nodes_batch` and merged with the ll entity list in
-            # `_merge_context`). We previously fed those endpoint ids only to
-            # `_expand_via_graph` above — a Neptune re-query that returns the
-            # seeds' NEIGHBOURHOOD, not the endpoints themselves — so the
-            # endpoints never became context items and the entity section sat at
-            # 48 vs upstream's 71. Sourced from the hl VECTOR hits only, as
-            # upstream does (NOT the incident-edge expansion above).
-            relationship_hits = results_by_source.get("lightrag_relationships", [])
-            if relationship_hits:
-                endpoints = await self._retrieve_endpoint_entities(
-                    query,
-                    relationship_hits,
-                    known_entities=results_by_source.get("lightrag_entities", []),
-                )
-                if endpoints:
-                    results_by_source.update(endpoints)
-
-            # KG-grounded chunks: follow text_unit_ids lineage from the matched
-            # entities/relationships to their source chunks. BOTH KG modes do this —
-            # upstream `hybrid` builds its context from entities + relations + the
-            # chunks those reference (`_find_related_text_unit_from_entities` /
-            # `_from_relations`), which is why upstream hybrid's context is ~190 text
-            # items. Gating this on mix left hybrid with NO chunk stream at all, so it
-            # abstained on 55/100 MuSiQue queries. What `mix` adds on top is the
-            # separate naive VECTOR chunk query, not the lineage chunks.
-            #
-            # For mix the naive vector chunks are fetched FIRST and passed to the
-            # lineage selection as `exclude`, because upstream merges the three chunk
-            # streams round-robin under one `seen_chunk_ids` set with the vector stream
-            # taking precedence (operate.py `_merge_chunks`). Selecting the lineage
-            # chunks blind to that set spent 37% of the KG chunk budget re-fetching
-            # chunks the vector query had already delivered.
-            vector_chunk_ids: set[str] = set()
-            if mode == SearchStrategy.MIX.value:
-                results_by_source.update(await self._retrieve_chunks(query))
-                vector_chunk_ids = {
-                    cid
-                    for cid in self._get_ids(
-                        results_by_source.get("lightrag_chunks", []), "id"
-                    )
-                    if cid
-                }
-            linked = await self._retrieve_linked_chunks(
-                query,
-                results_by_source.get("lightrag_entities", []),
-                results_by_source.get("lightrag_relationships", []),
-                exclude=vector_chunk_ids,
-            )
-            if linked:
-                results_by_source.update(linked)
+            results_by_source.update(await self._retrieve_kg_streams(query, mode))
 
         # Keep entities/relationships/chunks as separate streams
         # with reserved slots (LightRAG uses ~40 entities / 20 chunks), instead of
@@ -396,6 +315,108 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 "sources": {k: len(v) for k, v in results_by_source.items()},
             },
         )
+
+    async def _retrieve_kg_streams(
+        self, query: SearchQuery, mode: str
+    ) -> dict[str, list[RetrievalResult]]:
+        """hybrid / mix retrieval in three dependency-ordered rounds.
+
+        1. The independent vector queries run concurrently: ll keywords ->
+           entities, hl keywords -> relationships, and (mix only) the naive
+           chunk query.
+        2. The two cross-type expansions run concurrently, as both depend only
+           on round 1: entity hits -> incident relationships (upstream
+           ``_find_most_related_edges_from_entities``) and relationship hits ->
+           endpoint entities (``_find_most_related_entities_from_relationships``).
+        3. The source chunks cited by the matched entities/relationships
+           (``_find_related_text_unit_from_entities`` / ``_from_relations``),
+           excluding chunks the mix vector query already returned, because
+           upstream merges the chunk streams under one ``seen_chunk_ids`` set
+           with the vector stream taking precedence (``_merge_chunks``).
+
+        Upstream LightRAG has no multi-hop graph traversal: its graph context is
+        the matched items plus their one-hop incident edges and endpoint nodes,
+        which rounds 2 and 3 already cover from the OpenSearch indices. The
+        Neptune neighbourhood expansion is therefore opt-in
+        (``search.lightrag_search.enable_graph_expansion``); when enabled it runs
+        in round 2, seeded from the entity hits and the relationship endpoints
+        in rank order.
+        """
+        results: dict[str, list[RetrievalResult]] = {}
+
+        first_round = []
+        if query.ll_keywords:
+            first_round.append(self._retrieve_entities(query))
+        if query.hl_keywords:
+            first_round.append(self._retrieve_relationships(query))
+        if mode == SearchStrategy.MIX.value:
+            first_round.append(self._retrieve_chunks(query))
+        for streams in await asyncio.gather(*first_round):
+            results.update(streams)
+
+        entity_hits = results.get("lightrag_entities", [])
+        relationship_hits = results.get("lightrag_relationships", [])
+        second_round = []
+        if entity_hits:
+            second_round.append(
+                self._retrieve_incident_relationships(
+                    query, entity_hits, known_relationships=relationship_hits
+                )
+            )
+        if relationship_hits:
+            # Sourced from the hl VECTOR hits only, as upstream does, not from
+            # the incident-edge expansion running alongside it.
+            second_round.append(
+                self._retrieve_endpoint_entities(
+                    query, relationship_hits, known_entities=entity_hits
+                )
+            )
+        if self._lightrag_config.enable_graph_expansion:
+            second_round.append(
+                self._graph_expansion(query, entity_hits, relationship_hits)
+            )
+        for streams in await asyncio.gather(*second_round):
+            results.update(streams)
+
+        vector_chunk_ids = {
+            cid
+            for cid in self._get_ids(results.get("lightrag_chunks", []), "id")
+            if cid
+        }
+        results.update(
+            await self._retrieve_linked_chunks(
+                query, entity_hits, relationship_hits, exclude=vector_chunk_ids
+            )
+        )
+        return results
+
+    async def _graph_expansion(
+        self,
+        query: SearchQuery,
+        entity_hits: list[RetrievalResult],
+        relationship_hits: list[RetrievalResult],
+    ) -> dict[str, list[RetrievalResult]]:
+        """Opt-in Neptune neighbourhood of the entity hits + relationship endpoints.
+
+        Seeds keep rank order (entity hits first, then endpoints in first-seen
+        order) because the graph retriever caps the seed count.
+        """
+        entity_ids = [
+            str((hit.metadata or {}).get("id") or hit.source or "")
+            for hit in entity_hits
+        ]
+        seed_ids = list(
+            dict.fromkeys(
+                eid
+                for eid in entity_ids
+                + self._relationship_endpoint_ids(relationship_hits)
+                if eid
+            )
+        )
+        if not seed_ids:
+            return {}
+        expanded = await self._expand_via_graph(query, seed_ids)
+        return {"graph_entities": expanded} if expanded else {}
 
     async def _retrieve_entities(
         self, query: SearchQuery
@@ -609,15 +630,13 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         (``_merge_context``). That is how upstream's entity section grows well past
         the width of the entity vector query itself.
 
-        We previously fed these endpoint ids into ``_expand_via_graph`` — a Neptune
-        re-query of the seeds, which returns the seeds' neighborhood, not the
-        endpoints themselves as context items. This emits them as first-class entity
-        candidates instead.
+        This emits the endpoints themselves as first-class entity candidates.
 
         Only the hl VECTOR hits are used as the source, not the
         incident-edge expansion: upstream's endpoint pass runs inside
-        ``_get_edge_data`` on the vector results only, and feeding it ~130 incident
-        edges would manufacture entities upstream never has.
+        ``_get_edge_data`` on the vector results only, and feeding it the
+        (much larger) incident-edge set would manufacture entities upstream never
+        has.
         """
         retriever = self.document_retriever
         if not retriever:

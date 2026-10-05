@@ -134,8 +134,12 @@ class ChunkQualityValidator:
             "oversized_chunks": sum(
                 1 for chunk in chunks if len(chunk) > self.max_chunk_size
             ),
-            "undersized_chunks": sum(
-                1 for chunk in chunks if len(chunk) < self.min_chunk_size
+            # A document's only chunk cannot be merged with anything, so a
+            # short document is not an undersized-chunk problem.
+            "undersized_chunks": (
+                sum(1 for chunk in chunks if len(chunk) < self.min_chunk_size)
+                if len(chunks) > 1
+                else 0
             ),
         }
 
@@ -673,12 +677,30 @@ class IntelligentTextChunker(BaseChunker):
             self.stats.num_pre_chunks_processed = (
                 self.stats.num_pre_chunks_processed or 0
             ) + len(pre_chunks)
-            boundary_results = self._get_boundary_results(pre_chunks, doc_name)
+            # Any split of a pre-chunk shorter than 2 * min_chunk_size leaves at
+            # least one piece under min_chunk_size, and merge_small_chunks folds
+            # it back, so the result is the pre-chunk itself: skip the LLM call
+            # (unless it is oversized and must be split anyway).
+            processor = self.chunk_processor
+            needs_llm = [
+                i
+                for i, pre_chunk in enumerate(pre_chunks)
+                if len(pre_chunk) >= 2 * processor.min_chunk_size
+                or len(pre_chunk) > processor.max_chunk_size
+            ]
+            llm_results = (
+                self._get_boundary_results([pre_chunks[i] for i in needs_llm], doc_name)
+                if needs_llm
+                else []
+            )
+            response_of = dict(zip(needs_llm, llm_results, strict=True))
 
-            final_chunks = []
-            for i, (pre_chunk, llm_response) in enumerate(
-                zip(pre_chunks, boundary_results, strict=True)
-            ):
+            final_chunks: list[tuple[str, str, int]] = []
+            for i, pre_chunk in enumerate(pre_chunks):
+                if i not in response_of:
+                    final_chunks.append(("unsplit", pre_chunk, i + 1))
+                    continue
+                llm_response = response_of[i]
                 chunks = self._get_chunks_from_response(pre_chunk, llm_response)
                 if chunks:
                     final_chunks.extend([("llm", chunk, i + 1) for chunk in chunks])

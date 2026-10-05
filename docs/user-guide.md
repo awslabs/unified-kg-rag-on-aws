@@ -245,8 +245,8 @@ still wins over its tier:
 
 | Tier | Roles (`*_model_id` keys) |
 | --- | --- |
-| `default` | `fixing.fixing_model_id`, `processing.graph_extraction.extraction_model_id`, `processing.gleaning.graph_refinement_model_id`, `processing.claim_extraction.extraction_model_id`, `graph.community_detection.report_generation.report_generation_model_id`, `search.{entity_extraction,strategy_selection,context_building,answer_generation}_model_id`, `evaluation.evaluation_model_id` |
-| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.translation_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{query_refinement,keyword_expansion,convergence_assessment,primer}_model_id` |
+| `default` | `fixing.fixing_model_id`, `processing.graph_extraction.extraction_model_id`, `processing.gleaning.graph_refinement_model_id`, `processing.claim_extraction.extraction_model_id`, `graph.community_detection.report_generation.report_generation_model_id`, `search.{entity_extraction,context_building,answer_generation}_model_id`, `evaluation.evaluation_model_id` |
+| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.{translation,strategy_selection}_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{query_refinement,keyword_expansion,convergence_assessment,primer}_model_id` |
 
 ```yaml
 aws:
@@ -398,12 +398,12 @@ splits by size. Most-tuned: `min_chunk_size` / `max_chunk_size`.
   chunking:
     chunker_type: "intelligent"     # intelligent | simple
     content_type: "markdown"
-    min_chunk_size: 5000
-    max_chunk_size: 50000
+    min_chunk_size: 1000
+    max_chunk_size: 8000            # must fit the embedding/rerank input
     chunk_overlap: 500
     pre_chunk_size: 50000
     pre_chunk_overlap: 500
-    fallback_chunk_size: 50000
+    fallback_chunk_size: 4800
     max_marker_miss_rate: 0.1
 ```
 
@@ -462,7 +462,7 @@ missed on the first pass (quality vs. cost trade-off).
 ```yaml
   gleaning:
     enabled: true
-    max_rounds: 3
+    max_rounds: 3                   # later rounds re-glean only units that gained items
     convergence_threshold: 0.8
     quality_threshold: 0.9
     min_improvement_threshold: 0.05
@@ -564,6 +564,7 @@ indexing:
 
 ```yaml
 search:
+  auto_routable_strategies: ["local", "mix", "global", "drift"]  # what `auto` may pick
   hybrid:
     lexical_weight: 0.5
     vector_weight: 0.5
@@ -584,7 +585,7 @@ search:
 
   global_search:
     max_communities: 10
-    use_dynamic_selection: true
+    use_dynamic_selection: false
     enable_map_reduce: true
     max_map_reduce_tokens: 8000
 
@@ -598,21 +599,21 @@ search:
     initial_top_k: 5
 
   token_manager:
-    max_context_tokens: null        # null => derive from the answer model's window
+    max_context_tokens: 30000       # null => derive from the answer model's window
     context_window_headroom_ratio: 0.1
 ```
 
-> **Context budget is derived, not fixed.** With `max_context_tokens: null`
-> (the default) the retrieval context budget is computed from
-> `search.answer_generation_model_id`'s own context window, minus the answer
-> request's output reservation (its `max_tokens`, see
-> `aws.bedrock.default_max_output_tokens`) and the headroom ratio. This keeps the two in agreement: a
-> single hardcoded number either overflows a 200K model's window (the window
-> must hold the prompt *and* the answer) or leaves most of a 1M window unused.
-> An explicit value is still honoured, but is clamped to what the model can
-> accept — a warning names the clamp when that happens. Enabling
-> `aws.bedrock.enable_1m_context` widens the derived budget on models whose 1M
-> window is a beta opt-in.
+> **Context budget.** The default `max_context_tokens: 30000` matches upstream
+> LightRAG's total context budget (MS GraphRAG uses 12000). A budget derived
+> from a 1M-token answer model's window is ~785K tokens, which never binds, so
+> the per-type budgets and priority ordering would never trim anything. The
+> value is always clamped to what `search.answer_generation_model_id` can
+> accept alongside its output reservation (the answer request's `max_tokens`,
+> see `aws.bedrock.default_max_output_tokens`) — a warning names the clamp when
+> that happens. With `max_context_tokens: null` the budget is instead derived
+> from that model's context window, minus the same output reservation and the
+> headroom ratio; enabling `aws.bedrock.enable_1m_context` widens the derived
+> budget on models whose 1M window is a beta opt-in.
 
 ### 2.7 `memory`, `cache`, `logging`
 
@@ -811,13 +812,13 @@ rerank); only the retrieval algorithm differs.
 | `local` | Detailed questions about specific entities/concepts | Extracts query entities → Neptune graph traversal for neighbors/relationships → combined with vector/keyword hits. Injects claims (covariates) when enabled. |
 | `global` | Broad, thematic, "what are the main themes" questions | Uses community reports + map-reduce over dynamically selected communities. Best for high-level synthesis. |
 | `drift` | Complex, multi-faceted questions needing exploration | Iterative query refinement/expansion with convergence detection across rounds. |
-| `auto` | You don't know / general use (the default) | An LLM router (`search.strategy_selection_model_id`) picks the best strategy from the query. |
+| `auto` | You don't know / general use (the default) | An LLM router (`search.strategy_selection_model_id`) picks the best strategy from the query among `search.auto_routable_strategies` (default local, mix, global, drift). |
 
 **LightRAG (dual-level keyword):**
 
 | Strategy | Use when | How it works |
 |---|---|---|
-| `mix` | General LightRAG use; balances graph + chunks | Low-level keywords → entity index, high-level keywords → relationship index, Neptune expansion, **plus** naive vector chunk retrieval blended in. |
+| `mix` | General LightRAG use; balances graph + chunks | Low-level keywords → entity index, high-level keywords → relationship index, one-hop incident-relationship / endpoint-entity expansion (Neptune multi-hop expansion is opt-in: `search.lightrag_search.enable_graph_expansion`), **plus** naive vector chunk retrieval blended in. |
 | `hybrid` | Keyword-driven graph questions | Same as `mix` but without the extra naive chunk blend. |
 | `naive` | Fast baseline / comparison eval | Pure vector chunk retrieval, no graph. The LightRAG baseline. |
 
@@ -847,8 +848,51 @@ run-rag --query "..." --mode search --output-format json --config-path config.ya
 run-rag --query "..." --verbose --config-path config.yaml
 
 # Attribute filters
-run-rag --query "..." --filters category:research entity_type:person --config-path config.yaml
+run-rag --query "..." --filters attr_category:research type:PERSON --config-path config.yaml
 ```
+
+Filters compile to `term`/`terms`/`range` clauses on OpenSearch and `has`
+steps on Neptune. Each store accepts the fields its indexer writes:
+
+| Store | Filterable fields |
+|---|---|
+| Text units | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.<path>` |
+| Entities | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
+| Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids` |
+| Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text` |
+| Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `attr_<key>`, `attributes.<path>` |
+| Neptune entity vertices | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>` (where present) |
+| Neptune community vertices | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
+
+On OpenSearch, `attr_<key>` is a document attribute: entry `<key>` of a
+document's `filters` metadata is indexed as `attr_<key>`. On Neptune entity
+vertices, `attr_<key>` holds the entity's own extracted attributes (for example
+`attr_role`). Use exact-match fields (keyword or
+numeric) for precise filtering; a `term` filter on an analyzed text field such
+as `description` matches single lowercase tokens. A range filter takes
+`{"gte": ..., "lte": ...}` through the Python API.
+
+Each filter applies only to the stores that declare its field, so
+`type:PERSON` narrows entities, claims, and Neptune entities and leaves text
+units unfiltered. The two stores treat `attr_<key>` differently:
+
+- OpenSearch applies `attr_<key>` and `attributes.<path>` strictly on text
+  units, entities, and community reports. A document without the attribute is
+  excluded, so community reports, which usually lack document attributes, drop
+  out of an attribute-filtered query. This is deliberate (fail-closed): an
+  attribute filter never returns content it cannot vouch for.
+- Neptune applies `attr_<key>` on entity vertices where present: a vertex
+  passes when the property matches or when it has no such property. A
+  document-attribute filter such as `attr_category` therefore leaves graph
+  expansion intact, while an entity-attribute filter such as `attr_role:buyer`
+  removes entities whose role differs. Every other key is strict on both
+  stores.
+
+A filter key that no store the selected strategy reads declares (for example
+the earlier `category` or `entity_type`) raises `InvalidFilterError`, whose
+message lists the filterable keys. Earlier releases ignored such keys silently
+and returned unfiltered results. The schema is defined in
+`unified_kg_rag/adapters/storage/filter_schema.py`.
 
 ### Interactive mode & conversation memory
 
@@ -945,7 +989,14 @@ Selected via `evaluation.enabled_evaluators`:
 - **`langchain`** — LangChain-based text similarity (`langchain_metrics`:
   `correctness`, `partial_correctness`). Needs `answer` ground truth.
 - **`ragas`** — RAGAS metrics (`answer_correctness`, `answer_relevancy`,
-  `context_precision`, `context_recall`, `faithfulness`).
+  `context_precision`, `context_recall`, `faithfulness`). The judge scores at
+  most `evaluation.ragas_max_contexts` (default 20; `null` = no cap) top-ranked
+  sources per query, applied before the `max_context_tokens` budget.
+  `context_precision` makes one judge call per context, so its cost scales with
+  the context count — strategies that report 100+ sources (e.g. LightRAG `mix`)
+  otherwise hit `ragas_timeout`. This caps only what the judge scores, not what
+  the answer model saw, so the context metrics are effectively
+  `context_precision@N` / `context_recall@N`.
 - **`graph_aware`** — deterministic, **LLM-free** entity/relationship
   **coverage = recall**: of the expected graph artifacts, how many appear in the
   generated answer (case-insensitive whole-word match; substring match for

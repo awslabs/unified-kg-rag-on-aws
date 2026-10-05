@@ -66,6 +66,24 @@ def _r(content: str, score: float, retriever_type: str, source: str) -> Retrieva
     )
 
 
+@pytest.mark.parametrize("model_id", list(LanguageModelId))
+def test_shipped_explicit_budget_is_honoured_for_every_curated_model(
+    mocker, model_id: LanguageModelId
+) -> None:
+    # The shipped default (30000) must not be clamped for any curated answer
+    # model, with or without the output cap.
+    shipped = Config().search.token_manager.max_context_tokens
+    assert shipped == 30000
+    for cap in (16384, None):
+        mgr = _make_manager(
+            mocker,
+            max_context_tokens=shipped,
+            answer_model_id=model_id,
+            default_max_output_tokens=cap,
+        )
+        assert mgr._max_context_tokens == shipped, (model_id, cap)
+
+
 class TestContextBudgetDerivation:
     """The prompt budget must track the answer model's real context window.
 
@@ -303,10 +321,9 @@ class TestPerTypeBudgetIsAHardCap:
     The previous implementation packed each type to its sub-budget and then ran a
     second pass that pooled every unused token and offered it to the leftovers of
     ANY type by raw priority. That made the proportions advisory: whichever type
-    had the most/highest-scoring leftovers absorbed the whole remainder (measured
-    on musique50/n=50: community reports took 0.68 of the window against a 0.10
-    prop; with ranked chunk scores TEXT took 0.84 and evicted every community
-    report). Neither upstream pools — MS GraphRAG's mixed_context packs community
+    had the most/highest-scoring leftovers absorbed the whole remainder, so one
+    type could take most of the window and evict the others. Neither upstream
+    pools — MS GraphRAG's mixed_context packs community
     / local / text against three independent strict budgets and LightRAG
     truncates each type separately.
     """
@@ -615,3 +632,14 @@ class TestContextTypeBudgetConfig:
             assert hasattr(
                 ContextTypeBudgetConfig(), TokenManager._BUDGET_FIELDS[section_type]
             )
+
+
+def test_default_config_budget_is_fixed_not_window_derived(mocker) -> None:
+    # The shipped default binds (30K, upstream LightRAG parity) instead of the
+    # ~785K a 1M-window derivation yields; it stays clamped to the model.
+    mocker.patch.object(tm_module, "boto3")
+    mocker.patch.object(tm_module, "get_assumed_role_boto_session")
+    mocker.patch.object(tm_module, "BedrockTokenCounter", return_value=mocker.Mock())
+    config = Config()
+    assert config.search.token_manager.max_context_tokens == 30_000
+    assert TokenManager(config)._max_context_tokens == 30_000

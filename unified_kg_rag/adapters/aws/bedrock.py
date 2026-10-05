@@ -870,6 +870,21 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
     # "adaptive" adds client-side rate limiting on top of retries, which is
     # materially better for throttling-heavy Bedrock workloads than "standard".
     BOTO_RETRY_MODE: ClassVar[Literal["legacy", "standard", "adaptive"]] = "adaptive"
+    # urllib3 connection-pool bounds. botocore defaults to 10 connections per
+    # client, but ingestion issues up to max_concurrency x chunk_concurrency
+    # concurrent Bedrock calls through one client; a smaller pool discards and
+    # re-opens connections ("Connection pool is full"), paying a TLS handshake
+    # per call. The cap keeps an extreme concurrency setting from opening an
+    # unbounded number of sockets.
+    BOTO_MIN_POOL_CONNECTIONS: ClassVar[int] = 10
+    BOTO_MAX_POOL_CONNECTIONS: ClassVar[int] = 200
+
+    def _max_pool_connections(self) -> int:
+        processing = self.config.processing
+        wanted = processing.max_concurrency * processing.chunk_concurrency
+        return max(
+            self.BOTO_MIN_POOL_CONNECTIONS, min(wanted, self.BOTO_MAX_POOL_CONNECTIONS)
+        )
 
     def _boto_config(self, read_timeout: int | None = None) -> BotoConfig:
         # botocore accepts a plain retries dict at runtime; its stub uses a
@@ -880,10 +895,12 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
                 connect_timeout=self.BOTO_CONNECT_TIMEOUT,
                 read_timeout=read_timeout,
                 retries=retries,  # type: ignore[arg-type]
+                max_pool_connections=self._max_pool_connections(),
             )
         return BotoConfig(
             connect_timeout=self.BOTO_CONNECT_TIMEOUT,
             retries=retries,  # type: ignore[arg-type]
+            max_pool_connections=self._max_pool_connections(),
         )
 
     def __init__(

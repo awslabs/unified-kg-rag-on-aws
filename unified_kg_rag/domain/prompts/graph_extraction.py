@@ -329,7 +329,6 @@ specified.
     <quality_scores>
         <completeness_score>[0.0-1.0]</completeness_score>
         <accuracy_score>[0.0-1.0]</accuracy_score>
-        <assessment_summary>[Concise evaluation of current quality and key issues]</assessment_summary>
     </quality_scores>
     <identified_issues>
         <issue>
@@ -339,7 +338,6 @@ specified.
                 <type>[Entity type]</type>
                 <description>[Entity description]</description>
             </details>
-            <justification>[Why this improvement is important]</justification>
             <text_evidence>[Exact quote from source text]</text_evidence>
         </issue>
 
@@ -351,7 +349,6 @@ specified.
                 <type>[Relationship type]</type>
                 <description>[Relationship description]</description>
             </details>
-            <justification>[Why this improvement is important]</justification>
             <text_evidence>[Exact quote from source text]</text_evidence>
         </issue>
 

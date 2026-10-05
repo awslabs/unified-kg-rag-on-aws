@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, TypeVar
 
 from unified_kg_rag.domain.models import RetrieverRole, SearchStrategy
@@ -28,6 +29,16 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+class QueryInput(str, Enum):
+    """Query-side LLM outputs a strategy reads from ``SearchQuery``.
+
+    The chain runs only the extractions the resolved strategy declares.
+    """
+
+    ENTITIES = "entities"  # ``entity_focus``
+    DUAL_KEYWORDS = "dual_keywords"  # ``hl_keywords`` / ``ll_keywords``
+
+
 @dataclass(frozen=True)
 class StrategySpec:
     """Registration record for a search strategy.
@@ -37,12 +48,14 @@ class StrategySpec:
         required_roles: Retriever ROLES the strategy needs injected (GRAPH /
             DOCUMENT), not concrete backends. The composition root binds each
             role to an adapter, so strategies stay backend-agnostic.
+        query_inputs: Query-side extractions the strategy reads.
     """
 
     strategy_class: type[BaseSearchStrategy]
     required_roles: tuple[RetrieverRole, ...] = field(
         default=(RetrieverRole.DOCUMENT, RetrieverRole.GRAPH)
     )
+    query_inputs: frozenset[QueryInput] = frozenset()
 
 
 _REGISTRY: dict[SearchStrategy, StrategySpec] = {}
@@ -57,12 +70,15 @@ def register_strategy(
         RetrieverRole.DOCUMENT,
         RetrieverRole.GRAPH,
     ),
+    query_inputs: frozenset[QueryInput] = frozenset(),
 ) -> Callable[[StrategyT], StrategyT]:
     """Class decorator that registers a search strategy under ``strategy``.
 
     Args:
         strategy: The ``SearchStrategy`` enum value this class implements.
         required_roles: Retriever roles to inject when instantiating it.
+        query_inputs: Query-side extractions the strategy reads; the chain
+            skips the LLM calls for the rest.
 
     Raises:
         ValueError: If ``strategy`` is already registered to another class.
@@ -76,7 +92,9 @@ def register_strategy(
                 f"to '{cls.__name__}'."
             )
         _REGISTRY[strategy] = StrategySpec(
-            strategy_class=cls, required_roles=tuple(required_roles)
+            strategy_class=cls,
+            required_roles=tuple(required_roles),
+            query_inputs=frozenset(query_inputs),
         )
         logger.debug(
             "Registered search strategy '%s' -> %s", strategy.value, cls.__name__

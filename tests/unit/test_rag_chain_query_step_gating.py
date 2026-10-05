@@ -191,6 +191,19 @@ async def test_auto_routed_to_local_extracts_entities(
     assert processed.entities == ["Vendor", "Buyer"]
 
 
+async def test_auto_router_is_told_the_routable_strategies(
+    same_language_config: Config,
+) -> None:
+    factory = _FakeFactory(route="mix")
+    await _run_query_side(
+        _chain_with(same_language_config, factory), SearchStrategy.AUTO
+    )
+    route_inputs = [i for cls, i in factory.calls if cls is StrategySelectionPrompt]
+    assert route_inputs and route_inputs[0]["strategies"] == "local, mix, global, drift"
+    # Routed to mix -> the LightRAG keyword extraction runs.
+    assert factory.counts[KeywordsExtractionPrompt] == 1
+
+
 async def test_auto_routed_to_global_skips_entities(
     same_language_config: Config,
 ) -> None:

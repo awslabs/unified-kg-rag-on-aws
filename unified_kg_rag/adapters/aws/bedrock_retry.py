@@ -28,6 +28,10 @@ from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
 
+# Module-level indirection so tests can stub the backoff wait for this module
+# only, without catching unrelated threads that call time.sleep.
+_sleep = time.sleep
+
 T = TypeVar("T")
 
 # Error codes Bedrock runtime returns for conditions that resolve on their own.
@@ -128,7 +132,7 @@ def call_with_transient_retry(
             )
             if delay is None:
                 raise
-            time.sleep(delay)
+            _sleep(delay)
             attempt += 1
 
 

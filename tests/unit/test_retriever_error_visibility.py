@@ -274,15 +274,14 @@ def recording_logger(monkeypatch) -> _RecordingLogger:
 
     rec = _RecordingLogger()
     monkeypatch.setattr(mod, "logger", rec)
-    monkeypatch.setattr(mod, "_warned_missing_aliases", set())
     return rec
 
 
-async def test_index_not_found_warns_once_per_alias(
+async def test_index_not_found_warns_instead_of_error(
     config: Config, recording_logger: _RecordingLogger
 ) -> None:
     # A 404 index_not_found is a config/index mismatch, not a transient
-    # failure: one WARNING per alias, no ERROR per query, empty results.
+    # failure: a WARNING (not an ERROR) per query, empty results.
     retriever = _opensearch_retriever(config)
     _set_asearch_raising(
         retriever,
@@ -295,7 +294,7 @@ async def test_index_not_found_warns_once_per_alias(
         )
         assert results == []
 
-    assert len(recording_logger.warnings) == 1
+    assert len(recording_logger.warnings) == 3
     assert recording_logger.errors == []
 
 

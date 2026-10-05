@@ -820,3 +820,68 @@ class TestGleanGraphOrchestration:
         assert any(e.name.lower() == "seed" for e in ents)
         # convergence_achieved set when a stop condition fired.
         assert stats.final_quality_score >= 0.0
+
+
+class TestRegleanOnlyUnitsThatGained:
+    @staticmethod
+    def _plan(name: str | None) -> dict:
+        issues = (
+            {
+                "issue": {
+                    "issue_type": "MISSING_ENTITY",
+                    "details": {"name": name, "type": "PERSON"},
+                }
+            }
+            if name
+            else {}
+        )
+        return {
+            "refinement_plan": {
+                "quality_scores": {"completeness_score": 0.5, "accuracy_score": 0.5},
+                "identified_issues": issues,
+            }
+        }
+
+    def test_second_round_sends_only_units_with_new_items(
+        self, gleaner, mocker
+    ) -> None:
+        gleaner.gleaning_config.max_rounds = 2
+        gleaner.gleaning_config.convergence_threshold = 0.0001
+        gleaner.gleaning_config.min_improvement_threshold = 0.0
+        units = [TextUnit(id="t1", text="a"), TextUnit(id="t2", text="b")]
+        sent: list[int] = []
+
+        def _batch(inputs, *args, **kwargs):
+            sent.append(len(inputs))
+            if len(sent) == 1:
+                # Round 1: only t1 yields a new entity.
+                return [self._plan("Alpha"), self._plan(None)]
+            return [self._plan(None)] * len(inputs)
+
+        gleaner.graph_refiner = mocker.Mock()
+        gleaner.graph_refiner.batch.side_effect = _batch
+        gleaner._should_stop_gleaning = lambda *a, **k: False  # type: ignore[method-assign]
+
+        _, _, stats = gleaner.glean_graph(units, [], [])
+
+        assert sent == [2, 1]
+        assert stats.total_rounds == 2
+
+    def test_stops_when_no_unit_gained(self, gleaner, mocker) -> None:
+        gleaner.gleaning_config.max_rounds = 3
+        gleaner.graph_refiner = mocker.Mock()
+        gleaner.graph_refiner.batch.return_value = [self._plan(None)]
+        gleaner._should_stop_gleaning = lambda *a, **k: False  # type: ignore[method-assign]
+
+        _, _, stats = gleaner.glean_graph([TextUnit(id="t1", text="a")], [], [])
+
+        assert gleaner.graph_refiner.batch.call_count == 1
+        assert stats.convergence_achieved is True
+
+
+def test_default_gleaning_keeps_three_rounds() -> None:
+    # A real-AWS E2E (MuSiQue subset) lost DRIFT accuracy with one round; the
+    # later rounds stay cheap because they only re-send units that gained items.
+    from unified_kg_rag.domain.models import Config
+
+    assert Config().processing.gleaning.max_rounds == 3

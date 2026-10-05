@@ -83,24 +83,6 @@ def test_parse_keyword_json_extracts_innermost_braces_span() -> None:
     assert parsed["meta"] == {"nested": 1}
 
 
-# --- _is_lightrag_mode ---------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "strategy,expected",
-    [
-        (SearchStrategy.MIX, True),
-        (SearchStrategy.HYBRID, True),
-        (SearchStrategy.NAIVE, True),
-        (SearchStrategy.LOCAL, False),
-        (SearchStrategy.GLOBAL, False),
-        (None, False),
-    ],
-)
-def test_is_lightrag_mode(strategy, expected) -> None:
-    assert GraphRAGChain._is_lightrag_mode({"resolved_strategy": strategy}) is expected
-
-
 # --- query-translation refusal guard (Issue F side observation) ----------
 
 
@@ -232,15 +214,9 @@ def test_format_output_step_builds_rag_output() -> None:
     # highest-scoring sources with no text for RAGAS / recall scoring to match on.
     assert out.sources[0]["source"] == "doc-1"
     assert out.sources[0]["content"] == "c1"
-    # `truncated` is additive (budget-truncation flag); the original four keys stay.
-    assert set(out.sources[0].keys()) == {
-        "content",
-        "source",
-        "score",
-        "metadata",
-        "truncated",
-    }
-    assert out.sources[0]["truncated"] is False
+    # The budget-truncation flag lives in metadata; the four keys stay.
+    assert set(out.sources[0].keys()) == {"content", "source", "score", "metadata"}
+    assert out.sources[0]["metadata"]["truncated"] is False
     # retriever_type / chunk_id stay out — the projection is still explicit, not a
     # full model_dump.
     assert "retriever_type" not in out.sources[0]
