@@ -12,15 +12,27 @@ never constructed.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 import pytest
 
+from unified_kg_rag.application.retrieval.rag_chain import (
+    DEFAULT_ERROR_MESSAGE,
+    ProcessedQuery,
+    RAGOutput,
+)
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationGroundTruth,
+    EvaluationMetric,
+    EvaluationMetricType,
     EvaluationQuery,
+    EvaluationReport,
     EvaluationResult,
+    EvaluationSummary,
     EvaluatorType,
+    SearchQuery,
+    SearchResult,
 )
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.evaluation.evaluation_manager import GraphAwareEvaluator
@@ -266,9 +278,43 @@ class TestEvaluateResults:
             query_id="q1", question="?", generated_answer="x", ground_truth=""
         )
         gt = EvaluationGroundTruth(query_id="q1", ground_truth="ref")
-        # Failure is caught and logged; returns no reports rather than raising.
+        # Failure is caught and logged (not raised) and recorded per query as a
+        # failed report, so the summary can count the metrics as failed.
         reports = await manager._evaluate_results([query], [result], [gt])
-        assert reports == []
+        assert len(reports) == 1
+        assert reports[0].metrics == []
+        assert reports[0].metadata["evaluation_failed"] is True
+        assert set(reports[0].metadata["failed_metrics"]) == {
+            "entity_coverage",
+            "relationship_coverage",
+        }
+
+    async def test_errored_result_is_not_scored(self, config: Config) -> None:
+        manager = _graph_aware_manager(config)
+        queries = [
+            EvaluationQuery(query_id="ok", question="?"),
+            EvaluationQuery(query_id="bad", question="?"),
+        ]
+        results = [
+            EvaluationResult(
+                query_id="ok", question="?", generated_answer="Alice", ground_truth=""
+            ),
+            EvaluationResult(
+                query_id="bad",
+                question="?",
+                generated_answer=DEFAULT_ERROR_MESSAGE,
+                ground_truth="",
+                error=True,
+            ),
+        ]
+        gts = [
+            EvaluationGroundTruth(
+                query_id=qid, ground_truth="", expected_entities=["Alice"]
+            )
+            for qid in ("ok", "bad")
+        ]
+        reports = await manager._evaluate_results(queries, results, gts)
+        assert [r.query_id for r in reports] == ["ok"]
 
 
 class TestExtractFromResult:
@@ -316,3 +362,156 @@ class TestLeanContextStrings:
         )
         assert "Miquette Giraudy" in out[0]
         assert "s1" not in out[0]
+
+
+def _rag_output(answer: str, metadata: dict, error: str | None = None) -> RAGOutput:
+    return RAGOutput(
+        answer=answer,
+        sources=[],
+        search_results=SearchResult(
+            query=SearchQuery(query="?"),
+            results=[],
+            total_results=0,
+            search_strategy="error" if error else "local",
+            processing_time=0.1,
+            metadata={"error": error} if error else {},
+        ),
+        conversation_id=None,
+        processed_query=ProcessedQuery(original_query="?", final_query="?"),
+        metadata=metadata,
+    )
+
+
+class _FakeChain:
+    """Returns canned RAG outputs keyed by question (AWS-free)."""
+
+    def __init__(self, outputs: dict) -> None:
+        self.outputs = outputs
+
+    async def ainvoke(self, inputs, config=None):
+        return self.outputs[inputs["query"]]
+
+    async def abatch(self, inputs, config=None):
+        return [self.outputs[i["query"]] for i in inputs]
+
+
+class TestErroredQueries:
+    async def test_rag_error_fallback_flagged_counted_failed_and_not_scored(
+        self, config: Config
+    ) -> None:
+        config.evaluation.enabled_evaluators = [EvaluatorType.GRAPH_AWARE]
+        chain = _FakeChain(
+            {
+                "Who founded Acme?": _rag_output(
+                    "Alice founded Acme.", {"processing_time": 1.0}
+                ),
+                "Who audits Acme?": _rag_output(
+                    DEFAULT_ERROR_MESSAGE,
+                    {"error": True, "processing_time": 9.0},
+                    error="upstream timeout",
+                ),
+            }
+        )
+        manager = EvaluationManager(config, rag_chain=chain)
+        queries = [
+            EvaluationQuery(query_id="q1", question="Who founded Acme?"),
+            EvaluationQuery(query_id="q2", question="Who audits Acme?"),
+        ]
+        gts = [
+            EvaluationGroundTruth(
+                query_id=q.query_id, ground_truth="", expected_entities=["Alice"]
+            )
+            for q in queries
+        ]
+        results, reports, summary = await manager.evaluate_dataset(
+            queries, gts, show_progress=False
+        )
+
+        errored = {r.query_id: r for r in results}["q2"]
+        assert errored.error is True
+        assert errored.error_message == "upstream timeout"
+        assert {r.query_id: r for r in results}["q1"].error is False
+
+        # The apology text is not scored by any evaluator.
+        assert [r.query_id for r in reports] == ["q1"]
+        assert summary.successful_evaluations == 1
+        assert summary.failed_evaluations == 1
+        # Errored response time is not averaged in.
+        assert summary.average_response_time == pytest.approx(1.0)
+        assert summary.metric_statistics["entity_coverage"]["count"] == 1
+        assert summary.metric_outcomes["graph_aware"]["entity_coverage"] == {
+            "scored": 1,
+            "failed": 0,
+            "skipped": 1,
+        }
+
+    def test_empty_sentinel_is_an_error(self) -> None:
+        assert EvaluationManager._detect_generation_error({}, {}) is not None
+        assert EvaluationManager._detect_generation_error(None, {}) is not None
+        assert EvaluationManager._detect_generation_error({"answer": "a"}, {}) is None
+
+    def test_error_flag_without_detail_has_generic_message(self) -> None:
+        msg = EvaluationManager._detect_generation_error(
+            {"answer": "x", "metadata": {"error": True}}, {"error": True}
+        )
+        assert msg == "RAG chain returned an error response"
+
+
+class TestMetricOutcomes:
+    def _report(self, metrics=(), metadata=None) -> EvaluationReport:
+        return EvaluationReport(
+            query_id="q",
+            evaluator_type=EvaluatorType.LANGCHAIN,
+            metrics=[
+                EvaluationMetric(metric_type=EvaluationMetricType.CORRECTNESS, value=v)
+                for v in metrics
+            ],
+            metadata=metadata or {},
+        )
+
+    def test_failed_and_skipped_excluded_from_mean_and_counted(
+        self, config: Config
+    ) -> None:
+        manager = _graph_aware_manager(config)
+        manager.evaluators = {}  # count from reports only
+        reports = [
+            self._report([0.8]),
+            self._report(metadata={"failed_metrics": {"correctness": "boom"}}),
+            self._report(metadata={"skipped_metrics": {"correctness": "empty"}}),
+        ]
+        stats = manager._calculate_metric_statistics(reports)
+        assert stats["correctness"]["mean"] == pytest.approx(0.8)
+        assert stats["correctness"]["count"] == 1
+        outcomes = manager._calculate_metric_outcomes([], reports)
+        assert outcomes == {
+            "langchain": {"correctness": {"scored": 1, "failed": 1, "skipped": 1}}
+        }
+
+
+class TestSummaryBackwardCompat:
+    def test_old_summary_json_still_loads(self) -> None:
+        old = {
+            "total_queries": 2,
+            "successful_evaluations": 2,
+            "failed_evaluations": 0,
+            "average_response_time": 1.5,
+            "metric_statistics": {"correctness": {"mean": 0.5, "count": 2}},
+            "evaluation_start_time": datetime(2026, 1, 1).isoformat(),
+            "evaluation_end_time": datetime(2026, 1, 1, 0, 1).isoformat(),
+            "configuration": {},
+        }
+        summary = EvaluationSummary.model_validate(json.loads(json.dumps(old)))
+        assert summary.successful_evaluations == 2
+        assert summary.metric_statistics["correctness"]["mean"] == 0.5
+        assert summary.metric_outcomes == {}
+
+    def test_old_result_json_still_loads(self) -> None:
+        result = EvaluationResult.model_validate(
+            {
+                "query_id": "q",
+                "question": "?",
+                "generated_answer": "a",
+                "ground_truth": "",
+            }
+        )
+        assert result.error is False and result.error_message is None

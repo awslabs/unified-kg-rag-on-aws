@@ -23,7 +23,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.utils import BatchProcessor
 
-from .base import BaseEvaluator
+from .base import FAILED_METRICS_KEY, SKIPPED_METRICS_KEY, BaseEvaluator
 from .graph_aware_evaluator import GraphAwareEvaluator
 
 logger = get_logger(__name__)
@@ -220,6 +220,7 @@ class EvaluationManager:
         for query, raw_result in zip(queries, raw_results, strict=True):
             try:
                 rag_metadata = self._extract_from_result(raw_result, "metadata", {})
+                error_message = self._detect_generation_error(raw_result, rag_metadata)
                 results.append(
                     EvaluationResult(
                         query_id=query.query_id,
@@ -238,6 +239,8 @@ class EvaluationManager:
                         top_k=query.metadata.get("top_k"),
                         retrieval_multiplier=query.metadata.get("retrieval_multiplier"),
                         metadata=query.metadata,
+                        error=error_message is not None,
+                        error_message=error_message,
                     )
                 )
             except Exception as e:
@@ -251,9 +254,30 @@ class EvaluationManager:
                         generated_answer="",
                         ground_truth="",
                         metadata={"error": str(e)},
+                        error=True,
+                        error_message=str(e),
                     )
                 )
         return results
+
+    @staticmethod
+    def _detect_generation_error(raw_result: Any, rag_metadata: Any) -> str | None:
+        """Return why answer generation failed, or None if it succeeded.
+
+        Two failure shapes reach here without raising: the RAG chain's
+        ignore_errors fallback (answer=DEFAULT_ERROR_MESSAGE, metadata
+        ``{"error": True}``) and the batch processor's per-item sentinel
+        (``None`` / ``{}``) for an item that failed even sequentially. Neither
+        is a real answer, so neither may be scored.
+        """
+        if raw_result is None or (isinstance(raw_result, dict) and not raw_result):
+            return "answer generation returned no result"
+        if not (isinstance(rag_metadata, dict) and rag_metadata.get("error")):
+            return None
+        detail = None
+        if isinstance(raw_result, RAGOutput) and raw_result.search_results:
+            detail = raw_result.search_results.metadata.get("error")
+        return str(detail) if detail else "RAG chain returned an error response"
 
     def create_lean_context_strings(
         self, sources_list: list[dict[str, Any]]
@@ -276,12 +300,7 @@ class EvaluationManager:
 
         for item in sources_list:
             payloads_to_search = self._get_payloads_to_search(item)
-            has_translated_text = self._has_translated_text(
-                payloads_to_search, translated_key
-            )
-            lean_item = self._extract_fields(
-                payloads_to_search, desired_fields, has_translated_text
-            )
+            lean_item = self._extract_fields(payloads_to_search, desired_fields)
 
             if lean_item:
                 lean_contexts.append(str(lean_item))
@@ -304,24 +323,14 @@ class EvaluationManager:
         return payloads
 
     @staticmethod
-    def _has_translated_text(
-        payloads: list[dict[str, Any]], translated_key: str
-    ) -> bool:
-        return any(
-            translated_key in payload and payload[translated_key]
-            for payload in payloads
-        )
-
-    @staticmethod
     def _extract_fields(
         payloads: list[dict[str, Any]],
         desired_fields: list[str],
-        has_translated_text: bool,
     ) -> dict[str, Any]:
         lean_item = {}
 
         for field in desired_fields:
-            if field in lean_item or (field == "text" and has_translated_text):
+            if field in lean_item:
                 continue
 
             for payload in payloads:
@@ -359,7 +368,7 @@ class EvaluationManager:
         results: list[EvaluationResult],
         ground_truths: list[EvaluationGroundTruth],
     ) -> list[EvaluationReport]:
-        all_reports = []
+        all_reports: list[EvaluationReport] = []
         ground_truth_map = {gt.query_id: gt.ground_truth for gt in ground_truths}
         gt_obj_map = {gt.query_id: gt for gt in ground_truths}
 
@@ -376,7 +385,24 @@ class EvaluationManager:
                     gt.expected_relationships
                 )
 
-        gt_list = [res.ground_truth for res in results]
+        # A failed answer generation (RAG error fallback text or an empty
+        # sentinel) is not an answer: scoring it would let LLM judges grade the
+        # apology text. Exclude it from every evaluator; the summary counts it
+        # as failed and its metrics as skipped.
+        scorable = [
+            (query, res)
+            for query, res in zip(queries, results, strict=True)
+            if not res.error
+        ]
+        if len(scorable) < len(results):
+            logger.warning(
+                "Excluding %s/%s queries from scoring: answer generation failed",
+                len(results) - len(scorable),
+                len(results),
+            )
+        scorable_queries = [query for query, _ in scorable]
+        scorable_results = [res for _, res in scorable]
+        gt_list = [res.ground_truth for res in scorable_results]
 
         # Graph-aware coverage is the project's headline differentiator over
         # text-similarity eval, but it silently emits nothing when the dataset
@@ -393,13 +419,27 @@ class EvaluationManager:
                 "entity/relationship recall."
             )
 
+        if not scorable_results:
+            return all_reports
+
         for evaluator_type, evaluator in self.evaluators.items():
             try:
-                reports = await evaluator.aevaluate_batch(queries, results, gt_list)
+                reports = await evaluator.aevaluate_batch(
+                    scorable_queries, scorable_results, gt_list
+                )
                 all_reports.extend(reports)
             except Exception as e:
                 logger.error(
                     "Failed to run '%s' evaluation: %s", evaluator_type.value, e
+                )
+                # Record the crash per query (as the per-query path in
+                # BaseEvaluator does) so the summary counts the metrics as
+                # failed instead of silently reporting nothing.
+                all_reports.extend(
+                    evaluator._create_empty_report(
+                        query.query_id, reason=f"Evaluator crashed: {e}"
+                    )
+                    for query in scorable_queries
                 )
 
         return all_reports
@@ -412,8 +452,12 @@ class EvaluationManager:
         start_time: datetime,
         end_time: datetime,
     ) -> EvaluationSummary:
-        successful_evaluations = sum(1 for r in results if r.generated_answer)
-        response_times = [r.response_time for r in results if r.response_time]
+        successful_evaluations = sum(
+            1 for r in results if r.generated_answer and not r.error
+        )
+        response_times = [
+            r.response_time for r in results if r.response_time and not r.error
+        ]
         avg_response_time = (
             sum(response_times) / len(response_times) if response_times else 0.0
         )
@@ -424,10 +468,48 @@ class EvaluationManager:
             failed_evaluations=len(queries) - successful_evaluations,
             average_response_time=avg_response_time,
             metric_statistics=self._calculate_metric_statistics(reports),
+            metric_outcomes=self._calculate_metric_outcomes(results, reports),
             evaluation_start_time=start_time,
             evaluation_end_time=end_time,
             configuration=self.config.evaluation.model_dump(),
         )
+
+    def _calculate_metric_outcomes(
+        self,
+        results: list[EvaluationResult],
+        reports: list[EvaluationReport],
+    ) -> dict[str, dict[str, dict[str, int]]]:
+        """Count scored / failed / skipped per evaluator and metric.
+
+        Only ``scored`` values enter ``metric_statistics``; this makes the
+        excluded ones visible so a mean over 3 of 50 queries is not mistaken
+        for a mean over 50. Queries whose answer generation failed are counted
+        as ``skipped`` for every metric of every enabled evaluator.
+        """
+        outcomes: dict[str, dict[str, dict[str, int]]] = {}
+
+        def _bump(evaluator: str, metric: str, kind: str, n: int = 1) -> None:
+            counts = outcomes.setdefault(evaluator, {}).setdefault(
+                metric, {"scored": 0, "failed": 0, "skipped": 0}
+            )
+            counts[kind] += n
+
+        errored = sum(1 for r in results if r.error)
+        for evaluator_type, evaluator in self.evaluators.items():
+            for metric_type in evaluator.metric_types():
+                _bump(evaluator_type.value, metric_type.value, "skipped", errored)
+
+        for report in reports:
+            evaluator_name = report.evaluator_type.value
+            for metric in report.metrics:
+                _bump(evaluator_name, metric.metric_type.value, "scored")
+            for kind, key in (
+                ("failed", FAILED_METRICS_KEY),
+                ("skipped", SKIPPED_METRICS_KEY),
+            ):
+                for metric_name in report.metadata.get(key) or {}:
+                    _bump(evaluator_name, metric_name, kind)
+        return outcomes
 
     @staticmethod
     def _calculate_metric_statistics(
