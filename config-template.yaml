@@ -662,6 +662,12 @@ evaluation:
   # judge (throttled calls burn the per-job timeout). ragas_max_retries is the
   # total attempts per judge call.
   ragas_timeout: 300
+  # Top-ranked contexts per sample handed to the RAGAS judge (applied before
+  # max_context_tokens). context_precision makes one judge call PER context, so
+  # strategies reporting 100+ sources (e.g. LightRAG mix) time out without a
+  # cap. Only the judge's input is capped — the answer model's context is
+  # unchanged — so context_precision/recall become "@N". null = no cap.
+  ragas_max_contexts: 20
   ragas_max_workers: 8
   ragas_max_retries: 3
   # Cutoff k for the retrieval evaluator's hit@k / recall@k.
