@@ -162,6 +162,61 @@ class BaseSearchStrategy(MetricsMixin, ABC):
 
         return self.retrievers.get(RetrieverRole.DOCUMENT.value)
 
+    async def _safe_aretrieve(
+        self,
+        retriever: BaseGraphRAGRetriever,
+        query: SearchQuery,
+        label: str,
+        timeout: float | None = None,
+    ) -> list[RetrievalResult]:
+        """Run one sub-retrieval, re-raising fatal errors and degrading the rest.
+
+        The single place a strategy decides whether a retrieval failure is
+        surfaced or absorbed: fatal errors (auth/credentials/endpoint/
+        connection, see `is_fatal_retrieval_error`) propagate so a broken
+        configuration is not reported as "no results"; anything else (timeouts,
+        throttling, a malformed query) is logged under ``label`` and degrades to
+        an empty list so one failing section does not sink the whole search.
+        ``timeout`` (seconds) bounds the call via `asyncio.wait_for`; hitting it
+        is treated as transient.
+        """
+        try:
+            if timeout is None:
+                return await retriever.aretrieve(query)
+            return await asyncio.wait_for(retriever.aretrieve(query), timeout=timeout)
+        except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
+            logger.error(
+                "%s: %s failed (degrading to empty results): %s",
+                type(self).__name__,
+                label,
+                e,
+            )
+            return []
+
+    async def _expand_via_graph(
+        self, query: SearchQuery, seed_entity_ids: list[str]
+    ) -> list[RetrievalResult]:
+        """Expand seed entities through the graph (GraphRAG local and LightRAG).
+
+        Re-queries the GRAPH retriever pinned to the seed entity ids (an ``id``
+        filter merged into the caller's filters), with the entity focus cleared
+        so the seeds, not name matching, drive the traversal.
+        """
+        if not self.graph_retriever or not seed_entity_ids:
+            return []
+
+        search_query = query.model_copy(deep=True)
+        search_query.label_prefixes = [self.config.indexing.neptune.entity_label_prefix]
+        search_query.entity_focus = []
+        search_query.filters = (search_query.filters or {}).copy()
+        search_query.filters["id"] = seed_entity_ids
+
+        return await self._safe_aretrieve(
+            self.graph_retriever, search_query, "Neptune graph expansion"
+        )
+
     def search(self, query: SearchQuery) -> SearchResult:
         return asyncio.run(self.asearch(query))
 

@@ -291,7 +291,7 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 
 ### 8.5 검색 오류 가시성
 
-리트리버(`opensearch_retriever`/`neptune_retriever`)는 인증/설정/연결 실패를 조용히 "결과 없음"으로 둔갑시키지 않습니다. `is_fatal_retrieval_error()`(`adapters/retrieval/base.py:50`)가 치명적 오류는 `exc_info`와 함께 재발생시키고, 일시적(transient) 오류일 때만 `[]`로 degrade합니다. 따라서 잘못된 IAM 권한이나 엔드포인트 오타가 "0건 검색"으로 묻히지 않습니다.
+리트리버(`opensearch_retriever`/`neptune_retriever`)는 인증/설정/연결 실패를 조용히 "결과 없음"으로 둔갑시키지 않습니다. `is_fatal_retrieval_error()`(`adapters/retrieval/base.py:50`)가 치명적 오류는 `exc_info`와 함께 재발생시키고, 일시적(transient) 오류일 때만 `[]`로 degrade합니다. 따라서 잘못된 IAM 권한이나 엔드포인트 오타가 "0건 검색"으로 묻히지 않습니다. Neptune의 쿼리 단위 `_execute_traversal`도 치명적 오류를 재발생시켜 이 최상위 판별까지 전달합니다. 검색 전략은 모든 하위 검색을 공통 헬퍼 `BaseSearchStrategy._safe_aretrieve`로 실행하므로, 섹션별 예외 처리가 리트리버가 올린 치명적 오류를 다시 삼키지 않습니다. 일시적 오류는 해당 섹션만 빈 결과로 degrade합니다.
 
 ### 8.6 클라이언트 수명주기 / 자원 해제
 

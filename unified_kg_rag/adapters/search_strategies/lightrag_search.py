@@ -33,7 +33,6 @@ import boto3
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
-    is_fatal_retrieval_error,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
@@ -411,14 +410,10 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             index_prefixes=[self._os_config.entities_index_prefix],
             suffix=query.suffix,
         )
-        try:
-            results = await self.document_retriever.aretrieve(search_query)
-            return {"lightrag_entities": results}
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("Entity retrieval (ll_keywords) failed: %s", e)
-            return {}
+        results = await self._safe_aretrieve(
+            self.document_retriever, search_query, "Entity retrieval (ll_keywords)"
+        )
+        return {"lightrag_entities": results}
 
     async def _retrieve_relationships(
         self, query: SearchQuery
@@ -433,14 +428,12 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             index_prefixes=[self._os_config.relationships_index_prefix],
             suffix=query.suffix,
         )
-        try:
-            results = await self.document_retriever.aretrieve(search_query)
-            return {"lightrag_relationships": results}
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("Relationship retrieval (hl_keywords) failed: %s", e)
-            return {}
+        results = await self._safe_aretrieve(
+            self.document_retriever,
+            search_query,
+            "Relationship retrieval (hl_keywords)",
+        )
+        return {"lightrag_relationships": results}
 
     async def _retrieve_chunks(
         self, query: SearchQuery
@@ -455,14 +448,10 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             index_prefixes=[self._os_config.text_units_index_prefix],
             suffix=query.suffix,
         )
-        try:
-            results = await self.document_retriever.aretrieve(search_query)
-            return {"lightrag_chunks": results}
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("Chunk retrieval failed: %s", e)
-            return {}
+        results = await self._safe_aretrieve(
+            self.document_retriever, search_query, "Chunk retrieval"
+        )
+        return {"lightrag_chunks": results}
 
     @staticmethod
     def _lineages(results: list[RetrievalResult]) -> list[list[str]]:
@@ -569,12 +558,10 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             suffix=query.suffix,
             filters={"id": chunk_ids},
         )
-        try:
-            results = await self.document_retriever.aretrieve(search_query)
-            return {"lightrag_linked_chunks": results} if results else {}
-        except Exception as e:
-            logger.error("Linked chunk retrieval failed: %s", e)
-            return {}
+        results = await self._safe_aretrieve(
+            self.document_retriever, search_query, "Linked chunk retrieval"
+        )
+        return {"lightrag_linked_chunks": results} if results else {}
 
     @staticmethod
     def _relationship_endpoint_ids(
@@ -648,13 +635,9 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             suffix=query.suffix,
             filters={"id": endpoint_ids},
         )
-        try:
-            results = await retriever.aretrieve(search_query)
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("Endpoint entity retrieval failed: %s", e)
-            return {}
+        results = await self._safe_aretrieve(
+            retriever, search_query, "Endpoint entity retrieval"
+        )
         if not results:
             return {}
         # Restore the endpoint order the fetch-by-id lost (OpenSearch returns a
@@ -725,7 +708,9 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 suffix=query.suffix,
                 filters={field: entity_ids},
             )
-            side = await retriever.aretrieve(search_query)
+            side = await self._safe_aretrieve(
+                retriever, search_query, f"Incident relationship retrieval ({field})"
+            )
             # A full page means the count cap bound and edges were dropped —
             # upstream drops none. Say so rather than let a silent truncation read
             # as "all edges".
@@ -738,15 +723,9 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 )
             return side
 
-        try:
-            sides = await asyncio.gather(
-                _by_endpoint("source_id"), _by_endpoint("target_id")
-            )
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("Incident relationship retrieval failed: %s", e)
-            return {}
+        sides = await asyncio.gather(
+            _by_endpoint("source_id"), _by_endpoint("target_id")
+        )
 
         # Dedup by the undirected endpoint pair, as upstream does (`tuple(sorted(e))`),
         # so an edge reachable from both of its endpoints is carried once — and so an
@@ -779,21 +758,3 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             len(deduped),
         )
         return {"lightrag_incident_relationships": deduped}
-
-    async def _expand_via_graph(
-        self, query: SearchQuery, seed_entity_ids: list[str]
-    ) -> list[RetrievalResult]:
-        """Expand seed entities through the graph (shared with GraphRAG local)."""
-        if not self.graph_retriever or not seed_entity_ids:
-            return []
-        search_query = query.model_copy(deep=True)
-        search_query.search_type = SearchType.HYBRID
-        search_query.label_prefixes = [self.config.indexing.neptune.entity_label_prefix]
-        search_query.entity_focus = []
-        search_query.filters = (search_query.filters or {}).copy()
-        search_query.filters["id"] = seed_entity_ids
-        try:
-            return await self.graph_retriever.aretrieve(search_query)
-        except Exception as e:
-            logger.error("Neptune expansion failed: %s", e)
-            return []
