@@ -624,7 +624,15 @@ class GleaningConfig(BaseModel):
         default=LanguageModelId.CLAUDE_V5_SONNET,
         description="Language model for graph refinement",
     )
-    max_rounds: int = Field(default=3, ge=1, description="Maximum gleaning rounds")
+    max_rounds: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Maximum gleaning rounds. Default 1 = MS GraphRAG's default "
+            "max_gleanings; each further round re-sends the units that still "
+            "yielded new items to the refinement model."
+        ),
+    )
     max_entities_per_prompt: int = Field(
         default=100, ge=1, description="Maximum entities per gleaning prompt"
     )
@@ -667,7 +675,7 @@ class GleaningConfig(BaseModel):
     convergence_change_scale: int = Field(
         default=20,
         ge=1,
-        description="New entities+relationships per round treated as a full unit of change when scoring convergence",
+        description="New entities+relationships per gleaned text unit treated as a full unit of change when scoring convergence",
     )
 
     @model_validator(mode="after")

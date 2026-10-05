@@ -253,8 +253,19 @@ class GraphGleaner(BaseProcessor):
 
         current_quality = initial_quality
         previous_quality = initial_quality
+        # Each round after the first re-gleans only the units that yielded new
+        # items in the previous round: a unit that yielded nothing has nothing
+        # left the model will add, and re-sending it repeats the same call.
+        units_to_glean = list(text_units)
 
         for round_num in range(1, self.gleaning_config.max_rounds + 1):
+            if not units_to_glean:
+                logger.info(
+                    "No text unit gained items in round %s; gleaning converged",
+                    round_num - 1,
+                )
+                stats.convergence_achieved = True
+                break
             round_start_time = time.time()
             logger.info(
                 "Starting gleaning round %s/%s",
@@ -266,7 +277,7 @@ class GraphGleaner(BaseProcessor):
             relationships_before = len(current_relationships)
 
             round_stats = self._perform_gleaning_round(
-                text_units=text_units,
+                text_units=units_to_glean,
                 current_entities=current_entities,
                 current_relationships=current_relationships,
                 round_num=round_num,
@@ -311,6 +322,8 @@ class GraphGleaner(BaseProcessor):
                 break
 
             previous_quality = current_quality
+            gained = round_stats["gained_unit_ids"]
+            units_to_glean = [unit for unit in units_to_glean if unit.id in gained]
 
         stats.total_rounds = len(stats.rounds)
         stats.final_quality_score = current_quality
@@ -385,8 +398,21 @@ class GraphGleaner(BaseProcessor):
         current_quality = self._calculate_graph_quality(quality_scores)
         quality_improvement = current_quality - previous_quality
         convergence_score = self._calculate_convergence_score(
-            entities_added, relationships_added, quality_improvement
+            entities_added,
+            relationships_added,
+            quality_improvement,
+            units_processed=len(text_units),
         )
+        processed_ids = {unit.id for unit in text_units}
+        lineages = [e.text_unit_ids or [] for e in newly_discovered_entities] + [
+            r.text_unit_ids or [] for r in newly_discovered_relationships
+        ]
+        gained_unit_ids = {
+            unit_id
+            for lineage in lineages
+            for unit_id in lineage
+            if unit_id in processed_ids
+        }
 
         round_info = GleaningRound(
             round_number=round_num,
@@ -404,6 +430,7 @@ class GraphGleaner(BaseProcessor):
             "relationships": merged_relationships,
             "quality": current_quality,
             "round_info": round_info,
+            "gained_unit_ids": gained_unit_ids,
         }
 
     def _perform_llm_refinement(
@@ -1058,10 +1085,20 @@ class GraphGleaner(BaseProcessor):
         entities_added: int,
         relationships_added: int,
         quality_improvement: float,
+        units_processed: int = 1,
     ) -> float:
+        """1.0 when the round added nothing, falling as it adds more per unit.
+
+        The change is measured per gleaned text unit
+        (``convergence_change_scale`` items per unit = a full unit of change).
+        An absolute count made any round over more than a handful of units
+        look unconverged, however little each unit gained.
+        """
         if entities_added == 0 and relationships_added == 0:
             return 1.0
-        change_scale = self.gleaning_config.convergence_change_scale
+        change_scale = self.gleaning_config.convergence_change_scale * max(
+            units_processed, 1
+        )
         change_rate = (entities_added + relationships_added) / change_scale
         convergence = 1.0 - min(1.0, change_rate + abs(quality_improvement))
         return max(0.0, convergence)
