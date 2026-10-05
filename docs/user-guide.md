@@ -553,8 +553,11 @@ evaluation:
     - langchain
     - ragas
     # - graph_aware                # opt-in; needs expected_entities/relationships
+    # - retrieval                  # opt-in; needs reference_sources
+    # - answer_match               # opt-in; needs answer (or metadata.answer_aliases)
   langchain_metrics: [correctness, partial_correctness]
   ragas_metrics: [answer_correctness, answer_relevancy, context_precision, context_recall, faithfulness]
+  retrieval_k: 5                   # cutoff for the retrieval evaluator's hit@k / recall@k
   save_detailed_results: true
 ```
 
@@ -834,6 +837,7 @@ a graph adapter that supports read-back. Off by default.
 | `--search-type` | `hybrid` | Search method |
 | `--top-k` | `10` | Max results |
 | `--retrieval-multiplier` | `1` | Retrieval depth |
+| `--max-failure-rate` | `1.0` | Exit non-zero when the fraction of queries whose answer generation failed exceeds this (0.0-1.0). A run where every query failed always exits non-zero |
 | `--verbose`, `-v` | off | Debug logging |
 | `--config-path` | — | Path to `config.yaml` |
 
@@ -855,6 +859,18 @@ Selected via `evaluation.enabled_evaluators`:
   NOT emitted** — enumerating every entity in a free-text answer isn't reliably
   possible, so reporting precision/F1 would only re-label the recall signal.
   (Opt in by uncommenting `graph_aware` in `enabled_evaluators`.)
+- **`retrieval`** — deterministic, LLM-free: did the sources the answer model saw
+  include the gold documents? `hit_at_k`, `recall_at_k` (k =
+  `evaluation.retrieval_k`, default 5) and `mrr` (over all reported sources)
+  against `reference_sources`. A reference matches a source when their
+  file-name stems are equal, case-insensitively (directories and extensions are
+  ignored: `docs/Terms.pdf` = `terms.pdf` = `terms`), or when it equals a
+  source's document id. Skipped when a query has no `reference_sources` or no
+  source carries a document id / file name.
+- **`answer_match`** — deterministic, LLM-free SQuAD-style `exact_match` and
+  `token_f1` (lowercase, punctuation and English articles removed) against
+  `answer` and optional `metadata.answer_aliases`, taking the max. Token F1
+  splits on whitespace, so for Chinese/Japanese text it degrades to exact match.
 
 ### Eval data format
 
@@ -876,7 +892,7 @@ the `graph_aware` evaluator.
       { "source": "AI", "target": "machine learning" },
       "machine learning -> data processing"
     ],
-    "metadata": { "search_strategy": "global" }
+    "metadata": { "search_strategy": "global", "answer_aliases": ["AI and ML"] }
   },
   {
     "id": "q2",
@@ -886,7 +902,10 @@ the `graph_aware` evaluator.
 ```
 
 Per-item `metadata` (e.g. `search_strategy`) overrides the CLI defaults for that
-question. `id` may also be given as `query_id`.
+question. `id` may also be given as `query_id`. The file is validated before any
+query runs: an empty dataset, a non-array file, a missing `question`, a
+duplicate id, a wrong field type, or a `metadata` value the RAG chain rejects
+(e.g. an unknown `search_strategy`) stops the run with the item index and id.
 
 ### Examples
 
@@ -899,8 +918,21 @@ run-eval --eval-data-path my_eval_data.json \
   --search-strategy global --search-type vector --config-path config.yaml
 ```
 
-Results (per-query details + a summary with mean/median/stdev/min/max per
-metric) are written to the outputs directory.
+Results are written to the outputs directory as
+`evaluation_{results,reports,summary}_<timestamp>.json`; when every answered
+query used the same strategy the name becomes `..._<strategy>_<timestamp>.json`.
+The summary holds, per metric, mean/median/stdev/min/max/count
+(`metric_statistics`) and scored/failed/skipped counts (`metric_outcomes`), plus:
+
+- `grouped_statistics` — the same statistics split by `search_strategy` (the
+  strategy actually used, which varies per query under `auto`), `category` and
+  `difficulty`.
+- `run_manifest` — CLI arguments, model ids (answer generation, evaluation
+  judge/embedding), package version, dataset path + sha256, and a UTC timestamp,
+  so two runs can be compared.
+
+Each result also records `retrieved_source_ids`: per reported source, in rank
+order, the document ids and file names it carries.
 
 ---
 

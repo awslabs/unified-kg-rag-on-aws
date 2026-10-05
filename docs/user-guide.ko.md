@@ -548,8 +548,11 @@ evaluation:
     - langchain
     - ragas
     # - graph_aware                # opt-in; needs expected_entities/relationships
+    # - retrieval                  # opt-in; needs reference_sources
+    # - answer_match               # opt-in; needs answer (or metadata.answer_aliases)
   langchain_metrics: [correctness, partial_correctness]
   ragas_metrics: [answer_correctness, answer_relevancy, context_precision, context_recall, faithfulness]
+  retrieval_k: 5                   # cutoff for the retrieval evaluator's hit@k / recall@k
   save_detailed_results: true
 ```
 
@@ -823,6 +826,7 @@ aws:
 | `--search-type` | `hybrid` | 검색 방법 |
 | `--top-k` | `10` | 최대 결과 수 |
 | `--retrieval-multiplier` | `1` | 검색 깊이 |
+| `--max-failure-rate` | `1.0` | 답변 생성에 실패한 질문의 비율이 이 값(0.0-1.0)을 넘으면 0이 아닌 코드로 종료. 모든 질문이 실패한 실행은 항상 0이 아닌 코드로 종료 |
 | `--verbose`, `-v` | off | 디버그 로깅 |
 | `--config-path` | — | `config.yaml` 경로 |
 
@@ -844,6 +848,17 @@ aws:
   불가능하므로, precision/F1을 보고하는 것은 recall 신호에 다른 이름표만
   붙이는 셈이기 때문입니다. (`enabled_evaluators`에서 `graph_aware`의 주석을
   해제하여 opt-in.)
+- **`retrieval`** — 결정적이고 LLM 불필요: 답변 모델이 본 소스에 정답 문서가
+  포함됐는지를 `reference_sources`와 비교해 `hit_at_k`, `recall_at_k`(k =
+  `evaluation.retrieval_k`, 기본값 5), `mrr`(보고된 전체 소스 기준)로 산출합니다.
+  참조와 소스는 파일 이름의 stem이 대소문자 무관하게 같거나(디렉터리와 확장자
+  무시: `docs/Terms.pdf` = `terms.pdf` = `terms`), 참조가 소스의 문서 ID와 같으면
+  매칭됩니다. `reference_sources`가 없거나 문서 ID/파일 이름을 가진 소스가 하나도
+  없으면 건너뜁니다.
+- **`answer_match`** — 결정적이고 LLM 불필요한 SQuAD 방식 `exact_match`와
+  `token_f1`(소문자화, 문장 부호와 영어 관사 제거)을 `answer`와 선택 항목
+  `metadata.answer_aliases`에 대해 계산하고 최댓값을 씁니다. 토큰 F1은 공백으로
+  나누므로 중국어/일본어 텍스트에서는 exact match와 같아집니다.
 
 ### 평가 데이터 포맷
 
@@ -865,7 +880,7 @@ aws:
       { "source": "AI", "target": "machine learning" },
       "machine learning -> data processing"
     ],
-    "metadata": { "search_strategy": "global" }
+    "metadata": { "search_strategy": "global", "answer_aliases": ["AI and ML"] }
   },
   {
     "id": "q2",
@@ -875,7 +890,10 @@ aws:
 ```
 
 항목별 `metadata`(예: `search_strategy`)는 해당 질문에 대해 CLI 기본값을
-오버라이드합니다. `id`는 `query_id`로 줄 수도 있습니다.
+오버라이드합니다. `id`는 `query_id`로 줄 수도 있습니다. 파일은 질문을 실행하기
+전에 검증합니다. 데이터셋이 비었거나, 배열이 아니거나, `question`이 없거나, ID가
+중복되거나, 필드 타입이 틀리거나, RAG 체인이 거부할 `metadata` 값(예: 알 수 없는
+`search_strategy`)이 있으면 항목 인덱스와 ID를 담은 오류로 실행을 멈춥니다.
 
 ### 예시
 
@@ -888,8 +906,19 @@ run-eval --eval-data-path my_eval_data.json \
   --search-strategy global --search-type vector --config-path config.yaml
 ```
 
-결과(질의별 상세 + 지표별 평균/중앙값/표준편차/최소/최대 요약)는 출력
-디렉터리에 기록됩니다.
+결과는 출력 디렉터리에 `evaluation_{results,reports,summary}_<timestamp>.json`으로
+기록되며, 답변한 모든 질문이 같은 전략을 썼다면 파일 이름이
+`..._<strategy>_<timestamp>.json`이 됩니다. 요약에는 지표별
+평균/중앙값/표준편차/최소/최대/개수(`metric_statistics`)와 scored/failed/skipped
+개수(`metric_outcomes`)에 더해 다음이 담깁니다.
+
+- `grouped_statistics` — 같은 통계를 `search_strategy`(실제로 사용한 전략이며
+  `auto`에서는 질문마다 다를 수 있음), `category`, `difficulty`별로 나눈 값.
+- `run_manifest` — CLI 인자, 모델 ID(답변 생성, 평가 judge/임베딩), 패키지 버전,
+  데이터셋 경로와 sha256, UTC 타임스탬프. 두 실행을 비교할 때 사용합니다.
+
+각 결과에는 `retrieved_source_ids`(보고된 소스별 문서 ID와 파일 이름, 순위 순)도
+기록됩니다.
 
 ---
 
