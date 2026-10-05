@@ -8,6 +8,7 @@ from langchain_core.output_parsers import StrOutputParser
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
+from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.domain.models import Config, LanguageCode, ModelPurpose, TextUnit
 from unified_kg_rag.domain.prompts import TextTranslationPrompt
@@ -81,7 +82,9 @@ class TextUnitTranslator:
             boto_session=self.boto_session,
             region_name=config.aws.bedrock.region_name,
         )
-        self.batch_processor = BatchProcessor()
+        self.batch_processor = BatchProcessor(
+            is_transient_error=is_transient_bedrock_error
+        )
 
         self.translator = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
@@ -89,6 +92,7 @@ class TextUnitTranslator:
             model_id=self.translation_config.translation_model_id,
             prompt_class=TextTranslationPrompt,
             parser=StrOutputParser(),
+            custom_prompts=config.custom_prompts,
         )
 
     def translate_text_units(self, text_units: list[TextUnit]) -> list[TextUnit]:

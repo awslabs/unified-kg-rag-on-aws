@@ -9,7 +9,8 @@ transient model-side failures outside that set — most notably
 error") and ``ModelNotReadyException`` — which botocore raises on the first
 occurrence. This module adds a bounded exponential-backoff retry on top of the
 botocore retries for exactly those transient failures, leaving validation,
-access-denied and other client errors to fail fast.
+access-denied and other client errors to fail fast. The bounds come from one
+policy, ``aws.bedrock.transient_retry``.
 """
 
 from __future__ import annotations
@@ -22,9 +23,14 @@ from typing import TypeVar
 
 from botocore import exceptions as boto_exc
 
+from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
+
+# Module-level indirection so tests can stub the backoff wait for this module
+# only, without catching unrelated threads that call time.sleep.
+_sleep = time.sleep
 
 T = TypeVar("T")
 
@@ -41,14 +47,6 @@ TRANSIENT_BEDROCK_ERROR_CODES: frozenset[str] = frozenset(
         "ThrottlingException",
     }
 )
-
-DEFAULT_MAX_ATTEMPTS = 5
-DEFAULT_BASE_DELAY_SECONDS = 2.0
-DEFAULT_MAX_DELAY_SECONDS = 16.0
-# Wall-clock budget for the whole retry loop. No new attempt is started once
-# the next backoff would cross it, so a persistently failing call gives up in
-# bounded time instead of stalling an indexing worker.
-DEFAULT_MAX_TOTAL_SECONDS = 60.0
 
 
 def is_transient_bedrock_error(exc: BaseException) -> bool:
@@ -84,21 +82,18 @@ def next_transient_retry_delay(
     operation: str,
     attempt: int,
     started_at: float,
-    max_attempts: int,
-    base_delay: float,
-    max_delay: float,
-    max_total_seconds: float,
+    policy: TransientRetryConfig,
 ) -> float | None:
     """Return the backoff before the next attempt, or None to give up on ``exc``."""
-    if not is_transient_bedrock_error(exc) or attempt >= max_attempts:
+    if not is_transient_bedrock_error(exc) or attempt >= policy.max_attempts:
         return None
-    delay = backoff_delay(attempt, base_delay, max_delay)
-    if time.monotonic() - started_at + delay > max_total_seconds:
+    delay = backoff_delay(attempt, policy.base_delay_seconds, policy.max_delay_seconds)
+    if time.monotonic() - started_at + delay > policy.max_total_seconds:
         logger.warning(
             "Giving up on '%s' after %s attempts (%.1fs retry budget exhausted): %s",
             operation,
             attempt,
-            max_total_seconds,
+            policy.max_total_seconds,
             _error_code(exc),
         )
         return None
@@ -106,7 +101,7 @@ def next_transient_retry_delay(
         "Transient Bedrock error on '%s' (attempt %s/%s): %s. Retrying in %.1fs",
         operation,
         attempt,
-        max_attempts,
+        policy.max_attempts,
         _error_code(exc),
         delay,
     )
@@ -114,13 +109,7 @@ def next_transient_retry_delay(
 
 
 def call_with_transient_retry(
-    func: Callable[[], T],
-    *,
-    operation: str,
-    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
-    base_delay: float = DEFAULT_BASE_DELAY_SECONDS,
-    max_delay: float = DEFAULT_MAX_DELAY_SECONDS,
-    max_total_seconds: float = DEFAULT_MAX_TOTAL_SECONDS,
+    func: Callable[[], T], *, operation: str, policy: TransientRetryConfig
 ) -> T:
     """Call ``func``, retrying transient Bedrock errors with bounded backoff.
 
@@ -128,7 +117,7 @@ def call_with_transient_retry(
     budget are exhausted, the last transient error is re-raised unchanged so
     callers' existing error handling keeps working.
     """
-    start = time.monotonic()
+    started_at = time.monotonic()
     attempt = 1
     while True:
         try:
@@ -138,29 +127,20 @@ def call_with_transient_retry(
                 exc,
                 operation=operation,
                 attempt=attempt,
-                started_at=start,
-                max_attempts=max_attempts,
-                base_delay=base_delay,
-                max_delay=max_delay,
-                max_total_seconds=max_total_seconds,
+                started_at=started_at,
+                policy=policy,
             )
             if delay is None:
                 raise
-            time.sleep(delay)
+            _sleep(delay)
             attempt += 1
 
 
 async def acall_with_transient_retry(
-    func: Callable[[], Awaitable[T]],
-    *,
-    operation: str,
-    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
-    base_delay: float = DEFAULT_BASE_DELAY_SECONDS,
-    max_delay: float = DEFAULT_MAX_DELAY_SECONDS,
-    max_total_seconds: float = DEFAULT_MAX_TOTAL_SECONDS,
+    func: Callable[[], Awaitable[T]], *, operation: str, policy: TransientRetryConfig
 ) -> T:
     """Async twin of :func:`call_with_transient_retry` (backs off without blocking)."""
-    start = time.monotonic()
+    started_at = time.monotonic()
     attempt = 1
     while True:
         try:
@@ -170,11 +150,8 @@ async def acall_with_transient_retry(
                 exc,
                 operation=operation,
                 attempt=attempt,
-                started_at=start,
-                max_attempts=max_attempts,
-                base_delay=base_delay,
-                max_delay=max_delay,
-                max_total_seconds=max_total_seconds,
+                started_at=started_at,
+                policy=policy,
             )
             if delay is None:
                 raise

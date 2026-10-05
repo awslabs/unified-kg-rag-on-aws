@@ -12,6 +12,7 @@ from graspologic.partition import leiden
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
+from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.aws.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
@@ -85,7 +86,9 @@ class CommunityDetector(BaseProcessor):
             boto_session=self.boto_session,
             region_name=self.config.aws.bedrock.region_name,
         )
-        self.batch_processor = BatchProcessor()
+        self.batch_processor = BatchProcessor(
+            is_transient_error=is_transient_bedrock_error
+        )
 
         if self.community_detection_config.report_generation.enabled:
             parser = create_robust_xml_output_parser(
@@ -100,6 +103,7 @@ class CommunityDetector(BaseProcessor):
                 model_id=self.community_detection_config.report_generation.report_generation_model_id,
                 prompt_class=CommunityReportPrompt,
                 parser=parser,
+                custom_prompts=self.config.custom_prompts,
             )
 
     def __call__(self, graph: nx.Graph) -> "CommunityDetector":
@@ -806,21 +810,94 @@ class CommunityDetector(BaseProcessor):
         reports_by_id: dict[str, CommunityReport] = {}
         all_reports: list[CommunityReport] = []
         total_failed = 0
+        community_by_id = {c.id: c for c in communities}
 
         for level in sorted({_level(c) for c in communities}):
             level_communities = [c for c in communities if _level(c) == level]
+            # A parent whose only child has the same members would get a second
+            # LLM report over identical context; reuse the child's instead.
+            reused = []
+            to_generate = []
+            for community in level_communities:
+                copy = self._reuse_single_child_report(
+                    community, reports_by_id, community_by_id
+                )
+                if copy is None:
+                    to_generate.append(community)
+                else:
+                    reused.append(copy)
             report_inputs = [
-                self._prepare_report_input(c, reports_by_id) for c in level_communities
+                self._prepare_report_input(c, reports_by_id) for c in to_generate
             ]
-            level_reports, failed = self._run_report_batch(
-                report_inputs, level_communities, graph_attributes
+            level_reports, failed = (
+                self._run_report_batch(report_inputs, to_generate, graph_attributes)
+                if to_generate
+                else ([], 0)
             )
             total_failed += failed
-            for report in level_reports:
+            for report in [*level_reports, *reused]:
                 reports_by_id[report.community_id] = report
             all_reports.extend(level_reports)
+            all_reports.extend(reused)
+            if reused:
+                logger.info(
+                    "Level %s: reused %s single-child reports instead of "
+                    "regenerating them",
+                    level,
+                    len(reused),
+                )
 
         return all_reports, total_failed
+
+    def _reuse_single_child_report(
+        self,
+        community: Community,
+        reports_by_id: dict[str, CommunityReport],
+        community_by_id: dict[str, Community],
+    ) -> CommunityReport | None:
+        """The only child's report re-keyed to ``community``, if membership matches.
+
+        Leiden often keeps a cluster unchanged across levels, so the parent has
+        exactly one child with the same entities and relationships. Its report
+        input would be the same context, so a new LLM call could only restate
+        the child's report.
+        """
+        children = list(community.children or [])
+        if len(children) != 1:
+            return None
+        child_report = reports_by_id.get(children[0])
+        child = community_by_id.get(children[0])
+        if child_report is None or child is None:
+            return None
+        if set(child.entity_ids or []) != set(community.entity_ids or []) or set(
+            child.relationship_ids or []
+        ) != set(community.relationship_ids or []):
+            return None
+
+        report_id = generate_stable_id(f"report:{community.id}")
+        _, _, title = child_report.name.partition(": ")
+        report = child_report.model_copy(
+            deep=True,
+            update={
+                "id": report_id,
+                "short_id": report_id[:8],
+                "name": (
+                    f"Report for {community.name}: {title}"
+                    if title
+                    else f"Report for {community.name}"
+                ),
+                "community_id": community.id,
+                "rank": self._compute_report_rank(community),
+                "size": community.size,
+                "period": community.period,
+                "attributes": {
+                    **(child_report.attributes or {}),
+                    "reused_from_community_id": child.id,
+                },
+            },
+        )
+        report.full_content = report.render_full_content() or child_report.full_content
+        return report
 
     def _compute_report_rank(self, community: Community) -> int:
         """Deterministic community-importance rank (no LLM call).

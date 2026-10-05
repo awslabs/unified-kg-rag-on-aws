@@ -8,7 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from .evaluation import EvaluationMetricType, EvaluatorType
-from .retrieval import FusionMethod
+from .retrieval import FusionMethod, SearchStrategy
 
 
 class PipelineStageType(Enum):
@@ -65,16 +65,19 @@ class S3EncryptionType(str, Enum):
     """Server-side encryption header sent on cache uploads.
 
     ``BUCKET_DEFAULT`` sends no SSE header, so S3 applies the bucket's default
-    encryption (SSE-S3 at minimum, or the bucket's SSE-KMS CMK). ``NONE`` is a
-    legacy alias with the same behaviour: S3 encrypts every new object, so it
-    never meant "unencrypted". ``AES256`` / ``aws:kms`` force a per-object
-    header that OVERRIDES the bucket default.
+    encryption (SSE-S3 at minimum, or the bucket's SSE-KMS CMK). ``AES256`` /
+    ``aws:kms`` force a per-object header that OVERRIDES the bucket default.
+    The legacy value ``"NONE"`` is still accepted and means ``BUCKET_DEFAULT``:
+    S3 encrypts every new object, so it never meant "unencrypted".
     """
 
     BUCKET_DEFAULT = "BUCKET_DEFAULT"
-    NONE = "NONE"
     AES256 = "AES256"
     KMS = "aws:kms"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "S3EncryptionType | None":
+        return cls.BUCKET_DEFAULT if value == "NONE" else None
 
 
 class EmbeddingModelId(str, Enum):
@@ -199,6 +202,43 @@ class GuardrailConfig(BaseModel):
         return self.apply_to == "all" or purpose is ModelPurpose.QUERY
 
 
+class TransientRetryConfig(BaseModel):
+    """Bounded retry on transient Bedrock errors that botocore does not retry.
+
+    botocore's retry modes do not retry Bedrock's HTTP 424
+    ``ModelErrorException`` (or ``ModelNotReadyException``), so without this a
+    single transient model fault fails a user query or drops an item from the
+    vector index. Applied to every embedding request and to query-time LLM
+    chains; ingestion LLM chains are retried by ``BatchProcessor`` instead.
+    Only transient errors are retried; validation and access errors still fail
+    fast.
+    """
+
+    max_attempts: int = Field(
+        default=5,
+        ge=1,
+        description="Total attempts per call, including the first (1 disables "
+        "the retry)",
+    )
+    base_delay_seconds: float = Field(
+        default=2.0,
+        ge=0.0,
+        description="Backoff ceiling for the first retry; doubles per attempt "
+        "with equal jitter",
+    )
+    max_delay_seconds: float = Field(
+        default=16.0,
+        ge=0.0,
+        description="Upper bound on a single backoff delay in seconds",
+    )
+    max_total_seconds: float = Field(
+        default=60.0,
+        ge=0.0,
+        description="Wall-clock retry budget per call; no retry starts once the "
+        "next backoff would cross it",
+    )
+
+
 class BedrockConfig(BaseModel):
     region_name: str = Field(
         default="us-west-2", min_length=1, description="AWS Bedrock service region"
@@ -232,6 +272,11 @@ class BedrockConfig(BaseModel):
     guardrail: GuardrailConfig = Field(
         default_factory=GuardrailConfig,
         description="Amazon Bedrock Guardrails configuration (disabled unless identifier set)",
+    )
+    transient_retry: TransientRetryConfig = Field(
+        default_factory=TransientRetryConfig,
+        description="Retry for embedding and query-time LLM calls on transient "
+        "Bedrock errors",
     )
 
 
@@ -381,9 +426,8 @@ class DocumentParsingConfig(BaseModel):
     target_directory: str | Path | None = Field(
         default=None,
         description=(
-            "Directory to export parsed documents to as JSON. None = "
-            "<cache directory>/parsed_documents/<pipeline id>. Must not be the "
-            "source directory."
+            "Directory to export each parsed document to as <stem>.json for "
+            "inspection. None = no export. Must not be the source directory."
         ),
     )
     index_value: str | None = Field(
@@ -406,26 +450,51 @@ class ChunkingConfig(BaseModel):
         description="Content format for processing",
     )
     min_chunk_size: int = Field(
-        default=5000, ge=1, description="Minimum chunk size in characters"
+        default=1000,
+        ge=1,
+        description=(
+            "Minimum chunk size in characters; shorter pieces are merged into a "
+            "neighbour. Default 1,000 (~250 English tokens) keeps headings and "
+            "short trailing paragraphs from becoming chunks of their own."
+        ),
     )
     max_chunk_size: int = Field(
-        default=50000,
+        default=8000,
         ge=1,
-        description="Maximum chunk size in characters",
+        description=(
+            "Maximum chunk size in characters. Every chunk is embedded whole and "
+            "reranked as one document, so it must fit the embedding model's "
+            "input (Titan Text Embeddings V2: 8,192 tokens) and the reranker's "
+            "per-document limit (Cohere Rerank 3.5: 4,096 tokens), or its tail "
+            "is never embedded or reranked. Default 8,000 fits Titan V2 even at "
+            "~1 character per token (CJK scripts) and is ~2K tokens of English, "
+            "inside the reranker limit."
+        ),
     )
     chunk_overlap: int = Field(
         default=500, ge=0, description="Chunk overlap in characters"
     )
     pre_chunk_size: int = Field(
-        default=50000, ge=1, description="Pre-chunk size in characters"
+        default=50000,
+        ge=1,
+        description=(
+            "Pre-chunk size in characters: the window the intelligent chunker's "
+            "LLM picks boundaries in. Not embedded itself (its chunks are capped "
+            "by max_chunk_size), so it is sized for the chunking model's prompt."
+        ),
     )
     pre_chunk_overlap: int = Field(
         default=500, ge=0, description="Pre-chunk overlap in characters"
     )
     fallback_chunk_size: int = Field(
-        default=50000,
+        default=4800,
         ge=1,
-        description="Fallback chunk size when intelligent chunking fails",
+        description=(
+            "Target chunk size for the size-based splitter (the simple chunker, "
+            "and intelligent chunking when the LLM fails or a chunk exceeds "
+            "max_chunk_size). Default 4,800 characters ~= 1,200 English tokens, "
+            "the default chunk size of MS GraphRAG and LightRAG."
+        ),
     )
     max_marker_miss_rate: float = Field(
         default=0.1,
@@ -619,7 +688,17 @@ class GleaningConfig(BaseModel):
         default=LanguageModelId.CLAUDE_V5_5_SONNET,
         description="Language model for graph refinement",
     )
-    max_rounds: int = Field(default=3, ge=1, description="Maximum gleaning rounds")
+    max_rounds: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Maximum gleaning rounds. Each round after the first re-sends only "
+            "the text units that gained entities or relationships in the "
+            "previous round, so later rounds cost less than the first. Set 1 "
+            "for MS GraphRAG's single-gleaning default when ingestion cost "
+            "matters more than graph recall."
+        ),
+    )
     max_entities_per_prompt: int = Field(
         default=100, ge=1, description="Maximum entities per gleaning prompt"
     )
@@ -662,7 +741,7 @@ class GleaningConfig(BaseModel):
     convergence_change_scale: int = Field(
         default=20,
         ge=1,
-        description="New entities+relationships per round treated as a full unit of change when scoring convergence",
+        description="New entities+relationships per gleaned text unit treated as a full unit of change when scoring convergence",
     )
 
     @model_validator(mode="after")
@@ -1373,8 +1452,17 @@ class GlobalSearchConfig(BaseModel):
         description="Minimum relevance score required for community selection",
     )
     use_dynamic_selection: bool = Field(
-        default=True,
-        description="Enable dynamic community selection based on query characteristics",
+        default=False,
+        description=(
+            "Score every retrieved community report for query relevance with an "
+            "LLM (one call per report) before map-reduce. Off by default: the map "
+            "step already rates each report's key points for the query and drops "
+            "the irrelevant ones, so this pre-filter repeats that judgement at the "
+            "cost of max_communities extra LLM calls per query (MS GraphRAG's "
+            "dynamic community selection is also off by default). Useful mainly "
+            "with enable_map_reduce=false; when off, communities are ranked by "
+            "their indexed rank and rating."
+        ),
     )
     enable_map_reduce: bool = Field(
         default=True,
@@ -1405,10 +1493,15 @@ class GlobalSearchConfig(BaseModel):
         "so a fast/cheap model (e.g. Haiku) is the sensible default.",
     )
     map_batch_size: int = Field(
-        default=2,
+        default=5,
         ge=1,
-        description="Number of community reports packed into one map-step LLM "
-        "call; map calls are fanned over batches concurrently via BatchProcessor.",
+        description=(
+            "Number of community reports packed into one map-step LLM call; map "
+            "calls are fanned over batches concurrently via BatchProcessor. "
+            "Default 5 keeps a map prompt near MS GraphRAG's 12K-token map "
+            "context (data_max_tokens) for reports of 1-2K tokens, and halves the "
+            "map calls per query compared with 2. Lower it if reports are long."
+        ),
     )
     map_relevance_threshold: int = Field(
         default=0,
@@ -1499,6 +1592,16 @@ class DriftSearchConfig(BaseModel):
         default=LanguageModelId.CLAUDE_V4_5_HAIKU,
         description="Language model used for expanding keywords from discovered entities",
     )
+    enable_llm_convergence: bool = Field(
+        default=False,
+        description=(
+            "Ask an LLM after each iteration whether DRIFT has converged and stop "
+            "early when its score reaches convergence_threshold. Off by default: "
+            "it adds one LLM call per iteration, while the deterministic checks "
+            "(low unique-result gain, improvement_threshold) already stop the "
+            "loop, and max_iterations bounds it."
+        ),
+    )
     convergence_assessment_model_id: LanguageModelId = Field(
         default=LanguageModelId.CLAUDE_V4_5_HAIKU,
         description="Language model used for assessing search convergence",
@@ -1531,10 +1634,15 @@ class DriftSearchConfig(BaseModel):
         description="Number of top entities to extract for keyword expansion",
     )
     convergence_threshold: float = Field(
-        default=0.1,
+        default=0.8,
         ge=0.0,
         le=1.0,
-        description="Convergence score threshold for early termination",
+        description=(
+            "LLM convergence score (0-1) at or above which DRIFT stops early "
+            "(enable_llm_convergence only). Default 0.8 is the lower bound of the "
+            "ConvergenceAssessmentPrompt's 'convergence achieved' band; lower "
+            "values stop while the prompt still advises exploring."
+        ),
     )
     improvement_threshold: float = Field(
         default=0.05,
@@ -1632,14 +1740,18 @@ class ContextTypeBudgetConfig(BaseModel):
 
 class TokenManagerConfig(BaseModel):
     max_context_tokens: int | None = Field(
-        default=None,
+        default=30_000,
         ge=1024,
         description=(
-            "Prompt-side context budget in tokens. Leave null (recommended) to "
-            "derive it from the answer model's own context window minus its "
-            "output reservation — a hardcoded value silently overflows a smaller "
-            "model's window and wastes a larger one. An explicit value is "
-            "honoured but clamped to what the model can actually accept."
+            "Prompt-side retrieval context budget in tokens. Default 30,000 "
+            "matches upstream LightRAG's total context budget "
+            "(DEFAULT_MAX_TOTAL_TOKENS); MS GraphRAG uses 12,000. Deriving the "
+            "budget from the answer model's window gives ~785K tokens on a 1M "
+            "model, so it never binds: the per-type budgets and priority "
+            "ordering never trim anything and every query pays for the whole "
+            "retrieved set. The value is always clamped to what the answer "
+            "model can accept alongside its output reservation. Set null to "
+            "derive the budget from the window instead."
         ),
     )
     context_window_headroom_ratio: float = Field(
@@ -1708,40 +1820,17 @@ class LightRAGSearchConfig(BaseModel):
             "distributed on a decreasing gradient so the last match still gets one."
         ),
     )
-
-
-class QueryLLMRetryConfig(BaseModel):
-    """Bounded retry for query-time LLM calls on transient Bedrock errors.
-
-    botocore's retry modes do not retry Bedrock's HTTP 424
-    ``ModelErrorException`` (or ``ModelNotReadyException``), so without this a
-    single transient model fault fails the whole user query. Only transient
-    errors are retried; validation and access errors still fail fast. Ingestion
-    LLM calls are retried by ``BatchProcessor`` and do not use this setting.
-    """
-
-    max_attempts: int = Field(
-        default=3,
-        ge=1,
-        description="Total attempts per query-time LLM call, including the first "
-        "(1 disables the retry)",
-    )
-    base_delay_seconds: float = Field(
-        default=1.0,
-        ge=0.0,
-        description="Backoff ceiling for the first retry; doubles per attempt "
-        "with equal jitter",
-    )
-    max_delay_seconds: float = Field(
-        default=8.0,
-        ge=0.0,
-        description="Upper bound on a single backoff delay in seconds",
-    )
-    max_total_seconds: float = Field(
-        default=20.0,
-        ge=0.0,
-        description="Wall-clock retry budget per call; no retry starts once the "
-        "next backoff would cross it",
+    enable_graph_expansion: bool = Field(
+        default=False,
+        description=(
+            "hybrid/mix: also expand the entity hits and relationship endpoints "
+            "through the Neptune graph (indexing.neptune.max_hops) and add the "
+            "neighbourhood as entity candidates. Off by default: upstream LightRAG "
+            "has no multi-hop traversal (its graph context is the matched items "
+            "plus their one-hop incident edges and endpoint entities, which this "
+            "strategy already retrieves), and the extra Neptune round trip adds "
+            "latency and entities less related to the query."
+        ),
     )
 
 
@@ -1755,8 +1844,29 @@ class SearchConfig(BaseModel):
         description="Language model identifier used for extracting named entities from user queries",
     )
     strategy_selection_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_5_SONNET,
-        description="Language model identifier used for automatically selecting the optimal search strategy",
+        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
+        description=(
+            "Language model identifier used for automatically selecting the "
+            "optimal search strategy (AUTO). A fast model by default: routing "
+            "is a one-word classification that runs before retrieval, so its "
+            "latency is added to every AUTO query."
+        ),
+    )
+    auto_routable_strategies: list[SearchStrategy] = Field(
+        default_factory=lambda: [
+            SearchStrategy.LOCAL,
+            SearchStrategy.MIX,
+            SearchStrategy.GLOBAL,
+            SearchStrategy.DRIFT,
+        ],
+        min_length=1,
+        description=(
+            "Strategies the AUTO router may pick. Default: local, mix, global, "
+            "drift. simple is left out because the graph strategies already "
+            "cover its direct lookups with graph context; mix (LightRAG) is "
+            "included for multi-hop fact chains, which it serves from the same "
+            "index. Every strategy stays selectable explicitly."
+        ),
     )
     context_building_model_id: LanguageModelId = Field(
         default=LanguageModelId.CLAUDE_V5_5_SONNET,
@@ -1790,10 +1900,6 @@ class SearchConfig(BaseModel):
     )
     token_manager: TokenManagerConfig = Field(
         default_factory=TokenManagerConfig, description="Token management configuration"
-    )
-    llm_retry: QueryLLMRetryConfig = Field(
-        default_factory=QueryLLMRetryConfig,
-        description="Retry for query-time LLM calls on transient Bedrock errors",
     )
 
 
@@ -2135,6 +2241,25 @@ class Config(BaseModel):
     custom_prompts: CustomPromptConfig = Field(
         default_factory=CustomPromptConfig, description="Custom prompt configuration"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_llm_retry(cls, data: Any) -> Any:
+        """Map the former ``search.llm_retry`` key to ``aws.bedrock.transient_retry``.
+
+        An explicit ``aws.bedrock.transient_retry`` wins over the legacy key.
+        """
+        if not isinstance(data, dict):
+            return data
+        search = data.get("search")
+        if not isinstance(search, dict) or "llm_retry" not in search:
+            return data
+        search = {k: v for k, v in search.items() if k != "llm_retry"}
+        aws = dict(data.get("aws") or {})
+        bedrock = dict(aws.get("bedrock") or {})
+        bedrock.setdefault("transient_retry", data["search"]["llm_retry"])
+        aws["bedrock"] = bedrock
+        return {**data, "search": search, "aws": aws}
 
 
 class PipelineConfig(BaseModel):

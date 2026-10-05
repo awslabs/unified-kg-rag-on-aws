@@ -11,7 +11,11 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
-from unified_kg_rag.adapters.retrieval.token_manager import TokenManager
+from unified_kg_rag.adapters.retrieval.token_manager import (
+    SectionType,
+    TokenManager,
+)
+from unified_kg_rag.adapters.storage.filter_schema import FilterFields
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -110,6 +114,14 @@ class BaseGraphRAGRetriever(BaseRetriever, MetricsMixin, ABC):
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         pass
 
+    def filter_fields(self) -> FilterFields | None:
+        """Filter keys some index or label this retriever searches can match.
+
+        Used to reject caller filters no target store can apply. ``None`` (the
+        default, for backends without a declared schema) accepts every key.
+        """
+        return None
+
     def _get_name(
         self, base: str, suffix: str | None, add_timestamp: bool = False
     ) -> str:
@@ -194,6 +206,42 @@ class BaseSearchStrategy(MetricsMixin, ABC):
                 e,
             )
             return []
+
+    def _per_type_quota(self, top_k: int) -> dict[str, int]:
+        """Reserved fusion slots per section type, from configured shares of top_k.
+
+        Shared by local search and DRIFT (whose iterations are local searches,
+        as in MS GraphRAG) so one flat top_k cut cannot let a single section
+        type crowd out the others (``search.local_search.type_quota``).
+        """
+        quota_config = self.config.search.local_search.type_quota
+        shares: list[tuple[SectionType, float, int]] = [
+            (SectionType.TEXT, quota_config.text_multiplier, quota_config.text_floor),
+            (
+                SectionType.ENTITY,
+                quota_config.entity_multiplier,
+                quota_config.entity_floor,
+            ),
+            (
+                SectionType.RELATIONSHIP,
+                quota_config.relationship_multiplier,
+                quota_config.relationship_floor,
+            ),
+            (
+                SectionType.COMMUNITY,
+                quota_config.community_multiplier,
+                quota_config.community_floor,
+            ),
+            (
+                SectionType.CLAIM,
+                quota_config.claim_multiplier,
+                quota_config.claim_floor,
+            ),
+        ]
+        return {
+            section_type.value: max(int(multiplier * top_k), floor)
+            for section_type, multiplier, floor in shares
+        }
 
     async def _expand_via_graph(
         self, query: SearchQuery, seed_entity_ids: list[str]

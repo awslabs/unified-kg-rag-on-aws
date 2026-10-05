@@ -147,16 +147,30 @@ async def test_select_static_honors_retrieval_multiplier() -> None:
 # --------------------------------------------------------------------------- #
 
 
-async def test_select_dynamic_sorts_by_blended_score_desc() -> None:
+async def test_select_dynamic_ties_keep_retrieval_order() -> None:
+    # Equal LLM relevance: retrieval rank decides, not the (differently
+    # scaled) retrieval score.
     strat = _bare_strategy(threshold=0.0, use_dynamic_selection=True)
     strat.community_relevance_scorer = _AScorer("7")  # 0.7 normalized, passes
     query = SearchQuery(query="q", retrieval_multiplier=1)
     items = [_community(0, score=0.0), _community(1, score=1.0)]
     kept = await strat._select_relevant_communities(items, query)
-    # Both pass threshold 0.0; blended = score*0.4 + 0.7*0.6, so the higher base
-    # score sorts first.
+    assert [c.source for c in kept] == ["c0", "c1"]
+    assert all(c.score == pytest.approx(0.7) for c in kept)
+
+
+async def test_select_dynamic_ranks_by_llm_relevance() -> None:
+    strat = _bare_strategy(threshold=0.0, use_dynamic_selection=True)
+
+    class _ByContent:
+        async def ainvoke(self, inputs):
+            return "9" if "1" in inputs["community_summary"] else "3"
+
+    strat.community_relevance_scorer = _ByContent()
+    query = SearchQuery(query="q", retrieval_multiplier=1)
+    items = [_community(0, score=1.0), _community(1, score=0.0)]
+    kept = await strat._select_relevant_communities(items, query)
     assert [c.source for c in kept] == ["c1", "c0"]
-    assert all(0.0 <= c.score <= 1.0 for c in kept)
 
 
 async def test_select_dynamic_error_with_ignore_errors_keeps_at_retrieval_score() -> (
@@ -168,11 +182,10 @@ async def test_select_dynamic_error_with_ignore_errors_keeps_at_retrieval_score(
     strat.community_relevance_scorer = _RaisingScorer()
     query = SearchQuery(query="q", retrieval_multiplier=1)
     kept = await strat._select_relevant_communities(_communities(2), query)
-    # A scoring failure must NOT silently drop a community: it is kept as a
-    # candidate at its retrieval score (0.5 >= 0.1 threshold), and its score is
-    # left unmutated (no in-place blending happened).
+    # A scoring failure must NOT silently drop a community: it is admitted at
+    # the threshold relevance (ranked after scored ones) on a copy.
     assert len(kept) == 2
-    assert all(c.score == 0.5 for c in kept)
+    assert all(c.score == pytest.approx(0.1) for c in kept)
 
 
 async def test_select_dynamic_does_not_mutate_input_items() -> None:
@@ -184,7 +197,7 @@ async def test_select_dynamic_does_not_mutate_input_items() -> None:
     items = [_community(0, score=0.2)]
     kept = await strat._select_relevant_communities(items, query)
     assert items[0].score == 0.2  # original untouched
-    assert kept[0].score != 0.2  # returned copy was blended
+    assert kept[0].score == pytest.approx(0.9)  # copy carries the relevance
 
 
 async def test_select_dynamic_error_without_ignore_errors_raises() -> None:
@@ -405,3 +418,16 @@ def test_parse_map_points_overflow_string_score() -> None:
     raw = '{"points": [{"description": "big", "score": "1e999"}]}'
     pts = GlobalSearchStrategy._parse_map_points(raw)
     assert pts[0].score == 0  # 1e999 -> inf -> coerced to 0
+
+
+def test_default_global_config_skips_per_report_llm_scoring() -> None:
+    from unified_kg_rag.domain.models import Config
+
+    config = Config()
+    gs = config.search.global_search
+    # The map step already rates the reports; the per-report pre-filter is opt-in.
+    assert gs.enable_map_reduce is True
+    assert gs.use_dynamic_selection is False
+    assert gs.map_batch_size == 5
+    strategy = GlobalSearchStrategy(config=config, retrievers={})
+    assert not hasattr(strategy, "community_relevance_scorer")

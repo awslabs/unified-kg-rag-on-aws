@@ -74,17 +74,18 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         )
 
         str_output_parser = StrOutputParser()
-        self.community_relevance_scorer: Runnable = setup_chain(
-            factory=factory,
-            model_id=self.global_search_config.community_relevance_model_id,
-            prompt_class=CommunityRelevancePrompt,
-            parser=str_output_parser,
-            retry=config.search.llm_retry,
-        )
+        # Built only when the opt-in per-report LLM relevance scoring is on.
+        if self.global_search_config.use_dynamic_selection:
+            self.community_relevance_scorer: Runnable = setup_chain(
+                factory=factory,
+                model_id=self.global_search_config.community_relevance_model_id,
+                prompt_class=CommunityRelevancePrompt,
+                parser=str_output_parser,
+                custom_prompts=config.custom_prompts,
+            )
         # MAP step: rate community-report key points (0-100) for the query. Cheap
         # model by default since rating is cheap. StrOutputParser + a robust JSON
-        # parse below keeps map output handling fault-tolerant. No ``retry`` here:
-        # the map calls run through BatchProcessor, which already retries them.
+        # parse below keeps map output handling fault-tolerant.
         self.map_rater: Runnable = setup_chain(
             factory=factory,
             model_id=self.global_search_config.map_model_id,
@@ -98,13 +99,17 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             model_id=self.global_search_config.map_reduce_model_id,
             prompt_class=MapReduceSummaryPrompt,
             parser=str_output_parser,
-            retry=config.search.llm_retry,
+            custom_prompts=config.custom_prompts,
         )
         # One prepared input per map LLM call (each input already packs
         # ``map_batch_size`` reports), so BatchProcessor's own batch_size is 1;
-        # max_concurrency fans the map calls out over the report batches.
+        # max_concurrency fans the map calls out over the report batches. The
+        # map chain already retries transient Bedrock errors as a query chain,
+        # so BatchProcessor adds no retry of its own (max_retries=1).
         self.batch_processor = BatchProcessor(
-            batch_size=1, max_concurrency=config.processing.max_concurrency
+            batch_size=1,
+            max_concurrency=config.processing.max_concurrency,
+            max_retries=1,
         )
 
     async def asearch(self, query: SearchQuery) -> SearchResult:
@@ -333,20 +338,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             # emits a 0-10 score; normalizing here was previously only done for
             # the blended item.score, leaving the threshold filter (line below)
             # comparing a 0-1 threshold against a 0-10 score -> a near no-op.
-            #
-            # Work on a COPY: the input RetrievalResult objects are shared with
-            # the fallback list and the downstream fuse/rerank, so mutating
-            # item.score in place would corrupt the scores fed to fusion (and,
-            # under concurrent queries sharing a strategy, race across queries).
             llm_output = await self.community_relevance_scorer.ainvoke(
                 {"community_summary": item.content, "query": query.query}
             )
             parsed_score = safe_float_parse(llm_output, default_value=5.0)
             relevance_score = (parsed_score / 10.0) if parsed_score is not None else 0.0
-            scored = item.model_copy()
-            if parsed_score is not None:
-                scored.score = ((item.score or 0.5) * 0.4) + (relevance_score * 0.6)
-            return scored, relevance_score
+            return item, relevance_score
 
         # return_exceptions=True so a single throttled/failed LLM scoring call
         # degrades that one community to score 0 rather than aborting the whole
@@ -366,15 +363,28 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 # is a raw RRF value (~1/(k+rank), e.g. 0.016) on a different
                 # scale than the 0-1 relevance the threshold filters on, so
                 # comparing it directly would drop it; assign the threshold value
-                # to keep it as a candidate (ranked by its retrieval score below).
+                # to keep it as a candidate (after scored ones, in retrieval order).
                 evaluated_items.append((original, relevance_threshold))
             else:
                 evaluated_items.append(outcome)
 
+        # Rank by the LLM relevance, ties broken by retrieval rank. The old
+        # 0.4 * retrieval score + 0.6 * relevance blend mixed scales: the
+        # retrieval score is an RRF value (~1/(k+rank), ~0.016), so it was
+        # noise next to a 0-1 relevance, yet still reordered near-ties.
+        ranked = sorted(
+            (
+                (score, position, item)
+                for position, (item, score) in enumerate(evaluated_items)
+                if score >= relevance_threshold
+            ),
+            key=lambda entry: (-entry[0], entry[1]),
+        )
+        # Copies: the inputs are shared with the fallback list and the fusion
+        # downstream, so their scores must not be mutated in place.
         relevant_items = [
-            item for item, score in evaluated_items if score >= relevance_threshold
+            item.model_copy(update={"score": score}) for score, _, item in ranked
         ]
-        relevant_items.sort(key=lambda x: x.score or 0.0, reverse=True)
         logger.debug(
             "Filtered %s communities based on relevance threshold %s",
             len(evaluated_items) - len(relevant_items),

@@ -16,6 +16,7 @@ from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
+from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -29,7 +30,10 @@ from unified_kg_rag.domain.prompts import (
     KeywordExpansionPrompt,
     QueryRefinementPrompt,
 )
-from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
+from unified_kg_rag.domain.retrieval.strategy_registry import (
+    QueryInput,
+    register_strategy,
+)
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
     compute_hash,
@@ -40,7 +44,7 @@ from unified_kg_rag.shared.utils import (
 logger = get_logger(__name__)
 
 
-@register_strategy(SearchStrategy.DRIFT)
+@register_strategy(SearchStrategy.DRIFT, query_inputs=frozenset({QueryInput.ENTITIES}))
 class DriftSearchStrategy(BaseSearchStrategy):
     def __init__(
         self,
@@ -70,22 +74,24 @@ class DriftSearchStrategy(BaseSearchStrategy):
             model_id=self.drift_config.query_refinement_model_id,
             prompt_class=QueryRefinementPrompt,
             parser=str_output_parser,
-            retry=self.config.search.llm_retry,
+            custom_prompts=self.config.custom_prompts,
         )
         self.keyword_expander = setup_chain(
             factory=factory,
             model_id=self.drift_config.keyword_expansion_model_id,
             prompt_class=KeywordExpansionPrompt,
             parser=CommaSeparatedListOutputParser(),
-            retry=self.config.search.llm_retry,
+            custom_prompts=self.config.custom_prompts,
         )
-        self.convergence_assessor = setup_chain(
-            factory=factory,
-            model_id=self.drift_config.convergence_assessment_model_id,
-            prompt_class=ConvergenceAssessmentPrompt,
-            parser=str_output_parser,
-            retry=self.config.search.llm_retry,
-        )
+        # Built only when the opt-in LLM convergence check is enabled.
+        if self.drift_config.enable_llm_convergence:
+            self.convergence_assessor = setup_chain(
+                factory=factory,
+                model_id=self.drift_config.convergence_assessment_model_id,
+                prompt_class=ConvergenceAssessmentPrompt,
+                parser=str_output_parser,
+                custom_prompts=self.config.custom_prompts,
+            )
         # The HyDE primer chain is only built when the primer path is enabled,
         # so the default DRIFT flow constructs no extra chain.
         if self.drift_config.enable_primer:
@@ -94,7 +100,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 model_id=self.drift_config.primer_model_id,
                 prompt_class=DriftPrimerPrompt,
                 parser=str_output_parser,
-                retry=self.config.search.llm_retry,
+                custom_prompts=self.config.custom_prompts,
             )
 
     async def asearch(self, query: SearchQuery) -> SearchResult:
@@ -133,11 +139,17 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 logger.info("No candidate communities; skipping DRIFT primer")
             await self._iterative_search(query, all_results, seen_hashes, metrics)
 
+        # DRIFT accumulates communities, entities, relationships and chunks
+        # from several iterations; reserve slots per section type (shared with
+        # local search) so the final cut does not collapse them to one type, and
+        # rerank only text chunks, as local search does.
         final_results = self.hybrid_scorer.fuse_and_rerank_results(
             {"results": all_results},
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,
             query=query.query,
+            per_type_quota=self._per_type_quota(query.top_k),
+            rerank_only_types={SectionType.TEXT.value},
         )
         processing_time = time.time() - start_time
         self._record_search_metrics(processing_time, len(all_results), len(metrics))
@@ -175,9 +187,13 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 logger.info("Convergence achieved at iteration %s", iteration)
                 break
 
-            current_query = await self._evolve_query(
-                current_query, query.query, all_results, iteration
-            )
+            # Iteration 0 searches with the original query: rewriting it before
+            # any document has been retrieved could only drift away from the
+            # user's wording. Later iterations refine it from what was found.
+            if iteration > 0:
+                current_query = await self._evolve_query(
+                    current_query, query.query, all_results, iteration
+                )
             logger.info(
                 "Iteration %s: evolved query='%s', optional keywords='%s'",
                 iteration,
@@ -345,8 +361,12 @@ class DriftSearchStrategy(BaseSearchStrategy):
             if all(gain < 2 for gain in recent_gains):
                 return True
 
-        if iteration > 2 and await self._assess_convergence_with_llm(
-            original_query, iteration, metrics
+        if (
+            self.drift_config.enable_llm_convergence
+            and metrics
+            and await self._assess_convergence_with_llm(
+                original_query, iteration, metrics
+            )
         ):
             return True
 

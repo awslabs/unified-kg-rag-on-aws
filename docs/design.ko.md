@@ -121,7 +121,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 ### 2.3 레지스트리
 
-- **검색 전략**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)`로 `SearchStrategy` enum에 클래스와 필요한 역할을 등록.
+- **검색 전략**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)`로 `SearchStrategy` enum에 클래스, 필요한 역할, 질의 입력을 등록.
 - **평가자**: `EvaluationManager._resolve_evaluator_class` — `EvaluatorType` → 평가자 클래스(lazy, 사용 시 import).
 - **렌더러**: `adapters/renderers/base.py` — `@register_renderer("name")`.
 
@@ -191,7 +191,7 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 
 **커뮤니티 리포트 컨텍스트 팩(stage 11)**: 리포트 생성 입력은 커뮤니티 내 엔티티를 **그래프 degree 내림차순으로 정렬**(동점은 안정적 id 정렬)한 뒤 `max_entities_per_report`로 캡하고, `max_report_context_tokens` 토큰 예산에 맞춰 팩합니다(관계는 양 끝점 degree 합·가중치 tiebreak로 동일하게 정렬·팩). 최상위 degree 엔티티는 단독으로 예산을 초과해도 항상 1개는 포함되어 리포트가 빈 컨텍스트로 남지 않습니다(`community_detector._prepare_report_input`).
 
-**서브커뮤니티 roll-up(MS GraphRAG 동등성)**: 상위 커뮤니티의 raw 엔티티/관계 컨텍스트가 `max_report_context_tokens`를 초과하면, 단순 truncate 대신 이미 생성된 child 서브커뮤니티 리포트 요약을 가장 낮은 우선순위의 raw 컨텍스트 자리에 치환합니다. 이를 위해 bottom-up 레벨별 생성이 필요합니다 — `generate_reports`가 커뮤니티를 `level`로 묶어 가장 세밀한 레벨부터(level 0 = leaf) 처리하며 각 레벨 리포트를 누적해, 상위 커뮤니티(`enable_sub_community_rollup`, 기본 on)가 child 요약을 끌어옵니다(`_generate_reports_with_rollup`/`_build_sub_community_context`, 동일 예산 내에서 큰 child부터 팩). 플래그를 false로 두면 flat·truncate-on-overflow 경로(`_generate_reports_flat`)로 복귀합니다.
+**서브커뮤니티 roll-up(MS GraphRAG 동등성)**: 상위 커뮤니티의 raw 엔티티/관계 컨텍스트가 `max_report_context_tokens`를 초과하면, 단순 truncate 대신 이미 생성된 child 서브커뮤니티 리포트 요약을 가장 낮은 우선순위의 raw 컨텍스트 자리에 치환합니다. 이를 위해 bottom-up 레벨별 생성이 필요합니다 — `generate_reports`가 커뮤니티를 `level`로 묶어 가장 세밀한 레벨부터(level 0 = leaf) 처리하며 각 레벨 리포트를 누적해, 상위 커뮤니티(`enable_sub_community_rollup`, 기본 on)가 child 요약을 끌어옵니다(`_generate_reports_with_rollup`/`_build_sub_community_context`, 동일 예산 내에서 큰 child부터 팩). 플래그를 false로 두면 flat·truncate-on-overflow 경로(`_generate_reports_flat`)로 복귀합니다. roll-up 경로에서 유일한 child와 엔티티·관계가 같은 상위 커뮤니티는 같은 컨텍스트로 LLM을 다시 호출하지 않고 child 리포트를 상위 커뮤니티 키로 바꿔 재사용합니다(`attributes.reused_from_community_id`, `_reuse_single_child_report`). flat 경로는 모든 리포트를 생성합니다.
 
 **구조화된 커뮤니티 리포트(MS GraphRAG 동등성)**: 리포트 프롬프트는 구조화된 결과를 생성합니다 — 요약(`summary`), 중요도 등급 `rating`(0-10)과 한 문장 근거 `rating_explanation`, 그리고 `findings` 리스트(각 항목은 한 줄 `summary` + 여러 문장 `explanation`)입니다(`CommunityReport.findings`/`rating`, `CommunityFinding`). 임베딩·global map-reduce·표시에 쓰이는 자유 텍스트 `full_content`는 이 구조화 필드에서 **결정적으로 렌더링**되므로(`CommunityReport.render_full_content`) 추가 LLM 호출이 없고 임베딩/검색 경로는 그대로입니다. `rating`은 중요도 기반 랭킹을 위해 커뮤니티 리포트 OpenSearch 문서에도 색인됩니다.
 
@@ -233,15 +233,15 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 
 - **simple**: OpenSearch 전용 벡터/렉시컬, 그래프 없음. claim 추출이 켜져 있으면 claims 인덱스도 자동 sweep 대상이고, 꺼져 있으면 `_apply_claim_gate`가 claims 인덱스를 명시적으로 제외해 claims-off 실행이 그 인덱스를 절대 조회하지 않습니다.
 - **local**: 엔티티 중심 — 후보 엔티티 → Neptune 그래프 확장 → 빈도 필터 → 텍스트 단위 결합에, **커뮤니티 리포트 섹션**과 **관계 섹션**을 덧붙여 보강합니다(MS GraphRAG local search가 엔티티 + 그 커뮤니티 리포트 + 네트워크 내 관계 + 텍스트 단위를 조립하는 것과 동일). `_retrieve_community_reports`·`_retrieve_relationships`가 엔티티 포커스로 해당 인덱스를 조회하며(없으면 원본 질의로 폴백), 관계 섹션은 `build_relationship_vector_index`로 게이팅되어 관계 벡터 인덱스를 만들지 않는 GraphRAG 전용 배포는 관계 조회를 아예 하지 않습니다. claim 추출이 켜져 있으면 MS GraphRAG처럼 **claims(covariate)를 컨텍스트에 주입**합니다(`_retrieve_claims`가 claims 인덱스를 별도 조회해 `all_results["claims"]`로 추가, `SectionType.CLAIM` 우선순위로 토큰 예산에 편입). claims-off 기본 경로는 추가 조회를 일절 하지 않습니다.
-- **global**: 커뮤니티 리포트 검색 → 커뮤니티 노드 확장 → LLM 동적 관련성 선택 → **map-reduce 합성**(아래 §6.1.1).
-- **drift**: 반복적 질의 진화(커뮤니티 시드 → LLM 질의 재정의/키워드 확장 → 수렴 판정). 선택적으로(`search.drift_search.enable_primer`, 기본 off) MS GraphRAG의 **primer → follow-up** 플로우로 동작합니다 — HyDE primer가 시드 커뮤니티 리포트로부터 가상 답변을 작성하고 질의를 `primer_follow_ups`개의 구체적 하위 질의로 분해해, 하나의 질의를 계속 변형하는 대신 각 하위 질의를 개별 검색 이터레이션으로 실행합니다(`_primer_search`/`_run_primer`). primer가 follow-up을 내지 못하면 반복 루프로 폴백하고, 후보 커뮤니티를 찾지 못하면 근거로 삼을 리포트가 없으므로 primer를 아예 건너뜁니다. 가상 답변은 follow-up 질의를 이끄는 데만 쓰이며, 검색된 근거가 아니라 LLM의 추측이므로 답변 컨텍스트나 보고되는 출처에 넣지 않습니다.
-- **auto**: `StrategySelectionPrompt`로 위 전략 중 LLM 라우팅.
+- **global**: 커뮤니티 리포트 검색 → 커뮤니티 노드 확장 → 인덱싱된 rank/rating 기준 선택(리포트별 LLM 관련성 채점은 `use_dynamic_selection`으로 선택, map 단계가 이미 질의 기준으로 리포트를 평가하므로 기본 off) → **map-reduce 합성**(아래 §6.1.1).
+- **drift**: 반복적 질의 진화(커뮤니티 시드 → 이터레이션 0은 원본 질의로 검색 → 이후 이터레이션은 찾은 결과로 질의 재정의/키워드 확장 → 고유 결과 증가가 적거나 `max_iterations`에 도달하면 종료. LLM 수렴 판정은 `search.drift_search.enable_llm_convergence`로 선택). 누적 결과는 local search와 같은 섹션 유형별 쿼터(`search.local_search.type_quota`)로 결합하고 텍스트 청크만 rerank합니다. 선택적으로(`search.drift_search.enable_primer`, 기본 off) MS GraphRAG의 **primer → follow-up** 플로우로 동작합니다 — HyDE primer가 시드 커뮤니티 리포트로부터 가상 답변을 작성하고 질의를 `primer_follow_ups`개의 구체적 하위 질의로 분해해, 하나의 질의를 계속 변형하는 대신 각 하위 질의를 개별 검색 이터레이션으로 실행합니다(`_primer_search`/`_run_primer`). primer가 follow-up을 내지 못하면 반복 루프로 폴백하고, 후보 커뮤니티를 찾지 못하면 근거로 삼을 리포트가 없으므로 primer를 아예 건너뜁니다. 가상 답변은 follow-up 질의를 이끄는 데만 쓰이며, 검색된 근거가 아니라 LLM의 추측이므로 답변 컨텍스트나 보고되는 출처에 넣지 않습니다.
+- **auto**: `StrategySelectionPrompt`로 `search.auto_routable_strategies`(기본값 local, mix, global, drift, simple 제외) 중 LLM 라우팅. 응답은 단어 단위로 파싱해 처음 나온 라우팅 가능 전략을 쓰고, 인식하지 못하면 local로 폴백합니다.
 
 #### 6.1.1 Global search map-reduce (`global_search.py`)
 
 `enable_map_reduce`이고 결과가 `map_reduce_min_results` 이상일 때 MS GraphRAG의 정식 map-reduce를 따릅니다. `map_reduce_min_results` 미달이면 검색 결과가 **그대로 통과**하고 합성 단계를 아예 거치지 않습니다 — 커뮤니티 리포트가 몇 개뿐이면 map-reduce로 요약할 필요가 없기 때문입니다.
 
-1. **MAP** — 커뮤니티 리포트를 `map_batch_size`개씩 배치로 묶어, 각 배치마다 `GlobalMapPrompt`로 LLM에게 핵심 포인트(key point)를 추출하고 질의 관련성을 **0-100**으로 채점시킵니다. 배치는 `BatchProcessor`로 동시 실행되며 항목별 graceful fallback이 있습니다.
+1. **MAP** — 커뮤니티 리포트를 `map_batch_size`개씩(기본 5, MS GraphRAG의 12K 토큰 map 컨텍스트 수준) 배치로 묶어, 각 배치마다 `GlobalMapPrompt`로 LLM에게 핵심 포인트(key point)를 추출하고 질의 관련성을 **0-100**으로 채점시킵니다. 배치는 `BatchProcessor`로 동시 실행되며 항목별 graceful fallback이 있습니다.
 2. **FILTER+RANK** — `map_relevance_threshold` 이하 포인트를 버리고 점수 내림차순 정렬(`_filter_and_rank_points`).
 3. **PACK** — `max_map_reduce_tokens` 토큰 예산까지 상위 포인트를 팩(`token_manager.count_tokens` 기준, `_pack_points_within_budget`).
 4. **REDUCE** — 팩된 포인트(relevance 주석 포함)를 `MapReduceSummaryPrompt`로 최종 답변 합성(`_reduce_from_points`). 결과는 `metadata.synthesized` 표시가 붙은 `synthesized_summary` `RetrievalResult`로 결과 앞에 추가. 답변 모델은 이를 컨텍스트로 읽지만, 검색된 근거가 아니라 LLM 출력이므로 `RAGOutput.sources`에는 포함하지 않습니다.
@@ -254,13 +254,13 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 
 모드(`RAGInput.search_strategy`):
 - **naive** — 그래프 없이 벡터 청크 검색만.
-- **hybrid** — ll→엔티티 인덱스 + hl→관계 인덱스 + Neptune 그래프 확장.
+- **hybrid** — ll→엔티티 인덱스 + hl→관계 인덱스 + 1홉 교차 유형 확장(엔티티 히트 → 연결 관계, 관계 히트 → 끝점 엔티티) + 이 항목들이 인용한 청크.
 - **mix** — hybrid 그래프 검색에 더해, **매칭된 엔티티/관계가 인용하는 소스 청크**(`text_unit_ids` lineage)와 naive 벡터 청크 검색을 모두 블렌딩.
 
 소스별 동작:
 - **저수준 키워드(ll)** → 엔티티 인덱스(렉시컬+시맨틱, `entities_index_prefix`)
 - **고수준 키워드(hl)** → **관계 인덱스**(LightRAG의 `relationships_vdb`에 해당. `relationships_index_prefix`, `Relationship.description` 임베딩)
-- 엔티티 히트는 Neptune(=GRAPH 역할)으로 확장
+- **검색 라운드** — 서로 독립인 엔티티·관계·(mix) 벡터 청크 질의를 동시에 실행하고, 이어서 연결 관계·끝점 엔티티 확장을 동시에 실행한 뒤, 둘 다에 의존하는 인용 청크를 마지막에 가져옵니다. upstream LightRAG에는 다중 홉 탐색이 없으므로 Neptune 이웃 확장(=GRAPH 역할, `indexing.neptune.max_hops`)은 `search.lightrag_search.enable_graph_expansion`(기본 `false`)으로 선택합니다.
 - **mix 링크드 청크** — 엔티티·관계를 `text_unit_ids` 청크 lineage와 함께 색인하므로, `mix`는 매칭된 엔티티/관계로부터 이를 뒷받침하는 청크로 거슬러 올라갑니다(`_collect_linked_chunk_ids`가 매칭 항목들이 각 청크를 몇 번 인용하는지로 청크 id를 랭킹 — LightRAG의 `_find_related_text_unit_from_entities`/`_from_relationships`와 동일). 해당 청크를 id로 가져와 naive 벡터 청크와 함께 블렌딩합니다. lineage 필드 이전에 만들어진 인덱스에서는 naive 전용 블렌딩으로 graceful degrade.
 - 키워드 추출 결과가 비면 짧은 질의는 원 질의를 ll 키워드로 폴백(설정 `search.lightrag_search.raw_query_fallback_max_len`)
 - 모든 소스는 공유 `HybridScorer`로 융합
@@ -275,8 +275,8 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 
 - **HybridScorer** (`adapters/retrieval/hybrid_scorer.py`): 소스별 결과를 RRF(`rrf_k`) 또는 가중 융합, 다양성 필터링(`diversity_lambda`), Bedrock 리랭킹으로 결합. 가중치·방법은 `config.search.fusion`/`hybrid`. 리랭킹은 `search.reranking.enabled`일 때만 활성화되며, `compress_documents`로 `top_n`을 문서 수에 맞춰 일시 조정 후 복원합니다. 초기화 실패 시 리랭커는 비활성(`None`)으로 degrade.
   - **IAM 주의**: Bedrock Rerank는 `bedrock:Rerank` 권한을 `Resource:*`로 요구합니다(실 AWS E2E에서 발견 — 모델 ARN으로 좁히면 AccessDenied). IaC에 전용 statement로 분리합니다.
-- **TokenManager** (`adapters/retrieval/token_manager.py`): 모델 한도 내 컨텍스트 최적화. 섹션 타입별 우선순위 배수로 가중(`PRIORITY_MULTIPLIERS`: TEXT 1.3 / ENTITY 1.2 / RELATIONSHIP 1.1 / CLAIM 1.1 / COMMUNITY 1.0 / GENERAL 0.8), 우선순위 내림차순으로 예산 내 섹션을 선택. `SectionType.CLAIM`은 query-time claims 주입(§6.1)을 토큰 예산에 편입하기 위한 타입입니다. 체인은 이 선택 결과(`OptimizedContext`)를 상태에 유지하고 그것으로 `RAGOutput.sources`를 만들기 때문에, sources에는 답변 모델이 실제로 본 섹션만 검색 순위 순서로 들어갑니다. 예산 때문에 잘린 섹션은 보고하지 않고, 예산에 맞춰 일부만 넣은 섹션은 `truncated: true`와 잘린 텍스트를 함께 보고합니다. 각 source의 metadata에는 `source_id` / `document_ids` / `chunk_id` / `section_type` / `score`를 유지하고 `*_embedding` 벡터는 제거합니다. 빈 컨텍스트로 답변 단계가 바로 종료되면 `sources`는 비어 있습니다.
-- **토큰 카운팅** (`adapters/aws/token_counter.py`): Bedrock `count_tokens` API가 단일 진실 소스. 실패 시에만 문자 체계 인식 추정치로 degrade(서드파티 토크나이저 미사용). 일시적이지 않은 실패(`AccessDeniedException`, 메시지가 모델의 기능 미지원을 뜻하는 `ValidationException` 등)가 나면 해당 모델을 프로세스 전체에서 미지원으로 기록해 이후 API를 호출하지 않으며, 스로틀링·타임아웃·입력 문제로 인한 `ValidationException`은 기록하지 않음. 비어 있거나 공백만 있는 텍스트는 API를 호출하지 않음. 임베딩·리랭크 모델과 CountTokens가 거부하는 언어 모델(Claude 4.7+/5.x, OpenAI GPT)은 기능 플래그(`supports_count_tokens`)로 API를 건너뜀. 절단은 char 비율로 후보를 잡고 API로 검증하는 수렴 루프.
+- **TokenManager** (`adapters/retrieval/token_manager.py`): 모델 한도 내 컨텍스트 최적화. 섹션 타입별 우선순위 배수로 가중(`PRIORITY_MULTIPLIERS`: TEXT 1.3 / ENTITY 1.2 / RELATIONSHIP 1.1 / CLAIM 1.1 / COMMUNITY 1.0 / GENERAL 0.8), 우선순위 내림차순으로 예산 내 섹션을 선택. `SectionType.CLAIM`은 query-time claims 주입(§6.1)을 토큰 예산에 편입하기 위한 타입입니다. 체인은 이 선택 결과(`OptimizedContext`)를 상태에 유지하고 그것으로 `RAGOutput.sources`를 만들기 때문에, sources에는 답변 모델이 실제로 본 섹션만 검색 순위 순서로 들어갑니다. 예산 때문에 잘린 섹션은 보고하지 않고, 예산에 맞춰 일부만 넣은 섹션은 잘린 텍스트와 `metadata.truncated: true`를 함께 보고합니다. 각 source의 metadata에는 `truncated` / `source_id` / `document_ids` / `chunk_id` / `section_type` / `score`를 유지하고 `*_embedding` 벡터는 제거합니다. 빈 컨텍스트로 답변 단계가 바로 종료되면 `sources`는 비어 있습니다.
+- **토큰 카운팅** (`adapters/aws/token_counter.py`): Bedrock `count_tokens` API가 단일 진실 소스. 실패 시에만 문자 체계 인식 추정치로 degrade(서드파티 토크나이저 미사용). 일시적이지 않은 실패(`AccessDeniedException`, 메시지가 모델의 기능 미지원을 뜻하는 `ValidationException` 등)가 나면 해당 모델을 프로세스 전체에서 미지원으로 기록해 이후 API를 호출하지 않으며, 스로틀링·타임아웃·입력 문제로 인한 `ValidationException`은 기록하지 않음. 비어 있거나 공백만 있는 텍스트는 API를 호출하지 않음. 임베딩·리랭크 모델용 카운터는 클라이언트 없이 만들어 API를 호출하지 않으며(API가 해당 모델을 받지 않음), CountTokens가 거부하는 언어 모델(Claude 4.7+/5.x, OpenAI GPT)은 기능 플래그(`supports_count_tokens`)로 API를 건너뜀. 절단은 char 비율로 후보를 잡고 API로 검증하는 수렴 루프.
 
 ---
 
@@ -378,7 +378,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 대부분의 확장은 레지스트리 등록만으로 가능하며 디스패치 코드를 수정하지 않습니다(자세한 내용 `CONTRIBUTING.md`/`CLAUDE.md`).
 
-- **새 검색 전략**: `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...))` + `adapters/search_strategies/__init__.py` export.
+- **새 검색 전략**: `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + `adapters/search_strategies/__init__.py` export. `query_inputs`는 전략이 읽는 질의 측 LLM 추출(`entity_focus`용 `ENTITIES`, `hl_keywords`/`ll_keywords`용 `DUAL_KEYWORDS`)을 선언하며, 체인은 나머지를 건너뜁니다.
 - **새 스토리지/LLM 백엔드**: 해당 포트 구현 후 주입(아래 "커스텀 백엔드" 참조). 매니저 `__init__`에 하드코딩 금지.
 - **새 평가자**: `BaseGraphRAGEvaluator` 상속 + `EvaluationManager._resolve_evaluator_class`에 분기 추가 + `EvaluatorType` enum 추가.
 - **새 렌더러**: `BaseRenderer` 상속 + `@register_renderer("name")`.

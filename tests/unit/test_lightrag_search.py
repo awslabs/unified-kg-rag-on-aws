@@ -9,6 +9,8 @@ keyword lists, fusing through the shared scorer.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
@@ -109,8 +111,8 @@ async def test_hybrid_mode_uses_entities_and_relationships(config: Config) -> No
     assert config.indexing.opensearch.relationships_index_prefix in prefixes
     # text-units (naive blend) NOT queried in hybrid mode.
     assert config.indexing.opensearch.text_units_index_prefix not in prefixes
-    # Entity hits seed a Neptune expansion.
-    assert len(neptune_r.calls) == 1
+    # LightRAG modes read only OpenSearch: no multi-hop Neptune expansion.
+    assert neptune_r.calls == []
 
 
 async def test_ll_keywords_go_to_entities_index(config: Config) -> None:
@@ -280,12 +282,12 @@ class RelationshipEndpointRetriever:
         ]
 
 
-async def test_hl_only_query_seeds_graph_via_relationship_endpoints(
+async def test_hl_only_query_grounds_entities_via_relationship_endpoints(
     config: Config,
 ) -> None:
-    # The documented fidelity fix: an hl-only (purely thematic) query — matched
-    # relationships but no matched entities — must still seed Neptune graph
-    # expansion via the relationships' endpoint entity ids.
+    # An hl-only (purely thematic) query — matched relationships but no matched
+    # entities — must still reach entities, via the relationships' endpoint ids
+    # (upstream `_find_most_related_entities_from_relationships`).
     spec = get_strategy_spec(SearchStrategy.HYBRID)
     os_r = RelationshipEndpointRetriever()
     neptune_r = FakeRetriever("graph")
@@ -304,10 +306,15 @@ async def test_hl_only_query_seeds_graph_via_relationship_endpoints(
     # hl keywords only, no ll keywords -> no entity hits, only relationship hits.
     await strategy.asearch(_query(SearchStrategy.HYBRID, hl_keywords=["theme"]))
 
-    # Neptune expansion was seeded from the relationship endpoints e1, e2.
-    assert len(neptune_r.calls) == 1
-    seeded = neptune_r.calls[0].filters.get("id")
-    assert set(seeded) == {"e1", "e2"}
+    entity_prefix = config.indexing.opensearch.entities_index_prefix
+    endpoint_fetches = [
+        q
+        for q in os_r.calls
+        if q.index_prefixes == [entity_prefix] and q.filters and "id" in q.filters
+    ]
+    assert len(endpoint_fetches) == 1
+    assert set(endpoint_fetches[0].filters["id"]) == {"e1", "e2"}
+    assert neptune_r.calls == []
 
 
 class FailingRetriever:
@@ -375,9 +382,8 @@ class TestUpstreamTwoRetrievalWidths:
     queries; ``QueryParam.chunk_top_k`` (DEFAULT_CHUNK_TOP_K = 20) separately sizes the
     chunk stream (lightrag/constants.py; ``search_top_k = query_param.chunk_top_k or
     query_param.top_k`` in operate.py). Collapsing both onto the caller's single
-    ``top_k`` starved the KG streams: measured on musique50/n=50 at top_k=10, upstream
-    mix assembled a median 71 entities / 86 relations / 20 chunks per query against our
-    20 / 10 / 17, and scored token-F1 0.653 vs our 0.477 (McNemar p=0.021).
+    ``top_k`` starves the KG streams: a width sized for chunks is far narrower than
+    what the entity/relationship queries need.
     """
 
     async def test_entity_and_relationship_queries_use_the_kg_width(
@@ -490,10 +496,10 @@ class TestUpstreamTwoRetrievalWidths:
     async def test_hybrid_gets_the_same_quota_as_mix(self, config: Config) -> None:
         # HYBRID runs the same three streams as mix (ll->entities, hl->relationships,
         # KG-linked chunks); mix only adds the naive VECTOR chunk blend on top. Gating
-        # the quota on mix alone left hybrid taking a flat top_k cut — 10 contexts
-        # against upstream hybrid's 188 — and abstaining on 55/100 MuSiQue queries for
-        # lack of evidence (F1 .236 vs upstream .567). The previous version of this test
-        # asserted that no-quota behaviour as intended, which encoded the defect.
+        # the quota on mix alone left hybrid taking a flat top_k cut, far narrower
+        # than upstream hybrid's context, so it often lacked the evidence to answer.
+        # The previous version of this test asserted that no-quota behaviour as
+        # intended, which encoded the defect.
         strategy, _, _ = _make_strategy(config)
         captured: dict = {}
 
@@ -560,10 +566,9 @@ class TestUpstreamChunkSelection:
     ``seen_chunk_ids`` set (``_merge_chunks``).
 
     The previous implementation ranked the pooled lineage by global citation
-    count and cut at ``chunk_top_k``, blind to the vector stream. Measured on
-    musique50/n=50 (m16 mix): 37.2% of the linked stream duplicated chunks the
-    vector query already returned, and gold-chain recall was 0.982 on
-    full-chain queries vs 0.477 on the rest.
+    count and cut at ``chunk_top_k``, blind to the vector stream, so part of
+    the linked stream's budget went to chunks the vector query had already
+    returned, and chunks cited by only one matched item were cut first.
     """
 
     @staticmethod
@@ -729,9 +734,9 @@ class TestIncidentRelationshipExpansion:
     ``get_nodes_edges_batch``, dedups by ``tuple(sorted(e))``, orders by
     ``(rank, weight)`` descending, and applies NO count cap — the per-type token
     limit (``DEFAULT_MAX_RELATION_TOKENS`` = 8000) does the trimming. We had
-    only the mirror direction (relation -> endpoint entity), so its relationship
-    stream held a median 28 relations per query against upstream's 86 on
-    musique50/n=50: the candidates never existed to be truncated.
+    only the mirror direction (relation -> endpoint entity), so the relationship
+    stream was a fraction of upstream's width: the candidates never existed to be
+    truncated.
     """
 
     async def test_incident_edges_are_fetched_from_both_endpoint_sides(
@@ -966,10 +971,9 @@ class TestRelationshipEndpointEntities:
     ``_find_most_related_entities_from_relationships`` (~5478), which collects
     ``src_id``/``tgt_id`` in first-seen order, fetches them with
     ``get_nodes_batch``, and (in hybrid/mix) round-robin merges them with the ll
-    entity list in ``_merge_context``. We previously routed those same ids ONLY into
-    ``_expand_via_graph`` — a Neptune re-query returning the seeds' neighbourhood,
-    not the endpoints — so the endpoints never became context items and the entity
-    section sat at a median 48 per query against upstream's 71 on musique50/n=50.
+    entity list in ``_merge_context``. Those ids were once routed ONLY into a
+    Neptune neighbourhood expansion, which returns the seeds' neighbours rather
+    than the endpoints, so the endpoints never became context items.
     """
 
     @staticmethod
@@ -1085,16 +1089,14 @@ class TestRelationshipEndpointEntities:
         ]
 
 
-class TestEndpointSeedingIsPreserved:
-    """Emitting endpoints as entity candidates must not replace the graph seeding.
+class TestEndpointsBecomeCandidates:
+    """Relationship endpoints are entity context items in their own right.
 
-    The endpoint ids serve two distinct purposes: they seed Neptune expansion (to
-    reach the endpoints' neighborhood) AND they are context items in their own
-    right (upstream ``_find_most_related_entities_from_relationships``). Adding
-    the second must keep the first.
+    Upstream ``_find_most_related_entities_from_relationships`` emits them as
+    entities; there is no further multi-hop traversal from them.
     """
 
-    async def test_endpoints_both_seed_neptune_and_become_candidates(
+    async def test_endpoints_become_candidates_without_graph_traversal(
         self, config: Config
     ) -> None:
         spec = get_strategy_spec(SearchStrategy.MIX)
@@ -1115,20 +1117,17 @@ class TestEndpointSeedingIsPreserved:
 
         strategy.hybrid_scorer.fuse_and_rerank_results = _fake_fuse  # type: ignore[method-assign]
         await strategy.asearch(_query(SearchStrategy.MIX, hl_keywords=["theme"]))
-        # Still seeded into the Neptune expansion...
-        assert len(neptune_r.calls) == 1
-        assert set(neptune_r.calls[0].filters["id"]) == {"e1", "e2"}
-        # ...and also emitted as their own entity candidates.
         assert captured["sources"]["lightrag_endpoint_entities"]
+        assert neptune_r.calls == []
 
 
 class TestHybridHasAChunkStream:
     """Upstream `hybrid` builds context from entities + relations + THEIR chunks.
 
-    `_find_related_text_unit_from_entities` / `_from_relations` run for hybrid too —
-    upstream hybrid's context measured ~190 text items. What `mix` adds is the
-    separate naive VECTOR chunk query. Gating the lineage chunks on mix left hybrid
-    with no chunk stream at all, and it abstained on 55/100 MuSiQue queries.
+    `_find_related_text_unit_from_entities` / `_from_relations` run for hybrid too.
+    What `mix` adds is the separate naive VECTOR chunk query. Gating the lineage
+    chunks on mix left hybrid with no chunk stream at all, so it had no passages
+    to answer from.
     """
 
     @staticmethod
@@ -1265,3 +1264,61 @@ class TestCallerFiltersReachEverySubQuery:
 
         assert merged == {"id": ["scoped"], "doc_type": "c"}
         assert query.filters == {"id": ["caller"], "doc_type": "c"}
+
+
+class _ConcurrencyProbe:
+    """Tracks how many aretrieve calls are in flight at once."""
+
+    def __init__(self) -> None:
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self.calls: list[SearchQuery] = []
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        self.calls.append(query)
+        self.in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        await asyncio.sleep(0.01)
+        self.in_flight -= 1
+        return [
+            RetrievalResult(
+                content="hit",
+                score=1.0,
+                source="hit-1",
+                retriever_type="document",
+                metadata={"id": "hit-1", "source_id": "e1", "target_id": "e2"},
+            )
+        ]
+
+
+async def test_mix_independent_vector_queries_run_concurrently(
+    config: Config,
+) -> None:
+    # Entities, relationships and the vector chunk query are independent, so
+    # they must be in flight together rather than awaited one after another.
+    spec = get_strategy_spec(SearchStrategy.MIX)
+    probe = _ConcurrencyProbe()
+    strategy = spec.strategy_class(
+        config=config, retrievers={RetrieverRole.DOCUMENT.value: probe}
+    )
+    strategy.hybrid_scorer.fuse_and_rerank_results = (  # type: ignore[method-assign]
+        lambda results_dict, top_k, **_kw: []
+    )
+    await strategy.asearch(
+        _query(SearchStrategy.MIX, ll_keywords=["alice"], hl_keywords=["theme"])
+    )
+    assert probe.max_in_flight >= 3
+
+
+async def test_opt_in_graph_expansion_seeds_in_rank_order(config: Config) -> None:
+    # enable_graph_expansion restores the Neptune neighbourhood expansion,
+    # seeded from the entity hits then the relationship endpoints, in order.
+    config.search.lightrag_search.enable_graph_expansion = True
+    strategy, os_r, neptune_r = _make_strategy(config)
+    result = await strategy.asearch(
+        _query(SearchStrategy.HYBRID, ll_keywords=["alice"], hl_keywords=["theme"])
+    )
+    assert len(neptune_r.calls) == 1
+    entity_prefix = config.indexing.opensearch.entities_index_prefix
+    assert neptune_r.calls[0].filters["id"][0] == f"{entity_prefix}-id"
+    assert result.metadata["sources"]["graph_entities"] == 1

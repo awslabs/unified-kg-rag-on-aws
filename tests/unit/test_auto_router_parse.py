@@ -24,7 +24,7 @@ def test_exact_word() -> None:
     assert parse("local") == SearchStrategy.LOCAL
     assert parse("GLOBAL") == SearchStrategy.GLOBAL
     assert parse("  drift  ") == SearchStrategy.DRIFT
-    assert parse("simple") == SearchStrategy.SIMPLE
+    assert parse("mix") == SearchStrategy.MIX
 
 
 def test_tolerates_surrounding_text() -> None:
@@ -41,3 +41,33 @@ def test_unknown_defaults_to_local_not_drift() -> None:
 def test_exact_match_precedence_over_substring() -> None:
     # "global" contains no other strategy name; ensure exact wins cleanly.
     assert parse("global") == SearchStrategy.GLOBAL
+
+
+def test_first_mentioned_strategy_wins_not_list_order() -> None:
+    # A substring scan returned whichever name it checked first.
+    assert parse("drift, or else local") == SearchStrategy.DRIFT
+    assert parse("local rather than drift") == SearchStrategy.LOCAL
+
+
+def test_words_are_matched_whole() -> None:
+    # "mixture" / "globally" are not strategy names.
+    assert parse("a mixture, globally") == SearchStrategy.LOCAL
+
+
+def test_simple_is_not_routable_by_default() -> None:
+    # simple stays selectable explicitly but is not an AUTO target by default.
+    assert parse("simple") == SearchStrategy.LOCAL
+    assert parse("simple", (SearchStrategy.SIMPLE,)) == SearchStrategy.SIMPLE
+
+
+def test_default_routable_set_and_fast_router_model() -> None:
+    from unified_kg_rag.domain.models import Config, LanguageModelId
+
+    search = Config().search
+    assert search.auto_routable_strategies == [
+        SearchStrategy.LOCAL,
+        SearchStrategy.MIX,
+        SearchStrategy.GLOBAL,
+        SearchStrategy.DRIFT,
+    ]
+    assert search.strategy_selection_model_id == LanguageModelId.CLAUDE_V4_5_HAIKU

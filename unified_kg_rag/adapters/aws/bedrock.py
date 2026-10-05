@@ -16,13 +16,7 @@ from langchain_core.documents import Document
 from langchain_core.outputs import ChatGeneration, LLMResult
 from pydantic import BaseModel, Field, PrivateAttr
 
-from unified_kg_rag.adapters.aws.bedrock_retry import (
-    DEFAULT_BASE_DELAY_SECONDS,
-    DEFAULT_MAX_ATTEMPTS,
-    DEFAULT_MAX_DELAY_SECONDS,
-    DEFAULT_MAX_TOTAL_SECONDS,
-    call_with_transient_retry,
-)
+from unified_kg_rag.adapters.aws.bedrock_retry import call_with_transient_retry
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.domain.models import (
     Config,
@@ -31,6 +25,7 @@ from unified_kg_rag.domain.models import (
     ModelPurpose,
     RerankModelId,
 )
+from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.shared import (
     AWSServiceError,
     EmbeddingModelError,
@@ -57,15 +52,6 @@ class EmbeddingModelInfo(BaseModel):
     max_sequence_tokens: int | None = Field(
         default=None,
         description="Maximum number of tokens the model can process in a single sequence.",
-    )
-    supports_count_tokens: bool = Field(
-        default=False,
-        description=(
-            "Whether BedrockTokenCounter may call CountTokens for this model. The "
-            "counter sends a Converse-shaped input, which embedding models do not "
-            "accept, so truncation uses the script-aware estimate directly "
-            "instead of paying a failing round trip per text."
-        ),
     )
 
 
@@ -234,15 +220,6 @@ class RerankModelInfo(BaseModel):
     )
     max_document_tokens: int | None = Field(
         default=None, description="Maximum number of tokens allowed per document."
-    )
-    supports_count_tokens: bool = Field(
-        default=False,
-        description=(
-            "Whether BedrockTokenCounter may call CountTokens for this model. "
-            "Rerank models do not support Converse, the input shape the counter "
-            "sends, so query/document truncation uses the script-aware estimate "
-            "and no bedrock-runtime client is created for counting."
-        ),
     )
 
 
@@ -615,11 +592,6 @@ def get_language_model_info(model_id: LanguageModelId) -> LanguageModelInfo | No
     return _LANGUAGE_MODEL_INFO.get(model_id)
 
 
-def get_embedding_model_info(model_id: EmbeddingModelId) -> EmbeddingModelInfo | None:
-    """Capability record for an embedding model, or None if unregistered."""
-    return _EMBEDDING_MODEL_INFO.get(model_id)
-
-
 ModelIdT = TypeVar("ModelIdT")
 ModelInfoT = TypeVar("ModelInfoT")
 WrapperT = TypeVar("WrapperT")
@@ -697,6 +669,21 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
     # "adaptive" adds client-side rate limiting on top of retries, which is
     # materially better for throttling-heavy Bedrock workloads than "standard".
     BOTO_RETRY_MODE: ClassVar[Literal["legacy", "standard", "adaptive"]] = "adaptive"
+    # urllib3 connection-pool bounds. botocore defaults to 10 connections per
+    # client, but ingestion issues up to max_concurrency x chunk_concurrency
+    # concurrent Bedrock calls through one client; a smaller pool discards and
+    # re-opens connections ("Connection pool is full"), paying a TLS handshake
+    # per call. The cap keeps an extreme concurrency setting from opening an
+    # unbounded number of sockets.
+    BOTO_MIN_POOL_CONNECTIONS: ClassVar[int] = 10
+    BOTO_MAX_POOL_CONNECTIONS: ClassVar[int] = 200
+
+    def _max_pool_connections(self) -> int:
+        processing = self.config.processing
+        wanted = processing.max_concurrency * processing.chunk_concurrency
+        return max(
+            self.BOTO_MIN_POOL_CONNECTIONS, min(wanted, self.BOTO_MAX_POOL_CONNECTIONS)
+        )
 
     def _boto_config(self, read_timeout: int | None = None) -> BotoConfig:
         # botocore accepts a plain retries dict at runtime; its stub uses a
@@ -707,10 +694,12 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
                 connect_timeout=self.BOTO_CONNECT_TIMEOUT,
                 read_timeout=read_timeout,
                 retries=retries,  # type: ignore[arg-type]
+                max_pool_connections=self._max_pool_connections(),
             )
         return BotoConfig(
             connect_timeout=self.BOTO_CONNECT_TIMEOUT,
             retries=retries,  # type: ignore[arg-type]
+            max_pool_connections=self._max_pool_connections(),
         )
 
     def __init__(
@@ -864,11 +853,9 @@ class BedrockEmbeddingsWrapper(BaseBedrockWrapper, BedrockEmbeddings):
     # Application-level retry for transient Bedrock model errors (e.g. HTTP 424
     # ModelErrorException) that botocore's retry modes do not cover. Applied
     # per InvokeModel call, so every sync/async embed path benefits and a
-    # failure mid-batch does not restart the already-embedded texts.
-    transient_max_attempts: int = Field(default=DEFAULT_MAX_ATTEMPTS, ge=1)
-    transient_base_delay: float = Field(default=DEFAULT_BASE_DELAY_SECONDS, ge=0)
-    transient_max_delay: float = Field(default=DEFAULT_MAX_DELAY_SECONDS, ge=0)
-    transient_max_total_seconds: float = Field(default=DEFAULT_MAX_TOTAL_SECONDS, ge=0)
+    # failure mid-batch does not restart the already-embedded texts. The
+    # factory sets it from aws.bedrock.transient_retry.
+    transient_retry: TransientRetryConfig = Field(default_factory=TransientRetryConfig)
 
     def _invoke_model(self, input_body: dict[str, Any] | None = None) -> dict[str, Any]:
         # Single choke point for every embedding request in langchain-aws
@@ -880,10 +867,7 @@ class BedrockEmbeddingsWrapper(BaseBedrockWrapper, BedrockEmbeddings):
                 input_body=body
             ),
             operation=f"embed:{self.model_id}",
-            max_attempts=self.transient_max_attempts,
-            base_delay=self.transient_base_delay,
-            max_delay=self.transient_max_delay,
-            max_total_seconds=self.transient_max_total_seconds,
+            policy=self.transient_retry,
         )
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
@@ -944,17 +928,17 @@ class BedrockEmbeddingModelFactory(
             if isinstance(supported_dims, list):
                 model_kwargs["dimensions"] = dimensions
 
-        token_counter = BedrockTokenCounter(
-            model_id=model_id.value,
-            client=self._client,
-            api_supported=model_info.supports_count_tokens,
-        )
+        # CountTokens takes a Converse-shaped input, which embedding models do
+        # not accept: without a client the counter uses the script-aware
+        # estimate instead of paying a failing round trip per text.
+        token_counter = BedrockTokenCounter(model_id=model_id.value, client=None)
         model = BedrockEmbeddingsWrapper(
             client=self._client,
             model_id=model_id.value,
             model_kwargs=model_kwargs,
             max_sequence_length=model_info.max_sequence_length,
             max_sequence_tokens=model_info.max_sequence_tokens,
+            transient_retry=self.config.aws.bedrock.transient_retry,
             # Accepted by BaseBedrockWrapper.__init__; pydantic's generated
             # __init__ signature hides it from mypy.
             token_counter=token_counter,  # type: ignore[call-arg]
@@ -993,8 +977,7 @@ class GuardrailInterventionHandler(BaseCallbackHandler):
 
     It deliberately does NOT raise: on the query path the blocked message *is*
     the intended user-facing response, and raising from a callback would turn
-    it into an opaque chain error. Operators alert on the WARNING (or read
-    :meth:`intervention_count`).
+    it into an opaque chain error. Operators alert on the WARNING.
     """
 
     _count: ClassVar[int] = 0
@@ -1006,16 +989,6 @@ class GuardrailInterventionHandler(BaseCallbackHandler):
         # InvokeModel with trace enabled reports through on_llm_error and then
         # still calls on_llm_end; remember those runs to count each call once.
         self._flagged_runs: set[UUID] = set()
-
-    @classmethod
-    def intervention_count(cls) -> int:
-        with cls._lock:
-            return cls._count
-
-    @classmethod
-    def reset_count(cls) -> None:
-        with cls._lock:
-            cls._count = 0
 
     def _record(self) -> None:
         with self._lock:
@@ -1490,23 +1463,9 @@ class BedrockRerankModelFactory(
             f"arn:aws:bedrock:{self.region_name}::foundation-model/{model_id.value}"
         )
 
-        # Only open a bedrock-runtime client when the counter will actually use
-        # it; for rerank models CountTokens is unsupported, so counting goes
-        # straight to the estimate.
-        bedrock_runtime_client = (
-            self.boto_session.client(
-                "bedrock-runtime",
-                region_name=self.region_name,
-                config=self._boto_config(),
-            )
-            if model_info.supports_count_tokens
-            else None
-        )
-        token_counter = BedrockTokenCounter(
-            model_id=model_id.value,
-            client=bedrock_runtime_client,
-            api_supported=model_info.supports_count_tokens,
-        )
+        # Rerank models do not accept CountTokens' Converse input either, so
+        # the counter gets no client and uses the script-aware estimate.
+        token_counter = BedrockTokenCounter(model_id=model_id.value, client=None)
         model = BedrockRerankWrapper(
             model_arn=model_arn,
             top_n=top_k,

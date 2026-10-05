@@ -812,6 +812,107 @@ class TestSubCommunityRollup:
         parent_input = next(ri for ri in captured if ri["community_id"] == "L1_C0")
         assert "summary for L0_C0" in parent_input["sub_community_reports"]
 
+    def test_single_child_parent_with_same_members_reuses_child_report(
+        self,
+    ) -> None:
+        # Leiden often carries a cluster unchanged up a level: the parent's only
+        # child has the same members, so its report input would be identical.
+        cd = self._detector()
+        g = nx.Graph()
+        g.add_node("e0", name="Vendor", type="ORG", description="d")
+        g.add_node("e1", name="Buyer", type="ORG", description="d")
+        g.add_edge("e0", "e1")
+        cd.graph = g
+
+        child = Community(
+            id="L0_C0",
+            name="Child",
+            level="0",
+            parent="L1_C0",
+            children=[],
+            entity_ids=["e0", "e1"],
+            text_unit_ids=["t1"],
+            size=2,
+        )
+        parent = Community(
+            id="L1_C0",
+            name="Parent",
+            level="1",
+            parent="",
+            children=["L0_C0"],
+            entity_ids=["e1", "e0"],
+            text_unit_ids=["t1"],
+            size=2,
+        )
+        generated: list[str] = []
+
+        def _fake_run_batch(report_inputs, communities, graph_attributes):
+            from unified_kg_rag.domain.models import CommunityReport
+
+            generated.extend(c.id for c in communities)
+            return [
+                CommunityReport(
+                    id=f"r-{c.id}",
+                    community_id=c.id,
+                    name=f"Report for {c.name}: Supply ties",
+                    summary="Vendor supplies Buyer.",
+                    rating=6.0,
+                    size=c.size,
+                )
+                for c in communities
+            ], 0
+
+        cd._run_report_batch = _fake_run_batch  # type: ignore[method-assign]
+        reports = cd.generate_reports([parent, child])
+
+        assert generated == ["L0_C0"]
+        by_community = {r.community_id: r for r in reports}
+        assert set(by_community) == {"L0_C0", "L1_C0"}
+        reused = by_community["L1_C0"]
+        assert reused.id != by_community["L0_C0"].id
+        assert reused.summary == "Vendor supplies Buyer."
+        assert reused.name == "Report for Parent: Supply ties"
+        assert reused.attributes["reused_from_community_id"] == "L0_C0"
+        assert reused.text_unit_ids == ["t1"]
+
+    def test_single_child_with_different_members_is_regenerated(self) -> None:
+        cd = self._detector()
+        cd.graph = nx.Graph()
+        child = Community(
+            id="L0_C0",
+            name="Child",
+            level="0",
+            parent="L1_C0",
+            children=[],
+            entity_ids=["e0"],
+            text_unit_ids=[],
+            size=1,
+        )
+        parent = Community(
+            id="L1_C0",
+            name="Parent",
+            level="1",
+            parent="",
+            children=["L0_C0"],
+            entity_ids=["e0", "e1"],
+            text_unit_ids=[],
+            size=2,
+        )
+        generated: list[str] = []
+
+        def _fake_run_batch(report_inputs, communities, graph_attributes):
+            from unified_kg_rag.domain.models import CommunityReport
+
+            generated.extend(c.id for c in communities)
+            return [
+                CommunityReport(id=f"r-{c.id}", community_id=c.id, name=c.name)
+                for c in communities
+            ], 0
+
+        cd._run_report_batch = _fake_run_batch  # type: ignore[method-assign]
+        cd.generate_reports([parent, child])
+        assert generated == ["L0_C0", "L1_C0"]
+
     def test_flat_path_when_rollup_disabled(self) -> None:
         cd = self._detector()
         cd.community_detection_config.report_generation.enable_sub_community_rollup = (
