@@ -22,11 +22,6 @@ class NodeEmbeddings(BaseModel):
     embeddings: dict[str, np.ndarray] = Field(
         description="Mapping of node identifiers to their corresponding high-dimensional embedding vectors"
     )
-    degraded: bool = Field(
-        default=False,
-        description="True when embedding generation failed and the result must "
-        "not be used for a semantic layout",
-    )
 
     class Config:
         arbitrary_types_allowed = True
@@ -133,4 +128,4 @@ class BedrockNodeEmbedder:
                 e,
                 exc_info=True,
             )
-            return NodeEmbeddings(nodes=[], embeddings={}, degraded=True)
+            return NodeEmbeddings(nodes=[], embeddings={})

@@ -184,17 +184,10 @@ class TestStructuredSplitter:
 
 
 # --------------------------------------------------------------------------- #
-# SimpleTextChunker (boto/token-counter patched out)
+# SimpleTextChunker
 # --------------------------------------------------------------------------- #
 @pytest.fixture
-def simple_chunker(config: Config, mocker) -> SimpleTextChunker:
-    mocker.patch.object(chunker_module, "boto3")
-    mocker.patch.object(chunker_module, "get_assumed_role_boto_session")
-    fake_counter = mocker.Mock()
-    fake_counter.count_tokens.side_effect = lambda text: len(text.split())
-    mocker.patch.object(
-        chunker_module, "BedrockTokenCounter", return_value=fake_counter
-    )
+def simple_chunker(config: Config) -> SimpleTextChunker:
     # Use 'text' content so we control the input regardless of default markdown.
     config.processing.chunking.content_type = "text"
     # Small sizes so a short test document actually splits.
@@ -376,12 +369,6 @@ class TestChunkProcessorExtra:
 def _patch_bedrock(mocker):
     """Patch every AWS/Bedrock seam so chunker __init__ never touches AWS."""
     mocker.patch.object(chunker_module, "boto3")
-    mocker.patch.object(chunker_module, "get_assumed_role_boto_session")
-    fake_counter = mocker.Mock()
-    fake_counter.count_tokens.side_effect = lambda text: len(text.split())
-    mocker.patch.object(
-        chunker_module, "BedrockTokenCounter", return_value=fake_counter
-    )
     mocker.patch.object(chunker_module, "BedrockLanguageModelFactory")
     mocker.patch.object(chunker_module, "create_robust_xml_output_parser")
     mocker.patch.object(chunker_module, "setup_chain")

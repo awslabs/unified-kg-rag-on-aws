@@ -126,7 +126,8 @@ class GraphVisualizationManager:
             return {}
 
         embeddings = self.embedder.generate_embeddings(self.analyzer.graph)
-        if embeddings.degraded or not embeddings.embeddings:
+        # Failed generation yields no embeddings (never random substitutes).
+        if not embeddings.embeddings:
             self.layout_degraded = True
             logger.error(
                 "Node embedding generation failed; the layout is DEGRADED "

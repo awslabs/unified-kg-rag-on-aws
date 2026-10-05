@@ -422,7 +422,7 @@ class _FakeChain:
     async def ainvoke(self, inputs, config=None):
         return self.outputs[inputs["query"]]
 
-    async def abatch(self, inputs, config=None):
+    async def abatch(self, inputs, config=None, return_exceptions=False):
         return [self.outputs[i["query"]] for i in inputs]
 
 

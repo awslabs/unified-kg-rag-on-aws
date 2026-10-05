@@ -100,7 +100,7 @@ class _FakeEmbedder:
     def generate_embeddings(self, graph: nx.Graph) -> NodeEmbeddings:
         self.calls += 1
         if self.degraded:
-            return NodeEmbeddings(nodes=[], embeddings={}, degraded=True)
+            return NodeEmbeddings(nodes=[], embeddings={})
         nodes = [str(n) for n in graph.nodes()]
         return NodeEmbeddings(
             nodes=nodes,

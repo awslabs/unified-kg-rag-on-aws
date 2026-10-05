@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
-from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
@@ -79,11 +78,10 @@ class S3CacheManager:
                 raise
         return self._s3_client
 
-    def sync_pipeline_from_s3(
-        self, pipeline_id: str, local_cache_dir: Path
-    ) -> dict[str, bool]:
+    def sync_pipeline_from_s3(self, pipeline_id: str, local_cache_dir: Path) -> None:
+        """Download the pipeline's cache files; raises CacheSyncError on failure."""
         logger.info("Syncing pipeline '%s' from S3", pipeline_id)
-        results: dict[str, bool] = {}
+        stages: set[str] = set()
         failed_keys: list[str] = []
         base_prefix = self._get_base_prefix(pipeline_id)
         s3_prefix = f"{base_prefix}/"
@@ -92,7 +90,6 @@ class S3CacheManager:
             local_cache_dir.mkdir(parents=True, exist_ok=True)
             paginator = self.s3_client.get_paginator("list_objects_v2")
             total_files = 0
-            downloaded_stages = set()
 
             for page in paginator.paginate(
                 Bucket=str(self.bucket_name), Prefix=s3_prefix
@@ -128,20 +125,9 @@ class S3CacheManager:
                         continue
                     local_path.parent.mkdir(parents=True, exist_ok=True)
 
-                    success = self._download_cache_file(s3_key, local_path)
-                    if not success:
+                    if not self._download_cache_file(s3_key, local_path):
                         failed_keys.append(s3_key)
-                    stage_name = (
-                        relative_path.parts[0]
-                        if len(relative_path.parts) > 1
-                        else relative_path.stem
-                    )
-
-                    if stage_name not in downloaded_stages:
-                        results[stage_name] = success
-                    else:
-                        results[stage_name] = results[stage_name] and success
-                    downloaded_stages.add(stage_name)
+                    stages.add(self._stage_name(relative_path))
 
         except Exception as e:
             logger.error("Failed to sync pipeline '%s' from S3: %s", pipeline_id, e)
@@ -154,25 +140,23 @@ class S3CacheManager:
         if total_files > 0:
             logger.info(
                 "Download completed: %s stages, %s files from 's3://%s/%s'",
-                len(results),
+                len(stages),
                 total_files,
                 self.bucket_name,
                 s3_prefix,
             )
         else:
             logger.info("No cache files found for pipeline '%s' in S3", pipeline_id)
-        return results
 
-    def sync_pipeline_to_s3(
-        self, pipeline_id: str, local_cache_dir: Path
-    ) -> dict[str, bool]:
+    def sync_pipeline_to_s3(self, pipeline_id: str, local_cache_dir: Path) -> None:
+        """Upload the pipeline's cache files; raises CacheSyncError on failure."""
         logger.info("Syncing pipeline '%s' to S3", pipeline_id)
         if not local_cache_dir.is_dir():
             logger.warning("Local cache directory not found: '%s'", local_cache_dir)
-            return {}
+            return
 
         base_prefix = self._get_base_prefix(pipeline_id)
-        stage_results: defaultdict[str, list[bool]] = defaultdict(list)
+        stages: set[str] = set()
         failed_keys: list[str] = []
         total_files = 0
 
@@ -181,16 +165,9 @@ class S3CacheManager:
                 total_files += 1
                 relative_path = local_path.relative_to(local_cache_dir)
                 s3_key = f"{base_prefix}/{relative_path.as_posix()}"
-                success = self._upload_file_to_s3(local_path, s3_key)
-                if not success:
+                if not self._upload_file_to_s3(local_path, s3_key):
                     failed_keys.append(s3_key)
-
-                stage_name = (
-                    relative_path.parts[0]
-                    if len(relative_path.parts) > 1
-                    else relative_path.stem
-                )
-                stage_results[stage_name].append(success)
+                stages.add(self._stage_name(relative_path))
 
         except Exception as e:
             logger.error("Failed to sync pipeline '%s' to S3: %s", pipeline_id, e)
@@ -200,18 +177,25 @@ class S3CacheManager:
             ) from e
 
         self._raise_on_failures("upload", pipeline_id, failed_keys, total_files)
-        results = {stage: all(outcomes) for stage, outcomes in stage_results.items()}
         if total_files > 0:
             logger.info(
                 "Upload completed: %s stages, %s files to 's3://%s/%s'",
-                len(results),
+                len(stages),
                 total_files,
                 self.bucket_name,
                 base_prefix,
             )
         else:
             logger.info("No cache files found for pipeline '%s' locally", pipeline_id)
-        return results
+
+    @staticmethod
+    def _stage_name(relative_path: Path) -> str:
+        # Stage files sit in a per-stage folder; top-level files are named by stem.
+        return (
+            relative_path.parts[0]
+            if len(relative_path.parts) > 1
+            else relative_path.stem
+        )
 
     def _raise_on_failures(
         self, direction: str, pipeline_id: str, failed_keys: list[str], total: int

@@ -27,6 +27,8 @@ from unified_kg_rag.adapters.aws.bedrock_retry import (
     call_with_transient_retry,
     is_transient_bedrock_error,
 )
+from unified_kg_rag.domain.models import Config, EmbeddingModelId
+from unified_kg_rag.domain.models.config import TransientRetryConfig
 
 pytestmark = pytest.mark.unit
 
@@ -131,7 +133,9 @@ def test_non_transient_error_not_retried(sleeps: list[float]) -> None:
 def test_exhausted_retries_reraise_original(sleeps: list[float]) -> None:
     client = _FakeRuntimeClient([_client_error("ModelErrorException", 424)] * 10)
     with pytest.raises(ClientError) as info:
-        _wrapper(client, transient_max_attempts=3).embed_query("synthetic text")
+        _wrapper(
+            client, transient_retry=TransientRetryConfig(max_attempts=3)
+        ).embed_query("synthetic text")
     assert info.value.response["Error"]["Code"] == "ModelErrorException"
     assert client.calls == 3
     assert len(sleeps) == 2
@@ -141,7 +145,9 @@ def test_retry_respects_wall_clock_budget(sleeps: list[float]) -> None:
     client = _FakeRuntimeClient([_client_error("ModelErrorException", 424)] * 10)
     # Budget smaller than the first backoff: give up without sleeping.
     with pytest.raises(ClientError):
-        _wrapper(client, transient_max_total_seconds=0.1).embed_query("x")
+        _wrapper(
+            client, transient_retry=TransientRetryConfig(max_total_seconds=0.1)
+        ).embed_query("x")
     assert client.calls == 1
     assert sleeps == []
 
@@ -175,5 +181,34 @@ async def test_async_aembed_query_retries(sleeps: list[float]) -> None:
 
 
 def test_call_with_transient_retry_passthrough(sleeps: list[float]) -> None:
-    assert call_with_transient_retry(lambda: 42, operation="noop") == 42
+    policy = TransientRetryConfig()
+    assert call_with_transient_retry(lambda: 42, operation="noop", policy=policy) == 42
     assert sleeps == []
+
+
+# --- one policy from config -------------------------------------------------
+
+
+def test_embedding_factory_applies_configured_policy(mocker) -> None:
+    from unified_kg_rag.adapters.aws.bedrock import BedrockEmbeddingModelFactory
+
+    config = Config()
+    config.aws.bedrock.transient_retry = TransientRetryConfig(max_attempts=2)
+    factory = BedrockEmbeddingModelFactory(
+        config=config, boto_session=mocker.MagicMock()
+    )
+    model = factory.get_model(EmbeddingModelId.TITAN_EMBED_V2)
+    assert model.transient_retry.max_attempts == 2
+
+
+def test_legacy_search_llm_retry_key_still_configures_the_policy() -> None:
+    legacy = Config.model_validate({"search": {"llm_retry": {"max_attempts": 2}}})
+    assert legacy.aws.bedrock.transient_retry.max_attempts == 2
+
+    both = Config.model_validate(
+        {
+            "search": {"llm_retry": {"max_attempts": 2}},
+            "aws": {"bedrock": {"transient_retry": {"max_attempts": 4}}},
+        }
+    )
+    assert both.aws.bedrock.transient_retry.max_attempts == 4

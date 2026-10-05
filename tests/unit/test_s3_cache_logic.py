@@ -70,21 +70,28 @@ def test_get_base_prefix_with_and_without_prefix(s3_setup) -> None:
 # --- sync_pipeline_to_s3 --------------------------------------------------
 
 
-def test_sync_to_s3_missing_local_dir_returns_empty(s3_setup, tmp_path) -> None:
+def _bucket_keys(session) -> set[str]:  # noqa: ANN001
+    listing = session.client("s3").list_objects_v2(Bucket=_BUCKET)
+    return {o["Key"] for o in listing.get("Contents", [])}
+
+
+def test_sync_to_s3_missing_local_dir_uploads_nothing(s3_setup, tmp_path) -> None:
     config, session = s3_setup
     mgr = _manager(config, session)
-    assert mgr.sync_pipeline_to_s3("pid", tmp_path / "nope") == {}
+    mgr.sync_pipeline_to_s3("pid", tmp_path / "nope")
+    assert _bucket_keys(session) == set()
 
 
 def test_sync_to_s3_no_json_files(s3_setup, tmp_path) -> None:
     config, session = s3_setup
     mgr = _manager(config, session)
     (tmp_path / "notjson.txt").write_text("x", encoding="utf-8")
-    # rglob('*.json') matches nothing -> empty results.
-    assert mgr.sync_pipeline_to_s3("pid", tmp_path) == {}
+    # rglob('*.json') matches nothing -> nothing uploaded.
+    mgr.sync_pipeline_to_s3("pid", tmp_path)
+    assert _bucket_keys(session) == set()
 
 
-def test_sync_to_s3_uploads_and_groups_by_stage(s3_setup, tmp_path) -> None:
+def test_sync_to_s3_uploads_to_mirrored_keys(s3_setup, tmp_path) -> None:
     config, session = s3_setup
     mgr = _manager(config, session, prefix="cache")
 
@@ -96,9 +103,7 @@ def test_sync_to_s3_uploads_and_groups_by_stage(s3_setup, tmp_path) -> None:
     (tmp_path / "stageB" / "b1.json").write_text("{}", encoding="utf-8")
     (tmp_path / "top.json").write_text("{}", encoding="utf-8")
 
-    results = mgr.sync_pipeline_to_s3("pid-1", tmp_path)
-    # Nested files group under their first path part; top-level under its stem.
-    assert results == {"stageA": True, "stageB": True, "top": True}
+    mgr.sync_pipeline_to_s3("pid-1", tmp_path)
 
     # Verify objects actually landed at the expected keys.
     s3 = session.client("s3")
@@ -120,8 +125,7 @@ def test_sync_from_s3_no_files(s3_setup, tmp_path) -> None:
     config, session = s3_setup
     mgr = _manager(config, session)
     local = tmp_path / "dl"
-    results = mgr.sync_pipeline_from_s3("absent-pid", local)
-    assert results == {}
+    mgr.sync_pipeline_from_s3("absent-pid", local)
     assert local.is_dir()  # created even when nothing to download
 
 
@@ -136,9 +140,7 @@ def test_sync_round_trip(s3_setup, tmp_path) -> None:
     mgr.sync_pipeline_to_s3("pid-rt", src)
 
     dest = tmp_path / "dest"
-    results = mgr.sync_pipeline_from_s3("pid-rt", dest)
-    assert results.get("stageA") is True
-    assert results.get("top") is True
+    mgr.sync_pipeline_from_s3("pid-rt", dest)
     # Files materialized at mirror-relative paths.
     assert (dest / "stageA" / "a1.json").read_text(encoding="utf-8") == '{"v": 1}'
     assert (dest / "top.json").read_text(encoding="utf-8") == '{"v": 2}'
@@ -187,13 +189,21 @@ def test_default_encryption_is_bucket_default() -> None:
     assert Config().aws.s3.encryption.encryption_type is S3EncryptionType.BUCKET_DEFAULT
 
 
+@pytest.mark.parametrize("value", ["BUCKET_DEFAULT", "NONE"])
+def test_bucket_default_and_legacy_none_both_validate(value: str) -> None:
+    cfg = Config.model_validate(
+        {"aws": {"s3": {"encryption": {"encryption_type": value}}}}
+    )
+    assert cfg.aws.s3.encryption.encryption_type is S3EncryptionType.BUCKET_DEFAULT
+
+
 @pytest.mark.parametrize(
     ("encryption_type", "kms_key_id", "expected"),
     [
         # No header => the bucket's default encryption (e.g. its CMK) applies.
         (S3EncryptionType.BUCKET_DEFAULT, None, {}),
         # Legacy alias: same behaviour as BUCKET_DEFAULT.
-        (S3EncryptionType.NONE, None, {}),
+        (S3EncryptionType("NONE"), None, {}),
         (S3EncryptionType.AES256, None, {"ServerSideEncryption": "AES256"}),
         (
             S3EncryptionType.KMS,

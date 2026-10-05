@@ -213,7 +213,8 @@ aws:
 > `apply_to: "all"`. Custom code that builds chains with `setup_chain` or calls
 > `get_model` for non-query work should pass
 > `model_purpose=ModelPurpose.INGESTION` (or `EVALUATION`). Unmarked calls
-> default to `QUERY` and stay guarded.
+> default to `QUERY`: they stay guarded and `setup_chain` also wraps them in the
+> query-time transient-error retry.
 
 > **S3 cache encryption:** the default `encryption_type: "BUCKET_DEFAULT"` sends
 > no per-object SSE header, so S3 applies the bucket's default encryption. With
@@ -321,11 +322,10 @@ processing:
     index_value: null
 ```
 
-> **Parsed output location:** the `document_parsing` stage writes one
-> `<stem>.json` per parsed file for inspection. With `target_directory` unset
-> (default) it goes to `<cache-directory>/parsed_documents/<pipeline-id>/`, never
-> into the source corpus. An explicit `target_directory` (or
-> `--target-directory`) is still honoured, but it must not be the source
+> **Parsed output export:** to inspect what the `document_parsing` stage
+> produced, set `target_directory` (or pass `--target-directory`); the stage
+> then writes one `<stem>.json` per parsed file there. With `target_directory`
+> unset (default) nothing is exported. The target must not be the source
 > directory itself; a target nested inside the source directory is skipped when
 > discovering source files, as is the cache directory. The export is
 > informational only: `document_loading` reuses the parsed documents from the
@@ -624,7 +624,7 @@ OpenSearch + Neptune.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | Directory of source documents. Required to run; if the flag is omitted it falls back to the `GRAPHRAG_SOURCE_DIRECTORY` environment variable. |
-| `--target-directory` | `<cache-directory>/parsed_documents/<pipeline-id>` | Where parsed documents are exported as JSON (must not be the source directory) |
+| `--target-directory` | none (no export) | Export parsed documents as JSON here for inspection (must not be the source directory) |
 | `--cache-directory` | `cache` | Pipeline cache + intermediate results |
 | `--force-rebuild` | off | Ignore all existing cache; rebuild from scratch |
 | `--s3-sync` | off | Sync cache to S3 (requires `--s3-bucket-name`) |

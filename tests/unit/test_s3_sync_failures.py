@@ -143,7 +143,8 @@ def test_download_listing_failure_raises(s3_setup, tmp_path) -> None:
 def test_download_with_no_remote_cache_is_not_an_error(s3_setup, tmp_path) -> None:
     # First phase of a fresh run: nothing in S3 yet is the expected state.
     config, session = s3_setup
-    assert _manager(config, session).sync_pipeline_from_s3("fresh", tmp_path) == {}
+    _manager(config, session).sync_pipeline_from_s3("fresh", tmp_path)
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize("marker", ["cache/pid/", "cache/pid/stageA/"])
@@ -158,15 +159,18 @@ def test_download_skips_folder_marker_keys(s3_setup, tmp_path, marker) -> None:
     session.client("s3").put_object(Bucket=_BUCKET, Key=marker, Body=b"")
 
     dest = tmp_path / "dest"
-    results = mgr.sync_pipeline_from_s3("pid", dest)
-    assert results == {"stageA": True}
+    mgr.sync_pipeline_from_s3("pid", dest)
+    assert [p.relative_to(dest).as_posix() for p in dest.rglob("*.json")] == [
+        "stageA/a.json"
+    ]
     assert (dest / "stageA" / "a.json").read_text(encoding="utf-8") == "{}"
 
 
 def test_download_with_only_folder_marker_is_empty(s3_setup, tmp_path) -> None:
     config, session = s3_setup
     session.client("s3").put_object(Bucket=_BUCKET, Key="cache/pid/", Body=b"")
-    assert _manager(config, session).sync_pipeline_from_s3("pid", tmp_path) == {}
+    _manager(config, session).sync_pipeline_from_s3("pid", tmp_path)
+    assert list(tmp_path.iterdir()) == []
 
 
 # --- pipeline wiring ---------------------------------------------------------
