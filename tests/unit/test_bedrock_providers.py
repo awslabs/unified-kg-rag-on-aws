@@ -332,17 +332,28 @@ def _system_message(model_id: LanguageModelId) -> Any:
         DescriptionSummarizationPrompt,
         StrOutputParser(),
     )
-    return chain.first.messages[0]  # type: ignore[attr-defined]
+    prompt = chain.first  # type: ignore[attr-defined]
+    values = dict.fromkeys(prompt.input_variables, "x")
+    return prompt.format_messages(**values)[0]
+
+
+def _has_cache_marker(message: SystemMessage) -> bool:
+    content = message.content
+    return isinstance(content, list) and any(
+        isinstance(block, dict) and block.get("cache_control") == {"type": "ephemeral"}
+        for block in content
+    )
 
 
 def test_prompt_cache_marker_only_for_caching_models() -> None:
     cached = _system_message(LanguageModelId.CLAUDE_V5_5_SONNET)
     assert isinstance(cached, SystemMessage)
-    assert cached.content[0]["cache_control"] == {"type": "ephemeral"}  # type: ignore[index]
+    assert _has_cache_marker(cached)
 
     for model_id in GPT_MODELS:
         plain = _system_message(model_id)
-        assert not isinstance(plain, SystemMessage), model_id
+        assert isinstance(plain, SystemMessage), model_id
+        assert not _has_cache_marker(plain), model_id
 
 
 # --- token counting -------------------------------------------------------
@@ -357,7 +368,7 @@ def test_token_counter_skips_api_when_unsupported() -> None:
     counter = BedrockTokenCounter(
         model_id=LanguageModelId.GPT_V6_SOL.value,
         client=_ExplodingClient(),
-        use_count_tokens_api=False,
+        api_supported=False,
     )
     assert counter.count_tokens("one two three four") >= 4
     truncated, count = counter.truncate_to_token_limit("word " * 200, 50)
@@ -373,7 +384,7 @@ def test_token_manager_disables_count_tokens_for_gpt(mocker) -> None:
     config = Config()
     config.search.answer_generation_model_id = LanguageModelId.GPT_V6_1_SOL
     tm_module.TokenManager(config)
-    assert counter_cls.call_args.kwargs["use_count_tokens_api"] is False
+    assert counter_cls.call_args.kwargs["api_supported"] is False
 
 
 # --- defaults ---------------------------------------------------------------

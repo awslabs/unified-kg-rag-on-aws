@@ -176,6 +176,19 @@ class EvaluationRunner:
                 )
             console.print(table)
 
+        # Failed/skipped metric values are excluded from the means above; say so
+        # explicitly so a mean over a subset is not read as a mean over all.
+        for evaluator_name, metrics in summary.metric_outcomes.items():
+            for metric_name, counts in metrics.items():
+                if counts.get("failed") or counts.get("skipped"):
+                    console.print(
+                        f"[yellow]{evaluator_name}/{metric_name}: "
+                        f"{counts.get('scored', 0)} scored, "
+                        f"{counts.get('failed', 0)} failed, "
+                        f"{counts.get('skipped', 0)} skipped "
+                        "(failed/skipped excluded from statistics)[/yellow]"
+                    )
+
         console.print(
             f"\n[bold green]Results saved to '{outputs_directory}'[/bold green]"
         )

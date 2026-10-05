@@ -15,7 +15,6 @@ from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
-    is_fatal_retrieval_error,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -119,11 +118,15 @@ class DriftSearchStrategy(BaseSearchStrategy):
         metrics: list[dict[str, Any]] = []
         self._update_seen_content(candidate_communities, seen_hashes)
 
-        if self.drift_config.enable_primer:
+        # The primer drafts from the seed community reports; with none to draw
+        # on it could only guess, so fall back to the iterative loop instead.
+        if self.drift_config.enable_primer and candidate_communities:
             await self._primer_search(
                 query, candidate_communities, all_results, seen_hashes, metrics
             )
         else:
+            if self.drift_config.enable_primer:
+                logger.info("No candidate communities; skipping DRIFT primer")
             await self._iterative_search(query, all_results, seen_hashes, metrics)
 
         final_results = self.hybrid_scorer.fuse_and_rerank_results(
@@ -221,28 +224,21 @@ class DriftSearchStrategy(BaseSearchStrategy):
         follow-up is then run as its own search iteration (capped by
         ``max_iterations``). Falls back to the iterative loop if the primer
         yields no follow-up queries, so the strategy never returns seed-only.
+
+        The hypothetical answer is deliberately NOT added to the result set: it
+        is an LLM guess, not retrieved evidence, and seeding it at top score
+        made it both answer context and a reported source. It only steers the
+        follow-up queries the primer derives alongside it.
         """
         follow_ups, intermediate_answer = await self._run_primer(
             query, candidate_communities
         )
-
-        # Seed the primer's hypothetical (HyDE) answer into the result set so it
-        # informs fusion + final synthesis (MS GraphRAG carries this forward
-        # rather than discarding it). Deduped like any other result.
         if intermediate_answer:
-            seed = RetrievalResult(
-                content=intermediate_answer,
-                score=1.0,
-                source="drift_primer",
-                retriever_type="drift_primer",
-                metadata={"source": "primer_intermediate_answer"},
+            logger.debug(
+                "DRIFT primer intermediate answer (%s chars) kept out of the "
+                "answer context",
+                len(intermediate_answer),
             )
-            if (
-                seed.content
-                and compute_hash(seed.content, length=16) not in seen_hashes
-            ):
-                all_results.append(seed)
-                self._update_seen_content([seed], seen_hashes)
 
         if not follow_ups:
             logger.info("Primer produced no follow-ups; using iterative loop")
@@ -277,19 +273,22 @@ class DriftSearchStrategy(BaseSearchStrategy):
         """Run the HyDE primer; return (follow-up sub-queries, intermediate answer).
 
         The ``intermediate_answer`` is the primer's hypothetical answer drafted
-        from the seed community summaries (HyDE). The caller seeds it into the
-        result set so it informs fusion/answer synthesis, matching MS GraphRAG's
-        DRIFT, which carries the primer answer forward rather than discarding it.
+        from the seed community summaries (HyDE). It is returned for diagnostics
+        only; callers must not treat it as retrieved evidence or a source.
         """
         reports = "\n".join(
             f"- {r.content[: self.drift_config.summary_char_limit]}"
             for r in candidate_communities[: self.drift_config.initial_top_k]
         )
+        if not reports:
+            # Nothing to ground the primer in: an LLM call here could only
+            # produce an unsupported guess.
+            return [], ""
         try:
             raw = await self.primer.ainvoke(
                 {
                     "query": query.query,
-                    "community_reports": reports or "(no community summaries found)",
+                    "community_reports": reports,
                     "num_follow_ups": self.drift_config.primer_follow_ups,
                 }
             )
@@ -321,13 +320,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
         ]
         search_query.top_k = self.config.search.drift_search.initial_top_k
 
-        try:
-            return await self.document_retriever.aretrieve(search_query)
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("Failed to find candidate communities: %s", e)
-            return []
+        return await self._safe_aretrieve(
+            self.document_retriever, search_query, "Candidate community lookup"
+        )
 
     @staticmethod
     def _update_seen_content(
@@ -482,23 +477,28 @@ class DriftSearchStrategy(BaseSearchStrategy):
             graph_query.entity_focus = []
             graph_query.filters = (graph_query.filters or {}).copy()
             graph_query.filters["id"] = candidate_entity_ids
-            tasks.append(self.graph_retriever.aretrieve(graph_query))
+            tasks.append(
+                self._safe_aretrieve(
+                    self.graph_retriever, graph_query, "DRIFT graph retrieval"
+                )
+            )
 
         if self.document_retriever:
             document_query = query.model_copy(deep=True)
             document_query.top_k = query.top_k
-            tasks.append(self.document_retriever.aretrieve(document_query))
+            tasks.append(
+                self._safe_aretrieve(
+                    self.document_retriever, document_query, "DRIFT document retrieval"
+                )
+            )
 
         if not tasks:
             return []
 
-        results_lists = await asyncio.gather(*tasks, return_exceptions=True)
-        return [
-            item
-            for result_list in results_lists
-            if isinstance(result_list, list)
-            for item in result_list
-        ]
+        # Each task already degrades transient failures to []; only fatal
+        # errors raise, and those must propagate rather than be gathered away.
+        results_lists = await asyncio.gather(*tasks)
+        return [item for result_list in results_lists for item in result_list]
 
     async def _find_candidate_entities_for_iteration(
         self, query: SearchQuery
@@ -506,7 +506,16 @@ class DriftSearchStrategy(BaseSearchStrategy):
         if not self.document_retriever:
             return []
 
-        n_candidates = len(query.entity_focus) * self.entity_focus_multiplier
+        # Size the candidate set from the extracted entity focus; when nothing
+        # was extracted, fall back to the iteration's own query text (the
+        # original or follow-up question) with top_k candidates, as local
+        # search does, instead of asking for 0 and seeding no graph expansion.
+        if query.entity_focus:
+            n_candidates = len(query.entity_focus) * self.entity_focus_multiplier
+        elif query.query:
+            n_candidates = query.top_k
+        else:
+            return []
         entity_search_query = query.model_copy(deep=True)
         entity_search_query.index_prefixes = [
             self.config.indexing.opensearch.entities_index_prefix
@@ -514,18 +523,14 @@ class DriftSearchStrategy(BaseSearchStrategy):
         entity_search_query.top_k = n_candidates
         entity_search_query.retrieval_multiplier = 1
 
-        try:
-            results = await self.document_retriever.aretrieve(entity_search_query)
-            return [
-                str(result.metadata.get("id") or result.source)
-                for result in results
-                if result.metadata or result.source
-            ]
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("Failed to find candidate entities: %s", e)
-            return []
+        results = await self._safe_aretrieve(
+            self.document_retriever, entity_search_query, "Candidate entity lookup"
+        )
+        return [
+            str(result.metadata.get("id") or result.source)
+            for result in results
+            if result.metadata or result.source
+        ]
 
     @staticmethod
     def _filter_unique_results(

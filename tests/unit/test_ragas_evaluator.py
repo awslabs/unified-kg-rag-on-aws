@@ -24,12 +24,15 @@ from unified_kg_rag.domain.models import (
     EvaluationQuery,
     EvaluationResult,
     EvaluatorType,
+    LanguageModelId,
 )
 
 pytestmark = pytest.mark.unit
 
 
-def _make_evaluator(mocker, *, ragas_metrics=None, max_context_tokens=8192):
+def _make_evaluator(
+    mocker, *, ragas_metrics=None, max_context_tokens=8192, evaluation_model_id=None
+):
     """Build a RagasEvaluator with all Bedrock/boto wiring patched out.
 
     Returns (evaluator, fake_token_counter).
@@ -52,6 +55,8 @@ def _make_evaluator(mocker, *, ragas_metrics=None, max_context_tokens=8192):
     config.evaluation.max_context_tokens = max_context_tokens
     if ragas_metrics is not None:
         config.evaluation.ragas_metrics = ragas_metrics
+    if evaluation_model_id is not None:
+        config.evaluation.evaluation_model_id = evaluation_model_id
     ev = RagasEvaluator(config=config, rag_chain=None, show_progress=False)
     return ev, fake_counter
 
@@ -141,6 +146,38 @@ class TestParseRagasReports:
         df = pd.DataFrame({"faithfulness": [float("nan")]})
         reports = ev._parse_ragas_reports(df, [_query()], [_result()])
         assert reports[0].metrics == []
+        assert "faithfulness" in reports[0].metadata["failed_metrics"]
+
+    def test_empty_reference_skips_reference_metrics(self, mocker) -> None:
+        ev, _ = _make_evaluator(
+            mocker,
+            ragas_metrics=[
+                EvaluationMetricType.ANSWER_CORRECTNESS,
+                EvaluationMetricType.CONTEXT_RECALL,
+                EvaluationMetricType.FAITHFULNESS,
+            ],
+        )
+        df = pd.DataFrame(
+            {
+                "answer_correctness": [0.0, 0.7],
+                "context_recall": [0.0, 0.5],
+                "faithfulness": [0.9, 0.9],
+            }
+        )
+        reports = ev._parse_ragas_reports(
+            df, [_query("q1"), _query("q2")], [_result(), _result()], ["", "truth"]
+        )
+        # Row without a reference: only the reference-free metric is scored.
+        assert {m.metric_type for m in reports[0].metrics} == {
+            EvaluationMetricType.FAITHFULNESS
+        }
+        assert reports[0].metadata["skipped_metrics"] == {
+            "answer_correctness": "empty_reference",
+            "context_recall": "empty_reference",
+        }
+        # Row with a reference: everything scored.
+        assert len(reports[1].metrics) == 3
+        assert "skipped_metrics" not in reports[1].metadata
 
     def test_nan_excluded_from_overall_score(self, mocker) -> None:
         # A NaN metric must not drag the overall score: only the real metric counts.
@@ -263,6 +300,51 @@ class TestAevaluateBatch:
         reports = await ev.aevaluate_batch([_query()], [_result()], [""])
         assert len(reports) == 1
         assert reports[0].metrics == []
+        assert "ragas down" in reports[0].metadata["failed_metrics"]["faithfulness"]
+
+    async def test_reference_metrics_not_run_when_no_row_has_reference(
+        self, mocker
+    ) -> None:
+        ev, _ = _make_evaluator(
+            mocker,
+            ragas_metrics=[
+                EvaluationMetricType.ANSWER_CORRECTNESS,
+                EvaluationMetricType.FAITHFULNESS,
+            ],
+        )
+        captured = {}
+
+        class _FakeRagasResult:
+            def to_pandas(self):
+                return pd.DataFrame({"faithfulness": [0.9]})
+
+        def fake_evaluate(*, dataset, metrics, **kwargs):
+            captured["metrics"] = metrics
+            return _FakeRagasResult()
+
+        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
+        reports = await ev.aevaluate_batch([_query()], [_result()], [""])
+        assert captured["metrics"] == [
+            rg_module.RagasEvaluator.RAGAS_METRICS[EvaluationMetricType.FAITHFULNESS]
+        ]
+        assert reports[0].metadata["skipped_metrics"] == {
+            "answer_correctness": "empty_reference"
+        }
+
+    async def test_only_reference_metrics_and_no_reference_skips_all(
+        self, mocker
+    ) -> None:
+        ev, _ = _make_evaluator(
+            mocker, ragas_metrics=[EvaluationMetricType.ANSWER_CORRECTNESS]
+        )
+        evaluate = mocker.patch.object(rg_module, "evaluate")
+        reports = await ev.aevaluate_batch([_query()], [_result()], [""])
+        evaluate.assert_not_called()
+        assert reports[0].metrics == []
+        assert reports[0].metadata["skipped_metrics"] == {
+            "answer_correctness": "empty_reference"
+        }
 
 
 class TestValidateConfig:
@@ -295,3 +377,111 @@ class TestInitFailure:
         )
         with pytest.raises(EvaluationException):
             RagasEvaluator(config=Config(), rag_chain=None)
+
+
+class _TemperatureTrackingLLM:
+    """Minimal LangChain-like judge exposing a mutable ``temperature``."""
+
+    def __init__(self) -> None:
+        self.temperature: float | None = None
+        self.seen_temperatures: list[float | None] = []
+
+    async def agenerate_prompt(self, prompts, **_kwargs):
+        from langchain_core.outputs import Generation, LLMResult
+
+        self.seen_temperatures.append(self.temperature)
+        return LLMResult(generations=[[Generation(text="ok")] for _ in prompts])
+
+
+class TestJudgeSamplingParams:
+    def test_judge_bypasses_temperature_for_unsupported_model(self, mocker) -> None:
+        # Default judge (Claude 5) rejects sampling params.
+        ev, _ = _make_evaluator(mocker)
+        assert ev.ragas_llm is not None
+        assert ev.ragas_llm.bypass_temperature is True
+
+    def test_judge_keeps_temperature_for_supporting_model(self, mocker) -> None:
+        ev, _ = _make_evaluator(
+            mocker, evaluation_model_id=LanguageModelId.CLAUDE_V4_5_SONNET
+        )
+        assert ev.ragas_llm is not None
+        assert ev.ragas_llm.bypass_temperature is False
+
+    async def test_bypassed_wrapper_never_sets_temperature(self, mocker) -> None:
+        from langchain_core.prompt_values import StringPromptValue
+
+        ev, _ = _make_evaluator(mocker)
+        assert ev.ragas_llm is not None
+        judge = _TemperatureTrackingLLM()
+        ev.ragas_llm.langchain_llm = judge  # type: ignore[assignment]
+
+        await ev.ragas_llm.agenerate_text(StringPromptValue(text="q"))
+
+        assert judge.seen_temperatures == [None]
+        assert judge.temperature is None
+
+    async def test_evaluate_receives_wrapped_judge(self, mocker) -> None:
+        ev, _ = _make_evaluator(
+            mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
+        )
+
+
+class TestRunConfigAndJudgeEffort:
+    def test_default_run_config_suits_thinking_judges(self, mocker) -> None:
+        ev, _ = _make_evaluator(mocker)
+        rc = ev._build_run_config()
+        assert rc.timeout >= 300
+        assert rc.timeout == ev.config.evaluation.ragas_timeout
+        assert rc.max_workers == ev.config.evaluation.ragas_max_workers
+        assert rc.max_retries == ev.config.evaluation.ragas_max_retries
+
+    def test_run_config_follows_evaluation_config(self, mocker) -> None:
+        ev, _ = _make_evaluator(mocker)
+        ev.config.evaluation.ragas_timeout = 900
+        ev.config.evaluation.ragas_max_workers = 2
+        ev.config.evaluation.ragas_max_retries = 5
+        rc = ev._build_run_config()
+        assert (rc.timeout, rc.max_workers, rc.max_retries) == (900, 2, 5)
+
+    async def test_evaluate_receives_run_config(self, mocker) -> None:
+        ev, _ = _make_evaluator(
+            mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
+        )
+        ev.config.evaluation.ragas_timeout = 450
+        captured = {}
+
+        class _FakeRagasResult:
+            def to_pandas(self):
+                return pd.DataFrame({"faithfulness": [0.5]})
+
+        def fake_evaluate(**kwargs):
+            captured.update(kwargs)
+            return _FakeRagasResult()
+
+        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
+
+        await ev.aevaluate_batch([_query()], [_result(contexts=["c"])], ["t"])
+
+        assert captured["llm"] is ev.ragas_llm
+
+        assert captured["run_config"].timeout == 450
+
+    def test_judge_model_gets_low_effort_by_default(self, mocker) -> None:
+        _make_evaluator(mocker)
+        factory = rg_module.BedrockLanguageModelFactory.return_value
+        _, kwargs = factory.get_model.call_args
+        assert kwargs["effort"] == "low"
+
+    def test_null_judge_effort_inherits_bedrock_effort(self, mocker) -> None:
+        mocker.patch.object(rg_module.boto3, "Session")
+        mocker.patch.object(rg_module, "get_assumed_role_boto_session")
+        mocker.patch.object(rg_module, "BedrockEmbeddingModelFactory")
+        mocker.patch.object(rg_module, "BedrockLanguageModelFactory")
+        mocker.patch.object(rg_module, "BedrockTokenCounter")
+        config = Config()
+        config.evaluation.judge_effort = None
+        RagasEvaluator(config=config, rag_chain=None, show_progress=False)
+        factory = rg_module.BedrockLanguageModelFactory.return_value
+        _, kwargs = factory.get_model.call_args
+        assert "effort" not in kwargs

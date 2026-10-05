@@ -7,7 +7,11 @@ from typing import Any, TypeVar
 
 from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import generate_stable_id, normalize_name
+from unified_kg_rag.shared.utils import (
+    clean_display_name,
+    entity_key,
+    generate_stable_id,
+)
 
 T = TypeVar("T")
 logger = get_logger(__name__)
@@ -29,7 +33,7 @@ class BaseProcessor:
         self, entity_data: dict[str, Any], text_unit: TextUnit
     ) -> Entity | None:
         try:
-            name = entity_data.get("name", "").strip()
+            name = clean_display_name(entity_data.get("name", ""))
             if not name:
                 logger.warning(
                     "Skipping entity with missing name in text unit '%s'",
@@ -37,16 +41,10 @@ class BaseProcessor:
                 )
                 return None
 
-            normalized_name = normalize_name(name)
-            if not normalized_name:
-                logger.warning(
-                    "Skipping entity with empty name after normalization (from '%s') in text unit '%s'",
-                    name,
-                    text_unit.short_id,
-                )
-                return None
-
-            entity_id = self._generate_entity_id(normalized_name)
+            # ``name`` keeps the display form ("$1,000 penalty", "C++") so
+            # answers can quote it verbatim; the id is derived from the
+            # identity key so case/whitespace variants still converge.
+            entity_id = self._generate_entity_id(name)
             attributes = self._parse_attributes(
                 entity_data.get("attributes"), text_unit
             )
@@ -59,9 +57,7 @@ class BaseProcessor:
             confidence = self._parse_confidence(entity_data)
 
             logger.debug(
-                "Successfully parsed entity: '%s' "
-                "(from: '%s', id: %s, confidence: %.2f)",
-                normalized_name,
+                "Successfully parsed entity: '%s' (id: %s, confidence: %.2f)",
                 name,
                 entity_id[:8],
                 confidence,
@@ -69,7 +65,7 @@ class BaseProcessor:
             return Entity(
                 id=entity_id,
                 short_id=entity_id[:8],
-                name=normalized_name,
+                name=name,
                 name_embedding=None,
                 type=entity_data.get("type", "").strip(),
                 description=entity_data.get("description", "").strip(),
@@ -94,8 +90,8 @@ class BaseProcessor:
 
     @staticmethod
     def _generate_entity_id(name: str) -> str:
-        entity_id_content = f"entity:{name}".lower()
-        return generate_stable_id(entity_id_content)
+        """Stable entity id from the name's identity key (see ``entity_key``)."""
+        return generate_stable_id(f"entity:{entity_key(name)}")
 
     @staticmethod
     def _parse_attributes(
@@ -130,36 +126,37 @@ class BaseProcessor:
             raw_target_name = rel_data.get("target", "").strip()
             rel_type = rel_data.get("type", "").strip()
 
-            source_name = normalize_name(raw_source_name)
-            target_name = normalize_name(raw_target_name)
+            source_name = clean_display_name(raw_source_name)
+            target_name = clean_display_name(raw_target_name)
 
             if not all((source_name, target_name, rel_type)):
                 logger.warning(
-                    "Skipping relationship with missing data in text unit '%s': source='%s' (from '%s'), target='%s' (from '%s'), type='%s'",
+                    "Skipping relationship with missing data in text unit '%s': source='%s', target='%s', type='%s'",
                     text_unit.short_id,
-                    source_name,
                     raw_source_name,
-                    target_name,
                     raw_target_name,
                     rel_type,
                 )
                 return None
+            source_key = entity_key(source_name)
+            target_key = entity_key(target_name)
 
-            # Entity ids are deterministic from the normalized name, so an
-            # endpoint id is recoverable even when the entity was not listed in
+            # ``entity_name_to_id`` is keyed by ``entity_key`` (callers build it
+            # with :meth:`build_entity_key_index`). Entity ids are deterministic
+            # from that key, so an endpoint id is recoverable even when the entity was not listed in
             # THIS chunk's entity block (the LLM commonly omits it, or it was
             # extracted in another chunk). Prefer the locally-extracted id, but
             # fall back to deriving it from the name rather than dropping a valid
             # relationship (the global merge + orphan filter still guard
             # integrity; missing endpoints are materialized as stub entities).
-            source_id = entity_name_to_id.get(source_name) or self._generate_entity_id(
+            source_id = entity_name_to_id.get(source_key) or self._generate_entity_id(
                 source_name
             )
-            target_id = entity_name_to_id.get(target_name) or self._generate_entity_id(
+            target_id = entity_name_to_id.get(target_key) or self._generate_entity_id(
                 target_name
             )
 
-            rel_id = self._generate_relationship_id(source_name, target_name, rel_type)
+            rel_id = self._generate_relationship_id(source_key, target_key, rel_type)
             attributes = self._parse_attributes(rel_data.get("attributes"), text_unit)
             # Stash the verbatim evidence span (when emitted) for grounding; a
             # reserved key, stripped before persistence.
@@ -203,10 +200,24 @@ class BaseProcessor:
             return None
 
     @staticmethod
+    def build_entity_key_index(entities: list[Entity]) -> dict[str, str]:
+        """Map each entity's identity key to its id, for endpoint resolution.
+
+        Keyed by ``entity_key`` (not the display name) so a relationship
+        endpoint spelled "ACME Corp." resolves to the entity named "Acme Corp",
+        including one renamed in place by a gleaner correction (whose id is no
+        longer derivable from its new name).
+        """
+        return {entity_key(entity.name): entity.id for entity in entities}
+
+    @staticmethod
     def _generate_relationship_id(
         source_name: str, target_name: str, rel_type: str
     ) -> str:
-        rel_id_content = f"relationship:{source_name}:{target_name}:{rel_type}".lower()
+        rel_id_content = (
+            f"relationship:{entity_key(source_name)}:{entity_key(target_name)}:"
+            f"{rel_type}".lower()
+        )
         return generate_stable_id(rel_id_content)
 
     @staticmethod

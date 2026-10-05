@@ -41,6 +41,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.shared import (
+    CacheSyncError,
     PipelineExecutionError,
     PipelineResumeError,
     PipelineResumeManager,
@@ -152,10 +153,14 @@ class DataIngestionPipeline:
         self.source_directory = source_directory or Path(
             self.config.processing.document_parsing.source_directory
         )
-        self.target_directory = Path(
-            target_directory
-            or self.config.processing.document_parsing.target_directory
-            or self.source_directory
+        # Explicit parsed-output directory, if any. Unset means the parsing
+        # stage writes to a pipeline-owned directory under the cache dir; it
+        # must never default to the source corpus (see DocumentParsingStage).
+        explicit_target = (
+            target_directory or self.config.processing.document_parsing.target_directory
+        )
+        self.target_directory: Path | None = (
+            Path(explicit_target) if explicit_target else None
         )
         self.boto_session = boto_session or boto3.Session(
             profile_name=self.config.aws.profile_name
@@ -267,6 +272,9 @@ class DataIngestionPipeline:
                     kwargs["boto_session"] = self.boto_session
                 if stage_type == PipelineStageType.DOCUMENT_PARSING:
                     kwargs["target_directory"] = self.target_directory
+                    kwargs["cache_directory"] = Path(
+                        self.pipeline_config.local_directory
+                    )
                 if stage_type in self.DOC_STATUS_STAGES and doc_status is not None:
                     kwargs["doc_status"] = doc_status
 
@@ -402,6 +410,12 @@ class DataIngestionPipeline:
         return f"pipeline-{directory_hash}-{timestamp}"
 
     def _sync_cache_with_s3(self, pipeline_id: str, direction: str) -> None:
+        """Download (before) or upload (after) the run's cache via S3.
+
+        A failed or partial sync raises ``CacheSyncError``; ``run()`` turns it
+        into ``PipelineExecutionError`` and the CLI exits non-zero, so a phased
+        Step Functions run fails at the phase that lost its checkpoint.
+        """
         if not self.s3_cache_manager:
             logger.info("S3 cache manager not available, skipping sync")
             return
@@ -741,7 +755,19 @@ class DataIngestionPipeline:
         self.state_manager.save_pipeline_metadata(context)
 
         if self.pipeline_config.s3_sync_enabled:
-            self._sync_cache_with_s3(context.pipeline_id, "upload")
+            try:
+                self._sync_cache_with_s3(context.pipeline_id, "upload")
+            except CacheSyncError:
+                # The stages (and indexing) already ran; the failure is only the
+                # checkpoint upload. Log the summary before failing the run so
+                # operators can see what was processed and indexed.
+                logger.error(
+                    "S3 cache upload failed after the pipeline stages finished "
+                    "for '%s'; the summary below shows what this run processed",
+                    context.pipeline_id,
+                )
+                self._log_pipeline_summary(context)
+                raise
 
         self._log_pipeline_summary(context)
 

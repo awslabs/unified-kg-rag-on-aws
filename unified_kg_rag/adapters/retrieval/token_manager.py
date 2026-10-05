@@ -46,6 +46,12 @@ class ContextSection(BaseModel):
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata for the section"
     )
+    result_index: int | None = Field(
+        default=None,
+        description="Position of the originating RetrievalResult in the list "
+        "passed to optimize_context, so callers can map the selected sections "
+        "back to the results they came from",
+    )
 
 
 class OptimizedContext(BaseModel):
@@ -110,7 +116,7 @@ class TokenManager(MetricsMixin):
             model_id=answer_model_id.value,
             client=bedrock_client,
             cache_maxsize=self.config.token_count_cache_size,
-            use_count_tokens_api=(
+            api_supported=(
                 answer_model_info.supports_count_tokens
                 if answer_model_info is not None
                 else True
@@ -265,6 +271,7 @@ class TokenManager(MetricsMixin):
             section_type=section_type,
             source_id=result.source or f"result_{index}",
             metadata=result.metadata or {},
+            result_index=index,
         )
 
     # Both upstreams (MS GraphRAG `mixed_context`, LightRAG

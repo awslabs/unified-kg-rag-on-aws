@@ -74,9 +74,47 @@ def test_normalize_index_prefixes_string(retriever) -> None:
     ]
 
 
-def test_normalize_index_prefixes_none_returns_all(retriever) -> None:
+def test_normalize_index_prefixes_none_skips_unbuilt_claims(retriever, config) -> None:
+    # Default config: claim extraction OFF -> no claims index is ever built, so
+    # the default sweep must not query it (it 404s on every query otherwise).
+    assert config.processing.claim_extraction.enabled is False
+    o = config.indexing.opensearch
+    out = retriever._normalize_index_prefixes(None)
+    assert o.claims_index_prefix not in out
+    assert out == [
+        o.text_units_index_prefix,
+        o.entities_index_prefix,
+        o.relationships_index_prefix,
+        o.community_reports_index_prefix,
+    ]
+
+
+def test_normalize_index_prefixes_none_all_when_everything_built(
+    retriever, config
+) -> None:
+    config.processing.claim_extraction.enabled = True
     out = retriever._normalize_index_prefixes(None)
     assert set(out) == set(retriever._field_mappings.keys())
+
+
+def test_normalize_index_prefixes_none_follows_optional_index_flags(
+    retriever, config
+) -> None:
+    config.processing.claim_extraction.enabled = True
+    config.indexing.opensearch.build_relationship_vector_index = False
+    config.graph.community_detection.enabled = False
+    o = config.indexing.opensearch
+    assert retriever._normalize_index_prefixes(None) == [
+        o.text_units_index_prefix,
+        o.entities_index_prefix,
+        o.claims_index_prefix,
+    ]
+
+
+def test_explicit_prefixes_reach_unbuilt_optional_index(retriever, config) -> None:
+    # Gating applies only to the default sweep; a pinned prefix is honoured.
+    claims = config.indexing.opensearch.claims_index_prefix
+    assert retriever._normalize_index_prefixes([claims]) == [claims]
 
 
 def test_normalize_index_prefixes_list_passthrough(retriever) -> None:
@@ -334,6 +372,40 @@ def test_parse_hit_basic(retriever) -> None:
     assert result.metadata["_search_index"] == "graphrag-entities-default-1"
     assert "Title: Alice" in result.content
     assert "Description: researcher" in result.content
+
+
+def test_build_search_request_excludes_embedding_fields(retriever) -> None:
+    # Vectors are only needed server-side for kNN scoring; the response must not
+    # ship them back (community reports alone carry three per hit).
+    q = SearchQuery(query="x", search_type=SearchType.HYBRID)
+    body, _params = retriever._build_search_request(
+        q, SearchType.HYBRID, ["name"], ["name_embedding"], [0.1]
+    )
+    assert body["_source"] == {"excludes": ["*_embedding"]}
+
+
+def test_parse_hit_drops_embedding_fields_from_metadata(retriever) -> None:
+    # Defensive: even if the cluster/client returns vectors anyway, they never
+    # reach RetrievalResult.metadata (and from there the reported sources).
+    hit = {
+        "_index": "graphrag-community-reports-default-1",
+        "_id": "r1",
+        "_score": 0.7,
+        "_source": {
+            "id": "r1",
+            "name": "Vendor network",
+            "summary": "Vendor supplies Buyer.",
+            "full_content": "Vendor supplies Buyer with parts.",
+            "name_embedding": [0.1, 0.2],
+            "summary_embedding": [0.3, 0.4],
+            "full_content_embedding": [0.5, 0.6],
+            "document_ids": ["doc-1"],
+        },
+    }
+    result = retriever._parse_hit(hit)
+    assert not [k for k in result.metadata if k.endswith("_embedding")]
+    assert result.metadata["document_ids"] == ["doc-1"]
+    assert result.metadata["summary"] == "Vendor supplies Buyer."
 
 
 def test_parse_hit_falls_back_to_underscore_id(retriever) -> None:

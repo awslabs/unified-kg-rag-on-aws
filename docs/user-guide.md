@@ -144,10 +144,11 @@ aws:
     enable_global_profile: true   # use cross-region (global) Bedrock inference profiles for higher throughput/availability
     enable_1m_context: false      # opt into the 1M window on models where it's a beta (premium billing); Claude 5 is native 1M
     effort: "high"                # reasoning depth for adaptive-thinking models: low | medium | high | xhigh | max
-    guardrail:                    # optional Bedrock Guardrails on every LLM call
+    guardrail:                    # optional Bedrock Guardrails (query path by default)
       identifier: null            # set a guardrail ID/ARN to enable
       version: "DRAFT"
       trace: false
+      apply_to: "query"           # query | all — see the guardrail scope note below
 
   neptune:
     endpoint:                     # REQUIRED — Neptune cluster endpoint
@@ -165,7 +166,7 @@ aws:
   s3:
     bucket_name:                  # REQUIRED for cache sync / embedding-cache persistence
     encryption:
-      encryption_type: "AES256"   # NONE | AES256 | aws:kms
+      encryption_type: "BUCKET_DEFAULT"  # BUCKET_DEFAULT | AES256 | aws:kms (NONE = legacy alias of BUCKET_DEFAULT)
       kms_key_id: null
 
   dynamodb:                       # incremental indexing registry
@@ -178,6 +179,48 @@ aws:
 > **Guardrail placement note:** when deploying multi-region, the Bedrock
 > Guardrail must exist in `bedrock.region_name` (the region LLM calls go to),
 > not necessarily `region_name`.
+
+> **Guardrail scope:** `apply_to: "query"` (default) attaches the guardrail only
+> to the user-facing query path: answer generation, query refinement,
+> query-time entity/keyword extraction, and global/DRIFT map-reduce. Ingestion
+> models (chunking, translation, graph extraction, gleaning, claims, description
+> summarization, community reports), the prompt tuner, and evaluation judges
+> run unguarded. The reason is that a PII guardrail that anonymizes `NAME`
+> rewrites extracted entity names to a placeholder such as `{NAME}`, so distinct
+> people merge into a single node, and a `PROMPT_ATTACK` filter can block
+> instruction-like corpus text, leaving that chunk with no entities. Set
+> `apply_to: "all"` only if your guardrail policy is safe for extraction (for
+> example, it blocks harmful content but does not mask PII). Every intervention
+> is logged at WARNING (`Bedrock guardrail '<id>' intervened on a <purpose>
+> model call ...`) with a running count. Detection is reliable on the Converse
+> API path (`stopReason: guardrail_intervened`, used with cross-region inference
+> profiles) whatever `trace` is set to. On the InvokeModel path (`ChatBedrock`,
+> used for non-cross-region model ids) `langchain_aws` reports an intervention
+> only when `trace: true`: with the default `trace: false` the guardrail is still
+> enforced (blocked/masked responses are returned), but no WARNING is logged and
+> the count stays at zero. Set `trace: true` if you need intervention visibility
+> on that path; it adds the guardrail trace to every response.
+>
+> Upgrading: earlier releases guarded every call. To keep that behaviour, set
+> `apply_to: "all"`. Custom code that builds chains with `setup_chain` or calls
+> `get_model` for non-query work should pass
+> `model_purpose=ModelPurpose.INGESTION` (or `EVALUATION`). Unmarked calls
+> default to `QUERY` and stay guarded.
+
+> **S3 cache encryption:** the default `encryption_type: "BUCKET_DEFAULT"` sends
+> no per-object SSE header, so S3 applies the bucket's default encryption. With
+> the CDK stack's `use_cmk=true` that is the customer-managed KMS key; otherwise
+> it is SSE-S3. `AES256` and `aws:kms` force a per-object header that overrides
+> the bucket default. Releases before this change defaulted to `AES256`, which
+> silently bypassed a bucket's CMK. When you reuse a bucket whose default is
+> SSE-KMS, the writer needs `kms:GenerateDataKey` and `kms:Decrypt` on that key.
+
+> **Doc-status table from the environment:** `GRAPHRAG_DOC_STATUS_TABLE`
+> overrides `aws.dynamodb.table_name` and `GRAPHRAG_DOC_STATUS_CREATE_TABLE`
+> (`true`/`false`) overrides `aws.dynamodb.create_table_if_missing`. The CDK
+> compute stack sets both: the IaC table name, and `false` because the table is
+> IaC-managed and the task role cannot create tables. Incremental indexing still
+> requires `aws.dynamodb.enabled: true` in your config.
 
 #### Model selection notes
 
@@ -264,9 +307,19 @@ processing:
 
   document_parsing:
     source_directory:               # overridden by --source-directory CLI flag
-    target_directory: null
+    target_directory: null          # parsed-JSON export dir; see note below
     index_value: null
 ```
+
+> **Parsed output location:** the `document_parsing` stage writes one
+> `<stem>.json` per parsed file for inspection. With `target_directory` unset
+> (default) it goes to `<cache-directory>/parsed_documents/<pipeline-id>/`, never
+> into the source corpus. An explicit `target_directory` (or
+> `--target-directory`) is still honoured, but it must not be the source
+> directory itself; a target nested inside the source directory is skipped when
+> discovering source files, as is the cache directory. The export is
+> informational only: `document_loading` reuses the parsed documents from the
+> parsing stage (or its stage cache on resume) and does not read this directory.
 
 **Chunking** — `intelligent` uses an LLM to pick semantic boundaries; `simple`
 splits by size. Most-tuned: `min_chunk_size` / `max_chunk_size`.
@@ -555,7 +608,7 @@ OpenSearch + Neptune.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | Directory of source documents. Required to run; if the flag is omitted it falls back to the `GRAPHRAG_SOURCE_DIRECTORY` environment variable. |
-| `--target-directory` | source dir | Where parsed documents are written |
+| `--target-directory` | `<cache-directory>/parsed_documents/<pipeline-id>` | Where parsed documents are exported as JSON (must not be the source directory) |
 | `--cache-directory` | `cache` | Pipeline cache + intermediate results |
 | `--force-rebuild` | off | Ignore all existing cache; rebuild from scratch |
 | `--s3-sync` | off | Sync cache to S3 (requires `--s3-bucket-name`) |
@@ -577,7 +630,9 @@ Run order (`DataIngestionPipeline.STAGE_CLASSES`). Use the stage **names**
 
 1. **`document_parsing`** — extract text per format (`.pdf`, `.txt`, `.csv`,
    `.json`; `.md`/`.html` with the `unstructured` extra).
-2. **`document_loading`** — load parsed documents into the pipeline corpus.
+2. **`document_loading`** — build the run's corpus from the parsed documents
+   (MinHash dedup, incremental filter). If `document_parsing` is disabled, it
+   instead loads pre-parsed `Document` `.json` files from the source directory.
 3. **`text_chunking`** — split documents into text units (`processing.chunking`).
 4. **`translation`** — optional; translate to `target_language` (no-op when
    source == target and no extra targets).
@@ -624,7 +679,11 @@ discards all cache and starts over.
 
 **S3 sync** keeps the stage cache in `s3://<bucket>/<prefix>/...`, so a fresh
 process (e.g. a new Fargate task) can resume without recomputing finished
-stages. For embeddings specifically, set
+stages. A failed or partial sync (the initial download or the final upload)
+fails the run with `CacheSyncError` and `run-ingestion` exits non-zero, so in a
+phased Step Functions run the phase that lost its checkpoint is the one marked
+failed. An empty remote cache on a fresh pipeline id is not an error. For
+embeddings specifically, set
 `indexing.opensearch.persist_embedding_cache: true` to avoid re-embedding
 unchanged text across runs.
 
@@ -874,9 +933,32 @@ metric) are written to the outputs directory.
 ## 7. Visualization (`run-visualization`)
 
 This is a **standalone** renderer that draws from an already-exported
-visualization-data JSON (produced during ingestion by
-`GraphVisualizationManager.export_visualization_data`). It does **not** re-run
-ingestion or touch AWS.
+visualization-data JSON. It does **not** re-run ingestion or touch AWS.
+
+When `graph.visualization.enabled` is `true`, the community-detection stage of
+`run-ingestion` renders the visualizations and also writes
+`visualization_data.json` into `graph.visualization.outputs_directory`
+(default `outputs/visualization/visualization_data.json`). That file is the
+`--data-path` input. It holds the graph nodes/edges, the computed `layout`, the
+community hierarchy, and centrality; vector attributes (`embedding`,
+`*_embedding`) are omitted to keep the file small.
+
+Layout and error behaviour:
+
+- `embedding_method: "none"` uses a spring layout and never constructs a
+  Bedrock embedding client.
+- `embedding_method: "node2vec"` embeds each node's `name: description` with
+  Bedrock and reduces it with `layout_method`. If embedding fails, the
+  visualization step fails when `processing.ignore_errors` is `false` (ingestion
+  itself continues and logs the failure). With `ignore_errors: true` it logs an
+  ERROR, falls back to a topology-only spring layout, and records
+  `"layout_degraded": true` in `visualization_data.json`.
+- Edge width/opacity in the interactive graph is scaled relative to the graph's
+  own weight range (log-scaled, then min-max normalised), so 1-10 strength
+  scores and merged counts are both distinguishable.
+- Only files a renderer actually wrote are reported (an earlier run's file of
+  the same name is removed first). If nothing is rendered (e.g. an empty graph),
+  `run-visualization` logs an error and exits with status `1`.
 
 ### CLI flags (verified)
 

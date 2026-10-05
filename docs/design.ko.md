@@ -157,7 +157,7 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 
 **계보(lineage)가 핵심 데이터**입니다. 엔티티/관계는 추출 시 자신이 등장한 `text_unit_ids`를 기록하며, 이 권위 데이터가 (구) 토큰 중첩 휴리스틱을 대체하여 "이 엔티티가 이 텍스트 단위와 관련 있는가?"를 정확하고 언어 무관하게 판정합니다.
 
-**엔티티 ID와 다국어**: 엔티티/관계 ID는 정규화된 이름의 해시입니다. `normalize_name`(`shared/utils/common.py`)은 NFKC + casefold 후 **모든 스크립트의 문자/숫자를 보존**(`\w`, `re.UNICODE`)하고 구두점만 제거합니다. 따라서 한국어·CJK·악센트 이름도 고유 ID를 가집니다(ASCII 전용 정규화는 비라틴 이름을 빈 문자열로 만들어 그래프를 붕괴시킵니다). 비어 있지 않은 입력은 절대 빈 ID로 collapse되지 않습니다.
+**엔티티 이름·ID와 다국어**: `Entity.name`(관계의 `source_name`/`target_name` 포함)은 원문의 *표시 형태*를 앞뒤 공백 제거와 공백 축약만 거쳐 그대로 보존합니다(`clean_display_name`). 따라서 검색 컨텍스트와 커뮤니티 리포트가 "$1,000 penalty", "Section 4.2", "C++"를 그대로 인용할 수 있습니다. 식별은 별도 키로 합니다. 엔티티/관계 ID는 `entity_key(name)`(`shared/utils/common.py`)의 해시이며, 이 키는 NFKC + casefold 후 `_`/`-`를 공백으로 바꾸고 따옴표와 쉼표를 제거하고 공백을 축약하고 끝의 문장부호를 떼지만 **그 밖의 기호와 모든 스크립트의 문자/숫자는 보존**합니다. 그래서 대소문자·공백·따옴표만 다른 이름("ACME  Corp." / "Acme Corp")은 같은 ID를 갖고, "C++"와 "C#"은 더 이상 충돌하지 않으며, 한국어·CJK·악센트 이름도 고유 ID를 가집니다. 비어 있지 않은 이름은 빈 키가 되지 않습니다. 정확 일치(추출 시 관계 끝점 조회, gleaner 병합, claim 해석, 증분 `merge_entities`)와 퍼지 매처의 shingle도 같은 키를 쓰며, 구두점을 지우는 `normalize_name`은 토큰 단위 유사도에만 남아 있습니다. **키가 바뀌면 모든 ID가 바뀌므로 이전 방식으로 인덱싱한 그래프는 전체 재인덱싱이 필요합니다**(증분 인덱싱만 하면 기존 엔티티 옆에 새 ID의 중복이 생깁니다).
 
 ---
 
@@ -185,6 +185,8 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 > 스테이지 순서는 `DataIngestionPipeline.STAGE_CLASSES`(`pipeline.py:62`)가 단일 진실 소스입니다. Bedrock가 필요한 스테이지는 `BOTO_REQUIRED_STAGES`로 선언되며, 설명 재요약이 추가되면서 **그래프 해석(7)도 이 집합에 포함**됩니다.
 
 **병합 설명 재요약(stage 7)**: 그래프 해석은 동일 엔티티/관계의 설명을 단순 연결(concatenation)로 병합하므로, 많은 청크에 등장하는 인기 엔티티의 설명이 무한정 길어집니다. `DescriptionSummarizer`(`GraphResolutionStage`에서 실행)는 토큰 예산을 초과한 설명만 저렴한 LLM으로 하나의 일관된 설명으로 재요약합니다(MS GraphRAG `summarize_descriptions` / LightRAG `_handle_entity_relation_summary` 패리티, `DescriptionSummarizationConfig`로 제어). 임베딩/프롬프트 비대화를 막는 것이 목적입니다.
+
+**퍼지 병합 가드(stage 7과 증분 병합)**: 문자 shingle 유사도는 앞부분이 긴 식별자를 구분하지 못합니다(MinHash에서 "purchase order 1001"과 "purchase order 1002"는 약 0.96, "vendor a"와 "vendor b"는 약 0.73). 그래서 두 이름은 *구분 토큰*(`base_resolver.discriminator_tokens`: 숫자를 포함한 토큰, 한 글자 ASCII 문자/숫자, 두 글자 이상 로마 숫자)이 완전히 같고 엔티티 유형이 호환될 때(정규화한 유형이 같거나 한쪽이 비어 있거나 `unknown`)만 퍼지 연결합니다. 식별자 가드는 `FuzzyMatcher.find_all_matches`에 있어 전체 빌드 resolver와 증분 `merge_entities`가 함께 씁니다. 전체 빌드 resolver는 유형 인식 union-find(점수가 높은 연결부터, 결정적 tie-break)로 그룹을 만들고 서로 다른 유형의 이름이 한 그룹에 들어가는 union을 거부하므로, 유형 없는 이름이 `organization`과 `person`을 잇는 다리가 될 수 없습니다. 표면 이름이 정확히 같은 엔티티는 항상 같은 그룹에 둡니다. 관계 해석은 엔티티 remap 후 `(source_id, target_id, type)` 정확 일치로 묶으므로 별도 가드가 필요 없습니다.
 
 **커뮤니티 리포트 컨텍스트 팩(stage 11)**: 리포트 생성 입력은 커뮤니티 내 엔티티를 **그래프 degree 내림차순으로 정렬**(동점은 안정적 id 정렬)한 뒤 `max_entities_per_report`로 캡하고, `max_report_context_tokens` 토큰 예산에 맞춰 팩합니다(관계는 양 끝점 degree 합·가중치 tiebreak로 동일하게 정렬·팩). 최상위 degree 엔티티는 단독으로 예산을 초과해도 항상 1개는 포함되어 리포트가 빈 컨텍스트로 남지 않습니다(`community_detector._prepare_report_input`).
 
@@ -214,7 +216,7 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 4. **삭제 전파** (`remove_deleted`): 삭제 문서의 *독점* 아티팩트만 `delete_by_id`로 제거(공유 엔티티 보존). 텍스트 단위·엔티티·관계 인덱스 모두 대상.
 5. **레지스트리 갱신**: 처리한 문서를 `DocumentLineage`(문서별 아티팩트 id + suffix)로 `DocStatusRecord`에 기록.
 
-**병합 의미론**(`domain/ingestion/merge/merger.py`, MS GraphRAG `update/*` 이식): 엔티티는 정규화된 이름 기준 병합(설명 결합, `text_unit_ids` union, `frequency` 재계산, 기존 id 보존+remap), 관계는 (source,target) 기준 병합(weight 평균), 커뮤니티는 id-offset append.
+**병합 의미론**(`domain/ingestion/merge/merger.py`, MS GraphRAG `update/*` 이식): 엔티티는 식별 키(`entity_key`) 기준 병합(설명 결합, `text_unit_ids` union, `frequency` 재계산, 기존 id 보존+remap), 관계는 (source,target) 기준 병합(weight 평균), 커뮤니티는 id-offset append.
 
 활성화: `config.aws.dynamodb.enabled = true`.
 
@@ -231,7 +233,7 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 - **simple**: OpenSearch 전용 벡터/렉시컬, 그래프 없음. claim 추출이 켜져 있으면 claims 인덱스도 자동 sweep 대상이고, 꺼져 있으면 `_apply_claim_gate`가 claims 인덱스를 명시적으로 제외해 claims-off 실행이 그 인덱스를 절대 조회하지 않습니다.
 - **local**: 엔티티 중심 — 후보 엔티티 → Neptune 그래프 확장 → 빈도 필터 → 텍스트 단위 결합에, **커뮤니티 리포트 섹션**과 **관계 섹션**을 덧붙여 보강합니다(MS GraphRAG local search가 엔티티 + 그 커뮤니티 리포트 + 네트워크 내 관계 + 텍스트 단위를 조립하는 것과 동일). `_retrieve_community_reports`·`_retrieve_relationships`가 엔티티 포커스로 해당 인덱스를 조회하며(없으면 원본 질의로 폴백), 관계 섹션은 `build_relationship_vector_index`로 게이팅되어 관계 벡터 인덱스를 만들지 않는 GraphRAG 전용 배포는 관계 조회를 아예 하지 않습니다. claim 추출이 켜져 있으면 MS GraphRAG처럼 **claims(covariate)를 컨텍스트에 주입**합니다(`_retrieve_claims`가 claims 인덱스를 별도 조회해 `all_results["claims"]`로 추가, `SectionType.CLAIM` 우선순위로 토큰 예산에 편입). claims-off 기본 경로는 추가 조회를 일절 하지 않습니다.
 - **global**: 커뮤니티 리포트 검색 → 커뮤니티 노드 확장 → LLM 동적 관련성 선택 → **map-reduce 합성**(아래 §6.1.1).
-- **drift**: 반복적 질의 진화(커뮤니티 시드 → LLM 질의 재정의/키워드 확장 → 수렴 판정). 선택적으로(`search.drift_search.enable_primer`, 기본 off) MS GraphRAG의 **primer → follow-up** 플로우로 동작합니다 — HyDE primer가 시드 커뮤니티 리포트로부터 가상 답변을 작성하고 질의를 `primer_follow_ups`개의 구체적 하위 질의로 분해해, 하나의 질의를 계속 변형하는 대신 각 하위 질의를 개별 검색 이터레이션으로 실행합니다(`_primer_search`/`_run_primer`). primer가 follow-up을 내지 못하면 반복 루프로 폴백합니다.
+- **drift**: 반복적 질의 진화(커뮤니티 시드 → LLM 질의 재정의/키워드 확장 → 수렴 판정). 선택적으로(`search.drift_search.enable_primer`, 기본 off) MS GraphRAG의 **primer → follow-up** 플로우로 동작합니다 — HyDE primer가 시드 커뮤니티 리포트로부터 가상 답변을 작성하고 질의를 `primer_follow_ups`개의 구체적 하위 질의로 분해해, 하나의 질의를 계속 변형하는 대신 각 하위 질의를 개별 검색 이터레이션으로 실행합니다(`_primer_search`/`_run_primer`). primer가 follow-up을 내지 못하면 반복 루프로 폴백하고, 후보 커뮤니티를 찾지 못하면 근거로 삼을 리포트가 없으므로 primer를 아예 건너뜁니다. 가상 답변은 follow-up 질의를 이끄는 데만 쓰이며, 검색된 근거가 아니라 LLM의 추측이므로 답변 컨텍스트나 보고되는 출처에 넣지 않습니다.
 - **auto**: `StrategySelectionPrompt`로 위 전략 중 LLM 라우팅.
 
 #### 6.1.1 Global search map-reduce (`global_search.py`)
@@ -241,9 +243,9 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 1. **MAP** — 커뮤니티 리포트를 `map_batch_size`개씩 배치로 묶어, 각 배치마다 `GlobalMapPrompt`로 LLM에게 핵심 포인트(key point)를 추출하고 질의 관련성을 **0-100**으로 채점시킵니다. 배치는 `BatchProcessor`로 동시 실행되며 항목별 graceful fallback이 있습니다.
 2. **FILTER+RANK** — `map_relevance_threshold` 이하 포인트를 버리고 점수 내림차순 정렬(`_filter_and_rank_points`).
 3. **PACK** — `max_map_reduce_tokens` 토큰 예산까지 상위 포인트를 팩(`token_manager.count_tokens` 기준, `_pack_points_within_budget`).
-4. **REDUCE** — 팩된 포인트(relevance 주석 포함)를 `MapReduceSummaryPrompt`로 최종 답변 합성(`_reduce_from_points`). 결과는 `synthesized_summary` `RetrievalResult`로 결과 앞에 추가.
+4. **REDUCE** — 팩된 포인트(relevance 주석 포함)를 `MapReduceSummaryPrompt`로 최종 답변 합성(`_reduce_from_points`). 결과는 `metadata.synthesized` 표시가 붙은 `synthesized_summary` `RetrievalResult`로 결과 앞에 추가. 답변 모델은 이를 컨텍스트로 읽지만, 검색된 근거가 아니라 LLM 출력이므로 `RAGOutput.sources`에는 포함하지 않습니다.
 
-견고성: map 응답이 코드펜스/산문에 싸여 와도 `_parse_map_points`가 JSON을 추출하고, 단일 배치 파싱 실패는 무시합니다. `_concat_reduce`는 두 가지 특정 실패에 대한 degrade 경로입니다 — map 단계가 유용한 포인트를 전혀 못 낸 경우(모든 배치 파싱 실패), 또는 임계값에 포인트가 전부 걸러진 경우 — 덕분에 global search가 hard-fail하지 않고 답변을 합성합니다. 임계값 미달 경로와는 무관합니다.
+견고성: map 응답이 코드펜스/산문에 싸여 와도 `_parse_map_points`가 JSON을 추출하고, map 호출이 실패했거나 파싱할 수 없는 출력을 낸 배치는 *미평가*로 추적합니다. `_concat_reduce`는 임계값을 넘는 포인트가 없지만 일부 리포트가 평가되지 않은 경우의 degrade 경로로, 미평가 리포트만 대상으로 합니다(모든 배치가 실패하면 전체). 덕분에 global search가 hard-fail하거나 아무도 평가하지 않은 리포트를 두고 데이터 없음으로 판정하지 않고 답변을 합성합니다. map 단계가 모든 배치를 평가했지만 모든 포인트가 `map_relevance_threshold` 이하인 경우에는 리포트가 질의와 무관하다고 판단된 것이므로, global search는 결과를 반환하지 않습니다(검색 메타데이터에 `map_reduce_no_relevant_points`로 표시). 이는 MS GraphRAG의 no-data 응답과 같으며, 체인의 빈 컨텍스트 가드가 걸러진 리포트로 답변을 합성하는 대신 "답할 수 없음"을 반환합니다. `MapReduceSummaryPrompt`도 reduce 단계가 제공된 포인트만 사용하고, 그것으로 답할 수 없으면 그렇다고 밝히도록 지시합니다.
 
 ### 6.2 LightRAG 방법론 (`lightrag_search.py`)
 
@@ -272,8 +274,8 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 
 - **HybridScorer** (`adapters/retrieval/hybrid_scorer.py`): 소스별 결과를 RRF(`rrf_k`) 또는 가중 융합, 다양성 필터링(`diversity_lambda`), Bedrock 리랭킹으로 결합. 가중치·방법은 `config.search.fusion`/`hybrid`. 리랭킹은 `search.reranking.enabled`일 때만 활성화되며, `compress_documents`로 `top_n`을 문서 수에 맞춰 일시 조정 후 복원합니다. 초기화 실패 시 리랭커는 비활성(`None`)으로 degrade.
   - **IAM 주의**: Bedrock Rerank는 `bedrock:Rerank` 권한을 `Resource:*`로 요구합니다(실 AWS E2E에서 발견 — 모델 ARN으로 좁히면 AccessDenied). IaC에 전용 statement로 분리합니다.
-- **TokenManager** (`adapters/retrieval/token_manager.py`): 모델 한도 내 컨텍스트 최적화. 섹션 타입별 우선순위 배수로 가중(`PRIORITY_MULTIPLIERS`: TEXT 1.3 / ENTITY 1.2 / RELATIONSHIP 1.1 / CLAIM 1.1 / COMMUNITY 1.0 / GENERAL 0.8), 우선순위 내림차순으로 예산 내 섹션을 선택. `SectionType.CLAIM`은 query-time claims 주입(§6.1)을 토큰 예산에 편입하기 위한 타입입니다.
-- **토큰 카운팅** (`adapters/aws/token_counter.py`): Bedrock `count_tokens` API가 단일 진실 소스. 실패 시에만 공백 단어 수로 degrade(서드파티 토크나이저 미사용). 절단은 char 비율로 후보를 잡고 API로 검증하는 수렴 루프.
+- **TokenManager** (`adapters/retrieval/token_manager.py`): 모델 한도 내 컨텍스트 최적화. 섹션 타입별 우선순위 배수로 가중(`PRIORITY_MULTIPLIERS`: TEXT 1.3 / ENTITY 1.2 / RELATIONSHIP 1.1 / CLAIM 1.1 / COMMUNITY 1.0 / GENERAL 0.8), 우선순위 내림차순으로 예산 내 섹션을 선택. `SectionType.CLAIM`은 query-time claims 주입(§6.1)을 토큰 예산에 편입하기 위한 타입입니다. 체인은 이 선택 결과(`OptimizedContext`)를 상태에 유지하고 그것으로 `RAGOutput.sources`를 만들기 때문에, sources에는 답변 모델이 실제로 본 섹션만 검색 순위 순서로 들어갑니다. 예산 때문에 잘린 섹션은 보고하지 않고, 예산에 맞춰 일부만 넣은 섹션은 `truncated: true`와 잘린 텍스트를 함께 보고합니다. 각 source의 metadata에는 `source_id` / `document_ids` / `chunk_id` / `section_type` / `score`를 유지하고 `*_embedding` 벡터는 제거합니다. 빈 컨텍스트로 답변 단계가 바로 종료되면 `sources`는 비어 있습니다.
+- **토큰 카운팅** (`adapters/aws/token_counter.py`): Bedrock `count_tokens` API가 단일 진실 소스. 실패 시에만 문자 체계 인식 추정치로 degrade(서드파티 토크나이저 미사용). 일시적이지 않은 실패(`AccessDeniedException`, 메시지가 모델의 기능 미지원을 뜻하는 `ValidationException` 등)가 나면 해당 모델을 프로세스 전체에서 미지원으로 기록해 이후 API를 호출하지 않으며, 스로틀링·타임아웃·입력 문제로 인한 `ValidationException`은 기록하지 않음. 비어 있거나 공백만 있는 텍스트는 API를 호출하지 않음. 임베딩·리랭크 모델은 기능 플래그(`supports_count_tokens`)로 API를 건너뜀. 절단은 char 비율로 후보를 잡고 API로 검증하는 수렴 루프.
 
 ---
 
@@ -284,14 +286,14 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 | **Bedrock** | `adapters/aws/bedrock.py` | LLM/임베딩/리랭킹. cross-region inference profile 자동 해석, 공급자별 요청 구성(Claude 4.6+는 Anthropic adaptive thinking + `effort`, 이전 Claude는 `budget_tokens`, OpenAI GPT는 Converse의 `reasoning_effort`), 1M 컨텍스트, 명시적 캐시 지점을 지원하는 모델의 prompt 캐싱, capability 테이블 |
 | **Neptune** | `adapters/aws/neptune.py` | Gremlin over `wss://`, SigV4 IAM, 배치 upsert/삭제. 쓰기 배치는 `indexing.neptune.index_concurrency`>1이면 스레드 풀로 동시 제출(배치별 독립 `IndexingStats` → 메인 스레드 병합, 공유 변경 없음), `aws.neptune.pool_size`로 Gremlin 커넥션 풀 다중화. 기본 1=순차 |
 | **OpenSearch** | `adapters/aws/opensearch.py` | 벡터(kNN/HNSW, 기본 엔진 **faiss** — nmslib는 deprecated) + BM25, async SigV4, sync/async 클라이언트, hybrid search pipeline, alias 관리, bulk upsert/delete, 언어별 분석기(en→english, ko→nori 등) |
-| **S3** | `adapters/aws/s3_cache.py` | 파이프라인 캐시 동기화(AES256/KMS 암호화) |
+| **S3** | `adapters/aws/s3_cache.py` | 파이프라인 캐시 동기화(암호화 기본값 `BUCKET_DEFAULT`는 버킷 기본 암호화(예: CMK)를 따르고, `AES256`/`aws:kms`는 객체별 SSE를 강제) |
 | **DynamoDB** | `adapters/aws/dynamodb.py` | 증분 인덱싱 문서-상태 레지스트리 |
 
 모든 어댑터는 `boto_session`을 주입받을 수 있어(기본은 `config.aws.profile_name`으로 생성) 테스트 시 fake/moto 세션을 주입할 수 있습니다.
 
 ### 8.5 검색 오류 가시성
 
-리트리버(`opensearch_retriever`/`neptune_retriever`)는 인증/설정/연결 실패를 조용히 "결과 없음"으로 둔갑시키지 않습니다. `is_fatal_retrieval_error()`(`adapters/retrieval/base.py:50`)가 치명적 오류는 `exc_info`와 함께 재발생시키고, 일시적(transient) 오류일 때만 `[]`로 degrade합니다. 따라서 잘못된 IAM 권한이나 엔드포인트 오타가 "0건 검색"으로 묻히지 않습니다.
+리트리버(`opensearch_retriever`/`neptune_retriever`)는 인증/설정/연결 실패를 조용히 "결과 없음"으로 둔갑시키지 않습니다. `is_fatal_retrieval_error()`(`adapters/retrieval/base.py:50`)가 치명적 오류는 `exc_info`와 함께 재발생시키고, 일시적(transient) 오류일 때만 `[]`로 degrade합니다. 따라서 잘못된 IAM 권한이나 엔드포인트 오타가 "0건 검색"으로 묻히지 않습니다. Neptune의 쿼리 단위 `_execute_traversal`도 치명적 오류를 재발생시켜 이 최상위 판별까지 전달합니다. 검색 전략은 모든 하위 검색을 공통 헬퍼 `BaseSearchStrategy._safe_aretrieve`로 실행하므로, 섹션별 예외 처리가 리트리버가 올린 치명적 오류를 다시 삼키지 않습니다. 일시적 오류는 해당 섹션만 빈 결과로 degrade합니다.
 
 ### 8.6 클라이언트 수명주기 / 자원 해제
 
@@ -304,7 +306,7 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 ### 8.7 다국어 처리
 
 - **OpenSearch 분석기**: 언어→분석기 매핑은 설정(`indexing.opensearch.language_analyzers`, 기본 `{"en": "english", "ko": "nori"}`)으로 노출되어 코드 변경 없이 확장합니다. nori(한국어 형태소 분석기)는 OpenSearch Service에 내장. 매핑이 없는 언어는 `default_analyzer`로 폴백.
-- **엔티티 ID 정규화**: `normalize_name`(`shared/utils/common.py`)은 NFKC + casefold 후 모든 스크립트의 문자/숫자를 보존(`\w`, `re.UNICODE`)하고 구두점만 제거 → 한국어·CJK·악센트 이름도 고유 ID(§3). 비어 있지 않은 입력이 빈 ID로 collapse되지 않습니다.
+- **엔티티 ID 정규화**: ID는 `entity_key`(`shared/utils/common.py`)의 해시입니다. NFKC + casefold 후 기호와 모든 스크립트의 문자/숫자를 보존하고 따옴표·쉼표·끝 문장부호만 제거 → 한국어·CJK·악센트 이름도 고유 ID를 갖고 "C++"/"C#"도 구분되며, `Entity.name`은 표시 형태를 유지합니다(§3). 비어 있지 않은 입력이 빈 ID로 collapse되지 않습니다.
 - **번역 스킵**: `TranslationConfig.is_noop`(source_language == target_language이고 추가 대상 언어 없음)이면 번역 스테이지가 비용 없이 통째로 스킵됩니다(`pipeline_stages.py:541`).
 - **인코딩 자동 감지**: 텍스트 파서는 비-UTF-8 파일에서 `UnicodeDecodeError`를 만나면 `charset-normalizer`로 인코딩을 감지해 명시적 `encoding=`으로 재시도(`parser.py:89`). LangChain의 `autodetect_encoding=True`(추가 의존성 `chardet`을 끌어옴)는 의도적으로 사용하지 않습니다.
 
@@ -406,6 +408,15 @@ class OllamaModelFactory:                 # 구조적으로 LLMFactoryPort
 
 chain = GraphRAGChain(config=cfg, model_factory=OllamaModelFactory())
 ```
+
+> **알 수 없는 kwargs는 받아서 무시합니다.** 호출 측은 `get_model(model_id, **kwargs)`로
+> 프레임워크 전용 키워드 인자를 넘깁니다. 예를 들어
+> `model_purpose=ModelPurpose.QUERY | INGESTION | EVALUATION`은 Bedrock 팩토리가
+> Guardrail 적용 범위를 정할 때 사용하며, 이후 릴리스에서 인자가 추가될 수 있습니다.
+> 커스텀 팩토리는 `**kwargs` 매개변수를 유지하고 이해하지 못하는 키는 무시해야 합니다.
+> 알 수 없는 인자를 거부하는 모델 생성자에 그대로 전달해서도 안 됩니다.
+> `get_model(self, model_id, temperature=0.0)`처럼 시그니처를 엄격하게 정의하면
+> `model_purpose`를 넘기는 첫 호출에서 `TypeError`가 발생합니다.
 
 `tests/fixtures/fakes/`의 인메모리 fake(`FakeGraphStore`/`FakeVectorStore`)가 인덱서
 포트의 동작하는 참조 구현이며 — 전체 인제스천+인덱싱 파이프라인이 AWS 없이 이들로

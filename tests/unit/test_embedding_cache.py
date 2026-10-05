@@ -95,3 +95,25 @@ def test_flush_embedding_cache_noop_without_s3(indexer) -> None:
     indexer._s3_embedding_cache = None
     # Should not raise when the S3 tier is disabled.
     indexer._flush_embedding_cache()
+
+
+def test_final_embedding_failures_summarized_at_warning(indexer, caplog) -> None:
+    # Batch call fails, then the per-item fallback fails only for "bad": the
+    # failure is reported once as a WARNING summary, not as per-item ERRORs.
+    def _embed(texts):
+        if len(texts) > 1 or texts[0] == "bad":
+            raise RuntimeError("synthetic model error")
+        return [[1.0] * 4]
+
+    indexer.embedding_model.embed_documents = _embed
+    with caplog.at_level("DEBUG"):
+        result = indexer._batch_embed(["good", "bad"])
+    assert result[0] is not None and result[1] is None
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
+    summaries = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING" and "unique texts after retries" in r.getMessage()
+    ]
+    assert len(summaries) == 1
+    assert "1 of 2" in summaries[0].getMessage()

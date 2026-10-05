@@ -162,9 +162,39 @@ class InteractiveRenderer:
             f"hsl({int(i * (360 / num_colors))}, 70%, 55%)" for i in range(num_colors)
         ]
 
+    @staticmethod
+    def _edge_weight(attrs: dict[str, Any]) -> float:
+        try:
+            weight = float(attrs.get("weight", 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+        return weight if np.isfinite(weight) else 1.0
+
+    @classmethod
+    def _normalized_edge_weights(cls, graph: nx.Graph) -> dict[tuple[Any, Any], float]:
+        """Map each edge to [0, 1] relative to the graph's weight range.
+
+        Relationship weights are LLM strength scores (1-10) or merged counts,
+        so a fixed ``min(weight, 1.0)`` cap saturated every edge at full
+        width. Weights are log-scaled (dampening large merge counts) and then
+        min-max normalised; a graph whose edges all share one weight renders
+        them at the mid width.
+        """
+        scaled = {
+            (u, v): float(np.log1p(max(cls._edge_weight(attrs), 0.0)))
+            for u, v, attrs in graph.edges(data=True)
+        }
+        if not scaled:
+            return {}
+        low, high = min(scaled.values()), max(scaled.values())
+        if high - low <= 1e-12:
+            return dict.fromkeys(scaled, 0.5)
+        return {edge: (w - low) / (high - low) for edge, w in scaled.items()}
+
     def _add_edges(self, net: Network, graph: nx.Graph) -> None:
+        normalized = self._normalized_edge_weights(graph)
         for u, v, attrs in graph.edges(data=True):
-            weight = attrs.get("weight", 1.0)
+            weight = self._edge_weight(attrs)
 
             if attrs.get("edge_type") in ["is_subject_of", "is_object_of"]:
                 title_parts = ["Edge: claim"]
@@ -178,7 +208,7 @@ class InteractiveRenderer:
                     title_parts.append(f"{clean_key}: {val}")
             title = "\n".join(title_parts)
 
-            normalized_weight = min(weight, 1.0)
+            normalized_weight = normalized.get((u, v), 0.5)
             edge_width = (
                 self.MIN_EDGE_WIDTH
                 + (self.MAX_EDGE_WIDTH - self.MIN_EDGE_WIDTH) * normalized_weight

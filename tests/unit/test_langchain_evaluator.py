@@ -251,13 +251,12 @@ class TestEvaluateWithMetric:
 
 
 class TestHandleEvaluationError:
-    def test_error_metric_shape(self) -> None:
-        metric = LangChainEvaluator._handle_evaluation_error(
+    def test_returns_failure_reason_not_a_zero_metric(self) -> None:
+        reason = LangChainEvaluator._handle_evaluation_error(
             EvaluationMetricType.CORRECTNESS, "q1", ValueError("nope")
         )
-        assert metric.value == 0.0
-        assert metric.metadata == {"evaluation_error": True}
-        assert "nope" in metric.explanation
+        assert isinstance(reason, str)
+        assert "nope" in reason
 
 
 class TestEvaluateSingle:
@@ -293,7 +292,53 @@ class TestEvaluateSingle:
         boom.evaluate_strings = mocker.Mock(side_effect=RuntimeError("x"))
         ev.evaluators = {EvaluationMetricType.CORRECTNESS: boom}
         report = ev.evaluate_single(_query(), _result(), ground_truth="gt")
-        assert report.metrics[0].metadata == {"evaluation_error": True}
+        # A judge failure is recorded as failed, NOT scored 0.0.
+        assert report.metrics == []
+        assert "correctness" in report.metadata["failed_metrics"]
+
+    def test_failed_metric_excluded_from_overall_score(self, mocker) -> None:
+        ev = _make_evaluator(
+            mocker,
+            langchain_metrics=[
+                EvaluationMetricType.CORRECTNESS,
+                EvaluationMetricType.PARTIAL_CORRECTNESS,
+            ],
+        )
+        ev.ignore_errors = True
+        boom = _FakeEvaluator({})
+        boom.evaluate_strings = mocker.Mock(side_effect=RuntimeError("x"))
+        ev.evaluators = {
+            EvaluationMetricType.CORRECTNESS: boom,
+            EvaluationMetricType.PARTIAL_CORRECTNESS: _FakeEvaluator({"score": 0.8}),
+        }
+        report = ev.evaluate_single(_query(), _result(), ground_truth="gt")
+        assert [m.metric_type for m in report.metrics] == [
+            EvaluationMetricType.PARTIAL_CORRECTNESS
+        ]
+        assert report.overall_score == pytest.approx(0.8)
+
+    def test_empty_reference_skips_reference_metrics(self, mocker) -> None:
+        ev = _make_evaluator(
+            mocker,
+            langchain_metrics=[
+                EvaluationMetricType.CORRECTNESS,
+                EvaluationMetricType.PARTIAL_CORRECTNESS,
+            ],
+        )
+        judge = _FakeEvaluator({"score": 1.0})
+        ev.evaluators = {
+            EvaluationMetricType.CORRECTNESS: judge,
+            EvaluationMetricType.PARTIAL_CORRECTNESS: judge,
+        }
+        report = ev.evaluate_single(_query(), _result(), ground_truth="  ")
+        # Both metrics are reference-based: skipped, judge never called.
+        assert report.metrics == []
+        assert judge.last_kwargs is None
+        assert report.metadata["skipped_metrics"] == {
+            "correctness": "empty_reference",
+            "partial_correctness": "empty_reference",
+        }
+        assert "failed_metrics" not in report.metadata
 
     def test_error_reraised_when_not_ignore_errors(self, mocker) -> None:
         ev = _make_evaluator(
@@ -333,7 +378,19 @@ class TestAevaluateSingle:
         boom.aevaluate_strings = _raise
         ev.evaluators = {EvaluationMetricType.CORRECTNESS: boom}
         report = await ev.aevaluate_single(_query(), _result(), ground_truth="gt")
-        assert report.metrics[0].metadata == {"evaluation_error": True}
+        assert report.metrics == []
+        assert "async boom" in report.metadata["failed_metrics"]["correctness"]
+
+    async def test_async_empty_reference_skips(self, mocker) -> None:
+        ev = _make_evaluator(
+            mocker, langchain_metrics=[EvaluationMetricType.CORRECTNESS]
+        )
+        judge = _FakeEvaluator({"score": 1.0})
+        ev.evaluators = {EvaluationMetricType.CORRECTNESS: judge}
+        report = await ev.aevaluate_single(_query(), _result(), ground_truth="")
+        assert report.metrics == []
+        assert judge.last_kwargs is None
+        assert report.metadata["skipped_metrics"] == {"correctness": "empty_reference"}
 
 
 class TestValidateConfig:
@@ -349,3 +406,19 @@ class TestValidateConfig:
         )
         ev.config.evaluation.langchain_metrics = [EvaluationMetricType.FAITHFULNESS]
         assert ev.validate_config() is False
+
+
+def test_judge_model_requested_without_sampling_params(mocker) -> None:
+    # The judge must not force temperature/top_p/top_k: the factory decides
+    # per model capability (Claude 5 rejects them outright).
+    _make_evaluator(mocker)
+    factory = lc_module.BedrockLanguageModelFactory.return_value
+    _, kwargs = factory.get_model.call_args
+    assert not {"temperature", "top_p", "top_k"} & set(kwargs)
+
+
+def test_judge_model_uses_configured_judge_effort(mocker) -> None:
+    _make_evaluator(mocker)
+    factory = lc_module.BedrockLanguageModelFactory.return_value
+    _, kwargs = factory.get_model.call_args
+    assert kwargs["effort"] == Config().evaluation.judge_effort == "low"

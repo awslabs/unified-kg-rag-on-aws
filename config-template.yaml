@@ -24,12 +24,31 @@ aws:
     # Ignored by older Claude models, which still use thinking_budget_tokens.
     effort: "high"
     # Amazon Bedrock Guardrails (WAF security pillar). Disabled unless an
-    # identifier is set; when set, every LLM call enforces the guardrail's
-    # content/PII/grounding policies on prompts and completions.
+    # identifier is set; when set, the guarded LLM calls enforce the
+    # guardrail's content/PII/grounding policies on prompts and completions.
+    # Interventions are logged at WARNING ("Bedrock guardrail ... intervened").
     guardrail:
       identifier: null # Guardrail ID or ARN, e.g. "abcd1234efgh"
       version: "DRAFT" # "DRAFT" or a published version number
-      trace: false # Emit guardrail trace for auditing/observability
+      # Emit guardrail trace for auditing/observability. Also decides whether
+      # interventions are DETECTED on the InvokeModel path (ChatBedrock, used
+      # for non-cross-region model ids): langchain_aws only signals an
+      # intervention there when trace is true, so with trace: false the
+      # guardrail is still enforced but its interventions are neither logged
+      # nor counted. The Converse path (cross-region inference profiles)
+      # detects interventions via stopReason regardless of trace.
+      trace: false
+      # Which calls are guarded:
+      #   query - (default) user-facing query path only: answer generation,
+      #           query refinement, query-time entity/keyword extraction,
+      #           global/DRIFT map-reduce. Ingestion (chunking, translation,
+      #           graph extraction, gleaning, claims, summarization, community
+      #           reports) and evaluation judges run unguarded.
+      #   all   - every LLM call. A PII-anonymizing guardrail then rewrites
+      #           names in extraction output to placeholders (distinct people
+      #           merge into one entity) and a prompt-attack filter can block
+      #           instruction-like corpus text (that chunk yields no entities).
+      apply_to: "query"
 
   # Neptune Configuration
   neptune:
@@ -56,16 +75,22 @@ aws:
   s3:
     bucket_name: # Add bucket name here
     encryption:
-      encryption_type: "AES256"
+      # BUCKET_DEFAULT (default): send no SSE header, so the bucket's default
+      #   encryption applies (e.g. the CDK stack's KMS CMK with use_cmk=true).
+      # AES256: force SSE-S3 per object (overrides a bucket CMK default).
+      # aws:kms: force SSE-KMS with kms_key_id (required).
+      # NONE: legacy alias of BUCKET_DEFAULT (S3 always encrypts new objects).
+      encryption_type: "BUCKET_DEFAULT"
       kms_key_id: null
   # DynamoDB document-status registry for incremental indexing. When enabled,
   # each indexing run diffs the corpus against this table (by content hash) and
   # only re-indexes new/changed documents, merging into the live graph.
   dynamodb:
     enabled: false
-    # If you provisioned the stack with the bundled CDK app (iac/), set this to
-    # the table it created — "graphrag-doc-status" (dev) — otherwise the app
-    # auto-creates a separate table your CloudWatch dashboards won't be watching.
+    # On the bundled CDK app (iac/) the Fargate task injects
+    # GRAPHRAG_DOC_STATUS_TABLE (the IaC table, "graphrag-doc-status" in dev) and
+    # GRAPHRAG_DOC_STATUS_CREATE_TABLE=false; these env vars override both keys
+    # below. Elsewhere, set table_name yourself.
     table_name: "unified-kg-rag-on-aws-doc-status"
     create_table_if_missing: true
     billing_mode: "PAY_PER_REQUEST"
@@ -93,6 +118,11 @@ processing:
   # Document Parsing
   document_parsing:
     source_directory: # Add source directory here
+    # Where parsed documents are exported as <stem>.json (inspection only; the
+    # loading stage reuses the parsed documents in memory). null = the
+    # pipeline-owned <cache-directory>/parsed_documents/<pipeline-id>/. Must not
+    # be the source directory: .json is a parseable source format, so output
+    # there would be re-ingested as new documents on the next run.
     target_directory: null
     index_value: null
 
@@ -591,6 +621,20 @@ evaluation:
     - context_recall
     - faithfulness
   max_context_tokens: 8192
+  # Reasoning effort for the LLM judge (ragas + langchain evaluators) on
+  # adaptive-thinking models (Claude 4.7+). Judge calls are short
+  # extraction/classification prompts; "low" keeps each RAGAS metric well inside
+  # ragas_timeout. null inherits aws.bedrock.effort. Ignored by other models.
+  judge_effort: "low"
+  # RAGAS RunConfig. ragas_timeout is the budget (seconds) for scoring ONE
+  # metric on ONE sample, including all of its judge calls and retries; a
+  # timed-out job yields NaN for that metric. RAGAS' own default (180s) is too
+  # tight for thinking judges. Lower ragas_max_workers if Bedrock throttles the
+  # judge (throttled calls burn the per-job timeout). ragas_max_retries is the
+  # total attempts per judge call.
+  ragas_timeout: 300
+  ragas_max_workers: 8
+  ragas_max_retries: 3
   save_detailed_results: true
 
 # Custom Prompts Configuration

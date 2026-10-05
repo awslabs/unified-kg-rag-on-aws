@@ -241,6 +241,17 @@ class PipelineStage(ABC):
 
 
 class DocumentLoadingStage(PipelineStage):
+    """Produce the run's document set (dedup + incremental filter).
+
+    When the parsing stage completed in this pipeline, its parsed documents are
+    already on the context (or restored from its stage cache on resume), so they
+    are reused directly: re-reading them from disk added nothing and, with the
+    parsed JSON written next to the raw corpus, made the loader try to read raw
+    files as JSON. Only without a parsing stage (a corpus of pre-parsed
+    ``Document`` JSON files) does this stage read ``source_directory``, and then
+    only ``.json`` files.
+    """
+
     def __init__(
         self,
         config: Config,
@@ -253,6 +264,9 @@ class DocumentLoadingStage(PipelineStage):
         self.loader = DirectoryLoader(
             source_directory,
             config=self.config,
+            # Without parsing, the directory holds pre-parsed Document JSON; any
+            # other file would only fail Document.from_json_file.
+            supported_extensions=None if parse_files else {".json"},
             deduplicate=self.config.processing.deduplicate,
             parse_files=parse_files,
         )
@@ -267,11 +281,23 @@ class DocumentLoadingStage(PipelineStage):
         logger.info("DOCUMENT LOADING STAGE - STARTED")
         logger.info("=" * 60)
 
-        discovered_files = self.loader.discover_files()
-        input_count = len(discovered_files)
-
-        result = self.loader.load()
-        documents = [Document(**doc.model_dump()) for doc in result]
+        failed_files: list[str] = []
+        if self._parsing_completed(context):
+            documents = list(context.documents)
+            input_count = len(documents)
+            logger.info(
+                "Using %s documents from the '%s' stage",
+                input_count,
+                PipelineStageType.DOCUMENT_PARSING.value,
+            )
+            if self.loader.deduplicate:
+                documents = self.loader.deduplicate_documents(documents)
+        else:
+            discovered_files = self.loader.discover_files()
+            input_count = len(discovered_files)
+            result = self.loader.load()
+            documents = [Document(**doc.model_dump()) for doc in result]
+            failed_files = self.loader.failed_files
 
         # Incremental indexing: when the DynamoDB doc-status registry is enabled,
         # diff against it, stash the delta/fingerprints for the IndexingStage, and
@@ -285,14 +311,14 @@ class DocumentLoadingStage(PipelineStage):
         context.documents = documents
         output_count = len(context.documents)
 
-        if self.loader.failed_files:
-            logger.warning("Failed to load %s files", len(self.loader.failed_files))
+        if failed_files:
+            logger.warning("Failed to load %s files", len(failed_files))
 
         metrics = {
             "file_count": input_count,
             "success_count": output_count,
             "delta_skipped": delta_skipped,
-            "failed_files": self.loader.failed_files,
+            "failed_files": failed_files,
         }
 
         logger.info("=" * 60)
@@ -302,6 +328,14 @@ class DocumentLoadingStage(PipelineStage):
         logger.info("=" * 60)
 
         return input_count, output_count, metrics
+
+    @staticmethod
+    def _parsing_completed(context: PipelineContext) -> bool:
+        return any(
+            r.stage_name == PipelineStageType.DOCUMENT_PARSING.value
+            and r.status == PipelineStageStatus.COMPLETED
+            for r in context.stage_results
+        )
 
     def _apply_incremental_filter(
         self, documents: list[Document], context: PipelineContext
@@ -355,16 +389,39 @@ class DocumentLoadingStage(PipelineStage):
 
 
 class DocumentParsingStage(PipelineStage):
+    """Parse the raw corpus into ``Document`` objects.
+
+    Each parsed document is also written as ``<stem>.json`` for inspection: to
+    ``target_directory`` when configured, otherwise to the pipeline-owned
+    ``<cache_directory>/parsed_documents/<pipeline_id>/``. The output never goes
+    into the source corpus: ``.json`` is itself a parseable source format, so a
+    re-run would ingest the previous run's output as new (duplicate) documents.
+    Discovery likewise skips the output and cache directories.
+    """
+
+    DEFAULT_OUTPUT_SUBDIR = "parsed_documents"
+
     def __init__(
         self,
         config: Config,
         source_directory: Path,
         target_directory: Path | None = None,
         boto_session: boto3.Session | None = None,
+        cache_directory: Path | None = None,
     ):
         super().__init__(PipelineStageType.DOCUMENT_PARSING, config, boto_session)
         self.source_directory = Path(source_directory)
         self.target_directory = Path(target_directory) if target_directory else None
+        self.cache_directory = Path(cache_directory) if cache_directory else None
+        if (
+            self.target_directory is not None
+            and self.target_directory.resolve() == self.source_directory.resolve()
+        ):
+            raise ValueError(
+                "document_parsing.target_directory must not be the source "
+                f"directory ('{self.source_directory}'): parsed .json output there "
+                "is re-ingested as new documents on the next run"
+            )
         self.supported_extensions = ParserFactory.get_supported_extensions()
 
     def _execute_core(
@@ -374,7 +431,8 @@ class DocumentParsingStage(PipelineStage):
         logger.info("DOCUMENT PARSING STAGE - STARTED")
         logger.info("=" * 60)
 
-        files_to_parse = self._discover_files()
+        output_directory = self._resolve_output_directory(context)
+        files_to_parse = self._discover_files(output_directory)
         input_count = len(files_to_parse)
 
         if not files_to_parse:
@@ -394,8 +452,8 @@ class DocumentParsingStage(PipelineStage):
                 )
                 parsed_documents.append(document)
 
-                if self.target_directory:
-                    self._save_parsed_document(document, file_path)
+                if output_directory is not None:
+                    self._save_parsed_document(document, file_path, output_directory)
 
             except Exception as e:
                 logger.error("Failed to parse '%s': %s", file_path, e)
@@ -423,18 +481,34 @@ class DocumentParsingStage(PipelineStage):
 
         return input_count, output_count, metrics
 
-    def _discover_files(self) -> list[Path]:
+    def _resolve_output_directory(self, context: PipelineContext) -> Path | None:
+        if self.target_directory is not None:
+            return self.target_directory
+        if self.cache_directory is not None:
+            return (
+                self.cache_directory / self.DEFAULT_OUTPUT_SUBDIR / context.pipeline_id
+            )
+        return None
+
+    def _discover_files(self, output_directory: Path | None = None) -> list[Path]:
         if not self.source_directory.exists():
             raise FileNotFoundError(
                 f"Source directory not found: {self.source_directory}"
             )
 
+        # Pipeline-written trees nested under the source dir (an explicit
+        # target_directory, or the cache dir, e.g. source "." with cache
+        # "./cache") hold JSON this pipeline produced, never source documents.
+        owned_dirs = [
+            d.resolve() for d in (output_directory, self.cache_directory) if d
+        ]
         files = []
         for file_path in self.source_directory.rglob("*"):
             if (
                 file_path.is_file()
                 and file_path.suffix.lower() in self.supported_extensions
                 and not self._should_exclude_file(file_path)
+                and not any(file_path.resolve().is_relative_to(d) for d in owned_dirs)
             ):
                 files.append(file_path)
 
@@ -450,13 +524,12 @@ class DocumentParsingStage(PipelineStage):
 
         return False
 
-    def _save_parsed_document(self, document: Document, original_path: Path) -> None:
-        if not self.target_directory:
-            return
-
-        self.target_directory.mkdir(parents=True, exist_ok=True)
+    def _save_parsed_document(
+        self, document: Document, original_path: Path, output_directory: Path
+    ) -> None:
+        output_directory.mkdir(parents=True, exist_ok=True)
         output_filename = f"{original_path.stem}.json"
-        output_path = self.target_directory / output_filename
+        output_path = output_directory / output_filename
 
         try:
             document.to_json_file(output_path)

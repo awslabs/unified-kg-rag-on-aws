@@ -216,6 +216,10 @@ class DirectoryLoader(BaseLoader):
             )
         return Document.from_json_file(file_path)
 
+    def deduplicate_documents(self, documents: list[Document]) -> list[Document]:
+        """MinHash near-duplicate removal for documents loaded elsewhere."""
+        return self._deduplicate_documents(documents)
+
     def _deduplicate_documents(self, documents: list[Document]) -> list[Document]:
         if len(documents) < 2:
             return documents

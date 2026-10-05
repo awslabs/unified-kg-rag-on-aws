@@ -54,7 +54,7 @@ class TestParseEntityData:
             text_unit,
         )
         assert ent is not None
-        assert ent.name == "acme corp"  # normalized (casefolded)
+        assert ent.name == "Acme Corp"  # display form preserved
         assert ent.type == "ORG"
         assert ent.text_unit_ids == ["t1"]
         assert ent.id  # stable id derived
@@ -120,8 +120,8 @@ class TestParseRelationshipData:
             entity_name_to_id={},
         )
         assert rel is not None
-        assert rel.source_name == "alice"
-        assert rel.target_name == "acme"
+        assert rel.source_name == "Alice"
+        assert rel.target_name == "Acme"
         assert rel.type == "WORKS_AT"
         # No local id map -> endpoint ids derived from normalized names.
         assert rel.source_id == BaseProcessor._generate_entity_id("alice")
@@ -409,10 +409,10 @@ class TestParseExtractionResult:
             },
         }
         ents, rels = extractor._parse_extraction_result(result, text_unit)
-        assert {e.name for e in ents} == {"alice", "acme"}
+        assert {e.name for e in ents} == {"Alice", "Acme"}
         assert len(rels) == 1
         # Relationship endpoint id resolved through the local name->id map.
-        alice_id = next(e.id for e in ents if e.name == "alice")
+        alice_id = next(e.id for e in ents if e.name == "Alice")
         assert rels[0].source_id == alice_id
 
     def test_invalid_entity_skipped(self, extractor, text_unit) -> None:
@@ -421,7 +421,7 @@ class TestParseExtractionResult:
             "relationships": {},
         }
         ents, rels = extractor._parse_extraction_result(result, text_unit)
-        assert [e.name for e in ents] == ["bob"]
+        assert [e.name for e in ents] == ["Bob"]
 
 
 # --------------------------------------------------------------------------- #
@@ -462,7 +462,7 @@ class TestProcessExtractionResults:
         ]
         extractor.extraction_config.entity_confidence_threshold = 0.0
         ents, _ = extractor._process_extraction_results(units, results)
-        assert [e.name for e in ents] == ["alice"]
+        assert [e.name for e in ents] == ["Alice"]
         assert extractor.stats.num_successful_extractions == 1
         assert extractor.stats.average_entity_confidence == 0.9
 
@@ -526,7 +526,7 @@ class TestExtractFromTextUnits:
             ]
         )
         ents, rels, stats = extractor.extract_from_text_units(units)
-        assert {e.name for e in ents} == {"alice", "acme"}
+        assert {e.name for e in ents} == {"Alice", "Acme"}
         assert len(rels) == 1
         assert stats.total_entities_extracted == 2
         assert stats.total_relationships_extracted == 1
@@ -605,7 +605,7 @@ class TestEntityGrounding:
     def test_disabled_keeps_all(self, extractor, text_unit) -> None:
         extractor.extraction_config.entity_grounding.enabled = False
         entities, _ = extractor._parse_extraction_result(self._result(), text_unit)
-        assert {e.name for e in entities} == {"acme corp", "24 months"}
+        assert {e.name for e in entities} == {"Acme Corp", "24 months"}
         assert extractor.stats.entities_ungrounded == 0
 
     def test_drop_removes_ungrounded(self, extractor, text_unit) -> None:
@@ -613,7 +613,7 @@ class TestEntityGrounding:
         extractor.extraction_config.entity_grounding.action = "drop"
         entities, _ = extractor._parse_extraction_result(self._result(), text_unit)
         names = {e.name for e in entities}
-        assert "acme corp" in names
+        assert "Acme Corp" in names
         assert "24 months" not in names  # hallucination dropped
         assert extractor.stats.entities_ungrounded == 1
 
@@ -626,7 +626,7 @@ class TestEntityGrounding:
         by_name = {e.name: e for e in entities}
         assert "24 months" in by_name  # kept
         assert by_name["24 months"].confidence == pytest.approx(0.5)  # penalized
-        assert by_name["acme corp"].confidence == pytest.approx(1.0)  # untouched
+        assert by_name["Acme Corp"].confidence == pytest.approx(1.0)  # untouched
         assert extractor.stats.entities_ungrounded == 1
 
     def test_source_text_not_persisted_as_attribute(self, extractor, text_unit) -> None:

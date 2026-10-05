@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from unified_kg_rag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
 from unified_kg_rag.domain.models import Claim, Config, Entity
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import normalize_name
+from unified_kg_rag.shared.utils import entity_key
 
 # See graph_resolver: log progress every N items instead of pulling tqdm
 # (a terminal-UI dependency) into the technology-agnostic domain layer.
@@ -29,7 +29,7 @@ def resolve_entity_reference_task(
     if not entity_reference or not entity_reference.strip():
         return None
 
-    normalized_reference = normalize_name(entity_reference)
+    normalized_reference = entity_key(entity_reference)
     if normalized_reference in normalized_name_to_id:
         return normalized_name_to_original_name[normalized_reference]
 
@@ -72,12 +72,12 @@ def resolve_single_claim_task(
         logger.debug("Dropping claim: subject not an entity: '%s'", claim.subject_name)
         return None
 
-    subject_id = normalized_name_to_id.get(normalize_name(resolved_subject_name))
+    subject_id = normalized_name_to_id.get(entity_key(resolved_subject_name))
     if subject_id is None:
         return None
 
     if resolved_object_name is not None:
-        object_id = normalized_name_to_id.get(normalize_name(resolved_object_name))
+        object_id = normalized_name_to_id.get(entity_key(resolved_object_name))
         object_name = resolved_object_name
     else:
         # Object is a literal value: preserve the original text, no entity id.
@@ -146,7 +146,7 @@ class ClaimResolver(BaseResolver):
         normalized_name_to_original_name: dict[str, str] = {}
 
         for entity in entities:
-            normalized_name = normalize_name(entity.name)
+            normalized_name = entity_key(entity.name)
             if normalized_name:
                 normalized_name_to_id[normalized_name] = entity.id
                 normalized_name_to_original_name[normalized_name] = entity.name

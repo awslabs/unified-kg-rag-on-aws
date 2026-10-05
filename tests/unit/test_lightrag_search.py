@@ -1179,3 +1179,89 @@ class TestHybridHasAChunkStream:
         sources = captured["sources"]
         assert "lightrag_chunks" in sources
         assert any("linked" in key for key in sources)
+
+
+class TestCallerFiltersReachEverySubQuery:
+    """``--filters`` must reach every OpenSearch sub-query LightRAG issues.
+
+    The strategy builds a fresh ``SearchQuery`` per stream; before the fix none
+    of them carried ``query.filters``, so a filtered query silently searched the
+    whole corpus. Fetch-by-id sub-queries must keep their own id scope too.
+    """
+
+    _FILTERS = {"doc_type": "contract", "year": {"gte": 2020}}
+
+    def _strategy(self, config: Config):
+        spec = get_strategy_spec(SearchStrategy.MIX)
+        os_r, graph_r = LineageRetriever(), FakeRetriever("graph")
+        strategy = spec.strategy_class(
+            config=config,
+            retrievers={
+                RetrieverRole.DOCUMENT.value: os_r,
+                RetrieverRole.GRAPH.value: graph_r,
+            },
+        )
+        strategy.hybrid_scorer.fuse_and_rerank_results = (  # type: ignore[method-assign]
+            lambda results_dict, top_k, retrieval_multiplier=1, query=None, **_kw: [
+                r for results in results_dict.values() for r in results
+            ]
+        )
+        return strategy, os_r, graph_r
+
+    async def test_mix_mode_propagates_filters(self, config: Config) -> None:
+        strategy, os_r, graph_r = self._strategy(config)
+        query = _query(
+            SearchStrategy.MIX,
+            ll_keywords=["x"],
+            hl_keywords=["y"],
+            filters=dict(self._FILTERS),
+        )
+
+        await strategy.asearch(query)
+
+        os_cfg = config.indexing.opensearch
+        queried = {q.index_prefixes[0] for q in os_r.calls}
+        assert {
+            os_cfg.entities_index_prefix,
+            os_cfg.relationships_index_prefix,
+            os_cfg.text_units_index_prefix,
+        } <= queried
+        for call in [*os_r.calls, *graph_r.calls]:
+            assert call.filters is not None
+            for key, value in self._FILTERS.items():
+                assert call.filters[key] == value
+        # The linked-chunk fetch keeps its id scope alongside the caller filters.
+        linked = [
+            q
+            for q in os_r.calls
+            if q.index_prefixes == [os_cfg.text_units_index_prefix]
+            and "id" in (q.filters or {})
+        ]
+        assert linked and linked[0].filters["id"] == ["chunk-A"]
+        # The caller's dict is never mutated by the id scoping.
+        assert query.filters == self._FILTERS
+
+    async def test_naive_mode_propagates_filters(self, config: Config) -> None:
+        strategy, os_r, _ = _make_strategy(config)
+
+        await strategy.asearch(
+            _query(SearchStrategy.NAIVE, filters={"doc_type": "contract"})
+        )
+
+        assert [q.filters for q in os_r.calls] == [{"doc_type": "contract"}]
+
+    async def test_no_filters_stays_unfiltered(self, config: Config) -> None:
+        strategy, os_r, _ = _make_strategy(config)
+
+        await strategy.asearch(_query(SearchStrategy.NAIVE))
+
+        assert [q.filters for q in os_r.calls] == [None]
+
+    async def test_id_scope_overrides_caller_id_key(self, config: Config) -> None:
+        strategy, _, _ = _make_strategy(config)
+        query = SearchQuery(query="q", filters={"id": ["caller"], "doc_type": "c"})
+
+        merged = strategy._scoped_filters(query, id=["scoped"])
+
+        assert merged == {"id": ["scoped"], "doc_type": "c"}
+        assert query.filters == {"id": ["caller"], "doc_type": "c"}

@@ -13,6 +13,7 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseLanguageModel
 from ragas import evaluate
 from ragas.dataset_schema import EvaluationResult as RagasEvaluationResult
+from ragas.llms.base import LangchainLLMWrapper
 from ragas.metrics import (
     answer_correctness,
     answer_relevancy,
@@ -20,6 +21,7 @@ from ragas.metrics import (
     context_recall,
     faithfulness,
 )
+from ragas.run_config import RunConfig
 
 from unified_kg_rag.adapters.aws import (
     BedrockEmbeddingModelFactory,
@@ -38,8 +40,15 @@ from unified_kg_rag.domain.models import (
     EvaluationReport,
     EvaluationResult,
     EvaluatorType,
+    ModelPurpose,
 )
-from unified_kg_rag.evaluation.base import BaseGraphRAGEvaluator
+from unified_kg_rag.evaluation.base import (
+    FAILED_METRICS_KEY,
+    SKIP_REASON_EMPTY_REFERENCE,
+    SKIPPED_METRICS_KEY,
+    BaseGraphRAGEvaluator,
+    judge_model_kwargs,
+)
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import EvaluationException, get_logger
 
@@ -64,6 +73,17 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         EvaluationMetricType.FAITHFULNESS: faithfulness,
     }
 
+    # Metrics whose RAGAS implementation reads the `reference` column. Scoring
+    # them against an empty reference produces an artificial value, so they are
+    # skipped (not zeroed) for rows without a ground-truth answer.
+    REFERENCE_METRICS: ClassVar[frozenset[EvaluationMetricType]] = frozenset(
+        {
+            EvaluationMetricType.ANSWER_CORRECTNESS,
+            EvaluationMetricType.CONTEXT_PRECISION,
+            EvaluationMetricType.CONTEXT_RECALL,
+        }
+    )
+
     def __init__(
         self,
         config: Config,
@@ -74,6 +94,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
     ) -> None:
         self.embeddings: Embeddings | None = None
         self.llm: BaseLanguageModel | None = None
+        self.ragas_llm: LangchainLLMWrapper | None = None
         self._embedding_factory = embedding_factory
         self.boto_session = boto_session or boto3.Session(
             profile_name=config.aws.profile_name
@@ -90,7 +111,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         self._token_counter = BedrockTokenCounter(
             model_id=config.evaluation.evaluation_model_id.value,
             client=bedrock_client,
-            use_count_tokens_api=(
+            api_supported=(
                 eval_model_info.supports_count_tokens
                 if eval_model_info is not None
                 else True
@@ -131,8 +152,27 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             boto_session=self.boto_session,
             region_name=self.config.aws.bedrock.region_name,
         )
+        model_id = self.config.evaluation.evaluation_model_id
         self.llm = llm_factory.get_model(
-            model_id=self.config.evaluation.evaluation_model_id
+            model_id=model_id,
+            model_purpose=ModelPurpose.EVALUATION,
+            **judge_model_kwargs(self.config),
+        )
+        # ragas sets ``llm.temperature`` on every judge call (and never resets
+        # it when the original was None). Claude 4.7+/5 reject sampling params,
+        # so langchain-aws drops it with a warning per call — bypass it instead.
+        model_info = get_language_model_info(model_id)
+        supports_sampling = model_info is None or model_info.supports_sampling_params
+        self.ragas_llm = LangchainLLMWrapper(
+            self.llm, bypass_temperature=not supports_sampling
+        )
+
+    def _build_run_config(self) -> RunConfig:
+        evaluation = self.config.evaluation
+        return RunConfig(
+            timeout=evaluation.ragas_timeout,
+            max_workers=evaluation.ragas_max_workers,
+            max_retries=evaluation.ragas_max_retries,
         )
 
     def _truncate_contexts(self, results: list[EvaluationResult]) -> list[list[str]]:
@@ -164,37 +204,54 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             processed_contexts.append(safe_contexts)
         return processed_contexts
 
+    def metric_types(self) -> list[EvaluationMetricType]:
+        return [
+            m for m in self.config.evaluation.ragas_metrics if m in self.RAGAS_METRICS
+        ]
+
     def _parse_ragas_reports(
         self,
         ragas_df: pd.DataFrame,
         queries: list[EvaluationQuery],
         results: list[EvaluationResult],
+        ground_truths: list[str] | None = None,
     ) -> list[EvaluationReport]:
         reports = []
         for i, query in enumerate(queries):
             row = ragas_df.iloc[i]
+            has_reference = ground_truths is None or bool(ground_truths[i].strip())
             metrics = []
+            failed: dict[str, str] = {}
+            skipped: dict[str, str] = {}
             for metric_type, metric_name in self.METRIC_MAPPING.items():
-                if (
-                    metric_type in self.config.evaluation.ragas_metrics
-                    and metric_name in row
-                ):
-                    raw_value = row[metric_name]
-                    # RAGAS returns NaN when a metric is uncomputable (empty
-                    # answer, no contexts, parse failure). Skip it rather than
-                    # coercing to 0.0, which would conflate "failed to measure"
-                    # with a genuine zero score and bias the aggregate down.
-                    if pd.isna(raw_value):
-                        continue
-                    metrics.append(
-                        EvaluationMetric(
-                            metric_type=metric_type, value=float(raw_value)
-                        )
-                    )
+                if metric_type not in self.config.evaluation.ragas_metrics:
+                    continue
+                if metric_type in self.REFERENCE_METRICS and not has_reference:
+                    skipped[metric_type.value] = SKIP_REASON_EMPTY_REFERENCE
+                    continue
+                if metric_name not in row:
+                    failed[metric_type.value] = "metric missing from RAGAS output"
+                    continue
+                raw_value = row[metric_name]
+                # RAGAS returns NaN when a metric is uncomputable (empty
+                # answer, no contexts, parse failure). Record it as failed
+                # rather than coercing to 0.0, which would conflate "failed to
+                # measure" with a genuine zero score and bias the aggregate down.
+                if pd.isna(raw_value):
+                    failed[metric_type.value] = "uncomputable (NaN)"
+                    continue
+                metrics.append(
+                    EvaluationMetric(metric_type=metric_type, value=float(raw_value))
+                )
 
             overall_score = (
                 sum(m.value for m in metrics) / len(metrics) if metrics else 0.0
             )
+            metadata = self._extract_search_metadata(results[i])
+            if failed:
+                metadata[FAILED_METRICS_KEY] = failed
+            if skipped:
+                metadata[SKIPPED_METRICS_KEY] = skipped
             reports.append(
                 EvaluationReport(
                     query_id=query.query_id,
@@ -202,7 +259,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                     metrics=metrics,
                     overall_score=overall_score,
                     evaluation_time=datetime.now(),
-                    metadata=self._extract_search_metadata(results[i]),
+                    metadata=metadata,
                 )
             )
         return reports
@@ -214,14 +271,24 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         ground_truths: list[str],
         **kwargs: Any,
     ) -> list[EvaluationReport]:
-        metrics_to_use = [
-            self.RAGAS_METRICS[m]
-            for m in self.config.evaluation.ragas_metrics
-            if m in self.RAGAS_METRICS
-        ]
-        if not metrics_to_use:
+        metric_types = self.metric_types()
+        if not metric_types:
             logger.warning("No valid Ragas metrics found in configuration")
             return []
+        # If no row has a reference, reference-based metrics would be skipped
+        # for every row anyway — don't pay for the judge calls.
+        if not any(gt.strip() for gt in ground_truths):
+            metric_types = [m for m in metric_types if m not in self.REFERENCE_METRICS]
+        metrics_to_use = [self.RAGAS_METRICS[m] for m in metric_types]
+        if not metrics_to_use:
+            logger.warning(
+                "Only reference-based Ragas metrics are configured and no row has "
+                "a ground-truth answer; all Ragas metrics are skipped"
+            )
+            return [
+                self._create_skipped_report(q.query_id, r)
+                for q, r in zip(queries, results, strict=True)
+            ]
 
         processed_contexts = self._truncate_contexts(results)
         dataset_dict = {
@@ -237,9 +304,10 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 evaluate,
                 dataset=eval_dataset,
                 metrics=metrics_to_use,
-                llm=self.llm,
+                llm=self.ragas_llm or self.llm,
                 embeddings=self.embeddings,
                 raise_exceptions=False,
+                run_config=self._build_run_config(),
                 show_progress=self.show_progress,
                 batch_size=self.config.processing.batch_size,
             )
@@ -247,13 +315,36 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             # Executor`; the Executor branch is only taken when the caller passes
             # return_executor=True, which this call never does.
             ragas_result = cast(RagasEvaluationResult, ragas_result)
-            return self._parse_ragas_reports(ragas_result.to_pandas(), queries, results)
+            return self._parse_ragas_reports(
+                ragas_result.to_pandas(), queries, results, ground_truths
+            )
         except Exception as e:
             if not self.ignore_errors:
                 raise
 
             logger.error("Ragas async evaluation failed for batch: %s", e)
-            return [self._create_empty_report(q.query_id) for q in queries]
+            return [
+                self._create_empty_report(
+                    q.query_id, reason=f"Ragas batch evaluation failed: {e}"
+                )
+                for q in queries
+            ]
+
+    def _create_skipped_report(
+        self, query_id: str, result: EvaluationResult
+    ) -> EvaluationReport:
+        metadata = self._extract_search_metadata(result)
+        metadata[SKIPPED_METRICS_KEY] = {
+            m.value: SKIP_REASON_EMPTY_REFERENCE for m in self.metric_types()
+        }
+        return EvaluationReport(
+            query_id=query_id,
+            evaluator_type=self.evaluator_type,
+            metrics=[],
+            overall_score=0.0,
+            evaluation_time=datetime.now(),
+            metadata=metadata,
+        )
 
     async def aevaluate_single(
         self,
