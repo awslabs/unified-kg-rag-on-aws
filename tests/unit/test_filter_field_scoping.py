@@ -16,6 +16,8 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from gremlin_python.process.graph_traversal import __
+from gremlin_python.process.traversal import P
 
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
@@ -279,15 +281,89 @@ def test_neptune_drops_key_no_target_label_declares() -> None:
     assert exempt == {}
 
 
-def test_neptune_drops_document_attribute_filters() -> None:
-    # Vertices store attributes as raw JSON (``attr_filters``), so a document
-    # attribute filter would empty graph expansion; it is scoped out instead.
-    filters, exempt = NeptuneRetriever._scope_filters_to_labels(
-        {"Community-default": "community", "Entity-default": "entity"},
-        {"attr_region": "north", "id": ["e1"]},
-    )
-    assert filters == {"id": ["e1"]}
-    assert exempt == {}
+def _matches(vertex: dict[str, Any], steps: list[list[Any]]) -> bool:
+    """Evaluate the filter steps ``_apply_filters`` emits against one vertex.
+
+    Covers the subset used: ``has`` (value or ``P``), ``hasNot``, ``hasLabel``,
+    ``or`` and ``where`` over anonymous traversals.
+    """
+
+    def _sub(arg: Any) -> bool:
+        return _matches(vertex, arg.step_instructions)
+
+    for name, *args in steps:
+        if name == "identity":
+            continue
+        if name == "has":
+            key, want = args
+            if key not in vertex:
+                return False
+            value = vertex[key]
+            if isinstance(want, P) and want.operator == "within":
+                ok = value in want.value
+            elif isinstance(want, P):
+                assert want.operator == "gte", want.operator
+                ok = value >= want.value
+            else:
+                ok = value == want
+            if not ok:
+                return False
+        elif name == "hasNot":
+            if args[0] in vertex:
+                return False
+        elif name == "hasLabel":
+            if vertex["label"] not in args:
+                return False
+        elif name == "or":
+            if not any(_sub(a) for a in args):
+                return False
+        elif name == "where":
+            if not _sub(args[0]):
+                return False
+        else:  # pragma: no cover - guards the evaluator's coverage
+            raise AssertionError(f"unsupported step {name}")
+    return True
+
+
+_VERTICES = [
+    {"label": "Entity-default", "id": "e1", "type": "PERSON", "attr_role": "buyer"},
+    {"label": "Entity-default", "id": "e2", "type": "PERSON", "attr_role": "vendor"},
+    {"label": "Entity-default", "id": "e3", "type": "ORGANIZATION"},
+    {"label": "Community-default", "id": "c1", "size": 3},
+]
+
+
+def _kept(label_kinds: dict[str, str], filters: dict[str, Any]) -> list[str]:
+    scoped, exempt = NeptuneRetriever._scope_filters_to_labels(label_kinds, filters)
+    traversal = NeptuneRetriever._apply_filters(__.identity(), scoped, exempt)
+    steps = traversal.bytecode.step_instructions
+    return [
+        v["id"] for v in _VERTICES if v["label"] in label_kinds and _matches(v, steps)
+    ]
+
+
+_ENTITY = {"Entity-default": "entity"}
+_BOTH = {"Community-default": "community", "Entity-default": "entity"}
+
+
+def test_neptune_entity_attribute_filters_vertices_that_have_it() -> None:
+    # attr_role is an LLM-extracted entity attribute stored on the vertex;
+    # vertices without the property are not filtered by it.
+    assert _kept(_ENTITY, {"attr_role": "buyer"}) == ["e1", "e3"]
+    assert _kept(_ENTITY, {"attr_role": ["buyer", "vendor"]}) == ["e1", "e2", "e3"]
+
+
+def test_neptune_document_attribute_does_not_empty_expansion() -> None:
+    # attr_category is a document attribute: absent on every vertex.
+    assert _kept(_ENTITY, {"attr_category": "research"}) == ["e1", "e2", "e3"]
+    assert _kept(_BOTH, {"attr_category": "research"}) == ["e1", "e2", "e3", "c1"]
+
+
+def test_neptune_strict_key_stays_strict() -> None:
+    assert _kept(_ENTITY, {"type": "PERSON"}) == ["e1", "e2"]
+    # Strict on the entity label, exempt on the community label.
+    assert _kept(_BOTH, {"type": "ORGANIZATION"}) == ["e3", "c1"]
+    assert _kept(_ENTITY, {"type": "PERSON", "attr_role": "vendor"}) == ["e2"]
 
 
 def test_neptune_exempts_labels_lacking_a_key() -> None:
@@ -317,14 +393,14 @@ def test_neptune_key_on_every_label_is_a_plain_has() -> None:
 
 def test_neptune_filter_fields(config: Config) -> None:
     declared = _neptune(config).filter_fields()
-    for key in ("id", "type", "description", "size"):
+    for key in ("id", "type", "description", "size", "attr_role"):
         assert declared.declares(key), key
-    for key in ("status", "entity_type", "attr_category", "attributes.source"):
+    for key in ("status", "entity_type", "attributes.source"):
         assert not declared.declares(key), key
 
 
 def test_neptune_schema_covers_indexed_entity_properties(config: Config) -> None:
-    """Every non-attribute property ``NeptuneIndexer`` writes is declared."""
+    """Every property ``NeptuneIndexer`` writes on an entity is declared."""
     indexer = NeptuneIndexer.__new__(NeptuneIndexer)
     object.__setattr__(indexer, "neptune_config", config.indexing.neptune)
     entity = Entity(
@@ -350,8 +426,8 @@ def test_neptune_schema_covers_indexed_entity_properties(config: Config) -> None
             "community_ids": entity.community_ids,
         },
     )
-    undeclared = {k for k in props if not NEPTUNE_FILTER_FIELDS["entity"].declares(k)}
-    assert undeclared == {"attr_region"}
+    assert "attr_region" in props
+    assert all(NEPTUNE_FILTER_FIELDS["entity"].declares(k) for k in props)
 
 
 # --------------------------------------------------------------------------- #

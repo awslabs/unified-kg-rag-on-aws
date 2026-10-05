@@ -16,11 +16,12 @@ item's ``filters`` attribute) and ``attributes.<path>`` (the dynamic
 whose documents lack the field returns nothing for that filter rather than
 being searched unfiltered.
 
-Neptune declares no ``attr_*`` rule: its ``attr_<key>`` vertex properties are
-the item's raw top-level attributes (``attr_filters`` holds the filters as one
-JSON string), so a document attribute filter such as ``attr_category`` matches
-no vertex. Graph expansion is seeded from entities the OpenSearch side already
-filtered.
+Neptune entity vertices carry ``attr_<key>`` for the entity's raw top-level
+attributes (e.g. ``attr_role`` from LLM extraction); document attribute filters
+sit inside one JSON property (``attr_filters``), so ``attr_category`` is absent
+on vertices. Neptune therefore applies ``attr_*`` keys "where present": a vertex
+passes when the property matches or when it has no such property
+(``NeptuneRetriever._filter_predicate``). Other keys are strict on both stores.
 """
 
 from collections.abc import Iterable
@@ -141,7 +142,8 @@ def opensearch_filter_fields(target_language: str) -> dict[str, FilterFields]:
     }
 
 
-# Vertex label kind -> filterable properties.
+# Vertex label kind -> filterable properties. ``attr_*`` keys on Neptune apply
+# where present (see the module docstring).
 NEPTUNE_FILTER_FIELDS: dict[str, FilterFields] = {
     "entity": FilterFields(
         frozenset(
@@ -155,7 +157,8 @@ NEPTUNE_FILTER_FIELDS: dict[str, FilterFields] = {
                 "text_unit_ids",
                 "community_ids",
             }
-        )
+        ),
+        frozenset({ATTRIBUTE_KEY_PREFIX}),
     ),
     "community": FilterFields(
         frozenset({"id", "name", "level", "parent", "size", "period", "children"})

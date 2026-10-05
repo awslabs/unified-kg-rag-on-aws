@@ -21,6 +21,7 @@ from unified_kg_rag.adapters.retrieval.base import (
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.filter_schema import (
+    ATTRIBUTE_KEY_PREFIX,
     NEPTUNE_FILTER_FIELDS,
     FilterFields,
     union_filter_fields,
@@ -247,6 +248,23 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             ]
         return [(key, value)]
 
+    @staticmethod
+    def _filter_predicate(key: str, steps: list[tuple[str, Any]]) -> GraphTraversal:
+        """Anonymous traversal a vertex must match for one filter entry.
+
+        ``attr_*`` keys apply where present: a vertex without the property
+        passes. Entity vertices carry their own extracted attributes (e.g.
+        ``attr_role``) but not document attribute filters (``attr_category``
+        lives in OpenSearch), so a strict match would empty graph expansion for
+        every document-attribute filter. Every other key is strict.
+        """
+        matched = __.has(*steps[0])
+        for step in steps[1:]:
+            matched = matched.has(*step)
+        if key.startswith(ATTRIBUTE_KEY_PREFIX):
+            return __.or_(matched, __.hasNot(key))
+        return matched
+
     @classmethod
     def _apply_filters(
         cls,
@@ -263,17 +281,17 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             steps = cls._filter_steps(key, value)
             if not steps:
                 continue
+            predicate = cls._filter_predicate(key, steps)
             exempt = (exempt_labels or {}).get(key)
             if exempt:
                 # Only the labels that carry ``key`` are filtered; vertices of
                 # the exempt labels pass through untouched.
-                guarded = __.has(*steps[0])
-                for step in steps[1:]:
-                    guarded = guarded.has(*step)
-                traversal = traversal.or_(__.hasLabel(*exempt), guarded)
-                continue
-            for step in steps:
-                traversal = traversal.has(*step)
+                traversal = traversal.or_(__.hasLabel(*exempt), predicate)
+            elif key.startswith(ATTRIBUTE_KEY_PREFIX):
+                traversal = traversal.where(predicate)
+            else:
+                for step in steps:
+                    traversal = traversal.has(*step)
         return traversal
 
     async def _traverse_from_seeds(
