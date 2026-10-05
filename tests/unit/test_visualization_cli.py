@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
+import networkx as nx
 import pytest
 
 from unified_kg_rag.adapters.renderers import (
@@ -16,6 +18,7 @@ from unified_kg_rag.adapters.renderers import (
     register_renderer,
     registered_renderers,
 )
+from unified_kg_rag.application.cli import run_visualization as cli_module
 from unified_kg_rag.application.cli.run_visualization import (
     load_render_context,
     run_visualization,
@@ -132,3 +135,64 @@ class TestRendererRegistry:
     def test_unknown_renderer_raises(self) -> None:
         with pytest.raises(ValueError, match="No renderer registered"):
             get_renderer_class("does-not-exist")
+
+
+def _write_empty_export(tmp_path: Path) -> Path:
+    path = tmp_path / "empty.json"
+    path.write_text(json.dumps({"nodes": [], "edges": []}), encoding="utf-8")
+    return path
+
+
+class TestBuiltinAdaptersReportOnlyWrittenFiles:
+    @staticmethod
+    def _empty_context() -> RenderContext:
+        return RenderContext(graph=nx.Graph(), layout={})
+
+    def test_interactive_empty_graph_reports_nothing(self, tmp_path: Path) -> None:
+        renderer = get_renderer_class("interactive")({})
+        assert renderer.render(self._empty_context(), tmp_path) == []
+        assert not (tmp_path / "interactive_graph.html").exists()
+
+    def test_stale_output_is_not_reported(self, tmp_path: Path) -> None:
+        # A file left by an earlier run must not be reported as freshly written.
+        stale = tmp_path / "interactive_graph.html"
+        stale.write_text("old", encoding="utf-8")
+        renderer = get_renderer_class("interactive")({})
+        assert renderer.render(self._empty_context(), tmp_path) == []
+        assert not stale.exists()
+
+    def test_reported_paths_all_exist(
+        self, export_json: Path, tmp_path: Path, config: Config
+    ) -> None:
+        written = run_visualization(
+            export_json, tmp_path / "out", ["interactive", "static"], config
+        )
+        assert written
+        assert all(p.is_file() for p in written)
+
+    def test_empty_export_renders_nothing(self, tmp_path: Path, config: Config) -> None:
+        written = run_visualization(
+            _write_empty_export(tmp_path),
+            tmp_path / "out",
+            ["interactive", "static"],
+            config,
+        )
+        assert written == []
+
+    def test_main_returns_nonzero_when_nothing_rendered(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        argv = [
+            "run-visualization",
+            "--data-path",
+            str(_write_empty_export(tmp_path)),
+            "--output-dir",
+            str(tmp_path / "out"),
+            # Explicit built-ins: other tests register extra renderers globally.
+            "--renderers",
+            "interactive",
+            "static",
+        ]
+        monkeypatch.setattr(sys, "argv", argv)
+        monkeypatch.setattr(cli_module, "get_config", lambda _path=None: Config())
+        assert cli_module.main() == 1

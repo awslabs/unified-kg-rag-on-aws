@@ -145,10 +145,11 @@ aws:
     enable_global_profile: true   # 크로스 리전(글로벌) Bedrock 추론 프로파일 사용 — 처리량/가용성 향상
     enable_1m_context: false      # 1M 창이 베타인 모델에서 옵트인(장문 요금 프리미엄); Claude 5는 네이티브 1M
     effort: "high"                # 적응형 사고 모델의 추론 깊이: low | medium | high | xhigh | max
-    guardrail:                    # optional Bedrock Guardrails on every LLM call
+    guardrail:                    # optional Bedrock Guardrails (query path by default)
       identifier: null            # set a guardrail ID/ARN to enable
       version: "DRAFT"
       trace: false
+      apply_to: "query"           # query | all — see the guardrail scope note below
 
   neptune:
     endpoint:                     # REQUIRED — Neptune cluster endpoint
@@ -166,7 +167,7 @@ aws:
   s3:
     bucket_name:                  # REQUIRED for cache sync / embedding-cache persistence
     encryption:
-      encryption_type: "AES256"   # NONE | AES256 | aws:kms
+      encryption_type: "BUCKET_DEFAULT"  # BUCKET_DEFAULT | AES256 | aws:kms (NONE = BUCKET_DEFAULT의 레거시 별칭)
       kms_key_id: null
 
   dynamodb:                       # incremental indexing registry
@@ -179,6 +180,47 @@ aws:
 > **Guardrail 배치 주의:** 멀티 리전으로 배포할 때 Bedrock Guardrail은
 > `region_name`이 아니라 `bedrock.region_name`(LLM 호출이 전달되는 리전)에
 > 존재해야 합니다.
+
+> **Guardrail 적용 범위:** 기본값 `apply_to: "query"`는 사용자에게 응답하는 질의
+> 경로에만 Guardrail을 붙입니다. 답변 생성, 질의 정제, 질의 시점 엔터티·키워드
+> 추출, global/DRIFT map-reduce가 여기에 해당합니다. 인제스천 모델(청킹, 번역,
+> 그래프 추출, gleaning, claim, 설명 요약, 커뮤니티 리포트), 프롬프트 튜너와 평가
+> 모델에는 Guardrail을 붙이지 않습니다. `NAME`을 익명화하는 PII Guardrail은 추출된
+> 엔터티 이름을 `{NAME}` 같은 플레이스홀더로 바꿔 서로 다른 인물을 한 노드로
+> 병합하고, `PROMPT_ATTACK` 필터는 지시문처럼 보이는 코퍼스 텍스트를 차단해 해당
+> 청크에서 엔터티가 하나도 나오지 않게 만들기 때문입니다. Guardrail 정책이 추출에
+> 안전한 경우(예: 유해 콘텐츠는 차단하지만 PII는 마스킹하지 않는 경우)에만
+> `apply_to: "all"`을 사용합니다. Guardrail이 개입할 때마다 누적 횟수와 함께
+> WARNING 로그(`Bedrock guardrail '<id>' intervened on a <purpose> model call ...`)를
+> 남깁니다. Converse API 경로(크로스 리전 추론 프로파일 사용 시,
+> `stopReason: guardrail_intervened`)에서는 `trace` 설정과 관계없이 안정적으로
+> 감지합니다. InvokeModel 경로(`ChatBedrock`, 크로스 리전이 아닌 모델 ID 사용 시)에서는
+> `langchain_aws`가 `trace: true`일 때만 개입을 알립니다. 기본값 `trace: false`에서도
+> Guardrail은 그대로 적용되어 차단·마스킹된 응답이 반환되지만, WARNING 로그가 남지 않고
+> 누적 횟수도 0으로 유지됩니다. 이 경로에서 개입 여부를 확인해야 한다면
+> `trace: true`로 설정합니다. 이 경우 모든 응답에 Guardrail trace가 추가됩니다.
+>
+> 업그레이드 시 참고: 이전 릴리스는 모든 호출에 Guardrail을 적용했습니다. 같은
+> 동작을 유지하려면 `apply_to: "all"`로 설정합니다. 질의가 아닌 작업에서
+> `setup_chain`으로 체인을 만들거나 `get_model`을 직접 호출하는 사용자 코드는
+> `model_purpose=ModelPurpose.INGESTION`(또는 `EVALUATION`)을 넘겨야 합니다.
+> 지정하지 않은 호출은 `QUERY`로 간주해 Guardrail이 계속 적용됩니다.
+
+> **S3 캐시 암호화:** 기본값 `encryption_type: "BUCKET_DEFAULT"`는 객체별 SSE
+> 헤더를 보내지 않으므로 S3가 버킷의 기본 암호화를 적용합니다. CDK 스택에서
+> `use_cmk=true`이면 고객 관리형 KMS 키, 아니면 SSE-S3입니다. `AES256`과
+> `aws:kms`는 버킷 기본값을 덮어쓰는 객체별 헤더를 강제합니다. 이 변경 이전
+> 릴리스는 기본값이 `AES256`이어서 버킷의 CMK를 조용히 우회했습니다. 기본 암호화가
+> SSE-KMS인 기존 버킷을 재사용하면 업로드 주체에 해당 키의 `kms:GenerateDataKey`와
+> `kms:Decrypt` 권한이 필요합니다.
+
+> **환경 변수로 지정하는 doc-status 테이블:** `GRAPHRAG_DOC_STATUS_TABLE`은
+> `aws.dynamodb.table_name`을, `GRAPHRAG_DOC_STATUS_CREATE_TABLE`(`true`/`false`)은
+> `aws.dynamodb.create_table_if_missing`을 덮어씁니다. CDK compute 스택은 두 값을
+> 모두 설정합니다. 테이블 이름은 IaC 테이블로, 생성 여부는 `false`로 지정합니다.
+> 테이블을 IaC가 관리하고 태스크 역할에는 테이블 생성 권한이 없기 때문입니다.
+> 증분 인덱싱을 쓰려면 여전히 설정 파일에서 `aws.dynamodb.enabled: true`가
+> 필요합니다.
 
 #### 모델 선택 주의사항
 
@@ -589,7 +631,11 @@ run-ingestion --source-directory ./documents --config-path config.yaml --metrics
 
 **S3 동기화**는 스테이지 캐시를 `s3://<bucket>/<prefix>/...`에 유지하므로, 새
 프로세스(예: 새 Fargate 태스크)가 완료된 스테이지를 재계산하지 않고 재개할 수
-있습니다. 임베딩에 한해서는 `indexing.opensearch.persist_embedding_cache: true`
+있습니다. 시작 시 다운로드나 종료 시 업로드가 실패하거나 일부 파일만 동기화되면
+`CacheSyncError`로 실행이 실패하고 `run-ingestion`은 0이 아닌 코드로 종료합니다.
+따라서 Step Functions 단계별 실행에서는 체크포인트를 잃은 단계가 실패로
+표시됩니다. 새 pipeline id에 원격 캐시가 비어 있는 것은 오류가 아닙니다.
+임베딩에 한해서는 `indexing.opensearch.persist_embedding_cache: true`
 로 설정하면 실행 간에 변경되지 않은 텍스트를 다시 임베딩하지 않습니다.
 
 ### 다국어 인제스천
@@ -833,9 +879,32 @@ run-eval --eval-data-path my_eval_data.json \
 
 ## 7. 시각화 (`run-visualization`)
 
-이것은 이미 내보내진 시각화 데이터 JSON(인제스천 중
-`GraphVisualizationManager.export_visualization_data`가 생성)으로부터 그리는
-**독립형** 렌더러입니다. 인제스천을 다시 실행하거나 AWS를 건드리지 **않습니다**.
+이것은 이미 내보낸 시각화 데이터 JSON으로부터 그리는 **독립형** 렌더러입니다.
+인제스천을 다시 실행하거나 AWS를 건드리지 **않습니다**.
+
+`graph.visualization.enabled`가 `true`이면 `run-ingestion`의 커뮤니티 탐지
+단계가 시각화를 렌더링하면서 `graph.visualization.outputs_directory`에
+`visualization_data.json`도 기록합니다(기본값
+`outputs/visualization/visualization_data.json`). 이 파일이 `--data-path`
+입력입니다. 그래프 노드·엣지, 계산된 `layout`, 커뮤니티 계층, 중심성을 담으며,
+파일 크기를 줄이기 위해 벡터 속성(`embedding`, `*_embedding`)은 제외합니다.
+
+레이아웃과 오류 처리:
+
+- `embedding_method: "none"`은 spring 레이아웃을 쓰며 Bedrock 임베딩
+  클라이언트를 만들지 않습니다.
+- `embedding_method: "node2vec"`은 각 노드의 `name: description`을 Bedrock으로
+  임베딩한 뒤 `layout_method`로 차원을 축소합니다. 임베딩이 실패하면
+  `processing.ignore_errors`가 `false`일 때 시각화 단계가 실패합니다(인제스천은
+  계속 진행하고 실패를 로그에 남깁니다). `ignore_errors: true`이면 ERROR 로그를
+  남기고 그래프 구조만 반영하는 spring 레이아웃으로 대체하며,
+  `visualization_data.json`에 `"layout_degraded": true`를 기록합니다.
+- 인터랙티브 그래프의 엣지 두께·불투명도는 그래프 자체의 가중치 범위를
+  기준으로 조정합니다(로그 스케일 후 min-max 정규화). 따라서 1–10 강도 점수와
+  병합 횟수 모두 구분됩니다.
+- 렌더러가 실제로 기록한 파일만 보고합니다(같은 이름의 이전 실행 파일은 먼저
+  삭제합니다). 아무것도 렌더링하지 못하면(예: 빈 그래프) `run-visualization`은
+  오류를 로그에 남기고 종료 코드 `1`을 반환합니다.
 
 ### CLI 플래그 (검증됨)
 

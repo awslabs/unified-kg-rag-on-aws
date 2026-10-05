@@ -23,6 +23,31 @@ from .exporters.html_exporter import HTMLExporter
 
 logger = get_logger(__name__)
 
+# File written into the visualization outputs directory on every run; it is the
+# input ``run-visualization --data-path`` re-renders from without ingestion.
+VISUALIZATION_DATA_FILENAME = "visualization_data.json"
+
+
+def _is_heavy_attribute(key: str) -> bool:
+    """Vector attributes (``embedding``/``*_embedding``) are excluded from the
+    export: they are large, unused by any renderer, and dominate file size."""
+    return key == "embedding" or key.endswith("_embedding")
+
+
+def _strip_heavy_attributes(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    stripped: list[dict[str, Any]] = []
+    for item in items:
+        attrs = item.get("attributes") or {}
+        stripped.append(
+            {
+                **item,
+                "attributes": {
+                    k: v for k, v in attrs.items() if not _is_heavy_attribute(k)
+                },
+            }
+        )
+    return stripped
+
 
 class GraphVisualizationManager:
     def __init__(
@@ -32,6 +57,7 @@ class GraphVisualizationManager:
         community_detector: CommunityDetector,
         outputs_dir: Path | None = None,
         boto_session: boto3.Session | None = None,
+        embedder: BedrockNodeEmbedder | None = None,
     ) -> None:
         self.config = config
         self.viz_config = self.config.graph.visualization
@@ -42,10 +68,21 @@ class GraphVisualizationManager:
             profile_name=self.config.aws.profile_name
         )
 
-        self.embedder = BedrockNodeEmbedder(self.config, self.boto_session)
+        # Built lazily: with embedding_method == "none" no Bedrock embedding
+        # client is ever constructed.
+        self._embedder = embedder
 
         self.reducer = DimensionalityReducer(self.viz_config.layout)
         self.html_exporter = HTMLExporter()
+        # Set by _generate_layout when the embedding-based layout could not be
+        # produced and a topology-only spring layout was used instead.
+        self.layout_degraded = False
+
+    @property
+    def embedder(self) -> BedrockNodeEmbedder:
+        if self._embedder is None:
+            self._embedder = BedrockNodeEmbedder(self.config, self.boto_session)
+        return self._embedder
 
     def run(self) -> None:
         if not self.viz_config.enabled:
@@ -71,10 +108,20 @@ class GraphVisualizationManager:
 
         self._generate_visualizations(self.outputs_dir, layout)
         self._export_summary_report(self.outputs_dir)
+        self.export_visualization_data(
+            self.outputs_dir / VISUALIZATION_DATA_FILENAME, layout=layout
+        )
 
-        logger.info("Comprehensive visualization report created successfully.")
+        if self.layout_degraded:
+            logger.warning(
+                "Visualization report created with a DEGRADED layout (node "
+                "embeddings unavailable; spring layout used instead)."
+            )
+        else:
+            logger.info("Comprehensive visualization report created successfully.")
 
     def _generate_layout(self) -> dict[str, Any]:
+        self.layout_degraded = False
         if not self.analyzer.graph or self.viz_config.embedding_method == "none":
             logger.info(
                 "Skipping embedding generation. Using spring layout as fallback."
@@ -85,9 +132,11 @@ class GraphVisualizationManager:
             return {}
 
         embeddings = self.embedder.generate_embeddings(self.analyzer.graph)
-        if not embeddings.embeddings:
-            logger.warning(
-                "Embedding generation failed. Falling back to spring layout."
+        if embeddings.degraded or not embeddings.embeddings:
+            self.layout_degraded = True
+            logger.error(
+                "Node embedding generation failed; the layout is DEGRADED "
+                "(spring layout from graph topology, not semantic embeddings)."
             )
             spring_layout = nx.spring_layout(self.analyzer.graph, seed=42)
             return {str(k): v.tolist() for k, v in spring_layout.items()}
@@ -111,6 +160,7 @@ class GraphVisualizationManager:
             community_hierarchy=list(self.community_detector.all_communities.values()),
             centrality=self.analyzer.calculate_centrality(),
         )
+        written: list[Path] = []
         for name in registered_renderers():
             try:
                 renderer_cls = get_renderer_class(name)
@@ -119,9 +169,11 @@ class GraphVisualizationManager:
                 # dedicated config block gets an empty dict so renderers can call
                 # ``.get(...)`` uniformly. No hardcoded renderer list.
                 renderer_config = getattr(self.viz_config, name, None) or {}
-                renderer_cls(renderer_config).render(context, outputs_dir)
+                written += renderer_cls(renderer_config).render(context, outputs_dir)
             except Exception as e:
                 logger.warning("Renderer '%s' failed: %s", name, e)
+        if not written:
+            logger.warning("No visualization files were rendered.")
 
     def _export_summary_report(self, outputs_dir: Path) -> None:
         report_data = {
@@ -131,14 +183,26 @@ class GraphVisualizationManager:
         }
         self.html_exporter.create_report(outputs_dir, report_data)
 
-    def export_visualization_data(self, output_path: str) -> None:
+    def export_visualization_data(
+        self, output_path: str | Path, layout: dict[str, Any] | None = None
+    ) -> Path | None:
+        """Write the JSON ``run-visualization --data-path`` renders from.
+
+        Pass the already-computed ``layout`` to avoid a second (Bedrock-backed)
+        embedding pass. Returns the written path, or ``None`` if nothing was
+        written.
+        """
         if not self.analyzer.graph:
             logger.warning("No graph available for data export.")
-            return
+            return None
 
+        output_path = Path(output_path)
         logger.info("Exporting visualization data to '%s'...", output_path)
         data = self.analyzer.export_graph_data()
-        data["layout"] = self._generate_layout()
+        data["nodes"] = _strip_heavy_attributes(data.get("nodes", []))
+        data["edges"] = _strip_heavy_attributes(data.get("edges", []))
+        data["layout"] = layout if layout is not None else self._generate_layout()
+        data["layout_degraded"] = self.layout_degraded
         data["communities"] = self.community_detector.export_community_data()
         # Serialize centrality so the standalone CLI can render the centrality
         # comparison plot without re-running analysis.
@@ -148,8 +212,12 @@ class GraphVisualizationManager:
         }
 
         try:
-            with open(output_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, default=str)
-            logger.info("Successfully exported visualization data to '%s'", output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                json.dumps(data, indent=2, default=str), encoding="utf-8"
+            )
         except Exception as e:
             logger.exception("Failed to export data to JSON: %s", e)
+            return None
+        logger.info("Successfully exported visualization data to '%s'", output_path)
+        return output_path

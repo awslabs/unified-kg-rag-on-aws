@@ -3,8 +3,9 @@
 """Standalone graph visualization CLI.
 
 Renders visualizations from a previously exported visualization-data JSON
-(produced by ``GraphVisualizationManager.export_visualization_data``) WITHOUT
-re-running ingestion. Drives the renderer registry, so any registered renderer
+(``visualization_data.json``, written into ``graph.visualization.outputs_directory``
+by ``GraphVisualizationManager.run`` during ingestion) WITHOUT re-running
+ingestion. Drives the renderer registry, so any registered renderer
 (``--renderers interactive static``) can be produced independently.
 """
 
@@ -126,10 +127,19 @@ def run_visualization(
         try:
             paths = renderer_cls(renderer_config).render(context, output_dir)
             written.extend(paths)
-            logger.info("Renderer '%s' wrote %d file(s)", name, len(paths))
+            if paths:
+                logger.info("Renderer '%s' wrote %d file(s)", name, len(paths))
+            else:
+                logger.warning("Renderer '%s' wrote no files", name)
         except Exception as e:
             logger.error("Renderer '%s' failed: %s", name, e)
 
+    if not written:
+        logger.error(
+            "No visualization files were rendered from '%s' (empty graph or "
+            "every renderer failed).",
+            data_path,
+        )
     return written
 
 

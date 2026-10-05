@@ -22,8 +22,15 @@ from unified_kg_rag.domain.models import (
     EvaluationReport,
     EvaluationResult,
     EvaluatorType,
+    ModelPurpose,
 )
-from unified_kg_rag.evaluation.base import BaseGraphRAGEvaluator, judge_model_kwargs
+from unified_kg_rag.evaluation.base import (
+    FAILED_METRICS_KEY,
+    SKIP_REASON_EMPTY_REFERENCE,
+    SKIPPED_METRICS_KEY,
+    BaseGraphRAGEvaluator,
+    judge_model_kwargs,
+)
 from unified_kg_rag.shared import EvaluationException, get_logger
 
 logger = get_logger(__name__)
@@ -107,6 +114,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             )
             self.llm = llm_factory.get_model(
                 model_id=self.config.evaluation.evaluation_model_id,
+                model_purpose=ModelPurpose.EVALUATION,
                 **judge_model_kwargs(self.config),
             )
             self._initialize_metric_evaluators()
@@ -219,6 +227,14 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             return 0.0
         return max(0.0, min(1.0, score))
 
+    def metric_types(self) -> list[EvaluationMetricType]:
+        return [
+            m for m in self.config.evaluation.langchain_metrics if m in self.evaluators
+        ]
+
+    def _requires_reference(self, metric_type: EvaluationMetricType) -> bool:
+        return bool(self.METRIC_MAPPING[metric_type].get("requires_reference"))
+
     def _prepare_eval_args(
         self,
         metric_type: EvaluationMetricType,
@@ -227,36 +243,59 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         ground_truth: str,
     ) -> dict[str, str]:
         eval_args = {"input": question, "prediction": answer}
-        if self.METRIC_MAPPING[metric_type].get("requires_reference"):
+        if self._requires_reference(metric_type):
             eval_args["reference"] = ground_truth
         return eval_args
 
     @staticmethod
     def _handle_evaluation_error(
         metric_type: EvaluationMetricType, query_id: str, error: Exception
-    ) -> EvaluationMetric:
+    ) -> str:
+        """Log a judge failure and return the reason recorded in the report.
+
+        A failed judge call yields NO metric value (it used to emit 0.0, which
+        dragged the mean down and conflated "could not measure" with "wrong").
+        The failure is recorded under the report's ``failed_metrics`` instead,
+        matching RAGAS's NaN-skip behaviour.
+        """
         logger.error(
             "Evaluation failed for '%s' on query '%s': %s", metric_type, query_id, error
         )
-        return EvaluationMetric(
-            metric_type=metric_type,
-            value=0.0,
-            explanation=f"Evaluation failed: {error}",
-            metadata={"evaluation_error": True},
-        )
+        return f"Evaluation failed: {error}"
 
     def _create_report(
-        self, query_id: str, metrics: list[EvaluationMetric], result: EvaluationResult
+        self,
+        query_id: str,
+        metrics: list[EvaluationMetric],
+        result: EvaluationResult,
+        failed: dict[str, str] | None = None,
+        skipped: dict[str, str] | None = None,
     ) -> EvaluationReport:
         overall_score = sum(m.value for m in metrics) / len(metrics) if metrics else 0.0
+        metadata = self._extract_search_metadata(result)
+        if failed:
+            metadata[FAILED_METRICS_KEY] = failed
+        if skipped:
+            metadata[SKIPPED_METRICS_KEY] = skipped
         return EvaluationReport(
             query_id=query_id,
             evaluator_type=self.evaluator_type,
             metrics=metrics,
             overall_score=overall_score,
             evaluation_time=datetime.now(),
-            metadata=self._extract_search_metadata(result),
+            metadata=metadata,
         )
+
+    def _should_skip(
+        self, metric_type: EvaluationMetricType, ground_truth: str
+    ) -> bool:
+        """Reference-based metrics are not applicable without a reference.
+
+        Datasets may legitimately omit ``answer`` (graph-aware-only rows), in
+        which case ground_truth is "". Judging correctness against an empty
+        reference yields an artificial zero, so the metric is skipped instead.
+        """
+        return self._requires_reference(metric_type) and not ground_truth.strip()
 
     def evaluate_single(
         self,
@@ -266,8 +305,13 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         **kwargs: Any,
     ) -> EvaluationReport:
         metrics = []
+        failed: dict[str, str] = {}
+        skipped: dict[str, str] = {}
         for metric_type in self.config.evaluation.langchain_metrics:
             if metric_type not in self.evaluators:
+                continue
+            if self._should_skip(metric_type, ground_truth):
+                skipped[metric_type.value] = SKIP_REASON_EMPTY_REFERENCE
                 continue
             try:
                 metric = self._evaluate_with_metric(
@@ -281,10 +325,10 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             except Exception as e:
                 if not self.ignore_errors:
                     raise
-                metrics.append(
-                    self._handle_evaluation_error(metric_type, query.query_id, e)
+                failed[metric_type.value] = self._handle_evaluation_error(
+                    metric_type, query.query_id, e
                 )
-        return self._create_report(query.query_id, metrics, result)
+        return self._create_report(query.query_id, metrics, result, failed, skipped)
 
     def _evaluate_with_metric(
         self,
@@ -333,9 +377,14 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
     ) -> EvaluationReport:
         tasks: list[Coroutine] = []
         metric_types_to_run: list[EvaluationMetricType] = []
+        failed: dict[str, str] = {}
+        skipped: dict[str, str] = {}
 
         for metric_type in self.config.evaluation.langchain_metrics:
             if metric_type in self.evaluators:
+                if self._should_skip(metric_type, ground_truth):
+                    skipped[metric_type.value] = SKIP_REASON_EMPTY_REFERENCE
+                    continue
                 tasks.append(
                     self._aevaluate_with_metric(
                         self.evaluators[metric_type],
@@ -355,15 +404,13 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             if isinstance(res, Exception):
                 if not self.ignore_errors:
                     raise res
-                error_metric = self._handle_evaluation_error(
+                failed[metric_type.value] = self._handle_evaluation_error(
                     metric_type, query.query_id, res
                 )
-                metrics.append(error_metric)
-            else:
-                if isinstance(res, EvaluationMetric):
-                    metrics.append(res)
+            elif isinstance(res, EvaluationMetric):
+                metrics.append(res)
 
-        return self._create_report(query.query_id, metrics, result)
+        return self._create_report(query.query_id, metrics, result, failed, skipped)
 
     async def _aevaluate_with_metric(
         self,

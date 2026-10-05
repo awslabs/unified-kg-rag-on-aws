@@ -81,6 +81,26 @@ async def test_claims_included_in_sweep_when_enabled(config: Config) -> None:
     assert os_r.calls[0].index_prefixes is None
 
 
+async def test_relationship_and_reports_excluded_when_not_built(
+    config: Config,
+) -> None:
+    # Claims ON but no relationship vector index / community detection -> the
+    # sweep is pinned to the indices the pipeline actually builds.
+    config.processing.claim_extraction.enabled = True
+    config.indexing.opensearch.build_relationship_vector_index = False
+    config.graph.community_detection.enabled = False
+    strategy, os_r = _make_strategy(config)
+
+    await strategy.asearch(SearchQuery(query="q"))
+
+    o = config.indexing.opensearch
+    assert os_r.calls[0].index_prefixes == [
+        o.text_units_index_prefix,
+        o.entities_index_prefix,
+        o.claims_index_prefix,
+    ]
+
+
 async def test_caller_pinned_prefixes_passed_through(config: Config) -> None:
     # When the caller pins index_prefixes, the gate never rewrites them.
     strategy, os_r = _make_strategy(config)

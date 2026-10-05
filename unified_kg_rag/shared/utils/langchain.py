@@ -3,6 +3,7 @@
 import asyncio
 import concurrent.futures
 import html
+import inspect
 import math
 import re
 from collections import defaultdict
@@ -78,6 +79,13 @@ class BatchProcessor(BaseModel):
         block the only worker for the full mini-batch; this bounds it so the
         caller can fall back to per-item retries. ``timeout_seconds <= 0`` runs
         ``func`` directly with no timeout.
+
+        Python cannot kill a thread, so a timed-out call is abandoned, not
+        cancelled: its in-flight Bedrock request(s) keep running (and billing)
+        until botocore's own read timeout or completion, while the caller's
+        fallback re-issues the same work. Keep ``call_timeout_seconds`` well
+        above normal call latency so this path stays reserved for genuinely hung
+        calls; the cost of a timeout is roughly one extra copy of the call.
         """
         if timeout_seconds <= 0:
             return func()
@@ -93,6 +101,12 @@ class BatchProcessor(BaseModel):
             result = future.result(timeout=timeout_seconds)
         except concurrent.futures.TimeoutError as exc:
             pool.shutdown(wait=False, cancel_futures=True)
+            logger.warning(
+                "'%s' exceeded the %ss call timeout; the abandoned call may still "
+                "complete in the background while the fallback re-issues it",
+                label,
+                timeout_seconds,
+            )
             raise TimeoutError(
                 f"'{label}' exceeded the {timeout_seconds}s call timeout"
             ) from exc
@@ -170,13 +184,13 @@ class BatchProcessor(BaseModel):
                 def run_batch(inputs: list[dict[str, Any]] = chunk_inputs) -> Any:
                     return prepared_batch_func(inputs)
 
-                results: list[Any] = self._run_with_timeout(
-                    run_batch,
-                    self.call_timeout_seconds,
-                    f"{task_name} batch chunk {chunk_num}",
+                results: list[Any] = list(
+                    self._run_with_timeout(
+                        run_batch,
+                        self.call_timeout_seconds,
+                        f"{task_name} batch chunk {chunk_num}",
+                    )
                 )
-                logger.debug("Chunk %s processed successfully in batch mode", chunk_num)
-                return list(results)
             except Exception as e:
                 logger.warning(
                     "Batch processing failed for chunk %s: %s. Falling back to "
@@ -190,6 +204,22 @@ class BatchProcessor(BaseModel):
                     f"{task_name} (chunk {chunk_num})",
                     show_progress=show_progress,
                 )
+
+            # The batch ran with return_exceptions=True: keep the successful
+            # results and retry ONLY the failed positions, so one bad item no
+            # longer re-pays every successful LLM call in its chunk.
+            failed = self._failed_indices(results)
+            if not failed:
+                logger.debug("Chunk %s processed successfully in batch mode", chunk_num)
+                return results
+            self._log_partial_failure(task_name, chunk_num, results, failed)
+            retried = self._process_sequentially_with_fallback(
+                [chunk_inputs[i] for i in failed],
+                retrying_sequential_func,
+                f"{task_name} (chunk {chunk_num} retry)",
+                show_progress=show_progress,
+            )
+            return self._splice_retried(results, failed, retried)
 
         # Chunks are independent Bedrock-bound batches; run them concurrently so
         # chunk N+1's LLM calls overlap chunk N's network wait instead of
@@ -225,11 +255,62 @@ class BatchProcessor(BaseModel):
         logger.info("Completed '%s': processed %s results", task_name, len(all_results))
         return all_results
 
+    @staticmethod
+    def _accepts_return_exceptions(func: Callable[..., Any]) -> bool:
+        """Whether ``func`` can take ``return_exceptions=`` (LangChain batch API).
+
+        ``Runnable.batch``/``abatch`` do; a plain ``(inputs, config=None)``
+        wrapper does not, and keeps the legacy all-or-nothing contract.
+        """
+        try:
+            params = inspect.signature(func).parameters.values()
+        except (TypeError, ValueError):
+            return False
+        return any(
+            p.name == "return_exceptions" or p.kind is inspect.Parameter.VAR_KEYWORD
+            for p in params
+        )
+
+    def _batch_kwargs(self, batch_func: Callable[..., Any]) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "config": RunnableConfig(max_concurrency=self.max_concurrency)
+        }
+        if self._accepts_return_exceptions(batch_func):
+            kwargs["return_exceptions"] = True
+        return kwargs
+
+    @staticmethod
+    def _failed_indices(results: list[Any]) -> list[int]:
+        return [i for i, res in enumerate(results) if isinstance(res, BaseException)]
+
+    @staticmethod
+    def _log_partial_failure(
+        task_name: str, chunk_num: int, results: list[Any], failed: list[int]
+    ) -> None:
+        logger.warning(
+            "Batch chunk %s of '%s': %s/%s items failed (first error: %s). "
+            "Retrying only the failed items",
+            chunk_num,
+            task_name,
+            len(failed),
+            len(results),
+            results[failed[0]],
+        )
+
+    @staticmethod
+    def _splice_retried(
+        results: list[Any], failed: list[int], retried: list[Any]
+    ) -> list[Any]:
+        merged = list(results)
+        for idx, res in zip(failed, retried, strict=True):
+            merged[idx] = res
+        return merged
+
     def _create_batch_func(self, batch_func: Callable[..., list[Any]]) -> Callable:
+        batch_kwargs = self._batch_kwargs(batch_func)
+
         def _batch_func(inputs: list[dict[str, Any]]) -> list[Any]:
-            return batch_func(
-                inputs, config=RunnableConfig(max_concurrency=self.max_concurrency)
-            )
+            return batch_func(inputs, **batch_kwargs)
 
         return _batch_func
 
@@ -358,7 +439,6 @@ class BatchProcessor(BaseModel):
 
             try:
                 chunk_results = await prepared_batch_func(chunk_inputs)
-                all_results.extend(chunk_results)
             except Exception as e:
                 logger.warning(
                     "Async batch processing failed for chunk %s: %s. Falling back to concurrent sequential processing",
@@ -372,15 +452,29 @@ class BatchProcessor(BaseModel):
                     show_progress,
                 )
                 all_results.extend(chunk_results)
+                continue
+
+            # Retry only the failed positions (see the sync path).
+            failed = self._failed_indices(chunk_results)
+            if failed:
+                self._log_partial_failure(task_name, chunk_num, chunk_results, failed)
+                retried = await self._aprocess_sequentially_with_fallback(
+                    [chunk_inputs[idx] for idx in failed],
+                    retrying_sequential_func,
+                    f"{task_name} (chunk {chunk_num} retry)",
+                    show_progress,
+                )
+                chunk_results = self._splice_retried(chunk_results, failed, retried)
+            all_results.extend(chunk_results)
 
         logger.info("Completed '%s': processed %s results", task_name, len(all_results))
         return all_results
 
     def _create_async_batch_func(self, batch_func: Callable[..., Any]) -> Callable:
+        batch_kwargs = self._batch_kwargs(batch_func)
+
         async def _batch_func(inputs: list[dict[str, Any]]) -> list[Any]:
-            result = await batch_func(
-                inputs, config=RunnableConfig(max_concurrency=self.max_concurrency)
-            )
+            result = await batch_func(inputs, **batch_kwargs)
             return list(result)
 
         return _batch_func

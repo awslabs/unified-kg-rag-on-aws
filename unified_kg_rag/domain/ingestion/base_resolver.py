@@ -11,11 +11,68 @@ from datasketch import MinHash, MinHashLSH
 
 from unified_kg_rag.domain.models import Config, ResolutionMethod
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import default_max_workers, normalize_name
+from unified_kg_rag.shared.utils import (
+    default_max_workers,
+    entity_key,
+    normalize_name,
+)
 
 logger = get_logger(__name__)
 
 MatchResult: TypeAlias = tuple[str, float] | None
+
+# Multi-letter Roman numerals ("ii", "iv", "xii"); single letters ("i", "v",
+# "x") are already covered by the single-character rule below.
+_RE_ROMAN_NUMERAL = re.compile(r"x{0,3}(?:ix|iv|v?i{0,3})")
+
+# Entity types that carry no information and so never block a merge.
+_GENERIC_ENTITY_TYPES = frozenset({"", "unknown"})
+
+
+def discriminator_tokens(name: str | None) -> frozenset[str]:
+    """Return the tokens of ``name`` that identify *which* instance it denotes.
+
+    Character-shingle similarity cannot tell "purchase order 1001" from
+    "purchase order 1002" or "vendor a" from "vendor b": the shared prefix
+    dominates the score. The differing part is a short identifier token, so
+    two names may only be fuzzy-linked when their discriminator tokens are
+    identical. After :func:`normalize_name` tokenization, a token counts as a
+    discriminator when it
+
+    * contains a digit (``1001``, ``4``, ``2b``, ``v2``), or
+    * is a single ASCII letter or digit (``a``, ``b``), or
+    * is a multi-letter Roman numeral (``ii``, ``iv``, ``xii``).
+
+    Requiring *equality* (not overlap) keeps the relation transitive, so a
+    cluster built from guarded links can never contain two members whose
+    discriminators differ. The rule is deliberately conservative: a variant
+    that only one side spells with an initial ("J. Smith" vs "Smith") stays a
+    separate entity rather than risking a wrong merge.
+    """
+    tokens = normalize_name(name).split()
+    return frozenset(
+        token
+        for token in tokens
+        if any(c.isdigit() for c in token)
+        or (len(token) == 1 and token.isascii() and token.isalnum())
+        or (len(token) > 1 and token.isascii() and _RE_ROMAN_NUMERAL.fullmatch(token))
+    )
+
+
+def normalize_entity_type(entity_type: str | None) -> str:
+    """Normalize an entity type for compatibility checks ("" = unknown)."""
+    normalized = normalize_name(entity_type)
+    return "" if normalized in _GENERIC_ENTITY_TYPES else normalized
+
+
+def entity_types_compatible(type_a: str | None, type_b: str | None) -> bool:
+    """Whether two entity types allow a fuzzy merge.
+
+    Types are compatible when they normalize to the same value or either side
+    is empty/unknown (the extractor does not always emit a type).
+    """
+    a, b = normalize_entity_type(type_a), normalize_entity_type(type_b)
+    return not a or not b or a == b
 
 
 class FuzzyMatcher:
@@ -86,7 +143,12 @@ class FuzzyMatcher:
 
     def _build_indices(self) -> None:
         self.exact_index = {name: name for name in self.candidates}
-        self.normalized_index = {normalize_name(name): name for name in self.candidates}
+        self.normalized_index = {entity_key(name): name for name in self.candidates}
+        # Precomputed once so find_all_matches' identifier guard is a dict
+        # lookup per candidate rather than a re-normalization.
+        self.discriminator_index = {
+            name: discriminator_tokens(name) for name in self.candidates
+        }
         self.abbreviation_index: dict[str, str] = {}
         for name in self.candidates:
             for abbrev in self._generate_abbreviations(name):
@@ -117,7 +179,7 @@ class FuzzyMatcher:
         cls, text: str, minhash_permutations: int = 128, n_grams: int = 3
     ) -> MinHash:
         minhash = MinHash(num_perm=minhash_permutations)
-        normalized_text = normalize_name(text)
+        normalized_text = entity_key(text)
 
         if len(normalized_text) < n_grams:
             shingles = {normalized_text}
@@ -164,12 +226,29 @@ class FuzzyMatcher:
         tier: grouping fans every match into a merge cluster, and abbreviation
         matches ("AC" -> "Acme Corp") are too aggressive there (they would
         over-merge unrelated entities). Exact/normalized equality is still
-        covered — ``_create_minhash`` normalizes (NFKC/casefold) before
-        shingling, so normalized-equal names (incl. CJK) score 1.0 under LSH.
+        covered — ``_create_minhash`` shingles the ``entity_key`` (NFKC/casefold,
+        symbols kept), so key-equal names (incl. CJK) score 1.0 under LSH while
+        "C++" and "C#" do not collide.
+
+        Candidates whose :func:`discriminator_tokens` differ from the query's
+        are dropped: "purchase order 1001" and "purchase order 1002" share most
+        shingles but name different things, and every consumer of this method
+        (full-build grouping, incremental merge) would otherwise collapse them.
         """
         if self.resolution_method == ResolutionMethod.MINHASH:
-            return self._find_all_lsh_matches(query)
-        return self._find_all_string_similarity_matches(query)
+            matches = self._find_all_lsh_matches(query)
+        else:
+            matches = self._find_all_string_similarity_matches(query)
+        query_discriminators = discriminator_tokens(query)
+        return [
+            match
+            for match in matches
+            if self._discriminators_of(match[0]) == query_discriminators
+        ]
+
+    def _discriminators_of(self, candidate: str) -> frozenset[str]:
+        cached = self.discriminator_index.get(candidate)
+        return cached if cached is not None else discriminator_tokens(candidate)
 
     def _find_all_lsh_matches(self, query: str) -> list[tuple[str, float]]:
         if self.resolution_method != ResolutionMethod.MINHASH:
@@ -189,14 +268,14 @@ class FuzzyMatcher:
     def _find_all_string_similarity_matches(
         self, query: str
     ) -> list[tuple[str, float]]:
-        normalized_query = normalize_name(query)
+        normalized_query = entity_key(query)
         matches = []
 
         for candidate_name in self.candidates:
             if query == candidate_name:
                 continue
 
-            normalized_candidate = normalize_name(candidate_name)
+            normalized_candidate = entity_key(candidate_name)
             score = SequenceMatcher(
                 None, normalized_query, normalized_candidate
             ).ratio()
@@ -213,7 +292,7 @@ class FuzzyMatcher:
             logger.debug("Found exact match for '%s': %s", query, match)
             return match, 1.0
 
-        normalized_query = normalize_name(query)
+        normalized_query = entity_key(query)
         if match := self.normalized_index.get(normalized_query):
             logger.debug("Found normalized match for '%s': %s", query, match)
             return match, 0.95
@@ -318,7 +397,7 @@ class FuzzyMatcher:
         best_score = 0.0
 
         for candidate_name in self.candidates:
-            normalized_candidate = normalize_name(candidate_name)
+            normalized_candidate = entity_key(candidate_name)
             score = 0.0
 
             if normalized_query in normalized_candidate:
@@ -349,7 +428,7 @@ class FuzzyMatcher:
             (
                 candidate_name,
                 SequenceMatcher(
-                    None, normalized_query, normalize_name(candidate_name)
+                    None, normalized_query, entity_key(candidate_name)
                 ).ratio(),
             )
             for candidate_name in self.candidates

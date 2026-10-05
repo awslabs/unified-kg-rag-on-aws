@@ -2,12 +2,88 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import threading
 from functools import lru_cache
 from typing import Any
+
+from botocore.exceptions import ClientError, ParamValidationError
 
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
+
+# Bedrock error codes meaning "this model/operation will never accept
+# CountTokens" (no IAM permission, unknown operation on an old endpoint, unknown
+# model). Throttling, 5xx, model-not-ready and timeouts are transient and
+# deliberately absent: they must not permanently disable the API for a model.
+_UNSUPPORTED_ERROR_CODES: frozenset[str] = frozenset(
+    {
+        "AccessDeniedException",
+        "UnknownOperationException",
+        "ResourceNotFoundException",
+    }
+)
+
+# ``ValidationException`` is ambiguous: Bedrock returns it both for a model that
+# does not support CountTokens and for a bad *input* (e.g. a blank text block).
+# Only the former is permanent, so it is recognised by its message; any other
+# ValidationException fails just the current call.
+_VALIDATION_UNSUPPORTED_MARKERS: tuple[str, ...] = (
+    "doesn't support",
+    "does not support",
+    "not supported",
+    "unsupported",
+)
+
+# Process-wide negative cache of model ids whose CountTokens call failed with a
+# non-transient error. ``lru_cache`` does not memoize exceptions, so without
+# this every count for such a model paid a failing network round trip.
+_unsupported_model_ids: set[str] = set()
+_unsupported_lock = threading.Lock()
+
+
+def is_count_tokens_unsupported_error(error: BaseException) -> bool:
+    """Whether a CountTokens failure means the model will never support it.
+
+    Client-side request-shape errors and a client lacking the operation
+    (botocore too old) are deterministic too, so they count as unsupported. A
+    ``ValidationException`` counts only when its message says the model or
+    operation is unsupported; otherwise it is an input problem for that call.
+    """
+    if isinstance(error, ClientError):
+        err = error.response.get("Error", {})
+        code = str(err.get("Code", ""))
+        if code == "ValidationException":
+            message = str(err.get("Message", "")).lower()
+            return any(marker in message for marker in _VALIDATION_UNSUPPORTED_MARKERS)
+        return code in _UNSUPPORTED_ERROR_CODES
+    return isinstance(error, (ParamValidationError, AttributeError))
+
+
+def is_count_tokens_known_unsupported(model_id: str) -> bool:
+    with _unsupported_lock:
+        return model_id in _unsupported_model_ids
+
+
+def mark_count_tokens_unsupported(model_id: str, reason: object) -> None:
+    """Record that ``model_id`` rejects CountTokens; logs only the first time."""
+    with _unsupported_lock:
+        if model_id in _unsupported_model_ids:
+            return
+        _unsupported_model_ids.add(model_id)
+    logger.info(
+        "Bedrock count_tokens is unsupported for model '%s' (%s); using the "
+        "script-aware estimate for the rest of this process.",
+        model_id,
+        reason,
+    )
+
+
+def clear_count_tokens_unsupported_cache() -> None:
+    """Forget every negative CountTokens result (tests, credential rotation)."""
+    with _unsupported_lock:
+        _unsupported_model_ids.clear()
+
 
 # Codepoint ranges that tokenize at roughly ONE token per character (often more)
 # under BPE tokenizers: CJK ideographs + Japanese kana + Hangul + CJK
@@ -63,6 +139,12 @@ class BedrockTokenCounter:
     fails (e.g. transient error or a model that does not support the API), it
     degrades to a script-aware estimate purely to keep the pipeline running — no
     third-party tokenizer is used, so counting stays consistent with the model.
+
+    A non-transient failure (see ``is_count_tokens_unsupported_error``) marks the
+    model unsupported process-wide, so later counts skip the API entirely.
+    Callers that already know the model cannot be counted (embedding and rerank
+    models do not accept the Converse input this counter sends) pass
+    ``api_supported=False`` and may pass ``client=None``.
     """
 
     MAX_TRUNCATION_ITERATIONS: int = 8
@@ -72,9 +154,12 @@ class BedrockTokenCounter:
         model_id: str,
         client: Any,
         cache_maxsize: int = 1024,
+        *,
+        api_supported: bool = True,
     ) -> None:
         self.model_id = model_id
         self._client = client
+        self._api_supported = api_supported and client is not None
 
         @lru_cache(maxsize=cache_maxsize)
         def _cached_count(text: str) -> int:
@@ -85,14 +170,24 @@ class BedrockTokenCounter:
     def count_tokens(self, text: str) -> int:
         """Count tokens via the Bedrock count_tokens API (LRU-cached).
 
-        Degrades to a whitespace word count only if the API call fails, so the
-        pipeline never crashes on an unsupported model or transient error.
+        Degrades to the script-aware estimate if the API call fails, so the
+        pipeline never crashes on an unsupported model or transient error. Once
+        the model is known to be unsupported, the API is no longer called.
         """
         if not text:
             return 0
+        # Converse rejects blank text blocks with a ValidationException; never
+        # send one (it would also be indistinguishable from a model rejection).
+        if not text.strip():
+            return estimate_token_count(text)
+        if not self._api_supported or is_count_tokens_known_unsupported(self.model_id):
+            return estimate_token_count(text)
         try:
             return self._cached_count(text)
         except Exception as e:
+            if is_count_tokens_unsupported_error(e):
+                mark_count_tokens_unsupported(self.model_id, e)
+                return estimate_token_count(text)
             logger.debug(
                 "Bedrock count_tokens failed for model '%s': %s. Degrading to "
                 "script-aware estimate.",
