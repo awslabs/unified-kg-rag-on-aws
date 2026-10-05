@@ -1691,6 +1691,18 @@ class LightRAGSearchConfig(BaseModel):
             "distributed on a decreasing gradient so the last match still gets one."
         ),
     )
+    enable_graph_expansion: bool = Field(
+        default=False,
+        description=(
+            "hybrid/mix: also expand the entity hits and relationship endpoints "
+            "through the Neptune graph (indexing.neptune.max_hops) and add the "
+            "neighbourhood as entity candidates. Off by default: upstream LightRAG "
+            "has no multi-hop traversal (its graph context is the matched items "
+            "plus their one-hop incident edges and endpoint entities, which this "
+            "strategy already retrieves), and the extra Neptune round trip adds "
+            "latency and entities less related to the query."
+        ),
+    )
 
 
 class QueryLLMRetryConfig(BaseModel):

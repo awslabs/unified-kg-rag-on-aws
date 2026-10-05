@@ -478,6 +478,10 @@ search:
     # Chunks allocated per matched entity/relationship when following text-unit
     # lineage (slots decrease across matches so the last match still gets one).
     related_chunk_number: 5
+    # hybrid/mix: additionally expand matched entities through Neptune
+    # (indexing.neptune.max_hops). Off by default, as in upstream LightRAG: the
+    # one-hop incident edges and relationship endpoints are already retrieved.
+    enable_graph_expansion: false
 
   # Global Search Configuration
   global_search:

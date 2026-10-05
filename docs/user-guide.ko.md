@@ -715,7 +715,7 @@ OpenSearch analyzer는 `indexing.opensearch.language_analyzers`(예: `ko: nori`)
 
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
-| `mix` | 일반 LightRAG 용도; 그래프 + 청크 균형 | 저수준 키워드 → 엔티티 인덱스, 고수준 키워드 → 관계 인덱스, Neptune 확장, **추가로** naive 벡터 청크 검색을 섞음. |
+| `mix` | 일반 LightRAG 용도; 그래프 + 청크 균형 | 저수준 키워드 → 엔티티 인덱스, 고수준 키워드 → 관계 인덱스, 1홉 연결 관계·끝점 엔티티 확장(Neptune 다중 홉 확장은 `search.lightrag_search.enable_graph_expansion`으로 선택), **추가로** naive 벡터 청크 검색을 섞음. |
 | `hybrid` | 키워드 기반 그래프 질문 | `mix`와 동일하나 추가 naive 청크 혼합 없음. |
 | `naive` | 빠른 베이스라인 / 비교 평가 | 순수 벡터 청크 검색, 그래프 없음. LightRAG 베이스라인. |
 

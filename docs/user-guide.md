@@ -723,7 +723,7 @@ rerank); only the retrieval algorithm differs.
 
 | Strategy | Use when | How it works |
 |---|---|---|
-| `mix` | General LightRAG use; balances graph + chunks | Low-level keywords → entity index, high-level keywords → relationship index, Neptune expansion, **plus** naive vector chunk retrieval blended in. |
+| `mix` | General LightRAG use; balances graph + chunks | Low-level keywords → entity index, high-level keywords → relationship index, one-hop incident-relationship / endpoint-entity expansion (Neptune multi-hop expansion is opt-in: `search.lightrag_search.enable_graph_expansion`), **plus** naive vector chunk retrieval blended in. |
 | `hybrid` | Keyword-driven graph questions | Same as `mix` but without the extra naive chunk blend. |
 | `naive` | Fast baseline / comparison eval | Pure vector chunk retrieval, no graph. The LightRAG baseline. |
 
