@@ -504,18 +504,18 @@ search:
     initial_top_k: 5
 
   token_manager:
-    max_context_tokens: null        # null => 답변 모델의 창 크기에서 자동 도출
+    max_context_tokens: 30000       # null => 답변 모델의 창 크기에서 자동 도출
     context_window_headroom_ratio: 0.1
 ```
 
-> **컨텍스트 예산은 고정값이 아니라 도출값입니다.** `max_context_tokens: null`
-> (기본값)이면 검색 컨텍스트 예산을 `search.answer_generation_model_id`의 컨텍스트
-> 창에서 해당 모델의 출력 예약분과 헤드룸 비율을 뺀 값으로 계산합니다. 이렇게 해야
-> 두 값이 어긋나지 않습니다 — 하드코딩된 단일 숫자는 200K 모델의 창을 넘기거나
-> (창이 프롬프트와 답변을 **함께** 담아야 하므로) 1M 창의 대부분을 놀리게 됩니다.
-> 명시값도 존중되지만 모델이 수용 가능한 한도로 클램프되며, 그때 경고 로그가
-> 남습니다. `aws.bedrock.enable_1m_context`를 켜면 1M 창이 베타 옵트인인 모델에서
-> 도출 예산이 함께 넓어집니다.
+> **컨텍스트 예산.** 기본값 `max_context_tokens: 30000`은 upstream LightRAG의 전체
+> 컨텍스트 예산과 같습니다(MS GraphRAG는 12000). 1M 토큰 답변 모델의 창에서 도출하면
+> 예산이 약 785K 토큰이 되어 실제로 제한이 걸리지 않으므로, 유형별 예산과 우선순위가
+> 아무것도 잘라 내지 않습니다. 이 값은 항상 `search.answer_generation_model_id`가 출력
+> 예약분과 함께 수용할 수 있는 한도로 클램프되며, 그때 경고 로그가 남습니다.
+> `max_context_tokens: null`이면 해당 모델의 컨텍스트 창에서 출력 예약분과 헤드룸 비율을
+> 뺀 값으로 예산을 도출하며, `aws.bedrock.enable_1m_context`를 켜면 1M 창이 베타
+> 옵트인인 모델에서 도출 예산이 함께 넓어집니다.
 
 ### 2.7 `memory`, `cache`, `logging`
 

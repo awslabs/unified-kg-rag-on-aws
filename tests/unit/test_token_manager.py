@@ -602,3 +602,14 @@ class TestContextTypeBudgetConfig:
             assert hasattr(
                 ContextTypeBudgetConfig(), TokenManager._BUDGET_FIELDS[section_type]
             )
+
+
+def test_default_config_budget_is_fixed_not_window_derived(mocker) -> None:
+    # The shipped default binds (30K, upstream LightRAG parity) instead of the
+    # ~785K a 1M-window derivation yields; it stays clamped to the model.
+    mocker.patch.object(tm_module, "boto3")
+    mocker.patch.object(tm_module, "get_assumed_role_boto_session")
+    mocker.patch.object(tm_module, "BedrockTokenCounter", return_value=mocker.Mock())
+    config = Config()
+    assert config.search.token_manager.max_context_tokens == 30_000
+    assert TokenManager(config)._max_context_tokens == 30_000

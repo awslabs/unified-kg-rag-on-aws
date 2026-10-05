@@ -1644,14 +1644,18 @@ class ContextTypeBudgetConfig(BaseModel):
 
 class TokenManagerConfig(BaseModel):
     max_context_tokens: int | None = Field(
-        default=None,
+        default=30_000,
         ge=1024,
         description=(
-            "Prompt-side context budget in tokens. Leave null (recommended) to "
-            "derive it from the answer model's own context window minus its "
-            "output reservation — a hardcoded value silently overflows a smaller "
-            "model's window and wastes a larger one. An explicit value is "
-            "honoured but clamped to what the model can actually accept."
+            "Prompt-side retrieval context budget in tokens. Default 30,000 "
+            "matches upstream LightRAG's total context budget "
+            "(DEFAULT_MAX_TOTAL_TOKENS); MS GraphRAG uses 12,000. Deriving the "
+            "budget from the answer model's window gives ~785K tokens on a 1M "
+            "model, so it never binds: the per-type budgets and priority "
+            "ordering never trim anything and every query pays for the whole "
+            "retrieved set. The value is always clamped to what the answer "
+            "model can accept alongside its output reservation. Set null to "
+            "derive the budget from the window instead."
         ),
     )
     context_window_headroom_ratio: float = Field(

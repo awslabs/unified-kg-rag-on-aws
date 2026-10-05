@@ -569,11 +569,12 @@ search:
 
   # Token Manager Configuration
   token_manager:
-    # Prompt-side context budget. Leave null to derive it from the answer
-    # model's own window minus its output reservation and the headroom below —
-    # a hardcoded number overflows a smaller model's window and wastes a larger
-    # one. An explicit value is honoured but clamped to what the model accepts.
-    max_context_tokens: null
+    # Prompt-side retrieval context budget. 30000 = upstream LightRAG's total
+    # context budget (MS GraphRAG uses 12000); a budget derived from a 1M window
+    # (~785K) never binds, so nothing is ever trimmed. Always clamped to what
+    # the answer model accepts. null derives it from the model's window minus
+    # its output reservation and the headroom below.
+    max_context_tokens: 30000
     # Share of the window held back for the system prompt, question, history,
     # and token-estimation error when deriving the budget above.
     context_window_headroom_ratio: 0.1

@@ -507,20 +507,20 @@ search:
     initial_top_k: 5
 
   token_manager:
-    max_context_tokens: null        # null => derive from the answer model's window
+    max_context_tokens: 30000       # null => derive from the answer model's window
     context_window_headroom_ratio: 0.1
 ```
 
-> **Context budget is derived, not fixed.** With `max_context_tokens: null`
-> (the default) the retrieval context budget is computed from
-> `search.answer_generation_model_id`'s own context window, minus that model's
-> output reservation and the headroom ratio. This keeps the two in agreement: a
-> single hardcoded number either overflows a 200K model's window (the window
-> must hold the prompt *and* the answer) or leaves most of a 1M window unused.
-> An explicit value is still honoured, but is clamped to what the model can
-> accept — a warning names the clamp when that happens. Enabling
-> `aws.bedrock.enable_1m_context` widens the derived budget on models whose 1M
-> window is a beta opt-in.
+> **Context budget.** The default `max_context_tokens: 30000` matches upstream
+> LightRAG's total context budget (MS GraphRAG uses 12000). A budget derived
+> from a 1M-token answer model's window is ~785K tokens, which never binds, so
+> the per-type budgets and priority ordering would never trim anything. The
+> value is always clamped to what `search.answer_generation_model_id` can
+> accept alongside its output reservation — a warning names the clamp when
+> that happens. With `max_context_tokens: null` the budget is instead derived
+> from that model's context window, minus its output reservation and the
+> headroom ratio; enabling `aws.bedrock.enable_1m_context` widens the derived
+> budget on models whose 1M window is a beta opt-in.
 
 ### 2.7 `memory`, `cache`, `logging`
 
