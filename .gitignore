@@ -199,6 +199,8 @@ reference/
 references/
 
 config.yaml
+# The image config is endpoint-free (values come from env vars), so it is tracked.
+!docker/config.yaml
 
 # CDK synth artifacts (synthesized from iac/)
 cdk.out/

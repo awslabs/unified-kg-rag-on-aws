@@ -1,0 +1,35 @@
+# Config baked into the data-plane image as /app/config.yaml.
+#
+# Intentionally endpoint-free: the CDK compute stack injects every
+# deployment-specific value as an environment variable, and ConfigLoader
+# applies those on top of this file (AWS_REGION, BEDROCK_REGION,
+# NEPTUNE_ENDPOINT, OPENSEARCH_ENDPOINT, S3_BUCKET_NAME,
+# GRAPHRAG_DOC_STATUS_TABLE, GRAPHRAG_DOC_STATUS_CREATE_TABLE, LOG_FORMAT and,
+# when a guardrail is deployed, BEDROCK_GUARDRAIL_IDENTIFIER). The source
+# directory and pipeline id arrive per run via GRAPHRAG_SOURCE_DIRECTORY /
+# GRAPHRAG_PIPELINE_ID.
+#
+# Every key not listed here uses the default documented in
+# config-template.yaml. Only settings where the deployed stack differs from
+# those defaults belong in this file.
+
+aws:
+  opensearch:
+    # The IaC domain authorizes IAM-signed (SigV4) requests from the task role;
+    # it has no basic-auth user.
+    use_iam: true
+  dynamodb:
+    # The stack provisions the doc-status table (KMS, PITR, alarms) for
+    # incremental indexing; its name is injected via GRAPHRAG_DOC_STATUS_TABLE.
+    enabled: true
+
+graph:
+  visualization:
+    # Off in the image: render output would land on the task's ephemeral disk
+    # and be discarded when the task exits. Run `run-visualization` locally
+    # against exported graph data instead.
+    enabled: false
+
+logging:
+  # The container logs to stdout, which the awslogs driver ships to CloudWatch.
+  log_to_file: false
