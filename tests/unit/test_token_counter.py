@@ -162,8 +162,17 @@ def test_truncate_noop_when_within_limit() -> None:
 # --------------------------------------------------------------------------- #
 # Negative cache for models that reject CountTokens
 # --------------------------------------------------------------------------- #
-def _client_error(code: str) -> ClientError:
-    return ClientError({"Error": {"Code": code, "Message": "synthetic"}}, "CountTokens")
+_UNSUPPORTED_MODEL_MESSAGE = "The provided model doesn't support counting tokens."
+
+
+def _client_error(code: str, message: str | None = None) -> ClientError:
+    if message is None:
+        # A ValidationException is only permanent when it names the model as
+        # unsupported; other codes are permanent regardless of the message.
+        message = (
+            _UNSUPPORTED_MODEL_MESSAGE if code == "ValidationException" else "synthetic"
+        )
+    return ClientError({"Error": {"Code": code, "Message": message}}, "CountTokens")
 
 
 class ErrorClient:
@@ -217,6 +226,7 @@ def test_negative_cache_is_per_model_id() -> None:
 @pytest.mark.parametrize(
     "error",
     [
+        _client_error("ValidationException", "Malformed input request: text is blank"),
         _client_error("ThrottlingException"),
         _client_error("ServiceUnavailableException"),
         _client_error("InternalServerException"),
@@ -233,6 +243,57 @@ def test_transient_error_does_not_disable_api(error: Exception) -> None:
     counter.count_tokens("three four")
     assert client.calls == 3
     assert not is_count_tokens_known_unsupported("flaky-model")
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "The provided model doesn't support counting tokens.",
+        "This model does not support the CountTokens operation",
+        "Operation not supported for this model",
+        "UNSUPPORTED model",
+    ],
+)
+def test_validation_exception_unsupported_message_marks_model(message: str) -> None:
+    client = ErrorClient(_client_error("ValidationException", message))
+    counter = BedrockTokenCounter("vx-model", client)
+    counter.count_tokens("alpha")
+    counter.count_tokens("beta")
+    assert client.calls == 1
+    assert is_count_tokens_known_unsupported("vx-model")
+
+
+def test_input_validation_exception_fails_only_that_call() -> None:
+    class _RejectsOneInput:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def count_tokens(self, **kwargs: object) -> dict:
+            self.calls += 1
+            text = kwargs["input"]["converse"]["messages"][0]["content"][0]["text"]  # type: ignore[index]
+            if text == "bad input":
+                raise _client_error(
+                    "ValidationException", "Input is too long for model"
+                )
+            return {"inputTokens": 7}
+
+    client = _RejectsOneInput()
+    counter = BedrockTokenCounter("input-model", client)
+    assert counter.count_tokens("bad input") == estimate_token_count("bad input")
+    assert not is_count_tokens_known_unsupported("input-model")
+    assert counter.count_tokens("good input") == 7
+    assert client.calls == 2
+
+
+@pytest.mark.parametrize("text", ["\n\n", "   ", "\t \r\n"])
+def test_whitespace_only_text_skips_api_and_keeps_it_enabled(text: str) -> None:
+    client = FakeBedrockClient()
+    counter = BedrockTokenCounter("ws-model", client)
+    assert counter.count_tokens(text) == estimate_token_count(text)
+    assert client.calls == 0
+    assert not is_count_tokens_known_unsupported("ws-model")
+    counter.count_tokens("real text")
+    assert client.calls == 1
 
 
 def test_api_recovers_after_transient_error() -> None:

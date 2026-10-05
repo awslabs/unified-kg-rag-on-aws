@@ -13,16 +13,26 @@ from unified_kg_rag.shared import get_logger
 logger = get_logger(__name__)
 
 # Bedrock error codes meaning "this model/operation will never accept
-# CountTokens" (unsupported model, no IAM permission, unknown operation on an
-# old endpoint). Throttling, 5xx, model-not-ready and timeouts are transient and
+# CountTokens" (no IAM permission, unknown operation on an old endpoint, unknown
+# model). Throttling, 5xx, model-not-ready and timeouts are transient and
 # deliberately absent: they must not permanently disable the API for a model.
 _UNSUPPORTED_ERROR_CODES: frozenset[str] = frozenset(
     {
-        "ValidationException",
         "AccessDeniedException",
         "UnknownOperationException",
         "ResourceNotFoundException",
     }
+)
+
+# ``ValidationException`` is ambiguous: Bedrock returns it both for a model that
+# does not support CountTokens and for a bad *input* (e.g. a blank text block).
+# Only the former is permanent, so it is recognised by its message; any other
+# ValidationException fails just the current call.
+_VALIDATION_UNSUPPORTED_MARKERS: tuple[str, ...] = (
+    "doesn't support",
+    "does not support",
+    "not supported",
+    "unsupported",
 )
 
 # Process-wide negative cache of model ids whose CountTokens call failed with a
@@ -36,10 +46,16 @@ def is_count_tokens_unsupported_error(error: BaseException) -> bool:
     """Whether a CountTokens failure means the model will never support it.
 
     Client-side request-shape errors and a client lacking the operation
-    (botocore too old) are deterministic too, so they count as unsupported.
+    (botocore too old) are deterministic too, so they count as unsupported. A
+    ``ValidationException`` counts only when its message says the model or
+    operation is unsupported; otherwise it is an input problem for that call.
     """
     if isinstance(error, ClientError):
-        code = str(error.response.get("Error", {}).get("Code", ""))
+        err = error.response.get("Error", {})
+        code = str(err.get("Code", ""))
+        if code == "ValidationException":
+            message = str(err.get("Message", "")).lower()
+            return any(marker in message for marker in _VALIDATION_UNSUPPORTED_MARKERS)
         return code in _UNSUPPORTED_ERROR_CODES
     return isinstance(error, (ParamValidationError, AttributeError))
 
@@ -160,6 +176,10 @@ class BedrockTokenCounter:
         """
         if not text:
             return 0
+        # Converse rejects blank text blocks with a ValidationException; never
+        # send one (it would also be indistinguishable from a model rejection).
+        if not text.strip():
+            return estimate_token_count(text)
         if not self._api_supported or is_count_tokens_known_unsupported(self.model_id):
             return estimate_token_count(text)
         try:
