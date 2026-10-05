@@ -506,7 +506,16 @@ class DriftSearchStrategy(BaseSearchStrategy):
         if not self.document_retriever:
             return []
 
-        n_candidates = len(query.entity_focus) * self.entity_focus_multiplier
+        # Size the candidate set from the extracted entity focus; when nothing
+        # was extracted, fall back to the iteration's own query text (the
+        # original or follow-up question) with top_k candidates, as local
+        # search does, instead of asking for 0 and seeding no graph expansion.
+        if query.entity_focus:
+            n_candidates = len(query.entity_focus) * self.entity_focus_multiplier
+        elif query.query:
+            n_candidates = query.top_k
+        else:
+            return []
         entity_search_query = query.model_copy(deep=True)
         entity_search_query.index_prefixes = [
             self.config.indexing.opensearch.entities_index_prefix

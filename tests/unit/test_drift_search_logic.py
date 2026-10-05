@@ -283,6 +283,29 @@ async def test_find_candidate_entities_prefers_metadata_id_over_source() -> None
     assert sent.retrieval_multiplier == 1
 
 
+async def test_find_candidate_entities_falls_back_to_query_text() -> None:
+    # Regression: with no extracted entity focus, n_candidates was
+    # 0 * multiplier = 0, so a DRIFT iteration seeded no graph expansion.
+    retriever = _StubRetriever([_result("x", source="e-1", metadata={"id": "e-1"})])
+    strat = _bare_strategy(retrievers={"document": retriever})
+    query = SearchQuery(query="follow-up about the vendor", top_k=7)
+    assert await strat._find_candidate_entities_for_iteration(query) == ["e-1"]
+    sent = retriever.last_query
+    assert sent is not None
+    assert sent.query == "follow-up about the vendor"
+    assert sent.top_k == 7
+    assert sent.index_prefixes == ["entities"]
+
+
+async def test_find_candidate_entities_empty_query_and_focus_short_circuits() -> None:
+    retriever = _StubRetriever([_result("x", source="e-1")])
+    strat = _bare_strategy(retrievers={"document": retriever})
+    assert (
+        await strat._find_candidate_entities_for_iteration(SearchQuery(query="")) == []
+    )
+    assert retriever.last_query is None
+
+
 async def test_find_candidate_entities_swallows_error() -> None:
     strat = _bare_strategy(
         retrievers={"document": _StubRetriever(raises=RuntimeError("os"))}
