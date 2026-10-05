@@ -204,7 +204,8 @@ aws:
 > 동작을 유지하려면 `apply_to: "all"`로 설정합니다. 질의가 아닌 작업에서
 > `setup_chain`으로 체인을 만들거나 `get_model`을 직접 호출하는 사용자 코드는
 > `model_purpose=ModelPurpose.INGESTION`(또는 `EVALUATION`)을 넘겨야 합니다.
-> 지정하지 않은 호출은 `QUERY`로 간주해 Guardrail이 계속 적용됩니다.
+> 지정하지 않은 호출은 `QUERY`로 간주해 Guardrail이 계속 적용되고, `setup_chain`이
+> 질의 시점의 일시적 오류 재시도도 함께 적용합니다.
 
 > **S3 캐시 암호화:** 기본값 `encryption_type: "BUCKET_DEFAULT"`는 객체별 SSE
 > 헤더를 보내지 않으므로 S3가 버킷의 기본 암호화를 적용합니다. CDK 스택에서

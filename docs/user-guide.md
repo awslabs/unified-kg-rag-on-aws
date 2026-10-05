@@ -205,7 +205,8 @@ aws:
 > `apply_to: "all"`. Custom code that builds chains with `setup_chain` or calls
 > `get_model` for non-query work should pass
 > `model_purpose=ModelPurpose.INGESTION` (or `EVALUATION`). Unmarked calls
-> default to `QUERY` and stay guarded.
+> default to `QUERY`: they stay guarded and `setup_chain` also wraps them in the
+> query-time transient-error retry.
 
 > **S3 cache encryption:** the default `encryption_type: "BUCKET_DEFAULT"` sends
 > no per-object SSE header, so S3 applies the bucket's default encryption. With

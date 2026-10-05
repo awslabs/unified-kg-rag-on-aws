@@ -24,6 +24,7 @@ from langchain_core.prompts import (
 )
 from langchain_core.runnables import Runnable, RunnableConfig
 
+from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.bedrock_retry import next_transient_retry_delay
 from unified_kg_rag.domain.models import LanguageModelId, ModelPurpose
 from unified_kg_rag.domain.prompts import BasePrompt, ResolvedPrompt
@@ -236,20 +237,18 @@ def setup_chain(
     parser: BaseOutputParser,
     custom_prompts: CustomPromptConfig | None = None,
     model_purpose: ModelPurpose = ModelPurpose.QUERY,
-    retry: QueryLLMRetryConfig | None = None,
     **kwargs: Any,
 ) -> Runnable:
-    """Build ``prompt | llm | parser``.
+    """Build ``prompt | llm | parser`` with the policies of ``model_purpose``.
 
-    ``model_purpose`` tells the factory which path the model serves; ingestion
-    and evaluation call sites must pass it explicitly so query-only policies
-    (guardrails with ``apply_to: query``) are not applied to them. The default
-    ``QUERY`` keeps an unmarked call site on the guarded, conservative side.
-
-    ``retry`` is for query-time chains only: it wraps the whole chain in a
-    transient-Bedrock-error retry. Leave it ``None`` for ingestion chains,
-    which ``BatchProcessor`` already retries; wrapping those too would
-    multiply the attempts.
+    ``QUERY`` (the default, so an unmarked call site stays on the guarded,
+    conservative side) gets the query guardrail scope (``guardrail.apply_to``,
+    applied by the factory) and, on a Bedrock factory, a transient-error retry
+    around the whole chain. Ingestion and evaluation call sites pass their
+    purpose explicitly: they run unguarded under ``apply_to: query`` and get no
+    chain-level retry, because ``BatchProcessor`` already retries them and a
+    second layer would multiply the attempts. A non-Bedrock factory owns its
+    own retry policy.
     """
     try:
         llm = factory.get_model(
@@ -263,6 +262,12 @@ def setup_chain(
         prompt = _build_chat_prompt(resolved, enable_prompt_cache)
         chain: Runnable = prompt | llm | parser
         logger.debug("Successfully created LLM chain with model: '%s'", model_id.value)
+        retry = (
+            factory.config.search.llm_retry
+            if model_purpose is ModelPurpose.QUERY
+            and isinstance(factory, BedrockLanguageModelFactory)
+            else None
+        )
         return with_transient_retry(chain, operation=prompt_class.__name__, retry=retry)
     except Exception as e:
         logger.error("Failed to setup LLM chain with model '%s': %s", model_id.value, e)

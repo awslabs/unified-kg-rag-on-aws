@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
-import ast
+import asyncio
+import importlib
 import logging
 from collections.abc import Iterator
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -281,8 +281,11 @@ def test_handler_fires_through_a_real_chain(handler) -> None:
 # --- Call sites pass the right purpose ---------------------------------------
 
 
-class _RecordingFactory:
-    def __init__(self) -> None:
+class _RecordingFactory(BedrockLanguageModelFactory):
+    """Bedrock factory without a boto client that records every get_model call."""
+
+    def __init__(self, config: Config | None = None, **_: object) -> None:
+        self.config = config or Config()
         self.calls: list[dict] = []
 
     def get_model(self, model_id, **kwargs):  # noqa: ANN001, ANN003
@@ -291,7 +294,7 @@ class _RecordingFactory:
         )
 
         self.calls.append(kwargs)
-        return FakeListChatModel(responses=["ok"])
+        return FakeListChatModel(responses=["{}"])
 
     def get_model_info(self, model_id):  # noqa: ANN001
         return None
@@ -335,62 +338,38 @@ def test_output_fixing_llm_inherits_purpose() -> None:
     assert factory.calls == [{"model_purpose": ModelPurpose.INGESTION}]
 
 
-def test_graph_extractor_models_are_ingestion(mocker) -> None:
-    factory = _RecordingFactory()
-    mocker.patch(
-        "unified_kg_rag.adapters.ingestion.graph_extractor."
-        "BedrockLanguageModelFactory",
-        return_value=factory,
-    )
-    from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
+_INGESTION = "unified_kg_rag.adapters.ingestion"
+# Every component whose LLM chains process corpus text. Each must request
+# INGESTION models so neither the query guardrail scope nor the query retry
+# (which would stack on BatchProcessor's) is attached.
+_INGESTION_COMPONENTS = {
+    "chunker": (f"{_INGESTION}.chunker", "IntelligentTextChunker"),
+    "translator": (f"{_INGESTION}.translator", "TextUnitTranslator"),
+    "graph_extractor": (f"{_INGESTION}.graph_extractor", "GraphExtractor"),
+    "gleaner": (f"{_INGESTION}.gleaner", "GraphGleaner"),
+    "claim_extractor": (f"{_INGESTION}.claim_extractor", "ClaimExtractor"),
+    "description_summarizer": (
+        f"{_INGESTION}.description_summarizer",
+        "DescriptionSummarizer",
+    ),
+    "community_detector": (f"{_INGESTION}.community_detector", "CommunityDetector"),
+    "prompt_tuner": ("unified_kg_rag.application.prompts.tuner", "PromptTuner"),
+}
 
+
+@pytest.mark.parametrize("name", sorted(_INGESTION_COMPONENTS))
+def test_ingestion_components_request_ingestion_models(name: str, mocker) -> None:
+    from unified_kg_rag.application.prompts.tuner import PromptTuner
+
+    module, cls = _INGESTION_COMPONENTS[name]
     cfg = Config()
-    cfg.fixing.enabled = True
-    GraphExtractor(config=cfg, boto_session=mocker.MagicMock())
-    assert len(factory.calls) == 2  # output fixer + extraction chain
+    cfg.fixing.enabled = True  # also cover the output-fixing LLMs
+    factory = _RecordingFactory(cfg)
+    mocker.patch(f"{module}.BedrockLanguageModelFactory", return_value=factory)
+    component = getattr(importlib.import_module(module), cls)(
+        config=cfg, boto_session=mocker.MagicMock()
+    )
+    if isinstance(component, PromptTuner):  # builds its chain lazily
+        asyncio.run(component.profile_corpus(["Vendor ships parts to Buyer."]))
+    assert factory.calls, f"{name} built no LLM chain"
     assert all(c["model_purpose"] is ModelPurpose.INGESTION for c in factory.calls)
-
-
-_PKG = Path(__file__).resolve().parents[2] / "unified_kg_rag"
-_CHAIN_BUILDERS = {"setup_chain", "create_robust_xml_output_parser"}
-# Modules whose LLM chains process corpus text (ingestion) and so must never
-# fall back to the query-path guardrail scope.
-_INGESTION_MODULES = sorted(
-    [
-        *(_PKG / "adapters" / "ingestion").glob("*.py"),
-        _PKG / "application" / "prompts" / "tuner.py",
-    ]
-)
-
-
-def _chain_builder_calls(path: Path) -> list[ast.Call]:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    return [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in _CHAIN_BUILDERS
-    ]
-
-
-def test_ingestion_modules_build_chains() -> None:
-    # Sanity check so the parametrized guard below cannot pass vacuously.
-    assert sum(len(_chain_builder_calls(p)) for p in _INGESTION_MODULES) >= 10
-
-
-@pytest.mark.parametrize("path", _INGESTION_MODULES, ids=lambda p: p.name)
-def test_ingestion_chain_builders_mark_ingestion_purpose(path: Path) -> None:
-    """Every chain built in an ingestion module passes INGESTION explicitly.
-
-    An unmarked call defaults to QUERY, which would silently re-attach a
-    PII-anonymizing guardrail to extraction (the bug this guards against).
-    """
-    for call in _chain_builder_calls(path):
-        purposes = [
-            ast.unparse(kw.value) for kw in call.keywords if kw.arg == "model_purpose"
-        ]
-        assert purposes == ["ModelPurpose.INGESTION"], (
-            f"{path.name}:{call.lineno} {ast.unparse(call.func)}() must pass "
-            "model_purpose=ModelPurpose.INGESTION"
-        )

@@ -52,13 +52,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   per item.
 - Query-time LLM calls (strategy routing, query entity and keyword extraction,
   translation, context building, answer generation, the global-search
-  relevance and reduce steps, the DRIFT steps, and conversation-memory entity
-  extraction) now retry transient Bedrock errors such as HTTP 424
+  relevance, map and reduce steps, the DRIFT steps, and conversation-memory
+  entity extraction) now retry transient Bedrock errors such as HTTP 424
   `ModelErrorException`. A single transient model fault previously failed the
   whole query, or silently degraded it under `ignore_errors`. The retry is
   bounded (3 attempts, 20s budget by default) and configurable under
-  `search.llm_retry`; non-transient errors still fail fast, and ingestion
-  chains keep their existing `BatchProcessor` retry without a second layer.
+  `search.llm_retry`; non-transient errors still fail fast. `setup_chain`
+  derives the retry from `model_purpose`, so ingestion chains keep their
+  existing `BatchProcessor` retry without a second layer.
 - RRF fusion now accumulates a cross-store match. The fusion key was derived
   from a hash of the rendered content, and the graph and vector stores render
   the same artifact differently, so an entity present in both produced two keys
