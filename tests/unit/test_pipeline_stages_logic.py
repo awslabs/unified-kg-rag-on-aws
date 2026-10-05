@@ -371,3 +371,35 @@ def _context() -> PipelineContext:
         start_time=datetime(2026, 1, 1),
         source_directory="/tmp/src",
     )
+
+
+# --- CommunityDetectionStage: visualization output directory ----------------
+
+
+def _viz_dir(outputs_directory: str | None, cache_directory: Any) -> Any:
+    from types import SimpleNamespace
+
+    from unified_kg_rag.application.ingestion.pipeline_stages import (
+        CommunityDetectionStage,
+    )
+    from unified_kg_rag.domain.models import Config
+
+    config = Config()
+    config.graph.visualization.outputs_directory = outputs_directory
+    stage = SimpleNamespace(config=config, cache_directory=cache_directory)
+    context = SimpleNamespace(pipeline_id="pid")
+    return CommunityDetectionStage._visualization_outputs_dir(stage, context)
+
+
+def test_visualization_defaults_under_pipeline_cache_dir(tmp_path) -> None:
+    # The S3 cache sync uploads <cache dir>/<pipeline_id>, so a deployed run's
+    # visualization_data.json survives the task.
+    assert _viz_dir(None, tmp_path) == tmp_path / "pid" / "visualization"
+
+
+def test_visualization_explicit_directory_wins(tmp_path) -> None:
+    assert _viz_dir("custom/viz", tmp_path) is None  # manager uses the config path
+
+
+def test_visualization_without_cache_dir_falls_back(tmp_path) -> None:
+    assert _viz_dir(None, None) is None

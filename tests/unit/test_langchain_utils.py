@@ -22,8 +22,10 @@ import pytest
 from langchain_core.exceptions import OutputParserException
 from langchain_core.runnables import RunnableLambda
 
+import unified_kg_rag.shared.utils.langchain as langchain_module
 from unified_kg_rag.shared.utils.langchain import (
     BatchProcessor,
+    ProgressLogger,
     RobustXMLOutputParser,
 )
 
@@ -675,3 +677,51 @@ class TestRobustXMLOutputParser:
         assert fixer.parse("this is just prose with no structure at all") == {
             "name": "Vendor"
         }
+
+
+# --------------------------------------------------------------------------- #
+# ProgressLogger (INFO progress where tqdm is disabled, e.g. no TTY)
+# --------------------------------------------------------------------------- #
+def _progress_lines(log: Any) -> list[tuple]:
+    return [
+        c.args
+        for c in log.info.call_args_list
+        if c.args and c.args[0].startswith("Progress")
+    ]
+
+
+def test_progress_logger_logs_every_ten_percent(mocker) -> None:
+    log = mocker.patch.object(langchain_module, "logger")
+    progress = ProgressLogger("Extract", total=100)
+    for _ in range(100):
+        progress.update()
+    done_counts = [args[2] for args in _progress_lines(log)]
+    assert done_counts == [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+
+
+def test_progress_logger_logs_on_interval_between_marks(mocker) -> None:
+    log = mocker.patch.object(langchain_module, "logger")
+    clock = mocker.patch.object(langchain_module.time, "monotonic", return_value=0.0)
+    progress = ProgressLogger("Extract", total=1000)
+    progress.update()  # 0.1%, well below the first 10% mark
+    assert _progress_lines(log) == []
+    clock.return_value = 61.0
+    progress.update()
+    ((_, task, done, total, pct, rate, eta),) = _progress_lines(log)
+    assert (task, done, total) == ("Extract", 2, 1000)
+    assert rate == pytest.approx(2 / 61.0)
+    assert eta == pytest.approx(998 / (2 / 61.0))
+
+
+def test_execute_with_fallback_reports_progress(mocker) -> None:
+    log = mocker.patch.object(langchain_module, "logger")
+    processor = BatchProcessor(batch_size=2, chunk_concurrency=1)
+    processor.execute_with_fallback(
+        items_to_process=list(range(4)),
+        prepare_inputs_func=lambda chunk: [{"x": x} for x in chunk],
+        batch_func=lambda inputs, **_: [i["x"] for i in inputs],  # noqa: ARG005
+        sequential_func=lambda i: i["x"],
+        task_name="T",
+        show_progress=False,
+    )
+    assert [args[2] for args in _progress_lines(log)][-1] == 4

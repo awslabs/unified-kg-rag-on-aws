@@ -26,6 +26,7 @@ from unified_kg_rag.shared import (
     PipelineExecutionError,
     get_config,
     get_logger,
+    setup_logging,
 )
 from unified_kg_rag.shared.utils import (
     console,
@@ -148,6 +149,7 @@ class IngestionPipelineRunner:
     def __init__(self, args: argparse.Namespace):
         self.args = args
         self.config = get_config(Path(args.config_path) if args.config_path else None)
+        setup_logging(self.config)
         self.pipeline: DataIngestionPipeline | None = None
         self._validate_args()
 

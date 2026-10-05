@@ -7,6 +7,7 @@ from typing import Any, TypeVar
 
 import boto3
 from pydantic import BaseModel
+from structlog.contextvars import bound_contextvars
 
 from unified_kg_rag.adapters.aws import S3CacheManager
 from unified_kg_rag.application.ingestion.pipeline_stages import (
@@ -271,6 +272,10 @@ class DataIngestionPipeline:
                     kwargs["boto_session"] = self.boto_session
                 if stage_type == PipelineStageType.DOCUMENT_PARSING:
                     kwargs["target_directory"] = self.target_directory
+                if stage_type in (
+                    PipelineStageType.DOCUMENT_PARSING,
+                    PipelineStageType.COMMUNITY_DETECTION,
+                ):
                     kwargs["cache_directory"] = Path(
                         self.pipeline_config.local_directory
                     )
@@ -527,8 +532,9 @@ class DataIngestionPipeline:
         self, context: PipelineContext, start_stage_name: str | None
     ) -> None:
         total_start_time = time.time()
-        self._execute_pipeline_stages(context, start_stage_name)
-        self._finalize_pipeline_execution(context, total_start_time)
+        with bound_contextvars(pipeline_id=context.pipeline_id):
+            self._execute_pipeline_stages(context, start_stage_name)
+            self._finalize_pipeline_execution(context, total_start_time)
 
     def _execute_pipeline_stages(
         self, context: PipelineContext, start_stage_name: str | None
@@ -814,6 +820,17 @@ class DataIngestionPipeline:
             or (1 if self._stage_failed(context, "indexing") else 0),
             "relationships_indexed": int(
                 self._get_stage_metric(context, "indexing", "relationships_indexed")
+            ),
+            # Per-chunk LLM failures degrade a run without failing it; surface
+            # them so the ExtractionFailures alarm can catch a partial graph.
+            "total_extraction_failures": int(
+                self._get_stage_metric(context, "graph_extraction", "failed_units")
+            ),
+            "total_gleaning_failures": int(
+                self._get_stage_metric(context, "gleaning", "failed_units")
+            ),
+            "total_claim_extraction_failures": int(
+                self._get_stage_metric(context, "claim_extraction", "failed_units")
             ),
             "cache_hit_rate": cache_stats.hit_rate,
             "cache_size_mb": cache_stats.total_size_mb,

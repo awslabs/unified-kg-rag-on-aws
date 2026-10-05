@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import boto3
+from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from unified_kg_rag.adapters.ingestion.chunker import ChunkerFactory
 from unified_kg_rag.adapters.ingestion.claim_extractor import ClaimExtractor
@@ -103,6 +104,7 @@ class PipelineStage(ABC):
         """
 
     def execute(self, context: PipelineContext) -> PipelineStageResult:
+        tokens = bind_contextvars(stage=self.name)
         logger.info("Starting stage: '%s'", self.name)
         start_time = datetime.now()
 
@@ -139,6 +141,8 @@ class PipelineStage(ABC):
             return self._create_result(
                 PipelineStageStatus.FAILED, start_time, end_time, error_message=str(e)
             )
+        finally:
+            reset_contextvars(**tokens)
 
     @abstractmethod
     def _execute_core(
@@ -700,6 +704,7 @@ class GraphExtractionStage(PipelineStage):
             "text_units_processed": len(text_units),
             "entities_extracted": entities_count,
             "relationships_extracted": relationships_count,
+            "failed_units": stats.num_failed_extractions if stats else 0,
             "extraction_stats": self._stats_to_dict(stats),
         }
 
@@ -763,6 +768,7 @@ class GleaningStage(PipelineStage):
             "iterations_completed": (
                 gleaning_stats.total_rounds if gleaning_stats else 0
             ),
+            "failed_units": gleaning_stats.num_failed_units if gleaning_stats else 0,
             "gleaning_stats": self._stats_to_dict(gleaning_stats),
         }
 
@@ -876,6 +882,9 @@ class ClaimExtractionStage(PipelineStage):
         metrics = {
             "text_units_processed": len(text_units),
             "claims_extracted": len(claims),
+            "failed_units": (
+                extraction_stats.num_failed_extractions if extraction_stats else 0
+            ),
             "extraction_stats": self._stats_to_dict(extraction_stats),
         }
 
@@ -1002,9 +1011,21 @@ class CommunityDetectionStage(PipelineStage):
         self,
         config: Config,
         boto_session: boto3.Session | None = None,
+        cache_directory: Path | None = None,
     ):
         super().__init__(PipelineStageType.COMMUNITY_DETECTION, config, boto_session)
         self.detector = CommunityDetector(config, boto_session=self.boto_session)
+        self.cache_directory = Path(cache_directory) if cache_directory else None
+
+    def _visualization_outputs_dir(self, context: PipelineContext) -> Path | None:
+        # Unset outputs_directory -> the pipeline's cache dir, which the S3 cache
+        # sync uploads (a deployed task's local outputs/ is lost on exit).
+        if (
+            self.config.graph.visualization.outputs_directory
+            or not self.cache_directory
+        ):
+            return None
+        return self.cache_directory / context.pipeline_id / "visualization"
 
     @staticmethod
     def _get_detection_stats_dict(metrics_obj: CommunityMetrics) -> dict[str, Any]:
@@ -1063,6 +1084,7 @@ class CommunityDetectionStage(PipelineStage):
                     config=self.config,
                     graph_analyzer=analyzer,
                     community_detector=self.detector,
+                    outputs_dir=self._visualization_outputs_dir(context),
                     boto_session=self.boto_session,
                 )
 

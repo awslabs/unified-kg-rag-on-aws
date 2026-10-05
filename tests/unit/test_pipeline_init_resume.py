@@ -451,6 +451,29 @@ def test_create_pipeline_metrics_populates_counts_and_stage_metrics() -> None:
     assert metrics.stage_durations.get("indexing") == 2.0
 
 
+def test_create_pipeline_metrics_surfaces_extraction_failures() -> None:
+    # A run whose chunks partly failed extraction still COMPLETES; the failure
+    # counts must reach PipelineMetrics (-> EMF -> ExtractionFailures alarm).
+    from unified_kg_rag.domain.models.cache import CacheStats
+
+    pipe = object.__new__(DataIngestionPipeline)
+    pipe.cache_manager = SimpleNamespace(get_cache_stats=lambda pid: CacheStats())
+    ctx = _ctx_with_results(
+        [
+            _result("graph_extraction", metrics={"failed_units": 3}),
+            _result("gleaning", metrics={"failed_units": 2}),
+            _result("claim_extraction", metrics={"failed_units": 1}),
+        ]
+    )
+    ctx.duration_seconds = 1.0
+
+    metrics = DataIngestionPipeline._create_pipeline_metrics(pipe, ctx)
+
+    assert metrics.total_extraction_failures == 3
+    assert metrics.total_gleaning_failures == 2
+    assert metrics.total_claim_extraction_failures == 1
+
+
 # --- helpers -------------------------------------------------------------
 
 
