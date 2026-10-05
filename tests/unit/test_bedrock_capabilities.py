@@ -525,7 +525,7 @@ def test_assumed_role_session_calls_assume_role(mocker) -> None:
 def test_embedding_counter_skips_count_tokens_api(mocker) -> None:
     spy = mocker.patch.object(bedrock_mod, "BedrockTokenCounter")
     _embed_factory().get_model(EmbeddingModelId.TITAN_EMBED_V2)
-    assert spy.call_args.kwargs["api_supported"] is False
+    assert spy.call_args.kwargs["client"] is None
 
 
 def test_rerank_factory_opens_no_runtime_client_for_counting(mocker) -> None:
@@ -536,7 +536,6 @@ def test_rerank_factory_opens_no_runtime_client_for_counting(mocker) -> None:
     factory.get_model(RerankModelId.COHERE_RERANK_V3_5)
     assert "bedrock-runtime" not in session.clients_requested
     assert spy.call_args.kwargs["client"] is None
-    assert spy.call_args.kwargs["api_supported"] is False
 
 
 # --- get_model: kwargs reaching the LangChain chat class ------------------

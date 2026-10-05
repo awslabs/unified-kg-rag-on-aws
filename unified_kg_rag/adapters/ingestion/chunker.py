@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import Any
 
 import boto3
-from botocore.config import Config as BotoConfig
 from langchain_text_splitters import (
     HTMLHeaderTextSplitter,
     MarkdownHeaderTextSplitter,
@@ -17,19 +16,12 @@ from pydantic import BaseModel, Field
 from tqdm import tqdm
 
 from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
-from unified_kg_rag.adapters.aws.bedrock import (
-    get_assumed_role_boto_session,
-    get_embedding_model_info,
-)
 from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.aws.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
-from unified_kg_rag.adapters.aws.token_counter import (
-    BedrockTokenCounter,
-    estimate_token_count,
-)
+from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
 from unified_kg_rag.domain.models import (
     ChunkingStrategy,
     Config,
@@ -362,33 +354,11 @@ class ChunkProcessor:
 
 
 class BaseChunker(ABC):
-    def __init__(
-        self,
-        config: Config,
-        show_progress: bool = True,
-        boto_session: boto3.Session | None = None,
-    ) -> None:
+    def __init__(self, config: Config, show_progress: bool = True) -> None:
         self.config = config
         self.chunking_config = self.config.processing.chunking
         self.show_progress = show_progress
         self.stats = ChunkingStats()
-
-        session = boto_session or boto3.Session(profile_name=config.aws.profile_name)
-        session = get_assumed_role_boto_session(
-            session, assumed_role_arn=config.aws.bedrock.assumed_role_arn
-        )
-        bedrock_client = session.client(
-            "bedrock-runtime",
-            region_name=config.aws.bedrock.region_name,
-            config=BotoConfig(retries={"max_attempts": 3}),
-        )
-        embedding_model_id = config.indexing.opensearch.embedding_model_id
-        embedding_info = get_embedding_model_info(embedding_model_id)
-        self._token_counter = BedrockTokenCounter(
-            model_id=embedding_model_id.value,
-            client=bedrock_client,
-            api_supported=bool(embedding_info and embedding_info.supports_count_tokens),
-        )
 
         self.fallback_splitter = self._create_splitter(
             self.chunking_config.fallback_chunk_size, self.chunking_config.chunk_overlap
@@ -547,11 +517,11 @@ class BaseChunker(ABC):
         except Exception as e:
             raise DataProcessingError(f"Failed to create text unit: {e}") from e
 
-    def _calculate_token_count(self, text: str) -> int:
-        try:
-            return self._token_counter.count_tokens(text)
-        except Exception:
-            return estimate_token_count(text)
+    @staticmethod
+    def _calculate_token_count(text: str) -> int:
+        # Chunk sizes are budgeted for the embedding model, and Bedrock's
+        # CountTokens API does not accept embedding models.
+        return estimate_token_count(text)
 
     def _extract_document_content(self, doc: Document) -> str | None:
         try:
@@ -578,13 +548,9 @@ class BaseChunker(ABC):
 
 class SimpleTextChunker(BaseChunker):
     def __init__(
-        self,
-        config: Config,
-        show_progress: bool = True,
-        boto_session: boto3.Session | None = None,
-        **kwargs: Any,
+        self, config: Config, show_progress: bool = True, **kwargs: Any
     ) -> None:
-        super().__init__(config, show_progress=show_progress, boto_session=boto_session)
+        super().__init__(config, show_progress=show_progress)
         logger.debug("Initialized SimpleTextChunker")
 
     def _chunk_single_document(self, doc: Document) -> list[TextUnit]:
@@ -622,7 +588,7 @@ class IntelligentTextChunker(BaseChunker):
         show_progress: bool = True,
         **kwargs: Any,
     ) -> None:
-        super().__init__(config, show_progress=show_progress, boto_session=boto_session)
+        super().__init__(config, show_progress=show_progress)
         self.boto_session = boto_session or boto3.Session(
             profile_name=self.config.aws.profile_name
         )
@@ -1002,9 +968,7 @@ class ChunkerFactory:
     ) -> BaseChunker:
         logger.info("Creating chunker of type: '%s'", chunker_type.value)
         if chunker_type == ChunkingStrategy.SIMPLE:
-            return SimpleTextChunker(
-                config, show_progress, boto_session=boto_session, **kwargs
-            )
+            return SimpleTextChunker(config, show_progress, **kwargs)
         if chunker_type == ChunkingStrategy.INTELLIGENT:
             return IntelligentTextChunker(config, boto_session, show_progress, **kwargs)
         raise DataProcessingError(f"Unknown chunker type: '{chunker_type}'")

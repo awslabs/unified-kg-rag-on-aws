@@ -53,15 +53,6 @@ class EmbeddingModelInfo(BaseModel):
         default=None,
         description="Maximum number of tokens the model can process in a single sequence.",
     )
-    supports_count_tokens: bool = Field(
-        default=False,
-        description=(
-            "Whether BedrockTokenCounter may call CountTokens for this model. The "
-            "counter sends a Converse-shaped input, which embedding models do not "
-            "accept, so truncation uses the script-aware estimate directly "
-            "instead of paying a failing round trip per text."
-        ),
-    )
 
 
 class LanguageModelInfo(BaseModel):
@@ -159,15 +150,6 @@ class RerankModelInfo(BaseModel):
     )
     max_document_tokens: int | None = Field(
         default=None, description="Maximum number of tokens allowed per document."
-    )
-    supports_count_tokens: bool = Field(
-        default=False,
-        description=(
-            "Whether BedrockTokenCounter may call CountTokens for this model. "
-            "Rerank models do not support Converse, the input shape the counter "
-            "sends, so query/document truncation uses the script-aware estimate "
-            "and no bedrock-runtime client is created for counting."
-        ),
     )
 
 
@@ -324,11 +306,6 @@ def get_language_model_info(model_id: LanguageModelId) -> LanguageModelInfo | No
     don't reach into the private dict.
     """
     return _LANGUAGE_MODEL_INFO.get(model_id)
-
-
-def get_embedding_model_info(model_id: EmbeddingModelId) -> EmbeddingModelInfo | None:
-    """Capability record for an embedding model, or None if unregistered."""
-    return _EMBEDDING_MODEL_INFO.get(model_id)
 
 
 ModelIdT = TypeVar("ModelIdT")
@@ -650,11 +627,10 @@ class BedrockEmbeddingModelFactory(
             if isinstance(supported_dims, list):
                 model_kwargs["dimensions"] = dimensions
 
-        token_counter = BedrockTokenCounter(
-            model_id=model_id.value,
-            client=self._client,
-            api_supported=model_info.supports_count_tokens,
-        )
+        # CountTokens takes a Converse-shaped input, which embedding models do
+        # not accept: without a client the counter uses the script-aware
+        # estimate instead of paying a failing round trip per text.
+        token_counter = BedrockTokenCounter(model_id=model_id.value, client=None)
         model = BedrockEmbeddingsWrapper(
             client=self._client,
             model_id=model_id.value,
@@ -1164,23 +1140,9 @@ class BedrockRerankModelFactory(
             f"arn:aws:bedrock:{self.region_name}::foundation-model/{model_id.value}"
         )
 
-        # Only open a bedrock-runtime client when the counter will actually use
-        # it; for rerank models CountTokens is unsupported, so counting goes
-        # straight to the estimate.
-        bedrock_runtime_client = (
-            self.boto_session.client(
-                "bedrock-runtime",
-                region_name=self.region_name,
-                config=self._boto_config(),
-            )
-            if model_info.supports_count_tokens
-            else None
-        )
-        token_counter = BedrockTokenCounter(
-            model_id=model_id.value,
-            client=bedrock_runtime_client,
-            api_supported=model_info.supports_count_tokens,
-        )
+        # Rerank models do not accept CountTokens' Converse input either, so
+        # the counter gets no client and uses the script-aware estimate.
+        token_counter = BedrockTokenCounter(model_id=model_id.value, client=None)
         model = BedrockRerankWrapper(
             model_arn=model_arn,
             top_n=top_k,
