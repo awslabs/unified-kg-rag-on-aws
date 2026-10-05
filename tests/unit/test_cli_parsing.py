@@ -13,6 +13,7 @@ pipeline / tuner construction is patched so nothing touches AWS.
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -105,6 +106,21 @@ def test_rag_runner_accepts_query(config, mocker) -> None:
     args = _rag_parser().parse_args(["-q", "hi"])
     runner = run_rag_chain.RAGChainRunner(args)  # no SystemExit
     assert runner.args.query == "hi"
+
+
+def test_rag_runner_json_mode_routes_decorations_and_logs_to_stderr(
+    config, mocker
+) -> None:
+    # stdout must carry only the JSON document so it can be piped to jq.
+    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    setup = mocker.patch.object(run_rag_chain, "setup_logging")
+    mocker.patch.object(run_rag_chain.console, "stderr", False)
+    args = _rag_parser().parse_args(["-q", "hi", "--output-format", "json"])
+
+    run_rag_chain.RAGChainRunner(args)
+
+    assert run_rag_chain.console.stderr is True
+    assert setup.call_args.kwargs["stream"] is sys.stderr
 
 
 def test_rag_runner_accepts_interactive(config, mocker) -> None:

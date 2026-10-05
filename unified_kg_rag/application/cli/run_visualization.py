@@ -27,7 +27,7 @@ from unified_kg_rag.adapters.renderers import (
 )
 from unified_kg_rag.domain.ingestion.graph_analyzer import CentralityMetrics
 from unified_kg_rag.domain.models import Community
-from unified_kg_rag.shared import get_config, get_logger
+from unified_kg_rag.shared import get_config, get_logger, setup_logging
 
 logger = get_logger(__name__)
 
@@ -175,6 +175,7 @@ def main() -> int:
     args = _build_parser().parse_args()
     try:
         config = get_config(args.config_path)
+        setup_logging(config)
         written = run_visualization(
             args.data_path, args.output_dir, args.renderers, config
         )

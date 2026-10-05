@@ -20,6 +20,7 @@ class InteractiveRenderer:
     MAX_EDGE_WIDTH: ClassVar[float] = 7.0
     MIN_EDGE_OPACITY: ClassVar[float] = 0.3
     MAX_EDGE_OPACITY: ClassVar[float] = 0.8
+    DEFAULT_MAX_NODES: ClassVar[int] = 2000
 
     def __init__(self, config: dict[str, Any]) -> None:
         self.height = config.get("height", "900px")
@@ -29,6 +30,9 @@ class InteractiveRenderer:
         self.background_color = config.get("background_color", "#f8fafc")
         self.font_family = config.get("font_family", "Arial")
         self.tooltip_delay = config.get("tooltip_delay", 200)
+        # A browser cannot lay out a pyvis page of tens of thousands of nodes;
+        # keep the top-N by degree (None/0 = no cap).
+        self.max_nodes = config.get("max_nodes", self.DEFAULT_MAX_NODES)
 
     def create_network_visualization(
         self, graph: nx.Graph, layout: dict[str, tuple[float, float]], outputs_path: str
@@ -36,6 +40,16 @@ class InteractiveRenderer:
         if not graph or graph.number_of_nodes() == 0:
             logger.warning("Cannot create visualization for an empty or invalid graph.")
             return
+
+        if self.max_nodes and graph.number_of_nodes() > self.max_nodes:
+            logger.info(
+                "Interactive graph capped to the top %s of %s nodes by degree "
+                "(graph.visualization.interactive.max_nodes)",
+                self.max_nodes,
+                graph.number_of_nodes(),
+            )
+            ranked = sorted(graph.degree(), key=lambda nd: nd[1], reverse=True)
+            graph = graph.subgraph(node for node, _ in ranked[: self.max_nodes])
 
         logger.info(
             "Creating interactive visualization for %s nodes...",

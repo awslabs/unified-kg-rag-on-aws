@@ -21,7 +21,7 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.evaluation import EvaluationManager
-from unified_kg_rag.shared import get_config, get_logger
+from unified_kg_rag.shared import get_config, get_logger, setup_logging
 from unified_kg_rag.shared.utils import console, display_ascii_art
 
 nest_asyncio.apply()
@@ -289,12 +289,12 @@ def main() -> None:
         cli = CommandLineInterface()
         args = cli.parse_args()
 
+        config = get_config(Path(args.config_path) if args.config_path else None)
+        setup_logging(config)
         if args.verbose:
             logging.getLogger("unified_kg_rag").setLevel(logging.DEBUG)
 
-        rag_chain = GraphRAGChain(
-            get_config(Path(args.config_path) if args.config_path else None)
-        )
+        rag_chain = GraphRAGChain(config)
         runner = EvaluationRunner(args, rag_chain)
         exit_code = asyncio.run(runner.run())
         if exit_code:

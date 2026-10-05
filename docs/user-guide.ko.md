@@ -454,9 +454,11 @@ graph:
 
   visualization:
     enabled: true
-    outputs_directory: "outputs/visualization"
+    # outputs_directory: 미설정 -> <cache dir>/<pipeline_id>/visualization
     embedding_method: "node2vec"
     layout_method: "umap"           # umap | tsne | pca
+    interactive:
+      max_nodes: 2000               # 연결 수 기준 상위 N개 노드, 0/null = 제한 없음
 ```
 
 ### 2.5 `indexing` — OpenSearch & Neptune 쓰기 측
@@ -975,9 +977,13 @@ run-eval --eval-data-path my_eval_data.json \
 
 `graph.visualization.enabled`가 `true`이면 `run-ingestion`의 커뮤니티 탐지
 단계가 시각화를 렌더링하면서 `graph.visualization.outputs_directory`에
-`visualization_data.json`도 기록합니다(기본값
-`outputs/visualization/visualization_data.json`). 이 파일이 `--data-path`
-입력입니다. 그래프 노드·엣지, 계산된 `layout`, 커뮤니티 계층, 중심성을 담으며,
+`visualization_data.json`도 기록합니다. 이 값을 설정하지 않으면(기본값)
+인제스천은 `<cache.local_directory>/<pipeline_id>/visualization/`에 기록하므로,
+S3 캐시 동기화를 켜면 `visualization_data.json`이 캐시와 함께 업로드됩니다(동기화는
+`.json` 파일만 복사하므로 HTML은 `run-visualization`으로 로컬에서 다시
+렌더링합니다). 이 파일이 `--data-path` 입력입니다. 인터랙티브 그래프는 브라우저에서
+열 수 있도록 연결 수 기준 상위 `interactive.max_nodes`개 노드(기본 2000)만
+남깁니다. 그래프 노드·엣지, 계산된 `layout`, 커뮤니티 계층, 중심성을 담으며,
 파일 크기를 줄이기 위해 벡터 속성(`embedding`, `*_embedding`)은 제외합니다.
 
 레이아웃과 오류 처리:

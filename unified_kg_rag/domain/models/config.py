@@ -961,9 +961,12 @@ class VisualizationConfig(BaseModel):
     enabled: bool = Field(
         default=True, description="Enable or disable the entire visualization pipeline."
     )
-    outputs_directory: str | Path = Field(
-        default="outputs/visualization",
-        description="Directory to save visualization files.",
+    outputs_directory: str | Path | None = Field(
+        default=None,
+        description="Directory to save visualization files. When unset, "
+        "ingestion writes to '<cache.local_directory>/<pipeline_id>/visualization' "
+        "so visualization_data.json is synced to S3 with the cache; other callers "
+        "fall back to 'outputs/visualization'.",
     )
     embedding_method: str = Field(
         default="node2vec",
@@ -1857,6 +1860,15 @@ class LoggingConfig(BaseModel):
         min_length=1,
         max_length=255,
         description="Log file path",
+    )
+    library_levels: dict[str, str] = Field(
+        default_factory=lambda: {
+            "langchain_aws": "WARNING",
+            "botocore": "WARNING",
+            "urllib3": "WARNING",
+        },
+        description="Per-logger levels for chatty third-party libraries "
+        "(logger name -> level)",
     )
 
 

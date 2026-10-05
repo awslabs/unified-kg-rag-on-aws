@@ -19,7 +19,7 @@ import yaml
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.application.prompts.tuner import PromptTuner
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.shared import get_config, get_logger
+from unified_kg_rag.shared import get_config, get_logger, setup_logging
 
 logger = get_logger(__name__)
 
@@ -89,6 +89,7 @@ def main() -> int:
     args = _build_parser().parse_args()
     try:
         config = get_config(args.config_path)
+        setup_logging(config)
 
         texts = load_corpus_texts(args.source_directory, args.max_docs, config)
         if not texts:

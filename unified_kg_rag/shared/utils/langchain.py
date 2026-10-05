@@ -6,6 +6,7 @@ import html
 import inspect
 import math
 import re
+import time
 from collections import defaultdict
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -25,6 +26,50 @@ if TYPE_CHECKING:
     pass
 
 logger = get_logger(__name__)
+
+
+class ProgressLogger:
+    """Log ``done/total``, rate and ETA at INFO every ~10% or 60s.
+
+    tqdm is disabled without a TTY (e.g. Fargate/CloudWatch, where its
+    carriage-return redraws become junk lines), so this is the progress signal
+    an operator sees in the logs.
+    """
+
+    def __init__(
+        self,
+        task_name: str,
+        total: int,
+        step_fraction: float = 0.1,
+        interval_seconds: float = 60.0,
+    ) -> None:
+        self.task_name = task_name
+        self.total = total
+        self.step = max(1, math.ceil(total * step_fraction))
+        self.interval_seconds = interval_seconds
+        self.done = 0
+        self._next_mark = self.step
+        self._start = self._last = time.monotonic()
+
+    def update(self, n: int = 1) -> None:
+        self.done += n
+        now = time.monotonic()
+        if self.done < self._next_mark and now - self._last < self.interval_seconds:
+            return
+        self._last = now
+        self._next_mark = (self.done // self.step + 1) * self.step
+        elapsed = now - self._start
+        rate = self.done / elapsed if elapsed > 0 else 0.0
+        eta = (self.total - self.done) / rate if rate > 0 else 0.0
+        logger.info(
+            "Progress '%s': %s/%s items (%.0f%%), %.2f items/s, ETA %.0fs",
+            self.task_name,
+            self.done,
+            self.total,
+            100.0 * self.done / self.total if self.total else 100.0,
+            rate,
+            eta,
+        )
 
 
 class BatchProcessor(BaseModel):
@@ -227,13 +272,18 @@ class BatchProcessor(BaseModel):
         # are reassembled in chunk order. chunk_concurrency=1 restores the old
         # strictly-serial behaviour.
         chunk_results_by_idx: dict[int, list[Any]] = {}
+        progress = ProgressLogger(task_name, num_items)
         if self.chunk_concurrency <= 1 or len(chunk_specs) <= 1:
             for chunk_num, chunk_items in tqdm(
-                chunk_specs, desc=f"Processing: {task_name}", disable=not show_progress
+                chunk_specs,
+                desc=f"Processing: {task_name}",
+                disable=None if show_progress else True,
             ):
                 chunk_results_by_idx[chunk_num] = process_chunk(chunk_num, chunk_items)
+                progress.update(len(chunk_items))
         else:
             workers = min(self.chunk_concurrency, len(chunk_specs))
+            chunk_sizes = {num: len(items) for num, items in chunk_specs}
             with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
                 future_to_num = {
                     executor.submit(process_chunk, num, items): num
@@ -243,10 +293,11 @@ class BatchProcessor(BaseModel):
                     concurrent.futures.as_completed(future_to_num),
                     total=len(future_to_num),
                     desc=f"Processing: {task_name}",
-                    disable=not show_progress,
+                    disable=None if show_progress else True,
                 ):
                     num = future_to_num[future]
                     chunk_results_by_idx[num] = future.result()
+                    progress.update(chunk_sizes[num])
 
         all_results: list[Any] = []
         for chunk_num, _ in chunk_specs:
@@ -353,7 +404,9 @@ class BatchProcessor(BaseModel):
         progress_desc = f"Sequential Processing: '{task_name}'"
         successful_count = 0
 
-        for single_input in tqdm(inputs, desc=progress_desc, disable=not show_progress):
+        for single_input in tqdm(
+            inputs, desc=progress_desc, disable=None if show_progress else True
+        ):
             try:
                 result = sequential_func(single_input)
                 results.append(result)
@@ -417,8 +470,9 @@ class BatchProcessor(BaseModel):
         chunk_iterator = async_tqdm(
             range(0, num_items, self.batch_size),
             desc=f"Processing: {task_name}",
-            disable=not show_progress,
+            disable=None if show_progress else True,
         )
+        progress = ProgressLogger(task_name, num_items)
 
         for i in chunk_iterator:
             chunk_items = items_to_process[i : i + self.batch_size]
@@ -452,6 +506,7 @@ class BatchProcessor(BaseModel):
                     show_progress,
                 )
                 all_results.extend(chunk_results)
+                progress.update(len(chunk_items))
                 continue
 
             # Retry only the failed positions (see the sync path).
@@ -466,6 +521,7 @@ class BatchProcessor(BaseModel):
                 )
                 chunk_results = self._splice_retried(chunk_results, failed, retried)
             all_results.extend(chunk_results)
+            progress.update(len(chunk_items))
 
         logger.info("Completed '%s': processed %s results", task_name, len(all_results))
         return all_results
@@ -505,7 +561,7 @@ class BatchProcessor(BaseModel):
 
         progress_desc = f"Concurrent Fallback: '{task_name}'"
         results = await async_tqdm.gather(
-            *tasks, disable=not show_progress, desc=progress_desc
+            *tasks, disable=None if show_progress else True, desc=progress_desc
         )
 
         # Preserve positional alignment with `inputs`: failed items are kept as
