@@ -121,7 +121,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 ### 2.3 Registries
 
-- **Search strategies**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)` registers a class and its required roles against the `SearchStrategy` enum.
+- **Search strategies**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)` registers a class, its required roles, and its query inputs against the `SearchStrategy` enum.
 - **Evaluators**: `EvaluationManager._resolve_evaluator_class` — `EvaluatorType` → evaluator class (lazy, import-on-use).
 - **Renderers**: `adapters/renderers/base.py` — `@register_renderer("name")`.
 
@@ -378,7 +378,7 @@ Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 
 Most extensions are possible with registry registration alone and require no changes to dispatch code (details in `CONTRIBUTING.md`/`CLAUDE.md`).
 
-- **New search strategy**: Subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...))` + export from `adapters/search_strategies/__init__.py`.
+- **New search strategy**: Subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py`. `query_inputs` declares the query-side LLM extractions the strategy reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest.
 - **New storage/LLM backend**: Implement the relevant port and inject it (see "Custom backends" below). Do not hardcode it into a manager's `__init__`.
 - **New evaluator**: Subclass `BaseGraphRAGEvaluator` + add a branch in `EvaluationManager._resolve_evaluator_class` + an `EvaluatorType` enum.
 - **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`.

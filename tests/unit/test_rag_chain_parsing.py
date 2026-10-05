@@ -83,24 +83,6 @@ def test_parse_keyword_json_extracts_innermost_braces_span() -> None:
     assert parsed["meta"] == {"nested": 1}
 
 
-# --- _is_lightrag_mode ---------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "strategy,expected",
-    [
-        (SearchStrategy.MIX, True),
-        (SearchStrategy.HYBRID, True),
-        (SearchStrategy.NAIVE, True),
-        (SearchStrategy.LOCAL, False),
-        (SearchStrategy.GLOBAL, False),
-        (None, False),
-    ],
-)
-def test_is_lightrag_mode(strategy, expected) -> None:
-    assert GraphRAGChain._is_lightrag_mode({"resolved_strategy": strategy}) is expected
-
-
 # --- query-translation refusal guard (Issue F side observation) ----------
 
 

@@ -120,7 +120,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 ### 2.3 레지스트리
 
-- **검색 전략**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)`로 `SearchStrategy` enum에 클래스와 필요한 역할을 등록.
+- **검색 전략**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)`로 `SearchStrategy` enum에 클래스, 필요한 역할, 질의 입력을 등록.
 - **평가자**: `EvaluationManager._resolve_evaluator_class` — `EvaluatorType` → 평가자 클래스(lazy, 사용 시 import).
 - **렌더러**: `adapters/renderers/base.py` — `@register_renderer("name")`.
 
@@ -376,7 +376,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 대부분의 확장은 레지스트리 등록만으로 가능하며 디스패치 코드를 수정하지 않습니다(자세한 내용 `CONTRIBUTING.md`/`CLAUDE.md`).
 
-- **새 검색 전략**: `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...))` + `adapters/search_strategies/__init__.py` export.
+- **새 검색 전략**: `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + `adapters/search_strategies/__init__.py` export. `query_inputs`는 전략이 읽는 질의 측 LLM 추출(`entity_focus`용 `ENTITIES`, `hl_keywords`/`ll_keywords`용 `DUAL_KEYWORDS`)을 선언하며, 체인은 나머지를 건너뜁니다.
 - **새 스토리지/LLM 백엔드**: 해당 포트 구현 후 주입(아래 "커스텀 백엔드" 참조). 매니저 `__init__`에 하드코딩 금지.
 - **새 평가자**: `BaseGraphRAGEvaluator` 상속 + `EvaluationManager._resolve_evaluator_class`에 분기 추가 + `EvaluatorType` enum 추가.
 - **새 렌더러**: `BaseRenderer` 상속 + `@register_renderer("name")`.

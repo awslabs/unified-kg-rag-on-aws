@@ -74,7 +74,10 @@ from unified_kg_rag.domain.prompts import (
     StrategySelectionPrompt,
     TranslationPrompt,
 )
-from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
+from unified_kg_rag.domain.retrieval.strategy_registry import (
+    QueryInput,
+    get_strategy_spec,
+)
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import InvalidFilterError, get_logger
 from unified_kg_rag.shared.utils import strip_embedding_fields
@@ -83,26 +86,6 @@ logger = get_logger(__name__)
 
 DEFAULT_ERROR_MESSAGE: str = (
     "I apologize, but an error occurred while processing your request. Please try again in a moment."
-)
-
-# Strategies that use LightRAG dual-level keyword retrieval rather than the
-# GraphRAG community-summary methodology.
-LIGHTRAG_STRATEGIES: frozenset[SearchStrategy] = frozenset(
-    {SearchStrategy.MIX, SearchStrategy.HYBRID, SearchStrategy.NAIVE}
-)
-
-# Strategies whose retrieval reads ``SearchQuery.entity_focus`` (local search
-# seeds entities from it; DRIFT sizes its per-iteration entity candidate pool by
-# it). Every other strategy ignores it, so the query-side entity-extraction LLM
-# call is skipped for them.
-ENTITY_FOCUS_STRATEGIES: frozenset[SearchStrategy] = frozenset(
-    {SearchStrategy.LOCAL, SearchStrategy.DRIFT}
-)
-
-# LightRAG modes that consume high/low-level keywords. NAIVE is chunk-only
-# vector retrieval and never reads them, so it skips keyword extraction.
-DUAL_KEYWORD_STRATEGIES: frozenset[SearchStrategy] = frozenset(
-    {SearchStrategy.MIX, SearchStrategy.HYBRID}
 )
 
 
@@ -489,20 +472,22 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             )
 
     @staticmethod
-    def _is_lightrag_mode(state: dict[str, Any]) -> bool:
-        strategy = state.get("resolved_strategy")
-        return strategy in LIGHTRAG_STRATEGIES
-
-    @staticmethod
     def _needs_query_entities(state: dict[str, Any]) -> bool:
         # Without a resolved strategy (direct step invocation) stay conservative
         # and extract, matching the pre-gating behavior.
         strategy = state.get("resolved_strategy")
-        return strategy is None or strategy in ENTITY_FOCUS_STRATEGIES
+        return (
+            strategy is None
+            or QueryInput.ENTITIES in get_strategy_spec(strategy).query_inputs
+        )
 
     @staticmethod
     def _needs_dual_keywords(state: dict[str, Any]) -> bool:
-        return state.get("resolved_strategy") in DUAL_KEYWORD_STRATEGIES
+        strategy = state.get("resolved_strategy")
+        return (
+            strategy is not None
+            and QueryInput.DUAL_KEYWORDS in get_strategy_spec(strategy).query_inputs
+        )
 
     # Phrases that signal the model returned commentary about the request rather
     # than a translation of it (seen when the query is already in the target
@@ -604,10 +589,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         )
 
         resolved_strategy: SearchStrategy = state["resolved_strategy"]
-        metadata: dict[str, Any] = {}
-        if resolved_strategy in LIGHTRAG_STRATEGIES:
-            metadata["lightrag_mode"] = resolved_strategy.value
-
         search_query = SearchQuery(
             query=processed.final_query,
             search_type=state.get("search_type", SearchType.HYBRID),
@@ -619,7 +600,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             hl_keywords=processed.hl_keywords,
             ll_keywords=processed.ll_keywords,
             filters=state.get("filters"),
-            metadata=metadata,
+            # One strategy class may serve several modes (LightRAG mix/hybrid/
+            # naive), so it reads the resolved mode from here.
+            metadata={"search_strategy": resolved_strategy.value},
         )
         return await strategy_instance.asearch(search_query)
 

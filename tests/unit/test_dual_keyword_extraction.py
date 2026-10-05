@@ -6,12 +6,18 @@ from __future__ import annotations
 
 import pytest
 
+from unified_kg_rag.adapters.search_strategies.lightrag_search import (
+    LightRAGSearchStrategy,
+)
 from unified_kg_rag.application.retrieval.rag_chain import (
-    LIGHTRAG_STRATEGIES,
     GraphRAGChain,
     ProcessedQuery,
 )
 from unified_kg_rag.domain.models import Config, SearchQuery, SearchStrategy, SearchType
+from unified_kg_rag.domain.retrieval.strategy_registry import (
+    QueryInput,
+    get_strategy_spec,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -57,30 +63,36 @@ class TestParseKeywordJson:
             GraphRAGChain._parse_keyword_json("not json at all")
 
 
-class TestLightragModeDetection:
-    def test_lightrag_strategies_membership(self) -> None:
-        assert LIGHTRAG_STRATEGIES == {
-            SearchStrategy.MIX,
-            SearchStrategy.HYBRID,
-            SearchStrategy.NAIVE,
-        }
+class TestRegisteredQueryInputs:
+    """Query-side extractions are declared on the strategy registration."""
 
     @pytest.mark.parametrize(
         ("strategy", "expected"),
         [
-            (SearchStrategy.MIX, True),
-            (SearchStrategy.HYBRID, True),
-            (SearchStrategy.NAIVE, True),
-            (SearchStrategy.LOCAL, False),
-            (SearchStrategy.GLOBAL, False),
-            (SearchStrategy.DRIFT, False),
-            (SearchStrategy.SIMPLE, False),
+            (SearchStrategy.LOCAL, {QueryInput.ENTITIES}),
+            (SearchStrategy.DRIFT, {QueryInput.ENTITIES}),
+            (SearchStrategy.MIX, {QueryInput.DUAL_KEYWORDS}),
+            (SearchStrategy.HYBRID, {QueryInput.DUAL_KEYWORDS}),
+            (SearchStrategy.NAIVE, set()),
+            (SearchStrategy.GLOBAL, set()),
+            (SearchStrategy.SIMPLE, set()),
         ],
     )
-    def test_is_lightrag_mode(self, strategy: SearchStrategy, expected: bool) -> None:
-        assert (
-            GraphRAGChain._is_lightrag_mode({"resolved_strategy": strategy}) is expected
+    def test_query_inputs(
+        self, strategy: SearchStrategy, expected: set[QueryInput]
+    ) -> None:
+        assert get_strategy_spec(strategy).query_inputs == expected
+        state = {"resolved_strategy": strategy}
+        assert GraphRAGChain._needs_query_entities(state) is (
+            QueryInput.ENTITIES in expected
         )
+        assert GraphRAGChain._needs_dual_keywords(state) is (
+            QueryInput.DUAL_KEYWORDS in expected
+        )
+
+    def test_unresolved_strategy_extracts_entities_only(self) -> None:
+        assert GraphRAGChain._needs_query_entities({}) is True
+        assert GraphRAGChain._needs_dual_keywords({}) is False
 
 
 @pytest.fixture
@@ -153,10 +165,10 @@ class TestSearchStepThreading:
         }
         await chain._search_step(state)
         sq = captured["query"]
-        assert sq.metadata["lightrag_mode"] == "hybrid"
+        assert sq.metadata["search_strategy"] == "hybrid"
         assert sq.hl_keywords == ["t"] and sq.ll_keywords == ["e"]
 
-    async def test_graphrag_mode_has_no_lightrag_metadata(
+    async def test_graphrag_mode_threaded_into_search_query(
         self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         captured: dict = {}
@@ -172,4 +184,19 @@ class TestSearchStepThreading:
             "processed_query": ProcessedQuery(original_query="q", final_query="q"),
         }
         await chain._search_step(state)
-        assert "lightrag_mode" not in captured["query"].metadata
+        assert captured["query"].metadata == {"search_strategy": "local"}
+
+
+class TestLightragModeFromQuery:
+    @pytest.mark.parametrize(
+        ("metadata", "expected"),
+        [
+            ({"search_strategy": "naive"}, "naive"),
+            ({"lightrag_mode": "hybrid"}, "hybrid"),
+            ({}, "mix"),
+        ],
+    )
+    def test_mode(self, metadata: dict, expected: str) -> None:
+        strategy = LightRAGSearchStrategy.__new__(LightRAGSearchStrategy)
+        query = SearchQuery(query="q", metadata=metadata)
+        assert strategy._mode(query) == expected
