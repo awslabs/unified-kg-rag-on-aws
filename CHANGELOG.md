@@ -58,8 +58,8 @@ Each previous behaviour stays available through the setting in parentheses.
 - Chunk sizes fit the embedding/rerank input: `max_chunk_size` 8,000,
   `fallback_chunk_size` 4,800, `min_chunk_size` 1,000 characters (old: 50,000 /
   50,000 / 5,000).
-- Gleaning runs one round and re-gleans only units that gained items
-  (`processing.gleaning.max_rounds: 3`).
+- Gleaning rounds after the first re-send only the text units that gained
+  items in the previous round (the default stays 3 rounds).
 - AUTO routes among local/mix/global/drift with Haiku
   (`search.auto_routable_strategies: [simple, local, global, drift]`,
   `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).

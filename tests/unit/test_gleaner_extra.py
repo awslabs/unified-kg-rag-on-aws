@@ -879,7 +879,9 @@ class TestRegleanOnlyUnitsThatGained:
         assert stats.convergence_achieved is True
 
 
-def test_default_gleaning_is_one_round() -> None:
+def test_default_gleaning_keeps_three_rounds() -> None:
+    # A real-AWS E2E (MuSiQue subset) lost DRIFT accuracy with one round; the
+    # later rounds stay cheap because they only re-send units that gained items.
     from unified_kg_rag.domain.models import Config
 
-    assert Config().processing.gleaning.max_rounds == 1
+    assert Config().processing.gleaning.max_rounds == 3

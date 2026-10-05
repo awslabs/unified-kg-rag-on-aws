@@ -645,12 +645,14 @@ class GleaningConfig(BaseModel):
         description="Language model for graph refinement",
     )
     max_rounds: int = Field(
-        default=1,
+        default=3,
         ge=1,
         description=(
-            "Maximum gleaning rounds. Default 1 = MS GraphRAG's default "
-            "max_gleanings; each further round re-sends the units that still "
-            "yielded new items to the refinement model."
+            "Maximum gleaning rounds. Each round after the first re-sends only "
+            "the text units that gained entities or relationships in the "
+            "previous round, so later rounds cost less than the first. Set 1 "
+            "for MS GraphRAG's single-gleaning default when ingestion cost "
+            "matters more than graph recall."
         ),
     )
     max_entities_per_prompt: int = Field(
