@@ -197,6 +197,8 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         itself adds (e.g. ``id=[...]`` for a fetch-by-id); on a key collision
         the scope wins, since it pins the fetch to specific artifacts. Returns a
         new dict (never the caller's) or ``None`` when there is nothing to apply.
+        Indexes have different fields, so the retrievers drop each caller key
+        from the sub-queries whose index (or vertex label) lacks that field.
         """
         merged = {**(query.filters or {}), **scope}
         return merged or None
