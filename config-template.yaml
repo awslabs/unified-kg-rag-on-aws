@@ -10,6 +10,38 @@ aws:
     region_name: "ap-northeast-2"
     assumed_role_arn: null
     enable_global_profile: true
+    # Language models, by tier. Every LLM role uses one of these two ids unless
+    # its own *_model_id key is set (e.g. search.answer_generation_model_id),
+    # which always wins. Any Bedrock model id or inference-profile id works,
+    # including models released after this package.
+    #   default tier: fixing.fixing_model_id,
+    #     processing.graph_extraction.extraction_model_id,
+    #     processing.gleaning.graph_refinement_model_id,
+    #     processing.claim_extraction.extraction_model_id,
+    #     graph.community_detection.report_generation.report_generation_model_id,
+    #     search.{entity_extraction,strategy_selection,context_building,
+    #             answer_generation}_model_id,
+    #     evaluation.evaluation_model_id
+    #   fast tier: processing.chunking.chunking_model_id,
+    #     processing.translation.translation_model_id,
+    #     processing.graph_extraction.description_summarization.summary_model_id,
+    #     search.translation_model_id,
+    #     search.global_search.{community_relevance,map_reduce,map}_model_id,
+    #     search.drift_search.{query_refinement,keyword_expansion,
+    #                          convergence_assessment,primer}_model_id
+    default_model_id: "anthropic.claude-sonnet-5-5"
+    fast_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    # Capability overrides for a model without a curated record (or to correct
+    # one). Unlisted models get provider-family defaults ('anthropic.claude-*',
+    # 'openai.gpt-*') or, for other providers, conservative ones (Converse, no
+    # reasoning/sampling params, 32K window, 4K output) with one warning.
+    # Keys: context_window_size, max_output_tokens, supports_thinking,
+    # supports_sampling_params, supports_prompt_caching, supports_count_tokens,
+    # adaptive_thinking_only, requires_inference_profile, ...
+    model_overrides: {}
+    #   "amazon.nova-pro-v1:0":
+    #     context_window_size: 300000
+    #     max_output_tokens: 10000
     # Opt into the 1M-token context window on models that offer it as a beta
     # (Sonnet 4/4.5, Opus 4/4.1/4.5). Off by default — long-context requests are
     # billed at a premium there. Claude 5 has a native 1M window and ignores
@@ -110,7 +142,6 @@ aws:
 # Global Output Fixing Configuration (auto-repair malformed model responses)
 fixing:
   enabled: true
-  fixing_model_id: "anthropic.claude-sonnet-5-5"
 
 # Data Processing Configuration
 processing:
@@ -141,7 +172,6 @@ processing:
   # Text Chunking
   chunking:
     chunker_type: "intelligent"
-    chunking_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     content_type: "markdown"
     min_chunk_size: 5000
     max_chunk_size: 50000
@@ -157,7 +187,6 @@ processing:
     # no-op when source_language == target_language and there are no
     # additional_target_languages (e.g. an English-only corpus pays no LLM cost).
     enabled: true
-    translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     # Predominant source language of the corpus (used only for the no-op skip).
     source_language: "en"
     target_language: "en"
@@ -165,7 +194,6 @@ processing:
 
   # Graph Extraction
   graph_extraction:
-    extraction_model_id: "anthropic.claude-sonnet-5-5"
     max_entities_per_chunk: 50
     max_relationships_per_chunk: 50
     entity_confidence_threshold: 0.0
@@ -190,8 +218,6 @@ processing:
     # (below-threshold) entities never reach the LLM.
     description_summarization:
       enabled: true
-      # Summarization is mechanical, so a cheap/fast model is the default.
-      summary_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
       # Only re-summarize when the merged description exceeds this many tokens.
       force_summary_threshold_tokens: 600
       # Target length (tokens) of the produced summary.
@@ -214,7 +240,6 @@ processing:
   # Gleaning (Iterative Information Extraction)
   gleaning:
     enabled: true
-    graph_refinement_model_id: "anthropic.claude-sonnet-5-5"
     max_rounds: 3
     convergence_threshold: 0.8
     quality_threshold: 0.9
@@ -236,7 +261,6 @@ processing:
     # claims index in its sweep. Claims subject/object are still not linked into
     # the entity graph.
     enabled: false
-    extraction_model_id: "anthropic.claude-sonnet-5-5"
     max_entities_per_prompt: 100
 
 # Graph Configuration
@@ -285,7 +309,6 @@ graph:
     # Community report generation
     report_generation:
       enabled: true
-      report_generation_model_id: "anthropic.claude-sonnet-5-5"
       max_entities_per_report: 50
       # Token budget for the entity/relationship context packed into a report
       # prompt. Entities are degree-sorted (most-connected first) and packed up
@@ -446,12 +469,6 @@ indexing:
 
 # Search Configuration
 search:
-  translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
-  entity_extraction_model_id: "anthropic.claude-sonnet-5-5"
-  strategy_selection_model_id: "anthropic.claude-sonnet-5-5"
-  context_building_model_id: "anthropic.claude-sonnet-5-5"
-  answer_generation_model_id: "anthropic.claude-sonnet-5-5"
-
   # Hybrid search weights
   hybrid:
     lexical_weight: 0.5
@@ -500,8 +517,6 @@ search:
 
   # Global Search Configuration
   global_search:
-    community_relevance_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
-    map_reduce_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     max_communities: 10
     relevance_threshold: 0.5
     use_dynamic_selection: true
@@ -517,8 +532,6 @@ search:
     # MS GraphRAG map-reduce knobs. MAP rates community-report key points
     # (0-100) for the query, FILTER+RANK drops low-scored points, PACK fits the
     # ranked points into a token budget, REDUCE synthesizes the answer from them.
-    # Map model is cheap by default (rating is cheap).
-    map_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     # Community reports packed into one map LLM call (calls run concurrently).
     map_batch_size: 2
     # Drop map key points whose 0-100 score is at or below this (0 keeps any
@@ -550,9 +563,6 @@ search:
   drift_search:
     enable_query_refinement: true
     enable_keyword_extraction: true
-    query_refinement_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
-    keyword_expansion_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
-    convergence_assessment_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     max_iterations: 3
     initial_top_k: 5
     summary_length: 5
@@ -569,7 +579,6 @@ search:
     # adds one LLM call up front and turns the iteration budget into follow-up
     # breadth.
     enable_primer: false
-    primer_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     primer_follow_ups: 3
 
   # Token Manager Configuration
@@ -628,7 +637,6 @@ logging:
 evaluation:
   outputs_directory: "outputs/evaluation"
   embedding_model_id: "amazon.titan-embed-text-v2:0"
-  evaluation_model_id: "anthropic.claude-sonnet-5-5"
   enabled_evaluators:
     - langchain
     - ragas

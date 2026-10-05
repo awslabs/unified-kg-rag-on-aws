@@ -683,7 +683,7 @@ class TestComparability:
         )
         assert manifest["cli_args"] == {"eval_data_path": str(data), "top_k": 5}
         assert manifest["models"]["answer_generation"] == (
-            config.search.answer_generation_model_id.value
+            config.search.answer_generation_model_id
         )
         assert manifest["models"]["evaluation_judge"] is None  # no LLM judge
         assert manifest["enabled_evaluators"] == ["graph_aware"]

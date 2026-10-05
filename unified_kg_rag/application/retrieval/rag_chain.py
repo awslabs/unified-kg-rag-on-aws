@@ -56,7 +56,6 @@ from unified_kg_rag.adapters.search_strategies import (  # noqa: F401
 )
 from unified_kg_rag.domain.models import (
     Config,
-    LanguageModelId,
     MessageRole,
     RetrievalResult,
     RetrieverRole,
@@ -332,7 +331,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         parser: BaseOutputParser,
         **kwargs: Any,
     ) -> Runnable:
-        model_id_map: dict[type[BasePrompt], LanguageModelId] = {
+        model_id_map: dict[type[BasePrompt], str] = {
             EntityExtractionPrompt: self.config.search.entity_extraction_model_id,
             KeywordsExtractionPrompt: self.config.search.entity_extraction_model_id,
             TranslationPrompt: self.config.search.translation_model_id,

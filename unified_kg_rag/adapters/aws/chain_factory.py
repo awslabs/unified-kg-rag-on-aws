@@ -30,7 +30,7 @@ from unified_kg_rag.adapters.aws.bedrock_retry import (
     call_with_transient_retry,
     next_transient_retry_delay,
 )
-from unified_kg_rag.domain.models import LanguageModelId, ModelPurpose
+from unified_kg_rag.domain.models import ModelPurpose
 from unified_kg_rag.domain.prompts import BasePrompt, ResolvedPrompt
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import GraphRAGException, get_logger
@@ -196,7 +196,7 @@ def with_transient_retry(
 def create_robust_xml_output_parser(
     factory: LLMFactoryPort,
     enable_output_fixing: bool,
-    output_fixing_model_id: LanguageModelId,
+    output_fixing_model_id: str,
     model_purpose: ModelPurpose = ModelPurpose.QUERY,
 ) -> BaseOutputParser:
     """Build the XML parser, optionally wrapped in an LLM output fixer.
@@ -213,13 +213,13 @@ def create_robust_xml_output_parser(
             model_id=output_fixing_model_id, model_purpose=model_purpose
         )
         logger.info(
-            "Created OutputFixingParser with model: '%s'", output_fixing_model_id.value
+            "Created OutputFixingParser with model: '%s'", output_fixing_model_id
         )
         return OutputFixingParser.from_llm(parser=base_parser, llm=fixing_llm)
     except Exception as e:
         logger.error(
             "Failed to create OutputFixingParser with model %s: %s",
-            output_fixing_model_id.value,
+            output_fixing_model_id,
             e,
         )
         raise GraphRAGException(f"Failed to create OutputFixingParser: {e}") from e
@@ -227,7 +227,7 @@ def create_robust_xml_output_parser(
 
 def setup_chain(
     factory: LLMFactoryPort,
-    model_id: LanguageModelId,
+    model_id: str,
     prompt_class: type[BasePrompt],
     parser: BaseOutputParser,
     custom_prompts: CustomPromptConfig | None = None,
@@ -256,7 +256,7 @@ def setup_chain(
         resolved = prompt_class.resolve(custom_prompts=custom_prompts)
         prompt = _build_chat_prompt(resolved, enable_prompt_cache)
         chain: Runnable = prompt | llm | parser
-        logger.debug("Successfully created LLM chain with model: '%s'", model_id.value)
+        logger.debug("Successfully created LLM chain with model: '%s'", model_id)
         retry = (
             factory.config.aws.bedrock.transient_retry
             if model_purpose is ModelPurpose.QUERY
@@ -265,7 +265,7 @@ def setup_chain(
         )
         return with_transient_retry(chain, operation=prompt_class.__name__, retry=retry)
     except Exception as e:
-        logger.error("Failed to setup LLM chain with model '%s': %s", model_id.value, e)
+        logger.error("Failed to setup LLM chain with model '%s': %s", model_id, e)
         raise GraphRAGException(
-            f"Failed to setup LLM chain with model '{model_id.value}': {e}"
+            f"Failed to setup LLM chain with model '{model_id}': {e}"
         ) from e

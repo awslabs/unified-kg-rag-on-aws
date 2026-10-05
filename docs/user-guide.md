@@ -150,6 +150,9 @@ aws:
     region_name: "ap-northeast-2" # Bedrock can live in a different region
     assumed_role_arn: null
     enable_global_profile: true   # use cross-region (global) Bedrock inference profiles for higher throughput/availability
+    default_model_id: "anthropic.claude-sonnet-5-5"            # every 'default'-tier role (see Model selection notes)
+    fast_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"  # every 'fast'-tier role
+    model_overrides: {}           # capability overrides for a model without a curated record
     enable_1m_context: false      # opt into the 1M window on models where it's a beta (premium billing); Claude 5 is native 1M
     effort: "high"                # reasoning depth for adaptive-thinking models: low | medium | high | xhigh | max
     guardrail:                    # optional Bedrock Guardrails (query path by default)
@@ -233,10 +236,46 @@ aws:
 
 #### Model selection notes
 
-Defaults are `anthropic.claude-sonnet-5-5` (Claude Sonnet 5.5) for
-reasoning-heavy stages and `anthropic.claude-haiku-4-5-...` for light ones
-(summarization, translation, keyword extraction). Any `*_model_id` accepts the
-models below in addition to the older Claude 3.x/4.x ids:
+Every LLM role belongs to one of two tiers. `aws.bedrock.default_model_id`
+(Claude Sonnet 5.5) serves the reasoning-heavy roles and
+`aws.bedrock.fast_model_id` (Claude Haiku 4.5) the light ones, so switching the
+whole pipeline to another model is one line. A role's own `*_model_id` key
+still wins over its tier:
+
+| Tier | Roles (`*_model_id` keys) |
+| --- | --- |
+| `default` | `fixing.fixing_model_id`, `processing.graph_extraction.extraction_model_id`, `processing.gleaning.graph_refinement_model_id`, `processing.claim_extraction.extraction_model_id`, `graph.community_detection.report_generation.report_generation_model_id`, `search.{entity_extraction,strategy_selection,context_building,answer_generation}_model_id`, `evaluation.evaluation_model_id` |
+| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.translation_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{query_refinement,keyword_expansion,convergence_assessment,primer}_model_id` |
+
+```yaml
+aws:
+  bedrock:
+    default_model_id: "openai.gpt-6-sol"    # every default-tier role
+search:
+  answer_generation_model_id: "anthropic.claude-opus-5-5"  # one role pinned
+```
+
+Model-id keys accept any Bedrock model id, or an inference-profile id such as
+`us.anthropic.claude-sonnet-5-5` (used as-is). The models below have a curated
+capability record (as do the older Claude 3.x/4.x ids). Any other id still
+works: `anthropic.claude-*` ids get the request shape of their generation,
+`openai.gpt-*` ids the GPT shape, and other providers a conservative Converse
+request (no reasoning or sampling parameters, 32K window, 4K output), each with
+one WARNING. Describe or correct a model with `aws.bedrock.model_overrides`:
+
+```yaml
+aws:
+  bedrock:
+    model_overrides:
+      "amazon.nova-pro-v1:0":
+        context_window_size: 300000
+        max_output_tokens: 10000
+```
+
+Override keys are capability-record fields (`context_window_size`,
+`max_output_tokens`, `supports_thinking`, `supports_sampling_params`,
+`supports_prompt_caching`, `supports_count_tokens`, `adaptive_thinking_only`,
+`requires_inference_profile`, ...); an unknown key fails fast.
 
 | Model id | Provider | Context / max output | Reasoning control |
 | --- | --- | --- | --- |
@@ -295,7 +334,6 @@ call.
 ```yaml
 fixing:
   enabled: true
-  fixing_model_id: "anthropic.claude-sonnet-5-5"
 ```
 
 When an LLM returns malformed JSON for a structured stage, this re-asks a model
@@ -337,7 +375,6 @@ splits by size. Most-tuned: `min_chunk_size` / `max_chunk_size`.
 ```yaml
   chunking:
     chunker_type: "intelligent"     # intelligent | simple
-    chunking_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     content_type: "markdown"
     min_chunk_size: 5000
     max_chunk_size: 50000
@@ -355,7 +392,6 @@ empty. See §3 for the multilingual workflow.
 ```yaml
   translation:
     enabled: true
-    translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     source_language: "en"           # predominant source language (no-op skip only)
     target_language: "en"
     additional_target_languages: null
@@ -367,7 +403,6 @@ most impactful domain-adaptation knob (see §9). Each item is
 
 ```yaml
   graph_extraction:
-    extraction_model_id: "anthropic.claude-sonnet-5-5"
     max_entities_per_chunk: 50
     max_relationships_per_chunk: 50
     entity_confidence_threshold: 0.0
@@ -381,7 +416,6 @@ most impactful domain-adaptation knob (see §9). Each item is
       - "TEMPORAL: Dates, time periods, schedules, deadlines"
     description_summarization:      # collapse over-long merged descriptions
       enabled: true
-      summary_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
       force_summary_threshold_tokens: 600
       max_summary_tokens: 256
     entity_grounding:              # hallucination guard (opt-in, off by default)
@@ -406,7 +440,6 @@ missed on the first pass (quality vs. cost trade-off).
 ```yaml
   gleaning:
     enabled: true
-    graph_refinement_model_id: "anthropic.claude-sonnet-5-5"
     max_rounds: 3
     convergence_threshold: 0.8
     quality_threshold: 0.9
@@ -421,7 +454,6 @@ When ON, `local` search injects matching claims (MS GraphRAG covariates) and
 ```yaml
   claim_extraction:
     enabled: false
-    extraction_model_id: "anthropic.claude-sonnet-5-5"
     max_entities_per_prompt: 100
 ```
 
@@ -453,7 +485,6 @@ graph:
     auto_resolution: true
     report_generation:              # LLM-generated community summaries (used by global search)
       enabled: true
-      report_generation_model_id: "anthropic.claude-sonnet-5-5"
       max_entities_per_report: 50
       max_report_context_tokens: 4000
 
@@ -511,12 +542,6 @@ indexing:
 
 ```yaml
 search:
-  translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
-  entity_extraction_model_id: "anthropic.claude-sonnet-5-5"
-  strategy_selection_model_id: "anthropic.claude-sonnet-5-5"   # the `auto` router
-  context_building_model_id: "anthropic.claude-sonnet-5-5"
-  answer_generation_model_id: "anthropic.claude-sonnet-5-5"    # the answer LLM
-
   hybrid:
     lexical_weight: 0.5
     vector_weight: 0.5
@@ -539,7 +564,6 @@ search:
     max_communities: 10
     use_dynamic_selection: true
     enable_map_reduce: true
-    map_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     max_map_reduce_tokens: 8000
 
   local_search:
@@ -593,7 +617,6 @@ logging:
 ```yaml
 evaluation:
   outputs_directory: "outputs/evaluation"
-  evaluation_model_id: "anthropic.claude-sonnet-5-5"
   enabled_evaluators:
     - langchain
     - ragas

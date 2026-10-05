@@ -403,8 +403,9 @@ def _language_model_defaults(model: BaseModel, path: str = "") -> dict[str, Any]
     for name in type(model).model_fields:
         value = getattr(model, name)
         here = f"{path}.{name}" if path else name
-        if isinstance(value, LanguageModelId):
-            found[here] = value
+        if name.endswith("_model_id") and here.split(".")[0] != "aws":
+            if "embedding" not in name and "rerank" not in name:
+                found[here] = value
         elif isinstance(value, BaseModel):
             found.update(_language_model_defaults(value, here))
         elif isinstance(value, Enum):

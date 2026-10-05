@@ -656,9 +656,9 @@ class EvaluationManager:
                 for k, v in (cli_args or {}).items()
             },
             "models": {
-                "answer_generation": self.config.search.answer_generation_model_id.value,
+                "answer_generation": self.config.search.answer_generation_model_id,
                 "evaluation_judge": (
-                    evaluation.evaluation_model_id.value if uses_judge else None
+                    evaluation.evaluation_model_id if uses_judge else None
                 ),
                 "evaluation_embedding": (
                     evaluation.embedding_model_id.value

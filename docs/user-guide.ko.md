@@ -151,6 +151,9 @@ aws:
     region_name: "ap-northeast-2" # Bedrock can live in a different region
     assumed_role_arn: null
     enable_global_profile: true   # 크로스 리전(글로벌) Bedrock 추론 프로파일 사용 — 처리량/가용성 향상
+    default_model_id: "anthropic.claude-sonnet-5-5"            # 'default' 등급 역할 전체(모델 선택 주의사항 참고)
+    fast_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"  # 'fast' 등급 역할 전체
+    model_overrides: {}           # 검증된 기능 정보가 없는 모델의 기능 재정의
     enable_1m_context: false      # 1M 창이 베타인 모델에서 옵트인(장문 요금 프리미엄); Claude 5는 네이티브 1M
     effort: "high"                # 적응형 사고 모델의 추론 깊이: low | medium | high | xhigh | max
     guardrail:                    # optional Bedrock Guardrails (query path by default)
@@ -233,9 +236,45 @@ aws:
 
 #### 모델 선택 주의사항
 
-기본값은 추론 비중이 큰 단계에 `anthropic.claude-sonnet-5-5`(Claude Sonnet 5.5),
-경량 단계(요약·번역·키워드 추출)에 `anthropic.claude-haiku-4-5-...`입니다. 모든
-`*_model_id`에는 기존 Claude 3.x/4.x ID와 함께 다음 모델을 지정할 수 있습니다.
+모든 LLM 역할은 두 등급 중 하나에 속합니다. 추론 비중이 큰 역할은
+`aws.bedrock.default_model_id`(Claude Sonnet 5.5), 경량 역할은
+`aws.bedrock.fast_model_id`(Claude Haiku 4.5)를 쓰므로 파이프라인 전체의 모델을
+한 줄로 바꿀 수 있습니다. 역할별 `*_model_id` 키를 지정하면 등급보다 우선합니다.
+
+| 등급 | 역할(`*_model_id` 키) |
+| --- | --- |
+| `default` | `fixing.fixing_model_id`, `processing.graph_extraction.extraction_model_id`, `processing.gleaning.graph_refinement_model_id`, `processing.claim_extraction.extraction_model_id`, `graph.community_detection.report_generation.report_generation_model_id`, `search.{entity_extraction,strategy_selection,context_building,answer_generation}_model_id`, `evaluation.evaluation_model_id` |
+| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.translation_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{query_refinement,keyword_expansion,convergence_assessment,primer}_model_id` |
+
+```yaml
+aws:
+  bedrock:
+    default_model_id: "openai.gpt-6-sol"    # default 등급 역할 전체
+search:
+  answer_generation_model_id: "anthropic.claude-opus-5-5"  # 역할 하나만 고정
+```
+
+모델 ID 키에는 어떤 Bedrock 모델 ID든, `us.anthropic.claude-sonnet-5-5` 같은
+추론 프로파일 ID(그대로 사용)든 지정할 수 있습니다. 아래 모델(과 기존 Claude
+3.x/4.x ID)은 검증된 기능 정보가 있습니다. 그 밖의 ID도 동작합니다.
+`anthropic.claude-*`는 세대별 요청 형식, `openai.gpt-*`는 GPT 형식, 다른
+공급자는 보수적인 Converse 요청(추론·샘플링 파라미터 없음, 32K 컨텍스트, 4K
+출력)을 쓰고 WARNING을 한 번 남깁니다. 모델 정보를 지정하거나 고치려면
+`aws.bedrock.model_overrides`를 씁니다.
+
+```yaml
+aws:
+  bedrock:
+    model_overrides:
+      "amazon.nova-pro-v1:0":
+        context_window_size: 300000
+        max_output_tokens: 10000
+```
+
+재정의 키는 기능 정보 필드(`context_window_size`, `max_output_tokens`,
+`supports_thinking`, `supports_sampling_params`, `supports_prompt_caching`,
+`supports_count_tokens`, `adaptive_thinking_only`,
+`requires_inference_profile` 등)이며 알 수 없는 키는 즉시 오류가 납니다.
 
 | 모델 ID | 공급자 | 컨텍스트 / 최대 출력 | 추론 제어 |
 | --- | --- | --- | --- |
@@ -292,7 +331,6 @@ Claude Fable 5 / 5.1은 제공하지 않습니다. 기본값이 아닌 계정 �
 ```yaml
 fixing:
   enabled: true
-  fixing_model_id: "anthropic.claude-sonnet-5-5"
 ```
 
 구조화된 스테이지에서 LLM이 잘못된 형식의 JSON을 반환하면, 실행을 실패시키는 대신
@@ -335,7 +373,6 @@ processing:
 ```yaml
   chunking:
     chunker_type: "intelligent"     # intelligent | simple
-    chunking_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     content_type: "markdown"
     min_chunk_size: 5000
     max_chunk_size: 50000
@@ -353,7 +390,6 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 ```yaml
   translation:
     enabled: true
-    translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     source_language: "en"           # predominant source language (no-op skip only)
     target_language: "en"
     additional_target_languages: null
@@ -365,7 +401,6 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 
 ```yaml
   graph_extraction:
-    extraction_model_id: "anthropic.claude-sonnet-5-5"
     max_entities_per_chunk: 50
     max_relationships_per_chunk: 50
     entity_confidence_threshold: 0.0
@@ -379,7 +414,6 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
       - "TEMPORAL: Dates, time periods, schedules, deadlines"
     description_summarization:      # collapse over-long merged descriptions
       enabled: true
-      summary_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
       force_summary_threshold_tokens: 600
       max_summary_tokens: 256
     entity_grounding:              # 환각 방지 가드 (옵트인, 기본 off)
@@ -402,7 +436,6 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 ```yaml
   gleaning:
     enabled: true
-    graph_refinement_model_id: "anthropic.claude-sonnet-5-5"
     max_rounds: 3
     convergence_threshold: 0.8
     quality_threshold: 0.9
@@ -417,7 +450,6 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 ```yaml
   claim_extraction:
     enabled: false
-    extraction_model_id: "anthropic.claude-sonnet-5-5"
     max_entities_per_prompt: 100
 ```
 
@@ -449,7 +481,6 @@ graph:
     auto_resolution: true
     report_generation:              # LLM-generated community summaries (used by global search)
       enabled: true
-      report_generation_model_id: "anthropic.claude-sonnet-5-5"
       max_entities_per_report: 50
       max_report_context_tokens: 4000
 
@@ -507,12 +538,6 @@ indexing:
 
 ```yaml
 search:
-  translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
-  entity_extraction_model_id: "anthropic.claude-sonnet-5-5"
-  strategy_selection_model_id: "anthropic.claude-sonnet-5-5"   # the `auto` router
-  context_building_model_id: "anthropic.claude-sonnet-5-5"
-  answer_generation_model_id: "anthropic.claude-sonnet-5-5"    # the answer LLM
-
   hybrid:
     lexical_weight: 0.5
     vector_weight: 0.5
@@ -535,7 +560,6 @@ search:
     max_communities: 10
     use_dynamic_selection: true
     enable_map_reduce: true
-    map_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     max_map_reduce_tokens: 8000
 
   local_search:
@@ -587,7 +611,6 @@ logging:
 ```yaml
 evaluation:
   outputs_directory: "outputs/evaluation"
-  evaluation_model_id: "anthropic.claude-sonnet-5-5"
   enabled_evaluators:
     - langchain
     - ragas

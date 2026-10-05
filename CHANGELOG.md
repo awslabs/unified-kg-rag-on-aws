@@ -40,6 +40,20 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   reports: those index both fields as empty lists until report generation and
   indexing are re-run (for example `run-ingestion --force-rebuild`).
 
+### Changed
+- Language-model ids are plain strings: every `*_model_id` key accepts any
+  Bedrock model id or inference-profile id, so a new model can be used without
+  a release. `aws.bedrock.default_model_id` and `aws.bedrock.fast_model_id`
+  set the model for all roles of their tier at once; a role's own
+  `*_model_id` still wins, so existing configs load unchanged. Ids without a
+  curated capability record get provider-family defaults (`anthropic.claude-*`
+  by generation, `openai.gpt-*`) or conservative Converse defaults, with one
+  warning, and `aws.bedrock.model_overrides` describes or corrects a model.
+  Python callers that read `config.<section>.<role>_model_id.value` should
+  drop `.value`; `LanguageModelId` members remain valid inputs. Claude Haiku,
+  Sonnet and Opus 4.5 now fail fast when no inference profile resolves, like
+  the other profile-only models.
+
 ### Fixed
 - `custom_prompts` overrides for community reports
   (`community_report_system`/`_human`), conversation-memory entity extraction

@@ -3,9 +3,16 @@
 import math
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    Field,
+    SecretStr,
+    StringConstraints,
+    model_validator,
+)
 
 from .evaluation import EvaluationMetricType, EvaluatorType
 from .retrieval import FusionMethod
@@ -90,6 +97,15 @@ class EmbeddingModelId(str, Enum):
 
 
 class LanguageModelId(str, Enum):
+    """Named constants for the language models with a curated capability record.
+
+    Model-id config fields accept ANY Bedrock model id string, so a new model
+    can be tried without a release; these members are only convenience names
+    (and the keys of the adapter's capability table). ``str()`` and
+    f-strings render the bare id, so a member can be used wherever an id
+    string is expected.
+    """
+
     # Claude 4.7+ / 5.x ids carry no date suffix and no ':0' revision, unlike
     # earlier generations. Cross-region resolution still applies the same
     # 'us.'/'apac.'/'global.' inference-profile prefixes.
@@ -127,6 +143,72 @@ class LanguageModelId(str, Enum):
     GPT_V5_5 = "openai.gpt-5.5"
     GPT_V5_4 = "openai.gpt-5.4"
     # NOTE: add new models here
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
+ModelTier = Literal["default", "fast"]
+
+# The two shipped model tiers. Every per-role model field declares one of them
+# and inherits aws.bedrock.default_model_id / aws.bedrock.fast_model_id unless
+# set explicitly, so changing a tier default is a one-line edit here.
+DEFAULT_MODEL_ID: str = LanguageModelId.CLAUDE_V5_5_SONNET.value
+FAST_MODEL_ID: str = LanguageModelId.CLAUDE_V4_5_HAIKU.value
+_TIER_DEFAULT_MODEL_IDS: dict[str, str] = {
+    "default": DEFAULT_MODEL_ID,
+    "fast": FAST_MODEL_ID,
+}
+_MODEL_TIER_KEY = "model_tier"
+
+
+def _coerce_model_id(value: Any) -> Any:
+    # A LanguageModelId member (or any str enum) validates as its bare id.
+    if isinstance(value, Enum):
+        value = value.value
+    return value.strip() if isinstance(value, str) else value
+
+
+# Any Bedrock model id (or cross-region inference-profile id) as a plain str.
+BedrockModelId = Annotated[
+    str, BeforeValidator(_coerce_model_id), StringConstraints(min_length=1)
+]
+
+
+def role_model_field(tier: ModelTier, description: str) -> Any:
+    """A per-role model-id field that inherits its tier's model when unset."""
+    return Field(
+        default=_TIER_DEFAULT_MODEL_IDS[tier],
+        description=f"{description.rstrip('.')}. Defaults to aws.bedrock.{tier}_model_id.",
+        json_schema_extra={_MODEL_TIER_KEY: tier},
+    )
+
+
+def _apply_model_tiers(model: BaseModel, tiers: dict[str, str]) -> BaseModel:
+    """Copy of ``model`` whose unset role-model fields follow ``tiers``.
+
+    Walks nested sections recursively. A field the user set explicitly is in
+    ``model_fields_set`` and is never touched.
+    """
+    updates: dict[str, Any] = {}
+    for name, field in type(model).model_fields.items():
+        value = getattr(model, name)
+        extra = field.json_schema_extra
+        tier = extra.get(_MODEL_TIER_KEY) if isinstance(extra, dict) else None
+        if isinstance(tier, str):
+            if name not in model.model_fields_set and value != tiers[tier]:
+                updates[name] = tiers[tier]
+        elif isinstance(value, BaseModel):
+            resolved = _apply_model_tiers(value, tiers)
+            if resolved is not value:
+                updates[name] = resolved
+    if not updates:
+        return model
+    copied = model.model_copy()
+    # Write through __dict__ so inherited values stay out of model_fields_set:
+    # the section keeps following its tier if it is reused in another Config.
+    copied.__dict__.update(updates)
+    return copied
 
 
 class ModelPurpose(str, Enum):
@@ -248,6 +330,35 @@ class BedrockConfig(BaseModel):
     )
     enable_global_profile: bool = Field(
         default=True, description="Enable global profile for Bedrock service"
+    )
+    default_model_id: BedrockModelId = Field(
+        default=DEFAULT_MODEL_ID,
+        description=(
+            "Model for every role on the 'default' tier (extraction, gleaning, "
+            "claims, community reports, output fixing, query entity extraction, "
+            "routing, context building, answer generation, evaluation). Any "
+            "Bedrock model id; a role's own *_model_id overrides it."
+        ),
+    )
+    fast_model_id: BedrockModelId = Field(
+        default=FAST_MODEL_ID,
+        description=(
+            "Model for every role on the 'fast' tier (chunking, translation, "
+            "description summarization, global/DRIFT search steps, query "
+            "translation). Any Bedrock model id; a role's own *_model_id "
+            "overrides it."
+        ),
+    )
+    model_overrides: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description=(
+            "Per-model capability overrides keyed by model id, e.g. "
+            "{'amazon.nova-pro-v1:0': {'context_window_size': 300000}}. Keys "
+            "are capability-record fields (context_window_size, "
+            "max_output_tokens, supports_thinking, supports_sampling_params, "
+            "supports_prompt_caching, ...). Use it for a model without a "
+            "curated record, or to correct one, without a release."
+        ),
     )
     enable_1m_context: bool = Field(
         default=False,
@@ -413,8 +524,8 @@ class FixingConfig(BaseModel):
     enabled: bool = Field(
         default=True, description="Enable automatic fixing of malformed model responses"
     )
-    fixing_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_5_SONNET,
+    fixing_model_id: BedrockModelId = role_model_field(
+        "default",
         description="Language model for output correction",
     )
 
@@ -440,8 +551,8 @@ class ChunkingConfig(BaseModel):
         default=ChunkingStrategy.INTELLIGENT,
         description="Text chunking strategy to use",
     )
-    chunking_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
+    chunking_model_id: BedrockModelId = role_model_field(
+        "fast",
         description="Language model for intelligent chunking",
     )
     content_type: str = Field(
@@ -498,8 +609,8 @@ class TranslationConfig(BaseModel):
         "additional_target_languages (e.g. an English-only corpus with an English "
         "target pays no LLM cost).",
     )
-    translation_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
+    translation_model_id: BedrockModelId = role_model_field(
+        "fast",
         description="Language model for text translation",
     )
     source_language: LanguageCode = Field(
@@ -542,8 +653,8 @@ class DescriptionSummarizationConfig(BaseModel):
         "(parity with MS GraphRAG/LightRAG). When disabled, descriptions are only "
         "concatenated and may grow unbounded for frequently-mentioned entities.",
     )
-    summary_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
+    summary_model_id: BedrockModelId = role_model_field(
+        "fast",
         description="Language model for description summarization. Summarization "
         "is mechanical, so a cheap/fast model is the default.",
     )
@@ -612,8 +723,8 @@ class EntityGroundingConfig(BaseModel):
 
 
 class GraphExtractionConfig(BaseModel):
-    extraction_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_5_SONNET,
+    extraction_model_id: BedrockModelId = role_model_field(
+        "default",
         description="Language model for entity and relationship extraction",
     )
     max_entities_per_chunk: int = Field(
@@ -659,8 +770,8 @@ class GleaningConfig(BaseModel):
     enabled: bool = Field(
         default=True, description="Enable gleaning for improved extraction"
     )
-    graph_refinement_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_5_SONNET,
+    graph_refinement_model_id: BedrockModelId = role_model_field(
+        "default",
         description="Language model for graph refinement",
     )
     max_rounds: int = Field(default=3, ge=1, description="Maximum gleaning rounds")
@@ -729,8 +840,8 @@ class ClaimExtractionConfig(BaseModel):
         "not linked into the entity graph. The pipeline honors this flag "
         "(DataIngestionPipeline._initialize_stages).",
     )
-    extraction_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_5_SONNET,
+    extraction_model_id: BedrockModelId = role_model_field(
+        "default",
         description="Language model for claim extraction",
     )
     max_entities_per_prompt: int = Field(
@@ -902,8 +1013,8 @@ class ReportGenerationConfig(BaseModel):
     enabled: bool = Field(
         default=True, description="Enable automatic community report generation"
     )
-    report_generation_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_5_SONNET,
+    report_generation_model_id: BedrockModelId = role_model_field(
+        "default",
         description="Language model for community report generation",
     )
     max_entities_per_report: int = Field(
@@ -1397,12 +1508,12 @@ class RerankingConfig(BaseModel):
 
 
 class GlobalSearchConfig(BaseModel):
-    community_relevance_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
+    community_relevance_model_id: BedrockModelId = role_model_field(
+        "fast",
         description="Language model used for scoring community relevance to search queries",
     )
-    map_reduce_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
+    map_reduce_model_id: BedrockModelId = role_model_field(
+        "fast",
         description="Language model used for map-reduce summarization operations",
     )
     max_communities: int = Field(
@@ -1442,8 +1553,8 @@ class GlobalSearchConfig(BaseModel):
         description="Timeout (seconds) for the Neptune community-graph retrieval "
         "in global search; raise for very large graphs or slow clusters.",
     )
-    map_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
+    map_model_id: BedrockModelId = role_model_field(
+        "fast",
         description="Language model used for the map step of MS GraphRAG "
         "map-reduce (rates community-report key points 0-100). Rating is cheap, "
         "so a fast/cheap model (e.g. Haiku) is the sensible default.",
@@ -1535,16 +1646,16 @@ class DriftSearchConfig(BaseModel):
         default=True,
         description="Enable automatic keyword extraction from search results",
     )
-    query_refinement_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
+    query_refinement_model_id: BedrockModelId = role_model_field(
+        "fast",
         description="Language model used for refining search queries based on intermediate results",
     )
-    keyword_expansion_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
+    keyword_expansion_model_id: BedrockModelId = role_model_field(
+        "fast",
         description="Language model used for expanding keywords from discovered entities",
     )
-    convergence_assessment_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
+    convergence_assessment_model_id: BedrockModelId = role_model_field(
+        "fast",
         description="Language model used for assessing search convergence",
     )
     max_iterations: int = Field(
@@ -1595,8 +1706,8 @@ class DriftSearchConfig(BaseModel):
         "one mutating query forward). Off by default — the primer adds one LLM "
         "call up front and turns the iteration budget into follow-up breadth.",
     )
-    primer_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
+    primer_model_id: BedrockModelId = role_model_field(
+        "fast",
         description="Language model for the DRIFT primer (HyDE answer + "
         "follow-up decomposition) when enable_primer is set.",
     )
@@ -1755,24 +1866,24 @@ class LightRAGSearchConfig(BaseModel):
 
 
 class SearchConfig(BaseModel):
-    translation_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
+    translation_model_id: BedrockModelId = role_model_field(
+        "fast",
         description="Language model identifier used for translating queries into the target language",
     )
-    entity_extraction_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_5_SONNET,
+    entity_extraction_model_id: BedrockModelId = role_model_field(
+        "default",
         description="Language model identifier used for extracting named entities from user queries",
     )
-    strategy_selection_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_5_SONNET,
+    strategy_selection_model_id: BedrockModelId = role_model_field(
+        "default",
         description="Language model identifier used for automatically selecting the optimal search strategy",
     )
-    context_building_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_5_SONNET,
+    context_building_model_id: BedrockModelId = role_model_field(
+        "default",
         description="Language model identifier used for building and structuring contextual information",
     )
-    answer_generation_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_5_SONNET,
+    answer_generation_model_id: BedrockModelId = role_model_field(
+        "default",
         description="Language model identifier used for generating final answers from retrieved context",
     )
     hybrid: HybridConfig = Field(
@@ -2011,8 +2122,8 @@ class EvaluationConfig(BaseModel):
         default=EmbeddingModelId.TITAN_EMBED_V2,
         description="Embedding model identifier for evaluation",
     )
-    evaluation_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_5_SONNET,
+    evaluation_model_id: BedrockModelId = role_model_field(
+        "default",
         description="Language model identifier used for evaluation",
     )
     enabled_evaluators: list[EvaluatorType] = Field(
@@ -2146,6 +2257,21 @@ class Config(BaseModel):
         bedrock.setdefault("transient_retry", data["search"]["llm_retry"])
         aws["bedrock"] = bedrock
         return {**data, "search": search, "aws": aws}
+
+    @model_validator(mode="after")
+    def _inherit_tier_models(self) -> "Config":
+        """Point every role-model field the user did not set at its tier model."""
+        tiers = {
+            "default": self.aws.bedrock.default_model_id,
+            "fast": self.aws.bedrock.fast_model_id,
+        }
+        for name in type(self).model_fields:
+            section = getattr(self, name)
+            if isinstance(section, BaseModel):
+                resolved = _apply_model_tiers(section, tiers)
+                if resolved is not section:
+                    self.__dict__[name] = resolved
+        return self
 
 
 class PipelineConfig(BaseModel):
