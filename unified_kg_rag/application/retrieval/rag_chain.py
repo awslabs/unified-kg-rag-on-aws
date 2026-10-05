@@ -4,9 +4,10 @@ import asyncio
 import json
 import time
 import uuid
-from collections.abc import AsyncGenerator, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeVar
 
 import boto3
 from langchain_core.output_parsers import (
@@ -227,8 +228,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             | RunnablePassthrough.assign(search_results=self._search_step)
         )
 
+        context_step: Runnable = RunnablePassthrough.assign(
+            context=self._context_building_step
+        )
+        # Streaming runs everything up to (and including) context building as
+        # one non-streamed pass, then streams only the answer LLM. Reusing the
+        # same step objects keeps stream and invoke behaviour in lockstep.
+        self._stream_context_chain: Runnable = base_chain | context_step
+
         rag_branch = (
-            RunnablePassthrough.assign(context=self._context_building_step)
+            context_step
             | RunnablePassthrough.assign(answer=self._answer_generation_step)
             | RunnableLambda(self._format_output_step)
         )
@@ -847,44 +856,115 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 e,
             )
 
-    def stream(
+    # Streaming yields answer TEXT chunks (str), not RAGOutput: callers of a
+    # streamed answer want tokens as they arrive. Sources/metadata stay on the
+    # non-streaming invoke/ainvoke path.
+    def stream(  # type: ignore[override]
         self,
         input: RAGInput,
         config: RunnableConfig | None = None,
         **kwargs: Any,
-    ) -> Iterator[RAGOutput | dict[str, Any]]:
+    ) -> Iterator[str]:
+        """Synchronously stream answer chunks.
+
+        Drives :meth:`astream` on a private event loop owned by a dedicated
+        worker thread, pulling one chunk at a time. This works both from plain
+        sync code and from a thread that already runs an event loop (where
+        ``asyncio.run`` would raise), while still delivering chunks as they are
+        produced rather than after the whole answer is generated.
+        """
         if self.mode == ChainMode.SEARCH:
             logger.warning("Streaming is not supported in SEARCH mode.")
             return
 
-        _, input_dict = self._prepare_invoke(input)
-        answer_chain = self.chain | (lambda x: x["answer"])
+        yield from _iterate_async_generator(self.astream(input, config, **kwargs))
 
-        try:
-            yield from answer_chain.stream(input_dict, config, **kwargs)
-        except Exception as e:
-            logger.error("RAG stream failed: %s", e)
-            raise
-
-    async def astream(
+    async def astream(  # type: ignore[override]
         self,
         input: RAGInput,
         config: RunnableConfig | None = None,
         **kwargs: Any,
-    ) -> AsyncGenerator[RAGOutput, None]:
+    ) -> AsyncIterator[str]:
+        """Asynchronously stream answer chunks.
+
+        Retrieval, query processing and context building run once (the same
+        steps ``ainvoke`` uses); only the answer-generation LLM is streamed.
+        An empty context yields the standard no-data answer once without
+        calling the LLM. On success the full answer is written to conversation
+        memory exactly as ``ainvoke`` would.
+        """
         if self.mode == ChainMode.SEARCH:
             logger.warning("Streaming is not supported in SEARCH mode.")
             return
 
-        _, input_dict = self._prepare_invoke(input)
-        answer_chain = self.chain | (lambda x: x["answer"])
-
+        rag_input, input_dict = self._prepare_invoke(input)
+        chunks: list[str] = []
         try:
-            async for chunk in answer_chain.astream(input_dict, config, **kwargs):
-                yield chunk
+            state: dict[str, Any] = await self._stream_context_chain.ainvoke(
+                input_dict, config
+            )
+            answer_runnable = self._answer_generation_step(state)
+            async for chunk in answer_runnable.astream(state, config):
+                text = str(chunk)
+                if not text:
+                    continue
+                chunks.append(text)
+                yield text
         except Exception as e:
-            logger.error("Async RAG stream failed: %s", e)
-            raise
+            if not self.ignore_errors:
+                logger.error("RAG stream failed for query '%s': %s", rag_input.query, e)
+                raise
+            logger.error(
+                "RAG stream failed for query '%s' after %s chunk(s): %s",
+                rag_input.query,
+                len(chunks),
+                e,
+            )
+            # Mirror ainvoke's degraded answer. If part of the answer was
+            # already delivered, append the notice so the truncation is visible.
+            yield f"\n\n{DEFAULT_ERROR_MESSAGE}" if chunks else DEFAULT_ERROR_MESSAGE
+            return
+
+        state["answer"] = "".join(chunks)
+        await self._save_memory(self._format_output_step(state))
+
+
+_T = TypeVar("_T")
+
+
+def _iterate_async_generator(agen: AsyncIterator[_T]) -> Iterator[_T]:
+    """Consume an async iterator from sync code, one item at a time.
+
+    The iterator runs on a fresh event loop confined to a single worker thread,
+    so it never collides with an event loop already running in the caller's
+    thread. Closing the returned iterator early (``break``) closes the async
+    iterator on its own loop.
+    """
+    loop = asyncio.new_event_loop()
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rag-stream")
+
+    def _run(awaitable: Awaitable[Any]) -> Any:
+        async def _await() -> Any:
+            return await awaitable
+
+        return executor.submit(loop.run_until_complete, _await()).result()
+
+    try:
+        while True:
+            try:
+                item = _run(agen.__anext__())
+            except StopAsyncIteration:
+                return
+            yield item
+    finally:
+        try:
+            aclose = getattr(agen, "aclose", None)
+            if aclose is not None:
+                _run(aclose())
+            _run(loop.shutdown_asyncgens())
+        finally:
+            executor.submit(loop.close).result()
+            executor.shutdown(wait=True)
 
 
 async def create_rag_chain(
