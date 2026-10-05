@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,7 @@ from unified_kg_rag.application.cli import (
     run_rag_chain,
     run_visualization,
 )
-from unified_kg_rag.domain.models import SearchStrategy, SearchType
+from unified_kg_rag.domain.models import EvaluationSummary, SearchStrategy, SearchType
 
 pytestmark = pytest.mark.unit
 
@@ -192,6 +193,74 @@ def test_eval_runner_existing_file_ok(config, mocker, tmp_path) -> None:
     args = _eval_parser().parse_args(["--eval-data-path", str(data)])
     runner = run_evaluation.EvaluationRunner(args, rag_chain=object())  # no exit
     assert runner.args.eval_data_path == data
+
+
+def test_eval_parser_max_failure_rate_default_and_range() -> None:
+    assert _eval_parser().parse_args(["--eval-data-path", "d"]).max_failure_rate == 1.0
+    args = _eval_parser().parse_args(
+        ["--eval-data-path", "d", "--max-failure-rate", "0.2"]
+    )
+    assert args.max_failure_rate == 0.2
+    with pytest.raises(SystemExit):
+        _eval_parser().parse_args(["--eval-data-path", "d", "--max-failure-rate", "2"])
+
+
+@pytest.mark.parametrize(
+    ("total", "failed", "budget", "expected"),
+    [
+        (10, 10, 1.0, True),  # all failed always fails the run
+        (10, 9, 1.0, False),
+        (10, 3, 0.2, True),
+        (10, 2, 0.2, False),
+        (10, 0, 0.0, False),
+    ],
+)
+def test_eval_exceeds_failure_budget(total, failed, budget, expected) -> None:
+    summary = EvaluationSummary(
+        total_queries=total,
+        successful_evaluations=total - failed,
+        failed_evaluations=failed,
+        evaluation_start_time=datetime(2026, 1, 1),
+        evaluation_end_time=datetime(2026, 1, 1),
+    )
+    assert run_evaluation.exceeds_failure_budget(summary, budget) is expected
+
+
+class _DictChain:
+    def __init__(self, error: bool) -> None:
+        self.error = error
+
+    async def ainvoke(self, inputs, config=None):
+        meta = {"search_strategy": "local", "processing_time": 0.1}
+        if self.error:
+            meta["error"] = True
+        return {"answer": "Vendor", "sources": [], "metadata": meta}
+
+    async def abatch(self, inputs, config=None):
+        return [await self.ainvoke(i) for i in inputs]
+
+
+@pytest.mark.parametrize(("error", "code"), [(False, 0), (True, 1)])
+async def test_eval_runner_exit_code_and_manifest(
+    config, mocker, tmp_path, error, code
+) -> None:
+    import json
+
+    config.evaluation.enabled_evaluators = []
+    mocker.patch.object(run_evaluation, "get_config", return_value=config)
+    mocker.patch.object(run_evaluation, "display_ascii_art")
+    data = tmp_path / "eval.json"
+    data.write_text(json.dumps([{"question": "Who ships?", "answer": "Vendor"}]))
+    out = tmp_path / "out"
+    args = _eval_parser().parse_args(
+        ["--eval-data-path", str(data), "--outputs-directory", str(out)]
+    )
+    runner = run_evaluation.EvaluationRunner(args, rag_chain=_DictChain(error))
+    assert await runner.run() == code
+    summary_file = next(out.glob("evaluation_summary_*.json"))
+    manifest = json.loads(summary_file.read_text())["run_manifest"]
+    assert manifest["cli_args"]["eval_data_path"] == str(data)
+    assert len(manifest["dataset"]["sha256"]) == 64
 
 
 # --- run_ingestion_pipeline: parser --------------------------------------
@@ -376,9 +445,39 @@ def test_load_corpus_texts_filters_and_limits(tmp_path) -> None:
     (tmp_path / "a.txt").write_text("alpha", encoding="utf-8")
     (tmp_path / "b.md").write_text("beta", encoding="utf-8")
     (tmp_path / "c.markdown").write_text("gamma", encoding="utf-8")
-    (tmp_path / "skip.pdf").write_text("ignored", encoding="utf-8")
+    (tmp_path / "broken.pdf").write_text("not a pdf", encoding="utf-8")
+    (tmp_path / "skip.bin").write_text("ignored", encoding="utf-8")
     texts = run_prompt_tuning.load_corpus_texts(tmp_path, max_docs=10)
     assert set(texts) == {"alpha", "beta", "gamma"}
+
+
+def _minimal_pdf(text: str) -> bytes:
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\n" % (len(objects) + 1)
+    out += b"startxref\n%d\n%%%%EOF\n" % xref
+    return bytes(out)
+
+
+def test_load_corpus_texts_parses_pdf_with_ingestion_loaders(tmp_path) -> None:
+    (tmp_path / "terms.pdf").write_bytes(_minimal_pdf("Vendor ships to Buyer"))
+    texts = run_prompt_tuning.load_corpus_texts(tmp_path, max_docs=10)
+    assert len(texts) == 1 and "Vendor ships to Buyer" in texts[0]
 
 
 def test_load_corpus_texts_respects_max_docs(tmp_path) -> None:
