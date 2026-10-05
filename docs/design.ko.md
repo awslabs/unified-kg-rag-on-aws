@@ -243,7 +243,7 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 3. **PACK** — `max_map_reduce_tokens` 토큰 예산까지 상위 포인트를 팩(`token_manager.count_tokens` 기준, `_pack_points_within_budget`).
 4. **REDUCE** — 팩된 포인트(relevance 주석 포함)를 `MapReduceSummaryPrompt`로 최종 답변 합성(`_reduce_from_points`). 결과는 `metadata.synthesized` 표시가 붙은 `synthesized_summary` `RetrievalResult`로 결과 앞에 추가. 답변 모델은 이를 컨텍스트로 읽지만, 검색된 근거가 아니라 LLM 출력이므로 `RAGOutput.sources`에는 포함하지 않습니다.
 
-견고성: map 응답이 코드펜스/산문에 싸여 와도 `_parse_map_points`가 JSON을 추출하고, 단일 배치 파싱 실패는 무시합니다. `_concat_reduce`는 한 가지 특정 실패에 대한 degrade 경로입니다 — map 단계가 유용한 포인트를 전혀 못 낸 경우(모든 배치 파싱 실패) — 덕분에 global search가 hard-fail하지 않고 답변을 합성합니다. 임계값 미달 경로와는 무관합니다. map 단계가 리포트를 평가했지만 모든 포인트가 `map_relevance_threshold` 이하인 경우에는 리포트가 질의와 무관하다고 판단된 것이므로, global search는 결과를 반환하지 않습니다(검색 메타데이터에 `map_reduce_no_relevant_points`로 표시). 이는 MS GraphRAG의 no-data 응답과 같으며, 체인의 빈 컨텍스트 가드가 걸러진 리포트로 답변을 합성하는 대신 "답할 수 없음"을 반환합니다. `MapReduceSummaryPrompt`도 reduce 단계가 제공된 포인트만 사용하고, 그것으로 답할 수 없으면 그렇다고 밝히도록 지시합니다.
+견고성: map 응답이 코드펜스/산문에 싸여 와도 `_parse_map_points`가 JSON을 추출하고, map 호출이 실패했거나 파싱할 수 없는 출력을 낸 배치는 *미평가*로 추적합니다. `_concat_reduce`는 임계값을 넘는 포인트가 없지만 일부 리포트가 평가되지 않은 경우의 degrade 경로로, 미평가 리포트만 대상으로 합니다(모든 배치가 실패하면 전체). 덕분에 global search가 hard-fail하거나 아무도 평가하지 않은 리포트를 두고 데이터 없음으로 판정하지 않고 답변을 합성합니다. map 단계가 모든 배치를 평가했지만 모든 포인트가 `map_relevance_threshold` 이하인 경우에는 리포트가 질의와 무관하다고 판단된 것이므로, global search는 결과를 반환하지 않습니다(검색 메타데이터에 `map_reduce_no_relevant_points`로 표시). 이는 MS GraphRAG의 no-data 응답과 같으며, 체인의 빈 컨텍스트 가드가 걸러진 리포트로 답변을 합성하는 대신 "답할 수 없음"을 반환합니다. `MapReduceSummaryPrompt`도 reduce 단계가 제공된 포인트만 사용하고, 그것으로 답할 수 없으면 그렇다고 밝히도록 지시합니다.
 
 ### 6.2 LightRAG 방법론 (`lightrag_search.py`)
 

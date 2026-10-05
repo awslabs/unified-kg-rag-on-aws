@@ -452,27 +452,33 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         the query: this returns no results (MS GraphRAG answers with its no-data
         response here), so the chain's empty-context guard answers "cannot
         answer" instead of synthesizing from reports the map step rejected.
+        That verdict needs every batch to have been rated: when some batches
+        failed (throttling, timeout) or returned unparseable output, their
+        reports were never judged, so it degrades to concat-and-reduce over
+        just those unrated reports instead.
         """
         if len(results) < self.global_search_config.map_reduce_min_results:
             return results
 
         try:
-            map_points = await self._run_map_phase(results, query)
+            map_points, unrated = await self._run_map_phase(results, query)
         except Exception as e:
             if not self.ignore_errors:
                 raise
             logger.error("Map phase failed: %s", e)
-            map_points = []
-
-        if not map_points:
-            logger.warning(
-                "Map phase produced no usable key points; degrading to "
-                "concat-and-reduce synthesis."
-            )
-            return await self._concat_reduce(results, query)
+            map_points, unrated = [], list(results)
 
         ranked_points = self._filter_and_rank_points(map_points)
         if not ranked_points:
+            if unrated:
+                logger.warning(
+                    "No relevant map key point among the rated reports, but %s/%s "
+                    "reports were never rated (failed or unparseable map calls); "
+                    "degrading to concat-and-reduce over the unrated reports.",
+                    len(unrated),
+                    len(results),
+                )
+                return await self._concat_reduce(unrated, query)
             logger.warning(
                 "All %s map key points scored at or below threshold %s; "
                 "no relevant community data for the query, returning no context.",
@@ -486,11 +492,14 @@ class GlobalSearchStrategy(BaseSearchStrategy):
 
     async def _run_map_phase(
         self, results: list[RetrievalResult], query: SearchQuery
-    ) -> list[_MapPoint]:
+    ) -> tuple[list[_MapPoint], list[RetrievalResult]]:
         """Fan map calls over batches of reports and parse the scored points.
 
         Each batch of ``map_batch_size`` reports becomes one map LLM call;
         BatchProcessor runs them concurrently with graceful per-item fallback.
+        Returns the scored points and the reports of every batch that was NOT
+        rated (the call failed, or its output was not parseable map JSON), so
+        the caller can tell "rated irrelevant" apart from "never rated".
         """
         batch_size = self.global_search_config.map_batch_size
         report_batches = [
@@ -528,12 +537,25 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         )
 
         points: list[_MapPoint] = []
-        for raw in raw_outputs:
-            if not isinstance(raw, str) or not raw:
-                # Sequential fallback inserts {} for a failed item.
+        unrated: list[RetrievalResult] = []
+        for i, batch in enumerate(report_batches):
+            raw = raw_outputs[i] if i < len(raw_outputs) else None
+            # Sequential fallback inserts {} for a failed item.
+            batch_points = (
+                self._parse_map_payload(raw) if isinstance(raw, str) and raw else None
+            )
+            if batch_points is None:
+                unrated.extend(batch)
                 continue
-            points.extend(self._parse_map_points(raw))
-        return points
+            points.extend(batch_points)
+        if unrated:
+            logger.warning(
+                "Global map phase left %s/%s reports unrated (failed or "
+                "unparseable map calls)",
+                len(unrated),
+                len(results),
+            )
+        return points, unrated
 
     @staticmethod
     def _format_reports(reports: list[RetrievalResult]) -> str:
@@ -551,9 +573,17 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         empty list on any parse failure (the caller degrades gracefully) so a
         single bad map response never aborts global search.
         """
+        return GlobalSearchStrategy._parse_map_payload(raw) or []
+
+    @staticmethod
+    def _parse_map_payload(raw: str) -> list[_MapPoint] | None:
+        """Like ``_parse_map_points`` but ``None`` when ``raw`` is not map JSON.
+
+        An empty list means the batch WAS rated and yielded no key points.
+        """
         payload = parse_llm_json(raw)
         if not payload:
-            return []
+            return None
 
         points: list[_MapPoint] = []
         for item in payload.get("points", []) or []:
