@@ -27,6 +27,57 @@ from unified_kg_rag.shared.utils import EMBEDDING_FIELD_SUFFIX, strip_embedding_
 
 logger = get_logger(__name__)
 
+# Aliases already reported as missing (process-wide), so a config/index mismatch
+# is logged once per alias instead of once per query.
+_warned_missing_aliases: set[str] = set()
+
+
+def _is_index_not_found(exc: BaseException) -> bool:
+    """True when ``exc`` is OpenSearch's 404 ``index_not_found_exception``."""
+    if isinstance(exc, NotFoundError):
+        return exc.error == "index_not_found_exception"
+    return "index_not_found_exception" in str(exc)
+
+
+def all_index_prefixes(config: Config) -> list[str]:
+    """Every OpenSearch index prefix the retriever can map, in sweep order."""
+    opensearch = config.indexing.opensearch
+    return [
+        opensearch.text_units_index_prefix,
+        opensearch.entities_index_prefix,
+        opensearch.relationships_index_prefix,
+        opensearch.claims_index_prefix,
+        opensearch.community_reports_index_prefix,
+    ]
+
+
+def configured_index_prefixes(config: Config) -> list[str]:
+    """Index prefixes the configured pipeline actually builds.
+
+    This is the default sweep when a query pins no ``index_prefixes``. Optional
+    indices are skipped when their producing stage is disabled, so the sweep
+    never queries an alias that was never created: claims need
+    ``processing.claim_extraction.enabled``, the relationship vector index needs
+    ``indexing.opensearch.build_relationship_vector_index``, and community
+    reports need ``graph.community_detection.enabled``. Explicit
+    ``index_prefixes`` still reach any mapped index.
+    """
+    opensearch = config.indexing.opensearch
+    optional_enabled = {
+        opensearch.claims_index_prefix: config.processing.claim_extraction.enabled,
+        opensearch.relationships_index_prefix: (
+            opensearch.build_relationship_vector_index
+        ),
+        opensearch.community_reports_index_prefix: (
+            config.graph.community_detection.enabled
+        ),
+    }
+    return [
+        prefix
+        for prefix in all_index_prefixes(config)
+        if optional_enabled.get(prefix, True)
+    ]
+
 
 class OpenSearchRetriever(BaseGraphRAGRetriever):
     # How long a live index mapping is trusted before it is re-read. Dynamic
@@ -440,7 +491,14 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
     def _normalize_index_prefixes(self, prefixes: str | list[str] | None) -> list[str]:
         if isinstance(prefixes, str):
             return [prefixes]
-        return prefixes or list(self._field_mappings.keys())
+        return prefixes or self._default_index_prefixes()
+
+    def _default_index_prefixes(self) -> list[str]:
+        return [
+            prefix
+            for prefix in configured_index_prefixes(self._config)
+            if prefix in self._field_mappings
+        ]
 
     async def _get_query_vector(
         self, query_text: str, search_type: SearchType, vector_fields: list[str]
@@ -763,6 +821,19 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             if is_fatal_retrieval_error(e):
                 logger.error("Fatal search error on indices %s: %s", aliases, e)
                 raise
+            if _is_index_not_found(e):
+                # A missing alias is a config/index mismatch (the index was
+                # never built), not a transient failure: warn once per alias.
+                key = ",".join(aliases)
+                if key not in _warned_missing_aliases:
+                    _warned_missing_aliases.add(key)
+                    logger.warning(
+                        "Index not found for %s; skipping it (was it built by "
+                        "the ingestion config?): %s",
+                        aliases,
+                        e,
+                    )
+                return []
             logger.error("Search failed on indices %s: %s", aliases, e)
             return []
 
