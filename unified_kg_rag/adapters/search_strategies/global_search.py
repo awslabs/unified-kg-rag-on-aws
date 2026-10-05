@@ -14,7 +14,6 @@ from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
-    is_fatal_retrieval_error,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
@@ -259,22 +258,16 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         if not self.document_retriever or not community_ids:
             return []
 
-        try:
-            search_query = query.model_copy(deep=True)
-            search_query.query = ""
-            search_query.filters = (search_query.filters or {}).copy()
-            search_query.filters["community_id"] = community_ids
-            search_query.top_k = len(community_ids)
+        search_query = query.model_copy(deep=True)
+        search_query.query = ""
+        search_query.filters = (search_query.filters or {}).copy()
+        search_query.filters["community_id"] = community_ids
+        search_query.top_k = len(community_ids)
 
-            index_prefixes = [
-                self.config.indexing.opensearch.community_reports_index_prefix
-            ]
-            return await self._retrieve_documents(search_query, index_prefixes)
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("OpenSearch retrieval failed: %s", e)
-            return []
+        index_prefixes = [
+            self.config.indexing.opensearch.community_reports_index_prefix
+        ]
+        return await self._retrieve_documents(search_query, index_prefixes)
 
     async def _retrieve_documents(
         self, query: SearchQuery, index_prefixes: list[str]
@@ -282,15 +275,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         if not self.document_retriever:
             return []
 
-        try:
-            search_query = query.model_copy(deep=True)
-            search_query.index_prefixes = index_prefixes
-            return await self.document_retriever.aretrieve(search_query)
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("OpenSearch retrieval failed: %s", e)
-            return []
+        search_query = query.model_copy(deep=True)
+        search_query.index_prefixes = index_prefixes
+        return await self._safe_aretrieve(
+            self.document_retriever, search_query, "OpenSearch retrieval"
+        )
 
     async def _retrieve_community_nodes(
         self, query: SearchQuery, community_ids: list[str]
@@ -298,24 +287,20 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         if not self.graph_retriever:
             return []
 
-        try:
-            search_query = query.model_copy(deep=True)
-            search_query.query = ""
-            search_query.filters = (search_query.filters or {}).copy()
-            search_query.filters["id"] = community_ids
-            search_query.label_prefixes = [
-                self.config.indexing.neptune.community_label_prefix
-            ]
+        search_query = query.model_copy(deep=True)
+        search_query.query = ""
+        search_query.filters = (search_query.filters or {}).copy()
+        search_query.filters["id"] = community_ids
+        search_query.label_prefixes = [
+            self.config.indexing.neptune.community_label_prefix
+        ]
 
-            return await asyncio.wait_for(
-                self.graph_retriever.aretrieve(search_query),
-                timeout=self.global_search_config.graph_timeout_seconds,
-            )
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("Neptune community retrieval failed: %s", e)
-            return []
+        return await self._safe_aretrieve(
+            self.graph_retriever,
+            search_query,
+            "Neptune community retrieval",
+            timeout=self.global_search_config.graph_timeout_seconds,
+        )
 
     async def _select_relevant_communities(
         self, all_communities: list[RetrievalResult], query: SearchQuery

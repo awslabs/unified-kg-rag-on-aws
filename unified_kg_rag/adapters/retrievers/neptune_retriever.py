@@ -429,6 +429,11 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             result: list[Any] = await asyncio.to_thread(traversal.to_list)
             return result
         except Exception as e:
+            # Fatal errors (auth/credentials/endpoint/connection) must reach
+            # `aretrieve`, which re-raises them; swallowing them here turned a
+            # broken Neptune configuration into a silent "no seed nodes found".
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("Gremlin traversal execution failed: %s", e)
             return []
 

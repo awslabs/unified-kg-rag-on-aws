@@ -357,9 +357,23 @@ async def test_execute_search_iteration_tolerates_retriever_exception(mocker) ->
         mocker.AsyncMock(return_value=["e1"]),
     )
     out = await strat._execute_search_iteration(SearchQuery(query="q"))
-    # gather(return_exceptions=True): the failed graph list is skipped, document
-    # results survive.
+    # A transient failure degrades that branch to []; document results survive.
     assert [r.content for r in out] == ["d1"]
+
+
+async def test_execute_search_iteration_propagates_fatal_error(mocker) -> None:
+    # gather(return_exceptions=True) used to swallow fatal errors too, so an
+    # AccessDenied from Neptune read as "no graph results" on every iteration.
+    graph = _StubRetriever(raises=RuntimeError("AccessDeniedException: neptune-db"))
+    document = _StubRetriever([_result("d1")])
+    strat = _bare_strategy(retrievers={"graph": graph, "document": document})
+    mocker.patch.object(
+        strat,
+        "_find_candidate_entities_for_iteration",
+        mocker.AsyncMock(return_value=["e1"]),
+    )
+    with pytest.raises(RuntimeError, match="AccessDenied"):
+        await strat._execute_search_iteration(SearchQuery(query="q"))
 
 
 async def test_execute_search_iteration_skips_graph_without_candidates(mocker) -> None:

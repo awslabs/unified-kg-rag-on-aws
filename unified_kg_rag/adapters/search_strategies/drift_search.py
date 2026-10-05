@@ -15,7 +15,6 @@ from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
-    is_fatal_retrieval_error,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -321,13 +320,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
         ]
         search_query.top_k = self.config.search.drift_search.initial_top_k
 
-        try:
-            return await self.document_retriever.aretrieve(search_query)
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("Failed to find candidate communities: %s", e)
-            return []
+        return await self._safe_aretrieve(
+            self.document_retriever, search_query, "Candidate community lookup"
+        )
 
     @staticmethod
     def _update_seen_content(
@@ -482,23 +477,28 @@ class DriftSearchStrategy(BaseSearchStrategy):
             graph_query.entity_focus = []
             graph_query.filters = (graph_query.filters or {}).copy()
             graph_query.filters["id"] = candidate_entity_ids
-            tasks.append(self.graph_retriever.aretrieve(graph_query))
+            tasks.append(
+                self._safe_aretrieve(
+                    self.graph_retriever, graph_query, "DRIFT graph retrieval"
+                )
+            )
 
         if self.document_retriever:
             document_query = query.model_copy(deep=True)
             document_query.top_k = query.top_k
-            tasks.append(self.document_retriever.aretrieve(document_query))
+            tasks.append(
+                self._safe_aretrieve(
+                    self.document_retriever, document_query, "DRIFT document retrieval"
+                )
+            )
 
         if not tasks:
             return []
 
-        results_lists = await asyncio.gather(*tasks, return_exceptions=True)
-        return [
-            item
-            for result_list in results_lists
-            if isinstance(result_list, list)
-            for item in result_list
-        ]
+        # Each task already degrades transient failures to []; only fatal
+        # errors raise, and those must propagate rather than be gathered away.
+        results_lists = await asyncio.gather(*tasks)
+        return [item for result_list in results_lists for item in result_list]
 
     async def _find_candidate_entities_for_iteration(
         self, query: SearchQuery
@@ -523,18 +523,14 @@ class DriftSearchStrategy(BaseSearchStrategy):
         entity_search_query.top_k = n_candidates
         entity_search_query.retrieval_multiplier = 1
 
-        try:
-            results = await self.document_retriever.aretrieve(entity_search_query)
-            return [
-                str(result.metadata.get("id") or result.source)
-                for result in results
-                if result.metadata or result.source
-            ]
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("Failed to find candidate entities: %s", e)
-            return []
+        results = await self._safe_aretrieve(
+            self.document_retriever, entity_search_query, "Candidate entity lookup"
+        )
+        return [
+            str(result.metadata.get("id") or result.source)
+            for result in results
+            if result.metadata or result.source
+        ]
 
     @staticmethod
     def _filter_unique_results(
