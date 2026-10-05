@@ -180,6 +180,14 @@ aws:
 > `region_name`이 아니라 `bedrock.region_name`(LLM 호출이 전달되는 리전)에
 > 존재해야 합니다.
 
+> **환경 변수로 지정하는 doc-status 테이블:** `GRAPHRAG_DOC_STATUS_TABLE`은
+> `aws.dynamodb.table_name`을, `GRAPHRAG_DOC_STATUS_CREATE_TABLE`(`true`/`false`)은
+> `aws.dynamodb.create_table_if_missing`을 덮어씁니다. CDK compute 스택은 두 값을
+> 모두 설정합니다. 테이블 이름은 IaC 테이블로, 생성 여부는 `false`로 지정합니다.
+> 테이블을 IaC가 관리하고 태스크 역할에는 테이블 생성 권한이 없기 때문입니다.
+> 증분 인덱싱을 쓰려면 여전히 설정 파일에서 `aws.dynamodb.enabled: true`가
+> 필요합니다.
+
 #### 모델 선택 주의사항
 
 기본값은 추론 비중이 큰 단계에 `anthropic.claude-sonnet-5`, 경량 단계(요약·번역·

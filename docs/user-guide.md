@@ -179,6 +179,13 @@ aws:
 > Guardrail must exist in `bedrock.region_name` (the region LLM calls go to),
 > not necessarily `region_name`.
 
+> **Doc-status table from the environment:** `GRAPHRAG_DOC_STATUS_TABLE`
+> overrides `aws.dynamodb.table_name` and `GRAPHRAG_DOC_STATUS_CREATE_TABLE`
+> (`true`/`false`) overrides `aws.dynamodb.create_table_if_missing`. The CDK
+> compute stack sets both: the IaC table name, and `false` because the table is
+> IaC-managed and the task role cannot create tables. Incremental indexing still
+> requires `aws.dynamodb.enabled: true` in your config.
+
 #### Model selection notes
 
 Defaults are `anthropic.claude-sonnet-5` for reasoning-heavy stages and

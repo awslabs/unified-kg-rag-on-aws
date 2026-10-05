@@ -61,9 +61,10 @@ aws:
   # only re-indexes new/changed documents, merging into the live graph.
   dynamodb:
     enabled: false
-    # If you provisioned the stack with the bundled CDK app (iac/), set this to
-    # the table it created — "graphrag-doc-status" (dev) — otherwise the app
-    # auto-creates a separate table your CloudWatch dashboards won't be watching.
+    # On the bundled CDK app (iac/) the Fargate task injects
+    # GRAPHRAG_DOC_STATUS_TABLE (the IaC table, "graphrag-doc-status" in dev) and
+    # GRAPHRAG_DOC_STATUS_CREATE_TABLE=false; these env vars override both keys
+    # below. Elsewhere, set table_name yourself.
     table_name: "unified-kg-rag-on-aws-doc-status"
     create_table_if_missing: true
     billing_mode: "PAY_PER_REQUEST"
