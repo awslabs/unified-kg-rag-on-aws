@@ -61,7 +61,7 @@ class _FakeRuntimeClient:
 @pytest.fixture
 def sleeps(monkeypatch) -> list[float]:
     recorded: list[float] = []
-    monkeypatch.setattr(bedrock_retry.time, "sleep", recorded.append)
+    monkeypatch.setattr(bedrock_retry, "_sleep", recorded.append)
     return recorded
 
 
