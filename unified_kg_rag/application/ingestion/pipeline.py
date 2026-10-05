@@ -818,6 +818,17 @@ class DataIngestionPipeline:
             "relationships_indexed": int(
                 self._get_stage_metric(context, "indexing", "relationships_indexed")
             ),
+            # Per-chunk LLM failures degrade a run without failing it; surface
+            # them so the ExtractionFailures alarm can catch a partial graph.
+            "total_extraction_failures": int(
+                self._get_stage_metric(context, "graph_extraction", "failed_units")
+            ),
+            "total_gleaning_failures": int(
+                self._get_stage_metric(context, "gleaning", "failed_units")
+            ),
+            "total_claim_extraction_failures": int(
+                self._get_stage_metric(context, "claim_extraction", "failed_units")
+            ),
             "cache_hit_rate": cache_stats.hit_rate,
             "cache_size_mb": cache_stats.total_size_mb,
             "stage_durations": stage_durations,

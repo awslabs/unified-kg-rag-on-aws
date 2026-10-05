@@ -75,6 +75,42 @@ class ObservabilityStack(Stack):
             cw_actions.SnsAction(orchestration.alarm_topic)
         )
 
+        # Alarm: per-chunk extraction failures -> SNS. A chunk whose LLM call
+        # fails every retry is dropped and the run still SUCCEEDS with a partial
+        # graph; neither alarm above sees that. Sums the three EMF failure
+        # counters (FILL keeps a missing metric from blanking the sum).
+        extraction_failed_alarm = cw.Alarm(
+            self,
+            "ExtractionFailures",
+            metric=cw.MathExpression(
+                expression="FILL(e, 0) + FILL(g, 0) + FILL(c, 0)",
+                using_metrics={
+                    key: cw.Metric(
+                        namespace=EMF_NAMESPACE,
+                        metric_name=name,
+                        statistic="Sum",
+                        period=Duration.minutes(5),
+                    )
+                    for key, name in (
+                        ("e", "total_extraction_failures"),
+                        ("g", "total_gleaning_failures"),
+                        ("c", "total_claim_extraction_failures"),
+                    )
+                },
+                label="Failed extraction units",
+                period=Duration.minutes(5),
+            ),
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+            alarm_description="unified-kg-rag-on-aws extraction/gleaning/claim "
+            "extraction dropped text units (partial graph despite a SUCCEEDED run)",
+        )
+        extraction_failed_alarm.add_alarm_action(
+            cw_actions.SnsAction(orchestration.alarm_topic)
+        )
+
         # Store-health alarms: the SFN/indexing alarms above only fire when a
         # pipeline RUN fails. These surface data-store degradation (red cluster,
         # disk pressure, memory pressure, DDB throttling) that would otherwise be
@@ -115,6 +151,7 @@ class ObservabilityStack(Stack):
                 "total_entities_extracted",
                 "total_relationships_extracted",
                 "total_claims_extracted",
+                "total_extraction_failures",
             )
         ]
         indexed_metrics = [

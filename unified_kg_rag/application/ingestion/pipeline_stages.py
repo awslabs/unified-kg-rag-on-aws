@@ -713,6 +713,7 @@ class GraphExtractionStage(PipelineStage):
             "text_units_processed": len(text_units),
             "entities_extracted": entities_count,
             "relationships_extracted": relationships_count,
+            "failed_units": stats.num_failed_extractions if stats else 0,
             "extraction_stats": self._stats_to_dict(stats),
         }
 
@@ -776,6 +777,7 @@ class GleaningStage(PipelineStage):
             "iterations_completed": (
                 gleaning_stats.total_rounds if gleaning_stats else 0
             ),
+            "failed_units": gleaning_stats.num_failed_units if gleaning_stats else 0,
             "gleaning_stats": self._stats_to_dict(gleaning_stats),
         }
 
@@ -889,6 +891,9 @@ class ClaimExtractionStage(PipelineStage):
         metrics = {
             "text_units_processed": len(text_units),
             "claims_extracted": len(claims),
+            "failed_units": (
+                extraction_stats.num_failed_extractions if extraction_stats else 0
+            ),
             "extraction_stats": self._stats_to_dict(extraction_stats),
         }
 

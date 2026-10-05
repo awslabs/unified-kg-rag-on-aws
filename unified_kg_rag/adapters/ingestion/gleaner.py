@@ -148,6 +148,9 @@ class GleaningStats(BaseModel):
     final_quality_score: float = 0.0
     total_processing_time: float = 0.0
     convergence_achieved: bool = False
+    # Unit refinements that failed (input prep, LLM call, or whole batch),
+    # summed over rounds; such units simply gain nothing from gleaning.
+    num_failed_units: int = 0
     rounds: list[GleaningRound] = Field(default_factory=list)
 
     @property
@@ -197,6 +200,7 @@ class GraphGleaner(BaseProcessor):
         self.max_workers = max_workers or default_max_workers()
         self.use_process_pool = use_process_pool
         self.show_progress = show_progress
+        self._failed_units = 0
 
         self.factory = BedrockLanguageModelFactory(
             config=self.config,
@@ -239,6 +243,7 @@ class GraphGleaner(BaseProcessor):
             current_entities, current_relationships
         )
         stats = GleaningStats(initial_quality_score=initial_quality)
+        self._failed_units = 0
 
         logger.info(
             "Starting graph gleaning from %s text units, "
@@ -313,6 +318,7 @@ class GraphGleaner(BaseProcessor):
             previous_quality = current_quality
 
         stats.total_rounds = len(stats.rounds)
+        stats.num_failed_units = self._failed_units
         stats.final_quality_score = current_quality
         stats.total_processing_time = time.time() - start_time
 
@@ -470,6 +476,7 @@ class GraphGleaner(BaseProcessor):
         # the zip to the prepared units so a single failed prep degrades to
         # skipping that unit, not crashing the stage.
         prepared_units = [u for u in text_units if u.id in unit_to_input]
+        self._failed_units += len(text_units) - len(prepared_units)
 
         try:
             results = self.batch_processor.execute_with_fallback(
@@ -485,6 +492,7 @@ class GraphGleaner(BaseProcessor):
             if not self.ignore_errors:
                 raise
             logger.error("Error during graph refinement: %s", e)
+            self._failed_units += len(prepared_units)
             return [], [], {}
 
         all_new_entities, all_new_relationships = [], []
@@ -496,6 +504,10 @@ class GraphGleaner(BaseProcessor):
         # This loop is serial, so a correction may mutate an entity or
         # relationship carried by the round in place without racing another chunk.
         for item, result_data in zip(prepared_units, results, strict=True):
+            if not result_data:
+                # execute_with_fallback yields {} for an item that failed
+                # every retry.
+                self._failed_units += 1
             new_entities, new_relationships, quality_scores = (
                 self._parse_refinement_output(
                     result_data.get("refinement_plan", {}),
@@ -1139,6 +1151,11 @@ class GraphGleaner(BaseProcessor):
                 stats.entities_per_round,
                 stats.relationships_per_round,
                 stats.average_round_time,
+            )
+
+        if stats.num_failed_units > 0:
+            logger.warning(
+                "Gleaning failed for %s text-unit refinements", stats.num_failed_units
             )
 
         if stats.convergence_achieved:
