@@ -6,14 +6,13 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Iterator
 
 import pytest
 from botocore.exceptions import ClientError
 
+from unified_kg_rag.adapters.aws import token_counter
 from unified_kg_rag.adapters.aws.token_counter import (
     BedrockTokenCounter,
-    clear_count_tokens_unsupported_cache,
     estimate_token_count,
     is_count_tokens_known_unsupported,
 )
@@ -22,11 +21,9 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
-def _reset_unsupported_cache() -> Iterator[None]:
-    # The negative cache is process-wide; isolate every test from it.
-    clear_count_tokens_unsupported_cache()
-    yield
-    clear_count_tokens_unsupported_cache()
+def _isolate_unsupported_cache(monkeypatch) -> None:
+    # The negative cache is process-wide; give every test a fresh one.
+    monkeypatch.setattr(token_counter, "_unsupported_model_ids", set())
 
 
 class TestEstimateTokenCount:

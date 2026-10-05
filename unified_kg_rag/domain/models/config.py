@@ -65,16 +65,19 @@ class S3EncryptionType(str, Enum):
     """Server-side encryption header sent on cache uploads.
 
     ``BUCKET_DEFAULT`` sends no SSE header, so S3 applies the bucket's default
-    encryption (SSE-S3 at minimum, or the bucket's SSE-KMS CMK). ``NONE`` is a
-    legacy alias with the same behaviour: S3 encrypts every new object, so it
-    never meant "unencrypted". ``AES256`` / ``aws:kms`` force a per-object
-    header that OVERRIDES the bucket default.
+    encryption (SSE-S3 at minimum, or the bucket's SSE-KMS CMK). ``AES256`` /
+    ``aws:kms`` force a per-object header that OVERRIDES the bucket default.
+    The legacy value ``"NONE"`` is still accepted and means ``BUCKET_DEFAULT``:
+    S3 encrypts every new object, so it never meant "unencrypted".
     """
 
     BUCKET_DEFAULT = "BUCKET_DEFAULT"
-    NONE = "NONE"
     AES256 = "AES256"
     KMS = "aws:kms"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "S3EncryptionType | None":
+        return cls.BUCKET_DEFAULT if value == "NONE" else None
 
 
 class EmbeddingModelId(str, Enum):

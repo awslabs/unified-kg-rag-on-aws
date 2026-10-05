@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
-from collections.abc import Iterator
 from uuid import uuid4
 
 import pytest
@@ -216,10 +215,14 @@ def _llm_result(metadata: dict) -> LLMResult:
 
 
 @pytest.fixture
-def handler() -> Iterator[GuardrailInterventionHandler]:
-    GuardrailInterventionHandler.reset_count()
-    yield GuardrailInterventionHandler("gr-123", ModelPurpose.QUERY)
-    GuardrailInterventionHandler.reset_count()
+def handler(monkeypatch, caplog) -> GuardrailInterventionHandler:
+    monkeypatch.setattr(GuardrailInterventionHandler, "_count", 0)
+    caplog.set_level(logging.WARNING)
+    return GuardrailInterventionHandler("gr-123", ModelPurpose.QUERY)
+
+
+def _interventions_logged(caplog) -> int:  # noqa: ANN001
+    return sum("intervened" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.parametrize(
@@ -231,9 +234,9 @@ def handler() -> Iterator[GuardrailInterventionHandler]:
     ],
 )
 def test_handler_detects_intervention(handler, metadata, caplog) -> None:
-    with caplog.at_level(logging.WARNING):
-        handler.on_llm_end(_llm_result(metadata), run_id=uuid4())
-    assert GuardrailInterventionHandler.intervention_count() == 1
+    handler.on_llm_end(_llm_result(metadata), run_id=uuid4())
+    assert _interventions_logged(caplog) == 1
+    assert "interventions in this process: 1" in caplog.text
     assert "gr-123" in caplog.text
     assert "query" in caplog.text
 
@@ -242,12 +245,12 @@ def test_handler_detects_intervention(handler, metadata, caplog) -> None:
     "metadata",
     [{"stopReason": "end_turn"}, {}, {"amazon-bedrock-guardrailAction": "NONE"}],
 )
-def test_handler_ignores_normal_responses(handler, metadata) -> None:
+def test_handler_ignores_normal_responses(handler, metadata, caplog) -> None:
     handler.on_llm_end(_llm_result(metadata), run_id=uuid4())
-    assert GuardrailInterventionHandler.intervention_count() == 0
+    assert _interventions_logged(caplog) == 0
 
 
-def test_handler_counts_invoke_model_signal_once(handler) -> None:
+def test_handler_counts_invoke_model_signal_once(handler, caplog) -> None:
     # InvokeModel + trace reports via on_llm_error, then still calls on_llm_end.
     run_id = uuid4()
     handler.on_llm_error(
@@ -256,15 +259,15 @@ def test_handler_counts_invoke_model_signal_once(handler) -> None:
     handler.on_llm_end(
         _llm_result({"amazon-bedrock-guardrailAction": "INTERVENED"}), run_id=run_id
     )
-    assert GuardrailInterventionHandler.intervention_count() == 1
+    assert _interventions_logged(caplog) == 1
 
 
-def test_handler_ignores_unrelated_errors(handler) -> None:
+def test_handler_ignores_unrelated_errors(handler, caplog) -> None:
     handler.on_llm_error(Exception("throttled"), run_id=uuid4())
-    assert GuardrailInterventionHandler.intervention_count() == 0
+    assert _interventions_logged(caplog) == 0
 
 
-def test_handler_fires_through_a_real_chain(handler) -> None:
+def test_handler_fires_through_a_real_chain(handler, caplog) -> None:
     """End-to-end through LangChain callbacks: an intervened response is counted."""
     from langchain_core.language_models.fake_chat_models import (
         GenericFakeChatModel,
@@ -276,7 +279,7 @@ def test_handler_fires_through_a_real_chain(handler) -> None:
     )
     model = GenericFakeChatModel(messages=iter([blocked]), callbacks=[handler])
     model.invoke("hello")
-    assert GuardrailInterventionHandler.intervention_count() == 1
+    assert _interventions_logged(caplog) == 1
 
 
 # --- Call sites pass the right purpose ---------------------------------------

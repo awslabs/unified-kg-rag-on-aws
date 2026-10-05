@@ -79,12 +79,6 @@ def mark_count_tokens_unsupported(model_id: str, reason: object) -> None:
     )
 
 
-def clear_count_tokens_unsupported_cache() -> None:
-    """Forget every negative CountTokens result (tests, credential rotation)."""
-    with _unsupported_lock:
-        _unsupported_model_ids.clear()
-
-
 # Codepoint ranges that tokenize at roughly ONE token per character (often more)
 # under BPE tokenizers: CJK ideographs + Japanese kana + Hangul + CJK
 # punctuation/full-width forms. A plain chars/4 estimate under-counts these ~4x,

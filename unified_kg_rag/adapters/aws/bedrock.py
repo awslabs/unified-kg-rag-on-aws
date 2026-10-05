@@ -676,8 +676,7 @@ class GuardrailInterventionHandler(BaseCallbackHandler):
 
     It deliberately does NOT raise: on the query path the blocked message *is*
     the intended user-facing response, and raising from a callback would turn
-    it into an opaque chain error. Operators alert on the WARNING (or read
-    :meth:`intervention_count`).
+    it into an opaque chain error. Operators alert on the WARNING.
     """
 
     _count: ClassVar[int] = 0
@@ -689,16 +688,6 @@ class GuardrailInterventionHandler(BaseCallbackHandler):
         # InvokeModel with trace enabled reports through on_llm_error and then
         # still calls on_llm_end; remember those runs to count each call once.
         self._flagged_runs: set[UUID] = set()
-
-    @classmethod
-    def intervention_count(cls) -> int:
-        with cls._lock:
-            return cls._count
-
-    @classmethod
-    def reset_count(cls) -> None:
-        with cls._lock:
-            cls._count = 0
 
     def _record(self) -> None:
         with self._lock:
