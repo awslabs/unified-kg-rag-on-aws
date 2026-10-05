@@ -89,6 +89,20 @@ LIGHTRAG_STRATEGIES: frozenset[SearchStrategy] = frozenset(
     {SearchStrategy.MIX, SearchStrategy.HYBRID, SearchStrategy.NAIVE}
 )
 
+# Strategies whose retrieval reads ``SearchQuery.entity_focus`` (local search
+# seeds entities from it; DRIFT sizes its per-iteration entity candidate pool by
+# it). Every other strategy ignores it, so the query-side entity-extraction LLM
+# call is skipped for them.
+ENTITY_FOCUS_STRATEGIES: frozenset[SearchStrategy] = frozenset(
+    {SearchStrategy.LOCAL, SearchStrategy.DRIFT}
+)
+
+# LightRAG modes that consume high/low-level keywords. NAIVE is chunk-only
+# vector retrieval and never reads them, so it skips keyword extraction.
+DUAL_KEYWORD_STRATEGIES: frozenset[SearchStrategy] = frozenset(
+    {SearchStrategy.MIX, SearchStrategy.HYBRID}
+)
+
 
 class ChainMode(str, Enum):
     RAG = "rag"
@@ -373,15 +387,26 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 and self.config.processing.translation.is_noop
             )
 
-            entity_extractor = self._get_chain_for_prompt(
-                EntityExtractionPrompt, CommaSeparatedListOutputParser()
-            )
+            # The strategy is resolved (AUTO routing included) before this step,
+            # so only pay for the LLM extractions the resolved strategy reads.
+            needs_entities = self._needs_query_entities(inputs)
+            needs_keywords = self._needs_dual_keywords(inputs)
 
-            tasks: dict[str, Any] = {
-                "entities": entity_extractor.ainvoke(
+            tasks: dict[str, Any] = {}
+            if needs_entities:
+                entity_extractor = self._get_chain_for_prompt(
+                    EntityExtractionPrompt, CommaSeparatedListOutputParser()
+                )
+                tasks["entities"] = entity_extractor.ainvoke(
                     {"query": original_query, "target_language": target_language}
-                ),
-            }
+                )
+            # Keyword extraction runs on the final (possibly translated) query.
+            # When translation is skipped that is the original query, so it can
+            # run concurrently with entity extraction instead of after it.
+            if needs_keywords and skip_translation:
+                tasks["keywords"] = self._extract_dual_keywords(
+                    original_query, target_language
+                )
             if not skip_translation:
                 translator = self._get_chain_for_prompt(
                     TranslationPrompt, StrOutputParser()
@@ -390,7 +415,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                     {"query": original_query, "target_language": target_language}
                 )
 
-            results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+            results = (
+                await asyncio.gather(*tasks.values(), return_exceptions=True)
+                if tasks
+                else []
+            )
             results_map = dict(zip(tasks.keys(), results, strict=True))
             translated_query = results_map.get("translation")
             if not isinstance(translated_query, str):
@@ -423,7 +452,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             final_query = translated_query or original_query
             hl_keywords: list[str] = []
             ll_keywords: list[str] = []
-            if self._is_lightrag_mode(inputs):
+            if "keywords" in results_map:
+                keyword_data = results_map["keywords"]
+                if isinstance(keyword_data, BaseException):
+                    # _extract_dual_keywords already degrades to ([], []) under
+                    # ignore_errors, so an exception here must propagate.
+                    raise keyword_data
+                hl_keywords, ll_keywords = keyword_data
+            elif needs_keywords:
                 hl_keywords, ll_keywords = await self._extract_dual_keywords(
                     final_query, target_language
                 )
@@ -448,6 +484,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     def _is_lightrag_mode(state: dict[str, Any]) -> bool:
         strategy = state.get("resolved_strategy")
         return strategy in LIGHTRAG_STRATEGIES
+
+    @staticmethod
+    def _needs_query_entities(state: dict[str, Any]) -> bool:
+        # Without a resolved strategy (direct step invocation) stay conservative
+        # and extract, matching the pre-gating behavior.
+        strategy = state.get("resolved_strategy")
+        return strategy is None or strategy in ENTITY_FOCUS_STRATEGIES
+
+    @staticmethod
+    def _needs_dual_keywords(state: dict[str, Any]) -> bool:
+        return state.get("resolved_strategy") in DUAL_KEYWORD_STRATEGIES
 
     # Phrases that signal the model returned commentary about the request rather
     # than a translation of it (seen when the query is already in the target
@@ -538,8 +585,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # one query against another query's strategy (silent cross-contamination).
         strategy_instance = self._get_strategy_instance(state["resolved_strategy"])
         processed: ProcessedQuery = state["processed_query"]
+        # Ordered dedupe (not set()) so the joined entity query, and hence its
+        # embedding, is reproducible across processes.
         entity_focus = list(
-            set(processed.entities + state.get("relevant_entities", []))
+            dict.fromkeys(processed.entities + state.get("relevant_entities", []))
         )
 
         resolved_strategy: SearchStrategy = state["resolved_strategy"]
@@ -686,7 +735,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 quality_score=0.0,
             )
 
-    def _context_building_step(self, state: dict[str, Any]) -> str:
+    async def _context_building_step(self, state: dict[str, Any]) -> str:
         try:
             query: ProcessedQuery = state["processed_query"]
             optimized: OptimizedContext | None = state.get("optimized_context")
@@ -695,13 +744,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             search_context = self.token_manager.build_context_string(optimized)
             history = state.get("history")
 
-            if not history:
+            # Decide emptiness on what retrieval actually produced, BEFORE the
+            # history-aware rewrite: the builder LLM can turn an empty context
+            # plus conversation history into a plausible narrative that would
+            # slip past the answer step's empty-context guard.
+            if not history or not optimized.sections:
                 return search_context
 
             context_builder = self._get_chain_for_prompt(
                 ContextBuildingPrompt, StrOutputParser()
             )
-            result = context_builder.invoke(
+            result = await context_builder.ainvoke(
                 {
                     "query": query.original_query,
                     "search_results": search_context,

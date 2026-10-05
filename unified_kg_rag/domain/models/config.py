@@ -1522,7 +1522,7 @@ class ContextTypeBudgetConfig(BaseModel):
         default=0.10,
         ge=0.0,
         description="Relative share for untyped sections — global search's "
-        "map-reduce synthesis and drift search's primer answer land here.",
+        "map-reduce synthesis lands here.",
     )
 
     @model_validator(mode="after")
