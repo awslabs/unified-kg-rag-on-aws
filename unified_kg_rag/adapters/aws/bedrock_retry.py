@@ -14,9 +14,10 @@ access-denied and other client errors to fail fast.
 
 from __future__ import annotations
 
+import asyncio
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 from botocore import exceptions as boto_exc
@@ -77,6 +78,41 @@ def backoff_delay(attempt: int, base_delay: float, max_delay: float) -> float:
     return half + random.uniform(0, half)  # noqa: S311 - jitter, not crypto
 
 
+def next_transient_retry_delay(
+    exc: BaseException,
+    *,
+    operation: str,
+    attempt: int,
+    started_at: float,
+    max_attempts: int,
+    base_delay: float,
+    max_delay: float,
+    max_total_seconds: float,
+) -> float | None:
+    """Return the backoff before the next attempt, or None to give up on ``exc``."""
+    if not is_transient_bedrock_error(exc) or attempt >= max_attempts:
+        return None
+    delay = backoff_delay(attempt, base_delay, max_delay)
+    if time.monotonic() - started_at + delay > max_total_seconds:
+        logger.warning(
+            "Giving up on '%s' after %s attempts (%.1fs retry budget exhausted): %s",
+            operation,
+            attempt,
+            max_total_seconds,
+            _error_code(exc),
+        )
+        return None
+    logger.warning(
+        "Transient Bedrock error on '%s' (attempt %s/%s): %s. Retrying in %.1fs",
+        operation,
+        attempt,
+        max_attempts,
+        _error_code(exc),
+        delay,
+    )
+    return delay
+
+
 def call_with_transient_retry(
     func: Callable[[], T],
     *,
@@ -98,27 +134,49 @@ def call_with_transient_retry(
         try:
             return func()
         except Exception as exc:
-            if not is_transient_bedrock_error(exc) or attempt >= max_attempts:
-                raise
-            delay = backoff_delay(attempt, base_delay, max_delay)
-            if time.monotonic() - start + delay > max_total_seconds:
-                logger.warning(
-                    "Giving up on '%s' after %s attempts (%.1fs retry budget "
-                    "exhausted): %s",
-                    operation,
-                    attempt,
-                    max_total_seconds,
-                    _error_code(exc),
-                )
-                raise
-            logger.warning(
-                "Transient Bedrock error on '%s' (attempt %s/%s): %s. "
-                "Retrying in %.1fs",
-                operation,
-                attempt,
-                max_attempts,
-                _error_code(exc),
-                delay,
+            delay = next_transient_retry_delay(
+                exc,
+                operation=operation,
+                attempt=attempt,
+                started_at=start,
+                max_attempts=max_attempts,
+                base_delay=base_delay,
+                max_delay=max_delay,
+                max_total_seconds=max_total_seconds,
             )
+            if delay is None:
+                raise
             time.sleep(delay)
+            attempt += 1
+
+
+async def acall_with_transient_retry(
+    func: Callable[[], Awaitable[T]],
+    *,
+    operation: str,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    base_delay: float = DEFAULT_BASE_DELAY_SECONDS,
+    max_delay: float = DEFAULT_MAX_DELAY_SECONDS,
+    max_total_seconds: float = DEFAULT_MAX_TOTAL_SECONDS,
+) -> T:
+    """Async twin of :func:`call_with_transient_retry` (backs off without blocking)."""
+    start = time.monotonic()
+    attempt = 1
+    while True:
+        try:
+            return await func()
+        except Exception as exc:
+            delay = next_transient_retry_delay(
+                exc,
+                operation=operation,
+                attempt=attempt,
+                started_at=start,
+                max_attempts=max_attempts,
+                base_delay=base_delay,
+                max_delay=max_delay,
+                max_total_seconds=max_total_seconds,
+            )
+            if delay is None:
+                raise
+            await asyncio.sleep(delay)
             attempt += 1

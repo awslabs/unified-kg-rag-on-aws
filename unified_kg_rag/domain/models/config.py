@@ -1707,6 +1707,41 @@ class LightRAGSearchConfig(BaseModel):
     )
 
 
+class QueryLLMRetryConfig(BaseModel):
+    """Bounded retry for query-time LLM calls on transient Bedrock errors.
+
+    botocore's retry modes do not retry Bedrock's HTTP 424
+    ``ModelErrorException`` (or ``ModelNotReadyException``), so without this a
+    single transient model fault fails the whole user query. Only transient
+    errors are retried; validation and access errors still fail fast. Ingestion
+    LLM calls are retried by ``BatchProcessor`` and do not use this setting.
+    """
+
+    max_attempts: int = Field(
+        default=3,
+        ge=1,
+        description="Total attempts per query-time LLM call, including the first "
+        "(1 disables the retry)",
+    )
+    base_delay_seconds: float = Field(
+        default=1.0,
+        ge=0.0,
+        description="Backoff ceiling for the first retry; doubles per attempt "
+        "with equal jitter",
+    )
+    max_delay_seconds: float = Field(
+        default=8.0,
+        ge=0.0,
+        description="Upper bound on a single backoff delay in seconds",
+    )
+    max_total_seconds: float = Field(
+        default=20.0,
+        ge=0.0,
+        description="Wall-clock retry budget per call; no retry starts once the "
+        "next backoff would cross it",
+    )
+
+
 class SearchConfig(BaseModel):
     translation_model_id: LanguageModelId = Field(
         default=LanguageModelId.CLAUDE_V4_5_HAIKU,
@@ -1752,6 +1787,10 @@ class SearchConfig(BaseModel):
     )
     token_manager: TokenManagerConfig = Field(
         default_factory=TokenManagerConfig, description="Token management configuration"
+    )
+    llm_retry: QueryLLMRetryConfig = Field(
+        default_factory=QueryLLMRetryConfig,
+        description="Retry for query-time LLM calls on transient Bedrock errors",
     )
 
 
