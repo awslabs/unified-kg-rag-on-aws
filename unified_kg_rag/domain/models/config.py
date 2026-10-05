@@ -1222,7 +1222,8 @@ class FusionConfig(BaseModel):
         le=1.0,
         description=(
             "MMR lambda for diversity filtering: score = lambda*relevance - "
-            "(1-lambda)*max_similarity. 1.0 = pure relevance (no diversity), "
+            "(1-lambda)*max_similarity, with relevance min-max normalized to "
+            "[0, 1] over the fused candidates. 1.0 = pure relevance (no diversity), "
             "0.0 = maximum diversity. Lower values penalize redundant results "
             "more strongly. Filtering is skipped at 1.0 (no diversity benefit)."
         ),
