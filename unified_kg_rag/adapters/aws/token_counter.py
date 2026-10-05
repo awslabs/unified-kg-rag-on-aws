@@ -72,9 +72,14 @@ class BedrockTokenCounter:
         model_id: str,
         client: Any,
         cache_maxsize: int = 1024,
+        use_count_tokens_api: bool = True,
     ) -> None:
         self.model_id = model_id
         self._client = client
+        # False for models CountTokens is documented not to support (Claude
+        # 4.7+/5.x, OpenAI GPT): a failed call is not cached, so leaving the API
+        # on would issue one guaranteed-failing request per distinct text.
+        self._use_api = use_count_tokens_api
 
         @lru_cache(maxsize=cache_maxsize)
         def _cached_count(text: str) -> int:
@@ -90,6 +95,8 @@ class BedrockTokenCounter:
         """
         if not text:
             return 0
+        if not self._use_api:
+            return estimate_token_count(text)
         try:
             return self._cached_count(text)
         except Exception as e:

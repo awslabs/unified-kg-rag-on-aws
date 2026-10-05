@@ -181,9 +181,29 @@ aws:
 
 #### Model selection notes
 
-Defaults are `anthropic.claude-sonnet-5` for reasoning-heavy stages and
-`anthropic.claude-haiku-4-5-...` for light ones (summarization, translation,
-keyword extraction). Three things differ for Claude 4.7-and-later models:
+Defaults are `anthropic.claude-sonnet-5-5` (Claude Sonnet 5.5) for
+reasoning-heavy stages and `anthropic.claude-haiku-4-5-...` for light ones
+(summarization, translation, keyword extraction). Any `*_model_id` accepts the
+models below in addition to the older Claude 3.x/4.x ids:
+
+| Model id | Provider | Context / max output | Reasoning control |
+| --- | --- | --- | --- |
+| `anthropic.claude-sonnet-5-5` (default) | Anthropic | 1M / 128K | adaptive, always on; `effort` low–max |
+| `anthropic.claude-opus-5-5` | Anthropic | 1M / 128K | adaptive, always on; `effort` low–max |
+| `anthropic.claude-fable-5-1`, `anthropic.claude-fable-5` | Anthropic | 1M / 128K | adaptive, always on; `effort` |
+| `anthropic.claude-sonnet-5`, `anthropic.claude-opus-5` | Anthropic | 1M / 128K | adaptive, always on; `effort` |
+| `anthropic.claude-opus-4-8`, `anthropic.claude-opus-4-7` | Anthropic | 1M / 128K | adaptive, always on; `effort` |
+| `anthropic.claude-opus-4-6-v1` | Anthropic | 1M / 128K | opt-in (`--enable-thinking`), adaptive; `effort` low–max |
+| `anthropic.claude-sonnet-4-6` | Anthropic | 1M / 64K | opt-in, adaptive; `effort` low/medium/high/max |
+| `openai.gpt-6.1-sol` | OpenAI | 1M / 131K | `reasoning_effort`, always on |
+| `openai.gpt-6-astra`, `openai.gpt-6-sol`, `openai.gpt-6-luna` | OpenAI | 1.05M / 128K | `reasoning_effort`, always on |
+| `openai.gpt-5.6-sol`, `openai.gpt-5.6-terra`, `openai.gpt-5.6-luna` | OpenAI | 1.05M / 128K | `reasoning_effort`, always on |
+| `openai.gpt-5.5`, `openai.gpt-5.4` | OpenAI | 1.05M / 128K | `reasoning_effort`, always on |
+
+All of these are inference-profile-only. Only OpenAI's proprietary GPT models
+are offered; the open-weight `gpt-oss` models are not.
+
+Three things differ for Claude 4.7-and-later models:
 
 - **Inference profiles are mandatory.** They ship without `ON_DEMAND`
   throughput, so the bare model id is not invocable — a cross-region profile
@@ -193,23 +213,35 @@ keyword extraction). Three things differ for Claude 4.7-and-later models:
   for Claude 5 (no `apac.`), so disabling the global profile leaves no path.
 - **`effort` replaces the thinking token budget.** `thinking_budget_tokens` is
   ignored for these models (the old `budget_tokens` request shape is rejected
-  with a 400); set `bedrock.effort` instead. Claude Sonnet 5 always thinks, so
-  `--enable-thinking` is a no-op for it — depth is `effort` only.
+  with a 400); set `bedrock.effort` instead. Claude Sonnet 5.5 always thinks, so
+  `--enable-thinking` is a no-op for it — depth is `effort` only. A level the
+  model card does not list (e.g. `xhigh` on Sonnet 4.6) fails fast.
 - **Sampling parameters are dropped.** `temperature`/`top_k` are not accepted
   and are omitted from requests automatically; steer behaviour by prompting.
 
-`anthropic.claude-fable-5` is intentionally not among the selectable models: it
-requires the account's data-retention mode to be `provider_data_share` (Data
-Retention API only — no console UI), so it would fail on most accounts with
-*"data retention mode 'default' is not available for this model"*, and its
-pricing exceeds the Opus tier.
+OpenAI GPT models differ from Claude in these ways:
+
+- They always go through the Converse API on a `us.`/`global.` inference
+  profile (no `apac.`/`eu.` geo profiles; keep `enable_global_profile: true`
+  outside the US). `bedrock.effort` is sent as `reasoning_effort`.
+- No Anthropic-only fields are sent (`thinking`, `output_config`,
+  `anthropic_beta`, the `\n\nHuman:` stop sequence), and sampling parameters
+  are omitted.
+- Explicit prompt-cache markers are not sent: Converse supports only implicit
+  caching for these models. Bedrock CountTokens does not support them, so the
+  retrieval context budget uses the local token estimate.
+
+Claude Fable 5 / 5.1 require the account's data-retention mode to be
+`aws_review` (set through the Data Retention API); otherwise calls are
+rejected. Their dual-use classifiers also return `stop_reason: "refusal"`
+noticeably more often than other Claude models.
 
 ### 2.2 `fixing` — auto-repair malformed model output
 
 ```yaml
 fixing:
   enabled: true
-  fixing_model_id: "anthropic.claude-sonnet-5"
+  fixing_model_id: "anthropic.claude-sonnet-5-5"
 ```
 
 When an LLM returns malformed JSON for a structured stage, this re-asks a model
@@ -272,7 +304,7 @@ most impactful domain-adaptation knob (see §9). Each item is
 
 ```yaml
   graph_extraction:
-    extraction_model_id: "anthropic.claude-sonnet-5"
+    extraction_model_id: "anthropic.claude-sonnet-5-5"
     max_entities_per_chunk: 50
     max_relationships_per_chunk: 50
     entity_confidence_threshold: 0.0
@@ -311,7 +343,7 @@ missed on the first pass (quality vs. cost trade-off).
 ```yaml
   gleaning:
     enabled: true
-    graph_refinement_model_id: "anthropic.claude-sonnet-5"
+    graph_refinement_model_id: "anthropic.claude-sonnet-5-5"
     max_rounds: 3
     convergence_threshold: 0.8
     quality_threshold: 0.9
@@ -326,7 +358,7 @@ When ON, `local` search injects matching claims (MS GraphRAG covariates) and
 ```yaml
   claim_extraction:
     enabled: false
-    extraction_model_id: "anthropic.claude-sonnet-5"
+    extraction_model_id: "anthropic.claude-sonnet-5-5"
     max_entities_per_prompt: 100
 ```
 
@@ -358,7 +390,7 @@ graph:
     auto_resolution: true
     report_generation:              # LLM-generated community summaries (used by global search)
       enabled: true
-      report_generation_model_id: "anthropic.claude-sonnet-5"
+      report_generation_model_id: "anthropic.claude-sonnet-5-5"
       max_entities_per_report: 50
       max_report_context_tokens: 4000
 
@@ -414,10 +446,10 @@ indexing:
 ```yaml
 search:
   translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
-  entity_extraction_model_id: "anthropic.claude-sonnet-5"
-  strategy_selection_model_id: "anthropic.claude-sonnet-5"   # the `auto` router
-  context_building_model_id: "anthropic.claude-sonnet-5"
-  answer_generation_model_id: "anthropic.claude-sonnet-5"    # the answer LLM
+  entity_extraction_model_id: "anthropic.claude-sonnet-5-5"
+  strategy_selection_model_id: "anthropic.claude-sonnet-5-5"   # the `auto` router
+  context_building_model_id: "anthropic.claude-sonnet-5-5"
+  answer_generation_model_id: "anthropic.claude-sonnet-5-5"    # the answer LLM
 
   hybrid:
     lexical_weight: 0.5
@@ -495,7 +527,7 @@ logging:
 ```yaml
 evaluation:
   outputs_directory: "outputs/evaluation"
-  evaluation_model_id: "anthropic.claude-sonnet-5"
+  evaluation_model_id: "anthropic.claude-sonnet-5-5"
   enabled_evaluators:
     - langchain
     - ragas

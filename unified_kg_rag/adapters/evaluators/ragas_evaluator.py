@@ -25,7 +25,10 @@ from unified_kg_rag.adapters.aws import (
     BedrockEmbeddingModelFactory,
     BedrockLanguageModelFactory,
 )
-from unified_kg_rag.adapters.aws.bedrock import get_assumed_role_boto_session
+from unified_kg_rag.adapters.aws.bedrock import (
+    get_assumed_role_boto_session,
+    get_language_model_info,
+)
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.domain.models import (
     Config,
@@ -83,9 +86,15 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             region_name=config.aws.bedrock.region_name,
             config=BotoConfig(retries={"max_attempts": 3}),
         )
+        eval_model_info = get_language_model_info(config.evaluation.evaluation_model_id)
         self._token_counter = BedrockTokenCounter(
             model_id=config.evaluation.evaluation_model_id.value,
             client=bedrock_client,
+            use_count_tokens_api=(
+                eval_model_info.supports_count_tokens
+                if eval_model_info is not None
+                else True
+            ),
         )
         self.ignore_errors = config.processing.ignore_errors
         super().__init__(

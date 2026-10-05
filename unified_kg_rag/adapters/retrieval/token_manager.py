@@ -105,10 +105,16 @@ class TokenManager(MetricsMixin):
 
         answer_model_id = config.search.answer_generation_model_id
         self._enable_1m_context = config.aws.bedrock.enable_1m_context
+        answer_model_info = get_language_model_info(answer_model_id)
         self._token_counter = BedrockTokenCounter(
             model_id=answer_model_id.value,
             client=bedrock_client,
             cache_maxsize=self.config.token_count_cache_size,
+            use_count_tokens_api=(
+                answer_model_info.supports_count_tokens
+                if answer_model_info is not None
+                else True
+            ),
         )
         self._max_context_tokens = self._resolve_max_context_tokens(answer_model_id)
 

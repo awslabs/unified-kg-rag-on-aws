@@ -49,7 +49,27 @@ class EmbeddingModelInfo(BaseModel):
     )
 
 
+ModelProvider = Literal["anthropic", "openai"]
+
+# Effort levels as documented per model family. Anthropic levels are sent as
+# ``output_config.effort``; OpenAI levels as ``reasoning_effort``.
+_ANTHROPIC_EFFORTS_ALL: frozenset[str] = frozenset(
+    {"low", "medium", "high", "xhigh", "max"}
+)
+_OPENAI_EFFORTS_GPT6: frozenset[str] = frozenset(
+    {"none", "low", "medium", "high", "xhigh", "max"}
+)
+
+
 class LanguageModelInfo(BaseModel):
+    provider: ModelProvider = Field(
+        default="anthropic",
+        description=(
+            "Model provider. Selects the provider-specific request shape: "
+            "Anthropic thinking/output_config, anthropic_beta headers and the "
+            "legacy stop sequence for 'anthropic'; reasoning_effort for 'openai'."
+        ),
+    )
     context_window_size: int = Field(
         description="Maximum context window size in tokens that the model can handle."
     )
@@ -112,8 +132,53 @@ class LanguageModelInfo(BaseModel):
             "bare model id fails — a cross-region profile must resolve."
         ),
     )
+    supports_adaptive_thinking: bool = Field(
+        default=False,
+        description=(
+            "Whether the model accepts Anthropic adaptive thinking "
+            "({'type': 'adaptive'} + output_config.effort). Claude 4.6 accepts it "
+            "alongside the deprecated budget_tokens shape, so an opt-in thinking "
+            "request uses adaptive there; adaptive_thinking_only implies it."
+        ),
+    )
+    supported_efforts: frozenset[str] | None = Field(
+        default=None,
+        description=(
+            "Effort levels the model card documents. A configured effort outside "
+            "this set fails fast instead of surfacing as a Bedrock 400. None means "
+            "the levels are not documented and the value is passed through."
+        ),
+    )
+    supports_count_tokens: bool = Field(
+        default=True,
+        description=(
+            "Whether the CountTokens API accepts the model on bedrock-runtime. "
+            "When False, token counting uses the local estimate directly instead "
+            "of issuing a call that is guaranteed to fail."
+        ),
+    )
 
     BETA_1M_CONTEXT_WINDOW_SIZE: ClassVar[int] = 1000000
+
+    @property
+    def uses_adaptive_thinking(self) -> bool:
+        """Whether thinking requests take the adaptive + effort shape."""
+        return self.provider == "anthropic" and (
+            self.supports_adaptive_thinking or self.adaptive_thinking_only
+        )
+
+    @property
+    def always_reasons(self) -> bool:
+        """Whether every request carries the reasoning config.
+
+        Adaptive-only Claude models think by default (and Sonnet 5 / Fable 5
+        cannot turn it off); OpenAI GPT models are reasoning models whose depth
+        is set per request. In both cases the reasoning block is what carries
+        the configured effort, so it is sent regardless of the caller's flag.
+        """
+        if not self.supports_thinking:
+            return False
+        return self.adaptive_thinking_only or self.provider == "openai"
 
     def effective_context_window(self, enable_1m_context: bool = False) -> int:
         """Context window the model will actually honour for a request.
@@ -173,7 +238,70 @@ _EMBEDDING_MODEL_INFO: dict[EmbeddingModelId, EmbeddingModelInfo] = {
     # NOTE: add new models here
 }
 
+# Capability sources: the Amazon Bedrock model cards
+# (docs.aws.amazon.com/bedrock/latest/userguide/model-card-<provider>-<model>.html)
+# and the adaptive-thinking guide (claude-messages-adaptive-thinking.html).
 _LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
+    # --- Claude 5.5 -----------------------------------------------------
+    # 1M context / 128K output; adaptive thinking with effort low..max;
+    # CountTokens is not supported on bedrock-runtime.
+    LanguageModelId.CLAUDE_V5_5_SONNET: LanguageModelInfo(
+        context_window_size=1000000,
+        max_output_tokens=128000,
+        supports_prompt_caching=True,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        adaptive_thinking_only=True,
+        supported_efforts=_ANTHROPIC_EFFORTS_ALL,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+        supports_count_tokens=False,
+    ),
+    LanguageModelId.CLAUDE_V5_5_OPUS: LanguageModelInfo(
+        context_window_size=1000000,
+        max_output_tokens=128000,
+        supports_prompt_caching=True,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        # Adaptive thinking is always on and cannot be disabled.
+        adaptive_thinking_only=True,
+        supported_efforts=_ANTHROPIC_EFFORTS_ALL,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+        supports_count_tokens=False,
+    ),
+    # --- Claude Fable 5.x -----------------------------------------------
+    # Adaptive-only; temperature must be 1.0/unset and top_k is unsupported,
+    # so sampling params are omitted. Both require the account's data
+    # retention mode to be 'aws_review' (set via the Data Retention API), and
+    # dual-use classifiers may end a response with stop_reason 'refusal'.
+    LanguageModelId.CLAUDE_V5_1_FABLE: LanguageModelInfo(
+        context_window_size=1000000,
+        max_output_tokens=128000,
+        supports_prompt_caching=True,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        adaptive_thinking_only=True,
+        supported_efforts=_ANTHROPIC_EFFORTS_ALL,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+        # CountTokens is listed for bedrock-mantle only.
+        supports_count_tokens=False,
+    ),
+    LanguageModelId.CLAUDE_V5_FABLE: LanguageModelInfo(
+        context_window_size=1000000,
+        max_output_tokens=128000,
+        supports_prompt_caching=True,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        adaptive_thinking_only=True,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+    ),
     # --- Claude 5 -------------------------------------------------------
     # 1M context is the default (and the maximum), so no beta opt-in header.
     # Both take adaptive thinking only and reject sampling parameters.
@@ -187,6 +315,7 @@ _LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
         adaptive_thinking_only=True,
         supports_sampling_params=False,
         requires_inference_profile=True,
+        supports_count_tokens=False,
     ),
     LanguageModelId.CLAUDE_V5_OPUS: LanguageModelInfo(
         context_window_size=1000000,
@@ -200,12 +329,62 @@ _LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
         # We always send adaptive, so that cap never applies.
         supports_sampling_params=False,
         requires_inference_profile=True,
+        supports_count_tokens=False,
     ),
-    # Claude Fable 5 is deliberately NOT offered: it requires the account's
-    # data-retention mode to be 'provider_data_share' (Data Retention API only,
-    # no console UI), so a selectable entry would fail for most accounts with
-    # "data retention mode 'default' is not available for this model". Its
-    # pricing also exceeds the Opus tier.
+    # --- Claude 4.6 - 4.8 -----------------------------------------------
+    # 1M context per the model cards. 4.7 accepts adaptive thinking only and
+    # dropped sampling parameters; 4.8 is assumed to keep the 4.7 contract
+    # (its card states only "Reasoning: Supported").
+    LanguageModelId.CLAUDE_V4_8_OPUS: LanguageModelInfo(
+        context_window_size=1000000,
+        max_output_tokens=128000,
+        supports_prompt_caching=True,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        adaptive_thinking_only=True,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+        supports_count_tokens=False,
+    ),
+    LanguageModelId.CLAUDE_V4_7_OPUS: LanguageModelInfo(
+        context_window_size=1000000,
+        max_output_tokens=128000,
+        supports_prompt_caching=True,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        adaptive_thinking_only=True,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+        supports_count_tokens=False,
+    ),
+    # 4.6 still accepts sampling params and disabled thinking, so thinking stays
+    # opt-in; when requested it uses adaptive + effort because budget_tokens is
+    # deprecated on these models.
+    LanguageModelId.CLAUDE_V4_6_OPUS: LanguageModelInfo(
+        context_window_size=1000000,
+        max_output_tokens=128000,
+        supports_prompt_caching=True,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        supports_adaptive_thinking=True,
+        supported_efforts=_ANTHROPIC_EFFORTS_ALL,
+        requires_inference_profile=True,
+    ),
+    LanguageModelId.CLAUDE_V4_6_SONNET: LanguageModelInfo(
+        context_window_size=1000000,
+        max_output_tokens=64000,
+        supports_prompt_caching=True,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        supports_adaptive_thinking=True,
+        # 'xhigh' is documented for Opus models only.
+        supported_efforts=frozenset({"low", "medium", "high", "max"}),
+        requires_inference_profile=True,
+    ),
     LanguageModelId.CLAUDE_V3_HAIKU: LanguageModelInfo(
         context_window_size=200000,
         max_output_tokens=4096,
@@ -277,6 +456,115 @@ _LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
         supports_prompt_caching=True,
         supports_thinking=True,
         supports_1m_context_window=True,
+    ),
+    # --- OpenAI GPT (proprietary) ---------------------------------------
+    # Served on bedrock-runtime through Converse with US-geo / global inference
+    # profiles only. Converse gets implicit prompt caching only (the native
+    # cachePoint field is rejected), so no explicit cache markers are sent, and
+    # CountTokens is not supported. Sampling params are omitted: these are
+    # reasoning models and the cards do not document temperature/top_p.
+    LanguageModelId.GPT_V6_1_SOL: LanguageModelInfo(
+        provider="openai",
+        context_window_size=1000000,
+        max_output_tokens=131072,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+        supports_count_tokens=False,
+    ),
+    LanguageModelId.GPT_V6_ASTRA: LanguageModelInfo(
+        provider="openai",
+        context_window_size=1050000,
+        max_output_tokens=128000,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+        supports_count_tokens=False,
+    ),
+    LanguageModelId.GPT_V6_SOL: LanguageModelInfo(
+        provider="openai",
+        context_window_size=1050000,
+        max_output_tokens=128000,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        supported_efforts=_OPENAI_EFFORTS_GPT6,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+        supports_count_tokens=False,
+    ),
+    LanguageModelId.GPT_V6_LUNA: LanguageModelInfo(
+        provider="openai",
+        context_window_size=1050000,
+        max_output_tokens=128000,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        supported_efforts=_OPENAI_EFFORTS_GPT6,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+        supports_count_tokens=False,
+    ),
+    LanguageModelId.GPT_V5_6_SOL: LanguageModelInfo(
+        provider="openai",
+        context_window_size=1050000,
+        max_output_tokens=128000,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+        supports_count_tokens=False,
+    ),
+    LanguageModelId.GPT_V5_6_TERRA: LanguageModelInfo(
+        provider="openai",
+        context_window_size=1050000,
+        max_output_tokens=128000,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+        supports_count_tokens=False,
+    ),
+    LanguageModelId.GPT_V5_6_LUNA: LanguageModelInfo(
+        provider="openai",
+        context_window_size=1050000,
+        max_output_tokens=128000,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+        supports_count_tokens=False,
+    ),
+    # The GPT-5.5 / GPT-5.4 cards list bedrock-mantle only, while the
+    # bedrock-runtime catalog exposes us./global. profiles for both.
+    LanguageModelId.GPT_V5_5: LanguageModelInfo(
+        provider="openai",
+        context_window_size=1050000,
+        max_output_tokens=128000,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+        supports_count_tokens=False,
+    ),
+    LanguageModelId.GPT_V5_4: LanguageModelInfo(
+        provider="openai",
+        context_window_size=1050000,
+        max_output_tokens=128000,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+        supports_count_tokens=False,
     ),
     # NOTE: add new models here
 }
@@ -672,10 +960,15 @@ class BedrockLanguageModelFactory(
                 f"grant bedrock:ListInferenceProfiles, or choose a region where "
                 f"a profile for this model exists."
             )
+        # ChatBedrock speaks the Anthropic InvokeModel body; every other provider
+        # goes through the provider-neutral Converse API. Non-Anthropic models are
+        # profile-only today (enforced above), so this also guards a future
+        # on-demand entry from being sent an Anthropic-shaped body.
+        use_converse = is_cross_region or model_info.provider != "anthropic"
         model_config = self._build_model_config(
-            model_info, resolved_model_id, is_cross_region, **kwargs
+            model_info, resolved_model_id, use_converse, **kwargs
         )
-        model_class = ChatBedrockConverse if is_cross_region else ChatBedrock
+        model_class = ChatBedrockConverse if use_converse else ChatBedrock
         model = model_class(**model_config)
         logger.debug(
             "Created language model: '%s' with class %s",
@@ -731,6 +1024,7 @@ class BedrockLanguageModelFactory(
         elif (
             self.config.aws.bedrock.enable_1m_context
             and model_info.supports_1m_context_window
+            and model_info.provider == "anthropic"
         ):
             if is_cross_region:
                 config.setdefault("additional_model_request_fields", {}).update(
@@ -762,9 +1056,13 @@ class BedrockLanguageModelFactory(
             and self.boto_session.profile_name != "default"
         ):
             config["credentials_profile_name"] = self.boto_session.profile_name
-        common_params = {
-            "stop_sequences": ["\n\nHuman:"],
-        }
+        # "\n\nHuman:" is an Anthropic text-completion turn marker; it means
+        # nothing to other providers, so they get no stop sequence at all.
+        common_params: dict[str, Any] = (
+            {"stop_sequences": ["\n\nHuman:"]}
+            if model_info.provider == "anthropic"
+            else {}
+        )
         if is_cross_region:
             config.update(common_params)
         elif model_info.supports_sampling_params:
@@ -807,31 +1105,53 @@ class BedrockLanguageModelFactory(
     def _build_thinking_config(
         self, model_info: LanguageModelInfo, **kwargs: Any
     ) -> dict[str, Any]:
-        """Assemble the reasoning request fields for a model.
+        """Assemble the provider-specific reasoning request fields for a model.
 
-        Adaptive-thinking models (Claude 4.7+) reject the manual
-        ``{"type": "enabled", "budget_tokens": N}`` shape with a 400 and steer
-        depth via ``effort`` instead. ``effort`` must sit in its own
-        ``output_config`` object — nesting it inside ``thinking`` raises a
-        ``ValidationException``.
+        - OpenAI GPT: ``reasoning_effort`` in ``additionalModelRequestFields`` —
+          the Chat Completions field, which the Converse mapping for OpenAI
+          models passes through unchanged.
+        - Anthropic adaptive (Claude 4.6+): ``{"type": "adaptive"}`` plus
+          ``effort`` in its own ``output_config`` object — nesting it inside
+          ``thinking`` raises a ``ValidationException``. Adaptive-only models
+          (Claude 4.7+) reject the manual ``budget_tokens`` shape with a 400.
+        - Older Anthropic: ``{"type": "enabled", "budget_tokens": N}``.
         """
-        if not model_info.adaptive_thinking_only:
+        if model_info.provider == "openai":
+            effort = self._resolve_effort(model_info, **kwargs)
+            logger.debug("Applied OpenAI reasoning (reasoning_effort='%s')", effort)
+            return {"reasoning_effort": effort}
+        if not model_info.uses_adaptive_thinking:
             budget = kwargs.get(
                 "thinking_budget_tokens", self.DEFAULT_THINKING_BUDGET_TOKENS
             )
             logger.debug("Applied extended thinking (budget_tokens=%d)", budget)
             return {"thinking": {"type": "enabled", "budget_tokens": budget}}
+        effort = self._resolve_effort(model_info, **kwargs)
+        logger.debug("Applied adaptive thinking (effort='%s')", effort)
+        return {
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": effort},
+        }
+
+    def _resolve_effort(self, model_info: LanguageModelInfo, **kwargs: Any) -> str:
+        """Pick the effort level (per-call override, else config) and validate it.
+
+        Fails fast with the documented levels rather than letting Bedrock answer
+        with a 400 on the first request.
+        """
         effort = kwargs.get("effort") or self.config.aws.bedrock.effort
         if effort not in self.VALID_EFFORTS:
             raise LanguageModelError(
                 f"Invalid effort level '{effort}'. "
                 f"Valid levels: {sorted(self.VALID_EFFORTS)}"
             )
-        logger.debug("Applied adaptive thinking (effort='%s')", effort)
-        return {
-            "thinking": {"type": "adaptive"},
-            "output_config": {"effort": effort},
-        }
+        allowed = model_info.supported_efforts
+        if allowed is not None and effort not in allowed:
+            raise LanguageModelError(
+                f"Effort level '{effort}' is not supported by this model. "
+                f"Supported levels: {sorted(allowed)}"
+            )
+        return str(effort)
 
     def _apply_guardrail(self, config: dict[str, Any], is_cross_region: bool) -> None:
         """Attach Bedrock Guardrails to the model when configured.
@@ -890,12 +1210,12 @@ class BedrockLanguageModelFactory(
     def _should_enable_thinking(enable: bool, model_info: LanguageModelInfo) -> bool:
         if not model_info.supports_thinking:
             return False
-        # Adaptive-thinking models think by default (and Sonnet 5 / Fable 5
-        # reject {'type': 'disabled'} outright), so their requests always carry
-        # the adaptive config regardless of the caller's flag — that block is
-        # also what carries the configured effort level, which would otherwise
-        # be silently dropped.
-        return enable or model_info.adaptive_thinking_only
+        # Adaptive-only Claude models think by default (and Sonnet 5 / Fable 5
+        # reject {'type': 'disabled'} outright) and GPT models always reason, so
+        # their requests carry the reasoning config regardless of the caller's
+        # flag — that block is also what carries the configured effort level,
+        # which would otherwise be silently dropped.
+        return enable or model_info.always_reasons
 
 
 class BedrockRerankWrapper(BaseBedrockWrapper, BedrockRerank):

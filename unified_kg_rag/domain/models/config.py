@@ -77,11 +77,19 @@ class EmbeddingModelId(str, Enum):
 
 
 class LanguageModelId(str, Enum):
-    # Claude 5 ids carry no date suffix and no ':0' revision, unlike every
-    # earlier generation. Cross-region resolution still applies the same
+    # Claude 4.7+ / 5.x ids carry no date suffix and no ':0' revision, unlike
+    # earlier generations. Cross-region resolution still applies the same
     # 'us.'/'apac.'/'global.' inference-profile prefixes.
+    CLAUDE_V5_5_SONNET = "anthropic.claude-sonnet-5-5"
+    CLAUDE_V5_5_OPUS = "anthropic.claude-opus-5-5"
+    CLAUDE_V5_1_FABLE = "anthropic.claude-fable-5-1"
+    CLAUDE_V5_FABLE = "anthropic.claude-fable-5"
     CLAUDE_V5_SONNET = "anthropic.claude-sonnet-5"
     CLAUDE_V5_OPUS = "anthropic.claude-opus-5"
+    CLAUDE_V4_8_OPUS = "anthropic.claude-opus-4-8"
+    CLAUDE_V4_7_OPUS = "anthropic.claude-opus-4-7"
+    CLAUDE_V4_6_OPUS = "anthropic.claude-opus-4-6-v1"
+    CLAUDE_V4_6_SONNET = "anthropic.claude-sonnet-4-6"
     CLAUDE_V3_HAIKU = "anthropic.claude-3-haiku-20240307-v1:0"
     CLAUDE_V3_SONNET = "anthropic.claude-3-sonnet-20240229-v1:0"
     CLAUDE_V3_OPUS = "anthropic.claude-3-opus-20240229-v1:0"
@@ -95,6 +103,18 @@ class LanguageModelId(str, Enum):
     CLAUDE_V4_OPUS = "anthropic.claude-opus-4-20250514-v1:0"
     CLAUDE_V4_1_OPUS = "anthropic.claude-opus-4-1-20250805-v1:0"
     CLAUDE_V4_5_OPUS = "anthropic.claude-opus-4-5-20251101-v1:0"
+    # OpenAI proprietary GPT models (open-weight gpt-oss is intentionally not
+    # offered). Ids use dotted versions and are served through the Converse API
+    # on cross-region inference profiles only.
+    GPT_V6_1_SOL = "openai.gpt-6.1-sol"
+    GPT_V6_ASTRA = "openai.gpt-6-astra"
+    GPT_V6_SOL = "openai.gpt-6-sol"
+    GPT_V6_LUNA = "openai.gpt-6-luna"
+    GPT_V5_6_SOL = "openai.gpt-5.6-sol"
+    GPT_V5_6_TERRA = "openai.gpt-5.6-terra"
+    GPT_V5_6_LUNA = "openai.gpt-5.6-luna"
+    GPT_V5_5 = "openai.gpt-5.5"
+    GPT_V5_4 = "openai.gpt-5.4"
     # NOTE: add new models here
 
 
@@ -154,9 +174,11 @@ class BedrockConfig(BaseModel):
     effort: Literal["low", "medium", "high", "xhigh", "max"] = Field(
         default="high",
         description=(
-            "Reasoning effort for adaptive-thinking models (Claude 4.7+), which "
-            "replaces the fixed thinking token budget. 'xhigh'/'max' are only "
-            "accepted by some models; lower levels trade depth for cost/latency."
+            "Reasoning effort. Sent as output_config.effort to Anthropic "
+            "adaptive-thinking models (Claude 4.6+), where it replaces the fixed "
+            "thinking token budget, and as reasoning_effort to OpenAI GPT models. "
+            "'xhigh'/'max' are only accepted by some models; lower levels trade "
+            "depth for cost/latency."
         ),
     )
     guardrail: GuardrailConfig = Field(
@@ -293,7 +315,7 @@ class FixingConfig(BaseModel):
         default=True, description="Enable automatic fixing of malformed model responses"
     )
     fixing_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_5_SONNET,
         description="Language model for output correction",
     )
 
@@ -488,7 +510,7 @@ class EntityGroundingConfig(BaseModel):
 
 class GraphExtractionConfig(BaseModel):
     extraction_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_5_SONNET,
         description="Language model for entity and relationship extraction",
     )
     max_entities_per_chunk: int = Field(
@@ -535,7 +557,7 @@ class GleaningConfig(BaseModel):
         default=True, description="Enable gleaning for improved extraction"
     )
     graph_refinement_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_5_SONNET,
         description="Language model for graph refinement",
     )
     max_rounds: int = Field(default=3, ge=1, description="Maximum gleaning rounds")
@@ -605,7 +627,7 @@ class ClaimExtractionConfig(BaseModel):
         "(DataIngestionPipeline._initialize_stages).",
     )
     extraction_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_5_SONNET,
         description="Language model for claim extraction",
     )
     max_entities_per_prompt: int = Field(
@@ -778,7 +800,7 @@ class ReportGenerationConfig(BaseModel):
         default=True, description="Enable automatic community report generation"
     )
     report_generation_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_5_SONNET,
         description="Language model for community report generation",
     )
     max_entities_per_report: int = Field(
@@ -1631,19 +1653,19 @@ class SearchConfig(BaseModel):
         description="Language model identifier used for translating queries into the target language",
     )
     entity_extraction_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_5_SONNET,
         description="Language model identifier used for extracting named entities from user queries",
     )
     strategy_selection_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_5_SONNET,
         description="Language model identifier used for automatically selecting the optimal search strategy",
     )
     context_building_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_5_SONNET,
         description="Language model identifier used for building and structuring contextual information",
     )
     answer_generation_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_5_SONNET,
         description="Language model identifier used for generating final answers from retrieved context",
     )
     hybrid: HybridConfig = Field(
@@ -1874,7 +1896,7 @@ class EvaluationConfig(BaseModel):
         description="Embedding model identifier for evaluation",
     )
     evaluation_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_SONNET,
+        default=LanguageModelId.CLAUDE_V5_5_SONNET,
         description="Language model identifier used for evaluation",
     )
     enabled_evaluators: list[EvaluatorType] = Field(
