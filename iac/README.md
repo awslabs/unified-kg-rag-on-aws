@@ -137,11 +137,14 @@ hardening is opt-in via the flags above. Validate with:
 ```bash
 cdk synth -c enable_cdk_nag=true                       # dev
 cdk synth -c enable_cdk_nag=true -c use_cmk=true \
-  -c vpc_flow_logs=true -c neptune_instances=2 \
+  -c vpc_flow_logs=true -c neptune_instances=2 -c opensearch_count=2 \
   -c deletion_protection=true -c removal_destroy=false  # prod-hardened
 ```
-Both report zero AwsSolutions findings (accepted findings are documented in
-`iac/nag_suppressions.py`).
+Both report zero AwsSolutions findings, and CI runs both. Accepted findings are
+documented in `iac/nag_suppressions.py`: `AwsSolutions-IAM5` is suppressed per
+role for the listed wildcards only (`appliesTo`), so a new wildcard fails the
+synth, and the OpenSearch HA findings (OS4/OS7) are accepted only for a
+single-node domain.
 
 > **A few Bedrock read actions use `Resource: "*"` by necessity**, not oversight:
 > `bedrock:Rerank` (authorizes against a different resource shape than
@@ -179,15 +182,16 @@ cdk deploy --all
 
 ## After deploy
 
-1. Build & push the app image to the created ECR repo (tag `latest`); the image
-   must contain a `/app/config.yaml` with the deployed endpoints (or rely on the
-   injected `NEPTUNE_ENDPOINT` / `OPENSEARCH_ENDPOINT` / `S3_BUCKET_NAME` /
-   `BEDROCK_REGION` env vars the app reads). The task also injects
+1. Build & push the app image (`docker/Dockerfile`, build context = repo root)
+   to the created ECR repo (tag `latest`). The image bakes in the tracked,
+   endpoint-free `docker/config.yaml` as `/app/config.yaml`; the deployed
+   endpoints come from the injected `NEPTUNE_ENDPOINT` / `OPENSEARCH_ENDPOINT` /
+   `S3_BUCKET_NAME` / `BEDROCK_REGION` env vars the app reads. The task also injects
    `GRAPHRAG_DOC_STATUS_TABLE` (the table this stack created,
    `graphrag-doc-status` in `dev`) and `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false`,
    which override `aws.dynamodb.table_name` / `create_table_if_missing`, so the
-   app and the CloudWatch alarms track the same IaC-managed table. Incremental
-   indexing still needs `aws.dynamodb.enabled: true` in `config.yaml`.
+   app and the CloudWatch alarms track the same IaC-managed table. The image
+   config sets `aws.dynamodb.enabled: true`, so ingestion runs incrementally.
    S3 cache uploads default to the bucket's own encryption
    (`aws.s3.encryption.encryption_type: BUCKET_DEFAULT`), so `use_cmk=true`
    objects are encrypted with the CMK.

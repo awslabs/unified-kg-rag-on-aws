@@ -25,7 +25,7 @@ We welcome contributions to the Unified Knowledge Graph RAG on AWS framework! Th
 
 3. **Install Dependencies**
    ```bash
-   pip install -e ".[dev]"
+   pip install -e . --group dev  # pip >= 25.1; or simply: uv sync
    ```
 
 4. **Set Up Pre-commit Hooks** (if available)
@@ -88,8 +88,8 @@ mypy unified_kg_rag
 
 ### Testing
 - Write **unit tests** for new functionality
-- Keep coverage at or above the current CI gate (**78%**, ratcheting toward 80%
-  per milestone — see `.github/workflows/quality.yml` `--cov-fail-under`)
+- Keep coverage at or above the current CI gate (**84%**, ratcheted up with
+  measured coverage — see `.github/workflows/quality.yml` `--cov-fail-under`)
 - Use **pytest** for testing framework
 - Prefer the port-based in-memory fakes in `tests/fixtures/fakes/` (e.g.
   `FakeDocStatusStore`) over ad-hoc boto3 mocking; use `moto` when an adapter

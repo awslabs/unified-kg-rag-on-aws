@@ -58,7 +58,7 @@ See the [User Guide §4](./docs/user-guide.md#4-querying-run-rag) for per-strate
 ```bash
 git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync --extra dev                     # or: pip install -e .
+uv sync                                 # or: pip install -e .
 cp config-template.yaml config.yaml     # then set your Bedrock region and service endpoints
 ```
 

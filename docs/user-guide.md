@@ -79,7 +79,7 @@ git clone <repository-url>
 cd unified-kg-rag-on-aws
 
 # uv (recommended)
-uv sync --extra dev
+uv sync
 
 # or pip
 pip install -e .
@@ -93,6 +93,14 @@ parsed (the parser raises a clear error naming the missing package for
 The extra requires `unstructured>=0.24.0`, which fixes URL-partitioning SSRF
 and no longer depends on NLTK. On Python 3.10 the extra does not install a parser;
 use PDF/TXT/CSV/JSON, or upgrade Python for Markdown/HTML support.
+
+The deployed container image (`docker/Dockerfile`) leaves this extra out by
+default because it adds about 200 MB (spaCy and friends), so a Step Functions
+ingest of `.md`/`.html` files fails with "No supported files found". Either
+convert those files to a supported format, or build the image with the extra:
+`docker build --build-arg UV_EXTRAS="--extra unstructured" -f docker/Dockerfile .`.
+The image bakes in `docker/config.yaml`, which holds no endpoints; the CDK
+compute stack injects them as environment variables.
 
 ### Authentication
 

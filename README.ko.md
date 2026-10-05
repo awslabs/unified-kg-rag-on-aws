@@ -58,7 +58,7 @@
 ```bash
 git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync --extra dev                     # 또는: pip install -e .
+uv sync                                 # 또는: pip install -e .
 cp config-template.yaml config.yaml     # Bedrock 리전과 서비스 엔드포인트 입력
 ```
 
