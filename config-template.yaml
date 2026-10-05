@@ -620,6 +620,9 @@ evaluation:
     #                (= recall of expected graph artifacts; precision/F1 are
     #                intentionally not emitted). Requires `expected_entities` /
     #                `expected_relationships` in the evaluation dataset.
+    # - retrieval    # deterministic hit@k / recall@k / MRR of the reported
+    #                sources vs `reference_sources` (matched by file-name stem
+    #                or document id, case-insensitive).
   langchain_metrics:
     - correctness
     - partial_correctness
@@ -644,6 +647,8 @@ evaluation:
   ragas_timeout: 300
   ragas_max_workers: 8
   ragas_max_retries: 3
+  # Cutoff k for the retrieval evaluator's hit@k / recall@k.
+  retrieval_k: 5
   save_detailed_results: true
 
 # Custom Prompts Configuration

@@ -26,6 +26,7 @@ from unified_kg_rag.shared.utils import BatchProcessor
 
 from .base import FAILED_METRICS_KEY, SKIPPED_METRICS_KEY, BaseEvaluator
 from .graph_aware_evaluator import GraphAwareEvaluator
+from .retrieval_evaluator import RetrievalEvaluator
 
 logger = get_logger(__name__)
 
@@ -58,6 +59,8 @@ class EvaluationManager:
             return RagasEvaluator
         if evaluator_type is EvaluatorType.GRAPH_AWARE:
             return GraphAwareEvaluator
+        if evaluator_type is EvaluatorType.RETRIEVAL:
+            return RetrievalEvaluator
         # Defensive: a future EvaluatorType with no mapping resolves to None and
         # is skipped by the caller. mypy sees the enum as exhaustive today, hence
         # the ignore — the branch is real once a new member is added.
@@ -207,7 +210,12 @@ class EvaluationManager:
             expected_relationships = item.get("expected_relationships") or []
             reference_sources = item.get("reference_sources") or []
             gt = None
-            if answer or expected_entities or expected_relationships:
+            if (
+                answer
+                or expected_entities
+                or expected_relationships
+                or reference_sources
+            ):
                 gt = EvaluationGroundTruth(
                     query_id=query_id,
                     ground_truth=str(answer) if answer else "",
@@ -277,6 +285,7 @@ class EvaluationManager:
                         retrieved_contexts=self._extract_from_result(
                             raw_result, "sources", []
                         ),
+                        retrieved_source_ids=self._extract_source_ids(raw_result),
                         enable_thinking=rag_metadata.get("enable_thinking", False),
                         search_strategy=rag_metadata.get("search_strategy"),
                         response_time=rag_metadata.get("processing_time"),
@@ -323,6 +332,46 @@ class EvaluationManager:
         if isinstance(raw_result, RAGOutput) and raw_result.search_results:
             detail = raw_result.search_results.metadata.get("error")
         return str(detail) if detail else "RAG chain returned an error response"
+
+    @staticmethod
+    def _extract_source_ids(raw_result: Any) -> list[list[str]]:
+        """Per reported source, in rank order: its document ids and file names.
+
+        Read from the provenance the RAG chain attaches to each source
+        (``metadata.document_ids``) and the chunk attributes the indexer stores
+        (``file_name`` / ``file_path``, top-level or under ``attributes``).
+        """
+        if isinstance(raw_result, RAGOutput):
+            sources: Any = raw_result.sources
+        elif isinstance(raw_result, dict):
+            sources = raw_result.get("sources")
+        else:
+            return []
+        if not isinstance(sources, list):
+            return []
+
+        ranked: list[list[str]] = []
+        for source in sources:
+            ids: list[str] = []
+            if isinstance(source, dict):
+                metadata = source.get("metadata")
+                payloads = [source]
+                if isinstance(metadata, dict):
+                    payloads.append(metadata)
+                    if isinstance(metadata.get("attributes"), dict):
+                        payloads.append(metadata["attributes"])
+                for payload in payloads:
+                    doc_ids = payload.get("document_ids") or payload.get("document_id")
+                    if isinstance(doc_ids, str):
+                        doc_ids = [doc_ids]
+                    if isinstance(doc_ids, list | tuple):
+                        ids.extend(str(d) for d in doc_ids if d)
+                    for key in ("file_name", "file_path"):
+                        value = payload.get(key)
+                        if isinstance(value, str) and value.strip():
+                            ids.append(Path(value).name)
+            ranked.append(list(dict.fromkeys(ids)))
+        return ranked
 
     def create_lean_context_strings(
         self, sources_list: list[dict[str, Any]]
@@ -448,6 +497,7 @@ class EvaluationManager:
                 result.metadata["expected_relationships"] = list(
                     gt.expected_relationships
                 )
+                result.metadata["reference_sources"] = list(gt.reference_sources)
 
         # A failed answer generation (RAG error fallback text or an empty
         # sentinel) is not an answer: scoring it would let LLM judges grade the

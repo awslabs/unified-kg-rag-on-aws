@@ -23,12 +23,18 @@ class EvaluationMetricType(str, Enum):
     # copy of recall (the previous behaviour) overstated the signal.
     ENTITY_COVERAGE = "entity_coverage"
     RELATIONSHIP_COVERAGE = "relationship_coverage"
+    # Deterministic retrieval metrics against EvaluationGroundTruth.
+    # reference_sources (k = EvaluationConfig.retrieval_k).
+    HIT_AT_K = "hit_at_k"
+    RECALL_AT_K = "recall_at_k"
+    MRR = "mrr"
 
 
 class EvaluatorType(str, Enum):
     LANGCHAIN = "langchain"
     RAGAS = "ragas"
     GRAPH_AWARE = "graph_aware"
+    RETRIEVAL = "retrieval"
 
 
 class EvaluationQuery(BaseModel):
@@ -75,6 +81,13 @@ class EvaluationResult(BaseModel):
     retrieved_contexts: list[str] = Field(
         default_factory=list,
         description="List of context passages retrieved during answer generation.",
+    )
+    retrieved_source_ids: list[list[str]] = Field(
+        default_factory=list,
+        description=(
+            "Provenance of the reported sources, in rank order: for each source, "
+            "the document ids and file names it carries (empty when it has none)."
+        ),
     )
     response_time: float | None = Field(
         default=None, description="Time taken to generate the answer in seconds."

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from .base import BaseEvaluator, BaseGraphRAGEvaluator
 from .evaluation_manager import EvaluationManager
 from .graph_aware_evaluator import GraphAwareEvaluator
+from .retrieval_evaluator import RetrievalEvaluator
 
 if TYPE_CHECKING:
     from unified_kg_rag.adapters.evaluators.langchain_evaluator import (
@@ -19,6 +20,7 @@ __all__ = [
     "GraphAwareEvaluator",
     "LangChainEvaluator",
     "RagasEvaluator",
+    "RetrievalEvaluator",
 ]
 
 # The langchain/ragas adapter evaluators import `unified_kg_rag.evaluation.base`,
