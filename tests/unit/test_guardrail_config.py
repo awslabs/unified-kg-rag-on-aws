@@ -18,6 +18,7 @@ from unified_kg_rag.adapters.aws.bedrock import (
     BedrockLanguageModelFactory,
     GuardrailInterventionHandler,
 )
+from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.domain.models import Config, ModelPurpose
 
 pytestmark = pytest.mark.unit
@@ -373,3 +374,7 @@ def test_ingestion_components_request_ingestion_models(name: str, mocker) -> Non
         asyncio.run(component.profile_corpus(["Vendor ships parts to Buyer."]))
     assert factory.calls, f"{name} built no LLM chain"
     assert all(c["model_purpose"] is ModelPurpose.INGESTION for c in factory.calls)
+    # The ingestion-side retry must fail fast on permanent Bedrock errors.
+    batch_processor = getattr(component, "batch_processor", None)
+    if batch_processor is not None:
+        assert batch_processor.is_transient_error is is_transient_bedrock_error

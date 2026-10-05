@@ -59,6 +59,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   errors still fail fast. `setup_chain` derives the retry from
   `model_purpose`, so ingestion chains keep their existing `BatchProcessor`
   retry without a second layer.
+- Ingestion LLM stages no longer retry permanent Bedrock errors such as
+  `AccessDeniedException`, `ValidationException` or `ResourceNotFoundException`
+  with backoff; those fail the item on the first attempt. Transient Bedrock
+  errors, call timeouts and unparseable model output are still retried with
+  backoff.
 - Embedding and query-time LLM calls share one transient-error retry policy,
   `aws.bedrock.transient_retry` (5 attempts, 60s budget per call by default).
   The `search.llm_retry` key used earlier in this release cycle is still

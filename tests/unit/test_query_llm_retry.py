@@ -339,7 +339,7 @@ def test_batch_processor_chain_is_not_double_retried() -> None:
         batch_size=1, max_retries=2, retry_multiplier=1.0, retry_max_wait=0
     )
 
-    def batch_func(inputs: list[dict[str, Any]], config: Any = None) -> list[Any]:
+    def batch_func(inputs: list[dict[str, Any]], **_: Any) -> list[Any]:
         raise RuntimeError("force the per-item sequential path")
 
     results = processor.execute_with_fallback(

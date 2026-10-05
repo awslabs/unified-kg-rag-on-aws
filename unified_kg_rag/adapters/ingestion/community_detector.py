@@ -12,6 +12,7 @@ from graspologic.partition import leiden
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
+from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.aws.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
@@ -85,7 +86,9 @@ class CommunityDetector(BaseProcessor):
             boto_session=self.boto_session,
             region_name=self.config.aws.bedrock.region_name,
         )
-        self.batch_processor = BatchProcessor()
+        self.batch_processor = BatchProcessor(
+            is_transient_error=is_transient_bedrock_error
+        )
 
         if self.community_detection_config.report_generation.enabled:
             parser = create_robust_xml_output_parser(

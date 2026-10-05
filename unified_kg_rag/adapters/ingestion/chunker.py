@@ -21,6 +21,7 @@ from unified_kg_rag.adapters.aws.bedrock import (
     get_assumed_role_boto_session,
     get_embedding_model_info,
 )
+from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.aws.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
@@ -632,7 +633,9 @@ class IntelligentTextChunker(BaseChunker):
             boto_session=self.boto_session,
             region_name=self.config.aws.bedrock.region_name,
         )
-        self.batch_processor = BatchProcessor()
+        self.batch_processor = BatchProcessor(
+            is_transient_error=is_transient_bedrock_error
+        )
 
         robust_xml_output_parser = create_robust_xml_output_parser(
             model_purpose=ModelPurpose.INGESTION,

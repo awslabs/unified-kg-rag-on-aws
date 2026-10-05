@@ -34,6 +34,10 @@ pytestmark = pytest.mark.unit
 _NO_BACKOFF: dict[str, Any] = {"retry_multiplier": 1.0, "retry_max_wait": 0}
 
 
+class _TransientError(Exception):
+    """Stands in for a backend error the injected classifier calls transient."""
+
+
 # --------------------------------------------------------------------------- #
 # BatchProcessor.execute_with_fallback
 # --------------------------------------------------------------------------- #
@@ -42,7 +46,7 @@ class TestExecuteWithFallback:
         bp = BatchProcessor()
         called = []
 
-        def batch(inputs, config=None):  # noqa: ANN001, ARG001
+        def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
             called.append(inputs)
             return []
 
@@ -62,7 +66,7 @@ class TestExecuteWithFallback:
         bp = BatchProcessor(batch_size=10, chunk_concurrency=1, call_timeout_seconds=0)
         seq_calls = []
 
-        def batch(inputs, config=None):  # noqa: ANN001, ARG001
+        def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
             return [{"echo": i["v"]} for i in inputs]
 
         def sequential(item):  # noqa: ANN001
@@ -85,7 +89,7 @@ class TestExecuteWithFallback:
         bp = BatchProcessor(max_concurrency=7, batch_size=10, call_timeout_seconds=0)
         seen = {}
 
-        def batch(inputs, config=None):  # noqa: ANN001
+        def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001
             seen["config"] = config
             return [{"ok": 1} for _ in inputs]
 
@@ -104,7 +108,7 @@ class TestExecuteWithFallback:
         # batch_size override to 1 -> two chunks for two items.
         chunk_sizes = []
 
-        def batch(inputs, config=None):  # noqa: ANN001, ARG001
+        def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
             chunk_sizes.append(len(inputs))
             return [{"echo": i["v"]} for i in inputs]
 
@@ -130,7 +134,7 @@ class TestExecuteWithFallback:
         out = bp.execute_with_fallback(
             items_to_process=[1, 2],
             prepare_inputs_func=lambda items: [],
-            batch_func=lambda inputs, config=None: [{"x": 1}],  # noqa: ARG005
+            batch_func=lambda inputs, **_: [{"x": 1}],  # noqa: ARG005
             sequential_func=lambda item: {},
             task_name="t",
             show_progress=False,
@@ -144,7 +148,7 @@ class TestExecuteWithFallback:
             batch_size=10, chunk_concurrency=1, call_timeout_seconds=0, **_NO_BACKOFF
         )
 
-        def batch(inputs, config=None):  # noqa: ANN001, ARG001
+        def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
             raise RuntimeError("batch boom")
 
         def sequential(item):  # noqa: ANN001
@@ -170,7 +174,7 @@ class TestExecuteWithFallback:
         lock = threading.Lock()
         barrier = threading.Barrier(3)
 
-        def batch(inputs, config=None):  # noqa: ANN001, ARG001
+        def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
             barrier.wait(timeout=5)  # force genuine overlap across 3 chunks
             with lock:
                 thread_ids.add(threading.get_ident())
@@ -226,6 +230,35 @@ class TestRetryDecorator:
             always_fail()
         assert attempts["n"] == 2  # stop_after_attempt(2)
 
+    @pytest.mark.parametrize(
+        ("error", "attempts_made"),
+        [
+            (_TransientError("throttled"), 3),
+            (OutputParserException("malformed XML"), 3),
+            (TimeoutError("hung call"), 3),
+            # Permanent (e.g. access denied / validation): fail fast.
+            (RuntimeError("access denied"), 1),
+        ],
+    )
+    def test_classifier_limits_retries_to_retryable_errors(
+        self, error: Exception, attempts_made: int
+    ) -> None:
+        bp = BatchProcessor(
+            max_retries=3,
+            is_transient_error=lambda e: isinstance(e, _TransientError),
+            **_NO_BACKOFF,
+        )
+        attempts = {"n": 0}
+
+        @bp._create_retry_decorator("op")
+        def always_fail():  # noqa: ANN202
+            attempts["n"] += 1
+            raise error
+
+        with pytest.raises(type(error)):
+            always_fail()
+        assert attempts["n"] == attempts_made
+
     def test_retry_log_callback_handles_none_next_action(self) -> None:
         # Defensive branch: next_action None -> wait_time 0, no crash.
         cb = BatchProcessor._create_retry_log_callback("op")
@@ -256,7 +289,9 @@ class TestAExecuteWithFallback:
     async def test_async_batch_happy_path(self) -> None:
         bp = BatchProcessor(batch_size=10, max_concurrency=2)
 
-        async def batch(inputs, config=None):  # noqa: ANN001, ARG001
+        async def batch(
+            inputs, config=None, return_exceptions=False
+        ):  # noqa: ANN001, ARG001
             return [{"echo": i["v"]} for i in inputs]
 
         out = await bp.aexecute_with_fallback(
@@ -278,7 +313,9 @@ class TestAExecuteWithFallback:
         # strict=True and a dropped item would abort the whole run.
         bp = BatchProcessor(batch_size=10, max_concurrency=2, **_NO_BACKOFF)
 
-        async def batch(inputs, config=None):  # noqa: ANN001, ARG001
+        async def batch(
+            inputs, config=None, return_exceptions=False
+        ):  # noqa: ANN001, ARG001
             raise RuntimeError("async batch boom")
 
         async def sequential(item):  # noqa: ANN001
@@ -301,7 +338,9 @@ class TestAExecuteWithFallback:
     async def test_async_empty_prepared_chunk_skipped(self) -> None:
         bp = BatchProcessor(batch_size=10)
 
-        async def batch(inputs, config=None):  # noqa: ANN001, ARG001
+        async def batch(
+            inputs, config=None, return_exceptions=False
+        ):  # noqa: ANN001, ARG001
             return [{"x": 1}]
 
         out = await bp.aexecute_with_fallback(
@@ -430,7 +469,7 @@ class TestRetryFailedItemsOnly:
         # legacy full sequential fallback.
         seq_calls: list[int] = []
 
-        def batch(inputs, config=None):  # noqa: ANN001, ARG001
+        def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
             raise RuntimeError("batch boom")
 
         def sequential(item):  # noqa: ANN001
@@ -448,28 +487,24 @@ class TestRetryFailedItemsOnly:
         assert out == [{"echo": 1}, {"echo": 2}, {"echo": 3}]
         assert seq_calls == [1, 2, 3]
 
-    def test_return_exceptions_only_passed_when_accepted(self) -> None:
+    def test_batch_func_always_gets_return_exceptions(self) -> None:
         seen: dict[str, Any] = {}
 
-        def legacy(inputs, config=None):  # noqa: ANN001
-            seen["legacy"] = config
+        def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001
+            seen["config"] = config
+            seen["return_exceptions"] = return_exceptions
             return [{"ok": 1} for _ in inputs]
 
-        def modern(inputs, config=None, return_exceptions=False):  # noqa: ANN001
-            seen["modern"] = return_exceptions
-            return [{"ok": 1} for _ in inputs]
-
-        for func in (legacy, modern):
-            _fast_bp().execute_with_fallback(
-                items_to_process=[1],
-                prepare_inputs_func=lambda items: [{"v": i} for i in items],
-                batch_func=func,
-                sequential_func=lambda item: {},
-                task_name="t",
-                show_progress=False,
-            )
-        assert seen["legacy"] is not None
-        assert seen["modern"] is True
+        _fast_bp().execute_with_fallback(
+            items_to_process=[1],
+            prepare_inputs_func=lambda items: [{"v": i} for i in items],
+            batch_func=batch,
+            sequential_func=lambda item: {},
+            task_name="t",
+            show_progress=False,
+        )
+        assert seen["config"] is not None
+        assert seen["return_exceptions"] is True
 
     async def test_async_one_failure_reinvokes_only_that_item(self) -> None:
         fake = _CountingRunnable(fail_first={3: 1})

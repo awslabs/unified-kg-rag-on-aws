@@ -3,7 +3,6 @@
 import asyncio
 import concurrent.futures
 import html
-import inspect
 import math
 import re
 from collections import defaultdict
@@ -68,6 +67,13 @@ class BatchProcessor(BaseModel):
         "botocore's read_timeout only measures the gap between bytes, so a server "
         "that dribbles keep-alive data can hang a call indefinitely; this hard "
         "ceiling forces such a call to abort (and fall back / retry). 0 disables.",
+    )
+    is_transient_error: Callable[[BaseException], bool] | None = Field(
+        default=None,
+        description="Classifies backend errors worth retrying (e.g. "
+        "adapters.aws.bedrock_retry.is_transient_bedrock_error); other errors "
+        "fail fast. Output-parse failures and call timeouts are always retried. "
+        "None retries every error, for callers that span several backends.",
     )
 
     @staticmethod
@@ -256,29 +262,13 @@ class BatchProcessor(BaseModel):
         logger.info("Completed '%s': processed %s results", task_name, len(all_results))
         return all_results
 
-    @staticmethod
-    def _accepts_return_exceptions(func: Callable[..., Any]) -> bool:
-        """Whether ``func`` can take ``return_exceptions=`` (LangChain batch API).
-
-        ``Runnable.batch``/``abatch`` do; a plain ``(inputs, config=None)``
-        wrapper does not, and keeps the legacy all-or-nothing contract.
-        """
-        try:
-            params = inspect.signature(func).parameters.values()
-        except (TypeError, ValueError):
-            return False
-        return any(
-            p.name == "return_exceptions" or p.kind is inspect.Parameter.VAR_KEYWORD
-            for p in params
-        )
-
-    def _batch_kwargs(self, batch_func: Callable[..., Any]) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {
-            "config": RunnableConfig(max_concurrency=self.max_concurrency)
+    def _batch_kwargs(self) -> dict[str, Any]:
+        # batch_func follows the Runnable.batch/abatch signature; per-item
+        # exceptions come back in place so only the failed items are retried.
+        return {
+            "config": RunnableConfig(max_concurrency=self.max_concurrency),
+            "return_exceptions": True,
         }
-        if self._accepts_return_exceptions(batch_func):
-            kwargs["return_exceptions"] = True
-        return kwargs
 
     @staticmethod
     def _failed_indices(results: list[Any]) -> list[int]:
@@ -308,18 +298,26 @@ class BatchProcessor(BaseModel):
         return merged
 
     def _create_batch_func(self, batch_func: Callable[..., list[Any]]) -> Callable:
-        batch_kwargs = self._batch_kwargs(batch_func)
+        batch_kwargs = self._batch_kwargs()
 
         def _batch_func(inputs: list[dict[str, Any]]) -> list[Any]:
             return batch_func(inputs, **batch_kwargs)
 
         return _batch_func
 
+    def _is_retryable(self, exc: BaseException) -> bool:
+        # A malformed LLM response or a hung call can succeed on a new attempt.
+        if isinstance(exc, OutputParserException | TimeoutError):
+            return True
+        return self.is_transient_error is None or self.is_transient_error(exc)
+
     def _create_retry_decorator(self, operation_name: str) -> Callable:
         # Exponential backoff WITH jitter (wait_random_exponential) to spread
         # concurrent retries and avoid hammering a throttled Bedrock endpoint in
-        # lock-step. Bounded by max_retries so non-retryable errors still fail fast.
+        # lock-step. Only retryable errors are retried, so a permanent failure
+        # (access denied, validation, missing model) fails fast.
         return tenacity.retry(
+            retry=tenacity.retry_if_exception(self._is_retryable),
             wait=tenacity.wait_random_exponential(
                 multiplier=self.retry_multiplier, max=self.retry_max_wait
             ),
@@ -472,7 +470,7 @@ class BatchProcessor(BaseModel):
         return all_results
 
     def _create_async_batch_func(self, batch_func: Callable[..., Any]) -> Callable:
-        batch_kwargs = self._batch_kwargs(batch_func)
+        batch_kwargs = self._batch_kwargs()
 
         async def _batch_func(inputs: list[dict[str, Any]]) -> list[Any]:
             result = await batch_func(inputs, **batch_kwargs)
