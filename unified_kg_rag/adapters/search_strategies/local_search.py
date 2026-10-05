@@ -8,7 +8,6 @@ import boto3
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
-    is_fatal_retrieval_error,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
@@ -110,7 +109,9 @@ class LocalSearchStrategy(BaseSearchStrategy):
             "..." if len(text_unit_ids) > 5 else "",
         )
 
-        text_units = await self._retrieve_documents(text_unit_ids, query.suffix)
+        text_units = await self._retrieve_documents(
+            text_unit_ids, query.suffix, filters=query.filters
+        )
         all_results = {"graph_entities": expanded_entity_nodes, **text_units}
 
         # MS GraphRAG local search builds context from entities + the community
@@ -177,26 +178,35 @@ class LocalSearchStrategy(BaseSearchStrategy):
         )
 
     async def _find_candidate_entities(self, query: SearchQuery) -> list[str]:
-        if not self.document_retriever or not query.entity_focus:
+        if not self.document_retriever:
             return []
 
-        n_candidates = len(query.entity_focus) * self.entity_focus_multiplier
+        # Map the extracted entity focus onto the entities index; when no
+        # entities were extracted, fall back to the raw query text (as the
+        # claims/community-report/relationship sections do) so local search
+        # still seeds graph expansion instead of returning no chunks at all.
+        if query.entity_focus:
+            entity_query = " ".join(query.entity_focus)
+            n_candidates = len(query.entity_focus) * self.entity_focus_multiplier
+        else:
+            entity_query = query.query
+            n_candidates = query.top_k
+        if not entity_query:
+            return []
+
         search_query = SearchQuery(
-            query=" ".join(query.entity_focus),
+            query=entity_query,
             search_type=query.search_type,
             top_k=n_candidates,
             index_prefixes=[self.config.indexing.opensearch.entities_index_prefix],
             suffix=query.suffix,
+            filters=self._scoped_filters(query),
         )
 
-        try:
-            results = await self.document_retriever.aretrieve(search_query)
-            return [res.source for res in results if res.source]
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("Failed to find candidate entities: %s", e)
-            return []
+        results = await self._safe_aretrieve(
+            self.document_retriever, search_query, "Candidate entity lookup"
+        )
+        return [res.source for res in results if res.source]
 
     async def _retrieve_claims(self, query: SearchQuery) -> list[RetrievalResult]:
         # Only consume the claims (covariate) index when extraction is enabled;
@@ -221,15 +231,12 @@ class LocalSearchStrategy(BaseSearchStrategy):
             top_k=query.top_k,
             index_prefixes=[self.config.indexing.opensearch.claims_index_prefix],
             suffix=query.suffix,
+            filters=self._scoped_filters(query),
         )
 
-        try:
-            return await self.document_retriever.aretrieve(search_query)
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("Failed to retrieve claims: %s", e)
-            return []
+        return await self._safe_aretrieve(
+            self.document_retriever, search_query, "Claims retrieval"
+        )
 
     async def _retrieve_community_reports(
         self, query: SearchQuery
@@ -255,15 +262,12 @@ class LocalSearchStrategy(BaseSearchStrategy):
                 self.config.indexing.opensearch.community_reports_index_prefix
             ],
             suffix=query.suffix,
+            filters=self._scoped_filters(query),
         )
 
-        try:
-            return await self.document_retriever.aretrieve(search_query)
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("Failed to retrieve community reports: %s", e)
-            return []
+        return await self._safe_aretrieve(
+            self.document_retriever, search_query, "Community reports retrieval"
+        )
 
     async def _retrieve_relationships(
         self, query: SearchQuery
@@ -288,35 +292,12 @@ class LocalSearchStrategy(BaseSearchStrategy):
             top_k=query.top_k,
             index_prefixes=[self.config.indexing.opensearch.relationships_index_prefix],
             suffix=query.suffix,
+            filters=self._scoped_filters(query),
         )
 
-        try:
-            return await self.document_retriever.aretrieve(search_query)
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("Failed to retrieve relationships: %s", e)
-            return []
-
-    async def _expand_via_graph(
-        self, query: SearchQuery, seed_entity_ids: list[str]
-    ) -> list[RetrievalResult]:
-        if not self.graph_retriever or not seed_entity_ids:
-            return []
-
-        search_query = query.model_copy(deep=True)
-        search_query.label_prefixes = [self.config.indexing.neptune.entity_label_prefix]
-        search_query.entity_focus = []
-        search_query.filters = (search_query.filters or {}).copy()
-        search_query.filters["id"] = seed_entity_ids
-
-        try:
-            return await self.graph_retriever.aretrieve(search_query)
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("Neptune retrieval failed: %s", e)
-            return []
+        return await self._safe_aretrieve(
+            self.document_retriever, search_query, "Relationships retrieval"
+        )
 
     @classmethod
     def _rank_text_unit_ids(cls, entity_nodes: list[RetrievalResult]) -> list[str]:
@@ -395,7 +376,10 @@ class LocalSearchStrategy(BaseSearchStrategy):
         return filtered_nodes
 
     async def _retrieve_documents(
-        self, text_unit_ids: list[str], suffix: str | None
+        self,
+        text_unit_ids: list[str],
+        suffix: str | None,
+        filters: dict[str, Any] | None = None,
     ) -> dict[str, list[RetrievalResult]]:
         if not self.document_retriever or not text_unit_ids:
             return {}
@@ -406,17 +390,15 @@ class LocalSearchStrategy(BaseSearchStrategy):
             top_k=len(text_unit_ids),
             index_prefixes=[self.config.indexing.opensearch.text_units_index_prefix],
             suffix=suffix,
-            filters={"id": text_unit_ids},
+            filters={**(filters or {}), "id": text_unit_ids},
         )
 
-        try:
-            results = await self.document_retriever.aretrieve(search_query)
-            return {"text_units": self._restore_rank(results, text_unit_ids)}
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("OpenSearch retrieval failed: %s", e)
+        results = await self._safe_aretrieve(
+            self.document_retriever, search_query, "Text unit fetch"
+        )
+        if not results:
             return {}
+        return {"text_units": self._restore_rank(results, text_unit_ids)}
 
     @staticmethod
     def _restore_rank(

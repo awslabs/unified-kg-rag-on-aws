@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from .config import ConfigLoader, get_config
 from .exceptions import (
     AWSServiceError,
+    CacheSyncError,
     DataProcessingError,
     EmbeddingModelError,
     EvaluationException,
@@ -33,6 +34,7 @@ def get_cache_manager() -> "type[CacheManager]":
 
 __all__ = [
     "AWSServiceError",
+    "CacheSyncError",
     "CloudWatchEMFSink",
     "ConfigLoader",
     "DataProcessingError",

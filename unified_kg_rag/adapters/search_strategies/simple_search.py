@@ -4,7 +4,6 @@ import time
 
 from unified_kg_rag.adapters.retrieval.base import (
     BaseSearchStrategy,
-    is_fatal_retrieval_error,
 )
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import (
     all_index_prefixes,
@@ -76,16 +75,12 @@ class SimpleSearchStrategy(BaseSearchStrategy):
         if not self.document_retriever:
             return {}
 
-        try:
-            results = await self.document_retriever.aretrieve(
-                self._apply_claim_gate(query)
-            )
-            return {"opensearch_all": results} if results else {}
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("OpenSearch retrieval failed: %s", e)
-            return {}
+        results = await self._safe_aretrieve(
+            self.document_retriever,
+            self._apply_claim_gate(query),
+            "OpenSearch retrieval",
+        )
+        return {"opensearch_all": results} if results else {}
 
     def _apply_claim_gate(self, query: SearchQuery) -> SearchQuery:
         # Simple search sweeps every index by default. When the caller hasn't

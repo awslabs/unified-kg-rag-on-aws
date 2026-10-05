@@ -143,3 +143,53 @@ class TestCommunityHierarchy:
         out = tmp_path / "hierarchy.html"
         InteractiveRenderer({}).create_community_hierarchy([comm], str(out))
         assert out.exists()
+
+
+class TestEdgeWeightNormalization:
+    @staticmethod
+    def _weighted_graph(weights: list[float]) -> nx.Graph:
+        g = nx.Graph()
+        for i, w in enumerate(weights):
+            g.add_edge(f"a{i}", f"b{i}", weight=w)
+        return g
+
+    def test_strength_scale_weights_span_the_full_range(self) -> None:
+        # Relationship strengths are 1-10; the old min(weight, 1.0) cap mapped
+        # every one of them to 1.0 (max width).
+        g = self._weighted_graph([1.0, 5.0, 10.0])
+        norm = InteractiveRenderer._normalized_edge_weights(g)
+        values = [norm[("a0", "b0")], norm[("a1", "b1")], norm[("a2", "b2")]]
+        assert values[0] == pytest.approx(0.0)
+        assert values[2] == pytest.approx(1.0)
+        assert 0.0 < values[1] < 1.0
+        assert values == sorted(values)
+
+    def test_log_scaling_dampens_large_merge_counts(self) -> None:
+        g = self._weighted_graph([1.0, 2.0, 100.0])
+        norm = InteractiveRenderer._normalized_edge_weights(g)
+        # Linear min-max would put weight 2 at ~0.01; log scaling keeps it visible.
+        assert norm[("a1", "b1")] > 0.05
+
+    def test_uniform_weights_render_at_mid_width(self) -> None:
+        g = self._weighted_graph([3.0, 3.0])
+        norm = InteractiveRenderer._normalized_edge_weights(g)
+        assert set(norm.values()) == {0.5}
+
+    def test_invalid_weights_default_to_one(self) -> None:
+        g = nx.Graph()
+        g.add_edge("a", "b", weight="n/a")
+        g.add_edge("c", "d")
+        norm = InteractiveRenderer._normalized_edge_weights(g)
+        assert set(norm.values()) == {0.5}
+
+    def test_rendered_edge_widths_differ(self, mocker) -> None:  # noqa: ANN001
+        renderer = InteractiveRenderer({})
+        net = renderer._init_network()
+        g = self._weighted_graph([1.0, 10.0])
+        for node in g.nodes:
+            net.add_node(node)
+        spy = mocker.spy(net, "add_edge")
+        renderer._add_edges(net, g)
+        widths = sorted(call.kwargs["width"] for call in spy.call_args_list)
+        assert widths[0] == pytest.approx(InteractiveRenderer.MIN_EDGE_WIDTH)
+        assert widths[1] == pytest.approx(InteractiveRenderer.MAX_EDGE_WIDTH)

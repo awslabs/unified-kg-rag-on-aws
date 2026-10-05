@@ -62,6 +62,16 @@ class RetrieverType(str, Enum):
 
 
 class S3EncryptionType(str, Enum):
+    """Server-side encryption header sent on cache uploads.
+
+    ``BUCKET_DEFAULT`` sends no SSE header, so S3 applies the bucket's default
+    encryption (SSE-S3 at minimum, or the bucket's SSE-KMS CMK). ``NONE`` is a
+    legacy alias with the same behaviour: S3 encrypts every new object, so it
+    never meant "unencrypted". ``AES256`` / ``aws:kms`` force a per-object
+    header that OVERRIDES the bucket default.
+    """
+
+    BUCKET_DEFAULT = "BUCKET_DEFAULT"
     NONE = "NONE"
     AES256 = "AES256"
     KMS = "aws:kms"
@@ -98,6 +108,22 @@ class LanguageModelId(str, Enum):
     # NOTE: add new models here
 
 
+class ModelPurpose(str, Enum):
+    """Why a language model is being created, so per-path policies can differ.
+
+    Callers pass it to the LLM factory (``get_model(model_purpose=...)``). The
+    Bedrock factory uses it to scope guardrails (``GuardrailConfig.apply_to``):
+    a user-facing guardrail that anonymizes PII or blocks instruction-like text
+    is appropriate for queries, but corrupts graph extraction over a corpus.
+    Unspecified means ``QUERY`` so an unmarked call site keeps the guarded,
+    conservative behaviour.
+    """
+
+    QUERY = "query"
+    INGESTION = "ingestion"
+    EVALUATION = "evaluation"
+
+
 class RerankModelId(str, Enum):
     AMAZON_RERANK_V1 = "amazon.rerank-v1:0"
     COHERE_RERANK_V3_5 = "cohere.rerank-v3-5:0"
@@ -105,11 +131,21 @@ class RerankModelId(str, Enum):
 
 
 class GuardrailConfig(BaseModel):
-    """Amazon Bedrock Guardrails applied to every model invocation.
+    """Amazon Bedrock Guardrails applied to language-model invocations.
 
     Disabled by default; set ``identifier`` (and optionally ``version``) to
     enforce content/PII/grounding policies on prompts and completions — the
     WAF security-pillar control for a user-facing LLM RAG application.
+
+    ``apply_to`` scopes the guardrail. The default ``"query"`` guards only the
+    user-facing query path (answer generation, query refinement and
+    query-time entity/keyword extraction, global/DRIFT map-reduce). Ingestion
+    (chunking, translation, graph extraction, gleaning, claims, description
+    summarization, community reports) and evaluation judges run unguarded,
+    because a PII-anonymizing guardrail rewrites names to placeholders (every
+    person merges into one entity) and a prompt-attack filter blocks
+    instruction-like corpus text, which silently yields empty extractions.
+    ``"all"`` restores the previous guard-everything behaviour.
     """
 
     identifier: str | None = Field(
@@ -125,10 +161,24 @@ class GuardrailConfig(BaseModel):
         default=False,
         description="Emit guardrail trace details for observability/auditing",
     )
+    apply_to: Literal["query", "all"] = Field(
+        default="query",
+        description=(
+            "Which model invocations the guardrail is attached to: 'query' "
+            "(user-facing query path only; ingestion and evaluation models run "
+            "unguarded) or 'all' (every model, including ingestion)"
+        ),
+    )
 
     @property
     def enabled(self) -> bool:
         return bool(self.identifier)
+
+    def applies_to(self, purpose: ModelPurpose) -> bool:
+        """Whether a model created for ``purpose`` gets this guardrail."""
+        if not self.enabled:
+            return False
+        return self.apply_to == "all" or purpose is ModelPurpose.QUERY
 
 
 class BedrockConfig(BaseModel):
@@ -218,7 +268,13 @@ class OpenSearchConfig(BaseModel):
 
 class S3EncryptionConfig(BaseModel):
     encryption_type: S3EncryptionType = Field(
-        default=S3EncryptionType.AES256, description="S3 server-side encryption method"
+        default=S3EncryptionType.BUCKET_DEFAULT,
+        description=(
+            "S3 server-side encryption for cache uploads: BUCKET_DEFAULT (send no "
+            "header; the bucket's default encryption, e.g. its KMS CMK, applies), "
+            "AES256 (force SSE-S3) or aws:kms (force SSE-KMS with kms_key_id). "
+            "NONE is a legacy alias of BUCKET_DEFAULT."
+        ),
     )
     kms_key_id: str | None = Field(
         default=None,
@@ -1222,7 +1278,8 @@ class FusionConfig(BaseModel):
         le=1.0,
         description=(
             "MMR lambda for diversity filtering: score = lambda*relevance - "
-            "(1-lambda)*max_similarity. 1.0 = pure relevance (no diversity), "
+            "(1-lambda)*max_similarity, with relevance min-max normalized to "
+            "[0, 1] over the fused candidates. 1.0 = pure relevance (no diversity), "
             "0.0 = maximum diversity. Lower values penalize redundant results "
             "more strongly. Filtering is skipped at 1.0 (no diversity benefit)."
         ),
@@ -1522,7 +1579,7 @@ class ContextTypeBudgetConfig(BaseModel):
         default=0.10,
         ge=0.0,
         description="Relative share for untyped sections — global search's "
-        "map-reduce synthesis and drift search's primer answer land here.",
+        "map-reduce synthesis lands here.",
     )
 
     @model_validator(mode="after")

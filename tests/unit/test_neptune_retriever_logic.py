@@ -364,7 +364,7 @@ async def test_entity_traversal_honors_configured_max_hops(
     async def _fake_execute(_traversal):
         return []
 
-    object.__setattr__(retriever, "_apply_filters", lambda t, f: t)
+    object.__setattr__(retriever, "_apply_filters", lambda t, f, *_: t)
     object.__setattr__(retriever, "_with_projection", lambda t: t)
     object.__setattr__(retriever, "_execute_traversal", _fake_execute)
 

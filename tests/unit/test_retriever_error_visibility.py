@@ -12,6 +12,8 @@ empty list only on genuinely-transient failures.
 from __future__ import annotations
 
 import pytest
+from gremlin_python.process.graph_traversal import GraphTraversal
+from gremlin_python.structure.graph import Graph
 from opensearchpy.exceptions import NotFoundError
 
 from unified_kg_rag.adapters.retrieval.base import is_fatal_retrieval_error
@@ -185,6 +187,67 @@ async def test_neptune_retriever_degrades_on_transient(config: Config) -> None:
     retriever = _neptune_retriever(config, client)
     results = await retriever.aretrieve(SearchQuery(query="hello"))
     assert results == []
+
+
+# --- NeptuneRetriever._execute_traversal ------------------------------------
+#
+# Every Gremlin round trip goes through `_execute_traversal`, which used to
+# catch everything and return [] — so a fatal error raised by the actual query
+# (rather than by `.g`) became "no seed nodes found" and never reached the
+# top-level re-raise.
+
+
+class _RaisingTraversal:
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def to_list(self) -> list:
+        raise self._exc
+
+
+async def test_neptune_execute_traversal_reraises_fatal() -> None:
+    with pytest.raises(AWSServiceError, match="AccessDenied"):
+        await NeptuneRetriever._execute_traversal(
+            _RaisingTraversal(AWSServiceError("AccessDeniedException"))  # type: ignore[arg-type]
+        )
+
+
+async def test_neptune_execute_traversal_degrades_on_transient() -> None:
+    results = await NeptuneRetriever._execute_traversal(
+        _RaisingTraversal(AWSServiceError("Read timed out"))  # type: ignore[arg-type]
+    )
+    assert results == []
+
+
+class _ClientWithLocalGraph:
+    """A fake NeptuneClient exposing a real, connectionless traversal source."""
+
+    @property
+    def g(self):
+        return Graph().traversal()
+
+
+async def test_neptune_fatal_traversal_error_surfaces_from_aretrieve(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _fatal_to_list(self) -> list:
+        raise ConnectionError("Failed to connect to the Neptune endpoint")
+
+    monkeypatch.setattr(GraphTraversal, "to_list", _fatal_to_list)
+    retriever = _neptune_retriever(config, _ClientWithLocalGraph())
+    with pytest.raises(ConnectionError, match="Neptune endpoint"):
+        await retriever.aretrieve(SearchQuery(query="hello", entity_focus=["Vendor"]))
+
+
+async def test_neptune_transient_traversal_error_degrades_from_aretrieve(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _transient_to_list(self) -> list:
+        raise RuntimeError("Read timed out")
+
+    monkeypatch.setattr(GraphTraversal, "to_list", _transient_to_list)
+    retriever = _neptune_retriever(config, _ClientWithLocalGraph())
+    assert await retriever.aretrieve(SearchQuery(query="hello")) == []
 
 
 # --- OpenSearchRetriever: missing index (config mismatch) ------------------

@@ -3,7 +3,7 @@
 import asyncio
 import time
 from collections.abc import Coroutine
-from typing import Any
+from typing import Any, ClassVar
 
 import boto3
 from opensearchpy.exceptions import NotFoundError
@@ -16,12 +16,14 @@ from unified_kg_rag.adapters.retrieval.base import (
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
     Config,
+    Constants,
     RetrievalResult,
     SearchQuery,
     SearchType,
 )
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils import EMBEDDING_FIELD_SUFFIX, strip_embedding_fields
 
 logger = get_logger(__name__)
 
@@ -78,6 +80,11 @@ def configured_index_prefixes(config: Config) -> list[str]:
 
 
 class OpenSearchRetriever(BaseGraphRAGRetriever):
+    # How long a live index mapping is trusted before it is re-read. Dynamic
+    # ``attr_*`` fields appear when documents carrying them are first indexed,
+    # so the cache must not be permanent.
+    FILTER_FIELDS_TTL_SECONDS: ClassVar[float] = 300.0
+
     def __init__(
         self,
         config: Config,
@@ -112,6 +119,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             self._opensearch_config.embedding_model_id
         )
         self._field_mappings = self._initialize_field_mappings()
+        self._static_filter_fields = self._initialize_static_filter_fields()
+        self._live_filter_fields: dict[str, tuple[float, frozenset[str] | None]] = {}
 
     def close(self) -> None:
         """Release the underlying OpenSearch client's connections (best-effort)."""
@@ -155,6 +164,202 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             },
         }
 
+    def _initialize_static_filter_fields(self) -> dict[str, frozenset[str]]:
+        """Fields each index declares in its explicit mapping (``OpenSearchIndexer``).
+
+        These exist on every index this package creates, so a filter on one of
+        them is always applied to that index. Strategy-added scope keys (``id``,
+        ``source_id``, ``community_id``, ...) are all here, which keeps a
+        fetch-by-id pinned to its ids even when the live mapping is unreadable.
+        Keep in sync with ``OpenSearchIndexer._get_*_mapping``.
+        """
+        o = self._opensearch_config
+        target_language = self._config.processing.translation.target_language.value
+        return {
+            o.text_units_index_prefix: frozenset(
+                {
+                    "id",
+                    "text",
+                    f"translated_text_{target_language}",
+                    "community_ids",
+                    "n_tokens",
+                }
+            ),
+            o.entities_index_prefix: frozenset(
+                {
+                    "id",
+                    "name",
+                    "name.keyword",
+                    "description",
+                    "type",
+                    "rank",
+                    "confidence",
+                    "text_unit_ids",
+                }
+            ),
+            o.relationships_index_prefix: frozenset(
+                {
+                    "id",
+                    "source_id",
+                    "target_id",
+                    "source_name",
+                    "target_name",
+                    "description",
+                    "weight",
+                    "rank",
+                    "text_unit_ids",
+                }
+            ),
+            o.claims_index_prefix: frozenset(
+                {
+                    "id",
+                    "subject_id",
+                    "object_id",
+                    "subject_name",
+                    "object_name",
+                    "type",
+                    "status",
+                    "description",
+                    "source_text",
+                }
+            ),
+            o.community_reports_index_prefix: frozenset(
+                {
+                    "id",
+                    "community_id",
+                    "name",
+                    "summary",
+                    "full_content",
+                    "rank",
+                    "rating",
+                    "text_unit_ids",
+                    "document_ids",
+                }
+            ),
+        }
+
+    def _attribute_bearing_prefixes(self) -> frozenset[str]:
+        """Indices whose documents carry document-level ``attr_<key>`` fields.
+
+        See ``OpenSearchIndexer._prepare_common_doc_properties``. Consulted only
+        when an index's live mapping cannot be read.
+        """
+        o = self._opensearch_config
+        return frozenset(
+            {
+                o.text_units_index_prefix,
+                o.entities_index_prefix,
+                o.community_reports_index_prefix,
+            }
+        )
+
+    @staticmethod
+    def _flatten_mapping_fields(
+        properties: dict[str, Any], prefix: str = ""
+    ) -> set[str]:
+        """Dotted field paths in a mapping ``properties`` tree (incl. multi-fields)."""
+        fields: set[str] = set()
+        for name, spec in properties.items():
+            path = f"{prefix}{name}"
+            fields.add(path)
+            if not isinstance(spec, dict):
+                continue
+            if isinstance(spec.get("properties"), dict):
+                fields |= OpenSearchRetriever._flatten_mapping_fields(
+                    spec["properties"], f"{path}."
+                )
+            if isinstance(spec.get("fields"), dict):
+                fields |= {f"{path}.{sub}" for sub in spec["fields"]}
+        return fields
+
+    async def _live_index_fields(self, alias: str) -> frozenset[str] | None:
+        """Fields mapped on the indices behind ``alias``, or ``None`` if unknown.
+
+        Read from the live mapping (so dynamically mapped ``attr_*`` fields are
+        included) and cached for ``FILTER_FIELDS_TTL_SECONDS``. A missing index
+        or a transient read failure yields ``None`` (callers fall back to the
+        static allowlist); a fatal error propagates.
+        """
+        now = time.monotonic()
+        cached = self._live_filter_fields.get(alias)
+        if cached and now - cached[0] < self.FILTER_FIELDS_TTL_SECONDS:
+            return cached[1]
+
+        fields: frozenset[str] | None
+        try:
+            response = await self._opensearch_client.aget_mapping(index=alias)
+        except NotFoundError:
+            fields = None
+        except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
+            logger.warning(
+                "Could not read the mapping of '%s'; using the static filter "
+                "field allowlist: %s",
+                alias,
+                e,
+            )
+            return None
+        else:
+            collected: set[str] = set()
+            for index_body in (response or {}).values():
+                properties = (index_body or {}).get("mappings", {}).get("properties")
+                if isinstance(properties, dict):
+                    collected |= self._flatten_mapping_fields(properties)
+            fields = frozenset(collected) if collected else None
+
+        self._live_filter_fields[alias] = (now, fields)
+        return fields
+
+    async def _resolve_filter_fields(
+        self, index_prefixes: list[str], suffix: str | None
+    ) -> dict[str, frozenset[str] | None]:
+        """Live mapped fields per searchable prefix (``None`` = unknown)."""
+        prefixes = [p for p in index_prefixes if p in self._field_mappings]
+        live = await asyncio.gather(
+            *(self._live_index_fields(self._get_name(p, suffix)) for p in prefixes)
+        )
+        return dict(zip(prefixes, live, strict=True))
+
+    def _filters_for_index(
+        self,
+        prefix: str,
+        filters: dict[str, Any] | None,
+        live_fields: frozenset[str] | None,
+    ) -> dict[str, Any] | None:
+        """``filters`` restricted to the keys the ``prefix`` index can match.
+
+        A ``term``/``terms``/``range`` clause on a field an index does not map
+        matches no document, so one caller filter shared across sub-queries
+        (e.g. ``type`` on entities, ``attr_category`` on text units) would empty
+        every other index. A key is kept when the index declares it statically
+        or its live mapping has it; with no live mapping, ``attr_*`` keys are
+        kept only on the indices whose documents carry attribute fields.
+        """
+        if not filters:
+            return filters
+        static = self._static_filter_fields.get(prefix, frozenset())
+        attr_prefix = f"{Constants.ATTRIBUTE_PREFIX.value}_"
+
+        def applicable(key: str) -> bool:
+            if key in static:
+                return True
+            if live_fields is not None:
+                return key in live_fields
+            return (
+                key.startswith(attr_prefix)
+                and prefix in self._attribute_bearing_prefixes()
+            )
+
+        kept = {k: v for k, v in filters.items() if applicable(k)}
+        if len(kept) != len(filters):
+            logger.debug(
+                "Dropped filter keys absent from index '%s': %s",
+                prefix,
+                ", ".join(sorted(set(filters) - set(kept))),
+            )
+        return kept or None
+
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         start_time = time.time()
         query_preview = query.query[:50] if query.query else "(empty)"
@@ -172,6 +377,12 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 query.query, search_type, ["any"]
             )
 
+            filter_fields = (
+                await self._resolve_filter_fields(index_prefixes, query.suffix)
+                if query.filters
+                else None
+            )
+
             safe_batch_size = self._calculate_safe_batch_size(query.filters)
             large_filters = self._find_all_large_filter_lists(
                 query.filters, safe_batch_size
@@ -184,10 +395,11 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     search_type,
                     index_prefixes,
                     query_vector,
+                    filter_fields,
                 )
             else:
                 search_tasks = self._create_search_tasks(
-                    query, search_type, index_prefixes, query_vector
+                    query, search_type, index_prefixes, query_vector, filter_fields
                 )
 
                 if not search_tasks:
@@ -237,7 +449,13 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         search_type: SearchType,
         index_prefixes: list[str],
         query_vector: list[float] | None,
+        filter_fields: dict[str, frozenset[str] | None] | None = None,
     ) -> list[Coroutine[Any, Any, list[RetrievalResult]]]:
+        """One search per index; ``filter_fields`` (when given) scopes filters.
+
+        ``filter_fields`` maps each prefix to its live mapped fields (``None`` =
+        unknown); when the argument itself is ``None`` filters pass unchanged.
+        """
         search_tasks = []
         for prefix in index_prefixes:
             mapping = self._field_mappings.get(prefix)
@@ -252,8 +470,18 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             ):
                 continue
 
+            index_query = query
+            if filter_fields is not None and query.filters:
+                index_query = query.model_copy(
+                    update={
+                        "filters": self._filters_for_index(
+                            prefix, query.filters, filter_fields.get(prefix)
+                        )
+                    }
+                )
+
             body, params = self._build_search_request(
-                query, search_type, lexical_fields, vector_fields, query_vector
+                index_query, search_type, lexical_fields, vector_fields, query_vector
             )
             target_alias = self._get_name(prefix, query.suffix)
             search_tasks.append(self._execute_search([target_alias], body, params))
@@ -326,7 +554,13 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             filters,
         )
 
-        search_body = {"size": size, "query": main_query}
+        # Embedding vectors are only needed server-side for kNN scoring; never
+        # ship them back (community reports alone carry three per hit).
+        search_body = {
+            "size": size,
+            "query": main_query,
+            "_source": {"excludes": [f"*{EMBEDDING_FIELD_SUFFIX}"]},
+        }
         params = {}
 
         if search_type == SearchType.HYBRID:
@@ -521,6 +755,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         search_type: SearchType,
         index_prefixes: list[str],
         query_vector: list[float] | None,
+        filter_fields: dict[str, frozenset[str] | None] | None = None,
     ) -> list[RetrievalResult]:
         all_results: list[RetrievalResult] = []
         seen_ids: set[str] = set()
@@ -550,7 +785,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             batch_query = query.model_copy(update={"filters": batch_filters})
 
             search_tasks = self._create_search_tasks(
-                batch_query, search_type, index_prefixes, query_vector
+                batch_query, search_type, index_prefixes, query_vector, filter_fields
             )
 
             for results in await asyncio.gather(*search_tasks):
@@ -609,12 +844,15 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         section_type = self._determine_section_type(index_name)
         content = self._extract_content(source)
 
+        # Defensive twin of the `_source` excludes in the request: a custom
+        # client or a cluster that ignores excludes must still not leak vectors
+        # into result metadata (and from there into reported sources).
         return RetrievalResult(
             content=content,
             score=hit.get("_score", 0.0),
             source=source_id,
             retriever_type=str(section_type.value),
-            metadata={**source, "_search_index": index_name},
+            metadata={**strip_embedding_fields(source), "_search_index": index_name},
         )
 
     def _extract_content(self, source: dict[str, Any]) -> str:
