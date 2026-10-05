@@ -275,9 +275,19 @@ processing:
 
   document_parsing:
     source_directory:               # overridden by --source-directory CLI flag
-    target_directory: null
+    target_directory: null          # parsed-JSON export dir; see note below
     index_value: null
 ```
+
+> **Parsed output location:** the `document_parsing` stage writes one
+> `<stem>.json` per parsed file for inspection. With `target_directory` unset
+> (default) it goes to `<cache-directory>/parsed_documents/<pipeline-id>/`, never
+> into the source corpus. An explicit `target_directory` (or
+> `--target-directory`) is still honoured, but it must not be the source
+> directory itself; a target nested inside the source directory is skipped when
+> discovering source files, as is the cache directory. The export is
+> informational only: `document_loading` reuses the parsed documents from the
+> parsing stage (or its stage cache on resume) and does not read this directory.
 
 **Chunking** — `intelligent` uses an LLM to pick semantic boundaries; `simple`
 splits by size. Most-tuned: `min_chunk_size` / `max_chunk_size`.
@@ -566,7 +576,7 @@ OpenSearch + Neptune.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | Directory of source documents. Required to run; if the flag is omitted it falls back to the `GRAPHRAG_SOURCE_DIRECTORY` environment variable. |
-| `--target-directory` | source dir | Where parsed documents are written |
+| `--target-directory` | `<cache-directory>/parsed_documents/<pipeline-id>` | Where parsed documents are exported as JSON (must not be the source directory) |
 | `--cache-directory` | `cache` | Pipeline cache + intermediate results |
 | `--force-rebuild` | off | Ignore all existing cache; rebuild from scratch |
 | `--s3-sync` | off | Sync cache to S3 (requires `--s3-bucket-name`) |
@@ -588,7 +598,9 @@ Run order (`DataIngestionPipeline.STAGE_CLASSES`). Use the stage **names**
 
 1. **`document_parsing`** — extract text per format (`.pdf`, `.txt`, `.csv`,
    `.json`; `.md`/`.html` with the `unstructured` extra).
-2. **`document_loading`** — load parsed documents into the pipeline corpus.
+2. **`document_loading`** — build the run's corpus from the parsed documents
+   (MinHash dedup, incremental filter). If `document_parsing` is disabled, it
+   instead loads pre-parsed `Document` `.json` files from the source directory.
 3. **`text_chunking`** — split documents into text units (`processing.chunking`).
 4. **`translation`** — optional; translate to `target_language` (no-op when
    source == target and no extra targets).

@@ -63,7 +63,9 @@ class CommandLineInterface:
         parser.add_argument(
             "--target-directory",
             type=str,
-            help="Path to directory for storing parsed documents (defaults to source directory)",
+            help="Path to directory for exporting parsed documents as JSON "
+            "(defaults to <cache-directory>/parsed_documents/<pipeline-id>; must "
+            "not be the source directory)",
         )
         parser.add_argument(
             "--cache-directory",

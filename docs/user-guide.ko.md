@@ -275,9 +275,18 @@ processing:
 
   document_parsing:
     source_directory:               # overridden by --source-directory CLI flag
-    target_directory: null
+    target_directory: null          # parsed-JSON export dir; see note below
     index_value: null
 ```
+
+> **파싱 결과 위치:** `document_parsing` 스테이지는 확인용으로 파싱한 파일마다
+> `<stem>.json`을 하나씩 기록합니다. `target_directory`를 지정하지 않으면(기본값)
+> 소스 코퍼스가 아니라 `<cache-directory>/parsed_documents/<pipeline-id>/`에
+> 기록합니다. `target_directory`(또는 `--target-directory`)를 명시하면 그 위치를
+> 그대로 사용하지만, 소스 디렉터리 자체로 지정할 수는 없습니다. 소스 디렉터리 안에
+> 있는 대상 디렉터리와 캐시 디렉터리는 소스 파일 탐색에서 제외합니다. 이 JSON은 확인용일
+> 뿐이며, `document_loading`은 이 디렉터리를 읽지 않고 파싱 스테이지의 결과(재개 시에는
+> 해당 스테이지 캐시)를 그대로 사용합니다.
 
 **청킹** — `intelligent`는 LLM으로 시맨틱 경계를 고르고, `simple`은 크기로
 분할합니다. 가장 많이 튜닝하는 항목: `min_chunk_size` / `max_chunk_size`.
@@ -562,7 +571,7 @@ evaluation:
 | 플래그 | 기본값 | 의미 |
 |---|---|---|
 | `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | 소스 문서 디렉터리. 실행에 필수이며, 플래그를 생략하면 `GRAPHRAG_SOURCE_DIRECTORY` 환경 변수로 대체됩니다. |
-| `--target-directory` | source dir | 파싱된 문서가 기록될 위치 |
+| `--target-directory` | `<cache-directory>/parsed_documents/<pipeline-id>` | 파싱된 문서를 JSON으로 내보낼 위치(소스 디렉터리는 지정 불가) |
 | `--cache-directory` | `cache` | 파이프라인 캐시 + 중간 결과 |
 | `--force-rebuild` | off | 기존 캐시를 모두 무시하고 처음부터 재구축 |
 | `--s3-sync` | off | 캐시를 S3에 동기화 (`--s3-bucket-name` 필요) |
@@ -584,7 +593,9 @@ evaluation:
 
 1. **`document_parsing`** — 포맷별 텍스트 추출(`.pdf`, `.txt`, `.csv`,
    `.json`; `unstructured` 추가 패키지로 `.md`/`.html`).
-2. **`document_loading`** — 파싱된 문서를 파이프라인 코퍼스로 로드.
+2. **`document_loading`** — 파싱된 문서로 실행 대상 코퍼스를 구성(MinHash 중복
+   제거, 증분 필터). `document_parsing`을 비활성화하면 소스 디렉터리에서 미리 파싱된
+   `Document` `.json` 파일을 읽습니다.
 3. **`text_chunking`** — 문서를 텍스트 유닛으로 분할(`processing.chunking`).
 4. **`translation`** — 선택적; `target_language`로 번역(source == target이고
    추가 타겟이 없으면 no-op).
