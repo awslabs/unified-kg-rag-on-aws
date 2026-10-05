@@ -631,7 +631,11 @@ run-ingestion --source-directory ./documents --config-path config.yaml --metrics
 
 **S3 동기화**는 스테이지 캐시를 `s3://<bucket>/<prefix>/...`에 유지하므로, 새
 프로세스(예: 새 Fargate 태스크)가 완료된 스테이지를 재계산하지 않고 재개할 수
-있습니다. 임베딩에 한해서는 `indexing.opensearch.persist_embedding_cache: true`
+있습니다. 시작 시 다운로드나 종료 시 업로드가 실패하거나 일부 파일만 동기화되면
+`CacheSyncError`로 실행이 실패하고 `run-ingestion`은 0이 아닌 코드로 종료합니다.
+따라서 Step Functions 단계별 실행에서는 체크포인트를 잃은 단계가 실패로
+표시됩니다. 새 pipeline id에 원격 캐시가 비어 있는 것은 오류가 아닙니다.
+임베딩에 한해서는 `indexing.opensearch.persist_embedding_cache: true`
 로 설정하면 실행 간에 변경되지 않은 텍스트를 다시 임베딩하지 않습니다.
 
 ### 다국어 인제스천

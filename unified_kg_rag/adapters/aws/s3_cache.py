@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
 import boto3
+from boto3.exceptions import S3UploadFailedError
 from botocore.exceptions import ClientError, NoCredentialsError
 
 from unified_kg_rag.domain.models import Config, S3EncryptionType
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import CacheSyncError, get_logger
 
 if TYPE_CHECKING:
     from types_boto3_s3 import S3Client
@@ -19,7 +20,18 @@ logger = get_logger(__name__)
 
 
 class S3CacheManager:
+    """Mirror a pipeline's local stage cache to and from S3.
+
+    Both sync directions raise :class:`CacheSyncError` on any failure (listing,
+    connection, or any single object) instead of returning a partial result: a
+    phased run hands checkpoints between tasks through S3, so a silent partial
+    sync would surface one phase later as a misleading "missing stage" error.
+    """
+
     DEFAULT_S3_PREFIX: ClassVar[str] = "cache"
+    # Failed keys quoted in a CacheSyncError message (the full count is always
+    # reported); keeps the message readable for large partial failures.
+    _MAX_REPORTED_FAILURES: ClassVar[int] = 5
 
     def __init__(
         self,
@@ -71,7 +83,8 @@ class S3CacheManager:
         self, pipeline_id: str, local_cache_dir: Path
     ) -> dict[str, bool]:
         logger.info("Syncing pipeline '%s' from S3", pipeline_id)
-        results = {}
+        results: dict[str, bool] = {}
+        failed_keys: list[str] = []
         base_prefix = self._get_base_prefix(pipeline_id)
         s3_prefix = f"{base_prefix}/"
 
@@ -88,9 +101,18 @@ class S3CacheManager:
                     s3_key = obj.get("Key")
                     if not s3_key:
                         continue
+                    # S3 "folder markers" (zero-byte keys ending in '/', created
+                    # by the console or some sync tools) are not cache files;
+                    # downloading one onto a directory path would fail the sync.
+                    if s3_key.endswith("/"):
+                        logger.debug("Skipping S3 folder marker '%s'", s3_key)
+                        continue
+                    relative_path = Path(s3_key).relative_to(base_prefix)
+                    if relative_path == Path("."):
+                        logger.debug("Skipping S3 folder marker '%s'", s3_key)
+                        continue
 
                     total_files += 1
-                    relative_path = Path(s3_key).relative_to(base_prefix)
                     local_path = local_cache_dir / relative_path
                     # Guard against path traversal: an S3 key containing '..'
                     # segments (tampered/shared bucket) could otherwise resolve
@@ -107,6 +129,8 @@ class S3CacheManager:
                     local_path.parent.mkdir(parents=True, exist_ok=True)
 
                     success = self._download_cache_file(s3_key, local_path)
+                    if not success:
+                        failed_keys.append(s3_key)
                     stage_name = (
                         relative_path.parts[0]
                         if len(relative_path.parts) > 1
@@ -119,21 +143,24 @@ class S3CacheManager:
                         results[stage_name] = results[stage_name] and success
                     downloaded_stages.add(stage_name)
 
-            success_count = sum(results.values())
-            if total_files > 0:
-                logger.info(
-                    "Download completed: %s/%s stages, %s files from 's3://%s/%s'",
-                    success_count,
-                    len(results),
-                    total_files,
-                    self.bucket_name,
-                    s3_prefix,
-                )
-            else:
-                logger.info("No cache files found for pipeline '%s' in S3", pipeline_id)
         except Exception as e:
             logger.error("Failed to sync pipeline '%s' from S3: %s", pipeline_id, e)
+            raise CacheSyncError(
+                f"Failed to sync pipeline '{pipeline_id}' from "
+                f"'s3://{self.bucket_name}/{s3_prefix}': {e}"
+            ) from e
 
+        self._raise_on_failures("download", pipeline_id, failed_keys, total_files)
+        if total_files > 0:
+            logger.info(
+                "Download completed: %s stages, %s files from 's3://%s/%s'",
+                len(results),
+                total_files,
+                self.bucket_name,
+                s3_prefix,
+            )
+        else:
+            logger.info("No cache files found for pipeline '%s' in S3", pipeline_id)
         return results
 
     def sync_pipeline_to_s3(
@@ -145,7 +172,8 @@ class S3CacheManager:
             return {}
 
         base_prefix = self._get_base_prefix(pipeline_id)
-        stage_results = defaultdict(list)
+        stage_results: defaultdict[str, list[bool]] = defaultdict(list)
+        failed_keys: list[str] = []
         total_files = 0
 
         try:
@@ -154,6 +182,8 @@ class S3CacheManager:
                 relative_path = local_path.relative_to(local_cache_dir)
                 s3_key = f"{base_prefix}/{relative_path.as_posix()}"
                 success = self._upload_file_to_s3(local_path, s3_key)
+                if not success:
+                    failed_keys.append(s3_key)
 
                 stage_name = (
                     relative_path.parts[0]
@@ -162,29 +192,40 @@ class S3CacheManager:
                 )
                 stage_results[stage_name].append(success)
 
-            results = {
-                stage: all(outcomes) for stage, outcomes in stage_results.items()
-            }
-            success_count = sum(results.values())
-
-            if total_files > 0:
-                logger.info(
-                    "Upload completed: %s/%s stages, %s files to 's3://%s/%s'",
-                    success_count,
-                    len(results),
-                    total_files,
-                    self.bucket_name,
-                    base_prefix,
-                )
-            else:
-                logger.info(
-                    "No cache files found for pipeline '%s' locally", pipeline_id
-                )
-
-            return results
         except Exception as e:
             logger.error("Failed to sync pipeline '%s' to S3: %s", pipeline_id, e)
-            return dict.fromkeys(stage_results, False)
+            raise CacheSyncError(
+                f"Failed to sync pipeline '{pipeline_id}' to "
+                f"'s3://{self.bucket_name}/{base_prefix}': {e}"
+            ) from e
+
+        self._raise_on_failures("upload", pipeline_id, failed_keys, total_files)
+        results = {stage: all(outcomes) for stage, outcomes in stage_results.items()}
+        if total_files > 0:
+            logger.info(
+                "Upload completed: %s stages, %s files to 's3://%s/%s'",
+                len(results),
+                total_files,
+                self.bucket_name,
+                base_prefix,
+            )
+        else:
+            logger.info("No cache files found for pipeline '%s' locally", pipeline_id)
+        return results
+
+    def _raise_on_failures(
+        self, direction: str, pipeline_id: str, failed_keys: list[str], total: int
+    ) -> None:
+        if not failed_keys:
+            return
+        shown = ", ".join(failed_keys[: self._MAX_REPORTED_FAILURES])
+        more = len(failed_keys) - self._MAX_REPORTED_FAILURES
+        suffix = f" (+{more} more)" if more > 0 else ""
+        raise CacheSyncError(
+            f"S3 cache {direction} for pipeline '{pipeline_id}' failed for "
+            f"{len(failed_keys)}/{total} files in bucket '{self.bucket_name}': "
+            f"{shown}{suffix}"
+        )
 
     def _get_base_prefix(self, pipeline_id: str) -> str:
         return f"{self.prefix}/{pipeline_id}" if self.prefix else pipeline_id
@@ -223,7 +264,9 @@ class S3CacheManager:
                 str(local_path), str(self.bucket_name), s3_key, ExtraArgs=extra_args
             )
             return True
-        except (ClientError, FileNotFoundError) as e:
+        except (ClientError, S3UploadFailedError, FileNotFoundError) as e:
+            # boto3's managed upload_file wraps ClientError in
+            # S3UploadFailedError, so both must count as a per-file failure.
             logger.warning(
                 "Failed to upload '%s' to 's3://%s/%s': %s",
                 local_path,

@@ -635,7 +635,11 @@ discards all cache and starts over.
 
 **S3 sync** keeps the stage cache in `s3://<bucket>/<prefix>/...`, so a fresh
 process (e.g. a new Fargate task) can resume without recomputing finished
-stages. For embeddings specifically, set
+stages. A failed or partial sync (the initial download or the final upload)
+fails the run with `CacheSyncError` and `run-ingestion` exits non-zero, so in a
+phased Step Functions run the phase that lost its checkpoint is the one marked
+failed. An empty remote cache on a fresh pipeline id is not an error. For
+embeddings specifically, set
 `indexing.opensearch.persist_embedding_cache: true` to avoid re-embedding
 unchanged text across runs.
 
