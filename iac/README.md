@@ -175,15 +175,16 @@ cdk deploy --all
 
 ## After deploy
 
-1. Build & push the app image to the created ECR repo (tag `latest`); the image
-   must contain a `/app/config.yaml` with the deployed endpoints (or rely on the
-   injected `NEPTUNE_ENDPOINT` / `OPENSEARCH_ENDPOINT` / `S3_BUCKET_NAME` /
-   `BEDROCK_REGION` env vars the app reads). The task also injects
+1. Build & push the app image (`docker/Dockerfile`, build context = repo root)
+   to the created ECR repo (tag `latest`). The image bakes in the tracked,
+   endpoint-free `docker/config.yaml` as `/app/config.yaml`; the deployed
+   endpoints come from the injected `NEPTUNE_ENDPOINT` / `OPENSEARCH_ENDPOINT` /
+   `S3_BUCKET_NAME` / `BEDROCK_REGION` env vars the app reads. The task also injects
    `GRAPHRAG_DOC_STATUS_TABLE` (the table this stack created,
    `graphrag-doc-status` in `dev`) and `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false`,
    which override `aws.dynamodb.table_name` / `create_table_if_missing`, so the
-   app and the CloudWatch alarms track the same IaC-managed table. Incremental
-   indexing still needs `aws.dynamodb.enabled: true` in `config.yaml`.
+   app and the CloudWatch alarms track the same IaC-managed table. The image
+   config sets `aws.dynamodb.enabled: true`, so ingestion runs incrementally.
    S3 cache uploads default to the bucket's own encryption
    (`aws.s3.encryption.encryption_type: BUCKET_DEFAULT`), so `use_cmk=true`
    objects are encrypted with the CMK.

@@ -95,6 +95,14 @@ pip install -e .
 선택해도 파서가 설치되지 않습니다. PDF/TXT/CSV/JSON을 사용하거나,
 Markdown/HTML 지원이 필요하면 Python 버전을 올리세요.
 
+배포용 컨테이너 이미지(`docker/Dockerfile`)는 이 추가 패키지가 약 200MB(spaCy 등)를
+더하므로 기본적으로 포함하지 않습니다. 따라서 Step Functions로 `.md`/`.html` 파일을
+수집하면 "No supported files found" 오류로 실패합니다. 해당 파일을 지원 포맷으로
+변환하거나, 추가 패키지를 넣어 이미지를 빌드하세요:
+`docker build --build-arg UV_EXTRAS="--extra unstructured" -f docker/Dockerfile .`.
+이미지에는 엔드포인트가 없는 `docker/config.yaml`이 포함되며, 엔드포인트는 CDK
+compute 스택이 환경 변수로 주입합니다.
+
 ### 인증
 
 서로 독립적인 두 가지 인증 사항이 있습니다.
