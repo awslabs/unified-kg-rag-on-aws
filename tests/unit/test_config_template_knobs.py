@@ -70,3 +70,16 @@ def test_truncation_floor_matches_model_default(template_search: SearchConfig) -
         template_search.token_manager.min_truncated_section_tokens
         == SearchConfig().token_manager.min_truncated_section_tokens
     )
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["judge_effort", "ragas_timeout", "ragas_max_workers", "ragas_max_retries"],
+)
+def test_evaluation_judge_knobs_match_model_defaults(field: str) -> None:
+    from unified_kg_rag.domain.models.config import EvaluationConfig
+
+    raw: dict[str, Any] = yaml.safe_load(TEMPLATE.read_text())
+    assert field in raw["evaluation"]
+    parsed = EvaluationConfig(**raw["evaluation"])
+    assert getattr(parsed, field) == getattr(EvaluationConfig(), field)

@@ -21,6 +21,7 @@ from ragas.metrics import (
     context_recall,
     faithfulness,
 )
+from ragas.run_config import RunConfig
 
 from unified_kg_rag.adapters.aws import (
     BedrockEmbeddingModelFactory,
@@ -46,6 +47,7 @@ from unified_kg_rag.evaluation.base import (
     SKIP_REASON_EMPTY_REFERENCE,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
+    judge_model_kwargs,
 )
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import EvaluationException, get_logger
@@ -146,7 +148,9 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         )
         model_id = self.config.evaluation.evaluation_model_id
         self.llm = llm_factory.get_model(
-            model_id=model_id, model_purpose=ModelPurpose.EVALUATION
+            model_id=model_id,
+            model_purpose=ModelPurpose.EVALUATION,
+            **judge_model_kwargs(self.config),
         )
         # ragas sets ``llm.temperature`` on every judge call (and never resets
         # it when the original was None). Claude 4.7+/5 reject sampling params,
@@ -155,6 +159,14 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         supports_sampling = model_info is None or model_info.supports_sampling_params
         self.ragas_llm = LangchainLLMWrapper(
             self.llm, bypass_temperature=not supports_sampling
+        )
+
+    def _build_run_config(self) -> RunConfig:
+        evaluation = self.config.evaluation
+        return RunConfig(
+            timeout=evaluation.ragas_timeout,
+            max_workers=evaluation.ragas_max_workers,
+            max_retries=evaluation.ragas_max_retries,
         )
 
     def _truncate_contexts(self, results: list[EvaluationResult]) -> list[list[str]]:
@@ -289,6 +301,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 llm=self.ragas_llm or self.llm,
                 embeddings=self.embeddings,
                 raise_exceptions=False,
+                run_config=self._build_run_config(),
                 show_progress=self.show_progress,
                 batch_size=self.config.processing.batch_size,
             )

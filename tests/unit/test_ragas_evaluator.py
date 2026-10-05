@@ -424,6 +424,30 @@ class TestJudgeSamplingParams:
         ev, _ = _make_evaluator(
             mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
         )
+
+
+class TestRunConfigAndJudgeEffort:
+    def test_default_run_config_suits_thinking_judges(self, mocker) -> None:
+        ev, _ = _make_evaluator(mocker)
+        rc = ev._build_run_config()
+        assert rc.timeout >= 300
+        assert rc.timeout == ev.config.evaluation.ragas_timeout
+        assert rc.max_workers == ev.config.evaluation.ragas_max_workers
+        assert rc.max_retries == ev.config.evaluation.ragas_max_retries
+
+    def test_run_config_follows_evaluation_config(self, mocker) -> None:
+        ev, _ = _make_evaluator(mocker)
+        ev.config.evaluation.ragas_timeout = 900
+        ev.config.evaluation.ragas_max_workers = 2
+        ev.config.evaluation.ragas_max_retries = 5
+        rc = ev._build_run_config()
+        assert (rc.timeout, rc.max_workers, rc.max_retries) == (900, 2, 5)
+
+    async def test_evaluate_receives_run_config(self, mocker) -> None:
+        ev, _ = _make_evaluator(
+            mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
+        )
+        ev.config.evaluation.ragas_timeout = 450
         captured = {}
 
         class _FakeRagasResult:
@@ -440,3 +464,24 @@ class TestJudgeSamplingParams:
         await ev.aevaluate_batch([_query()], [_result(contexts=["c"])], ["t"])
 
         assert captured["llm"] is ev.ragas_llm
+
+        assert captured["run_config"].timeout == 450
+
+    def test_judge_model_gets_low_effort_by_default(self, mocker) -> None:
+        _make_evaluator(mocker)
+        factory = rg_module.BedrockLanguageModelFactory.return_value
+        _, kwargs = factory.get_model.call_args
+        assert kwargs["effort"] == "low"
+
+    def test_null_judge_effort_inherits_bedrock_effort(self, mocker) -> None:
+        mocker.patch.object(rg_module.boto3, "Session")
+        mocker.patch.object(rg_module, "get_assumed_role_boto_session")
+        mocker.patch.object(rg_module, "BedrockEmbeddingModelFactory")
+        mocker.patch.object(rg_module, "BedrockLanguageModelFactory")
+        mocker.patch.object(rg_module, "BedrockTokenCounter")
+        config = Config()
+        config.evaluation.judge_effort = None
+        RagasEvaluator(config=config, rag_chain=None, show_progress=False)
+        factory = rg_module.BedrockLanguageModelFactory.return_value
+        _, kwargs = factory.get_model.call_args
+        assert "effort" not in kwargs

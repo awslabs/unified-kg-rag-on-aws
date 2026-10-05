@@ -29,6 +29,7 @@ from unified_kg_rag.evaluation.base import (
     SKIP_REASON_EMPTY_REFERENCE,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
+    judge_model_kwargs,
 )
 from unified_kg_rag.shared import EvaluationException, get_logger
 
@@ -114,6 +115,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             self.llm = llm_factory.get_model(
                 model_id=self.config.evaluation.evaluation_model_id,
                 model_purpose=ModelPurpose.EVALUATION,
+                **judge_model_kwargs(self.config),
             )
             self._initialize_metric_evaluators()
             logger.info(

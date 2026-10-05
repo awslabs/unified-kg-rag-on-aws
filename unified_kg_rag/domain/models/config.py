@@ -1960,6 +1960,44 @@ class EvaluationConfig(BaseModel):
         ge=1,
         description="Maximum number of tokens allowed in context for evaluation processing",
     )
+    judge_effort: Literal["low", "medium", "high", "xhigh", "max"] | None = Field(
+        default="low",
+        description=(
+            "Reasoning effort for the LLM judge (RAGAS and LangChain evaluators) "
+            "on adaptive-thinking models (Claude 4.7+). Judge prompts are short "
+            "extraction/classification calls, so a low effort keeps each metric "
+            "well inside the RAGAS timeout. null inherits aws.bedrock.effort. "
+            "Ignored by models without adaptive thinking."
+        ),
+    )
+    ragas_timeout: int = Field(
+        default=300,
+        ge=1,
+        description=(
+            "RAGAS RunConfig.timeout in seconds: the budget for scoring ONE "
+            "metric on ONE sample, covering all of its LLM calls and retries. "
+            "A timed-out job yields NaN for that metric. RAGAS' own default "
+            "(180s) is too tight for thinking judges."
+        ),
+    )
+    ragas_max_workers: int = Field(
+        default=8,
+        ge=1,
+        description=(
+            "RAGAS RunConfig.max_workers: concurrent metric jobs. Lower it if "
+            "Bedrock throttles the judge model (throttled calls burn the "
+            "per-job timeout)."
+        ),
+    )
+    ragas_max_retries: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "RAGAS RunConfig.max_retries: total attempts per judge call (RAGAS "
+            "applies it as stop_after_attempt, with exponential backoff). "
+            "Attempts count against ragas_timeout."
+        ),
+    )
     save_detailed_results: bool = Field(
         default=True,
         description="Whether to save detailed evaluation results and reports.",

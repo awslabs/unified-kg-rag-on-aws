@@ -415,3 +415,10 @@ def test_judge_model_requested_without_sampling_params(mocker) -> None:
     factory = lc_module.BedrockLanguageModelFactory.return_value
     _, kwargs = factory.get_model.call_args
     assert not {"temperature", "top_p", "top_k"} & set(kwargs)
+
+
+def test_judge_model_uses_configured_judge_effort(mocker) -> None:
+    _make_evaluator(mocker)
+    factory = lc_module.BedrockLanguageModelFactory.return_value
+    _, kwargs = factory.get_model.call_args
+    assert kwargs["effort"] == Config().evaluation.judge_effort == "low"
