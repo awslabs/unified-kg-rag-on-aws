@@ -26,7 +26,7 @@ from unified_kg_rag.domain.models import (
     ModelPurpose,
     RerankModelId,
 )
-from unified_kg_rag.domain.models.config import TransientRetryConfig
+from unified_kg_rag.domain.models.config import BedrockConfig, TransientRetryConfig
 from unified_kg_rag.shared import (
     AWSServiceError,
     EmbeddingModelError,
@@ -759,6 +759,22 @@ def get_language_model_info(
         ) from e
 
 
+def effective_max_output_tokens(
+    model_info: LanguageModelInfo,
+    bedrock_config: BedrockConfig,
+    min_output_tokens: int = 0,
+) -> int:
+    """max_tokens for a request that does not set one explicitly.
+
+    The configured default cap, raised to the prompt's output floor, never
+    above the model maximum; an unset cap means the model maximum.
+    """
+    cap = bedrock_config.default_max_output_tokens
+    if cap is None:
+        return model_info.max_output_tokens
+    return min(max(cap, min_output_tokens), model_info.max_output_tokens)
+
+
 ModelIdT = TypeVar("ModelIdT")
 ModelInfoT = TypeVar("ModelInfoT")
 WrapperT = TypeVar("WrapperT")
@@ -1250,8 +1266,16 @@ class BedrockLanguageModelFactory(
         **kwargs: Any,
     ) -> dict[str, Any]:
         enable_thinking = kwargs.get("enable_thinking", False)
+        # An explicit max_tokens is clamped as requested; otherwise the default
+        # cap applies, raised to the prompt's own output floor.
         final_max_tokens = self._validate_max_tokens(
-            kwargs.get("max_tokens"), model_info
+            kwargs.get("max_tokens")
+            or effective_max_output_tokens(
+                model_info,
+                self.config.aws.bedrock,
+                kwargs.get("min_output_tokens", 0),
+            ),
+            model_info,
         )
         config = self._build_base_config(
             resolved_model_id, is_cross_region, model_info, **kwargs
@@ -1483,18 +1507,15 @@ class BedrockLanguageModelFactory(
         )
 
     @staticmethod
-    def _validate_max_tokens(
-        max_tokens: int | None, model_info: LanguageModelInfo
-    ) -> int:
-        final_max_tokens = max_tokens or model_info.max_output_tokens
-        if final_max_tokens > model_info.max_output_tokens:
+    def _validate_max_tokens(max_tokens: int, model_info: LanguageModelInfo) -> int:
+        if max_tokens > model_info.max_output_tokens:
             logger.warning(
                 "Requested max_tokens (%d) exceeds model's maximum (%d). Adjusting.",
-                final_max_tokens,
+                max_tokens,
                 model_info.max_output_tokens,
             )
             return model_info.max_output_tokens
-        return final_max_tokens
+        return max_tokens
 
     @staticmethod
     def _should_enable_performance_optimization(

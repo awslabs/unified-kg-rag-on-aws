@@ -9,11 +9,13 @@ from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.aws.bedrock import (
     LanguageModelInfo,
+    effective_max_output_tokens,
     get_assumed_role_boto_session,
     get_language_model_info,
 )
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.domain.models import Config, RetrievalResult
+from unified_kg_rag.domain.prompts import AnswerGenerationPrompt
 from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
 from unified_kg_rag.shared import get_logger
 
@@ -117,12 +119,19 @@ class TokenManager(MetricsMixin):
             cache_maxsize=self.config.token_count_cache_size,
             api_supported=answer_model_info.supports_count_tokens,
         )
+        # Reserve what the answer request actually asks for (its max_tokens),
+        # not the model maximum, so a capped output leaves room for context.
+        answer_output_tokens = effective_max_output_tokens(
+            answer_model_info,
+            config.aws.bedrock,
+            AnswerGenerationPrompt.min_output_tokens,
+        )
         self._max_context_tokens = self._resolve_max_context_tokens(
-            answer_model_id, answer_model_info
+            answer_model_id, answer_model_info, answer_output_tokens
         )
 
     def _resolve_max_context_tokens(
-        self, answer_model_id: str, model_info: LanguageModelInfo
+        self, answer_model_id: str, model_info: LanguageModelInfo, output_tokens: int
     ) -> int:
         """Size the prompt-side budget against the answer model's real window.
 
@@ -135,7 +144,7 @@ class TokenManager(MetricsMixin):
         configured = self.config.max_context_tokens
         headroom = self.config.context_window_headroom_ratio
         window = model_info.effective_context_window(self._enable_1m_context)
-        budget_ceiling = int((window - model_info.max_output_tokens) * (1.0 - headroom))
+        budget_ceiling = int((window - output_tokens) * (1.0 - headroom))
         # A model whose output reservation swallows its window would yield a
         # non-positive ceiling; keep a usable floor instead of returning <= 0,
         # which optimize_context treats as "exclude everything".
@@ -148,7 +157,7 @@ class TokenManager(MetricsMixin):
                 budget_ceiling,
                 answer_model_id,
                 window,
-                model_info.max_output_tokens,
+                output_tokens,
                 headroom * 100,
             )
             return budget_ceiling
@@ -158,7 +167,7 @@ class TokenManager(MetricsMixin):
                 "alongside its %d-token output reservation; clamping to %d.",
                 configured,
                 answer_model_id,
-                model_info.max_output_tokens,
+                output_tokens,
                 budget_ceiling,
             )
             return budget_ceiling

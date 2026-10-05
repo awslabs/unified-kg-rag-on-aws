@@ -55,6 +55,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   the other profile-only models.
 
 ### Fixed
+- LLM requests no longer ask for the model's maximum output by default.
+  Bedrock reserves input + `max_tokens` against the tokens-per-minute quota at
+  request start, so sending 128K on Claude 5.x throttled concurrent calls far
+  below real usage. `aws.bedrock.default_max_output_tokens` (16384) now caps
+  each request; long-output prompts (extraction, gleaning, claims, community
+  reports, document translation) keep a higher floor, and the derived
+  retrieval context budget reserves the capped output instead of the model
+  maximum. Set the key to `null` to restore the previous behaviour.
 - `custom_prompts` overrides for community reports
   (`community_report_system`/`_human`), conversation-memory entity extraction
   (`entity_extraction_*`) and the DRIFT query refinement, keyword expansion and

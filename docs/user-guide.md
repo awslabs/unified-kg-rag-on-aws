@@ -152,6 +152,7 @@ aws:
     enable_global_profile: true   # use cross-region (global) Bedrock inference profiles for higher throughput/availability
     default_model_id: "anthropic.claude-sonnet-5-5"            # every 'default'-tier role (see Model selection notes)
     fast_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"  # every 'fast'-tier role
+    default_max_output_tokens: 16384  # max_tokens per request (see Model selection notes); null = model maximum
     model_overrides: {}           # capability overrides for a model without a curated record
     enable_1m_context: false      # opt into the 1M window on models where it's a beta (premium billing); Claude 5 is native 1M
     effort: "high"                # reasoning depth for adaptive-thinking models: low | medium | high | xhigh | max
@@ -276,6 +277,17 @@ Override keys are capability-record fields (`context_window_size`,
 `max_output_tokens`, `supports_thinking`, `supports_sampling_params`,
 `supports_prompt_caching`, `supports_count_tokens`, `adaptive_thinking_only`,
 `requires_inference_profile`, ...); an unknown key fails fast.
+
+**Output cap.** Each request sends `max_tokens` =
+`aws.bedrock.default_max_output_tokens` (16384), clamped to the model maximum.
+Bedrock reserves input + `max_tokens` against the tokens-per-minute quota when a
+request starts, so the previous behaviour of asking for the model maximum
+(128K on Claude 5.x) throttled concurrent ingestion long before real usage did.
+Thinking tokens count toward `max_tokens`. Prompts with long outputs declare a
+higher floor that wins: graph and claim extraction, gleaning, community reports
+and their output fixer 32768, document translation 65536. Raise the value if
+answers are cut off (`stopReason: max_tokens`), or set it to `null` to send the
+model maximum as before.
 
 | Model id | Provider | Context / max output | Reasoning control |
 | --- | --- | --- | --- |
@@ -582,8 +594,9 @@ search:
 
 > **Context budget is derived, not fixed.** With `max_context_tokens: null`
 > (the default) the retrieval context budget is computed from
-> `search.answer_generation_model_id`'s own context window, minus that model's
-> output reservation and the headroom ratio. This keeps the two in agreement: a
+> `search.answer_generation_model_id`'s own context window, minus the answer
+> request's output reservation (its `max_tokens`, see
+> `aws.bedrock.default_max_output_tokens`) and the headroom ratio. This keeps the two in agreement: a
 > single hardcoded number either overflows a 200K model's window (the window
 > must hold the prompt *and* the answer) or leaves most of a 1M window unused.
 > An explicit value is still honoured, but is clamped to what the model can

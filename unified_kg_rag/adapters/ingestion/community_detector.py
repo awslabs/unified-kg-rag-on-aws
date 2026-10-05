@@ -96,6 +96,7 @@ class CommunityDetector(BaseProcessor):
                 factory=self.factory,
                 enable_output_fixing=self.config.fixing.enabled,
                 output_fixing_model_id=self.config.fixing.fixing_model_id,
+                min_output_tokens=CommunityReportPrompt.min_output_tokens,
             )
             self.report_generator = setup_chain(
                 model_purpose=ModelPurpose.INGESTION,

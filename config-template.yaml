@@ -31,6 +31,13 @@ aws:
     #                          convergence_assessment,primer}_model_id
     default_model_id: "anthropic.claude-sonnet-5-5"
     fast_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    # max_tokens per LLM request, clamped to the model maximum. Bedrock reserves
+    # input + max_tokens against the tokens-per-minute quota at request start,
+    # so asking for the model maximum (128K on Claude 5.x) throttles concurrent
+    # calls early. Thinking tokens count toward it. Long-output prompts declare
+    # a higher floor that wins (graph/claim extraction, gleaning and community
+    # reports 32K, document translation 64K). null sends the model maximum.
+    default_max_output_tokens: 16384
     # Capability overrides for a model without a curated record (or to correct
     # one). Unlisted models get provider-family defaults ('anthropic.claude-*',
     # 'openai.gpt-*') or, for other providers, conservative ones (Converse, no
@@ -584,7 +591,8 @@ search:
   # Token Manager Configuration
   token_manager:
     # Prompt-side context budget. Leave null to derive it from the answer
-    # model's own window minus its output reservation and the headroom below —
+    # model's own window minus its output reservation (the answer request's
+    # max_tokens, see aws.bedrock.default_max_output_tokens) and the headroom below —
     # a hardcoded number overflows a smaller model's window and wastes a larger
     # one. An explicit value is honoured but clamped to what the model accepts.
     max_context_tokens: null

@@ -135,11 +135,6 @@ def test_validate_max_tokens_clamps_to_model_max() -> None:
     assert BedrockLanguageModelFactory._validate_max_tokens(100000, info) == 8192
 
 
-def test_validate_max_tokens_uses_default_when_none() -> None:
-    info = LanguageModelInfo(context_window_size=200000, max_output_tokens=8192)
-    assert BedrockLanguageModelFactory._validate_max_tokens(None, info) == 8192
-
-
 def test_validate_max_tokens_keeps_in_range_value() -> None:
     info = LanguageModelInfo(context_window_size=200000, max_output_tokens=8192)
     assert BedrockLanguageModelFactory._validate_max_tokens(2000, info) == 2000

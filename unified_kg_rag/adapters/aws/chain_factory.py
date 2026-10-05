@@ -198,11 +198,14 @@ def create_robust_xml_output_parser(
     enable_output_fixing: bool,
     output_fixing_model_id: str,
     model_purpose: ModelPurpose = ModelPurpose.QUERY,
+    min_output_tokens: int = 0,
 ) -> BaseOutputParser:
     """Build the XML parser, optionally wrapped in an LLM output fixer.
 
     ``model_purpose`` is forwarded to the fixing LLM so it gets the same
-    per-path policy (e.g. guardrail scope) as the chain it repairs.
+    per-path policy (e.g. guardrail scope) as the chain it repairs, and
+    ``min_output_tokens`` (the repaired prompt's output floor) so a long
+    output can be re-emitted in full.
     """
     base_parser = RobustXMLOutputParser()
     if not enable_output_fixing:
@@ -210,7 +213,9 @@ def create_robust_xml_output_parser(
 
     try:
         fixing_llm = factory.get_model(
-            model_id=output_fixing_model_id, model_purpose=model_purpose
+            model_id=output_fixing_model_id,
+            model_purpose=model_purpose,
+            min_output_tokens=min_output_tokens,
         )
         logger.info(
             "Created OutputFixingParser with model: '%s'", output_fixing_model_id
@@ -247,7 +252,10 @@ def setup_chain(
     """
     try:
         llm = factory.get_model(
-            model_id=model_id, model_purpose=model_purpose, **kwargs
+            model_id=model_id,
+            model_purpose=model_purpose,
+            min_output_tokens=prompt_class.min_output_tokens,
+            **kwargs,
         )
         model_info = factory.get_model_info(model_id)
         enable_prompt_cache = (

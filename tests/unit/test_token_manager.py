@@ -14,7 +14,10 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from unified_kg_rag.adapters.aws.bedrock import get_language_model_info
+from unified_kg_rag.adapters.aws.bedrock import (
+    effective_max_output_tokens,
+    get_language_model_info,
+)
 from unified_kg_rag.adapters.retrieval import token_manager as tm_module
 from unified_kg_rag.adapters.retrieval.token_manager import (
     ContextSection,
@@ -33,6 +36,7 @@ def _make_manager(
     max_context_tokens: int | None = None,
     answer_model_id: LanguageModelId | None = None,
     enable_1m_context: bool = False,
+    default_max_output_tokens: int | None = 16384,
 ) -> TokenManager:
     """Build a TokenManager with Bedrock/boto wiring stubbed and a deterministic
     word-count token counter (1 token per whitespace-delimited word).
@@ -50,6 +54,7 @@ def _make_manager(
     config = Config()
     config.search.token_manager.max_context_tokens = max_context_tokens
     config.aws.bedrock.enable_1m_context = enable_1m_context
+    config.aws.bedrock.default_max_output_tokens = default_max_output_tokens
     if answer_model_id is not None:
         config.search.answer_generation_model_id = answer_model_id
     return TokenManager(config)
@@ -70,13 +75,21 @@ class TestContextBudgetDerivation:
     """
 
     def test_derives_from_model_window_when_unset(self, mocker) -> None:
-        # Sonnet 5: 1M window - 128K output, less 10% headroom.
+        # Sonnet 5: 1M window - the 16K default output cap, less 10% headroom.
         mgr = _make_manager(mocker, answer_model_id=LanguageModelId.CLAUDE_V5_SONNET)
-        assert mgr._max_context_tokens == int((1000000 - 128000) * 0.9)
+        assert mgr._max_context_tokens == int((1000000 - 16384) * 0.9)
 
     def test_smaller_window_gets_smaller_budget(self, mocker) -> None:
         mgr = _make_manager(mocker, answer_model_id=LanguageModelId.CLAUDE_V4_5_SONNET)
-        assert mgr._max_context_tokens == int((200000 - 64000) * 0.9)
+        assert mgr._max_context_tokens == int((200000 - 16384) * 0.9)
+
+    def test_uncapped_output_reserves_the_model_maximum(self, mocker) -> None:
+        mgr = _make_manager(
+            mocker,
+            answer_model_id=LanguageModelId.CLAUDE_V5_SONNET,
+            default_max_output_tokens=None,
+        )
+        assert mgr._max_context_tokens == int((1000000 - 128000) * 0.9)
 
     def test_derived_budget_leaves_room_for_output(self, mocker) -> None:
         # The invariant the old hardcoded 200000 violated on every 200K model.
@@ -88,10 +101,10 @@ class TestContextBudgetDerivation:
         ):
             mgr = _make_manager(mocker, answer_model_id=model_id)
             info = get_language_model_info(model_id)
-            assert info is not None
+            output = effective_max_output_tokens(info, Config().aws.bedrock)
+            assert output <= info.max_output_tokens
             assert (
-                mgr._max_context_tokens + info.max_output_tokens
-                <= info.context_window_size
+                mgr._max_context_tokens + output <= info.context_window_size
             ), model_id
 
     def test_explicit_budget_over_window_is_clamped(self, mocker) -> None:
@@ -100,7 +113,7 @@ class TestContextBudgetDerivation:
             max_context_tokens=200000,
             answer_model_id=LanguageModelId.CLAUDE_V4_5_SONNET,
         )
-        assert mgr._max_context_tokens == int((200000 - 64000) * 0.9)
+        assert mgr._max_context_tokens == int((200000 - 16384) * 0.9)
 
     def test_explicit_budget_within_window_is_honoured(self, mocker) -> None:
         mgr = _make_manager(
@@ -120,7 +133,7 @@ class TestContextBudgetDerivation:
             enable_1m_context=True,
         )
         assert wide._max_context_tokens > narrow._max_context_tokens
-        assert wide._max_context_tokens == int((1000000 - 64000) * 0.9)
+        assert wide._max_context_tokens == int((1000000 - 16384) * 0.9)
 
     def test_caller_max_tokens_cannot_exceed_model_budget(self, mocker) -> None:
         mgr = _make_manager(mocker, answer_model_id=LanguageModelId.CLAUDE_V4_5_SONNET)

@@ -349,6 +349,20 @@ class BedrockConfig(BaseModel):
             "overrides it."
         ),
     )
+    default_max_output_tokens: int | None = Field(
+        default=16384,
+        ge=1,
+        description=(
+            "max_tokens sent with each LLM request, clamped to the model's "
+            "maximum. Bedrock reserves input + max_tokens against the "
+            "tokens-per-minute quota when a request starts, so sending the "
+            "model maximum (128K on Claude 5.x) throttles concurrent calls "
+            "long before real usage does. Thinking tokens count toward it. "
+            "Prompts with long outputs (graph/claim extraction, gleaning, "
+            "community reports, document translation) declare a higher floor "
+            "that wins over this value. null sends the model maximum."
+        ),
+    )
     model_overrides: dict[str, dict[str, Any]] = Field(
         default_factory=dict,
         description=(

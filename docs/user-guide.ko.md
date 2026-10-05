@@ -153,6 +153,7 @@ aws:
     enable_global_profile: true   # 크로스 리전(글로벌) Bedrock 추론 프로파일 사용 — 처리량/가용성 향상
     default_model_id: "anthropic.claude-sonnet-5-5"            # 'default' 등급 역할 전체(모델 선택 주의사항 참고)
     fast_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"  # 'fast' 등급 역할 전체
+    default_max_output_tokens: 16384  # 요청당 max_tokens(모델 선택 주의사항 참고). null이면 모델 최대값
     model_overrides: {}           # 검증된 기능 정보가 없는 모델의 기능 재정의
     enable_1m_context: false      # 1M 창이 베타인 모델에서 옵트인(장문 요금 프리미엄); Claude 5는 네이티브 1M
     effort: "high"                # 적응형 사고 모델의 추론 깊이: low | medium | high | xhigh | max
@@ -275,6 +276,15 @@ aws:
 `supports_thinking`, `supports_sampling_params`, `supports_prompt_caching`,
 `supports_count_tokens`, `adaptive_thinking_only`,
 `requires_inference_profile` 등)이며 알 수 없는 키는 즉시 오류가 납니다.
+
+**출력 상한.** 요청마다 `max_tokens`로 `aws.bedrock.default_max_output_tokens`
+(16384)를 보내며 모델 최대값을 넘지 않게 맞춥니다. Bedrock은 요청 시작 시 입력 +
+`max_tokens`를 분당 토큰 할당량에서 미리 차감하므로, 이전처럼 모델 최대값(Claude
+5.x는 128K)을 요청하면 실제 사용량보다 훨씬 먼저 동시 수집 호출이 스로틀링됩니다.
+thinking 토큰도 `max_tokens`에 포함됩니다. 출력이 긴 프롬프트는 더 높은 하한을
+선언하며 이 값이 우선합니다. 그래프·클레임 추출, gleaning, 커뮤니티 보고서와 그
+출력 수정기는 32768, 문서 번역은 65536입니다. 답변이 잘리면(`stopReason:
+max_tokens`) 값을 올리고, 이전처럼 모델 최대값을 보내려면 `null`로 설정합니다.
 
 | 모델 ID | 공급자 | 컨텍스트 / 최대 출력 | 추론 제어 |
 | --- | --- | --- | --- |
@@ -578,7 +588,8 @@ search:
 
 > **컨텍스트 예산은 고정값이 아니라 도출값입니다.** `max_context_tokens: null`
 > (기본값)이면 검색 컨텍스트 예산을 `search.answer_generation_model_id`의 컨텍스트
-> 창에서 해당 모델의 출력 예약분과 헤드룸 비율을 뺀 값으로 계산합니다. 이렇게 해야
+> 창에서 답변 요청의 출력 예약분(`max_tokens`, `aws.bedrock.default_max_output_tokens`
+> 참고)과 헤드룸 비율을 뺀 값으로 계산합니다. 이렇게 해야
 > 두 값이 어긋나지 않습니다 — 하드코딩된 단일 숫자는 200K 모델의 창을 넘기거나
 > (창이 프롬프트와 답변을 **함께** 담아야 하므로) 1M 창의 대부분을 놀리게 됩니다.
 > 명시값도 존중되지만 모델이 수용 가능한 한도로 클램프되며, 그때 경고 로그가
