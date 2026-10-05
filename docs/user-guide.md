@@ -448,7 +448,8 @@ indexing:
       m: 24
       ef_search: 100
       space_type: "cosinesimil"
-      engine: "faiss"               # faiss is the modern kNN engine (nmslib deprecated)
+      engine: "lucene"              # cosinesimil works on every version; max 1024 dims
+                                    # (see the engine note in config-template.yaml)
 
   neptune:
     batch_size: 100

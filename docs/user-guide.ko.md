@@ -445,7 +445,8 @@ indexing:
       m: 24
       ef_search: 100
       space_type: "cosinesimil"
-      engine: "faiss"               # faiss is the modern kNN engine (nmslib deprecated)
+      engine: "lucene"              # 모든 버전에서 cosinesimil 지원, 최대 1024차원
+                                    # (config-template.yaml의 엔진 설명 참고)
 
   neptune:
     batch_size: 100

@@ -288,7 +288,7 @@ Per-source behavior:
 |---|---|---|
 | **Bedrock** | `adapters/aws/bedrock.py` | LLM/embedding/reranking. Automatic cross-region inference profile resolution, thinking mode (adaptive + `effort` on Claude 4.7+, `budget_tokens` on older models), 1M context, prompt caching, capability table |
 | **Neptune** | `adapters/aws/neptune.py` | Gremlin over `wss://`, SigV4 IAM, batch upsert/delete. Write batches submit concurrently via a thread pool when `indexing.neptune.index_concurrency` > 1 (per-batch independent `IndexingStats` → merged on the main thread, no shared mutation), with `aws.neptune.pool_size` multiplexing the Gremlin connection pool. Default 1 = sequential |
-| **OpenSearch** | `adapters/aws/opensearch.py` | Vector (kNN/HNSW, default engine **faiss** — nmslib is deprecated) + BM25, async SigV4, sync/async clients, hybrid search pipeline, alias management, bulk upsert/delete, per-language analyzers (en→english, ko→nori, etc.) |
+| **OpenSearch** | `adapters/aws/opensearch.py` | Vector (kNN/HNSW, default engine **lucene**, which supports `cosinesimil` on OpenSearch 2.13 as deployed by `iac/`; faiss rejects `cosinesimil` before 2.19, so use it only with `innerproduct` for >1024-dim models — see the engine note in `config-template.yaml`) + BM25, async SigV4, sync/async clients, hybrid search pipeline, alias management, bulk upsert/delete, per-language analyzers (en→english, ko→nori, etc.) |
 | **S3** | `adapters/aws/s3_cache.py` | Pipeline cache sync (encryption defaults to `BUCKET_DEFAULT` — the bucket's default encryption, e.g. a CMK; `AES256`/`aws:kms` force per-object SSE) |
 | **DynamoDB** | `adapters/aws/dynamodb.py` | Incremental-indexing document-status registry |
 
