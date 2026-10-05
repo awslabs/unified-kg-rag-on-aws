@@ -106,6 +106,10 @@ class DeploymentConfig:
     cost_center: str
     # lifecycle
     removal_destroy: bool
+    # Whether `create_guardrail` was passed explicitly (vs. defaulted). Lets the
+    # guardrail stack warn bring-your-own users who set only
+    # `guardrail_identifier` that a baseline guardrail is now created as well.
+    create_guardrail_explicit: bool = False
 
     @property
     def is_dev(self) -> bool:
@@ -212,4 +216,5 @@ class DeploymentConfig:
             owner=str(ctx("owner", "aws-proserve")),
             cost_center=str(ctx("cost_center", "unified-kg-rag-on-aws")),
             removal_destroy=as_bool(ctx("removal_destroy"), default=is_dev),
+            create_guardrail_explicit=ctx("create_guardrail") is not None,
         )

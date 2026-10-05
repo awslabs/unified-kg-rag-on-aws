@@ -63,11 +63,19 @@ derived) to avoid replace-on-rename conflicts.
 > `-c create_guardrail=false -c guardrail_identifier=<id>`; the stack then
 > creates nothing.
 >
-> The created guardrail has a `RETAIN` removal policy (regardless of
-> `removal_destroy`) because its id reaches compute outside CloudFormation.
-> After `cdk destroy`, delete it manually
+> **Behaviour change for bring-your-own users:** setting only
+> `-c guardrail_identifier=<id>` used to skip creation; it now *also* creates the
+> baseline guardrail (`create_guardrail` defaults to `true`). Synth emits a
+> warning when `guardrail_identifier` is set without an explicit
+> `create_guardrail`; pass `-c create_guardrail=false` for an external guardrail
+> (or `-c create_guardrail=true` to acknowledge and silence it in the two-step flow).
+>
+> The created guardrail follows `removal_destroy`: `DESTROY` in dev (default), so
+> deploy → destroy → deploy cycles work, and `RETAIN` otherwise because its id
+> reaches compute outside CloudFormation. After `cdk destroy` of a retained
+> guardrail, delete it manually
 > (`aws bedrock delete-guardrail --guardrail-identifier <id> --region <bedrock_region>`);
-> otherwise the next deploy fails on the duplicate `graphrag-guardrail-<region>` name.
+> otherwise the next deploy fails on the duplicate `<prefix>-guardrail-<region>` name.
 >
 > Always pass `-c key=value` flags as **individual arguments** — collapsing them
 > into one shell variable corrupts context parsing (vpc_id is silently dropped →
@@ -98,7 +106,7 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `fargate_cpu` | `2048` | Fargate task vCPU units (in-task ProcessPool extractors scale with vCPU) |
 | `fargate_memory` | `8192` | Fargate task memory (MiB) |
 | `image_tag` | `latest` | container image tag the task pulls; pin a version tag to make ECR tags immutable |
-| `create_guardrail` | `true` | `GraphRagGuardrail` creates and keeps a baseline PII/prompt-attack guardrail in `bedrock_region` (retained on stack deletion). `false` = bring your own guardrail; nothing is created |
+| `create_guardrail` | `true` | `GraphRagGuardrail` creates and keeps a baseline PII/prompt-attack guardrail in `bedrock_region` (retained on stack deletion unless `removal_destroy`). `false` = bring your own guardrail; nothing is created |
 | `guardrail_identifier` | _(none)_ | guardrail id the compute task **uses**, injected as `BEDROCK_GUARDRAIL_IDENTIFIER`. The created guardrail's id is **not** injected automatically: pass the `GuardrailIdentifier` output of `GraphRagGuardrail` here (two-step flow above), or an external id with `create_guardrail=false`. Unset = no guardrail on the task |
 | `use_cmk` | `false` | customer-managed KMS key for at-rest encryption (S3/Neptune/OpenSearch/SNS/DDB) |
 | `vpc_flow_logs` | `false` (dev) / `true` (non-dev) | enable VPC flow logs (created VPC only) |

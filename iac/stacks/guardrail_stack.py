@@ -24,9 +24,11 @@ stable:
   disables creation. To bring your own externally managed guardrail, pass
   ``-c create_guardrail=false -c guardrail_identifier=<id>``.
 
-The guardrail is also ``RETAIN``-ed on stack deletion as a safety net: its id is
-consumed out-of-band (CDK context -> task env var), so CloudFormation cannot see
-that a delete would break compute.
+The removal policy follows ``removal_destroy``: ``DESTROY`` in dev (so a
+deploy -> destroy -> deploy cycle does not collide on the fixed guardrail name)
+and ``RETAIN`` otherwise as a safety net, because the id is consumed out-of-band
+(CDK context -> task env var) and CloudFormation cannot see that a delete would
+break compute.
 """
 
 from __future__ import annotations
@@ -49,6 +51,17 @@ class GuardrailStack(Stack):
         if config.create_guardrail:
             self.guardrail = self._build_guardrail()
             self.guardrail_identifier = self.guardrail.attr_guardrail_id
+            if config.guardrail_identifier and not config.create_guardrail_explicit:
+                # Behaviour change for bring-your-own users: setting only
+                # guardrail_identifier used to skip creation; it no longer does.
+                Annotations.of(self).add_warning(
+                    "guardrail_identifier is set but create_guardrail was not: this "
+                    "stack also creates and owns a baseline guardrail. That is "
+                    "expected when the id is this stack's GuardrailIdentifier "
+                    "output; for an externally managed guardrail pass "
+                    "`-c create_guardrail=false` (or `-c create_guardrail=true` to "
+                    "silence this warning)."
+                )
             if not config.guardrail_identifier:
                 Annotations.of(self).add_info(
                     "Guardrail created but not attached to compute yet: re-run "
@@ -95,9 +108,15 @@ class GuardrailStack(Stack):
                 )
             ),
         )
-        # Always RETAIN, independent of removal_destroy: the id is wired to
-        # compute out-of-band, so a CloudFormation-side delete (template drift,
-        # a mistaken synth, `cdk destroy`) would silently leave compute pointing
-        # at a dead guardrail. A retained guardrail must be deleted manually.
-        guardrail.apply_removal_policy(RemovalPolicy.RETAIN)
+        # RETAIN outside dev: the id is wired to compute out-of-band, so a
+        # CloudFormation-side delete (template drift, a mistaken synth,
+        # `cdk destroy`) would silently leave compute pointing at a dead
+        # guardrail. With removal_destroy (dev default) keep DESTROY: the name is
+        # fixed, so a retained guardrail would make the next deploy after
+        # `cdk destroy` fail on the duplicate name.
+        guardrail.apply_removal_policy(
+            RemovalPolicy.DESTROY
+            if self.config.removal_destroy
+            else RemovalPolicy.RETAIN
+        )
         return guardrail
