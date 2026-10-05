@@ -299,6 +299,17 @@ class EvaluationManager:
         ]
 
         for item in sources_list:
+            if self._is_truncated(item):
+                # The answer model saw only the budget-truncated ``content``;
+                # metadata may still carry the full description/full_content,
+                # which would let evaluation credit text the model never read.
+                content = item.get("content")
+                lean_contexts.append(
+                    str({"content": content})
+                    if content
+                    else self._create_minimal_info(item)
+                )
+                continue
             payloads_to_search = self._get_payloads_to_search(item)
             lean_item = self._extract_fields(payloads_to_search, desired_fields)
 
@@ -308,6 +319,13 @@ class EvaluationManager:
                 lean_contexts.append(self._create_minimal_info(item))
 
         return lean_contexts
+
+    @staticmethod
+    def _is_truncated(item: dict[str, Any]) -> bool:
+        metadata = item.get("metadata")
+        return bool(item.get("truncated")) or (
+            isinstance(metadata, dict) and bool(metadata.get("truncated"))
+        )
 
     @staticmethod
     def _get_payloads_to_search(item: dict[str, Any]) -> list[dict[str, Any]]:

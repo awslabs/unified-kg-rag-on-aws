@@ -515,3 +515,49 @@ class TestSummaryBackwardCompat:
             }
         )
         assert result.error is False and result.error_message is None
+
+    def test_truncated_source_uses_only_the_content_the_model_saw(
+        self, config: Config
+    ) -> None:
+        # A section cut by the token budget is reported with its truncated
+        # `content`, but its metadata may still hold the full description /
+        # full_content. Evaluation must see only what the answer model saw.
+        out = _graph_aware_manager(config).create_lean_context_strings(
+            [
+                {
+                    "content": "Vendor ships parts…",
+                    "source": "r1",
+                    "score": 0.7,
+                    "truncated": True,
+                    "metadata": {
+                        "truncated": True,
+                        "description": "Vendor ships parts to Buyer every month.",
+                        "full_content": "Full report: Vendor ships parts monthly.",
+                    },
+                }
+            ]
+        )
+        assert out == [str({"content": "Vendor ships parts…"})]
+
+    def test_truncated_flag_in_metadata_only_is_honoured(self, config: Config) -> None:
+        out = _graph_aware_manager(config).create_lean_context_strings(
+            [
+                {
+                    "content": "short",
+                    "metadata": {"truncated": True, "summary": "long summary"},
+                }
+            ]
+        )
+        assert out == [str({"content": "short"})]
+
+    def test_untruncated_source_keeps_metadata_fields(self, config: Config) -> None:
+        out = _graph_aware_manager(config).create_lean_context_strings(
+            [
+                {
+                    "content": "c",
+                    "truncated": False,
+                    "metadata": {"truncated": False, "description": "d"},
+                }
+            ]
+        )
+        assert "description" in out[0] and "content" in out[0]
