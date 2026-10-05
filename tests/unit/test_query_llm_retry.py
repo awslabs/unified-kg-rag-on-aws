@@ -40,14 +40,14 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchStrategy,
 )
-from unified_kg_rag.domain.models.config import QueryLLMRetryConfig
+from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.domain.prompts import StrategySelectionPrompt
 from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 pytestmark = pytest.mark.unit
 
 _ANSWER = "Vendor ships parts to Buyer every quarter."
-_NO_WAIT = QueryLLMRetryConfig(
+_NO_WAIT = TransientRetryConfig(
     max_attempts=3, base_delay_seconds=0.0, max_delay_seconds=0.0
 )
 
@@ -135,15 +135,15 @@ class _FakeBedrockFactory(BedrockLanguageModelFactory):
         return None
 
 
-def _config(retry: QueryLLMRetryConfig = _NO_WAIT) -> Config:
+def _config(retry: TransientRetryConfig = _NO_WAIT) -> Config:
     config = Config()
-    config.search.llm_retry = retry
+    config.aws.bedrock.transient_retry = retry
     return config
 
 
 def _query_chain(
     model: _ScriptedModel,
-    retry: QueryLLMRetryConfig = _NO_WAIT,
+    retry: TransientRetryConfig = _NO_WAIT,
     purpose: ModelPurpose = ModelPurpose.QUERY,
 ) -> Runnable:
     return setup_chain(
@@ -193,7 +193,7 @@ async def test_exhausted_retries_reraise_last_transient_error() -> None:
 
 async def test_retry_budget_bounds_attempts() -> None:
     # A backoff that would cross the wall-clock budget is not taken.
-    retry = QueryLLMRetryConfig(
+    retry = TransientRetryConfig(
         max_attempts=5,
         base_delay_seconds=30.0,
         max_delay_seconds=30.0,
@@ -238,7 +238,7 @@ def test_sync_stream_does_not_retry_after_output_was_emitted() -> None:
 def test_retry_disabled_returns_plain_chain() -> None:
     chain = RunnableLambda(lambda x: x)
     assert with_transient_retry(chain, operation="op", retry=None) is chain
-    off = QueryLLMRetryConfig(max_attempts=1)
+    off = TransientRetryConfig(max_attempts=1)
     assert with_transient_retry(chain, operation="op", retry=off) is chain
     assert not isinstance(_query_chain(_ScriptedModel(), off), TransientRetryRunnable)
 

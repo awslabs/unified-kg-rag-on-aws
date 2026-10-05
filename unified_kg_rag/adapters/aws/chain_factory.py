@@ -25,7 +25,11 @@ from langchain_core.prompts import (
 from langchain_core.runnables import Runnable, RunnableConfig
 
 from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
-from unified_kg_rag.adapters.aws.bedrock_retry import next_transient_retry_delay
+from unified_kg_rag.adapters.aws.bedrock_retry import (
+    acall_with_transient_retry,
+    call_with_transient_retry,
+    next_transient_retry_delay,
+)
 from unified_kg_rag.domain.models import LanguageModelId, ModelPurpose
 from unified_kg_rag.domain.prompts import BasePrompt, ResolvedPrompt
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
@@ -35,7 +39,7 @@ from unified_kg_rag.shared.utils.langchain import RobustXMLOutputParser
 if TYPE_CHECKING:
     from unified_kg_rag.domain.models.config import (
         CustomPromptConfig,
-        QueryLLMRetryConfig,
+        TransientRetryConfig,
     )
 
 logger = get_logger(__name__)
@@ -78,10 +82,10 @@ class TransientRetryRunnable(Runnable[Any, Any]):
     LangChain's ``Runnable.with_retry`` only matches exception *types*, but a
     transient Bedrock fault is a ``botocore.exceptions.ClientError`` whose
     error code decides retryability (424 ``ModelErrorException`` yes,
-    ``ValidationException`` no). This wrapper applies
-    :func:`~unified_kg_rag.adapters.aws.bedrock_retry.is_transient_bedrock_error`
-    with the same bounded backoff as the embedding path. Non-transient errors
-    and exhausted retries re-raise the original exception unchanged.
+    ``ValidationException`` no). This wrapper applies the same
+    :mod:`~unified_kg_rag.adapters.aws.bedrock_retry` policy as the embedding
+    path. Non-transient errors and exhausted retries re-raise the original
+    exception unchanged.
 
     ``batch``/``abatch`` use the base-class per-input ``invoke``/``ainvoke``, so
     each input is retried independently. Streaming retries only while no chunk
@@ -89,7 +93,11 @@ class TransientRetryRunnable(Runnable[Any, Any]):
     """
 
     def __init__(
-        self, bound: Runnable[Any, Any], *, operation: str, retry: QueryLLMRetryConfig
+        self,
+        bound: Runnable[Any, Any],
+        *,
+        operation: str,
+        retry: TransientRetryConfig,
     ) -> None:
         self.bound = bound
         self.operation = operation
@@ -111,42 +119,29 @@ class TransientRetryRunnable(Runnable[Any, Any]):
             operation=self.operation,
             attempt=attempt,
             started_at=started_at,
-            max_attempts=self.retry.max_attempts,
-            base_delay=self.retry.base_delay_seconds,
-            max_delay=self.retry.max_delay_seconds,
-            max_total_seconds=self.retry.max_total_seconds,
+            policy=self.retry,
         )
 
     def invoke(
         self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
     ) -> Any:
-        started_at = time.monotonic()
-        attempt = 1
-        while True:
-            try:
-                return self.bound.invoke(input, config, **kwargs)
-            except Exception as exc:
-                delay = self._delay(exc, attempt, started_at)
-                if delay is None:
-                    raise
-                time.sleep(delay)
-                attempt += 1
+        return call_with_transient_retry(
+            lambda: self.bound.invoke(input, config, **kwargs),
+            operation=self.operation,
+            policy=self.retry,
+        )
 
     async def ainvoke(
         self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
     ) -> Any:
-        started_at = time.monotonic()
-        attempt = 1
-        while True:
-            try:
-                return await self.bound.ainvoke(input, config, **kwargs)
-            except Exception as exc:
-                delay = self._delay(exc, attempt, started_at)
-                if delay is None:
-                    raise
-                await asyncio.sleep(delay)
-                attempt += 1
+        return await acall_with_transient_retry(
+            lambda: self.bound.ainvoke(input, config, **kwargs),
+            operation=self.operation,
+            policy=self.retry,
+        )
 
+    # Streaming keeps its own loop: a retry is allowed only before the first
+    # chunk, which the call-level helpers cannot observe.
     def stream(
         self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
     ) -> Iterator[Any]:
@@ -190,7 +185,7 @@ def with_transient_retry(
     runnable: Runnable[Any, Any],
     *,
     operation: str,
-    retry: QueryLLMRetryConfig | None,
+    retry: TransientRetryConfig | None,
 ) -> Runnable[Any, Any]:
     """Wrap ``runnable`` in :class:`TransientRetryRunnable` unless retry is off."""
     if retry is None or retry.max_attempts <= 1:
@@ -263,7 +258,7 @@ def setup_chain(
         chain: Runnable = prompt | llm | parser
         logger.debug("Successfully created LLM chain with model: '%s'", model_id.value)
         retry = (
-            factory.config.search.llm_retry
+            factory.config.aws.bedrock.transient_retry
             if model_purpose is ModelPurpose.QUERY
             and isinstance(factory, BedrockLanguageModelFactory)
             else None

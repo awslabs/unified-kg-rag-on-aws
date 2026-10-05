@@ -47,6 +47,18 @@ aws:
       #           merge into one entity) and a prompt-attack filter can block
       #           instruction-like corpus text (that chunk yields no entities).
       apply_to: "query"
+    # Retry on transient Bedrock errors that botocore does not retry, such as
+    # HTTP 424 ModelErrorException. Applies to every embedding request and to
+    # query-time LLM calls (strategy routing, query entity/keyword extraction,
+    # translation, context building, answer generation, global/DRIFT steps).
+    # Validation/access errors still fail fast. Ingestion LLM calls use
+    # processing.max_retries instead. The former search.llm_retry key is still
+    # accepted and maps here.
+    transient_retry:
+      max_attempts: 5  # total attempts per call; 1 disables the retry
+      base_delay_seconds: 2.0  # first backoff ceiling; doubles with jitter
+      max_delay_seconds: 16.0
+      max_total_seconds: 60.0  # wall-clock retry budget per call
 
   # Neptune Configuration
   neptune:
@@ -575,17 +587,6 @@ search:
       community: 0.10
       claim: 0.07
       general: 0.10
-
-  # Retry for query-time LLM calls (strategy routing, query entity/keyword
-  # extraction, translation, context building, answer generation, global/DRIFT
-  # steps) on transient Bedrock errors that botocore does not retry, such as
-  # HTTP 424 ModelErrorException. Validation/access errors still fail fast.
-  # Ingestion LLM calls use processing.max_retries instead.
-  llm_retry:
-    max_attempts: 3  # total attempts per call; 1 disables the retry
-    base_delay_seconds: 1.0  # first backoff ceiling; doubles with jitter
-    max_delay_seconds: 8.0
-    max_total_seconds: 20.0  # wall-clock retry budget per call
 
 # Memory Configuration
 memory:
