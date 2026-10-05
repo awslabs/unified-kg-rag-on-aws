@@ -27,10 +27,11 @@ classifiers = [
     "Topic :: Text Processing :: Linguistic",
 ]
 dependencies = [
-    "asyncio-throttle>=1.0.2",
     "aws-assume-role-lib>=2.10.0",
     "bokeh>=3.9.2",
     "boto3>=1.43.66",
+    # Encoding detection for non-UTF-8 text sources (parser + Document loader).
+    "charset-normalizer>=3.4.0",
     # Only used for `Dataset.from_dict` in the ragas evaluator. The previous
     # <4.0.0 ceiling held ragas back to 0.3.2, which imports a module that
     # langchain-community removed in 0.4 — see the ragas floor below.
@@ -79,7 +80,6 @@ dependencies = [
     # community 0.4, so it cannot coexist with LangChain 1.x. Every ragas that
     # can requires datasets>=4.0.0.
     "ragas>=0.4.3,<0.5.0",
-    "rapidfuzz>=3.13.0",
     # Instructor (via ragas) requires Rich <15 for OpenAI 2.x compatibility.
     "rich>=14.3.3,<15.0.0",
     "scikit-learn>=1.7.1",
@@ -97,28 +97,6 @@ run-visualization = "unified_kg_rag.application.cli.run_visualization:main"
 run-prompt-tuning = "unified_kg_rag.application.cli.run_prompt_tuning:main"
 
 [project.optional-dependencies]
-dev = [
-    "black>=25.9.0",
-    "hypothesis>=6.165.2",
-    "isort>=5.12.0",
-    "moto[dynamodb,s3]>=5.2.2",
-    "mypy>=2.3.0",
-    "pre-commit>=4.6.1",
-    "pytest>=9.1.1",
-    "pytest-asyncio>=1.0.0",
-    "pytest-cov>=4.1.0",
-    "pytest-mock>=3.12.0",
-    "ruff>=0.16.1",
-    # boto3 type stubs (mypy only): boto3-stubs covers the top-level boto3
-    # package; types-boto3 covers the per-service clients used under TYPE_CHECKING.
-    "boto3-stubs~=1.43.66",
-    "types-boto3[full]>=1.43.71",
-]
-docs = [
-    "mkdocs>=1.5.0",
-    "mkdocs-material>=9.7.7",
-    "mkdocstrings[python]>=1.0.6",
-]
 # Optional: enables .md/.markdown/.html/.htm source parsing (heavy transitive
 # deps, so not installed by default). The ParserFactory registers those formats
 # only when this is importable; .txt/.csv/.json/.pdf work without it.
@@ -286,8 +264,8 @@ exclude_lines = [
 ]
 
 [dependency-groups]
-# Mirrors [project.optional-dependencies].dev so `uv sync` installs the full
-# dev toolchain without an extra flag. Keep the two lists in sync.
+# Dev toolchain (PEP 735). `uv sync` installs it by default; `--no-dev` skips
+# it (the Docker image); pip >= 25.1 installs it with `pip install --group dev`.
 dev = [
     "black>=25.9.0",
     "hypothesis>=6.165.2",

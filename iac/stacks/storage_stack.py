@@ -7,7 +7,8 @@
   (maps to OpenSearchConfig; fine-grained access via IAM).
 - DynamoDB: the incremental doc-status registry (maps to DynamoDBConfig).
 - S3: pipeline cache bucket — reused if config.cache_bucket_name is set, else
-  created KMS-encrypted (maps to the pipeline S3 cache sync).
+  created with SSE-S3, or the shared CMK when config.use_cmk (maps to the
+  pipeline S3 cache sync).
 """
 
 from __future__ import annotations
