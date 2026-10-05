@@ -17,6 +17,25 @@ T = TypeVar("T")
 logger = get_logger(__name__)
 
 
+def coerce_llm_text(value: Any, *, join: bool = False) -> str:
+    """Coerce an LLM-parsed field to one stripped string.
+
+    The XML output parser returns a list when the model repeats a tag
+    (``<type>A</type><type>B</type>``). Identity fields (name, type, source,
+    target) take the first non-empty element; description-like fields pass
+    ``join=True`` to keep every distinct non-empty element, newline-joined.
+    ``None`` and other non-string scalars become ``""`` / ``str(value)``.
+    """
+    if value is None:
+        return ""
+    if not isinstance(value, list):
+        return str(value).strip()
+    parts = [p for p in (coerce_llm_text(v) for v in value) if p]
+    if not parts:
+        return ""
+    return "\n".join(dict.fromkeys(parts)) if join else parts[0]
+
+
 class BaseProcessor:
     def __init__(self, config: Config, show_progress: bool = True) -> None:
         self.config = config
@@ -33,7 +52,7 @@ class BaseProcessor:
         self, entity_data: dict[str, Any], text_unit: TextUnit
     ) -> Entity | None:
         try:
-            name = clean_display_name(entity_data.get("name", ""))
+            name = clean_display_name(coerce_llm_text(entity_data.get("name")))
             if not name:
                 logger.warning(
                     "Skipping entity with missing name in text unit '%s'",
@@ -67,8 +86,8 @@ class BaseProcessor:
                 short_id=entity_id[:8],
                 name=name,
                 name_embedding=None,
-                type=entity_data.get("type", "").strip(),
-                description=entity_data.get("description", "").strip(),
+                type=coerce_llm_text(entity_data.get("type")),
+                description=coerce_llm_text(entity_data.get("description"), join=True),
                 description_embedding=None,
                 text_unit_ids=[text_unit.id],
                 community_ids=None,
@@ -122,9 +141,9 @@ class BaseProcessor:
     ) -> Relationship | None:
         raw_source_name, raw_target_name = "", ""
         try:
-            raw_source_name = rel_data.get("source", "").strip()
-            raw_target_name = rel_data.get("target", "").strip()
-            rel_type = rel_data.get("type", "").strip()
+            raw_source_name = coerce_llm_text(rel_data.get("source"))
+            raw_target_name = coerce_llm_text(rel_data.get("target"))
+            rel_type = coerce_llm_text(rel_data.get("type"))
 
             source_name = clean_display_name(raw_source_name)
             target_name = clean_display_name(raw_target_name)
@@ -181,7 +200,7 @@ class BaseProcessor:
                 target_name=target_name,
                 type=rel_type,
                 weight=weight,
-                description=rel_data.get("description", "").strip(),
+                description=coerce_llm_text(rel_data.get("description"), join=True),
                 description_embedding=None,
                 rank=rel_data.get("rank", 1),
                 text_unit_ids=[text_unit.id],
