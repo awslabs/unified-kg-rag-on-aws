@@ -465,7 +465,8 @@ indexing:
 search:
   translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
   entity_extraction_model_id: "anthropic.claude-sonnet-5"
-  strategy_selection_model_id: "anthropic.claude-sonnet-5"   # the `auto` router
+  strategy_selection_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"   # the `auto` router
+  auto_routable_strategies: ["local", "mix", "global", "drift"]  # `auto`가 고를 수 있는 전략
   context_building_model_id: "anthropic.claude-sonnet-5"
   answer_generation_model_id: "anthropic.claude-sonnet-5"    # the answer LLM
 
@@ -709,7 +710,7 @@ OpenSearch analyzer는 `indexing.opensearch.language_analyzers`(예: `ko: nori`)
 | `local` | 특정 엔티티/개념에 대한 상세 질문 | 질의 엔티티 추출 → 이웃/관계를 위한 Neptune 그래프 순회 → 벡터/키워드 결과와 결합. 활성화 시 claim(covariate) 주입. |
 | `global` | 광범위하고 주제적인, "주요 주제가 무엇인가" 류의 질문 | 커뮤니티 리포트 + 동적으로 선택된 커뮤니티에 대한 map-reduce 사용. 고수준 종합에 최적. |
 | `drift` | 탐색이 필요한 복잡하고 다면적인 질문 | 라운드 간 수렴 감지를 동반한 반복적 질의 정제/확장. |
-| `auto` | 모를 때 / 일반 용도 (기본값) | LLM 라우터(`search.strategy_selection_model_id`)가 질의로부터 최적 전략 선택. |
+| `auto` | 모를 때 / 일반 용도 (기본값) | LLM 라우터(`search.strategy_selection_model_id`)가 질의로부터 `search.auto_routable_strategies`(기본값 local, mix, global, drift) 중 최적 전략 선택. |
 
 **LightRAG (이중 레벨 키워드):**
 

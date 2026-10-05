@@ -661,7 +661,7 @@ Return only the refined query in {target_language}, nothing else:"""
 @dataclass(frozen=True)
 class StrategySelectionPrompt(BasePrompt):
     prompt_key = "strategy_selection"
-    input_variables = ["query"]
+    input_variables = ["query", "strategies"]
 
     system_prompt_template = """You are an expert search strategy selector for advanced knowledge graph retrieval
 systems. Analyze user queries comprehensively and select the optimal search strategy based on query characteristics,
@@ -693,12 +693,20 @@ AVAILABLE SEARCH STRATEGIES:
    - Optimal for: Open-ended exploration, research discovery, novel relationship identification
    - Examples: "Unexpected AI applications", "Cross-industry innovation patterns", "Emerging technology intersections"
 
+5. MIX SEARCH
+   - Method: Keyword-driven entity and relationship retrieval with their one-hop graph neighbourhood, blended with
+     the source passages those items cite and a direct passage search
+   - Purpose: Questions that chain facts across several entities and need the supporting passages
+   - Optimal for: Multi-hop factual questions, "which X of the Y that did Z" questions, bridge-entity lookups
+   - Examples: "Who founded the company that acquired the startup", "Where was the author of the report born"
+
 SELECTION DECISION FRAMEWORK:
 
 QUERY ANALYSIS DIMENSIONS:
 1. COMPLEXITY ASSESSMENT:
    - Simple factual → SIMPLE
    - Entity-relationship focused → LOCAL
+   - Multi-hop fact chain → MIX
    - Multi-domain thematic → GLOBAL
    - Exploratory discovery → DRIFT
 
@@ -722,7 +730,7 @@ DECISION OPTIMIZATION:
 - Provide confidence based on query clarity and strategy alignment
 
 OUTPUT REQUIREMENTS:
-- Return ONLY the strategy name as a single word: simple, local, global, or drift
+- Return ONLY the strategy name as a single word, chosen from: {strategies}
 - No explanations, justifications, or additional text
 - No punctuation or formatting"""
     human_prompt_template = """Analyze this query and return only the optimal search strategy name:

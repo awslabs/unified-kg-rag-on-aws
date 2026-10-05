@@ -8,7 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from .evaluation import EvaluationMetricType, EvaluatorType
-from .retrieval import FusionMethod
+from .retrieval import FusionMethod, SearchStrategy
 
 
 class PipelineStageType(Enum):
@@ -1816,8 +1816,29 @@ class SearchConfig(BaseModel):
         description="Language model identifier used for extracting named entities from user queries",
     )
     strategy_selection_model_id: LanguageModelId = Field(
-        default=LanguageModelId.CLAUDE_V5_SONNET,
-        description="Language model identifier used for automatically selecting the optimal search strategy",
+        default=LanguageModelId.CLAUDE_V4_5_HAIKU,
+        description=(
+            "Language model identifier used for automatically selecting the "
+            "optimal search strategy (AUTO). A fast model by default: routing "
+            "is a one-word classification that runs before retrieval, so its "
+            "latency is added to every AUTO query."
+        ),
+    )
+    auto_routable_strategies: list[SearchStrategy] = Field(
+        default_factory=lambda: [
+            SearchStrategy.LOCAL,
+            SearchStrategy.MIX,
+            SearchStrategy.GLOBAL,
+            SearchStrategy.DRIFT,
+        ],
+        min_length=1,
+        description=(
+            "Strategies the AUTO router may pick. Default: local, mix, global, "
+            "drift. simple is left out because the graph strategies already "
+            "cover its direct lookups with graph context; mix (LightRAG) is "
+            "included for multi-hop fact chains, which it serves from the same "
+            "index. Every strategy stays selectable explicitly."
+        ),
     )
     context_building_model_id: LanguageModelId = Field(
         default=LanguageModelId.CLAUDE_V5_SONNET,

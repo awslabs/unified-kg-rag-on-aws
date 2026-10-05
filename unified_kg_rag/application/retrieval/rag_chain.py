@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import json
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
@@ -64,6 +65,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SearchType,
 )
+from unified_kg_rag.domain.models.config import SearchConfig
 from unified_kg_rag.domain.prompts import (
     AnswerGenerationPrompt,
     BasePrompt,
@@ -280,8 +282,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 StrategySelectionPrompt, StrOutputParser()
             )
             query = state.get("query", "")
-            selected_strategy_str = await router.ainvoke({"query": query})
-            strategy = self._parse_routed_strategy(selected_strategy_str)
+            routable = tuple(self.config.search.auto_routable_strategies)
+            selected_strategy_str = await router.ainvoke(
+                {
+                    "query": query,
+                    "strategies": ", ".join(s.value for s in routable),
+                }
+            )
+            strategy = self._parse_routed_strategy(selected_strategy_str, routable)
         except Exception as e:
             if not self.ignore_errors:
                 raise
@@ -293,33 +301,25 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         state["resolved_strategy"] = strategy
         return state
 
-    # AUTO routes within the GraphRAG strategies (the LightRAG mix/hybrid/naive
-    # modes are a separate methodology the caller selects explicitly).
-    _ROUTABLE_STRATEGIES = (
-        SearchStrategy.SIMPLE,
-        SearchStrategy.LOCAL,
-        SearchStrategy.GLOBAL,
-        SearchStrategy.DRIFT,
-    )
-
-    @classmethod
-    def _parse_routed_strategy(cls, raw: str) -> SearchStrategy:
-        """Map a router LLM response to a strategy, tolerating extra text.
+    @staticmethod
+    def _parse_routed_strategy(
+        raw: str, routable: tuple[SearchStrategy, ...] | None = None
+    ) -> SearchStrategy:
+        """Map a router LLM response to a routable strategy, tolerating extra text.
 
         The router is asked for a bare word, but LLMs add punctuation/prose
-        ("Local search.", "I'd use local"). Match a known strategy name as a
-        substring instead of requiring an exact enum value (which raised
-        ValueError and dropped to the expensive fallback). Defaults to LOCAL —
-        a sensible general-purpose graph strategy — NOT DRIFT (the costliest).
+        ("Local search.", "I'd use local"). The response is split into word
+        tokens and the FIRST token naming a routable strategy wins, so the
+        result depends on what the model wrote, not on the order strategies
+        are listed in (a substring scan picked whichever name it checked
+        first). Defaults to LOCAL, a general-purpose graph strategy, not the
+        costliest one.
         """
-        text = (raw or "").strip().lower()
-        # Exact match first, then substring (whole-word-ish) over routable names.
-        for strat in cls._ROUTABLE_STRATEGIES:
-            if text == strat.value:
-                return strat
-        for strat in cls._ROUTABLE_STRATEGIES:
-            if strat.value in text:
-                return strat
+        allowed = routable or tuple(SearchConfig().auto_routable_strategies)
+        by_value = {strat.value: strat for strat in allowed}
+        for token in re.findall(r"[a-z]+", (raw or "").lower()):
+            if token in by_value:
+                return by_value[token]
         logger.warning(
             "Router returned unrecognized strategy '%s'; defaulting to LOCAL", raw
         )

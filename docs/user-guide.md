@@ -468,7 +468,8 @@ indexing:
 search:
   translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
   entity_extraction_model_id: "anthropic.claude-sonnet-5"
-  strategy_selection_model_id: "anthropic.claude-sonnet-5"   # the `auto` router
+  strategy_selection_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"   # the `auto` router
+  auto_routable_strategies: ["local", "mix", "global", "drift"]  # what `auto` may pick
   context_building_model_id: "anthropic.claude-sonnet-5"
   answer_generation_model_id: "anthropic.claude-sonnet-5"    # the answer LLM
 
@@ -717,7 +718,7 @@ rerank); only the retrieval algorithm differs.
 | `local` | Detailed questions about specific entities/concepts | Extracts query entities → Neptune graph traversal for neighbors/relationships → combined with vector/keyword hits. Injects claims (covariates) when enabled. |
 | `global` | Broad, thematic, "what are the main themes" questions | Uses community reports + map-reduce over dynamically selected communities. Best for high-level synthesis. |
 | `drift` | Complex, multi-faceted questions needing exploration | Iterative query refinement/expansion with convergence detection across rounds. |
-| `auto` | You don't know / general use (the default) | An LLM router (`search.strategy_selection_model_id`) picks the best strategy from the query. |
+| `auto` | You don't know / general use (the default) | An LLM router (`search.strategy_selection_model_id`) picks the best strategy from the query among `search.auto_routable_strategies` (default local, mix, global, drift). |
 
 **LightRAG (dual-level keyword):**
 

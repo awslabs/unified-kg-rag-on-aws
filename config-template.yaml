@@ -439,7 +439,12 @@ indexing:
 search:
   translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
   entity_extraction_model_id: "anthropic.claude-sonnet-5"
-  strategy_selection_model_id: "anthropic.claude-sonnet-5"
+  # AUTO router: a one-word classification run before retrieval, so a fast
+  # model keeps it off the critical path.
+  strategy_selection_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+  # Strategies the AUTO router may pick (simple is left out; any strategy can
+  # still be selected explicitly).
+  auto_routable_strategies: ["local", "mix", "global", "drift"]
   context_building_model_id: "anthropic.claude-sonnet-5"
   answer_generation_model_id: "anthropic.claude-sonnet-5"
 
