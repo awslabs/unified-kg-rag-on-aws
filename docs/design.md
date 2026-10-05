@@ -21,6 +21,7 @@ This document is a **design reference for contributors and advanced users**, cov
 13. [Testing Strategy](#13-testing-strategy)
 14. [CI/CD and Security](#14-cicd-and-security)
 15. [Extension Guide](#15-extension-guide)
+16. [Further Reading](#16-further-reading)
 
 ---
 
@@ -466,3 +467,17 @@ intentional decision rather than an oversight:
   type with a `tenant` filter field + routing (delete-by-query instead of index
   drop) — a behavior-affecting change across the index/search/delete paths,
   deferred as a dedicated migration rather than bundled here.
+
+---
+
+## 16. Further Reading
+
+Microsoft Research posts on GraphRAG and its follow-up methods, useful background for §6:
+
+- [GraphRAG: Unlocking LLM Discovery on Narrative Private Data](https://www.microsoft.com/en-us/research/blog/graphrag-unlocking-llm-discovery-on-narrative-private-data/)
+- [GraphRAG: New Tool for Complex Data Discovery Now on GitHub](https://www.microsoft.com/en-us/research/blog/graphrag-new-tool-for-complex-data-discovery-now-on-github/)
+- [GraphRAG Auto-Tuning Provides Rapid Adaptation to New Domains](https://www.microsoft.com/en-us/research/blog/graphrag-auto-tuning-provides-rapid-adaptation-to-new-domains/)
+- [Introducing DRIFT Search: Combining Global and Local Search Methods to Improve Quality and Efficiency](https://www.microsoft.com/en-us/research/blog/introducing-drift-search-combining-global-and-local-search-methods-to-improve-quality-and-efficiency/)
+- [GraphRAG: Improving Global Search via Dynamic Community Selection](https://www.microsoft.com/en-us/research/blog/graphrag-improving-global-search-via-dynamic-community-selection/)
+- [LazyGraphRAG: Setting a New Standard for Quality and Cost](https://www.microsoft.com/en-us/research/blog/lazygraphrag-setting-a-new-standard-for-quality-and-cost/)
+- [Introducing GraphRAG 1.0](https://www.microsoft.com/en-us/research/blog/moving-to-graphrag-1-0-streamlining-ergonomics-for-developers-and-users/)

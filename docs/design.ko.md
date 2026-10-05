@@ -21,6 +21,7 @@
 13. [테스트 전략](#13-테스트-전략)
 14. [CI/CD와 보안](#14-cicd와-보안)
 15. [확장 가이드](#15-확장-가이드)
+16. [참고 자료](#16-참고-자료)
 
 ---
 
@@ -456,3 +457,17 @@ chain = GraphRAGChain(config=cfg, model_factory=OllamaModelFactory())
   오버헤드가 급증합니다. 확장 해법은 아티팩트 타입당 단일 인덱스 + `tenant` 필터
   필드 + routing(인덱스 drop 대신 delete-by-query)이며 — 인덱스/검색/삭제 경로를
   모두 건드리는 동작 변경이라 별도 마이그레이션으로 분리합니다.
+
+---
+
+## 16. 참고 자료
+
+§6의 배경 자료로 참고할 만한 Microsoft Research의 GraphRAG 및 후속 기법 소개 글입니다.
+
+- [GraphRAG: Unlocking LLM Discovery on Narrative Private Data](https://www.microsoft.com/en-us/research/blog/graphrag-unlocking-llm-discovery-on-narrative-private-data/)
+- [GraphRAG: New Tool for Complex Data Discovery Now on GitHub](https://www.microsoft.com/en-us/research/blog/graphrag-new-tool-for-complex-data-discovery-now-on-github/)
+- [GraphRAG Auto-Tuning Provides Rapid Adaptation to New Domains](https://www.microsoft.com/en-us/research/blog/graphrag-auto-tuning-provides-rapid-adaptation-to-new-domains/)
+- [Introducing DRIFT Search: Combining Global and Local Search Methods to Improve Quality and Efficiency](https://www.microsoft.com/en-us/research/blog/introducing-drift-search-combining-global-and-local-search-methods-to-improve-quality-and-efficiency/)
+- [GraphRAG: Improving Global Search via Dynamic Community Selection](https://www.microsoft.com/en-us/research/blog/graphrag-improving-global-search-via-dynamic-community-selection/)
+- [LazyGraphRAG: Setting a New Standard for Quality and Cost](https://www.microsoft.com/en-us/research/blog/lazygraphrag-setting-a-new-standard-for-quality-and-cost/)
+- [Introducing GraphRAG 1.0](https://www.microsoft.com/en-us/research/blog/moving-to-graphrag-1-0-streamlining-ergonomics-for-developers-and-users/)
