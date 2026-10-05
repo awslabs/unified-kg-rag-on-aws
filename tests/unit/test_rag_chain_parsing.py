@@ -17,6 +17,7 @@ import json
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from unified_kg_rag.adapters.retrieval.token_manager import EMPTY_CONTEXT_PLACEHOLDER
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     ProcessedQuery,
@@ -278,28 +279,64 @@ def _ctx_state(history: str) -> dict:
     }
 
 
-def test_context_building_no_history_returns_raw_context(config: Config) -> None:
+async def test_context_building_no_history_returns_raw_context(
+    config: Config,
+) -> None:
     chain = GraphRAGChain(config=config)
-    out = chain._context_building_step(_ctx_state(""))
+    out = await chain._context_building_step(_ctx_state(""))
     # No history -> the raw (token-optimized) search context is returned as-is,
     # with no ContextBuildingPrompt LLM call.
     assert isinstance(out, str)
     assert out  # non-empty (the one result's content)
 
 
-def test_context_building_with_history_invokes_llm(config: Config) -> None:
+async def test_context_building_with_history_invokes_llm_async(
+    config: Config,
+) -> None:
     chain = GraphRAGChain(config=config)
 
     class _FakeBuilder:
-        def invoke(self, _inputs):
+        # Only the async entry point exists: a blocking .invoke inside the
+        # async chain would stall the event loop.
+        async def ainvoke(self, _inputs):
             return "FOLDED-WITH-HISTORY"
 
     chain._get_chain_for_prompt = lambda *a, **k: _FakeBuilder()  # type: ignore[assignment]
-    out = chain._context_building_step(_ctx_state("earlier turn"))
+    out = await chain._context_building_step(_ctx_state("earlier turn"))
     assert out == "FOLDED-WITH-HISTORY"
 
 
-def test_context_building_ignore_errors_degrades_to_empty(config: Config) -> None:
+async def test_context_building_empty_retrieval_with_history_skips_builder(
+    config: Config,
+) -> None:
+    # Empty retrieval + conversation history must NOT reach the builder LLM:
+    # it could synthesize a narrative from the history alone, which would pass
+    # the empty-context guard and be answered as if it were evidence.
+    chain = GraphRAGChain(config=config)
+
+    def _must_not_build(*a, **k):
+        raise AssertionError("context builder must not run on empty retrieval")
+
+    chain._get_chain_for_prompt = _must_not_build  # type: ignore[assignment]
+    state = _ctx_state("earlier turn about the Vendor")
+    state["search_results"] = SearchResult(
+        query=SearchQuery(query="q"),
+        results=[],
+        total_results=0,
+        search_strategy="local",
+        processing_time=0.0,
+    )
+    context = await chain._context_building_step(state)
+    assert context == EMPTY_CONTEXT_PLACEHOLDER
+
+    # ...and the answer step short-circuits to the standard no-data answer.
+    answer = chain._answer_generation_step({"context": context}).invoke({})
+    assert answer.startswith("I could not find relevant information")
+
+
+async def test_context_building_ignore_errors_degrades_to_empty(
+    config: Config,
+) -> None:
     chain = GraphRAGChain(config=config)
     chain.ignore_errors = True
 
@@ -307,7 +344,7 @@ def test_context_building_ignore_errors_degrades_to_empty(config: Config) -> Non
         raise RuntimeError("context builder down")
 
     chain._get_chain_for_prompt = _boom  # type: ignore[assignment]
-    out = chain._context_building_step(_ctx_state("earlier turn"))
+    out = await chain._context_building_step(_ctx_state("earlier turn"))
     assert out == ""
 
 

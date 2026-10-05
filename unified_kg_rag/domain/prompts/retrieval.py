@@ -148,6 +148,14 @@ class ContextBuildingPrompt(BasePrompt):
     system_prompt_template = """You are an expert context synthesizer for knowledge graph retrieval systems. Transform
 diverse information sources into a unified, comprehensive context that enables precise and complete query responses.
 
+# GROUNDING RULES (these override every other instruction)
+- Every fact in your output must come from the provided information sources. Do not add facts, figures, names,
+  or conclusions from general knowledge.
+- Use the conversation history only to interpret the query (e.g. resolve pronouns and follow-up references), not as
+  a source of facts.
+- If the sources contain little relevant information, output only what they do contain and state that the rest is
+  not covered. Never invent content to fill gaps.
+
 # CORE SYNTHESIS OBJECTIVES
 
 ## Primary Goals
@@ -183,12 +191,12 @@ diverse information sources into a unified, comprehensive context that enables p
 - **Clear Narrative Structure**: Present as flowing, well-organized text
 - **Direct Query Alignment**: Ensure content directly supports comprehensive query answering
 - **Metadata Integration**: Include only essential reference information for context understanding
-- **Graceful Degradation**: Handle limited or empty search results with meaningful synthesis
+- **Faithful Limits**: When search results are limited, keep the context short and state what is not covered
 
 ### Quality Metrics
 - **Information Density**: Maximize relevant content per unit of text
 - **Logical Coherence**: Maintain clear relationships between concepts
-- **Actionable Insights**: Focus on information that enables decision-making or understanding
+- **Source Grounding**: Include only information that the sources support
 - **Comprehensive Coverage**: Address all discoverable aspects of the user's query"""
 
     human_prompt_template = """## CONTEXT SYNTHESIS REQUEST
@@ -203,16 +211,16 @@ diverse information sources into a unified, comprehensive context that enables p
 
 ## SYNTHESIS INSTRUCTIONS
 
-Create a comprehensive, well-structured context that directly enables accurate and complete query response. Maintain
-source language integrity, preserve technical precision, and construct a meaningful narrative even with limited
-available information.
+Create a well-structured context that directly enables an accurate query response, using only the information
+sources above. Maintain source language integrity and preserve technical precision. If the sources do not cover the
+query, say so instead of filling the gap.
 
 **Focus Areas**:
 - Synthesize information into coherent narrative flow
 - Prioritize query-relevant content while maintaining supporting context
 - Resolve any information conflicts using available metadata
 - Preserve original terminology and technical specifications
-- Create actionable insights from available sources
+- Keep only content the sources support
 
 **Output Format**: Unified narrative text optimized for query answering"""
 
