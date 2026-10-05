@@ -40,6 +40,30 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   reports: those index both fields as empty lists until report generation and
   indexing are re-run (for example `run-ingestion --force-rebuild`).
 
+### Changed
+Retrieval and indexing defaults changed for latency, cost, and upstream parity.
+Each previous behaviour stays available through the setting in parentheses.
+- `mix`/`hybrid` run independent retrievals concurrently; the multi-hop Neptune
+  expansion is opt-in (`search.lightrag_search.enable_graph_expansion: true`).
+- DRIFT searches the original query first, fuses with the local per-type quota,
+  and its LLM convergence check is opt-in
+  (`search.drift_search.enable_llm_convergence: true`; threshold now 0.8,
+  `convergence_threshold: 0.1` for the old value).
+- Global search skips per-report LLM relevance scoring
+  (`search.global_search.use_dynamic_selection: true`) and packs 5 reports per
+  map call (`map_batch_size: 2`).
+- The retrieval context budget defaults to 30,000 tokens
+  (`search.token_manager.max_context_tokens: null` derives it from the answer
+  model's window).
+- Chunk sizes fit the embedding/rerank input: `max_chunk_size` 8,000,
+  `fallback_chunk_size` 4,800, `min_chunk_size` 1,000 characters (old: 50,000 /
+  50,000 / 5,000).
+- Gleaning rounds after the first re-send only the text units that gained
+  items in the previous round (the default stays 3 rounds).
+- AUTO routes among local/mix/global/drift with Haiku
+  (`search.auto_routable_strategies: [simple, local, global, drift]`,
+  `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).
+
 ### Fixed
 - `custom_prompts` overrides for community reports
   (`community_report_system`/`_human`), conversation-memory entity extraction

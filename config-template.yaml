@@ -145,12 +145,18 @@ processing:
     chunker_type: "intelligent"
     chunking_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     content_type: "markdown"
-    min_chunk_size: 5000
-    max_chunk_size: 50000
+    # Chunks are embedded whole and reranked as one document, so max_chunk_size
+    # must fit Titan Text Embeddings V2 (8,192 tokens) and Cohere Rerank 3.5
+    # (4,096 tokens/document): 8000 chars fits Titan even at ~1 char/token (CJK)
+    # and is ~2K English tokens. fallback_chunk_size 4800 ~= 1,200 English
+    # tokens, the MS GraphRAG / LightRAG default chunk size. pre_chunk_size is
+    # the intelligent chunker's LLM window and is not embedded.
+    min_chunk_size: 1000
+    max_chunk_size: 8000
     chunk_overlap: 500
     pre_chunk_size: 50000
     pre_chunk_overlap: 500
-    fallback_chunk_size: 50000
+    fallback_chunk_size: 4800
     max_marker_miss_rate: 0.1
 
   # Translation
@@ -217,6 +223,8 @@ processing:
   gleaning:
     enabled: true
     graph_refinement_model_id: "anthropic.claude-sonnet-5-5"
+    # 1 = MS GraphRAG's default max_gleanings. Later rounds re-glean only the
+    # text units that yielded new items in the previous round.
     max_rounds: 3
     convergence_threshold: 0.8
     quality_threshold: 0.9
@@ -228,6 +236,8 @@ processing:
     quality_completeness_weight: 0.6
     initial_quality_entity_scale: 50
     initial_quality_relationship_scale: 100
+    # New entities+relationships per gleaned text unit counted as a full
+    # unit of change in the convergence score.
     convergence_change_scale: 20
 
   # Claim Extraction
@@ -450,7 +460,12 @@ indexing:
 search:
   translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
   entity_extraction_model_id: "anthropic.claude-sonnet-5-5"
-  strategy_selection_model_id: "anthropic.claude-sonnet-5-5"
+  # AUTO router: a one-word classification run before retrieval, so a fast
+  # model keeps it off the critical path.
+  strategy_selection_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+  # Strategies the AUTO router may pick (simple is left out; any strategy can
+  # still be selected explicitly).
+  auto_routable_strategies: ["local", "mix", "global", "drift"]
   context_building_model_id: "anthropic.claude-sonnet-5-5"
   answer_generation_model_id: "anthropic.claude-sonnet-5-5"
 
@@ -499,6 +514,10 @@ search:
     # Chunks allocated per matched entity/relationship when following text-unit
     # lineage (slots decrease across matches so the last match still gets one).
     related_chunk_number: 5
+    # hybrid/mix: additionally expand matched entities through Neptune
+    # (indexing.neptune.max_hops). Off by default, as in upstream LightRAG: the
+    # one-hop incident edges and relationship endpoints are already retrieved.
+    enable_graph_expansion: false
 
   # Global Search Configuration
   global_search:
@@ -506,7 +525,10 @@ search:
     map_reduce_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     max_communities: 10
     relevance_threshold: 0.5
-    use_dynamic_selection: true
+    # Per-report LLM relevance scoring before map-reduce (one call per
+    # report). Off by default: the map step already rates and filters the
+    # reports for the query. Mainly useful with enable_map_reduce: false.
+    use_dynamic_selection: false
     enable_map_reduce: true
     # Timeout (seconds) for the Neptune community-graph retrieval; raise for very
     # large graphs or slow clusters.
@@ -522,7 +544,9 @@ search:
     # Map model is cheap by default (rating is cheap).
     map_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     # Community reports packed into one map LLM call (calls run concurrently).
-    map_batch_size: 2
+    # 5 keeps a map prompt near MS GraphRAG's 12K-token map context for reports
+    # of 1-2K tokens; lower it for long reports.
+    map_batch_size: 5
     # Drop map key points whose 0-100 score is at or below this (0 keeps any
     # positive score).
     map_relevance_threshold: 0
@@ -554,6 +578,11 @@ search:
     enable_keyword_extraction: true
     query_refinement_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     keyword_expansion_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    # Opt-in LLM convergence check after each iteration (one extra LLM call per
+    # iteration). Off by default: the unique-gain / improvement_threshold checks
+    # already stop the loop. convergence_threshold applies only when enabled;
+    # 0.8 is the prompt's "convergence achieved" band.
+    enable_llm_convergence: false
     convergence_assessment_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     max_iterations: 3
     initial_top_k: 5
@@ -562,7 +591,7 @@ search:
     # evolved DRIFT query (caps how much of each result feeds the next iteration).
     summary_char_limit: 200
     n_entities: 5
-    convergence_threshold: 0.1
+    convergence_threshold: 0.8
     improvement_threshold: 0.05
     # MS GraphRAG primer -> follow-up flow. When true, a HyDE primer drafts a
     # hypothetical answer from the seed community reports and decomposes the
@@ -576,11 +605,12 @@ search:
 
   # Token Manager Configuration
   token_manager:
-    # Prompt-side context budget. Leave null to derive it from the answer
-    # model's own window minus its output reservation and the headroom below —
-    # a hardcoded number overflows a smaller model's window and wastes a larger
-    # one. An explicit value is honoured but clamped to what the model accepts.
-    max_context_tokens: null
+    # Prompt-side retrieval context budget. 30000 = upstream LightRAG's total
+    # context budget (MS GraphRAG uses 12000); a budget derived from a 1M window
+    # (~785K) never binds, so nothing is ever trimmed. Always clamped to what
+    # the answer model accepts. null derives it from the model's window minus
+    # its output reservation and the headroom below.
+    max_context_tokens: 30000
     # Share of the window held back for the system prompt, question, history,
     # and token-estimation error when deriving the budget above.
     context_window_headroom_ratio: 0.1

@@ -141,6 +141,8 @@ def _lightrag_query(mode: SearchStrategy) -> SearchQuery:
 async def test_lightrag_graph_expansion_reraises_fatal(
     config: Config, mode: SearchStrategy
 ) -> None:
+    # The Neptune expansion is opt-in for LightRAG modes.
+    config.search.lightrag_search.enable_graph_expansion = True
     strategy = _strategy(
         config, mode, _OkRetriever(), _RaisingRetriever(_NEPTUNE_FATAL)
     )

@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import time
+from collections import OrderedDict
 from collections.abc import Coroutine
-from typing import Any
+from typing import Any, ClassVar
 
 import boto3
 from opensearchpy.exceptions import NotFoundError
@@ -42,6 +43,12 @@ def _is_index_not_found(exc: BaseException) -> bool:
 
 
 class OpenSearchRetriever(BaseGraphRAGRetriever):
+    # Query embeddings are reused across the sub-queries of one search (local
+    # search sends the same entity-focus text to several indices) and across
+    # repeated queries. Bounded LRU: entries are only reused for identical
+    # text; 256 x a 1024-dim vector is ~2 MB.
+    QUERY_EMBEDDING_CACHE_SIZE: ClassVar[int] = 256
+
     def __init__(
         self,
         config: Config,
@@ -75,6 +82,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         self._embedding_model = self._embedding_factory.get_model(
             self._opensearch_config.embedding_model_id
         )
+        self._query_embedding_cache: OrderedDict[str, list[float]] = OrderedDict()
         self._field_mappings = self._initialize_field_mappings()
         self._index_filter_fields = self._initialize_index_filter_fields()
 
@@ -291,8 +299,20 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             and search_type in [SearchType.VECTOR, SearchType.HYBRID]
             and vector_fields
         ):
-            return await self._embedding_model.aembed_query(query_text)
+            return await self._embed_query_cached(query_text)
         return None
+
+    async def _embed_query_cached(self, query_text: str) -> list[float]:
+        cache = self._query_embedding_cache
+        cached = cache.get(query_text)
+        if cached is not None:
+            cache.move_to_end(query_text)
+            return cached
+        vector = await self._embedding_model.aembed_query(query_text)
+        cache[query_text] = vector
+        if len(cache) > self.QUERY_EMBEDDING_CACHE_SIZE:
+            cache.popitem(last=False)
+        return vector
 
     @staticmethod
     def _is_search_type_supported(

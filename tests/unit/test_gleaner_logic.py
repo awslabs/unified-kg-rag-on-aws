@@ -189,6 +189,12 @@ class TestConvergenceScore:
     def test_floored_at_zero(self, gleaner) -> None:
         assert gleaner._calculate_convergence_score(1000, 1000, 5.0) == 0.0
 
+    def test_change_is_measured_per_gleaned_unit(self, gleaner) -> None:
+        # 10 items over 10 units is 1 item per unit: (10)/(20*10) = 0.05 change.
+        # As an absolute count it was 0.5, so large rounds never converged.
+        score = gleaner._calculate_convergence_score(10, 0, 0.0, units_processed=10)
+        assert score == pytest.approx(0.95)
+
 
 # --------------------------------------------------------------------------- #
 # _should_stop_gleaning

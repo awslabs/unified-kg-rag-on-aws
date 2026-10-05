@@ -339,12 +339,12 @@ splits by size. Most-tuned: `min_chunk_size` / `max_chunk_size`.
     chunker_type: "intelligent"     # intelligent | simple
     chunking_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     content_type: "markdown"
-    min_chunk_size: 5000
-    max_chunk_size: 50000
+    min_chunk_size: 1000
+    max_chunk_size: 8000            # must fit the embedding/rerank input
     chunk_overlap: 500
     pre_chunk_size: 50000
     pre_chunk_overlap: 500
-    fallback_chunk_size: 50000
+    fallback_chunk_size: 4800
     max_marker_miss_rate: 0.1
 ```
 
@@ -407,7 +407,7 @@ missed on the first pass (quality vs. cost trade-off).
   gleaning:
     enabled: true
     graph_refinement_model_id: "anthropic.claude-sonnet-5-5"
-    max_rounds: 3
+    max_rounds: 3                   # later rounds re-glean only units that gained items
     convergence_threshold: 0.8
     quality_threshold: 0.9
     min_improvement_threshold: 0.05
@@ -513,7 +513,8 @@ indexing:
 search:
   translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
   entity_extraction_model_id: "anthropic.claude-sonnet-5-5"
-  strategy_selection_model_id: "anthropic.claude-sonnet-5-5"   # the `auto` router
+  strategy_selection_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"   # the `auto` router
+  auto_routable_strategies: ["local", "mix", "global", "drift"]  # what `auto` may pick
   context_building_model_id: "anthropic.claude-sonnet-5-5"
   answer_generation_model_id: "anthropic.claude-sonnet-5-5"    # the answer LLM
 
@@ -537,7 +538,7 @@ search:
 
   global_search:
     max_communities: 10
-    use_dynamic_selection: true
+    use_dynamic_selection: false
     enable_map_reduce: true
     map_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     max_map_reduce_tokens: 8000
@@ -552,20 +553,20 @@ search:
     initial_top_k: 5
 
   token_manager:
-    max_context_tokens: null        # null => derive from the answer model's window
+    max_context_tokens: 30000       # null => derive from the answer model's window
     context_window_headroom_ratio: 0.1
 ```
 
-> **Context budget is derived, not fixed.** With `max_context_tokens: null`
-> (the default) the retrieval context budget is computed from
-> `search.answer_generation_model_id`'s own context window, minus that model's
-> output reservation and the headroom ratio. This keeps the two in agreement: a
-> single hardcoded number either overflows a 200K model's window (the window
-> must hold the prompt *and* the answer) or leaves most of a 1M window unused.
-> An explicit value is still honoured, but is clamped to what the model can
-> accept — a warning names the clamp when that happens. Enabling
-> `aws.bedrock.enable_1m_context` widens the derived budget on models whose 1M
-> window is a beta opt-in.
+> **Context budget.** The default `max_context_tokens: 30000` matches upstream
+> LightRAG's total context budget (MS GraphRAG uses 12000). A budget derived
+> from a 1M-token answer model's window is ~785K tokens, which never binds, so
+> the per-type budgets and priority ordering would never trim anything. The
+> value is always clamped to what `search.answer_generation_model_id` can
+> accept alongside its output reservation — a warning names the clamp when
+> that happens. With `max_context_tokens: null` the budget is instead derived
+> from that model's context window, minus its output reservation and the
+> headroom ratio; enabling `aws.bedrock.enable_1m_context` widens the derived
+> budget on models whose 1M window is a beta opt-in.
 
 ### 2.7 `memory`, `cache`, `logging`
 
@@ -765,13 +766,13 @@ rerank); only the retrieval algorithm differs.
 | `local` | Detailed questions about specific entities/concepts | Extracts query entities → Neptune graph traversal for neighbors/relationships → combined with vector/keyword hits. Injects claims (covariates) when enabled. |
 | `global` | Broad, thematic, "what are the main themes" questions | Uses community reports + map-reduce over dynamically selected communities. Best for high-level synthesis. |
 | `drift` | Complex, multi-faceted questions needing exploration | Iterative query refinement/expansion with convergence detection across rounds. |
-| `auto` | You don't know / general use (the default) | An LLM router (`search.strategy_selection_model_id`) picks the best strategy from the query. |
+| `auto` | You don't know / general use (the default) | An LLM router (`search.strategy_selection_model_id`) picks the best strategy from the query among `search.auto_routable_strategies` (default local, mix, global, drift). |
 
 **LightRAG (dual-level keyword):**
 
 | Strategy | Use when | How it works |
 |---|---|---|
-| `mix` | General LightRAG use; balances graph + chunks | Low-level keywords → entity index, high-level keywords → relationship index, Neptune expansion, **plus** naive vector chunk retrieval blended in. |
+| `mix` | General LightRAG use; balances graph + chunks | Low-level keywords → entity index, high-level keywords → relationship index, one-hop incident-relationship / endpoint-entity expansion (Neptune multi-hop expansion is opt-in: `search.lightrag_search.enable_graph_expansion`), **plus** naive vector chunk retrieval blended in. |
 | `hybrid` | Keyword-driven graph questions | Same as `mix` but without the extra naive chunk blend. |
 | `naive` | Fast baseline / comparison eval | Pure vector chunk retrieval, no graph. The LightRAG baseline. |
 

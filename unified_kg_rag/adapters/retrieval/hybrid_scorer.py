@@ -97,11 +97,11 @@ class HybridScorer(MetricsMixin):
         combined_results = fusion_func(fusion_input)
 
         if self.fusion_config.diversity_lambda < 1.0:
-            # Diversity filtering cuts to top_k*multiplier — which, with top_k=10,
-            # pre-starves the fused set to 10 BEFORE rerank/quota, so a per-type quota
-            # (sum ~50) has nothing left to protect and a KG item at native rank ~10 is
-            # already gone. When a quota is set, keep at least the quota budget so
-            # diversity de-dups WITHIN that budget instead of collapsing it.
+            # Diversity filtering cuts to top_k*multiplier, which runs BEFORE
+            # rerank/quota: whenever the per-type quotas sum to more than top_k,
+            # the cut would leave them nothing to protect. When a quota is set,
+            # keep at least the quota budget so diversity de-dups WITHIN that
+            # budget instead of collapsing it.
             div_top_k = top_k
             if per_type_quota:
                 div_top_k = max(top_k, sum(per_type_quota.values()))

@@ -249,40 +249,37 @@ def test_build_content_community(retriever) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_calculate_relevance_clamped_to_one(retriever) -> None:
-    query = SearchQuery(query="alice")
-    score = retriever._calculate_relevance(
-        {"importance": 1.0, "name": "alice", "description": "alice"},
-        [],
-        query,
-        is_community=False,
+def test_calculate_relevance_is_mean_of_importance_and_proximity(
+    retriever,
+) -> None:
+    seed = retriever._calculate_relevance(
+        {"importance": 1.0}, [{"name": ["a"]}], is_community=False
     )
-    assert 0.0 <= score <= 1.0
+    one_hop = retriever._calculate_relevance(
+        {"importance": 1.0}, [{"name": ["a"]}, {"name": ["b"]}], is_community=False
+    )
+    assert seed == pytest.approx(1.0)
+    assert one_hop == pytest.approx(0.75)
 
 
-def test_calculate_relevance_text_match_boosts_entity(retriever) -> None:
-    query = SearchQuery(query="alice")
-    matched = retriever._calculate_relevance(
-        {"importance": 0.5, "name": "alice", "description": ""},
-        [],
-        query,
-        is_community=False,
-    )
-    unmatched = retriever._calculate_relevance(
-        {"importance": 0.5, "name": "bob", "description": ""},
-        [],
-        query,
-        is_community=False,
-    )
-    assert matched > unmatched
+def test_calculate_relevance_nearer_node_outranks_more_important_far_one(
+    retriever,
+) -> None:
+    near = retriever._calculate_relevance({"importance": 0.2}, [{}], False)
+    far = retriever._calculate_relevance({"importance": 0.6}, [{}, {}], False)
+    assert near > far
 
 
-def test_calculate_relevance_community_uses_size(retriever) -> None:
-    query = SearchQuery(query="x")
-    score = retriever._calculate_relevance(
-        {"size": 50, "name": "Cluster"}, [], query, is_community=True
+def test_calculate_relevance_community_size_relative_to_largest(retriever) -> None:
+    largest = retriever._calculate_relevance(
+        {"size": 50}, [{}], is_community=True, max_community_size=50
     )
-    assert 0.0 <= score <= 1.0
+    half = retriever._calculate_relevance(
+        {"size": 25}, [{}], is_community=True, max_community_size=50
+    )
+    assert largest == pytest.approx(1.0)
+    assert half == pytest.approx(0.75)
+    assert 0.0 <= retriever._calculate_relevance({"size": 5}, [], True) <= 1.0
 
 
 # --------------------------------------------------------------------------- #

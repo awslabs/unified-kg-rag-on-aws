@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import pytest
 
 from unified_kg_rag.adapters.search_strategies.drift_search import DriftSearchStrategy
-from unified_kg_rag.domain.models import RetrievalResult, SearchQuery
+from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
 from unified_kg_rag.shared.utils import compute_hash
 
 pytestmark = pytest.mark.unit
@@ -78,6 +78,7 @@ def _bare_strategy(
     summary_length: int = 5,
     n_entities: int = 5,
     convergence_threshold: float = 0.1,
+    enable_llm_convergence: bool = True,
 ) -> DriftSearchStrategy:
     strat = DriftSearchStrategy.__new__(DriftSearchStrategy)
     strat.drift_config = SimpleNamespace(
@@ -89,6 +90,7 @@ def _bare_strategy(
         summary_char_limit=200,
         n_entities=n_entities,
         convergence_threshold=convergence_threshold,
+        enable_llm_convergence=enable_llm_convergence,
         improvement_threshold=0.05,
     )
     strat.entity_focus_multiplier = entity_focus_multiplier
@@ -102,7 +104,10 @@ def _bare_strategy(
                 entities_index_prefix="entities",
             )
         ),
-        search=SimpleNamespace(drift_search=SimpleNamespace(initial_top_k=5)),
+        search=SimpleNamespace(
+            drift_search=SimpleNamespace(initial_top_k=5),
+            local_search=Config().search.local_search,
+        ),
     )
     return strat
 
@@ -197,18 +202,26 @@ async def test_should_stop_true_on_consecutive_low_gains() -> None:
 
 
 async def test_should_stop_false_when_gains_above_floor() -> None:
-    strat = _bare_strategy()
+    strat = _bare_strategy(enable_llm_convergence=False)
     metrics = [{"unique_new": 5}, {"unique_new": 5}]
-    # iteration 2 -> low-gain branch evaluated but gains high; LLM branch needs
-    # iteration > 2 so it is not consulted here.
+    # Low-gain branch evaluated but gains high; the LLM check is disabled.
     assert await strat._should_stop(2, metrics, "q") is False
 
 
-async def test_should_stop_consults_llm_after_iteration_two() -> None:
+async def test_should_stop_consults_llm_once_an_iteration_ran() -> None:
+    # Reachable within the default max_iterations=3 (iterations 0, 1, 2): the
+    # old `iteration > 2` gate could never fire.
     strat = _bare_strategy(convergence_threshold=0.1)
     strat.convergence_assessor = _AChain("0.9")  # >= threshold -> converged
-    metrics = [{"unique_new": 5}, {"unique_new": 5}]  # high gains, skip low-gain stop
-    assert await strat._should_stop(3, metrics, "q") is True
+    metrics = [{"unique_new": 5}]  # high gain, skip low-gain stop
+    assert await strat._should_stop(1, metrics, "q") is True
+
+
+async def test_should_stop_skips_llm_when_disabled() -> None:
+    strat = _bare_strategy(enable_llm_convergence=False)
+    strat.convergence_assessor = _AChain(raises=AssertionError("must not run"))
+    metrics = [{"unique_new": 5}, {"unique_new": 5}]
+    assert await strat._should_stop(2, metrics, "q") is False
 
 
 async def test_should_stop_llm_below_threshold_continues() -> None:
@@ -621,3 +634,60 @@ async def test_primer_search_falls_back_to_iterative_without_follow_ups() -> Non
     strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
     await strat._primer_search(SearchQuery(query="q"), [], [], set(), [])
     assert called["iterative"]
+
+
+async def test_iterative_search_uses_original_query_on_first_iteration() -> None:
+    # Iteration 0 must search with the user's query; only later iterations are
+    # rewritten from what was retrieved.
+    strat = _bare_strategy(enable_llm_convergence=False)
+    strat.drift_config.max_iterations = 2
+    searched: list[str] = []
+    evolved_at: list[int] = []
+
+    async def _fake_search(q):
+        searched.append(q.query)
+        return [_result(f"new-{len(searched)}-{i}") for i in range(5)]
+
+    async def _fake_evolve(q, original, results, iteration):
+        evolved_at.append(iteration)
+        out = q.model_copy(deep=True)
+        out.query = f"refined-{iteration}"
+        return out
+
+    strat._execute_search_iteration = _fake_search  # type: ignore[method-assign]
+    strat._evolve_query = _fake_evolve  # type: ignore[method-assign]
+    await strat._iterative_search(SearchQuery(query="orig"), [], set(), [])
+
+    assert searched == ["orig", "refined-1"]
+    assert evolved_at == [1]
+
+
+def test_default_config_disables_llm_convergence() -> None:
+    drift = Config().search.drift_search
+    assert drift.enable_llm_convergence is False
+    assert drift.convergence_threshold == 0.8
+
+
+async def test_asearch_fuses_with_per_type_quota() -> None:
+    strat = _bare_strategy(
+        enable_llm_convergence=False, retrievers={"document": _StubRetriever([])}
+    )
+    captured: dict = {}
+
+    async def _fake_iterative(query, all_results, seen, metrics):
+        return None
+
+    def _fuse(groups, **kw):
+        captured.update(kw)
+        return groups["results"]
+
+    strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
+    strat.hybrid_scorer = SimpleNamespace(fuse_and_rerank_results=_fuse)
+    strat._record_search_metrics = lambda *a, **k: None  # type: ignore[method-assign]
+    strat.drift_config.enable_primer = False
+
+    await strat.asearch(SearchQuery(query="q", top_k=10))
+
+    quota = captured["per_type_quota"]
+    assert quota["text"] >= 10 and quota["entity"] >= 1 and quota["community"] >= 1
+    assert captured["rerank_only_types"] == {"text"}

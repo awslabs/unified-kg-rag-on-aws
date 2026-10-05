@@ -40,37 +40,6 @@ class LocalSearchStrategy(BaseSearchStrategy):
         super().__init__(config, retrievers, boto_session, **kwargs)
         self.entity_focus_multiplier = entity_focus_multiplier
 
-    def _per_type_quota(self, top_k: int) -> dict[str, int]:
-        """Reserved fusion slots per section type, from configured shares of top_k."""
-        quota_config = self.config.search.local_search.type_quota
-        shares: list[tuple[SectionType, float, int]] = [
-            (SectionType.TEXT, quota_config.text_multiplier, quota_config.text_floor),
-            (
-                SectionType.ENTITY,
-                quota_config.entity_multiplier,
-                quota_config.entity_floor,
-            ),
-            (
-                SectionType.RELATIONSHIP,
-                quota_config.relationship_multiplier,
-                quota_config.relationship_floor,
-            ),
-            (
-                SectionType.COMMUNITY,
-                quota_config.community_multiplier,
-                quota_config.community_floor,
-            ),
-            (
-                SectionType.CLAIM,
-                quota_config.claim_multiplier,
-                quota_config.claim_floor,
-            ),
-        ]
-        return {
-            section_type.value: max(int(multiplier * top_k), floor)
-            for section_type, multiplier, floor in shares
-        }
-
     async def asearch(self, query: SearchQuery) -> SearchResult:
         start_time = time.time()
         logger.info(
@@ -409,8 +378,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
     ) -> list[RetrievalResult]:
         # This lookup is an ID-batch FETCH (`query=""`,
         # LEXICAL, pure id filter), so OpenSearch returns the batch in index
-        # order with no meaningful relevance score — 1915 of 2355 emitted
-        # contexts carried score 0.0. That threw away the graph-support ranking
+        # order with no meaningful relevance score (typically 0.0). That would
+        # throw away the graph-support ranking
         # computed in `_rank_text_unit_ids`. Re-impose it here, and project it
         # into `score` as a normalized descending value so the shared fusion /
         # per-type-quota path (which sorts by score) preserves it instead of
