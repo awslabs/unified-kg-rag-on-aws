@@ -1482,6 +1482,16 @@ class DriftSearchConfig(BaseModel):
         default=LanguageModelId.CLAUDE_V4_5_HAIKU,
         description="Language model used for expanding keywords from discovered entities",
     )
+    enable_llm_convergence: bool = Field(
+        default=False,
+        description=(
+            "Ask an LLM after each iteration whether DRIFT has converged and stop "
+            "early when its score reaches convergence_threshold. Off by default: "
+            "it adds one LLM call per iteration, while the deterministic checks "
+            "(low unique-result gain, improvement_threshold) already stop the "
+            "loop, and max_iterations bounds it."
+        ),
+    )
     convergence_assessment_model_id: LanguageModelId = Field(
         default=LanguageModelId.CLAUDE_V4_5_HAIKU,
         description="Language model used for assessing search convergence",
@@ -1514,10 +1524,15 @@ class DriftSearchConfig(BaseModel):
         description="Number of top entities to extract for keyword expansion",
     )
     convergence_threshold: float = Field(
-        default=0.1,
+        default=0.8,
         ge=0.0,
         le=1.0,
-        description="Convergence score threshold for early termination",
+        description=(
+            "LLM convergence score (0-1) at or above which DRIFT stops early "
+            "(enable_llm_convergence only). Default 0.8 is the lower bound of the "
+            "ConvergenceAssessmentPrompt's 'convergence achieved' band; lower "
+            "values stop while the prompt still advises exploring."
+        ),
     )
     improvement_threshold: float = Field(
         default=0.05,

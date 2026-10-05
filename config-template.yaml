@@ -537,6 +537,11 @@ search:
     enable_keyword_extraction: true
     query_refinement_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     keyword_expansion_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    # Opt-in LLM convergence check after each iteration (one extra LLM call per
+    # iteration). Off by default: the unique-gain / improvement_threshold checks
+    # already stop the loop. convergence_threshold applies only when enabled;
+    # 0.8 is the prompt's "convergence achieved" band.
+    enable_llm_convergence: false
     convergence_assessment_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     max_iterations: 3
     initial_top_k: 5
@@ -545,7 +550,7 @@ search:
     # evolved DRIFT query (caps how much of each result feeds the next iteration).
     summary_char_limit: 200
     n_entities: 5
-    convergence_threshold: 0.1
+    convergence_threshold: 0.8
     improvement_threshold: 0.05
     # MS GraphRAG primer -> follow-up flow. When true, a HyDE primer drafts a
     # hypothetical answer from the seed community reports and decomposes the
