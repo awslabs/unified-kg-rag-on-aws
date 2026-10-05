@@ -3,7 +3,7 @@
 """Unit tests for provider-aware Bedrock request shaping (AWS-free).
 
 Covers the Claude 4.6-5.5 and OpenAI GPT capability records and the provider
-routing built on them: GPT goes through Converse with ``reasoning_effort`` and
+routing built on them: GPT goes through Converse with ``reasoning.effort`` and
 no Anthropic-only fields, Anthropic adaptive thinking carries ``effort`` in
 ``output_config``, explicit prompt-cache markers follow
 ``supports_prompt_caching``, and CountTokens is skipped for models that do not
@@ -41,8 +41,6 @@ GPT_MODELS = [m for m in LanguageModelId if m.value.startswith("openai.")]
 NEW_CLAUDE_MODELS = [
     LanguageModelId.CLAUDE_V5_5_SONNET,
     LanguageModelId.CLAUDE_V5_5_OPUS,
-    LanguageModelId.CLAUDE_V5_1_FABLE,
-    LanguageModelId.CLAUDE_V5_FABLE,
     LanguageModelId.CLAUDE_V4_8_OPUS,
     LanguageModelId.CLAUDE_V4_7_OPUS,
     LanguageModelId.CLAUDE_V4_6_OPUS,
@@ -109,6 +107,8 @@ def test_gpt_capabilities(model_id: LanguageModelId) -> None:
     assert info.uses_adaptive_thinking is False
     assert info.context_window_size >= 1000000
     assert info.max_output_tokens >= 128000
+    # Live Bedrock lists exactly these levels (plus 'none') for every GPT model.
+    assert info.supported_efforts == {"low", "medium", "high", "xhigh", "max"}
 
 
 @pytest.mark.parametrize("model_id", NEW_CLAUDE_MODELS)
@@ -131,7 +131,14 @@ def test_claude_4_6_keeps_opt_in_thinking_and_sampling() -> None:
         assert info.adaptive_thinking_only is False
         assert info.always_reasons is False
         assert info.supports_sampling_params is True
+        # Bedrock rejects 'xhigh' on Claude 4.6 (both Opus and Sonnet).
+        assert info.supported_efforts == {"low", "medium", "high", "max"}
     assert _info(LanguageModelId.CLAUDE_V4_6_SONNET).max_output_tokens == 64000
+
+
+def test_fable_models_are_not_offered() -> None:
+    # Fable 5 / 5.1 reject accounts on the default data-retention mode.
+    assert not any("fable" in m.value for m in LanguageModelId)
 
 
 # --- inference-profile resolution ----------------------------------------
@@ -229,7 +236,7 @@ _ANTHROPIC_ONLY_FIELDS = ("thinking", "output_config", "anthropic_beta")
 
 
 @pytest.mark.parametrize("model_id", GPT_MODELS)
-def test_gpt_request_has_reasoning_effort_and_no_anthropic_fields(
+def test_gpt_request_has_reasoning_effort_object_and_no_anthropic_fields(
     model_id: LanguageModelId,
 ) -> None:
     config = Config()
@@ -238,7 +245,7 @@ def test_gpt_request_has_reasoning_effort_and_no_anthropic_fields(
     factory = _factory(config)
     cfg = factory._build_model_config(_info(model_id), f"us.{model_id.value}", True)
     fields = cfg["additional_model_request_fields"]
-    assert fields == {"reasoning_effort": "medium"}
+    assert fields == {"reasoning": {"effort": "medium"}}
     for key in _ANTHROPIC_ONLY_FIELDS:
         assert key not in fields
     assert "stop_sequences" not in cfg
@@ -250,7 +257,7 @@ def test_gpt_reasoning_effort_per_call_override() -> None:
     factory = _factory()
     info = _info(LanguageModelId.GPT_V6_LUNA)
     assert factory._build_thinking_config(info, effort="low") == {
-        "reasoning_effort": "low"
+        "reasoning": {"effort": "low"}
     }
 
 
@@ -271,7 +278,7 @@ def test_claude_5_5_gets_adaptive_thinking_by_default() -> None:
         fields = cfg["additional_model_request_fields"]
         assert fields["thinking"] == {"type": "adaptive"}
         assert fields["output_config"] == {"effort": "high"}
-        assert "reasoning_effort" not in fields
+        assert "reasoning" not in fields
         assert "anthropic_beta" not in fields
         assert "temperature" not in cfg
 
@@ -295,13 +302,14 @@ def test_claude_4_6_thinking_is_opt_in_and_adaptive() -> None:
 
 def test_undocumented_effort_level_fails_fast() -> None:
     factory = _factory()
-    with pytest.raises(LanguageModelError, match="not supported by this model"):
-        factory._build_thinking_config(
-            _info(LanguageModelId.CLAUDE_V4_6_SONNET), effort="xhigh"
-        )
-    # Models whose levels the card does not list pass the value through.
+    for model_id in (
+        LanguageModelId.CLAUDE_V4_6_SONNET,
+        LanguageModelId.CLAUDE_V4_6_OPUS,
+    ):
+        with pytest.raises(LanguageModelError, match="not supported by this model"):
+            factory._build_thinking_config(_info(model_id), effort="xhigh")
     out = factory._build_thinking_config(_info(LanguageModelId.GPT_V5_5), effort="max")
-    assert out == {"reasoning_effort": "max"}
+    assert out == {"reasoning": {"effort": "max"}}
 
 
 def test_guardrail_applies_to_gpt_converse_request() -> None:

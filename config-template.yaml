@@ -17,10 +17,10 @@ aws:
     enable_1m_context: false
     # Reasoning effort. Sent as output_config.effort to Anthropic adaptive-
     # thinking models (Claude 4.6 and later), which replaced the fixed thinking
-    # token budget, and as reasoning_effort to OpenAI GPT models. One of: low,
+    # token budget, and as reasoning.effort to OpenAI GPT models. One of: low,
     # medium, high (default), xhigh, max. Lower levels trade reasoning depth
     # for cost and latency; xhigh/max are only accepted by some models (e.g.
-    # Sonnet 4.6 has no xhigh) and an unsupported level fails fast.
+    # Claude 4.6 has no xhigh) and an unsupported level fails fast.
     # Ignored by older Claude models, which still use thinking_budget_tokens.
     effort: "high"
     # Amazon Bedrock Guardrails (WAF security pillar). Disabled unless an

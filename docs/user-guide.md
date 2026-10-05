@@ -233,15 +233,14 @@ models below in addition to the older Claude 3.x/4.x ids:
 | --- | --- | --- | --- |
 | `anthropic.claude-sonnet-5-5` (default) | Anthropic | 1M / 128K | adaptive, always on; `effort` low–max |
 | `anthropic.claude-opus-5-5` | Anthropic | 1M / 128K | adaptive, always on; `effort` low–max |
-| `anthropic.claude-fable-5-1`, `anthropic.claude-fable-5` | Anthropic | 1M / 128K | adaptive, always on; `effort` |
 | `anthropic.claude-sonnet-5`, `anthropic.claude-opus-5` | Anthropic | 1M / 128K | adaptive, always on; `effort` |
-| `anthropic.claude-opus-4-8`, `anthropic.claude-opus-4-7` | Anthropic | 1M / 128K | adaptive, always on; `effort` |
-| `anthropic.claude-opus-4-6-v1` | Anthropic | 1M / 128K | opt-in (`--enable-thinking`), adaptive; `effort` low–max |
+| `anthropic.claude-opus-4-8`, `anthropic.claude-opus-4-7` | Anthropic | 1M / 128K | adaptive, always on; `effort` low–max |
+| `anthropic.claude-opus-4-6-v1` | Anthropic | 1M / 128K | opt-in (`--enable-thinking`), adaptive; `effort` low/medium/high/max |
 | `anthropic.claude-sonnet-4-6` | Anthropic | 1M / 64K | opt-in, adaptive; `effort` low/medium/high/max |
-| `openai.gpt-6.1-sol` | OpenAI | 1M / 131K | `reasoning_effort`, always on |
-| `openai.gpt-6-astra`, `openai.gpt-6-sol`, `openai.gpt-6-luna` | OpenAI | 1.05M / 128K | `reasoning_effort`, always on |
-| `openai.gpt-5.6-sol`, `openai.gpt-5.6-terra`, `openai.gpt-5.6-luna` | OpenAI | 1.05M / 128K | `reasoning_effort`, always on |
-| `openai.gpt-5.5`, `openai.gpt-5.4` | OpenAI | 1.05M / 128K | `reasoning_effort`, always on |
+| `openai.gpt-6.1-sol` | OpenAI | 1M / 131K | `reasoning.effort` low–max, always on |
+| `openai.gpt-6-astra`, `openai.gpt-6-sol`, `openai.gpt-6-luna` | OpenAI | 1.05M / 128K | `reasoning.effort` low–max, always on |
+| `openai.gpt-5.6-sol`, `openai.gpt-5.6-terra`, `openai.gpt-5.6-luna` | OpenAI | 1.05M / 128K | `reasoning.effort` low–max, always on |
+| `openai.gpt-5.5`, `openai.gpt-5.4` | OpenAI | 1.05M / 128K | `reasoning.effort` low–max, always on |
 
 All of these are inference-profile-only. Only OpenAI's proprietary GPT models
 are offered; the open-weight `gpt-oss` models are not.
@@ -258,7 +257,7 @@ Three things differ for Claude 4.7-and-later models:
   ignored for these models (the old `budget_tokens` request shape is rejected
   with a 400); set `bedrock.effort` instead. Claude Sonnet 5.5 always thinks, so
   `--enable-thinking` is a no-op for it — depth is `effort` only. A level the
-  model card does not list (e.g. `xhigh` on Sonnet 4.6) fails fast.
+  model does not accept (e.g. `xhigh` on Opus or Sonnet 4.6) fails fast.
 - **Sampling parameters are dropped.** `temperature`/`top_k` are not accepted
   and are omitted from requests automatically; steer behaviour by prompting.
 
@@ -266,7 +265,10 @@ OpenAI GPT models differ from Claude in these ways:
 
 - They always go through the Converse API on a `us.`/`global.` inference
   profile (no `apac.`/`eu.` geo profiles; keep `enable_global_profile: true`
-  outside the US). `bedrock.effort` is sent as `reasoning_effort`.
+  outside the US). `bedrock.effort` is sent as
+  `reasoning: {effort: ...}` (the flat `reasoning_effort` field is rejected).
+  GPT-5.6 and GPT-6.x answered a trivial prompt in roughly 10-25 s even at
+  `effort: low`, so size timeouts and concurrency accordingly.
 - No Anthropic-only fields are sent (`thinking`, `output_config`,
   `anthropic_beta`, the `\n\nHuman:` stop sequence), and sampling parameters
   are omitted.
@@ -274,10 +276,10 @@ OpenAI GPT models differ from Claude in these ways:
   caching for these models. Bedrock CountTokens does not support them, so the
   retrieval context budget uses the local token estimate.
 
-Claude Fable 5 / 5.1 require the account's data-retention mode to be
-`aws_review` (set through the Data Retention API); otherwise calls are
-rejected. Their dual-use classifiers also return `stop_reason: "refusal"`
-noticeably more often than other Claude models.
+Claude Fable 5 / 5.1 are not offered: they need a non-default account
+data-retention mode (Data Retention API only), and accounts on the default mode
+get `data retention mode 'default' is not available for this model` on every
+call.
 
 ### 2.2 `fixing` — auto-repair malformed model output
 

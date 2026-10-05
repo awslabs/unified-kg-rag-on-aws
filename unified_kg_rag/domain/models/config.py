@@ -92,8 +92,6 @@ class LanguageModelId(str, Enum):
     # 'us.'/'apac.'/'global.' inference-profile prefixes.
     CLAUDE_V5_5_SONNET = "anthropic.claude-sonnet-5-5"
     CLAUDE_V5_5_OPUS = "anthropic.claude-opus-5-5"
-    CLAUDE_V5_1_FABLE = "anthropic.claude-fable-5-1"
-    CLAUDE_V5_FABLE = "anthropic.claude-fable-5"
     CLAUDE_V5_SONNET = "anthropic.claude-sonnet-5"
     CLAUDE_V5_OPUS = "anthropic.claude-opus-5"
     CLAUDE_V4_8_OPUS = "anthropic.claude-opus-4-8"
@@ -226,7 +224,7 @@ class BedrockConfig(BaseModel):
         description=(
             "Reasoning effort. Sent as output_config.effort to Anthropic "
             "adaptive-thinking models (Claude 4.6+), where it replaces the fixed "
-            "thinking token budget, and as reasoning_effort to OpenAI GPT models. "
+            "thinking token budget, and as reasoning.effort to OpenAI GPT models. "
             "'xhigh'/'max' are only accepted by some models; lower levels trade "
             "depth for cost/latency."
         ),
