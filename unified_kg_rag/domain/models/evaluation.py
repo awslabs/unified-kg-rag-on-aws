@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class EvaluationMetricType(str, Enum):
@@ -23,12 +23,22 @@ class EvaluationMetricType(str, Enum):
     # copy of recall (the previous behaviour) overstated the signal.
     ENTITY_COVERAGE = "entity_coverage"
     RELATIONSHIP_COVERAGE = "relationship_coverage"
+    # Deterministic retrieval metrics against EvaluationGroundTruth.
+    # reference_sources (k = EvaluationConfig.retrieval_k).
+    HIT_AT_K = "hit_at_k"
+    RECALL_AT_K = "recall_at_k"
+    MRR = "mrr"
+    # Deterministic SQuAD-style answer metrics (max over answer + aliases).
+    EXACT_MATCH = "exact_match"
+    TOKEN_F1 = "token_f1"
 
 
 class EvaluatorType(str, Enum):
     LANGCHAIN = "langchain"
     RAGAS = "ragas"
     GRAPH_AWARE = "graph_aware"
+    RETRIEVAL = "retrieval"
+    ANSWER_MATCH = "answer_match"
 
 
 class EvaluationQuery(BaseModel):
@@ -57,14 +67,34 @@ class EvaluationGroundTruth(BaseModel):
         default_factory=list,
         description="List of entities that should be present in the answer.",
     )
-    expected_relationships: list[str] = Field(
+    expected_relationships: list[str | dict[str, str]] = Field(
         default_factory=list,
-        description="List of relationships that should be identified in the answer.",
+        description=(
+            "Relationships that should be identified in the answer: a "
+            '{"source": A, "target": B} pair or an "A -> B" string (counted when '
+            "both endpoints are mentioned), or any other string (counted when the "
+            "phrase appears verbatim)."
+        ),
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional metadata and custom attributes for the ground truth.",
     )
+
+    @field_validator("expected_relationships")
+    @classmethod
+    def _require_pair_endpoints(
+        cls, value: list[str | dict[str, str]]
+    ) -> list[str | dict[str, str]]:
+        for item in value:
+            if isinstance(item, dict) and not (
+                str(item.get("source", "")).strip()
+                and str(item.get("target", "")).strip()
+            ):
+                raise ValueError(
+                    "relationship objects need non-empty 'source' and 'target'"
+                )
+        return value
 
 
 class EvaluationResult(BaseModel):
@@ -75,6 +105,13 @@ class EvaluationResult(BaseModel):
     retrieved_contexts: list[str] = Field(
         default_factory=list,
         description="List of context passages retrieved during answer generation.",
+    )
+    retrieved_source_ids: list[list[str]] = Field(
+        default_factory=list,
+        description=(
+            "Provenance of the reported sources, in rank order: for each source, "
+            "the document ids and file names it carries (empty when it has none)."
+        ),
     )
     response_time: float | None = Field(
         default=None, description="Time taken to generate the answer in seconds."
@@ -187,5 +224,22 @@ class EvaluationSummary(BaseModel):
             "returned an uncomputable value) and 'skipped' (not applicable, e.g. "
             "empty reference answer or failed answer generation) are excluded "
             "from the means."
+        ),
+    )
+    grouped_statistics: dict[str, dict[str, dict[str, dict[str, float]]]] = Field(
+        default_factory=dict,
+        description=(
+            "metric_statistics split by query attribute: {dimension: {value: "
+            "{metric: stats}}} for 'search_strategy' (the strategy actually used, "
+            "which varies per query under auto), 'category' and 'difficulty'. A "
+            "dimension appears only when at least one scored query has a value."
+        ),
+    )
+    run_manifest: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "What produced this run, for comparing runs: CLI arguments, model ids "
+            "(answer generation, evaluation judge/embedding), package version, "
+            "dataset path + sha256, and creation timestamp (UTC)."
         ),
     )

@@ -23,6 +23,7 @@ from langchain_core.runnables import (
     RunnablePassthrough,
 )
 from pydantic import BaseModel, Field
+from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from unified_kg_rag.adapters.aws import (
     BedrockLanguageModelFactory,
@@ -973,6 +974,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         **kwargs: Any,
     ) -> RAGOutput | dict[str, Any]:
         rag_input, input_dict = self._prepare_invoke(input)
+        tokens = bind_contextvars(
+            query_id=uuid.uuid4().hex[:12], conversation_id=rag_input.conversation_id
+        )
 
         try:
             output: RAGOutput | dict[str, Any] = await self.chain.ainvoke(
@@ -1020,6 +1024,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 processed_query=processed_query,
                 metadata=error_metadata,
             )
+        finally:
+            reset_contextvars(**tokens)
 
     @staticmethod
     def _prepare_invoke(

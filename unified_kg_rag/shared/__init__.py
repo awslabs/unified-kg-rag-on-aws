@@ -19,7 +19,7 @@ from .exceptions import (
     PipelineStateError,
     RerankModelError,
 )
-from .logging import get_logger
+from .logging import get_logger, setup_logging
 from .metrics import CloudWatchEMFSink, MetricsSink, NullMetricsSink
 from .pipeline_manager import PipelineResumeManager, PipelineStateManager
 
@@ -57,4 +57,5 @@ __all__ = [
     "get_cache_manager",
     "get_config",
     "get_logger",
+    "setup_logging",
 ]

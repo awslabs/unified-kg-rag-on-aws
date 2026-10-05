@@ -4,12 +4,18 @@
 
 Consumes the previously-unused ``EvaluationGroundTruth.expected_entities`` and
 ``expected_relationships`` fields. For each query it measures how many of the
-expected graph artifacts the generated answer actually surfaces (case-insensitive
-substring match), reporting coverage (= recall) — a deterministic, LLM-free
+expected graph artifacts the generated answer actually surfaces (case-insensitive,
+word-boundary match; substring match for space-less CJK text), reporting
+coverage (= recall) — a deterministic, LLM-free
 signal complementing the LangChain/RAGAS text-similarity scores. Precision/F1 are
 deliberately NOT reported: they would require enumerating every entity in a
 free-text answer (not reliably possible), so emitting them would only duplicate
 the recall signal under another name.
+
+An expected relationship given as a ``{"source": A, "target": B}`` pair or an
+``"A -> B"`` string counts as covered when the answer mentions both endpoints
+(answers rarely restate a relation verbatim); any other string must appear as
+a phrase.
 
 Expected artifacts are threaded onto ``EvaluationResult.metadata`` by the
 manager (keys ``expected_entities`` / ``expected_relationships``), so this
@@ -119,8 +125,36 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
                 return True
         return False
 
+    @staticmethod
+    def _relationship_endpoints(item: Any) -> tuple[str, str] | None:
+        """(source, target) for a pair dict or an ``"A -> B"`` string, else None."""
+        if isinstance(item, dict):
+            return str(item.get("source", "")), str(item.get("target", ""))
+        if isinstance(item, str) and item.count("->") == 1:
+            source, target = (part.strip() for part in item.split("->"))
+            if source and target:
+                return source, target
+        return None
+
     @classmethod
-    def _coverage(cls, expected: list[str], answer: str) -> tuple[float | None, int]:
+    def _is_covered(
+        cls, item: Any, answer_tokens: list[str], answer: str, relationships: bool
+    ) -> bool:
+        if not item:
+            return False
+        endpoints = cls._relationship_endpoints(item) if relationships else None
+        if endpoints is not None:
+            return all(
+                cls._phrase_in_tokens(end, answer_tokens, answer) for end in endpoints
+            )
+        return isinstance(item, str) and cls._phrase_in_tokens(
+            item, answer_tokens, answer
+        )
+
+    @classmethod
+    def _coverage(
+        cls, expected: list[Any], answer: str, relationships: bool = False
+    ) -> tuple[float | None, int]:
         """Return (coverage, num_matched) for expected-artifacts-in-answer.
 
         Coverage = matched / expected (i.e. recall): the fraction of expected
@@ -133,7 +167,8 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
 
         Returns ``None`` when nothing is expected for the dimension, so a query
         with (say) only expected entities is not penalized for having no expected
-        relationships when the overall score is averaged.
+        relationships when the overall score is averaged. With
+        ``relationships=True``, pair/arrow items count when both endpoints match.
         """
         if not expected:
             return None, 0
@@ -141,7 +176,7 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         matched = sum(
             1
             for item in expected
-            if item and cls._phrase_in_tokens(item, answer_tokens, answer)
+            if cls._is_covered(item, answer_tokens, answer, relationships)
         )
         return matched / len(expected), matched
 
@@ -153,7 +188,9 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         expected_relationships = result.metadata.get("expected_relationships", []) or []
 
         e_cov, e_matched = self._coverage(expected_entities, answer)
-        r_cov, r_matched = self._coverage(expected_relationships, answer)
+        r_cov, r_matched = self._coverage(
+            expected_relationships, answer, relationships=True
+        )
 
         # Only emit metrics for dimensions that actually have expectations, so a
         # missing dimension does not dilute the averaged overall score.

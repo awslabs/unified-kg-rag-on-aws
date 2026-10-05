@@ -67,6 +67,18 @@ class PipelineMetrics(BaseModel):
         description="Relationships successfully indexed (0 while extracted>0 signals "
         "the silent-drop failure mode)",
     )
+    total_extraction_failures: int = Field(
+        default=0,
+        description="Text units whose graph extraction failed (LLM error or "
+        "unparseable output); the run still succeeds without their entities",
+    )
+    total_gleaning_failures: int = Field(
+        default=0,
+        description="Text-unit refinements that failed across all gleaning rounds",
+    )
+    total_claim_extraction_failures: int = Field(
+        default=0, description="Text units whose claim extraction failed"
+    )
     gleaning_improvement_rate: float = Field(
         default=0.0, description="Improvement rate from gleaning process"
     )

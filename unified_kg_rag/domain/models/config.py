@@ -961,9 +961,12 @@ class VisualizationConfig(BaseModel):
     enabled: bool = Field(
         default=True, description="Enable or disable the entire visualization pipeline."
     )
-    outputs_directory: str | Path = Field(
-        default="outputs/visualization",
-        description="Directory to save visualization files.",
+    outputs_directory: str | Path | None = Field(
+        default=None,
+        description="Directory to save visualization files. When unset, "
+        "ingestion writes to '<cache.local_directory>/<pipeline_id>/visualization' "
+        "so visualization_data.json is synced to S3 with the cache; other callers "
+        "fall back to 'outputs/visualization'.",
     )
     embedding_method: str = Field(
         default="node2vec",
@@ -1858,6 +1861,15 @@ class LoggingConfig(BaseModel):
         max_length=255,
         description="Log file path",
     )
+    library_levels: dict[str, str] = Field(
+        default_factory=lambda: {
+            "langchain_aws": "WARNING",
+            "botocore": "WARNING",
+            "urllib3": "WARNING",
+        },
+        description="Per-logger levels for chatty third-party libraries "
+        "(logger name -> level)",
+    )
 
 
 class CustomPromptConfig(BaseModel):
@@ -2060,6 +2072,14 @@ class EvaluationConfig(BaseModel):
             "RAGAS RunConfig.max_retries: total attempts per judge call (RAGAS "
             "applies it as stop_after_attempt, with exponential backoff). "
             "Attempts count against ragas_timeout."
+        ),
+    )
+    retrieval_k: int = Field(
+        default=5,
+        ge=1,
+        description=(
+            "Cutoff k for the retrieval evaluator's hit@k / recall@k: the number "
+            "of top-ranked reported sources compared with reference_sources."
         ),
     )
     save_detailed_results: bool = Field(

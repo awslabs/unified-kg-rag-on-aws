@@ -38,6 +38,9 @@ def _strip_heavy_attributes(items: list[dict[str, Any]]) -> list[dict[str, Any]]
     ]
 
 
+DEFAULT_OUTPUTS_DIRECTORY = "outputs/visualization"
+
+
 class GraphVisualizationManager:
     def __init__(
         self,
@@ -52,7 +55,9 @@ class GraphVisualizationManager:
         self.viz_config = self.config.graph.visualization
         self.analyzer = graph_analyzer
         self.community_detector = community_detector
-        self.outputs_dir = outputs_dir or Path(self.viz_config.outputs_directory)
+        self.outputs_dir = outputs_dir or Path(
+            self.viz_config.outputs_directory or DEFAULT_OUTPUTS_DIRECTORY
+        )
         self.boto_session = boto_session or boto3.Session(
             profile_name=self.config.aws.profile_name
         )

@@ -1,0 +1,144 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Answer-match evaluator: SQuAD-style exact match and token F1.
+
+Deterministic and LLM-free, so scores are reproducible across runs and judge
+models. Both the generated answer and each reference are normalized the SQuAD
+way — lowercased, punctuation removed (any Unicode punctuation), the English
+articles ``a``/``an``/``the`` dropped, whitespace collapsed — then:
+
+- ``exact_match``: 1.0 if the normalized strings are equal.
+- ``token_f1``: harmonic mean of token precision/recall over whitespace tokens
+  (multiset overlap).
+
+References are the dataset ``answer`` plus optional ``metadata.answer_aliases``
+(a string or list of strings); each metric takes the max over references.
+A query with no reference is skipped. Tokens are whitespace-delimited, so for
+scripts written without spaces (Chinese, Japanese) token F1 degrades to exact
+match; Korean (space-delimited) works as-is.
+"""
+
+from __future__ import annotations
+
+import unicodedata
+from collections import Counter
+from datetime import datetime
+from typing import Any
+
+from unified_kg_rag.domain.models import (
+    Config,
+    EvaluationMetric,
+    EvaluationMetricType,
+    EvaluationQuery,
+    EvaluationReport,
+    EvaluationResult,
+    EvaluatorType,
+)
+
+from .base import (
+    SKIP_REASON_EMPTY_REFERENCE,
+    SKIPPED_METRICS_KEY,
+    BaseGraphRAGEvaluator,
+)
+
+_ARTICLES = frozenset({"a", "an", "the"})
+
+
+def normalize_answer(text: str) -> str:
+    """SQuAD normalization, with Unicode-aware punctuation removal."""
+    no_punct = "".join(
+        " " if unicodedata.category(ch).startswith("P") else ch for ch in text.lower()
+    )
+    return " ".join(tok for tok in no_punct.split() if tok not in _ARTICLES)
+
+
+def exact_match(prediction: str, reference: str) -> float:
+    return float(normalize_answer(prediction) == normalize_answer(reference))
+
+
+def token_f1(prediction: str, reference: str) -> float:
+    pred_tokens = normalize_answer(prediction).split()
+    ref_tokens = normalize_answer(reference).split()
+    if not pred_tokens or not ref_tokens:
+        return float(pred_tokens == ref_tokens)
+    overlap = sum((Counter(pred_tokens) & Counter(ref_tokens)).values())
+    if overlap == 0:
+        return 0.0
+    precision = overlap / len(pred_tokens)
+    recall = overlap / len(ref_tokens)
+    return 2 * precision * recall / (precision + recall)
+
+
+class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
+    """Scores exact match and token F1 of the answer against reference answers."""
+
+    def __init__(self, config: Config, rag_chain: Any | None = None, **kwargs: Any):
+        super().__init__(
+            config, EvaluatorType.ANSWER_MATCH, rag_chain=rag_chain, **kwargs
+        )
+
+    def _initialize_evaluator(self, **kwargs: Any) -> None:
+        # Pure, deterministic evaluator — no model to initialize.
+        pass
+
+    def metric_types(self) -> list[EvaluationMetricType]:
+        return [EvaluationMetricType.EXACT_MATCH, EvaluationMetricType.TOKEN_F1]
+
+    @staticmethod
+    def _references(ground_truth: str, metadata: dict[str, Any]) -> list[str]:
+        aliases = metadata.get("answer_aliases") or []
+        if isinstance(aliases, str):
+            aliases = [aliases]
+        candidates = [ground_truth, *(a for a in aliases if isinstance(a, str))]
+        return [c for c in candidates if c and normalize_answer(c)]
+
+    def evaluate_single(
+        self,
+        query: EvaluationQuery,
+        result: EvaluationResult,
+        ground_truth: str,
+        **kwargs: Any,
+    ) -> EvaluationReport:
+        references = self._references(ground_truth, result.metadata)
+        if not references:
+            return EvaluationReport(
+                query_id=query.query_id,
+                evaluator_type=self.evaluator_type,
+                metrics=[],
+                overall_score=None,
+                metadata={
+                    SKIPPED_METRICS_KEY: {
+                        m.value: SKIP_REASON_EMPTY_REFERENCE
+                        for m in self.metric_types()
+                    }
+                },
+            )
+        answer = result.generated_answer or ""
+        em = max(exact_match(answer, ref) for ref in references)
+        f1 = max(token_f1(answer, ref) for ref in references)
+        return EvaluationReport(
+            query_id=query.query_id,
+            evaluator_type=self.evaluator_type,
+            metrics=[
+                EvaluationMetric(
+                    metric_type=EvaluationMetricType.EXACT_MATCH, value=em
+                ),
+                EvaluationMetric(metric_type=EvaluationMetricType.TOKEN_F1, value=f1),
+            ],
+            overall_score=(em + f1) / 2,
+            evaluation_time=datetime.now(),
+            metadata={
+                **self._extract_search_metadata(result),
+                "num_references": len(references),
+            },
+        )
+
+    async def aevaluate_single(
+        self,
+        query: EvaluationQuery,
+        result: EvaluationResult,
+        ground_truth: str,
+        **kwargs: Any,
+    ) -> EvaluationReport:
+        # Deterministic and CPU-only; reuse the sync path.
+        return self.evaluate_single(query, result, ground_truth, **kwargs)

@@ -776,6 +776,18 @@ class TestGleanGraphOrchestration:
             [TextUnit(id="t1", text="a")], [], []
         )
         assert new_e == [] and new_r == [] and scores == {}
+        assert gleaner._failed_units == 1
+
+    def test_glean_graph_counts_failed_unit_refinements(self, gleaner, mocker) -> None:
+        units = [TextUnit(id="t1", text="a"), TextUnit(id="t2", text="b")]
+        gleaner.gleaning_config.max_rounds = 1
+        gleaner.graph_refiner = mocker.Mock()
+        # execute_with_fallback yields {} for an item that failed every retry.
+        gleaner.graph_refiner.batch.return_value = [self._plan_for("Alpha"), {}]
+
+        _, _, stats = gleaner.glean_graph(units, [], [])
+
+        assert stats.num_failed_units == 1
 
     def test_perform_llm_refinement_reraises_when_not_ignoring(
         self, gleaner, mocker
