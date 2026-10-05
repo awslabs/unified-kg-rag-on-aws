@@ -833,9 +833,32 @@ run-eval --eval-data-path my_eval_data.json \
 
 ## 7. 시각화 (`run-visualization`)
 
-이것은 이미 내보내진 시각화 데이터 JSON(인제스천 중
-`GraphVisualizationManager.export_visualization_data`가 생성)으로부터 그리는
-**독립형** 렌더러입니다. 인제스천을 다시 실행하거나 AWS를 건드리지 **않습니다**.
+이것은 이미 내보낸 시각화 데이터 JSON으로부터 그리는 **독립형** 렌더러입니다.
+인제스천을 다시 실행하거나 AWS를 건드리지 **않습니다**.
+
+`graph.visualization.enabled`가 `true`이면 `run-ingestion`의 커뮤니티 탐지
+단계가 시각화를 렌더링하면서 `graph.visualization.outputs_directory`에
+`visualization_data.json`도 기록합니다(기본값
+`outputs/visualization/visualization_data.json`). 이 파일이 `--data-path`
+입력입니다. 그래프 노드·엣지, 계산된 `layout`, 커뮤니티 계층, 중심성을 담으며,
+파일 크기를 줄이기 위해 벡터 속성(`embedding`, `*_embedding`)은 제외합니다.
+
+레이아웃과 오류 처리:
+
+- `embedding_method: "none"`은 spring 레이아웃을 쓰며 Bedrock 임베딩
+  클라이언트를 만들지 않습니다.
+- `embedding_method: "node2vec"`은 각 노드의 `name: description`을 Bedrock으로
+  임베딩한 뒤 `layout_method`로 차원을 축소합니다. 임베딩이 실패하면
+  `processing.ignore_errors`가 `false`일 때 시각화 단계가 실패합니다(인제스천은
+  계속 진행하고 실패를 로그에 남깁니다). `ignore_errors: true`이면 ERROR 로그를
+  남기고 그래프 구조만 반영하는 spring 레이아웃으로 대체하며,
+  `visualization_data.json`에 `"layout_degraded": true`를 기록합니다.
+- 인터랙티브 그래프의 엣지 두께·불투명도는 그래프 자체의 가중치 범위를
+  기준으로 조정합니다(로그 스케일 후 min-max 정규화). 따라서 1–10 강도 점수와
+  병합 횟수 모두 구분됩니다.
+- 렌더러가 실제로 기록한 파일만 보고합니다(같은 이름의 이전 실행 파일은 먼저
+  삭제합니다). 아무것도 렌더링하지 못하면(예: 빈 그래프) `run-visualization`은
+  오류를 로그에 남기고 종료 코드 `1`을 반환합니다.
 
 ### CLI 플래그 (검증됨)
 
