@@ -28,6 +28,9 @@ class EvaluationMetricType(str, Enum):
     HIT_AT_K = "hit_at_k"
     RECALL_AT_K = "recall_at_k"
     MRR = "mrr"
+    # Deterministic SQuAD-style answer metrics (max over answer + aliases).
+    EXACT_MATCH = "exact_match"
+    TOKEN_F1 = "token_f1"
 
 
 class EvaluatorType(str, Enum):
@@ -35,6 +38,7 @@ class EvaluatorType(str, Enum):
     RAGAS = "ragas"
     GRAPH_AWARE = "graph_aware"
     RETRIEVAL = "retrieval"
+    ANSWER_MATCH = "answer_match"
 
 
 class EvaluationQuery(BaseModel):

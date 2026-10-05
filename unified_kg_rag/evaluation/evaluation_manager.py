@@ -24,6 +24,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.utils import BatchProcessor
 
+from .answer_match_evaluator import AnswerMatchEvaluator
 from .base import FAILED_METRICS_KEY, SKIPPED_METRICS_KEY, BaseEvaluator
 from .graph_aware_evaluator import GraphAwareEvaluator
 from .retrieval_evaluator import RetrievalEvaluator
@@ -61,6 +62,8 @@ class EvaluationManager:
             return GraphAwareEvaluator
         if evaluator_type is EvaluatorType.RETRIEVAL:
             return RetrievalEvaluator
+        if evaluator_type is EvaluatorType.ANSWER_MATCH:
+            return AnswerMatchEvaluator
         # Defensive: a future EvaluatorType with no mapping resolves to None and
         # is skipped by the caller. mypy sees the enum as exhaustive today, hence
         # the ignore — the branch is real once a new member is added.
