@@ -13,7 +13,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from langchain_classic.output_parsers import OutputFixingParser
-from langchain_core.messages import SystemMessage
 from langchain_core.output_parsers import BaseOutputParser
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -22,7 +21,7 @@ from langchain_core.prompts import (
 )
 from langchain_core.runnables import Runnable
 
-from unified_kg_rag.domain.models import LanguageModelId
+from unified_kg_rag.domain.models import LanguageModelId, ModelPurpose
 from unified_kg_rag.domain.prompts import BasePrompt, ResolvedPrompt
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import GraphRAGException, get_logger
@@ -43,26 +42,25 @@ def _build_chat_prompt(
     LangChain message templates is a backend concern. When prompt caching is
     enabled, the system message carries an ephemeral cache_control marker.
     """
-    messages: list[Any]
+    system_template: str | list[str | dict[str, Any]]
     if enable_prompt_cache:
-        system_msg = SystemMessage(
-            content=[
-                {
-                    "type": "text",
-                    "text": resolved.system_prompt_template,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ]
-        )
-        messages = [
-            system_msg,
-            HumanMessagePromptTemplate.from_template(resolved.human_prompt_template),
+        # A templated content block (not a literal SystemMessage) so system-side
+        # placeholders such as {entity_types} are substituted and escaped braces
+        # render exactly as in the non-cache path; LangChain keeps extra block
+        # keys, so the cache_control marker survives formatting.
+        system_template = [
+            {
+                "type": "text",
+                "text": resolved.system_prompt_template,
+                "cache_control": {"type": "ephemeral"},
+            }
         ]
     else:
-        messages = [
-            SystemMessagePromptTemplate.from_template(resolved.system_prompt_template),
-            HumanMessagePromptTemplate.from_template(resolved.human_prompt_template),
-        ]
+        system_template = resolved.system_prompt_template
+    messages = [
+        SystemMessagePromptTemplate.from_template(system_template),
+        HumanMessagePromptTemplate.from_template(resolved.human_prompt_template),
+    ]
     return ChatPromptTemplate.from_messages(messages)
 
 
@@ -70,13 +68,21 @@ def create_robust_xml_output_parser(
     factory: LLMFactoryPort,
     enable_output_fixing: bool,
     output_fixing_model_id: LanguageModelId,
+    model_purpose: ModelPurpose = ModelPurpose.QUERY,
 ) -> BaseOutputParser:
+    """Build the XML parser, optionally wrapped in an LLM output fixer.
+
+    ``model_purpose`` is forwarded to the fixing LLM so it gets the same
+    per-path policy (e.g. guardrail scope) as the chain it repairs.
+    """
     base_parser = RobustXMLOutputParser()
     if not enable_output_fixing:
         return base_parser
 
     try:
-        fixing_llm = factory.get_model(model_id=output_fixing_model_id)
+        fixing_llm = factory.get_model(
+            model_id=output_fixing_model_id, model_purpose=model_purpose
+        )
         logger.info(
             "Created OutputFixingParser with model: '%s'", output_fixing_model_id.value
         )
@@ -96,10 +102,20 @@ def setup_chain(
     prompt_class: type[BasePrompt],
     parser: BaseOutputParser,
     custom_prompts: CustomPromptConfig | None = None,
+    model_purpose: ModelPurpose = ModelPurpose.QUERY,
     **kwargs: Any,
 ) -> Runnable:
+    """Build ``prompt | llm | parser``.
+
+    ``model_purpose`` tells the factory which path the model serves; ingestion
+    and evaluation call sites must pass it explicitly so query-only policies
+    (guardrails with ``apply_to: query``) are not applied to them. The default
+    ``QUERY`` keeps an unmarked call site on the guarded, conservative side.
+    """
     try:
-        llm = factory.get_model(model_id=model_id, **kwargs)
+        llm = factory.get_model(
+            model_id=model_id, model_purpose=model_purpose, **kwargs
+        )
         model_info = factory.get_model_info(model_id)
         enable_prompt_cache = (
             model_info.supports_prompt_caching if model_info else False

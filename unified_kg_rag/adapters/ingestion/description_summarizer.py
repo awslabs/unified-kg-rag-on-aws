@@ -29,7 +29,7 @@ from langchain_core.output_parsers import StrOutputParser
 from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
-from unified_kg_rag.domain.models import Config, Entity, Relationship
+from unified_kg_rag.domain.models import Config, Entity, ModelPurpose, Relationship
 from unified_kg_rag.domain.prompts import DescriptionSummarizationPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import BatchProcessor
@@ -67,6 +67,7 @@ class DescriptionSummarizer:
         )
         self.batch_processor = BatchProcessor()
         self.summarizer = setup_chain(
+            model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
             model_id=self.summarization_config.summary_model_id,
             prompt_class=DescriptionSummarizationPrompt,

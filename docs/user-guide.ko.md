@@ -145,10 +145,11 @@ aws:
     enable_global_profile: true   # 크로스 리전(글로벌) Bedrock 추론 프로파일 사용 — 처리량/가용성 향상
     enable_1m_context: false      # 1M 창이 베타인 모델에서 옵트인(장문 요금 프리미엄); Claude 5는 네이티브 1M
     effort: "high"                # 적응형 사고 모델의 추론 깊이: low | medium | high | xhigh | max
-    guardrail:                    # optional Bedrock Guardrails on every LLM call
+    guardrail:                    # optional Bedrock Guardrails (query path by default)
       identifier: null            # set a guardrail ID/ARN to enable
       version: "DRAFT"
       trace: false
+      apply_to: "query"           # query | all — see the guardrail scope note below
 
   neptune:
     endpoint:                     # REQUIRED — Neptune cluster endpoint
@@ -179,6 +180,31 @@ aws:
 > **Guardrail 배치 주의:** 멀티 리전으로 배포할 때 Bedrock Guardrail은
 > `region_name`이 아니라 `bedrock.region_name`(LLM 호출이 전달되는 리전)에
 > 존재해야 합니다.
+
+> **Guardrail 적용 범위:** 기본값 `apply_to: "query"`는 사용자에게 응답하는 질의
+> 경로에만 Guardrail을 붙입니다. 답변 생성, 질의 정제, 질의 시점 엔터티·키워드
+> 추출, global/DRIFT map-reduce가 여기에 해당합니다. 인제스천 모델(청킹, 번역,
+> 그래프 추출, gleaning, claim, 설명 요약, 커뮤니티 리포트), 프롬프트 튜너와 평가
+> 모델에는 Guardrail을 붙이지 않습니다. `NAME`을 익명화하는 PII Guardrail은 추출된
+> 엔터티 이름을 `{NAME}` 같은 플레이스홀더로 바꿔 서로 다른 인물을 한 노드로
+> 병합하고, `PROMPT_ATTACK` 필터는 지시문처럼 보이는 코퍼스 텍스트를 차단해 해당
+> 청크에서 엔터티가 하나도 나오지 않게 만들기 때문입니다. Guardrail 정책이 추출에
+> 안전한 경우(예: 유해 콘텐츠는 차단하지만 PII는 마스킹하지 않는 경우)에만
+> `apply_to: "all"`을 사용합니다. Guardrail이 개입할 때마다 누적 횟수와 함께
+> WARNING 로그(`Bedrock guardrail '<id>' intervened on a <purpose> model call ...`)를
+> 남깁니다. Converse API 경로(크로스 리전 추론 프로파일 사용 시,
+> `stopReason: guardrail_intervened`)에서는 `trace` 설정과 관계없이 안정적으로
+> 감지합니다. InvokeModel 경로(`ChatBedrock`, 크로스 리전이 아닌 모델 ID 사용 시)에서는
+> `langchain_aws`가 `trace: true`일 때만 개입을 알립니다. 기본값 `trace: false`에서도
+> Guardrail은 그대로 적용되어 차단·마스킹된 응답이 반환되지만, WARNING 로그가 남지 않고
+> 누적 횟수도 0으로 유지됩니다. 이 경로에서 개입 여부를 확인해야 한다면
+> `trace: true`로 설정합니다. 이 경우 모든 응답에 Guardrail trace가 추가됩니다.
+>
+> 업그레이드 시 참고: 이전 릴리스는 모든 호출에 Guardrail을 적용했습니다. 같은
+> 동작을 유지하려면 `apply_to: "all"`로 설정합니다. 질의가 아닌 작업에서
+> `setup_chain`으로 체인을 만들거나 `get_model`을 직접 호출하는 사용자 코드는
+> `model_purpose=ModelPurpose.INGESTION`(또는 `EVALUATION`)을 넘겨야 합니다.
+> 지정하지 않은 호출은 `QUERY`로 간주해 Guardrail이 계속 적용됩니다.
 
 > **S3 캐시 암호화:** 기본값 `encryption_type: "BUCKET_DEFAULT"`는 객체별 SSE
 > 헤더를 보내지 않으므로 S3가 버킷의 기본 암호화를 적용합니다. CDK 스택에서

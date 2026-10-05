@@ -22,7 +22,13 @@ from langchain_core.output_parsers import StrOutputParser
 from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
-from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
+from unified_kg_rag.domain.models import (
+    Config,
+    Entity,
+    ModelPurpose,
+    Relationship,
+    TextUnit,
+)
 from unified_kg_rag.domain.prompts import CorpusProfilePrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import generate_stable_id, parse_llm_json
@@ -91,6 +97,7 @@ class PromptTuner:
             return CorpusProfile()
 
         chain = setup_chain(
+            model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
             model_id=self.config.search.entity_extraction_model_id,
             prompt_class=CorpusProfilePrompt,

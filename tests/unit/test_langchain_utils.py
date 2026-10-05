@@ -15,8 +15,11 @@ decorator, the async ``aexecute_with_fallback`` path, and the multi-stage
 from __future__ import annotations
 
 import threading
+from collections import Counter
+from typing import Any
 
 import pytest
+from langchain_core.runnables import RunnableLambda
 
 from unified_kg_rag.shared.utils.langchain import (
     BatchProcessor,
@@ -303,6 +306,192 @@ class TestAExecuteWithFallback:
             show_progress=False,
         )
         assert out == []
+
+
+# --------------------------------------------------------------------------- #
+# Partial batch failure: retry only the failed items
+# --------------------------------------------------------------------------- #
+class _CountingRunnable:
+    """Real LangChain Runnable whose per-item calls are counted.
+
+    ``fail_first`` maps an input value to how many of its calls raise before it
+    succeeds (``None`` = always raises).
+    """
+
+    def __init__(self, fail_first: dict[int, int | None] | None = None) -> None:
+        self.fail_first = fail_first or {}
+        self.calls: Counter[int] = Counter()
+        self._lock = threading.Lock()
+        self.runnable = RunnableLambda(self._call, afunc=self._acall)
+
+    def _call(self, item: dict[str, Any]) -> dict[str, Any]:
+        v = item["v"]
+        with self._lock:
+            self.calls[v] += 1
+            n = self.calls[v]
+        budget = self.fail_first.get(v, 0)
+        if budget is None or n <= budget:
+            raise ValueError(f"synthetic failure for item {v}")
+        return {"echo": v}
+
+    async def _acall(self, item: dict[str, Any]) -> dict[str, Any]:
+        return self._call(item)
+
+
+def _fast_bp(**kwargs: Any) -> BatchProcessor:
+    return BatchProcessor(
+        retry_multiplier=1.0,
+        retry_max_wait=0,
+        call_timeout_seconds=0,
+        chunk_concurrency=1,
+        **kwargs,
+    )
+
+
+class TestRetryFailedItemsOnly:
+    def test_one_failure_reinvokes_only_that_item(self) -> None:
+        fake = _CountingRunnable(fail_first={4: 1})  # item 4 fails once
+        bp = _fast_bp(batch_size=10, max_retries=3)
+        out = bp.execute_with_fallback(
+            items_to_process=list(range(10)),
+            prepare_inputs_func=lambda items: [{"v": i} for i in items],
+            batch_func=fake.runnable.batch,
+            sequential_func=fake.runnable.invoke,
+            task_name="t",
+            show_progress=False,
+        )
+        assert out == [{"echo": i} for i in range(10)]
+        assert all(fake.calls[i] == 1 for i in range(10) if i != 4)
+        assert fake.calls[4] == 2  # batch attempt + one retry
+
+    def test_permanently_failing_item_gets_sentinel_in_place(self) -> None:
+        fake = _CountingRunnable(fail_first={0: None, 7: None})
+        bp = _fast_bp(batch_size=10, max_retries=2)
+        out = bp.execute_with_fallback(
+            items_to_process=list(range(10)),
+            prepare_inputs_func=lambda items: [{"v": i} for i in items],
+            batch_func=fake.runnable.batch,
+            sequential_func=fake.runnable.invoke,
+            task_name="t",
+            show_progress=False,
+        )
+        expected: list[Any] = [{"echo": i} for i in range(10)]
+        expected[0] = {}
+        expected[7] = {}
+        assert out == expected
+        assert fake.calls[0] == 3  # batch attempt + max_retries
+        assert fake.calls[7] == 3
+        assert all(fake.calls[i] == 1 for i in range(1, 10) if i != 7)
+
+    def test_order_preserved_across_concurrent_chunks(self) -> None:
+        fake = _CountingRunnable(fail_first={2: 1, 9: 1, 13: 1})
+        bp = BatchProcessor(
+            batch_size=4,
+            chunk_concurrency=3,
+            max_retries=3,
+            retry_multiplier=1.0,
+            retry_max_wait=0,
+            call_timeout_seconds=0,
+        )
+        out = bp.execute_with_fallback(
+            items_to_process=list(range(15)),
+            prepare_inputs_func=lambda items: [{"v": i} for i in items],
+            batch_func=fake.runnable.batch,
+            sequential_func=fake.runnable.invoke,
+            task_name="t",
+            show_progress=False,
+        )
+        assert out == [{"echo": i} for i in range(15)]
+        assert sum(fake.calls.values()) == 15 + 3
+
+    def test_all_items_failing_behaves_as_before(self) -> None:
+        fake = _CountingRunnable(fail_first=dict.fromkeys(range(4)))
+        bp = _fast_bp(batch_size=10, max_retries=2)
+        out = bp.execute_with_fallback(
+            items_to_process=list(range(4)),
+            prepare_inputs_func=lambda items: [{"v": i} for i in items],
+            batch_func=fake.runnable.batch,
+            sequential_func=fake.runnable.invoke,
+            task_name="t",
+            show_progress=False,
+        )
+        assert out == [{}, {}, {}, {}]
+        assert all(fake.calls[i] == 3 for i in range(4))
+
+    def test_whole_batch_exception_still_reruns_every_item(self) -> None:
+        # A batch_func that raises outright (no per-item results) keeps the
+        # legacy full sequential fallback.
+        seq_calls: list[int] = []
+
+        def batch(inputs, config=None):  # noqa: ANN001, ARG001
+            raise RuntimeError("batch boom")
+
+        def sequential(item):  # noqa: ANN001
+            seq_calls.append(item["v"])
+            return {"echo": item["v"]}
+
+        out = _fast_bp(batch_size=10).execute_with_fallback(
+            items_to_process=[1, 2, 3],
+            prepare_inputs_func=lambda items: [{"v": i} for i in items],
+            batch_func=batch,
+            sequential_func=sequential,
+            task_name="t",
+            show_progress=False,
+        )
+        assert out == [{"echo": 1}, {"echo": 2}, {"echo": 3}]
+        assert seq_calls == [1, 2, 3]
+
+    def test_return_exceptions_only_passed_when_accepted(self) -> None:
+        seen: dict[str, Any] = {}
+
+        def legacy(inputs, config=None):  # noqa: ANN001
+            seen["legacy"] = config
+            return [{"ok": 1} for _ in inputs]
+
+        def modern(inputs, config=None, return_exceptions=False):  # noqa: ANN001
+            seen["modern"] = return_exceptions
+            return [{"ok": 1} for _ in inputs]
+
+        for func in (legacy, modern):
+            _fast_bp().execute_with_fallback(
+                items_to_process=[1],
+                prepare_inputs_func=lambda items: [{"v": i} for i in items],
+                batch_func=func,
+                sequential_func=lambda item: {},
+                task_name="t",
+                show_progress=False,
+            )
+        assert seen["legacy"] is not None
+        assert seen["modern"] is True
+
+    async def test_async_one_failure_reinvokes_only_that_item(self) -> None:
+        fake = _CountingRunnable(fail_first={3: 1})
+        bp = _fast_bp(batch_size=10, max_retries=3)
+        out = await bp.aexecute_with_fallback(
+            items_to_process=list(range(10)),
+            prepare_inputs_func=lambda items: [{"v": i} for i in items],
+            batch_func=fake.runnable.abatch,
+            sequential_func=fake.runnable.ainvoke,
+            task_name="t",
+            show_progress=False,
+        )
+        assert out == [{"echo": i} for i in range(10)]
+        assert all(fake.calls[i] == 1 for i in range(10) if i != 3)
+        assert fake.calls[3] == 2
+
+    async def test_async_all_failing_keeps_sentinels(self) -> None:
+        fake = _CountingRunnable(fail_first=dict.fromkeys(range(3)))
+        bp = _fast_bp(batch_size=10, max_retries=2)
+        out = await bp.aexecute_with_fallback(
+            items_to_process=list(range(3)),
+            prepare_inputs_func=lambda items: [{"v": i} for i in items],
+            batch_func=fake.runnable.abatch,
+            sequential_func=fake.runnable.ainvoke,
+            task_name="t",
+            show_progress=False,
+        )
+        assert out == [{}, {}, {}]
+        assert all(fake.calls[i] == 3 for i in range(3))
 
 
 # --------------------------------------------------------------------------- #

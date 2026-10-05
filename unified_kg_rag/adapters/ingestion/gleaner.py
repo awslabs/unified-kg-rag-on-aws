@@ -21,7 +21,13 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     check_relationship_relevance_task,
 )
 from unified_kg_rag.domain.ingestion.entity_grounding import is_grounded
-from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
+from unified_kg_rag.domain.models import (
+    Config,
+    Entity,
+    ModelPurpose,
+    Relationship,
+    TextUnit,
+)
 from unified_kg_rag.domain.prompts import GraphRefinementPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
@@ -204,11 +210,13 @@ class GraphGleaner(BaseProcessor):
         )
 
         robust_xml_output_parser = create_robust_xml_output_parser(
+            model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
             enable_output_fixing=self.config.fixing.enabled,
             output_fixing_model_id=self.config.fixing.fixing_model_id,
         )
         self.graph_refiner = setup_chain(
+            model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
             model_id=self.gleaning_config.graph_refinement_model_id,
             prompt_class=GraphRefinementPrompt,

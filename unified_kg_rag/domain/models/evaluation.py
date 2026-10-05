@@ -101,6 +101,17 @@ class EvaluationResult(BaseModel):
         default_factory=dict,
         description="Additional metadata and system-specific information.",
     )
+    error: bool = Field(
+        default=False,
+        description=(
+            "True when answer generation failed (e.g. the RAG chain returned its "
+            "error fallback under ignore_errors). Errored results are counted as "
+            "failed and are not scored by any evaluator."
+        ),
+    )
+    error_message: str | None = Field(
+        default=None, description="Reason answer generation failed, if known."
+    )
 
 
 class EvaluationMetric(BaseModel):
@@ -166,4 +177,15 @@ class EvaluationSummary(BaseModel):
     configuration: dict[str, Any] = Field(
         default_factory=dict,
         description="The evaluation configuration settings used for this run.",
+    )
+    metric_outcomes: dict[str, dict[str, dict[str, int]]] = Field(
+        default_factory=dict,
+        description=(
+            "Per-evaluator, per-metric outcome counts: "
+            "{evaluator: {metric: {'scored', 'failed', 'skipped'}}}. 'scored' "
+            "values feed metric_statistics; 'failed' (the evaluator errored or "
+            "returned an uncomputable value) and 'skipped' (not applicable, e.g. "
+            "empty reference answer or failed answer generation) are excluded "
+            "from the means."
+        ),
     )

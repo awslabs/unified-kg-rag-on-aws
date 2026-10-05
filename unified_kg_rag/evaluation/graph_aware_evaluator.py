@@ -32,7 +32,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.shared import get_logger
 
-from .base import BaseGraphRAGEvaluator
+from .base import SKIPPED_METRICS_KEY, BaseGraphRAGEvaluator
 
 logger = get_logger(__name__)
 
@@ -48,6 +48,12 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
     def _initialize_evaluator(self, **kwargs: Any) -> None:
         # Pure, deterministic evaluator — no model to initialize.
         pass
+
+    def metric_types(self) -> list[EvaluationMetricType]:
+        return [
+            EvaluationMetricType.ENTITY_COVERAGE,
+            EvaluationMetricType.RELATIONSHIP_COVERAGE,
+        ]
 
     @staticmethod
     def _tokenize(text: str) -> list[str]:
@@ -171,6 +177,15 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
             "expected_relationship_count": len(expected_relationships),
             "matched_relationship_count": r_matched,
         }
+        skipped: dict[str, str] = {}
+        if not expected_entities:
+            skipped[EvaluationMetricType.ENTITY_COVERAGE.value] = "no_expected_entities"
+        if not expected_relationships:
+            skipped[EvaluationMetricType.RELATIONSHIP_COVERAGE.value] = (
+                "no_expected_relationships"
+            )
+        if skipped:
+            metadata[SKIPPED_METRICS_KEY] = skipped
         return metrics, metadata
 
     def evaluate_single(
