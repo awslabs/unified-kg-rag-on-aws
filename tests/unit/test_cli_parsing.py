@@ -13,6 +13,7 @@ pipeline / tuner construction is patched so nothing touches AWS.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,7 @@ from unified_kg_rag.application.cli import (
     run_rag_chain,
     run_visualization,
 )
-from unified_kg_rag.domain.models import SearchStrategy, SearchType
+from unified_kg_rag.domain.models import EvaluationSummary, SearchStrategy, SearchType
 
 pytestmark = pytest.mark.unit
 
@@ -176,6 +177,37 @@ def test_eval_runner_existing_file_ok(config, mocker, tmp_path) -> None:
     args = _eval_parser().parse_args(["--eval-data-path", str(data)])
     runner = run_evaluation.EvaluationRunner(args, rag_chain=object())  # no exit
     assert runner.args.eval_data_path == data
+
+
+def test_eval_parser_max_failure_rate_default_and_range() -> None:
+    assert _eval_parser().parse_args(["--eval-data-path", "d"]).max_failure_rate == 1.0
+    args = _eval_parser().parse_args(
+        ["--eval-data-path", "d", "--max-failure-rate", "0.2"]
+    )
+    assert args.max_failure_rate == 0.2
+    with pytest.raises(SystemExit):
+        _eval_parser().parse_args(["--eval-data-path", "d", "--max-failure-rate", "2"])
+
+
+@pytest.mark.parametrize(
+    ("total", "failed", "budget", "expected"),
+    [
+        (10, 10, 1.0, True),  # all failed always fails the run
+        (10, 9, 1.0, False),
+        (10, 3, 0.2, True),
+        (10, 2, 0.2, False),
+        (10, 0, 0.0, False),
+    ],
+)
+def test_eval_exceeds_failure_budget(total, failed, budget, expected) -> None:
+    summary = EvaluationSummary(
+        total_queries=total,
+        successful_evaluations=total - failed,
+        failed_evaluations=failed,
+        evaluation_start_time=datetime(2026, 1, 1),
+        evaluation_end_time=datetime(2026, 1, 1),
+    )
+    assert run_evaluation.exceeds_failure_budget(summary, budget) is expected
 
 
 # --- run_ingestion_pipeline: parser --------------------------------------

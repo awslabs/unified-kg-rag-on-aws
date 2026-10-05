@@ -36,6 +36,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.evaluation.evaluation_manager import GraphAwareEvaluator
+from unified_kg_rag.shared import EvaluationException
 
 pytestmark = pytest.mark.unit
 
@@ -100,21 +101,51 @@ class TestLoadData:
         queries, _ = EvaluationManager.load_data(path)
         assert [q.query_id for q in queries] == ["qq", "ii", "q_2"]
 
-    def test_skips_items_without_question(self, tmp_path) -> None:
+    @pytest.mark.parametrize(
+        ("payload", "match"),
+        [
+            ({"questions": []}, "must be a JSON array"),
+            ([], "contains no queries"),
+            ([{"question": "ok"}, "not a dict"], "index 1: expected an object"),
+            ([{"id": "a1", "answer": "x"}], "index 0 \\(query_id 'a1'\\).*question"),
+            ([{"question": "  "}], "question"),
+            ([{"question": "q", "metadata": []}], "'metadata' must be an object"),
+            (
+                [{"question": "q"}, {"id": "q_0", "question": "r"}],
+                "duplicate query_id 'q_0'",
+            ),
+            (
+                [{"id": "s1", "question": "q", "metadata": {"search_strategy": "x"}}],
+                "(?s)query_id 's1'.*search_strategy",
+            ),
+            (
+                [{"id": "t1", "question": "q", "expected_entities": "Vendor"}],
+                "(?s)query_id 't1'.*expected_entities",
+            ),
+        ],
+    )
+    def test_invalid_dataset_fails_fast_with_location(
+        self, tmp_path, payload, match
+    ) -> None:
+        path = tmp_path / "data.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.raises(EvaluationException, match=match):
+            EvaluationManager.load_data(path)
+
+    def test_base_metadata_is_validated_too(self, tmp_path) -> None:
+        path = tmp_path / "data.json"
+        path.write_text(json.dumps([{"question": "q"}]), encoding="utf-8")
+        with pytest.raises(EvaluationException, match="top_k"):
+            EvaluationManager.load_data(path, base_metadata={"top_k": "many"})
+
+    def test_non_rag_metadata_keys_pass_through(self, tmp_path) -> None:
         path = tmp_path / "data.json"
         path.write_text(
-            json.dumps(
-                [
-                    {"question": "ok", "answer": "a"},
-                    {"answer": "no question"},  # skipped
-                    "not a dict",  # skipped
-                ]
-            ),
+            json.dumps([{"question": "q", "metadata": {"answer_aliases": ["x"]}}]),
             encoding="utf-8",
         )
-        queries, gts = EvaluationManager.load_data(path)
-        assert len(queries) == 1
-        assert queries[0].question == "ok"
+        queries, _ = EvaluationManager.load_data(path)
+        assert queries[0].metadata["answer_aliases"] == ["x"]
 
     def test_ground_truth_built_from_expected_only(self, tmp_path) -> None:
         # No textual answer, but expected_entities present -> still build a GT.

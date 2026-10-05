@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.runnables import Runnable
+from pydantic import ValidationError
 
-from unified_kg_rag.application.retrieval.rag_chain import RAGOutput
+from unified_kg_rag.application.retrieval.rag_chain import RAGInput, RAGOutput
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationGroundTruth,
@@ -104,75 +105,119 @@ class EvaluationManager:
     def load_data(
         eval_data_path: str | Path, base_metadata: dict[str, Any] | None = None
     ) -> tuple[list[EvaluationQuery], list[EvaluationGroundTruth]]:
+        """Load and validate an evaluation dataset (a JSON array of objects).
+
+        Fails fast with an ``EvaluationException`` naming the item index and
+        query id on any malformed item — a missing/blank ``question``, a
+        duplicate id, a field of the wrong type, or ``metadata`` the RAG chain
+        would reject (e.g. an unknown ``search_strategy``) — instead of
+        skipping it or failing per query mid-run. An empty dataset is an error.
+        """
         if not eval_data_path:
             raise ValueError("Evaluation data path is required.")
-
-        if base_metadata is None:
-            base_metadata = {}
 
         try:
             with open(eval_data_path, encoding="utf-8") as f:
                 data = json.load(f)
-
-            queries = []
-            ground_truths = []
-
-            cleaned_base_metadata = {
-                k: v for k, v in base_metadata.items() if v is not None
-            }
-
-            for i, item in enumerate(data):
-                if not isinstance(item, dict) or "question" not in item:
-                    logger.warning("Skipping invalid item at index %s: '%s'", i, item)
-                    continue
-
-                final_metadata = cleaned_base_metadata.copy()
-                final_metadata.update(item.get("metadata", {}))
-
-                query_id = str(item.get("query_id", item.get("id", f"q_{i}")))
-                query = EvaluationQuery(
-                    query_id=query_id,
-                    question=item["question"],
-                    category=item.get("category"),
-                    difficulty=item.get("difficulty"),
-                    metadata=final_metadata,
-                )
-                queries.append(query)
-
-                # Build a ground truth when ANY ground-truth signal is present —
-                # not only a textual answer — so graph-aware evaluation works on
-                # datasets that supply only expected_entities/relationships.
-                answer = item.get("answer")
-                expected_entities = item.get("expected_entities", [])
-                expected_relationships = item.get("expected_relationships", [])
-                reference_sources = item.get("reference_sources", [])
-                if answer or expected_entities or expected_relationships:
-                    gt = EvaluationGroundTruth(
-                        query_id=query_id,
-                        ground_truth=str(answer) if answer else "",
-                        reference_sources=reference_sources,
-                        expected_entities=expected_entities,
-                        expected_relationships=expected_relationships,
-                    )
-                    ground_truths.append(gt)
-
-            logger.info(
-                "Loaded %s queries and %s ground truths from '%s'.",
-                len(queries),
-                len(ground_truths),
-                eval_data_path,
-            )
-            return queries, ground_truths
-
         except FileNotFoundError:
             logger.error("Evaluation data file not found: '%s'", eval_data_path)
             raise
         except json.JSONDecodeError as e:
             logger.error("Error decoding JSON from '%s': %s", eval_data_path, e)
             raise
-        except Exception as e:
-            logger.error("Failed to load data from '%s': %s", eval_data_path, e)
-            raise
+
+        if not isinstance(data, list):
+            raise EvaluationException(
+                f"Evaluation data '{eval_data_path}' must be a JSON array of "
+                f"objects, got {type(data).__name__}."
+            )
+        if not data:
+            raise EvaluationException(
+                f"Evaluation data '{eval_data_path}' contains no queries."
+            )
+
+        cleaned_base_metadata = {
+            k: v for k, v in (base_metadata or {}).items() if v is not None
+        }
+        queries: list[EvaluationQuery] = []
+        ground_truths: list[EvaluationGroundTruth] = []
+        seen_ids: set[str] = set()
+
+        for i, item in enumerate(data):
+            query, gt = EvaluationManager._parse_item(i, item, cleaned_base_metadata)
+            if query.query_id in seen_ids:
+                raise EvaluationException(
+                    f"Invalid evaluation item at index {i}: duplicate query_id "
+                    f"'{query.query_id}'."
+                )
+            seen_ids.add(query.query_id)
+            queries.append(query)
+            if gt is not None:
+                ground_truths.append(gt)
+
+        logger.info(
+            "Loaded %s queries and %s ground truths from '%s'.",
+            len(queries),
+            len(ground_truths),
+            eval_data_path,
+        )
+        return queries, ground_truths
+
+    @staticmethod
+    def _parse_item(
+        index: int, item: Any, base_metadata: dict[str, Any]
+    ) -> tuple[EvaluationQuery, EvaluationGroundTruth | None]:
+        """Validate one dataset item; raise with its index and query id."""
+        if not isinstance(item, dict):
+            raise EvaluationException(
+                f"Invalid evaluation item at index {index}: expected an object, "
+                f"got {type(item).__name__}."
+            )
+        query_id = str(item.get("query_id", item.get("id", f"q_{index}")))
+        where = f"Invalid evaluation item at index {index} (query_id '{query_id}')"
+
+        question = item.get("question")
+        if not isinstance(question, str) or not question.strip():
+            raise EvaluationException(
+                f"{where}: 'question' must be a non-empty string."
+            )
+        item_metadata = item.get("metadata", {})
+        if not isinstance(item_metadata, dict):
+            raise EvaluationException(f"{where}: 'metadata' must be an object.")
+
+        final_metadata = {**base_metadata, **item_metadata}
+        rag_fields = {
+            k: v for k, v in final_metadata.items() if k in RAGInput.model_fields
+        }
+        try:
+            # Validate what the RAG chain will receive now, not per query later.
+            RAGInput.model_validate({**rag_fields, "query": question})
+            query = EvaluationQuery(
+                query_id=query_id,
+                question=question,
+                category=item.get("category"),
+                difficulty=item.get("difficulty"),
+                metadata=final_metadata,
+            )
+            # Build a ground truth when ANY ground-truth signal is present —
+            # not only a textual answer — so graph-aware evaluation works on
+            # datasets that supply only expected_entities/relationships.
+            answer = item.get("answer")
+            expected_entities = item.get("expected_entities") or []
+            expected_relationships = item.get("expected_relationships") or []
+            reference_sources = item.get("reference_sources") or []
+            gt = None
+            if answer or expected_entities or expected_relationships:
+                gt = EvaluationGroundTruth(
+                    query_id=query_id,
+                    ground_truth=str(answer) if answer else "",
+                    reference_sources=reference_sources,
+                    expected_entities=expected_entities,
+                    expected_relationships=expected_relationships,
+                )
+        except ValidationError as e:
+            raise EvaluationException(f"{where}: {e}") from e
+        return query, gt
 
     async def evaluate_dataset(
         self,
