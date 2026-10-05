@@ -18,7 +18,7 @@ environments are separated by account/region and tracked via the `env` tag.
 | `GraphRagOrchestration` | Step Functions state machine — 4 resumable phases on Fargate + retries + SNS alarms |
 | `GraphRagObservability` | CloudWatch dashboard + alarms: pipeline-failure, silent indexing-failure (EMF), and store health (OpenSearch cluster-red / free-storage / JVM pressure, DynamoDB write throttling) → SNS. Synth warns if `alarm_email` is unset (alarms would have no subscriber) |
 | `GraphRagSecurity` | Shared customer-managed KMS key (optional, `use_cmk`) |
-| `GraphRagGuardrail` | Bedrock Guardrail, **pinned to `bedrock_region`** (reuse or create a baseline PII/prompt-attack guardrail) |
+| `GraphRagGuardrail` | Bedrock Guardrail, **pinned to `bedrock_region`** (creates and keeps a baseline PII/prompt-attack guardrail; empty with `create_guardrail=false`) |
 
 ### Resource naming
 
@@ -55,6 +55,20 @@ derived) to avoid replace-on-rename conflicts.
 > cdk deploy --all -c guardrail_identifier=<id> -c bedrock_region=us-west-2 …
 > ```
 >
+> Keep passing `-c guardrail_identifier=<id>` on every later deploy, or compute
+> stops injecting it. The guardrail stack keeps owning the guardrail in step 2
+> and afterwards: `guardrail_identifier` only selects the id compute **uses**,
+> and creation is controlled separately by `create_guardrail`. To use an
+> externally managed guardrail instead, pass
+> `-c create_guardrail=false -c guardrail_identifier=<id>`; the stack then
+> creates nothing.
+>
+> The created guardrail has a `RETAIN` removal policy (regardless of
+> `removal_destroy`) because its id reaches compute outside CloudFormation.
+> After `cdk destroy`, delete it manually
+> (`aws bedrock delete-guardrail --guardrail-identifier <id> --region <bedrock_region>`);
+> otherwise the next deploy fails on the duplicate `graphrag-guardrail-<region>` name.
+>
 > Always pass `-c key=value` flags as **individual arguments** — collapsing them
 > into one shell variable corrupts context parsing (vpc_id is silently dropped →
 > `Vpc.from_lookup` falls back to a dummy VPC).
@@ -84,7 +98,8 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `fargate_cpu` | `2048` | Fargate task vCPU units (in-task ProcessPool extractors scale with vCPU) |
 | `fargate_memory` | `8192` | Fargate task memory (MiB) |
 | `image_tag` | `latest` | container image tag the task pulls; pin a version tag to make ECR tags immutable |
-| `guardrail_identifier` | _(none)_ | **reuse** an existing Bedrock guardrail (else a baseline PII/prompt-attack guardrail is created and its id injected as `BEDROCK_GUARDRAIL_IDENTIFIER`) |
+| `create_guardrail` | `true` | `GraphRagGuardrail` creates and keeps a baseline PII/prompt-attack guardrail in `bedrock_region` (retained on stack deletion). `false` = bring your own guardrail; nothing is created |
+| `guardrail_identifier` | _(none)_ | guardrail id the compute task **uses**, injected as `BEDROCK_GUARDRAIL_IDENTIFIER`. The created guardrail's id is **not** injected automatically: pass the `GuardrailIdentifier` output of `GraphRagGuardrail` here (two-step flow above), or an external id with `create_guardrail=false`. Unset = no guardrail on the task |
 | `use_cmk` | `false` | customer-managed KMS key for at-rest encryption (S3/Neptune/OpenSearch/SNS/DDB) |
 | `vpc_flow_logs` | `false` (dev) / `true` (non-dev) | enable VPC flow logs (created VPC only) |
 | `deletion_protection` | `false` | protect Neptune/OpenSearch from deletion |

@@ -33,7 +33,11 @@ Context keys (all optional; sensible defaults shown):
   backup_retention_days 7              Neptune automated backup retention
 
   # --- Security ---
-  guardrail_identifier None            attach an existing Bedrock guardrail
+  create_guardrail    True             GuardrailStack owns (creates + keeps) a
+                                       baseline guardrail; false = bring your own
+  guardrail_identifier None            guardrail id the compute task USES
+                                       (BEDROCK_GUARDRAIL_IDENTIFIER); does NOT
+                                       disable creation
   use_cmk             False            customer-managed KMS key for at-rest
                                        encryption (S3/Neptune/OpenSearch/SNS/DDB)
   vpc_flow_logs       dev:False/else:True  enable VPC flow logs (created VPC only)
@@ -87,6 +91,9 @@ class DeploymentConfig:
     # non-dev, which also flips the ECR repo to immutable tags (provenance).
     image_tag: str
     # security
+    # "create" and "use" are separate so the two-step deploy (create the
+    # guardrail, then pass its id) never drops the guardrail from the template.
+    create_guardrail: bool
     guardrail_identifier: str | None
     use_cmk: bool
     vpc_flow_logs: bool
@@ -194,6 +201,7 @@ class DeploymentConfig:
             fargate_cpu=int(ctx("fargate_cpu", 2048)),
             fargate_memory=int(ctx("fargate_memory", 8192)),
             image_tag=ctx("image_tag", "latest") or "latest",
+            create_guardrail=as_bool(ctx("create_guardrail"), default=True),
             guardrail_identifier=ctx("guardrail_identifier"),
             use_cmk=as_bool(ctx("use_cmk"), default=False),
             vpc_flow_logs=as_bool(ctx("vpc_flow_logs"), default=not is_dev),
