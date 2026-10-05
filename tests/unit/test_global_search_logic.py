@@ -405,3 +405,16 @@ def test_parse_map_points_overflow_string_score() -> None:
     raw = '{"points": [{"description": "big", "score": "1e999"}]}'
     pts = GlobalSearchStrategy._parse_map_points(raw)
     assert pts[0].score == 0  # 1e999 -> inf -> coerced to 0
+
+
+def test_default_global_config_skips_per_report_llm_scoring() -> None:
+    from unified_kg_rag.domain.models import Config
+
+    config = Config()
+    gs = config.search.global_search
+    # The map step already rates the reports; the per-report pre-filter is opt-in.
+    assert gs.enable_map_reduce is True
+    assert gs.use_dynamic_selection is False
+    assert gs.map_batch_size == 5
+    strategy = GlobalSearchStrategy(config=config, retrievers={})
+    assert not hasattr(strategy, "community_relevance_scorer")

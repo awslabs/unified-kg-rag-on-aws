@@ -489,7 +489,10 @@ search:
     map_reduce_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     max_communities: 10
     relevance_threshold: 0.5
-    use_dynamic_selection: true
+    # Per-report LLM relevance scoring before map-reduce (one call per
+    # report). Off by default: the map step already rates and filters the
+    # reports for the query. Mainly useful with enable_map_reduce: false.
+    use_dynamic_selection: false
     enable_map_reduce: true
     # Timeout (seconds) for the Neptune community-graph retrieval; raise for very
     # large graphs or slow clusters.
@@ -505,7 +508,9 @@ search:
     # Map model is cheap by default (rating is cheap).
     map_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     # Community reports packed into one map LLM call (calls run concurrently).
-    map_batch_size: 2
+    # 5 keeps a map prompt near MS GraphRAG's 12K-token map context for reports
+    # of 1-2K tokens; lower it for long reports.
+    map_batch_size: 5
     # Drop map key points whose 0-100 score is at or below this (0 keeps any
     # positive score).
     map_relevance_threshold: 0

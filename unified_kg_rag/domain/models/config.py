@@ -1356,8 +1356,17 @@ class GlobalSearchConfig(BaseModel):
         description="Minimum relevance score required for community selection",
     )
     use_dynamic_selection: bool = Field(
-        default=True,
-        description="Enable dynamic community selection based on query characteristics",
+        default=False,
+        description=(
+            "Score every retrieved community report for query relevance with an "
+            "LLM (one call per report) before map-reduce. Off by default: the map "
+            "step already rates each report's key points for the query and drops "
+            "the irrelevant ones, so this pre-filter repeats that judgement at the "
+            "cost of max_communities extra LLM calls per query (MS GraphRAG's "
+            "dynamic community selection is also off by default). Useful mainly "
+            "with enable_map_reduce=false; when off, communities are ranked by "
+            "their indexed rank and rating."
+        ),
     )
     enable_map_reduce: bool = Field(
         default=True,
@@ -1388,10 +1397,15 @@ class GlobalSearchConfig(BaseModel):
         "so a fast/cheap model (e.g. Haiku) is the sensible default.",
     )
     map_batch_size: int = Field(
-        default=2,
+        default=5,
         ge=1,
-        description="Number of community reports packed into one map-step LLM "
-        "call; map calls are fanned over batches concurrently via BatchProcessor.",
+        description=(
+            "Number of community reports packed into one map-step LLM call; map "
+            "calls are fanned over batches concurrently via BatchProcessor. "
+            "Default 5 keeps a map prompt near MS GraphRAG's 12K-token map "
+            "context (data_max_tokens) for reports of 1-2K tokens, and halves the "
+            "map calls per query compared with 2. Lower it if reports are long."
+        ),
     )
     map_relevance_threshold: int = Field(
         default=0,

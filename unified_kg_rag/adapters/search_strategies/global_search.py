@@ -74,13 +74,15 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         )
 
         str_output_parser = StrOutputParser()
-        self.community_relevance_scorer: Runnable = setup_chain(
-            factory=factory,
-            model_id=self.global_search_config.community_relevance_model_id,
-            prompt_class=CommunityRelevancePrompt,
-            parser=str_output_parser,
-            retry=config.search.llm_retry,
-        )
+        # Built only when the opt-in per-report LLM relevance scoring is on.
+        if self.global_search_config.use_dynamic_selection:
+            self.community_relevance_scorer: Runnable = setup_chain(
+                factory=factory,
+                model_id=self.global_search_config.community_relevance_model_id,
+                prompt_class=CommunityRelevancePrompt,
+                parser=str_output_parser,
+                retry=config.search.llm_retry,
+            )
         # MAP step: rate community-report key points (0-100) for the query. Cheap
         # model by default since rating is cheap. StrOutputParser + a robust JSON
         # parse below keeps map output handling fault-tolerant. No ``retry`` here:

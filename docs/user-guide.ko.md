@@ -489,7 +489,7 @@ search:
 
   global_search:
     max_communities: 10
-    use_dynamic_selection: true
+    use_dynamic_selection: false
     enable_map_reduce: true
     map_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     max_map_reduce_tokens: 8000
