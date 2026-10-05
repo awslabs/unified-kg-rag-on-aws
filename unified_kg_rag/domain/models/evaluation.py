@@ -206,3 +206,20 @@ class EvaluationSummary(BaseModel):
             "from the means."
         ),
     )
+    grouped_statistics: dict[str, dict[str, dict[str, dict[str, float]]]] = Field(
+        default_factory=dict,
+        description=(
+            "metric_statistics split by query attribute: {dimension: {value: "
+            "{metric: stats}}} for 'search_strategy' (the strategy actually used, "
+            "which varies per query under auto), 'category' and 'difficulty'. A "
+            "dimension appears only when at least one scored query has a value."
+        ),
+    )
+    run_manifest: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "What produced this run, for comparing runs: CLI arguments, model ids "
+            "(answer generation, evaluation judge/embedding), package version, "
+            "dataset path + sha256, and creation timestamp (UTC)."
+        ),
+    )

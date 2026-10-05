@@ -210,6 +210,43 @@ def test_eval_exceeds_failure_budget(total, failed, budget, expected) -> None:
     assert run_evaluation.exceeds_failure_budget(summary, budget) is expected
 
 
+class _DictChain:
+    def __init__(self, error: bool) -> None:
+        self.error = error
+
+    async def ainvoke(self, inputs, config=None):
+        meta = {"search_strategy": "local", "processing_time": 0.1}
+        if self.error:
+            meta["error"] = True
+        return {"answer": "Vendor", "sources": [], "metadata": meta}
+
+    async def abatch(self, inputs, config=None):
+        return [await self.ainvoke(i) for i in inputs]
+
+
+@pytest.mark.parametrize(("error", "code"), [(False, 0), (True, 1)])
+async def test_eval_runner_exit_code_and_manifest(
+    config, mocker, tmp_path, error, code
+) -> None:
+    import json
+
+    config.evaluation.enabled_evaluators = []
+    mocker.patch.object(run_evaluation, "get_config", return_value=config)
+    mocker.patch.object(run_evaluation, "display_ascii_art")
+    data = tmp_path / "eval.json"
+    data.write_text(json.dumps([{"question": "Who ships?", "answer": "Vendor"}]))
+    out = tmp_path / "out"
+    args = _eval_parser().parse_args(
+        ["--eval-data-path", str(data), "--outputs-directory", str(out)]
+    )
+    runner = run_evaluation.EvaluationRunner(args, rag_chain=_DictChain(error))
+    assert await runner.run() == code
+    summary_file = next(out.glob("evaluation_summary_*.json"))
+    manifest = json.loads(summary_file.read_text())["run_manifest"]
+    assert manifest["cli_args"]["eval_data_path"] == str(data)
+    assert len(manifest["dataset"]["sha256"]) == 64
+
+
 # --- run_ingestion_pipeline: parser --------------------------------------
 
 

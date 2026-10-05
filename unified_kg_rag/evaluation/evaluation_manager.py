@@ -1,10 +1,12 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import hashlib
 import json
 import statistics
 from collections import defaultdict
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
@@ -586,10 +588,85 @@ class EvaluationManager:
             average_response_time=avg_response_time,
             metric_statistics=self._calculate_metric_statistics(reports),
             metric_outcomes=self._calculate_metric_outcomes(results, reports),
+            grouped_statistics=self._calculate_grouped_statistics(
+                queries, results, reports
+            ),
             evaluation_start_time=start_time,
             evaluation_end_time=end_time,
             configuration=self.config.evaluation.model_dump(),
         )
+
+    @classmethod
+    def _calculate_grouped_statistics(
+        cls,
+        queries: list[EvaluationQuery],
+        results: list[EvaluationResult],
+        reports: list[EvaluationReport],
+    ) -> dict[str, dict[str, dict[str, dict[str, float]]]]:
+        """Metric statistics per actual strategy, category and difficulty.
+
+        A pooled mean hides that ``auto`` answers queries with different
+        strategies, and mixes easy and hard questions; grouping makes runs and
+        strategies comparable.
+        """
+        attributes: dict[str, dict[str, str | None]] = {
+            q.query_id: {"category": q.category, "difficulty": q.difficulty}
+            for q in queries
+        }
+        for r in results:
+            attributes.setdefault(r.query_id, {})["search_strategy"] = r.search_strategy
+
+        grouped: dict[str, dict[str, dict[str, dict[str, float]]]] = {}
+        for dimension in ("search_strategy", "category", "difficulty"):
+            buckets: dict[str, list[EvaluationReport]] = defaultdict(list)
+            for report in reports:
+                value = attributes.get(report.query_id, {}).get(dimension)
+                if value:
+                    buckets[str(value)].append(report)
+            stats = {
+                value: cls._calculate_metric_statistics(bucket)
+                for value, bucket in sorted(buckets.items())
+            }
+            if any(stats.values()):
+                grouped[dimension] = stats
+        return grouped
+
+    def build_run_manifest(
+        self, eval_data_path: str | Path, cli_args: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Record what produced a run so two summaries can be compared."""
+        path = Path(eval_data_path)
+        try:
+            package_version = version("unified-kg-rag-on-aws")
+        except PackageNotFoundError:
+            package_version = "unknown"
+        enabled = set(self.evaluators) or set(self.config.evaluation.enabled_evaluators)
+        uses_judge = bool(enabled & {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS})
+        evaluation = self.config.evaluation
+        return {
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "package_version": package_version,
+            "dataset": {
+                "path": str(path),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            },
+            "cli_args": {
+                k: str(v) if isinstance(v, Path) else v
+                for k, v in (cli_args or {}).items()
+            },
+            "models": {
+                "answer_generation": self.config.search.answer_generation_model_id.value,
+                "evaluation_judge": (
+                    evaluation.evaluation_model_id.value if uses_judge else None
+                ),
+                "evaluation_embedding": (
+                    evaluation.embedding_model_id.value
+                    if EvaluatorType.RAGAS in enabled
+                    else None
+                ),
+            },
+            "enabled_evaluators": sorted(e.value for e in enabled),
+        }
 
     def _calculate_metric_outcomes(
         self,
@@ -662,19 +739,23 @@ class EvaluationManager:
             outputs_dir = Path(outputs_dir)
         outputs_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Name files after the strategy when every answered query used the same
+        # one, so runs of different strategies are distinguishable on disk.
+        strategies = {r.search_strategy for r in results if r.search_strategy}
+        stem = f"{strategies.pop()}_{timestamp}" if len(strategies) == 1 else timestamp
 
         if self.config.evaluation.save_detailed_results:
             self._save_json(
-                outputs_dir / f"evaluation_results_{timestamp}.json",
+                outputs_dir / f"evaluation_results_{stem}.json",
                 [r.model_dump() for r in results],
             )
             self._save_json(
-                outputs_dir / f"evaluation_reports_{timestamp}.json",
+                outputs_dir / f"evaluation_reports_{stem}.json",
                 [r.model_dump() for r in reports],
             )
 
         self._save_json(
-            outputs_dir / f"evaluation_summary_{timestamp}.json", summary.model_dump()
+            outputs_dir / f"evaluation_summary_{stem}.json", summary.model_dump()
         )
         logger.info("Evaluation results saved to '%s'", outputs_dir)
 

@@ -258,6 +258,9 @@ class EvaluationRunner:
             queries=queries, ground_truths=ground_truths, show_progress=True
         )
         total_time = time.time() - start_time
+        summary.run_manifest = self.evaluation_manager.build_run_manifest(
+            self.args.eval_data_path, vars(self.args)
+        )
 
         outputs_directory = (
             self.args.outputs_directory or self.config.evaluation.outputs_directory

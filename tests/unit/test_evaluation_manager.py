@@ -614,3 +614,78 @@ class TestSummaryBackwardCompat:
             [{"source": "r1", "truncated": True, "metadata": {"summary": "long"}}]
         )
         assert out == [str({"source": "r1"})]
+
+
+class TestComparability:
+    async def _run(self, config: Config, strategies: dict[str, str]):
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        chain = _FakeChain(
+            {
+                q: _rag_output("Vendor", {"search_strategy": s, "processing_time": 1})
+                for q, s in strategies.items()
+            }
+        )
+        manager = EvaluationManager(config, rag_chain=chain)
+        queries = [
+            EvaluationQuery(
+                query_id=f"q{i}",
+                question=q,
+                category="lookup" if i % 2 == 0 else None,
+                difficulty="easy",
+            )
+            for i, q in enumerate(strategies)
+        ]
+        gts = [
+            EvaluationGroundTruth(query_id="q0", ground_truth="Vendor"),
+            EvaluationGroundTruth(query_id="q1", ground_truth="Buyer"),
+        ]
+        return manager, *await manager.evaluate_dataset(
+            queries, gts, show_progress=False
+        )
+
+    async def test_grouped_by_actual_strategy_category_difficulty(
+        self, config: Config
+    ) -> None:
+        _, _, _, summary = await self._run(config, {"A?": "local", "B?": "global"})
+        grouped = summary.grouped_statistics
+        assert grouped["search_strategy"]["local"]["exact_match"]["mean"] == 1.0
+        assert grouped["search_strategy"]["global"]["exact_match"]["mean"] == 0.0
+        assert set(grouped["category"]) == {"lookup"}  # None is not a group
+        assert grouped["difficulty"]["easy"]["exact_match"]["count"] == 2
+
+    async def test_filenames_carry_single_strategy(self, config, tmp_path) -> None:
+        manager, results, reports, summary = await self._run(
+            config, {"A?": "local", "B?": "local"}
+        )
+        manager.save_results(results, reports, summary, tmp_path / "one")
+        assert all("_local_" in f.name for f in (tmp_path / "one").iterdir())
+
+        manager, results, reports, summary = await self._run(
+            config, {"A?": "local", "B?": "global"}
+        )
+        manager.save_results(results, reports, summary, tmp_path / "mixed")
+        names = [f.name for f in (tmp_path / "mixed").iterdir()]
+        assert names and not any("local" in n or "global" in n for n in names)
+
+    def test_run_manifest(self, config: Config, tmp_path) -> None:
+        import hashlib
+
+        data = tmp_path / "eval.json"
+        data.write_bytes(b'[{"question": "q"}]')
+        config.evaluation.enabled_evaluators = [EvaluatorType.GRAPH_AWARE]
+        manager = EvaluationManager(config, rag_chain=object())
+        manifest = manager.build_run_manifest(
+            data, {"eval_data_path": data, "top_k": 5}
+        )
+        assert (
+            manifest["dataset"]["sha256"]
+            == hashlib.sha256(data.read_bytes()).hexdigest()
+        )
+        assert manifest["cli_args"] == {"eval_data_path": str(data), "top_k": 5}
+        assert manifest["models"]["answer_generation"] == (
+            config.search.answer_generation_model_id.value
+        )
+        assert manifest["models"]["evaluation_judge"] is None  # no LLM judge
+        assert manifest["enabled_evaluators"] == ["graph_aware"]
+        assert manifest["package_version"] and manifest["created_at"]
+        json.dumps(manifest)  # serializable as-is
