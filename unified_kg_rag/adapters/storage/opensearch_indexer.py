@@ -767,6 +767,9 @@ class OpenSearchIndexer(VectorIndexer):
                 embeddings = self.embedding_model.embed_documents(batch_texts)
                 return list(zip(keys, embeddings, strict=True))
             except Exception as e:
+                # The embedding wrapper already retried transient Bedrock errors
+                # with backoff; re-embedding per item isolates the text(s) that
+                # still fail so the rest of the batch is not lost.
                 logger.warning(
                     "Batch embedding failed (%s items), retrying individually: %s",
                     len(batch),
@@ -778,7 +781,8 @@ class OpenSearchIndexer(VectorIndexer):
                         single_embs = self.embedding_model.embed_documents([text])
                         out.append((key, single_embs[0] if single_embs else None))
                     except Exception as item_error:
-                        logger.error("Failed to embed text '%s': %s", key, item_error)
+                        # Summarized once per call in _batch_embed (WARNING).
+                        logger.debug("Failed to embed text '%s': %s", key, item_error)
                         out.append((key, None))
                 return out
 
@@ -791,10 +795,20 @@ class OpenSearchIndexer(VectorIndexer):
         ]
         if batches:
             max_workers = min(8, len(batches))
+            failed_keys = 0
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 for pairs in executor.map(_embed_batch, batches):
                     for key, emb in pairs:
+                        if emb is None:
+                            failed_keys += 1
                         _store(key, emb)
+            if failed_keys:
+                logger.warning(
+                    "Embedding failed for %s of %s unique texts after retries; "
+                    "the affected items will be skipped from indexing",
+                    failed_keys,
+                    len(unique),
+                )
 
         # NOTE: the S3 cache is intentionally NOT flushed here. _batch_embed is
         # called once per extractor per item-type, so flushing here would
@@ -818,12 +832,14 @@ class OpenSearchIndexer(VectorIndexer):
         items: list[Any], embeddings: list[tuple], prepare_func: Callable
     ) -> tuple[list[dict], list[str]]:
         docs, failed_ids = [], []
+        embedding_failed_ids: list[str] = []
 
         for item, embedding_tuple in zip(items, embeddings, strict=True):
             if any(emb is None for emb in embedding_tuple):
-                logger.warning(
+                logger.debug(
                     "Embedding generation failed for item ID: %s. Skipping.", item.id
                 )
+                embedding_failed_ids.append(item.id)
                 failed_ids.append(item.id)
                 continue
 
@@ -835,6 +851,13 @@ class OpenSearchIndexer(VectorIndexer):
                 )
                 failed_ids.append(item.id)
 
+        if embedding_failed_ids:
+            logger.warning(
+                "Skipped %s of %s items with missing embeddings (e.g. %s)",
+                len(embedding_failed_ids),
+                len(items),
+                ", ".join(str(i) for i in embedding_failed_ids[:5]),
+            )
         return docs, failed_ids
 
     def _perform_indexing(

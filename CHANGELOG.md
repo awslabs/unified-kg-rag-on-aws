@@ -41,6 +41,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   indexing are re-run (for example `run-ingestion --force-rebuild`).
 
 ### Fixed
+- Bedrock embedding calls now retry transient model errors
+  (`ModelErrorException`, `ModelNotReadyException`, and service-side 5xx or
+  throttling that outlast botocore's own retries) with bounded exponential
+  backoff and jitter. botocore's retry modes do not treat HTTP 424
+  `ModelErrorException` as retryable, so a brief model-side fault previously
+  dropped the affected text units, entities, or relationships from the vector
+  indexes. Indexing and query-time embedding both use the retry. Embeddings
+  that still fail are reported in a single WARNING summary instead of one ERROR
+  per item.
 - RRF fusion now accumulates a cross-store match. The fusion key was derived
   from a hash of the rendered content, and the graph and vector stores render
   the same artifact differently, so an entity present in both produced two keys

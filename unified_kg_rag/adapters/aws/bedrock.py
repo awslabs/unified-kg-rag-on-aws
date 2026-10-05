@@ -13,6 +13,13 @@ from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
 from langchain_core.documents import Document
 from pydantic import BaseModel, Field, PrivateAttr
 
+from unified_kg_rag.adapters.aws.bedrock_retry import (
+    DEFAULT_BASE_DELAY_SECONDS,
+    DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_MAX_DELAY_SECONDS,
+    DEFAULT_MAX_TOTAL_SECONDS,
+    call_with_transient_retry,
+)
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.domain.models import (
     Config,
@@ -543,6 +550,30 @@ class BedrockEmbeddingsWrapper(BaseBedrockWrapper, BedrockEmbeddings):
     buffer_tokens: int = Field(default=512, ge=0)
     max_sequence_length: int | None = Field(default=None)
     max_sequence_tokens: int | None = Field(default=None)
+    # Application-level retry for transient Bedrock model errors (e.g. HTTP 424
+    # ModelErrorException) that botocore's retry modes do not cover. Applied
+    # per InvokeModel call, so every sync/async embed path benefits and a
+    # failure mid-batch does not restart the already-embedded texts.
+    transient_max_attempts: int = Field(default=DEFAULT_MAX_ATTEMPTS, ge=1)
+    transient_base_delay: float = Field(default=DEFAULT_BASE_DELAY_SECONDS, ge=0)
+    transient_max_delay: float = Field(default=DEFAULT_MAX_DELAY_SECONDS, ge=0)
+    transient_max_total_seconds: float = Field(default=DEFAULT_MAX_TOTAL_SECONDS, ge=0)
+
+    def _invoke_model(self, input_body: dict[str, Any] | None = None) -> dict[str, Any]:
+        # Single choke point for every embedding request in langchain-aws
+        # (embed_documents, embed_query, Cohere batch, and the async variants,
+        # which run embed_query in an executor).
+        body = input_body or {}
+        return call_with_transient_retry(
+            lambda: super(BedrockEmbeddingsWrapper, self)._invoke_model(
+                input_body=body
+            ),
+            operation=f"embed:{self.model_id}",
+            max_attempts=self.transient_max_attempts,
+            base_delay=self.transient_base_delay,
+            max_delay=self.transient_max_delay,
+            max_total_seconds=self.transient_max_total_seconds,
+        )
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         if not texts:
