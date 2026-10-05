@@ -519,9 +519,17 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             ]
 
         def batch_func(
-            inputs: list[dict[str, Any]], config: RunnableConfig | None = None
-        ) -> list[str]:
-            return list(self.map_rater.batch(inputs, config=config))
+            inputs: list[dict[str, Any]],
+            config: RunnableConfig | None = None,
+            return_exceptions: bool = False,
+        ) -> list[Any]:
+            # Forward return_exceptions so one failed map call is retried alone
+            # instead of re-running every map call in its chunk.
+            return list(
+                self.map_rater.batch(
+                    inputs, config=config, return_exceptions=return_exceptions
+                )
+            )
 
         def sequential_func(single_input: dict[str, Any]) -> str:
             return str(self.map_rater.invoke(single_input))
