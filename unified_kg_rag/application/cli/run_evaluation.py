@@ -33,6 +33,23 @@ except (FileNotFoundError, ImportError, ValueError):
     __version__ = "unknown"
 
 
+def _failure_rate(value: str) -> float:
+    rate = float(value)
+    if not 0.0 <= rate <= 1.0:
+        raise argparse.ArgumentTypeError("must be between 0.0 and 1.0")
+    return rate
+
+
+def exceeds_failure_budget(summary: EvaluationSummary, max_failure_rate: float) -> bool:
+    """True when the run must exit non-zero (all failed, or rate above budget)."""
+    if (
+        summary.total_queries == 0
+        or summary.failed_evaluations >= summary.total_queries
+    ):
+        return True
+    return summary.failed_evaluations / summary.total_queries > max_failure_rate
+
+
 class CommandLineInterface:
     def __init__(self) -> None:
         self.parser = self._setup_arguments()
@@ -87,6 +104,16 @@ class CommandLineInterface:
             type=int,
             default=1,
             help="Set the retrieval multiplier for increasing search depth",
+        )
+        parser.add_argument(
+            "--max-failure-rate",
+            type=_failure_rate,
+            default=1.0,
+            help=(
+                "Exit non-zero when the fraction of queries whose answer generation\n"
+                "failed exceeds this value (0.0-1.0). A run where every query failed\n"
+                "always exits non-zero. Default 1.0 = fail only when all failed."
+            ),
         )
         parser.add_argument(
             "--verbose",
@@ -193,7 +220,7 @@ class EvaluationRunner:
             f"\n[bold green]Results saved to '{outputs_directory}'[/bold green]"
         )
 
-    async def run(self) -> None:
+    async def run(self) -> int:
         display_ascii_art(version=__version__)
         console.rule("[bold]Initializing Evaluation[/bold]", style="blue")
 
@@ -231,6 +258,9 @@ class EvaluationRunner:
             queries=queries, ground_truths=ground_truths, show_progress=True
         )
         total_time = time.time() - start_time
+        summary.run_manifest = self.evaluation_manager.build_run_manifest(
+            self.args.eval_data_path, vars(self.args)
+        )
 
         outputs_directory = (
             self.args.outputs_directory or self.config.evaluation.outputs_directory
@@ -245,6 +275,14 @@ class EvaluationRunner:
         console.rule("[bold]Evaluation Complete[/bold]", style="blue")
         self._print_summary(summary, total_time, Path(outputs_directory))
 
+        if exceeds_failure_budget(summary, self.args.max_failure_rate):
+            console.print(
+                f"[red]{summary.failed_evaluations}/{summary.total_queries} queries "
+                f"failed (allowed failure rate: {self.args.max_failure_rate}).[/red]"
+            )
+            return 1
+        return 0
+
 
 def main() -> None:
     try:
@@ -258,7 +296,9 @@ def main() -> None:
             get_config(Path(args.config_path) if args.config_path else None)
         )
         runner = EvaluationRunner(args, rag_chain)
-        asyncio.run(runner.run())
+        exit_code = asyncio.run(runner.run())
+        if exit_code:
+            sys.exit(exit_code)
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Evaluation interrupted by user.[/yellow]")

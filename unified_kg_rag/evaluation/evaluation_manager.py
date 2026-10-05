@@ -1,16 +1,19 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import hashlib
 import json
 import statistics
 from collections import defaultdict
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
 from langchain_core.runnables import Runnable
+from pydantic import ValidationError
 
-from unified_kg_rag.application.retrieval.rag_chain import RAGOutput
+from unified_kg_rag.application.retrieval.rag_chain import RAGInput, RAGOutput
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationGroundTruth,
@@ -23,8 +26,10 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.utils import BatchProcessor
 
+from .answer_match_evaluator import AnswerMatchEvaluator
 from .base import FAILED_METRICS_KEY, SKIPPED_METRICS_KEY, BaseEvaluator
 from .graph_aware_evaluator import GraphAwareEvaluator
+from .retrieval_evaluator import RetrievalEvaluator
 
 logger = get_logger(__name__)
 
@@ -57,6 +62,10 @@ class EvaluationManager:
             return RagasEvaluator
         if evaluator_type is EvaluatorType.GRAPH_AWARE:
             return GraphAwareEvaluator
+        if evaluator_type is EvaluatorType.RETRIEVAL:
+            return RetrievalEvaluator
+        if evaluator_type is EvaluatorType.ANSWER_MATCH:
+            return AnswerMatchEvaluator
         # Defensive: a future EvaluatorType with no mapping resolves to None and
         # is skipped by the caller. mypy sees the enum as exhaustive today, hence
         # the ignore — the branch is real once a new member is added.
@@ -104,75 +113,124 @@ class EvaluationManager:
     def load_data(
         eval_data_path: str | Path, base_metadata: dict[str, Any] | None = None
     ) -> tuple[list[EvaluationQuery], list[EvaluationGroundTruth]]:
+        """Load and validate an evaluation dataset (a JSON array of objects).
+
+        Fails fast with an ``EvaluationException`` naming the item index and
+        query id on any malformed item — a missing/blank ``question``, a
+        duplicate id, a field of the wrong type, or ``metadata`` the RAG chain
+        would reject (e.g. an unknown ``search_strategy``) — instead of
+        skipping it or failing per query mid-run. An empty dataset is an error.
+        """
         if not eval_data_path:
             raise ValueError("Evaluation data path is required.")
-
-        if base_metadata is None:
-            base_metadata = {}
 
         try:
             with open(eval_data_path, encoding="utf-8") as f:
                 data = json.load(f)
-
-            queries = []
-            ground_truths = []
-
-            cleaned_base_metadata = {
-                k: v for k, v in base_metadata.items() if v is not None
-            }
-
-            for i, item in enumerate(data):
-                if not isinstance(item, dict) or "question" not in item:
-                    logger.warning("Skipping invalid item at index %s: '%s'", i, item)
-                    continue
-
-                final_metadata = cleaned_base_metadata.copy()
-                final_metadata.update(item.get("metadata", {}))
-
-                query_id = str(item.get("query_id", item.get("id", f"q_{i}")))
-                query = EvaluationQuery(
-                    query_id=query_id,
-                    question=item["question"],
-                    category=item.get("category"),
-                    difficulty=item.get("difficulty"),
-                    metadata=final_metadata,
-                )
-                queries.append(query)
-
-                # Build a ground truth when ANY ground-truth signal is present —
-                # not only a textual answer — so graph-aware evaluation works on
-                # datasets that supply only expected_entities/relationships.
-                answer = item.get("answer")
-                expected_entities = item.get("expected_entities", [])
-                expected_relationships = item.get("expected_relationships", [])
-                reference_sources = item.get("reference_sources", [])
-                if answer or expected_entities or expected_relationships:
-                    gt = EvaluationGroundTruth(
-                        query_id=query_id,
-                        ground_truth=str(answer) if answer else "",
-                        reference_sources=reference_sources,
-                        expected_entities=expected_entities,
-                        expected_relationships=expected_relationships,
-                    )
-                    ground_truths.append(gt)
-
-            logger.info(
-                "Loaded %s queries and %s ground truths from '%s'.",
-                len(queries),
-                len(ground_truths),
-                eval_data_path,
-            )
-            return queries, ground_truths
-
         except FileNotFoundError:
             logger.error("Evaluation data file not found: '%s'", eval_data_path)
             raise
         except json.JSONDecodeError as e:
             logger.error("Error decoding JSON from '%s': %s", eval_data_path, e)
             raise
-        except Exception as e:
-            logger.error("Failed to load data from '%s': %s", eval_data_path, e)
-            raise
+
+        if not isinstance(data, list):
+            raise EvaluationException(
+                f"Evaluation data '{eval_data_path}' must be a JSON array of "
+                f"objects, got {type(data).__name__}."
+            )
+        if not data:
+            raise EvaluationException(
+                f"Evaluation data '{eval_data_path}' contains no queries."
+            )
+
+        cleaned_base_metadata = {
+            k: v for k, v in (base_metadata or {}).items() if v is not None
+        }
+        queries: list[EvaluationQuery] = []
+        ground_truths: list[EvaluationGroundTruth] = []
+        seen_ids: set[str] = set()
+
+        for i, item in enumerate(data):
+            query, gt = EvaluationManager._parse_item(i, item, cleaned_base_metadata)
+            if query.query_id in seen_ids:
+                raise EvaluationException(
+                    f"Invalid evaluation item at index {i}: duplicate query_id "
+                    f"'{query.query_id}'."
+                )
+            seen_ids.add(query.query_id)
+            queries.append(query)
+            if gt is not None:
+                ground_truths.append(gt)
+
+        logger.info(
+            "Loaded %s queries and %s ground truths from '%s'.",
+            len(queries),
+            len(ground_truths),
+            eval_data_path,
+        )
+        return queries, ground_truths
+
+    @staticmethod
+    def _parse_item(
+        index: int, item: Any, base_metadata: dict[str, Any]
+    ) -> tuple[EvaluationQuery, EvaluationGroundTruth | None]:
+        """Validate one dataset item; raise with its index and query id."""
+        if not isinstance(item, dict):
+            raise EvaluationException(
+                f"Invalid evaluation item at index {index}: expected an object, "
+                f"got {type(item).__name__}."
+            )
+        query_id = str(item.get("query_id", item.get("id", f"q_{index}")))
+        where = f"Invalid evaluation item at index {index} (query_id '{query_id}')"
+
+        question = item.get("question")
+        if not isinstance(question, str) or not question.strip():
+            raise EvaluationException(
+                f"{where}: 'question' must be a non-empty string."
+            )
+        item_metadata = item.get("metadata", {})
+        if not isinstance(item_metadata, dict):
+            raise EvaluationException(f"{where}: 'metadata' must be an object.")
+
+        final_metadata = {**base_metadata, **item_metadata}
+        rag_fields = {
+            k: v for k, v in final_metadata.items() if k in RAGInput.model_fields
+        }
+        try:
+            # Validate what the RAG chain will receive now, not per query later.
+            RAGInput.model_validate({**rag_fields, "query": question})
+            query = EvaluationQuery(
+                query_id=query_id,
+                question=question,
+                category=item.get("category"),
+                difficulty=item.get("difficulty"),
+                metadata=final_metadata,
+            )
+            # Build a ground truth when ANY ground-truth signal is present —
+            # not only a textual answer — so graph-aware evaluation works on
+            # datasets that supply only expected_entities/relationships.
+            answer = item.get("answer")
+            expected_entities = item.get("expected_entities") or []
+            expected_relationships = item.get("expected_relationships") or []
+            reference_sources = item.get("reference_sources") or []
+            gt = None
+            if (
+                answer
+                or expected_entities
+                or expected_relationships
+                or reference_sources
+            ):
+                gt = EvaluationGroundTruth(
+                    query_id=query_id,
+                    ground_truth=str(answer) if answer else "",
+                    reference_sources=reference_sources,
+                    expected_entities=expected_entities,
+                    expected_relationships=expected_relationships,
+                )
+        except ValidationError as e:
+            raise EvaluationException(f"{where}: {e}") from e
+        return query, gt
 
     async def evaluate_dataset(
         self,
@@ -232,6 +290,7 @@ class EvaluationManager:
                         retrieved_contexts=self._extract_from_result(
                             raw_result, "sources", []
                         ),
+                        retrieved_source_ids=self._extract_source_ids(raw_result),
                         enable_thinking=rag_metadata.get("enable_thinking", False),
                         search_strategy=rag_metadata.get("search_strategy"),
                         response_time=rag_metadata.get("processing_time"),
@@ -279,6 +338,46 @@ class EvaluationManager:
             detail = raw_result.search_results.metadata.get("error")
         return str(detail) if detail else "RAG chain returned an error response"
 
+    @staticmethod
+    def _extract_source_ids(raw_result: Any) -> list[list[str]]:
+        """Per reported source, in rank order: its document ids and file names.
+
+        Read from the provenance the RAG chain attaches to each source
+        (``metadata.document_ids``) and the chunk attributes the indexer stores
+        (``file_name`` / ``file_path``, top-level or under ``attributes``).
+        """
+        if isinstance(raw_result, RAGOutput):
+            sources: Any = raw_result.sources
+        elif isinstance(raw_result, dict):
+            sources = raw_result.get("sources")
+        else:
+            return []
+        if not isinstance(sources, list):
+            return []
+
+        ranked: list[list[str]] = []
+        for source in sources:
+            ids: list[str] = []
+            if isinstance(source, dict):
+                metadata = source.get("metadata")
+                payloads = [source]
+                if isinstance(metadata, dict):
+                    payloads.append(metadata)
+                    if isinstance(metadata.get("attributes"), dict):
+                        payloads.append(metadata["attributes"])
+                for payload in payloads:
+                    doc_ids = payload.get("document_ids") or payload.get("document_id")
+                    if isinstance(doc_ids, str):
+                        doc_ids = [doc_ids]
+                    if isinstance(doc_ids, list | tuple):
+                        ids.extend(str(d) for d in doc_ids if d)
+                    for key in ("file_name", "file_path"):
+                        value = payload.get(key)
+                        if isinstance(value, str) and value.strip():
+                            ids.append(Path(value).name)
+            ranked.append(list(dict.fromkeys(ids)))
+        return ranked
+
     def create_lean_context_strings(
         self, sources_list: list[dict[str, Any]]
     ) -> list[str]:
@@ -299,16 +398,17 @@ class EvaluationManager:
         ]
 
         for item in sources_list:
+            # ``content`` is the exact (possibly budget-truncated) text the
+            # answer model saw; it already embeds the section's name/summary/
+            # description, so re-adding those metadata fields would duplicate
+            # them — and for a truncated section would credit text the model
+            # never read. Fall back to field extraction only when it is empty.
+            content = item.get("content")
+            if isinstance(content, str) and content.strip():
+                lean_contexts.append(content)
+                continue
             if self._is_truncated(item):
-                # The answer model saw only the budget-truncated ``content``;
-                # metadata may still carry the full description/full_content,
-                # which would let evaluation credit text the model never read.
-                content = item.get("content")
-                lean_contexts.append(
-                    str({"content": content})
-                    if content
-                    else self._create_minimal_info(item)
-                )
+                lean_contexts.append(self._create_minimal_info(item))
                 continue
             payloads_to_search = self._get_payloads_to_search(item)
             lean_item = self._extract_fields(payloads_to_search, desired_fields)
@@ -399,9 +499,11 @@ class EvaluationManager:
                 # Copy so a downstream in-place mutation of result.metadata does
                 # not corrupt the shared ground-truth lists.
                 result.metadata["expected_entities"] = list(gt.expected_entities)
-                result.metadata["expected_relationships"] = list(
-                    gt.expected_relationships
-                )
+                result.metadata["expected_relationships"] = [
+                    dict(rel) if isinstance(rel, dict) else rel
+                    for rel in gt.expected_relationships
+                ]
+                result.metadata["reference_sources"] = list(gt.reference_sources)
 
         # A failed answer generation (RAG error fallback text or an empty
         # sentinel) is not an answer: scoring it would let LLM judges grade the
@@ -487,10 +589,85 @@ class EvaluationManager:
             average_response_time=avg_response_time,
             metric_statistics=self._calculate_metric_statistics(reports),
             metric_outcomes=self._calculate_metric_outcomes(results, reports),
+            grouped_statistics=self._calculate_grouped_statistics(
+                queries, results, reports
+            ),
             evaluation_start_time=start_time,
             evaluation_end_time=end_time,
             configuration=self.config.evaluation.model_dump(),
         )
+
+    @classmethod
+    def _calculate_grouped_statistics(
+        cls,
+        queries: list[EvaluationQuery],
+        results: list[EvaluationResult],
+        reports: list[EvaluationReport],
+    ) -> dict[str, dict[str, dict[str, dict[str, float]]]]:
+        """Metric statistics per actual strategy, category and difficulty.
+
+        A pooled mean hides that ``auto`` answers queries with different
+        strategies, and mixes easy and hard questions; grouping makes runs and
+        strategies comparable.
+        """
+        attributes: dict[str, dict[str, str | None]] = {
+            q.query_id: {"category": q.category, "difficulty": q.difficulty}
+            for q in queries
+        }
+        for r in results:
+            attributes.setdefault(r.query_id, {})["search_strategy"] = r.search_strategy
+
+        grouped: dict[str, dict[str, dict[str, dict[str, float]]]] = {}
+        for dimension in ("search_strategy", "category", "difficulty"):
+            buckets: dict[str, list[EvaluationReport]] = defaultdict(list)
+            for report in reports:
+                value = attributes.get(report.query_id, {}).get(dimension)
+                if value:
+                    buckets[str(value)].append(report)
+            stats = {
+                value: cls._calculate_metric_statistics(bucket)
+                for value, bucket in sorted(buckets.items())
+            }
+            if any(stats.values()):
+                grouped[dimension] = stats
+        return grouped
+
+    def build_run_manifest(
+        self, eval_data_path: str | Path, cli_args: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Record what produced a run so two summaries can be compared."""
+        path = Path(eval_data_path)
+        try:
+            package_version = version("unified-kg-rag-on-aws")
+        except PackageNotFoundError:
+            package_version = "unknown"
+        enabled = set(self.evaluators) or set(self.config.evaluation.enabled_evaluators)
+        uses_judge = bool(enabled & {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS})
+        evaluation = self.config.evaluation
+        return {
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "package_version": package_version,
+            "dataset": {
+                "path": str(path),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            },
+            "cli_args": {
+                k: str(v) if isinstance(v, Path) else v
+                for k, v in (cli_args or {}).items()
+            },
+            "models": {
+                "answer_generation": self.config.search.answer_generation_model_id.value,
+                "evaluation_judge": (
+                    evaluation.evaluation_model_id.value if uses_judge else None
+                ),
+                "evaluation_embedding": (
+                    evaluation.embedding_model_id.value
+                    if EvaluatorType.RAGAS in enabled
+                    else None
+                ),
+            },
+            "enabled_evaluators": sorted(e.value for e in enabled),
+        }
 
     def _calculate_metric_outcomes(
         self,
@@ -563,19 +740,23 @@ class EvaluationManager:
             outputs_dir = Path(outputs_dir)
         outputs_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Name files after the strategy when every answered query used the same
+        # one, so runs of different strategies are distinguishable on disk.
+        strategies = {r.search_strategy for r in results if r.search_strategy}
+        stem = f"{strategies.pop()}_{timestamp}" if len(strategies) == 1 else timestamp
 
         if self.config.evaluation.save_detailed_results:
             self._save_json(
-                outputs_dir / f"evaluation_results_{timestamp}.json",
+                outputs_dir / f"evaluation_results_{stem}.json",
                 [r.model_dump() for r in results],
             )
             self._save_json(
-                outputs_dir / f"evaluation_reports_{timestamp}.json",
+                outputs_dir / f"evaluation_reports_{stem}.json",
                 [r.model_dump() for r in reports],
             )
 
         self._save_json(
-            outputs_dir / f"evaluation_summary_{timestamp}.json", summary.model_dump()
+            outputs_dir / f"evaluation_summary_{stem}.json", summary.model_dump()
         )
         logger.info("Evaluation results saved to '%s'", outputs_dir)
 

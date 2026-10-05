@@ -2,9 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 from typing import TYPE_CHECKING, Any
 
+from .answer_match_evaluator import AnswerMatchEvaluator
 from .base import BaseEvaluator, BaseGraphRAGEvaluator
 from .evaluation_manager import EvaluationManager
 from .graph_aware_evaluator import GraphAwareEvaluator
+from .retrieval_evaluator import RetrievalEvaluator
 
 if TYPE_CHECKING:
     from unified_kg_rag.adapters.evaluators.langchain_evaluator import (
@@ -13,12 +15,14 @@ if TYPE_CHECKING:
     from unified_kg_rag.adapters.evaluators.ragas_evaluator import RagasEvaluator
 
 __all__ = [
+    "AnswerMatchEvaluator",
     "BaseEvaluator",
     "BaseGraphRAGEvaluator",
     "EvaluationManager",
     "GraphAwareEvaluator",
     "LangChainEvaluator",
     "RagasEvaluator",
+    "RetrievalEvaluator",
 ]
 
 # The langchain/ragas adapter evaluators import `unified_kg_rag.evaluation.base`,

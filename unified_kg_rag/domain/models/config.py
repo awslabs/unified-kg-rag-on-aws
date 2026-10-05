@@ -2062,6 +2062,14 @@ class EvaluationConfig(BaseModel):
             "Attempts count against ragas_timeout."
         ),
     )
+    retrieval_k: int = Field(
+        default=5,
+        ge=1,
+        description=(
+            "Cutoff k for the retrieval evaluator's hit@k / recall@k: the number "
+            "of top-ranked reported sources compared with reference_sources."
+        ),
+    )
     save_detailed_results: bool = Field(
         default=True,
         description="Whether to save detailed evaluation results and reports.",
