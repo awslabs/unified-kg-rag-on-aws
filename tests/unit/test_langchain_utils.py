@@ -19,6 +19,7 @@ from collections import Counter
 from typing import Any
 
 import pytest
+from langchain_core.exceptions import OutputParserException
 from langchain_core.runnables import RunnableLambda
 
 from unified_kg_rag.shared.utils.langchain import (
@@ -623,5 +624,19 @@ class TestRobustXMLOutputParser:
         # clean, xml/tags/list fallbacks) fails or returns None, so the ladder
         # exhausts and raises.
         parser = RobustXMLOutputParser()
-        with pytest.raises(ValueError, match="Failed to parse XML"):
+        with pytest.raises(OutputParserException, match="Failed to parse XML"):
             parser.parse("this is just prose with no structure at all")
+
+    def test_exhausted_parse_triggers_output_fixing(self) -> None:
+        from langchain_classic.output_parsers import OutputFixingParser
+        from langchain_core.language_models.fake_chat_models import (
+            FakeListChatModel,
+        )
+
+        fixer = OutputFixingParser.from_llm(
+            parser=RobustXMLOutputParser(),
+            llm=FakeListChatModel(responses=["<name>Vendor</name>"]),
+        )
+        assert fixer.parse("this is just prose with no structure at all") == {
+            "name": "Vendor"
+        }

@@ -11,6 +11,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import tenacity
+from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import XMLOutputParser
 from langchain_core.runnables import RunnableConfig
 from lxml import etree
@@ -614,8 +615,11 @@ class RobustXMLOutputParser(XMLOutputParser):
             )
 
         logger.error("All XML parsing attempts failed for content: '%s...'", text[:200])
-        raise ValueError(
-            f"Failed to parse XML after multiple attempts. Content preview: '{text[:200]}...'"
+        # OutputParserException (a ValueError) is what OutputFixingParser
+        # catches to run its repair LLM; a bare ValueError bypassed it.
+        raise OutputParserException(
+            f"Failed to parse XML after multiple attempts. Content preview: '{text[:200]}...'",
+            llm_output=text,
         )
 
     @staticmethod
