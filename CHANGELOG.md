@@ -41,6 +41,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   indexing are re-run (for example `run-ingestion --force-rebuild`).
 
 ### Fixed
+- Ingestion no longer writes parsed `<stem>.json` files into the source
+  directory, where the loading stage misread raw files as JSON and a re-run
+  ingested the previous output as new documents. The loading stage reuses the
+  parsed documents directly, and the JSON export now happens only when
+  `processing.document_parsing.target_directory` (or `--target-directory`) is
+  set to a directory other than the source directory.
 - Bedrock embedding calls now retry transient model errors
   (`ModelErrorException`, `ModelNotReadyException`, and service-side 5xx or
   throttling that outlast botocore's own retries) with bounded exponential

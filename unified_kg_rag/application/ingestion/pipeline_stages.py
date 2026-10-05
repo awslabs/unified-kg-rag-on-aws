@@ -391,15 +391,14 @@ class DocumentLoadingStage(PipelineStage):
 class DocumentParsingStage(PipelineStage):
     """Parse the raw corpus into ``Document`` objects.
 
-    Each parsed document is also written as ``<stem>.json`` for inspection: to
-    ``target_directory`` when configured, otherwise to the pipeline-owned
-    ``<cache_directory>/parsed_documents/<pipeline_id>/``. The output never goes
-    into the source corpus: ``.json`` is itself a parseable source format, so a
+    When ``target_directory`` is set, each parsed document is also exported as
+    ``<stem>.json`` there for inspection; nothing reads the export back (the
+    loading stage reuses the parsed documents directly). The target may not be
+    the source directory: ``.json`` is itself a parseable source format, so a
     re-run would ingest the previous run's output as new (duplicate) documents.
-    Discovery likewise skips the output and cache directories.
+    Discovery likewise skips the target and cache directories, which hold JSON
+    this pipeline wrote.
     """
-
-    DEFAULT_OUTPUT_SUBDIR = "parsed_documents"
 
     def __init__(
         self,
@@ -431,8 +430,7 @@ class DocumentParsingStage(PipelineStage):
         logger.info("DOCUMENT PARSING STAGE - STARTED")
         logger.info("=" * 60)
 
-        output_directory = self._resolve_output_directory(context)
-        files_to_parse = self._discover_files(output_directory)
+        files_to_parse = self._discover_files()
         input_count = len(files_to_parse)
 
         if not files_to_parse:
@@ -452,8 +450,10 @@ class DocumentParsingStage(PipelineStage):
                 )
                 parsed_documents.append(document)
 
-                if output_directory is not None:
-                    self._save_parsed_document(document, file_path, output_directory)
+                if self.target_directory is not None:
+                    self._save_parsed_document(
+                        document, file_path, self.target_directory
+                    )
 
             except Exception as e:
                 logger.error("Failed to parse '%s': %s", file_path, e)
@@ -481,26 +481,17 @@ class DocumentParsingStage(PipelineStage):
 
         return input_count, output_count, metrics
 
-    def _resolve_output_directory(self, context: PipelineContext) -> Path | None:
-        if self.target_directory is not None:
-            return self.target_directory
-        if self.cache_directory is not None:
-            return (
-                self.cache_directory / self.DEFAULT_OUTPUT_SUBDIR / context.pipeline_id
-            )
-        return None
-
-    def _discover_files(self, output_directory: Path | None = None) -> list[Path]:
+    def _discover_files(self) -> list[Path]:
         if not self.source_directory.exists():
             raise FileNotFoundError(
                 f"Source directory not found: {self.source_directory}"
             )
 
-        # Pipeline-written trees nested under the source dir (an explicit
-        # target_directory, or the cache dir, e.g. source "." with cache
-        # "./cache") hold JSON this pipeline produced, never source documents.
+        # Pipeline-written trees nested under the source dir (the export
+        # target, or the cache dir, e.g. source "." with cache "./cache") hold
+        # JSON this pipeline produced, never source documents.
         owned_dirs = [
-            d.resolve() for d in (output_directory, self.cache_directory) if d
+            d.resolve() for d in (self.target_directory, self.cache_directory) if d
         ]
         files = []
         for file_path in self.source_directory.rglob("*"):

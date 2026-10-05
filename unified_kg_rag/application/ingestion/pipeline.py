@@ -153,8 +153,7 @@ class DataIngestionPipeline:
         self.source_directory = source_directory or Path(
             self.config.processing.document_parsing.source_directory
         )
-        # Explicit parsed-output directory, if any. Unset means the parsing
-        # stage writes to a pipeline-owned directory under the cache dir; it
+        # Parsed-JSON export directory, if any. Unset means no export; it
         # must never default to the source corpus (see DocumentParsingStage).
         explicit_target = (
             target_directory or self.config.processing.document_parsing.target_directory

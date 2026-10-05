@@ -406,9 +406,8 @@ class DocumentParsingConfig(BaseModel):
     target_directory: str | Path | None = Field(
         default=None,
         description=(
-            "Directory to export parsed documents to as JSON. None = "
-            "<cache directory>/parsed_documents/<pipeline id>. Must not be the "
-            "source directory."
+            "Directory to export each parsed document to as <stem>.json for "
+            "inspection. None = no export. Must not be the source directory."
         ),
     )
     index_value: str | None = Field(

@@ -106,13 +106,8 @@ def test_default_run_leaves_source_untouched(tmp_path: Path, caplog) -> None:
     assert _snapshot(source) == before
     assert len(context.documents) == len(_DOCS)
     assert "Failed to load" not in caplog.text
-    # Parsed output goes to the pipeline-owned dir under the cache dir.
-    out = cache / DocumentParsingStage.DEFAULT_OUTPUT_SUBDIR / "run-1"
-    assert sorted(p.name for p in out.glob("*.json")) == [
-        "alpha.json",
-        "beta.json",
-        "gamma.json",
-    ]
+    # Without target_directory nothing is exported, not even under the cache.
+    assert not list(cache.rglob("alpha.json"))
 
 
 def test_loading_reuses_parsed_documents_without_failures(tmp_path: Path) -> None:
@@ -170,7 +165,6 @@ def test_explicit_target_directory_still_written(tmp_path: Path) -> None:
         "beta.json",
         "gamma.json",
     ]
-    assert not (cache / DocumentParsingStage.DEFAULT_OUTPUT_SUBDIR).exists()
 
 
 def test_explicit_target_inside_source_is_not_reparsed(tmp_path: Path) -> None:

@@ -128,11 +128,11 @@ processing:
   # Document Parsing
   document_parsing:
     source_directory: # Add source directory here
-    # Where parsed documents are exported as <stem>.json (inspection only; the
-    # loading stage reuses the parsed documents in memory). null = the
-    # pipeline-owned <cache-directory>/parsed_documents/<pipeline-id>/. Must not
-    # be the source directory: .json is a parseable source format, so output
-    # there would be re-ingested as new documents on the next run.
+    # Set a directory to export each parsed document as <stem>.json for
+    # inspection (or pass --target-directory); null = no export. The loading
+    # stage reuses the parsed documents in memory and never reads the export.
+    # Must not be the source directory: .json is a parseable source format, so
+    # output there would be re-ingested as new documents on the next run.
     target_directory: null
     index_value: null
 
