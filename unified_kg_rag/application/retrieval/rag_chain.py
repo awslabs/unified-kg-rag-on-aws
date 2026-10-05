@@ -698,7 +698,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                     logger.debug("Error closing retriever %r: %s", retriever, e)
         self._retriever_cache.clear()
 
-    def _context_building_step(self, state: dict[str, Any]) -> str:
+    async def _context_building_step(self, state: dict[str, Any]) -> str:
         try:
             query: ProcessedQuery = state["processed_query"]
             search_results: SearchResult = state["search_results"]
@@ -711,13 +711,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             search_context = self.token_manager.build_context_string(optimized)
             history = state.get("history")
 
-            if not history:
+            # Decide emptiness on what retrieval actually produced, BEFORE the
+            # history-aware rewrite: the builder LLM can turn an empty context
+            # plus conversation history into a plausible narrative that would
+            # slip past the answer step's empty-context guard.
+            if not history or not optimized.sections:
                 return search_context
 
             context_builder = self._get_chain_for_prompt(
                 ContextBuildingPrompt, StrOutputParser()
             )
-            result = context_builder.invoke(
+            result = await context_builder.ainvoke(
                 {
                     "query": query.original_query,
                     "search_results": search_context,
@@ -760,9 +764,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # silently zeroed offline context-recall scoring AND starved the RAGAS context
         # metrics for the highest-scoring results. Retrieval and generation are
         # unaffected — this is what gets REPORTED, not what gets retrieved.
+        # Synthesized results (e.g. the global map-reduce summary) are LLM output
+        # the answer model may read, not retrieved evidence, so they are never
+        # reported as sources.
         sources = [
             r.model_dump(include={"content", "source", "score", "metadata"})
             for r in sr.results
+            if not (r.metadata or {}).get("synthesized")
         ]
 
         metadata = {

@@ -485,7 +485,19 @@ async def test_run_primer_degrades_on_error_when_ignoring() -> None:
     strat = _primer_strategy(
         primer_raises=RuntimeError("bedrock down"), ignore_errors=True
     )
+    result = await strat._run_primer(SearchQuery(query="q"), [_result("report")])
+    assert result == ([], "")
+    assert len(strat.primer.calls) == 1  # the failing call was attempted
+
+
+async def test_run_primer_without_reports_makes_no_llm_call() -> None:
+    # No community summaries -> nothing to ground a hypothetical answer in, so
+    # the primer LLM is not called at all (it could only guess).
+    strat = _primer_strategy(
+        primer_value='{"intermediate_answer": "guess", "follow_up_queries": ["x"]}'
+    )
     assert await strat._run_primer(SearchQuery(query="q"), []) == ([], "")
+    assert strat.primer.calls == []
 
 
 async def test_primer_search_runs_one_iteration_per_follow_up() -> None:
@@ -506,7 +518,7 @@ async def test_primer_search_runs_one_iteration_per_follow_up() -> None:
     seen: set[str] = set()
     metrics: list[dict] = []
     await strat._primer_search(
-        SearchQuery(query="orig"), [], all_results, seen, metrics
+        SearchQuery(query="orig"), [_result("seed report")], all_results, seen, metrics
     )
 
     assert executed == ["fa", "fb"]
@@ -514,9 +526,10 @@ async def test_primer_search_runs_one_iteration_per_follow_up() -> None:
     assert len(all_results) == 2
 
 
-async def test_primer_search_seeds_intermediate_answer() -> None:
-    # The primer's HyDE intermediate_answer is seeded into all_results so it
-    # informs fusion/synthesis (not discarded).
+async def test_primer_search_keeps_intermediate_answer_out_of_results() -> None:
+    # The primer's HyDE intermediate_answer is an LLM guess, not evidence: it
+    # must not enter all_results (which become answer context and sources).
+    # Only the follow-up queries it drives contribute results.
     strat = _primer_strategy(
         primer_value='{"intermediate_answer": "HYDE seed answer", '
         '"follow_up_queries": ["fa"], "score": 0.2}'
@@ -527,10 +540,38 @@ async def test_primer_search_seeds_intermediate_answer() -> None:
 
     strat._execute_search_iteration = _fake_iteration  # type: ignore[method-assign]
     all_results: list = []
-    await strat._primer_search(SearchQuery(query="orig"), [], all_results, set(), [])
+    await strat._primer_search(
+        SearchQuery(query="orig"), [_result("seed report")], all_results, set(), []
+    )
 
-    seeds = [r for r in all_results if r.source == "drift_primer"]
-    assert len(seeds) == 1 and seeds[0].content == "HYDE seed answer"
+    assert [r.content for r in all_results] == ["hit for fa"]
+    assert all(r.source != "drift_primer" for r in all_results)
+    assert all("HYDE seed answer" not in r.content for r in all_results)
+
+
+async def test_asearch_skips_primer_without_candidate_communities() -> None:
+    # Primer enabled but community retrieval found nothing: the primer must not
+    # run (no reports to ground it); DRIFT falls back to the iterative loop.
+    strat = _primer_strategy(
+        primer_value='{"intermediate_answer": "guess", "follow_up_queries": ["x"]}',
+        retrievers={"document": _StubRetriever(results=[])},
+    )
+    called = {"iterative": 0}
+
+    async def _fake_iterative(query, all_results, seen, metrics):
+        called["iterative"] += 1
+
+    strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
+    strat.hybrid_scorer = SimpleNamespace(
+        fuse_and_rerank_results=lambda groups, **kw: groups["results"]
+    )
+    strat._record_search_metrics = lambda *a, **k: None  # type: ignore[method-assign]
+
+    result = await strat.asearch(SearchQuery(query="q"))
+
+    assert strat.primer.calls == []
+    assert called["iterative"] == 1
+    assert result.results == []
 
 
 async def test_primer_search_falls_back_to_iterative_without_follow_ups() -> None:
