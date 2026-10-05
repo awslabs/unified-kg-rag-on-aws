@@ -537,3 +537,85 @@ def test_rerank_factory_opens_no_runtime_client_for_counting(mocker) -> None:
     assert "bedrock-runtime" not in session.clients_requested
     assert spy.call_args.kwargs["client"] is None
     assert spy.call_args.kwargs["api_supported"] is False
+
+
+# --- get_model: kwargs reaching the LangChain chat class ------------------
+
+
+class _RecordingChat:
+    """Stand-in for ChatBedrock/ChatBedrockConverse recording its kwargs."""
+
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def __init__(self, **kwargs: Any) -> None:
+        type(self).calls.append((type(self).__name__, kwargs))
+
+
+class _FakeConverse(_RecordingChat):
+    pass
+
+
+class _FakeChatBedrock(_RecordingChat):
+    pass
+
+
+@pytest.fixture
+def recorded_chat(monkeypatch) -> list[tuple[str, dict[str, Any]]]:
+    calls: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(_RecordingChat, "calls", calls)
+    monkeypatch.setattr(bedrock_mod, "ChatBedrockConverse", _FakeConverse)
+    monkeypatch.setattr(bedrock_mod, "ChatBedrock", _FakeChatBedrock)
+    return calls
+
+
+def _resolve_to(monkeypatch, resolved: str) -> None:
+    monkeypatch.setattr(
+        bedrock_mod.BedrockCrossRegionModelHelper,
+        "get_cross_region_model_id",
+        staticmethod(lambda *_a, **_k: resolved),
+    )
+
+
+_SAMPLING_KEYS = ("temperature", "top_p", "top_k")
+
+
+def test_get_model_omits_sampling_params_for_unsupported_model(
+    monkeypatch, recorded_chat
+) -> None:
+    # Claude 5 rejects sampling params: even an explicit caller override must
+    # not reach ChatBedrockConverse, or langchain-aws warns on every call.
+    _resolve_to(monkeypatch, "apac.anthropic.claude-sonnet-5")
+    factory = _lang_factory()
+    factory.get_model(LanguageModelId.CLAUDE_V5_SONNET, temperature=0.3, top_k=5)
+
+    name, kwargs = recorded_chat[-1]
+    assert name == "_FakeConverse"
+    for key in _SAMPLING_KEYS:
+        assert key not in kwargs
+        assert key not in kwargs.get("model_kwargs", {})
+
+
+def test_get_model_keeps_sampling_params_for_supporting_model_converse(
+    monkeypatch, recorded_chat
+) -> None:
+    _resolve_to(monkeypatch, "apac.anthropic.claude-sonnet-4-5-20250929-v1:0")
+    factory = _lang_factory()
+    factory.get_model(LanguageModelId.CLAUDE_V4_5_SONNET, temperature=0.3)
+
+    name, kwargs = recorded_chat[-1]
+    assert name == "_FakeConverse"
+    assert kwargs["temperature"] == 0.3
+
+
+def test_get_model_keeps_sampling_params_for_supporting_model_invoke(
+    monkeypatch, recorded_chat
+) -> None:
+    # Bare model id (no inference profile) -> ChatBedrock with model_kwargs.
+    _resolve_to(monkeypatch, LanguageModelId.CLAUDE_V4_SONNET.value)
+    factory = _lang_factory()
+    factory.get_model(LanguageModelId.CLAUDE_V4_SONNET, temperature=0.2, top_k=7)
+
+    name, kwargs = recorded_chat[-1]
+    assert name == "_FakeChatBedrock"
+    assert kwargs["model_kwargs"]["temperature"] == 0.2
+    assert kwargs["model_kwargs"]["top_k"] == 7

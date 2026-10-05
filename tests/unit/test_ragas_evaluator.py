@@ -24,12 +24,15 @@ from unified_kg_rag.domain.models import (
     EvaluationQuery,
     EvaluationResult,
     EvaluatorType,
+    LanguageModelId,
 )
 
 pytestmark = pytest.mark.unit
 
 
-def _make_evaluator(mocker, *, ragas_metrics=None, max_context_tokens=8192):
+def _make_evaluator(
+    mocker, *, ragas_metrics=None, max_context_tokens=8192, evaluation_model_id=None
+):
     """Build a RagasEvaluator with all Bedrock/boto wiring patched out.
 
     Returns (evaluator, fake_token_counter).
@@ -52,6 +55,8 @@ def _make_evaluator(mocker, *, ragas_metrics=None, max_context_tokens=8192):
     config.evaluation.max_context_tokens = max_context_tokens
     if ragas_metrics is not None:
         config.evaluation.ragas_metrics = ragas_metrics
+    if evaluation_model_id is not None:
+        config.evaluation.evaluation_model_id = evaluation_model_id
     ev = RagasEvaluator(config=config, rag_chain=None, show_progress=False)
     return ev, fake_counter
 
@@ -372,3 +377,66 @@ class TestInitFailure:
         )
         with pytest.raises(EvaluationException):
             RagasEvaluator(config=Config(), rag_chain=None)
+
+
+class _TemperatureTrackingLLM:
+    """Minimal LangChain-like judge exposing a mutable ``temperature``."""
+
+    def __init__(self) -> None:
+        self.temperature: float | None = None
+        self.seen_temperatures: list[float | None] = []
+
+    async def agenerate_prompt(self, prompts, **_kwargs):
+        from langchain_core.outputs import Generation, LLMResult
+
+        self.seen_temperatures.append(self.temperature)
+        return LLMResult(generations=[[Generation(text="ok")] for _ in prompts])
+
+
+class TestJudgeSamplingParams:
+    def test_judge_bypasses_temperature_for_unsupported_model(self, mocker) -> None:
+        # Default judge (Claude 5) rejects sampling params.
+        ev, _ = _make_evaluator(mocker)
+        assert ev.ragas_llm is not None
+        assert ev.ragas_llm.bypass_temperature is True
+
+    def test_judge_keeps_temperature_for_supporting_model(self, mocker) -> None:
+        ev, _ = _make_evaluator(
+            mocker, evaluation_model_id=LanguageModelId.CLAUDE_V4_5_SONNET
+        )
+        assert ev.ragas_llm is not None
+        assert ev.ragas_llm.bypass_temperature is False
+
+    async def test_bypassed_wrapper_never_sets_temperature(self, mocker) -> None:
+        from langchain_core.prompt_values import StringPromptValue
+
+        ev, _ = _make_evaluator(mocker)
+        assert ev.ragas_llm is not None
+        judge = _TemperatureTrackingLLM()
+        ev.ragas_llm.langchain_llm = judge  # type: ignore[assignment]
+
+        await ev.ragas_llm.agenerate_text(StringPromptValue(text="q"))
+
+        assert judge.seen_temperatures == [None]
+        assert judge.temperature is None
+
+    async def test_evaluate_receives_wrapped_judge(self, mocker) -> None:
+        ev, _ = _make_evaluator(
+            mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
+        )
+        captured = {}
+
+        class _FakeRagasResult:
+            def to_pandas(self):
+                return pd.DataFrame({"faithfulness": [0.5]})
+
+        def fake_evaluate(**kwargs):
+            captured.update(kwargs)
+            return _FakeRagasResult()
+
+        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
+
+        await ev.aevaluate_batch([_query()], [_result(contexts=["c"])], ["t"])
+
+        assert captured["llm"] is ev.ragas_llm
