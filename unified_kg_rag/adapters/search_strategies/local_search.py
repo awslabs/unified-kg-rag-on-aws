@@ -179,12 +179,24 @@ class LocalSearchStrategy(BaseSearchStrategy):
         )
 
     async def _find_candidate_entities(self, query: SearchQuery) -> list[str]:
-        if not self.document_retriever or not query.entity_focus:
+        if not self.document_retriever:
             return []
 
-        n_candidates = len(query.entity_focus) * self.entity_focus_multiplier
+        # Map the extracted entity focus onto the entities index; when no
+        # entities were extracted, fall back to the raw query text (as the
+        # claims/community-report/relationship sections do) so local search
+        # still seeds graph expansion instead of returning no chunks at all.
+        if query.entity_focus:
+            entity_query = " ".join(query.entity_focus)
+            n_candidates = len(query.entity_focus) * self.entity_focus_multiplier
+        else:
+            entity_query = query.query
+            n_candidates = query.top_k
+        if not entity_query:
+            return []
+
         search_query = SearchQuery(
-            query=" ".join(query.entity_focus),
+            query=entity_query,
             search_type=query.search_type,
             top_k=n_candidates,
             index_prefixes=[self.config.indexing.opensearch.entities_index_prefix],

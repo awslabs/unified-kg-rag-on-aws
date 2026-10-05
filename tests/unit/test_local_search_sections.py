@@ -225,3 +225,23 @@ async def test_unfiltered_query_sends_no_filters(config: Config) -> None:
             assert call.filters == {"id": ["chunk-1"]}
         else:
             assert call.filters is None
+
+
+async def test_no_entity_focus_falls_back_to_raw_query(config: Config) -> None:
+    # With no extracted entities the candidate lookup used to return [] and local
+    # search produced no entities and no chunks; it now maps the raw query onto
+    # the entities index like the other sections already do.
+    strategy, os_r, neptune_r = _make_lineage_strategy(config)
+    query = SearchQuery(query="who founded acme", entity_focus=[], top_k=7)
+
+    result = await strategy.asearch(query)
+
+    os_cfg = config.indexing.opensearch
+    entity_calls = [
+        q for q in os_r.calls if q.index_prefixes == [os_cfg.entities_index_prefix]
+    ]
+    assert len(entity_calls) == 1
+    assert entity_calls[0].query == "who founded acme"
+    assert entity_calls[0].top_k == 7
+    assert len(neptune_r.calls) == 1  # graph expansion is seeded
+    assert result.metadata["text_unit_count"] == 1

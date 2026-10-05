@@ -180,10 +180,23 @@ async def test_find_candidate_entities_no_retriever_returns_empty() -> None:
     assert await strat._find_candidate_entities(query) == []
 
 
-async def test_find_candidate_entities_no_entity_focus_returns_empty() -> None:
-    strat = _bare_strategy(retrievers={"document": _StubRetriever([_result("e1")])})
-    query = SearchQuery(query="q", entity_focus=[])
+async def test_find_candidate_entities_no_entity_focus_falls_back_to_query() -> None:
+    retriever = _StubRetriever([_result("e1")])
+    strat = _bare_strategy(retrievers={"document": retriever})
+    query = SearchQuery(query="q", entity_focus=[], top_k=5)
+    assert await strat._find_candidate_entities(query) == ["e1"]
+    sent = retriever.last_query
+    assert sent is not None
+    assert sent.query == "q"
+    assert sent.top_k == 5
+
+
+async def test_find_candidate_entities_no_focus_and_empty_query_returns_empty() -> None:
+    retriever = _StubRetriever([_result("e1")])
+    strat = _bare_strategy(retrievers={"document": retriever})
+    query = SearchQuery(query="", entity_focus=[])
     assert await strat._find_candidate_entities(query) == []
+    assert retriever.last_query is None
 
 
 async def test_find_candidate_entities_carries_caller_filters() -> None:
