@@ -231,7 +231,15 @@ def test_format_output_step_builds_rag_output() -> None:
     # highest-scoring sources with no text for RAGAS / recall scoring to match on.
     assert out.sources[0]["source"] == "doc-1"
     assert out.sources[0]["content"] == "c1"
-    assert set(out.sources[0].keys()) == {"content", "source", "score", "metadata"}
+    # `truncated` is additive (budget-truncation flag); the original four keys stay.
+    assert set(out.sources[0].keys()) == {
+        "content",
+        "source",
+        "score",
+        "metadata",
+        "truncated",
+    }
+    assert out.sources[0]["truncated"] is False
     # retriever_type / chunk_id stay out — the projection is still explicit, not a
     # full model_dump.
     assert "retriever_type" not in out.sources[0]
