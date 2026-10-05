@@ -344,16 +344,17 @@ class EvaluationManager:
         ]
 
         for item in sources_list:
+            # ``content`` is the exact (possibly budget-truncated) text the
+            # answer model saw; it already embeds the section's name/summary/
+            # description, so re-adding those metadata fields would duplicate
+            # them — and for a truncated section would credit text the model
+            # never read. Fall back to field extraction only when it is empty.
+            content = item.get("content")
+            if isinstance(content, str) and content.strip():
+                lean_contexts.append(content)
+                continue
             if self._is_truncated(item):
-                # The answer model saw only the budget-truncated ``content``;
-                # metadata may still carry the full description/full_content,
-                # which would let evaluation credit text the model never read.
-                content = item.get("content")
-                lean_contexts.append(
-                    str({"content": content})
-                    if content
-                    else self._create_minimal_info(item)
-                )
+                lean_contexts.append(self._create_minimal_info(item))
                 continue
             payloads_to_search = self._get_payloads_to_search(item)
             lean_item = self._extract_fields(payloads_to_search, desired_fields)

@@ -568,7 +568,7 @@ class TestSummaryBackwardCompat:
                 }
             ]
         )
-        assert out == [str({"content": "Vendor ships parts…"})]
+        assert out == ["Vendor ships parts…"]
 
     def test_truncated_flag_in_metadata_only_is_honoured(self, config: Config) -> None:
         out = _graph_aware_manager(config).create_lean_context_strings(
@@ -579,16 +579,38 @@ class TestSummaryBackwardCompat:
                 }
             ]
         )
-        assert out == [str({"content": "short"})]
+        assert out == ["short"]
 
-    def test_untruncated_source_keeps_metadata_fields(self, config: Config) -> None:
+    def test_untruncated_source_uses_content_without_duplication(
+        self, config: Config
+    ) -> None:
+        # `content` already embeds the report's name/summary; re-adding the
+        # metadata fields would hand RAGAS the same text twice.
+        content = "Report: Vendor network\nSummary: Vendor supplies Buyer."
         out = _graph_aware_manager(config).create_lean_context_strings(
             [
                 {
-                    "content": "c",
+                    "content": content,
                     "truncated": False,
-                    "metadata": {"truncated": False, "description": "d"},
+                    "metadata": {
+                        "truncated": False,
+                        "name": "Vendor network",
+                        "summary": "Vendor supplies Buyer.",
+                        "full_content": "Vendor supplies Buyer.",
+                    },
                 }
             ]
         )
-        assert "description" in out[0] and "content" in out[0]
+        assert out == [content]
+
+    def test_empty_content_falls_back_to_metadata_fields(self, config: Config) -> None:
+        out = _graph_aware_manager(config).create_lean_context_strings(
+            [{"content": "", "metadata": {"description": "d"}}]
+        )
+        assert "description" in out[0]
+
+    def test_truncated_without_content_is_minimal_info(self, config: Config) -> None:
+        out = _graph_aware_manager(config).create_lean_context_strings(
+            [{"source": "r1", "truncated": True, "metadata": {"summary": "long"}}]
+        )
+        assert out == [str({"source": "r1"})]
