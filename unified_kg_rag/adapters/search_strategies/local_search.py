@@ -397,8 +397,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
     ) -> list[RetrievalResult]:
         # This lookup is an ID-batch FETCH (`query=""`,
         # LEXICAL, pure id filter), so OpenSearch returns the batch in index
-        # order with no meaningful relevance score — 1915 of 2355 emitted
-        # contexts carried score 0.0. That threw away the graph-support ranking
+        # order with no meaningful relevance score (typically 0.0). That would
+        # throw away the graph-support ranking
         # computed in `_rank_text_unit_ids`. Re-impose it here, and project it
         # into `score` as a normalized descending value so the shared fusion /
         # per-type-quota path (which sorts by score) preserves it instead of

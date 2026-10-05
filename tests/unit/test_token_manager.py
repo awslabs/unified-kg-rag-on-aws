@@ -290,10 +290,9 @@ class TestPerTypeBudgetIsAHardCap:
     The previous implementation packed each type to its sub-budget and then ran a
     second pass that pooled every unused token and offered it to the leftovers of
     ANY type by raw priority. That made the proportions advisory: whichever type
-    had the most/highest-scoring leftovers absorbed the whole remainder (measured
-    on musique50/n=50: community reports took 0.68 of the window against a 0.10
-    prop; with ranked chunk scores TEXT took 0.84 and evicted every community
-    report). Neither upstream pools — MS GraphRAG's mixed_context packs community
+    had the most/highest-scoring leftovers absorbed the whole remainder, so one
+    type could take most of the window and evict the others. Neither upstream
+    pools — MS GraphRAG's mixed_context packs community
     / local / text against three independent strict budgets and LightRAG
     truncates each type separately.
     """

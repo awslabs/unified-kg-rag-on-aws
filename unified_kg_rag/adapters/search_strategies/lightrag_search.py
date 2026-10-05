@@ -624,8 +624,9 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
 
         Only the hl VECTOR hits are used as the source, not the
         incident-edge expansion: upstream's endpoint pass runs inside
-        ``_get_edge_data`` on the vector results only, and feeding it ~130 incident
-        edges would manufacture entities upstream never has.
+        ``_get_edge_data`` on the vector results only, and feeding it the
+        (much larger) incident-edge set would manufacture entities upstream never
+        has.
         """
         retriever = self.document_retriever
         if not retriever:

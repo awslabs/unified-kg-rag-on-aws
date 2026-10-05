@@ -70,7 +70,7 @@ async def test_low_llm_score_filtered_out() -> None:
 
 
 async def test_score_normalized_into_unit_interval() -> None:
-    # A perfect 10/10 must blend to a score within [0, 1], not blow past 1.
+    # A perfect 10/10 must normalize to a score within [0, 1], not blow past 1.
     strat = _strategy(threshold=0.0, score_text="10")
     query = SearchQuery(query="q", retrieval_multiplier=1)
     kept = await strat._select_relevant_communities(_communities(1), query)

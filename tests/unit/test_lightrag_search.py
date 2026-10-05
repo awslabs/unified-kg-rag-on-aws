@@ -382,9 +382,8 @@ class TestUpstreamTwoRetrievalWidths:
     queries; ``QueryParam.chunk_top_k`` (DEFAULT_CHUNK_TOP_K = 20) separately sizes the
     chunk stream (lightrag/constants.py; ``search_top_k = query_param.chunk_top_k or
     query_param.top_k`` in operate.py). Collapsing both onto the caller's single
-    ``top_k`` starved the KG streams: measured on musique50/n=50 at top_k=10, upstream
-    mix assembled a median 71 entities / 86 relations / 20 chunks per query against our
-    20 / 10 / 17, and scored token-F1 0.653 vs our 0.477 (McNemar p=0.021).
+    ``top_k`` starves the KG streams: a width sized for chunks is far narrower than
+    what the entity/relationship queries need.
     """
 
     async def test_entity_and_relationship_queries_use_the_kg_width(
@@ -497,10 +496,10 @@ class TestUpstreamTwoRetrievalWidths:
     async def test_hybrid_gets_the_same_quota_as_mix(self, config: Config) -> None:
         # HYBRID runs the same three streams as mix (ll->entities, hl->relationships,
         # KG-linked chunks); mix only adds the naive VECTOR chunk blend on top. Gating
-        # the quota on mix alone left hybrid taking a flat top_k cut — 10 contexts
-        # against upstream hybrid's 188 — and abstaining on 55/100 MuSiQue queries for
-        # lack of evidence (F1 .236 vs upstream .567). The previous version of this test
-        # asserted that no-quota behaviour as intended, which encoded the defect.
+        # the quota on mix alone left hybrid taking a flat top_k cut, far narrower
+        # than upstream hybrid's context, so it often lacked the evidence to answer.
+        # The previous version of this test asserted that no-quota behaviour as
+        # intended, which encoded the defect.
         strategy, _, _ = _make_strategy(config)
         captured: dict = {}
 
@@ -567,10 +566,9 @@ class TestUpstreamChunkSelection:
     ``seen_chunk_ids`` set (``_merge_chunks``).
 
     The previous implementation ranked the pooled lineage by global citation
-    count and cut at ``chunk_top_k``, blind to the vector stream. Measured on
-    musique50/n=50 (m16 mix): 37.2% of the linked stream duplicated chunks the
-    vector query already returned, and gold-chain recall was 0.982 on
-    full-chain queries vs 0.477 on the rest.
+    count and cut at ``chunk_top_k``, blind to the vector stream, so part of
+    the linked stream's budget went to chunks the vector query had already
+    returned, and chunks cited by only one matched item were cut first.
     """
 
     @staticmethod
@@ -736,9 +734,9 @@ class TestIncidentRelationshipExpansion:
     ``get_nodes_edges_batch``, dedups by ``tuple(sorted(e))``, orders by
     ``(rank, weight)`` descending, and applies NO count cap — the per-type token
     limit (``DEFAULT_MAX_RELATION_TOKENS`` = 8000) does the trimming. We had
-    only the mirror direction (relation -> endpoint entity), so its relationship
-    stream held a median 28 relations per query against upstream's 86 on
-    musique50/n=50: the candidates never existed to be truncated.
+    only the mirror direction (relation -> endpoint entity), so the relationship
+    stream was a fraction of upstream's width: the candidates never existed to be
+    truncated.
     """
 
     async def test_incident_edges_are_fetched_from_both_endpoint_sides(
@@ -973,10 +971,9 @@ class TestRelationshipEndpointEntities:
     ``_find_most_related_entities_from_relationships`` (~5478), which collects
     ``src_id``/``tgt_id`` in first-seen order, fetches them with
     ``get_nodes_batch``, and (in hybrid/mix) round-robin merges them with the ll
-    entity list in ``_merge_context``. We previously routed those same ids ONLY into
-    ``_expand_via_graph`` — a Neptune re-query returning the seeds' neighbourhood,
-    not the endpoints — so the endpoints never became context items and the entity
-    section sat at a median 48 per query against upstream's 71 on musique50/n=50.
+    entity list in ``_merge_context``. Those ids were once routed ONLY into a
+    Neptune neighbourhood expansion, which returns the seeds' neighbours rather
+    than the endpoints, so the endpoints never became context items.
     """
 
     @staticmethod
@@ -1127,10 +1124,10 @@ class TestEndpointsBecomeCandidates:
 class TestHybridHasAChunkStream:
     """Upstream `hybrid` builds context from entities + relations + THEIR chunks.
 
-    `_find_related_text_unit_from_entities` / `_from_relations` run for hybrid too —
-    upstream hybrid's context measured ~190 text items. What `mix` adds is the
-    separate naive VECTOR chunk query. Gating the lineage chunks on mix left hybrid
-    with no chunk stream at all, and it abstained on 55/100 MuSiQue queries.
+    `_find_related_text_unit_from_entities` / `_from_relations` run for hybrid too.
+    What `mix` adds is the separate naive VECTOR chunk query. Gating the lineage
+    chunks on mix left hybrid with no chunk stream at all, so it had no passages
+    to answer from.
     """
 
     @staticmethod

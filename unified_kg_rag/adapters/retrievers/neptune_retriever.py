@@ -451,6 +451,13 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         self, traversal_results: list[dict[str, Any]], query: SearchQuery
     ) -> list[RetrievalResult]:
         results, seen_ids = [], set()
+        community_sizes = [
+            float(self._clean_property_map(item.get("node", {})).get("size") or 0)
+            for item in traversal_results
+            if self._neptune_config.community_label_prefix
+            in str(item.get("node_type", ""))
+        ]
+        max_community_size = max(community_sizes, default=0.0)
 
         for item in traversal_results:
             node_data = self._clean_property_map(item.get("node", {}))
@@ -458,7 +465,9 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             if not node_id or node_id in seen_ids:
                 continue
 
-            result = self._create_retrieval_result(item, node_data, query)
+            result = self._create_retrieval_result(
+                item, node_data, query, max_community_size=max_community_size
+            )
             results.append(result)
             seen_ids.add(node_id)
 
@@ -466,7 +475,11 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         return results
 
     def _create_retrieval_result(
-        self, item: dict[str, Any], node_data: dict[str, Any], query: SearchQuery
+        self,
+        item: dict[str, Any],
+        node_data: dict[str, Any],
+        query: SearchQuery,
+        max_community_size: float = 0.0,
     ) -> RetrievalResult:
         node_id = str(node_data.get("id"))
         node_type_str = item.get("node_type", "unknown")
@@ -476,7 +489,9 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
 
         path_data = item.get("path", [])
         content = self._build_content(node_data, path_data, is_community)
-        score = self._calculate_relevance(node_data, path_data, query, is_community)
+        score = self._calculate_relevance(
+            node_data, path_data, is_community, max_community_size
+        )
 
         return RetrievalResult(
             content=content,
@@ -511,35 +526,28 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
     def _calculate_relevance(
         node: dict[str, Any],
         path: list[dict[str, Any]],
-        query: SearchQuery,
         is_community: bool,
+        max_community_size: float = 0.0,
     ) -> float:
-        score_weights = {"importance": 0.4, "path": 0.3, "text": 0.2, "type": 0.1}
-        path_len_penalty = 1.0 / (len(path) or 1)
-        query_lower = query.query.lower()
+        """Mean of the node's importance and its proximity to the seeds, in [0, 1].
 
+        ``proximity = 1 / path length`` (1.0 for a seed, 0.5 one hop out), so
+        nearer nodes rank first and importance breaks ties among equally near
+        ones. Entity importance is the indexed ``importance`` (0-1, neutral 0.5
+        when missing); a community's is its size relative to the largest
+        community in the same result, so no corpus-size constant is needed.
+        The two terms are weighted equally because neither has a measured
+        reason to dominate. (A query-text term was dropped: graph expansion
+        passes the whole question, which never occurs inside a node name.)
+        """
+        proximity = 1.0 / (len(path) or 1)
         if is_community:
-            importance = min(node.get("size", 1) / 100.0, 1.0)
-            type_boost = 0.1
-            text_match_score = (
-                0.2 if query_lower in node.get("name", "").lower() else 0.0
-            )
+            size = float(node.get("size") or 0)
+            importance = size / max_community_size if max_community_size > 0 else 0.0
         else:
             importance = float(node.get("importance", 0.5))
-            type_boost = 0.0
-            text_match_score = 0.0
-            if query_lower in node.get("name", "").lower():
-                text_match_score += 0.2
-            if query_lower in node.get("description", "").lower():
-                text_match_score += 0.1
-
-        score = (
-            (importance * score_weights["importance"])
-            + (path_len_penalty * score_weights["path"])
-            + (text_match_score * score_weights["text"])
-            + (type_boost * score_weights["type"])
-        )
-        return float(min(score, 1.0))
+        importance = min(max(importance, 0.0), 1.0)
+        return (importance + proximity) / 2.0
 
     def _record_metrics(
         self, result_count: int, entity_count: int, community_count: int
