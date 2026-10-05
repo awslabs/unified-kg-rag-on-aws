@@ -157,7 +157,7 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 
 **계보(lineage)가 핵심 데이터**입니다. 엔티티/관계는 추출 시 자신이 등장한 `text_unit_ids`를 기록하며, 이 권위 데이터가 (구) 토큰 중첩 휴리스틱을 대체하여 "이 엔티티가 이 텍스트 단위와 관련 있는가?"를 정확하고 언어 무관하게 판정합니다.
 
-**엔티티 ID와 다국어**: 엔티티/관계 ID는 정규화된 이름의 해시입니다. `normalize_name`(`shared/utils/common.py`)은 NFKC + casefold 후 **모든 스크립트의 문자/숫자를 보존**(`\w`, `re.UNICODE`)하고 구두점만 제거합니다. 따라서 한국어·CJK·악센트 이름도 고유 ID를 가집니다(ASCII 전용 정규화는 비라틴 이름을 빈 문자열로 만들어 그래프를 붕괴시킵니다). 비어 있지 않은 입력은 절대 빈 ID로 collapse되지 않습니다.
+**엔티티 이름·ID와 다국어**: `Entity.name`(관계의 `source_name`/`target_name` 포함)은 원문의 *표시 형태*를 앞뒤 공백 제거와 공백 축약만 거쳐 그대로 보존합니다(`clean_display_name`). 따라서 검색 컨텍스트와 커뮤니티 리포트가 "$1,000 penalty", "Section 4.2", "C++"를 그대로 인용할 수 있습니다. 식별은 별도 키로 합니다. 엔티티/관계 ID는 `entity_key(name)`(`shared/utils/common.py`)의 해시이며, 이 키는 NFKC + casefold 후 `_`/`-`를 공백으로 바꾸고 따옴표와 쉼표를 제거하고 공백을 축약하고 끝의 문장부호를 떼지만 **그 밖의 기호와 모든 스크립트의 문자/숫자는 보존**합니다. 그래서 대소문자·공백·따옴표만 다른 이름("ACME  Corp." / "Acme Corp")은 같은 ID를 갖고, "C++"와 "C#"은 더 이상 충돌하지 않으며, 한국어·CJK·악센트 이름도 고유 ID를 가집니다. 비어 있지 않은 이름은 빈 키가 되지 않습니다. 정확 일치(추출 시 관계 끝점 조회, gleaner 병합, claim 해석, 증분 `merge_entities`)와 퍼지 매처의 shingle도 같은 키를 쓰며, 구두점을 지우는 `normalize_name`은 토큰 단위 유사도에만 남아 있습니다. **키가 바뀌면 모든 ID가 바뀌므로 이전 방식으로 인덱싱한 그래프는 전체 재인덱싱이 필요합니다**(증분 인덱싱만 하면 기존 엔티티 옆에 새 ID의 중복이 생깁니다).
 
 ---
 
@@ -216,7 +216,7 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 4. **삭제 전파** (`remove_deleted`): 삭제 문서의 *독점* 아티팩트만 `delete_by_id`로 제거(공유 엔티티 보존). 텍스트 단위·엔티티·관계 인덱스 모두 대상.
 5. **레지스트리 갱신**: 처리한 문서를 `DocumentLineage`(문서별 아티팩트 id + suffix)로 `DocStatusRecord`에 기록.
 
-**병합 의미론**(`domain/ingestion/merge/merger.py`, MS GraphRAG `update/*` 이식): 엔티티는 정규화된 이름 기준 병합(설명 결합, `text_unit_ids` union, `frequency` 재계산, 기존 id 보존+remap), 관계는 (source,target) 기준 병합(weight 평균), 커뮤니티는 id-offset append.
+**병합 의미론**(`domain/ingestion/merge/merger.py`, MS GraphRAG `update/*` 이식): 엔티티는 식별 키(`entity_key`) 기준 병합(설명 결합, `text_unit_ids` union, `frequency` 재계산, 기존 id 보존+remap), 관계는 (source,target) 기준 병합(weight 평균), 커뮤니티는 id-offset append.
 
 활성화: `config.aws.dynamodb.enabled = true`.
 
@@ -306,7 +306,7 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 ### 8.7 다국어 처리
 
 - **OpenSearch 분석기**: 언어→분석기 매핑은 설정(`indexing.opensearch.language_analyzers`, 기본 `{"en": "english", "ko": "nori"}`)으로 노출되어 코드 변경 없이 확장합니다. nori(한국어 형태소 분석기)는 OpenSearch Service에 내장. 매핑이 없는 언어는 `default_analyzer`로 폴백.
-- **엔티티 ID 정규화**: `normalize_name`(`shared/utils/common.py`)은 NFKC + casefold 후 모든 스크립트의 문자/숫자를 보존(`\w`, `re.UNICODE`)하고 구두점만 제거 → 한국어·CJK·악센트 이름도 고유 ID(§3). 비어 있지 않은 입력이 빈 ID로 collapse되지 않습니다.
+- **엔티티 ID 정규화**: ID는 `entity_key`(`shared/utils/common.py`)의 해시입니다. NFKC + casefold 후 기호와 모든 스크립트의 문자/숫자를 보존하고 따옴표·쉼표·끝 문장부호만 제거 → 한국어·CJK·악센트 이름도 고유 ID를 갖고 "C++"/"C#"도 구분되며, `Entity.name`은 표시 형태를 유지합니다(§3). 비어 있지 않은 입력이 빈 ID로 collapse되지 않습니다.
 - **번역 스킵**: `TranslationConfig.is_noop`(source_language == target_language이고 추가 대상 언어 없음)이면 번역 스테이지가 비용 없이 통째로 스킵됩니다(`pipeline_stages.py:541`).
 - **인코딩 자동 감지**: 텍스트 파서는 비-UTF-8 파일에서 `UnicodeDecodeError`를 만나면 `charset-normalizer`로 인코딩을 감지해 명시적 `encoding=`으로 재시도(`parser.py:89`). LangChain의 `autodetect_encoding=True`(추가 의존성 `chardet`을 끌어옴)는 의도적으로 사용하지 않습니다.
 

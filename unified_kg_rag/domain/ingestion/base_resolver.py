@@ -11,7 +11,11 @@ from datasketch import MinHash, MinHashLSH
 
 from unified_kg_rag.domain.models import Config, ResolutionMethod
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import default_max_workers, normalize_name
+from unified_kg_rag.shared.utils import (
+    default_max_workers,
+    entity_key,
+    normalize_name,
+)
 
 logger = get_logger(__name__)
 
@@ -139,7 +143,7 @@ class FuzzyMatcher:
 
     def _build_indices(self) -> None:
         self.exact_index = {name: name for name in self.candidates}
-        self.normalized_index = {normalize_name(name): name for name in self.candidates}
+        self.normalized_index = {entity_key(name): name for name in self.candidates}
         # Precomputed once so find_all_matches' identifier guard is a dict
         # lookup per candidate rather than a re-normalization.
         self.discriminator_index = {
@@ -175,7 +179,7 @@ class FuzzyMatcher:
         cls, text: str, minhash_permutations: int = 128, n_grams: int = 3
     ) -> MinHash:
         minhash = MinHash(num_perm=minhash_permutations)
-        normalized_text = normalize_name(text)
+        normalized_text = entity_key(text)
 
         if len(normalized_text) < n_grams:
             shingles = {normalized_text}
@@ -222,8 +226,9 @@ class FuzzyMatcher:
         tier: grouping fans every match into a merge cluster, and abbreviation
         matches ("AC" -> "Acme Corp") are too aggressive there (they would
         over-merge unrelated entities). Exact/normalized equality is still
-        covered — ``_create_minhash`` normalizes (NFKC/casefold) before
-        shingling, so normalized-equal names (incl. CJK) score 1.0 under LSH.
+        covered — ``_create_minhash`` shingles the ``entity_key`` (NFKC/casefold,
+        symbols kept), so key-equal names (incl. CJK) score 1.0 under LSH while
+        "C++" and "C#" do not collide.
 
         Candidates whose :func:`discriminator_tokens` differ from the query's
         are dropped: "purchase order 1001" and "purchase order 1002" share most
@@ -263,14 +268,14 @@ class FuzzyMatcher:
     def _find_all_string_similarity_matches(
         self, query: str
     ) -> list[tuple[str, float]]:
-        normalized_query = normalize_name(query)
+        normalized_query = entity_key(query)
         matches = []
 
         for candidate_name in self.candidates:
             if query == candidate_name:
                 continue
 
-            normalized_candidate = normalize_name(candidate_name)
+            normalized_candidate = entity_key(candidate_name)
             score = SequenceMatcher(
                 None, normalized_query, normalized_candidate
             ).ratio()
@@ -287,7 +292,7 @@ class FuzzyMatcher:
             logger.debug("Found exact match for '%s': %s", query, match)
             return match, 1.0
 
-        normalized_query = normalize_name(query)
+        normalized_query = entity_key(query)
         if match := self.normalized_index.get(normalized_query):
             logger.debug("Found normalized match for '%s': %s", query, match)
             return match, 0.95
@@ -392,7 +397,7 @@ class FuzzyMatcher:
         best_score = 0.0
 
         for candidate_name in self.candidates:
-            normalized_candidate = normalize_name(candidate_name)
+            normalized_candidate = entity_key(candidate_name)
             score = 0.0
 
             if normalized_query in normalized_candidate:
@@ -423,7 +428,7 @@ class FuzzyMatcher:
             (
                 candidate_name,
                 SequenceMatcher(
-                    None, normalized_query, normalize_name(candidate_name)
+                    None, normalized_query, entity_key(candidate_name)
                 ).ratio(),
             )
             for candidate_name in self.candidates

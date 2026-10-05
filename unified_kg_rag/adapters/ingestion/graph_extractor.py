@@ -340,7 +340,7 @@ class GraphExtractor(BaseProcessor):
 
         entities = self._apply_entity_grounding(entities, text_unit)
 
-        entity_name_to_id = {entity.name: entity.id for entity in entities}
+        entity_name_to_id = self.build_entity_key_index(entities)
         relationships_data = ensure_list(
             result.get("relationships"), inner_key="relationship"
         )

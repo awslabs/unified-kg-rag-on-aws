@@ -3,9 +3,11 @@
 from .cache_keys import stage_cache_key, stage_input_fingerprint
 from .common import (
     EMBEDDING_FIELD_SUFFIX,
+    clean_display_name,
     compute_hash,
     default_max_workers,
     ensure_list,
+    entity_key,
     generate_stable_id,
     normalize_name,
     parse_llm_json,
@@ -34,6 +36,7 @@ __all__ = [
     "EMBEDDING_FIELD_SUFFIX",
     "BatchProcessor",
     "RobustXMLOutputParser",
+    "clean_display_name",
     "compute_hash",
     "console",
     "convert_langchain_to_document",
@@ -47,6 +50,7 @@ __all__ = [
     "display_sample_relationships",
     "display_stage_results",
     "ensure_list",
+    "entity_key",
     "generate_stable_id",
     "normalize_name",
     "parse_llm_json",

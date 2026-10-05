@@ -118,7 +118,11 @@ def generate_stable_id(
 
 
 def normalize_name(name: str | None) -> str:
-    """Normalize an entity/relationship name for id-hashing and matching.
+    """Normalize a name for token-level fuzzy similarity (not identity).
+
+    Entity ids and exact-name matching use :func:`entity_key`, which keeps
+    meaningful symbols; this stricter form drops all punctuation so token
+    overlap ignores it.
 
     Unicode-aware: casefold + NFKC normalization, treat _/- as separators, drop
     punctuation/symbols but keep letters/marks/digits of any script. If the
@@ -137,6 +141,52 @@ def normalize_name(name: str | None) -> str:
     normalized = RE_EXTRA_SPACES.sub(" ", normalized).strip()
 
     return normalized or unicodedata.normalize("NFKC", name).casefold().strip()
+
+
+# Quote marks and thousands separators carry no identity ("McDonald's" vs
+# "McDonalds", "1,000" vs "1000"), so entity_key drops them.
+_RE_KEY_DROP_CHARS = re.compile("[\"'`\u2018\u2019\u201c\u201d,]")
+# Sentence punctuation the LLM sometimes leaves on the end of a name
+# ("Acme Corp." vs "Acme Corp"). Only stripped at the end, so "4.2", ".NET"
+# and "C++" keep their symbols.
+_RE_KEY_TRAILING_PUNCT = re.compile(r"[.;:!?]+$")
+
+
+def clean_display_name(name: str | None) -> str:
+    """Return the display form of an entity name: trimmed, whitespace collapsed.
+
+    This is what ``Entity.name`` (and relationship ``source_name`` /
+    ``target_name``) carries, so retrieval context and community reports quote
+    the surface form the source used ("$1,000 penalty", "Section 4.2", "C++")
+    instead of a normalized key. Identity lives in :func:`entity_key`.
+    """
+    if not name:
+        return ""
+    return " ".join(name.split())
+
+
+def entity_key(name: str | None) -> str:
+    """Return the identity key of an entity name (used for ids and exact match).
+
+    NFKC + casefold, ``_``/``-`` treated as spaces, quote marks and commas
+    removed, whitespace collapsed, and trailing sentence punctuation stripped.
+    Unlike :func:`normalize_name` it keeps every other symbol, so names that
+    differ only in meaningful punctuation get distinct keys ("C++" vs "C#",
+    "Section 4.2" vs "Section 42") while case/whitespace/quote variants of one
+    name ("ACME  Corp." vs "Acme Corp") share a key. Falls back to the
+    casefolded input so a non-empty name never yields an empty key.
+
+    Entity and relationship ids are hashes of this key; changing it changes
+    every id, which requires a full re-index of existing graphs.
+    """
+    if not name:
+        return ""
+    folded = unicodedata.normalize("NFKC", name).casefold()
+    key = folded.replace("_", " ").replace("-", " ")
+    key = _RE_KEY_DROP_CHARS.sub("", key)
+    key = " ".join(key.split())
+    key = _RE_KEY_TRAILING_PUNCT.sub("", key).rstrip()
+    return key or folded.strip()
 
 
 def safe_float_parse(value: Any, default_value: float | None = None) -> float | None:
