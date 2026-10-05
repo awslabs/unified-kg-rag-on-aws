@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from unified_kg_rag.domain.models import (
     Config,
+    EvaluationMetricType,
     EvaluationQuery,
     EvaluationReport,
     EvaluationResult,
@@ -18,6 +19,16 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
+
+# Report-metadata keys recording metrics that produced no score. A metric listed
+# here is NOT in ``EvaluationReport.metrics``, so it never enters a mean:
+#   failed  -> the evaluator tried and errored / returned an uncomputable value
+#   skipped -> the metric was not applicable (e.g. no reference answer)
+# Values map ``EvaluationMetricType.value`` -> human-readable reason.
+FAILED_METRICS_KEY = "failed_metrics"
+SKIPPED_METRICS_KEY = "skipped_metrics"
+SKIP_REASON_EMPTY_REFERENCE = "empty_reference"
+SKIP_REASON_ANSWER_FAILED = "answer_generation_failed"
 
 
 class BaseEvaluator(ABC):
@@ -98,21 +109,37 @@ class BaseEvaluator(ABC):
 
             if error:
                 logger.error("Failed to evaluate query '%s': %s", query_id, error)
-                final_reports[original_index] = self._create_empty_report(query_id)
+                final_reports[original_index] = self._create_empty_report(
+                    query_id, reason=f"Evaluation failed: {error}"
+                )
             else:
                 final_reports[original_index] = report
 
         return [report for report in final_reports if report is not None]
 
-    def _create_empty_report(self, query_id: str) -> EvaluationReport:
+    def _create_empty_report(
+        self, query_id: str, reason: str = "evaluation failed"
+    ) -> EvaluationReport:
         return EvaluationReport(
             query_id=query_id,
             evaluator_type=self.evaluator_type,
             metrics=[],
             overall_score=0.0,
             evaluation_time=datetime.now(),
-            metadata={"evaluation_failed": True},
+            metadata={
+                "evaluation_failed": True,
+                FAILED_METRICS_KEY: {m.value: reason for m in self.metric_types()},
+            },
         )
+
+    def metric_types(self) -> list[EvaluationMetricType]:
+        """Metrics this evaluator attempts per query.
+
+        Used to attribute whole-report failures and skipped queries to
+        individual metrics in ``EvaluationSummary.metric_outcomes``. Subclasses
+        override; the default (no metrics) only loses that attribution.
+        """
+        return []
 
     def validate_config(self) -> bool:
         return True

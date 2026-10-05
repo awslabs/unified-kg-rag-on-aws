@@ -112,6 +112,19 @@ class TestEvaluateSingle:
         assert report.overall_score == 1.0
         assert report.metadata["matched_entity_count"] == 1
         assert report.metadata["matched_relationship_count"] == 1
+        assert "skipped_metrics" not in report.metadata
+
+    def test_absent_dimension_recorded_as_skipped(
+        self, evaluator: GraphAwareEvaluator
+    ) -> None:
+        report = evaluator.evaluate_single(
+            EvaluationQuery(query_id="q1", question="?"),
+            self._result("Alice", expected_entities=["Alice"]),
+            ground_truth="",
+        )
+        assert report.metadata["skipped_metrics"] == {
+            "relationship_coverage": "no_expected_relationships"
+        }
 
     def test_missing_expectations_score_zero(
         self, evaluator: GraphAwareEvaluator
