@@ -748,13 +748,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # Sources are what the answer model actually SAW: the token budgeter's
         # selection, not every search result (sections cut for budget were never
         # in the prompt). Without a selection in state (direct callers), fall
-        # back to reporting every result.
+        # back to reporting every result. Synthesized results (e.g. the global
+        # map-reduce summary) are LLM output the model may read, not retrieved
+        # evidence, so they are never reported as sources on either path.
         optimized: OptimizedContext | None = state.get("optimized_context")
         context = str(state.get("context") or "").strip()
         if optimized is None:
             sources = [
                 GraphRAGChain._source_entry(r, r.content, truncated=False)
                 for r in sr.results
+                if not GraphRAGChain._is_synthesized(r.metadata)
             ]
         elif not context or context == EMPTY_CONTEXT_PLACEHOLDER:
             # The answer step short-circuited: the model saw no context at all.
@@ -782,6 +785,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             processed_query=state["processed_query"],
             metadata=metadata,
         )
+
+    @staticmethod
+    def _is_synthesized(metadata: dict[str, Any] | None) -> bool:
+        return bool((metadata or {}).get("synthesized"))
 
     @staticmethod
     def _source_entry(
@@ -830,7 +837,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
         Reported in retrieval-rank order (the selection itself is grouped by
         section type). A section without a usable ``result_index`` (a custom
-        token manager) is reported from the section alone.
+        token manager) is reported from the section alone. Synthesized results
+        are skipped (see ``_format_output_step``).
         """
 
         def _rank(section: ContextSection) -> int:
@@ -851,6 +859,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                     retriever_type=section.section_type.value,
                     metadata=section.metadata,
                 )
+            if GraphRAGChain._is_synthesized(result.metadata):
+                continue
             sources.append(
                 GraphRAGChain._source_entry(
                     result, section.content, truncated=truncated

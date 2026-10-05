@@ -176,6 +176,43 @@ def test_sources_follow_retrieval_rank_not_section_type_order(
     assert out.sources[0]["metadata"]["chunk_id"] is None
 
 
+def test_sources_exclude_synthesized_results(config: Config) -> None:
+    # The global map-reduce summary is in the answer context but is LLM output,
+    # not retrieved evidence, so it is never a reported source.
+    chain = _chain(config)
+    summary = RetrievalResult(
+        content="Synthesized overview of the reports",
+        score=1.0,
+        source="synthesized_summary",
+        retriever_type="general",
+        metadata={"synthesized": True},
+    )
+    results = [summary, _text_result(1, words=10, score=0.8)]
+    optimized, out = _run_context_and_format(chain, _state(results, 4000))
+    assert optimized.sections_included == 2  # the model still saw the summary
+    assert [s["source"] for s in out.sources] == ["chunk-1"]
+
+
+def test_fallback_sources_exclude_synthesized_results() -> None:
+    # Without a budgeted selection in state, every result is reported -- except
+    # synthesized ones.
+    state = _state(
+        [
+            RetrievalResult(
+                content="summary",
+                score=1.0,
+                source="synthesized_summary",
+                retriever_type="general",
+                metadata={"synthesized": True},
+            ),
+            _text_result(1, words=5, score=0.8),
+        ],
+        4000,
+    )
+    out = GraphRAGChain._format_output_step(state)
+    assert [s["source"] for s in out.sources] == ["chunk-1"]
+
+
 def test_sources_empty_when_model_saw_no_context(config: Config) -> None:
     chain = _chain(config)
     state = _state([], 4000)
