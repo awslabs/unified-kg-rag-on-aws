@@ -373,6 +373,30 @@ async def test_entity_traversal_honors_configured_max_hops(
     assert captured.get("times") == configured_hops
 
 
+async def test_entity_traversal_emits_seeds(retriever, mocker) -> None:
+    # emit() must precede repeat() so the seed entities themselves are part of
+    # the expansion result, not only the nodes reached by >= 1 hop.
+    calls: list[tuple] = []
+    g = mocker.MagicMock()
+    g.V.return_value = RecordingTraversal(calls)
+
+    async def _fake_execute(_traversal):
+        return []
+
+    object.__setattr__(retriever, "_apply_filters", lambda t, f, *_: t)
+    object.__setattr__(retriever, "_with_projection", lambda t: t)
+    object.__setattr__(retriever, "_execute_traversal", _fake_execute)
+
+    await retriever._traverse_from_entities(g, [{"id": "e1"}], SearchQuery(query="x"))
+
+    steps = [name for name, _ in calls]
+    assert steps.index("emit") < steps.index("repeat")
+
+
+def test_default_max_hops_is_one_hop() -> None:
+    assert Config().indexing.neptune.max_hops == 1
+
+
 # --------------------------------------------------------------------------- #
 # _find_seeds_by_type (entity_focus vs text-search fallback)
 # --------------------------------------------------------------------------- #

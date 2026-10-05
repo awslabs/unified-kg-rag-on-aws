@@ -245,3 +245,41 @@ async def test_no_entity_focus_falls_back_to_raw_query(config: Config) -> None:
     assert entity_calls[0].top_k == 7
     assert len(neptune_r.calls) == 1  # graph expansion is seeded
     assert result.metadata["text_unit_count"] == 1
+
+
+class _SeedOnlyRetriever(FakeRetriever):
+    """Entity hits cite a chunk; graph expansion returns nothing."""
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        self.calls.append(query)
+        prefix = query.index_prefixes[0] if query.index_prefixes else self.tag
+        if self.tag == "graph" or "entities" not in prefix:
+            return []
+        return [
+            RetrievalResult(
+                content="Entity: Acme",
+                score=3.0,
+                source="acme-id",
+                retriever_type="document",
+                metadata={"id": "acme-id", "text_unit_ids": ["chunk-acme"]},
+            )
+        ]
+
+
+async def test_matched_entity_chunks_are_fetched_without_graph_hits(
+    config: Config,
+) -> None:
+    # The matched entities' own chunks must reach the text-unit fetch even when
+    # the Neptune expansion returns no nodes for them.
+    strategy, _, _ = _make_strategy(config)
+    os_r, neptune_r = _SeedOnlyRetriever("document"), _SeedOnlyRetriever("graph")
+    strategy.retrievers = {
+        RetrieverRole.DOCUMENT.value: os_r,
+        RetrieverRole.GRAPH.value: neptune_r,
+    }
+    await strategy.asearch(_query())
+    text_unit_prefix = config.indexing.opensearch.text_units_index_prefix
+    fetches = [q for q in os_r.calls if q.index_prefixes == [text_unit_prefix]]
+    assert fetches, "expected a text-unit fetch"
+    assert fetches[0].filters is not None
+    assert fetches[0].filters["id"] == ["chunk-acme"]
