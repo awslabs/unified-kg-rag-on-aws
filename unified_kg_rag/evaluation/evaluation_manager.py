@@ -300,12 +300,7 @@ class EvaluationManager:
 
         for item in sources_list:
             payloads_to_search = self._get_payloads_to_search(item)
-            has_translated_text = self._has_translated_text(
-                payloads_to_search, translated_key
-            )
-            lean_item = self._extract_fields(
-                payloads_to_search, desired_fields, has_translated_text
-            )
+            lean_item = self._extract_fields(payloads_to_search, desired_fields)
 
             if lean_item:
                 lean_contexts.append(str(lean_item))
@@ -328,24 +323,14 @@ class EvaluationManager:
         return payloads
 
     @staticmethod
-    def _has_translated_text(
-        payloads: list[dict[str, Any]], translated_key: str
-    ) -> bool:
-        return any(
-            translated_key in payload and payload[translated_key]
-            for payload in payloads
-        )
-
-    @staticmethod
     def _extract_fields(
         payloads: list[dict[str, Any]],
         desired_fields: list[str],
-        has_translated_text: bool,
     ) -> dict[str, Any]:
         lean_item = {}
 
         for field in desired_fields:
-            if field in lean_item or (field == "text" and has_translated_text):
+            if field in lean_item:
                 continue
 
             for payload in payloads:
