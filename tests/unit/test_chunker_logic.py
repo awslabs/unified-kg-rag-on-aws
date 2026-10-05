@@ -66,6 +66,13 @@ class TestChunkQualityValidator:
         assert result["metrics"]["empty_chunks"] == 1
         assert result["is_valid"] is False
 
+    def test_single_short_chunk_is_not_undersized(self) -> None:
+        # A short document's only chunk has nothing to merge with.
+        v = ChunkQualityValidator(min_chunk_size=10, max_chunk_size=100)
+        result = v.validate_chunks(["tiny"])
+        assert result["metrics"]["undersized_chunks"] == 0
+        assert result["is_valid"] is True
+
     def test_undersized_gate_only_trips_above_half(self) -> None:
         v = ChunkQualityValidator(min_chunk_size=10, max_chunk_size=100)
         # 1 of 3 undersized (< 50%): not flagged as a too-many-undersized issue.
@@ -544,8 +551,33 @@ class TestIntelligentChunkerPipeline:
         fake_bp = mocker.Mock()
         fake_bp.execute_with_fallback.side_effect = RuntimeError("boom")
         intelligent_chunker.batch_processor = fake_bp
-        out = intelligent_chunker._process_pre_chunks(["pre one", "pre two"], "f.txt")
+        # Long enough (>= 2 * min_chunk_size) to be sent to the LLM.
+        out = intelligent_chunker._process_pre_chunks(
+            ["pre one " * 5, "pre two " * 5], "f.txt"
+        )
         assert all(method == "fallback" for method, _, _ in out)
+
+    def test_short_pre_chunk_skips_the_llm(self, intelligent_chunker, mocker) -> None:
+        # Under 2 * min_chunk_size any split would be merged back into one
+        # chunk, so the pre-chunk is kept whole without an LLM call.
+        intelligent_chunker.chunker.batch = mocker.Mock(
+            side_effect=AssertionError("LLM must not be called")
+        )
+        out = intelligent_chunker._process_pre_chunks(["short text"], "f.txt")
+        assert out == [("unsplit", "short text", 1)]
+
+    def test_only_long_pre_chunks_reach_the_llm(
+        self, intelligent_chunker, mocker
+    ) -> None:
+        long_text = "alpha beta gamma delta\nepsilon zeta eta theta iota kappa"
+        intelligent_chunker.chunker.batch = mocker.Mock(
+            return_value=[{"chunk_boundaries": [2]}]
+        )
+        out = intelligent_chunker._process_pre_chunks(["tiny", long_text], "f.txt")
+        sent = intelligent_chunker.chunker.batch.call_args.args[0]
+        assert len(sent) == 1 and "alpha beta" in sent[0]["numbered_text"]
+        assert out[0] == ("unsplit", "tiny", 1)
+        assert all(method == "llm" and src == 2 for method, _, src in out[1:])
 
     def test_merge_structured_chunks_oversized_split(
         self, intelligent_chunker, mocker
