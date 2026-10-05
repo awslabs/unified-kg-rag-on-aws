@@ -18,13 +18,16 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SearchType,
 )
-from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
+from unified_kg_rag.domain.retrieval.strategy_registry import (
+    QueryInput,
+    register_strategy,
+)
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
 
 
-@register_strategy(SearchStrategy.LOCAL)
+@register_strategy(SearchStrategy.LOCAL, query_inputs=frozenset({QueryInput.ENTITIES}))
 class LocalSearchStrategy(BaseSearchStrategy):
     def __init__(
         self,

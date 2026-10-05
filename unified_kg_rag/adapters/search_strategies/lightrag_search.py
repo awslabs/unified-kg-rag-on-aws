@@ -44,7 +44,10 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SearchType,
 )
-from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
+from unified_kg_rag.domain.retrieval.strategy_registry import (
+    QueryInput,
+    register_strategy,
+)
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -127,15 +130,20 @@ def _pick_by_weighted_polling(
 # MIX/HYBRID need graph expansion and take the default (DOCUMENT, GRAPH). The
 # shared class can't carry one required_roles for all three, so NAIVE registers
 # separately -- otherwise every naive query builds an unused Neptune retriever.
-@register_strategy(SearchStrategy.MIX)
-@register_strategy(SearchStrategy.HYBRID)
+@register_strategy(
+    SearchStrategy.MIX, query_inputs=frozenset({QueryInput.DUAL_KEYWORDS})
+)
+@register_strategy(
+    SearchStrategy.HYBRID, query_inputs=frozenset({QueryInput.DUAL_KEYWORDS})
+)
 @register_strategy(SearchStrategy.NAIVE, required_roles=(RetrieverRole.DOCUMENT,))
 class LightRAGSearchStrategy(BaseSearchStrategy):
     """Dual-level keyword retrieval (LightRAG) over the shared hybrid stack.
 
     The same class serves three modes, distinguished by the resolved
-    :class:`SearchStrategy` passed via ``query.metadata['lightrag_mode']``
-    (default ``mix``):
+    :class:`SearchStrategy` passed via ``query.metadata['search_strategy']``
+    (the chain sets it; ``query.metadata['lightrag_mode']`` is still read for
+    direct callers; default ``mix``):
 
     - ``naive``: vector chunk retrieval only (no graph).
     - ``hybrid``: ll->entities + hl->relationships + graph expansion.
@@ -179,7 +187,9 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         return self._os_config.max_query_size
 
     def _mode(self, query: SearchQuery) -> str:
-        return str(query.metadata.get("lightrag_mode", SearchStrategy.MIX.value))
+        metadata = query.metadata
+        mode = metadata.get("search_strategy") or metadata.get("lightrag_mode")
+        return str(mode or SearchStrategy.MIX.value)
 
     def _apply_keyword_fallback(self, query: SearchQuery) -> SearchQuery:
         """Force the raw query as a low-level keyword when both lists are empty.

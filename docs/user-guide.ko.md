@@ -792,8 +792,47 @@ run-rag --query "..." --mode search --output-format json --config-path config.ya
 run-rag --query "..." --verbose --config-path config.yaml
 
 # Attribute filters
-run-rag --query "..." --filters category:research entity_type:person --config-path config.yaml
+run-rag --query "..." --filters attr_category:research type:PERSON --config-path config.yaml
 ```
+
+필터는 OpenSearch에서 `term`/`terms`/`range` 절로, Neptune에서 `has` 단계로
+변환됩니다. 각 저장소는 인덱서가 기록하는 필드를 받습니다.
+
+| 저장소 | 필터 가능 필드 |
+|---|---|
+| Text unit | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.<path>` |
+| Entity | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
+| Relationship | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids` |
+| Claim | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text` |
+| Community report | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `attr_<key>`, `attributes.<path>` |
+| Neptune entity 정점 | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>`(있는 경우에만) |
+| Neptune community 정점 | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
+
+OpenSearch에서 `attr_<key>`는 문서 속성입니다. 문서 `filters` 메타데이터의
+`<key>` 항목이 `attr_<key>`로 색인됩니다. Neptune entity 정점의 `attr_<key>`는
+entity 자체에서 추출한 속성(예: `attr_role`)입니다. 정확한 필터링에는 완전 일치 필드(keyword 또는 숫자)를
+사용하십시오. `description`처럼 분석되는 텍스트 필드에 대한 `term` 필터는 소문자
+단일 토큰과 일치합니다. 범위 필터는 Python API에서 `{"gte": ..., "lte": ...}`로
+지정합니다.
+
+각 필터는 해당 필드를 선언한 저장소에만 적용되므로 `type:PERSON`은 entity, claim,
+Neptune entity만 좁히고 text unit에는 적용되지 않습니다. 두 저장소는
+`attr_<key>`를 다르게 적용합니다.
+
+- OpenSearch는 text unit, entity, community report에 `attr_<key>`와
+  `attributes.<path>`를 엄격하게 적용합니다. 해당 속성이 없는 문서는 제외되므로
+  보통 문서 속성이 없는 community report는 속성 필터 질의에서 빠집니다. 이는 의도한
+  동작(fail-closed)으로, 속성 필터가 확인할 수 없는 내용을 반환하지 않게 합니다.
+- Neptune은 entity 정점에 `attr_<key>`를 속성이 있는 경우에만 적용합니다. 속성이
+  일치하거나 해당 속성이 없는 정점은 통과합니다. 따라서 `attr_category` 같은 문서
+  속성 필터는 그래프 확장을 비우지 않고, `attr_role:buyer` 같은 entity 속성 필터는
+  역할이 다른 entity를 제외합니다. 그 밖의 키는 두 저장소 모두 엄격하게 적용합니다.
+
+선택한 전략이 읽는 어떤 저장소도 선언하지 않은 필터 키(예: 이전 예시의 `category`,
+`entity_type`)는 `InvalidFilterError`를 발생시키며, 오류 메시지에 필터 가능 키
+목록이 포함됩니다. 이전 릴리스는 이런 키를 조용히 무시하고 필터링되지 않은 결과를
+반환했습니다. 스키마는 `unified_kg_rag/adapters/storage/filter_schema.py`에
+정의되어 있습니다.
 
 ### 인터랙티브 모드 & 대화 메모리
 

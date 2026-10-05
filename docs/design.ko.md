@@ -121,7 +121,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 ### 2.3 레지스트리
 
-- **검색 전략**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)`로 `SearchStrategy` enum에 클래스와 필요한 역할을 등록.
+- **검색 전략**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)`로 `SearchStrategy` enum에 클래스, 필요한 역할, 질의 입력을 등록.
 - **평가자**: `EvaluationManager._resolve_evaluator_class` — `EvaluatorType` → 평가자 클래스(lazy, 사용 시 import).
 - **렌더러**: `adapters/renderers/base.py` — `@register_renderer("name")`.
 
@@ -275,7 +275,7 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 
 - **HybridScorer** (`adapters/retrieval/hybrid_scorer.py`): 소스별 결과를 RRF(`rrf_k`) 또는 가중 융합, 다양성 필터링(`diversity_lambda`), Bedrock 리랭킹으로 결합. 가중치·방법은 `config.search.fusion`/`hybrid`. 리랭킹은 `search.reranking.enabled`일 때만 활성화되며, `compress_documents`로 `top_n`을 문서 수에 맞춰 일시 조정 후 복원합니다. 초기화 실패 시 리랭커는 비활성(`None`)으로 degrade.
   - **IAM 주의**: Bedrock Rerank는 `bedrock:Rerank` 권한을 `Resource:*`로 요구합니다(실 AWS E2E에서 발견 — 모델 ARN으로 좁히면 AccessDenied). IaC에 전용 statement로 분리합니다.
-- **TokenManager** (`adapters/retrieval/token_manager.py`): 모델 한도 내 컨텍스트 최적화. 섹션 타입별 우선순위 배수로 가중(`PRIORITY_MULTIPLIERS`: TEXT 1.3 / ENTITY 1.2 / RELATIONSHIP 1.1 / CLAIM 1.1 / COMMUNITY 1.0 / GENERAL 0.8), 우선순위 내림차순으로 예산 내 섹션을 선택. `SectionType.CLAIM`은 query-time claims 주입(§6.1)을 토큰 예산에 편입하기 위한 타입입니다. 체인은 이 선택 결과(`OptimizedContext`)를 상태에 유지하고 그것으로 `RAGOutput.sources`를 만들기 때문에, sources에는 답변 모델이 실제로 본 섹션만 검색 순위 순서로 들어갑니다. 예산 때문에 잘린 섹션은 보고하지 않고, 예산에 맞춰 일부만 넣은 섹션은 `truncated: true`와 잘린 텍스트를 함께 보고합니다. 각 source의 metadata에는 `source_id` / `document_ids` / `chunk_id` / `section_type` / `score`를 유지하고 `*_embedding` 벡터는 제거합니다. 빈 컨텍스트로 답변 단계가 바로 종료되면 `sources`는 비어 있습니다.
+- **TokenManager** (`adapters/retrieval/token_manager.py`): 모델 한도 내 컨텍스트 최적화. 섹션 타입별 우선순위 배수로 가중(`PRIORITY_MULTIPLIERS`: TEXT 1.3 / ENTITY 1.2 / RELATIONSHIP 1.1 / CLAIM 1.1 / COMMUNITY 1.0 / GENERAL 0.8), 우선순위 내림차순으로 예산 내 섹션을 선택. `SectionType.CLAIM`은 query-time claims 주입(§6.1)을 토큰 예산에 편입하기 위한 타입입니다. 체인은 이 선택 결과(`OptimizedContext`)를 상태에 유지하고 그것으로 `RAGOutput.sources`를 만들기 때문에, sources에는 답변 모델이 실제로 본 섹션만 검색 순위 순서로 들어갑니다. 예산 때문에 잘린 섹션은 보고하지 않고, 예산에 맞춰 일부만 넣은 섹션은 잘린 텍스트와 `metadata.truncated: true`를 함께 보고합니다. 각 source의 metadata에는 `truncated` / `source_id` / `document_ids` / `chunk_id` / `section_type` / `score`를 유지하고 `*_embedding` 벡터는 제거합니다. 빈 컨텍스트로 답변 단계가 바로 종료되면 `sources`는 비어 있습니다.
 - **토큰 카운팅** (`adapters/aws/token_counter.py`): Bedrock `count_tokens` API가 단일 진실 소스. 실패 시에만 문자 체계 인식 추정치로 degrade(서드파티 토크나이저 미사용). 일시적이지 않은 실패(`AccessDeniedException`, 메시지가 모델의 기능 미지원을 뜻하는 `ValidationException` 등)가 나면 해당 모델을 프로세스 전체에서 미지원으로 기록해 이후 API를 호출하지 않으며, 스로틀링·타임아웃·입력 문제로 인한 `ValidationException`은 기록하지 않음. 비어 있거나 공백만 있는 텍스트는 API를 호출하지 않음. 임베딩·리랭크 모델용 카운터는 클라이언트 없이 만들어 API를 호출하지 않으며(API가 해당 모델을 받지 않음), CountTokens가 거부하는 언어 모델(Claude 4.7+/5.x, OpenAI GPT)은 기능 플래그(`supports_count_tokens`)로 API를 건너뜀. 절단은 char 비율로 후보를 잡고 API로 검증하는 수렴 루프.
 
 ---
@@ -378,7 +378,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 대부분의 확장은 레지스트리 등록만으로 가능하며 디스패치 코드를 수정하지 않습니다(자세한 내용 `CONTRIBUTING.md`/`CLAUDE.md`).
 
-- **새 검색 전략**: `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...))` + `adapters/search_strategies/__init__.py` export.
+- **새 검색 전략**: `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + `adapters/search_strategies/__init__.py` export. `query_inputs`는 전략이 읽는 질의 측 LLM 추출(`entity_focus`용 `ENTITIES`, `hl_keywords`/`ll_keywords`용 `DUAL_KEYWORDS`)을 선언하며, 체인은 나머지를 건너뜁니다.
 - **새 스토리지/LLM 백엔드**: 해당 포트 구현 후 주입(아래 "커스텀 백엔드" 참조). 매니저 `__init__`에 하드코딩 금지.
 - **새 평가자**: `BaseGraphRAGEvaluator` 상속 + `EvaluationManager._resolve_evaluator_class`에 분기 추가 + `EvaluatorType` enum 추가.
 - **새 렌더러**: `BaseRenderer` 상속 + `@register_renderer("name")`.

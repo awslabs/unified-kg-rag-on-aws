@@ -801,8 +801,51 @@ run-rag --query "..." --mode search --output-format json --config-path config.ya
 run-rag --query "..." --verbose --config-path config.yaml
 
 # Attribute filters
-run-rag --query "..." --filters category:research entity_type:person --config-path config.yaml
+run-rag --query "..." --filters attr_category:research type:PERSON --config-path config.yaml
 ```
+
+Filters compile to `term`/`terms`/`range` clauses on OpenSearch and `has`
+steps on Neptune. Each store accepts the fields its indexer writes:
+
+| Store | Filterable fields |
+|---|---|
+| Text units | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.<path>` |
+| Entities | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
+| Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids` |
+| Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text` |
+| Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `attr_<key>`, `attributes.<path>` |
+| Neptune entity vertices | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>` (where present) |
+| Neptune community vertices | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
+
+On OpenSearch, `attr_<key>` is a document attribute: entry `<key>` of a
+document's `filters` metadata is indexed as `attr_<key>`. On Neptune entity
+vertices, `attr_<key>` holds the entity's own extracted attributes (for example
+`attr_role`). Use exact-match fields (keyword or
+numeric) for precise filtering; a `term` filter on an analyzed text field such
+as `description` matches single lowercase tokens. A range filter takes
+`{"gte": ..., "lte": ...}` through the Python API.
+
+Each filter applies only to the stores that declare its field, so
+`type:PERSON` narrows entities, claims, and Neptune entities and leaves text
+units unfiltered. The two stores treat `attr_<key>` differently:
+
+- OpenSearch applies `attr_<key>` and `attributes.<path>` strictly on text
+  units, entities, and community reports. A document without the attribute is
+  excluded, so community reports, which usually lack document attributes, drop
+  out of an attribute-filtered query. This is deliberate (fail-closed): an
+  attribute filter never returns content it cannot vouch for.
+- Neptune applies `attr_<key>` on entity vertices where present: a vertex
+  passes when the property matches or when it has no such property. A
+  document-attribute filter such as `attr_category` therefore leaves graph
+  expansion intact, while an entity-attribute filter such as `attr_role:buyer`
+  removes entities whose role differs. Every other key is strict on both
+  stores.
+
+A filter key that no store the selected strategy reads declares (for example
+the earlier `category` or `entity_type`) raises `InvalidFilterError`, whose
+message lists the filterable keys. Earlier releases ignored such keys silently
+and returned unfiltered results. The schema is defined in
+`unified_kg_rag/adapters/storage/filter_schema.py`.
 
 ### Interactive mode & conversation memory
 

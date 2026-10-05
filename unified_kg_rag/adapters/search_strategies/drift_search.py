@@ -29,7 +29,10 @@ from unified_kg_rag.domain.prompts import (
     KeywordExpansionPrompt,
     QueryRefinementPrompt,
 )
-from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
+from unified_kg_rag.domain.retrieval.strategy_registry import (
+    QueryInput,
+    register_strategy,
+)
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
     compute_hash,
@@ -40,7 +43,7 @@ from unified_kg_rag.shared.utils import (
 logger = get_logger(__name__)
 
 
-@register_strategy(SearchStrategy.DRIFT)
+@register_strategy(SearchStrategy.DRIFT, query_inputs=frozenset({QueryInput.ENTITIES}))
 class DriftSearchStrategy(BaseSearchStrategy):
     def __init__(
         self,
