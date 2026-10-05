@@ -119,11 +119,15 @@ class DriftSearchStrategy(BaseSearchStrategy):
         metrics: list[dict[str, Any]] = []
         self._update_seen_content(candidate_communities, seen_hashes)
 
-        if self.drift_config.enable_primer:
+        # The primer drafts from the seed community reports; with none to draw
+        # on it could only guess, so fall back to the iterative loop instead.
+        if self.drift_config.enable_primer and candidate_communities:
             await self._primer_search(
                 query, candidate_communities, all_results, seen_hashes, metrics
             )
         else:
+            if self.drift_config.enable_primer:
+                logger.info("No candidate communities; skipping DRIFT primer")
             await self._iterative_search(query, all_results, seen_hashes, metrics)
 
         final_results = self.hybrid_scorer.fuse_and_rerank_results(
@@ -221,28 +225,21 @@ class DriftSearchStrategy(BaseSearchStrategy):
         follow-up is then run as its own search iteration (capped by
         ``max_iterations``). Falls back to the iterative loop if the primer
         yields no follow-up queries, so the strategy never returns seed-only.
+
+        The hypothetical answer is deliberately NOT added to the result set: it
+        is an LLM guess, not retrieved evidence, and seeding it at top score
+        made it both answer context and a reported source. It only steers the
+        follow-up queries the primer derives alongside it.
         """
         follow_ups, intermediate_answer = await self._run_primer(
             query, candidate_communities
         )
-
-        # Seed the primer's hypothetical (HyDE) answer into the result set so it
-        # informs fusion + final synthesis (MS GraphRAG carries this forward
-        # rather than discarding it). Deduped like any other result.
         if intermediate_answer:
-            seed = RetrievalResult(
-                content=intermediate_answer,
-                score=1.0,
-                source="drift_primer",
-                retriever_type="drift_primer",
-                metadata={"source": "primer_intermediate_answer"},
+            logger.debug(
+                "DRIFT primer intermediate answer (%s chars) kept out of the "
+                "answer context",
+                len(intermediate_answer),
             )
-            if (
-                seed.content
-                and compute_hash(seed.content, length=16) not in seen_hashes
-            ):
-                all_results.append(seed)
-                self._update_seen_content([seed], seen_hashes)
 
         if not follow_ups:
             logger.info("Primer produced no follow-ups; using iterative loop")
@@ -277,19 +274,22 @@ class DriftSearchStrategy(BaseSearchStrategy):
         """Run the HyDE primer; return (follow-up sub-queries, intermediate answer).
 
         The ``intermediate_answer`` is the primer's hypothetical answer drafted
-        from the seed community summaries (HyDE). The caller seeds it into the
-        result set so it informs fusion/answer synthesis, matching MS GraphRAG's
-        DRIFT, which carries the primer answer forward rather than discarding it.
+        from the seed community summaries (HyDE). It is returned for diagnostics
+        only; callers must not treat it as retrieved evidence or a source.
         """
         reports = "\n".join(
             f"- {r.content[: self.drift_config.summary_char_limit]}"
             for r in candidate_communities[: self.drift_config.initial_top_k]
         )
+        if not reports:
+            # Nothing to ground the primer in: an LLM call here could only
+            # produce an unsupported guess.
+            return [], ""
         try:
             raw = await self.primer.ainvoke(
                 {
                     "query": query.query,
-                    "community_reports": reports or "(no community summaries found)",
+                    "community_reports": reports,
                     "num_follow_ups": self.drift_config.primer_follow_ups,
                 }
             )

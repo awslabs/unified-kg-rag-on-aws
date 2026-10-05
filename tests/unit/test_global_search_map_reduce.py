@@ -132,9 +132,25 @@ async def test_map_phase_produces_scored_points() -> None:
             _map_payload(("point B", 30), ("point C", 0)),
         ],
     )
-    points = await strat._run_map_phase(_communities(2), SearchQuery(query="q"))
+    points, unrated = await strat._run_map_phase(
+        _communities(2), SearchQuery(query="q")
+    )
     descriptions = {p.description: p.score for p in points}
     assert descriptions == {"point A": 90, "point B": 30, "point C": 0}
+    assert unrated == []
+
+
+async def test_map_phase_reports_unrated_batches() -> None:
+    # Batch 0 is rated (even with no points); batch 1 is unparseable; batch 2
+    # failed (the sequential fallback yields {}). Only 1 and 2 are unrated.
+    strat = _strategy(
+        map_batch_size=1,
+        map_outputs=[json.dumps({"points": []}), "not json", {}],  # type: ignore[list-item]
+    )
+    communities = _communities(3)
+    points, unrated = await strat._run_map_phase(communities, SearchQuery(query="q"))
+    assert points == []
+    assert [r.source for r in unrated] == ["c1", "c2"]
 
 
 async def test_map_phase_batches_reports_per_call() -> None:
@@ -257,6 +273,8 @@ async def test_apply_map_reduce_full_pipeline_prepends_synthesis() -> None:
     out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
     assert out[0].content == "THE ANSWER"
     assert out[0].metadata["ranked_key_points"] == 1  # only the 95 survived
+    # LLM synthesis, not evidence: flagged so it is never reported as a source.
+    assert out[0].metadata["synthesized"] is True
     assert [r.source for r in out[1:]] == ["c0", "c1"]
 
 
@@ -293,6 +311,7 @@ async def test_apply_map_reduce_parse_failure_degrades_to_concat() -> None:
     results = _communities(2)
     out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
     assert out[0].content == "CONCAT SUMMARY"
+    assert out[0].metadata["synthesized"] is True
     # Concat path metadata has no ranked_key_points key.
     assert "ranked_key_points" not in out[0].metadata
     # Reduce was fed the raw report bodies (concat path).
@@ -300,15 +319,82 @@ async def test_apply_map_reduce_parse_failure_degrades_to_concat() -> None:
     assert "community report 0" in sent["summaries"]
 
 
-async def test_apply_map_reduce_all_filtered_degrades_to_concat() -> None:
+async def test_apply_map_reduce_all_filtered_returns_no_context() -> None:
+    # Every map point scored at/below the threshold: the map step judged the
+    # reports irrelevant to the query. Synthesizing from them anyway (the old
+    # concat-and-reduce degradation) produced an answer with no supporting
+    # evidence. MS GraphRAG returns its no-data answer here, so the strategy
+    # returns no context and the chain's empty-context guard answers instead.
     reducer = _reducer("CONCAT SUMMARY")
     strat = _strategy(
         map_batch_size=1,
         map_reduce_min_results=2,
         map_relevance_threshold=50,
-        map_outputs=[_map_payload(("low1", 10)), _map_payload(("low2", 20))],
+        map_outputs=[_map_payload(("low1", 10)), _map_payload(("low2", 50))],
+        reducer=reducer,
+    )
+    out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
+    assert out == []
+    reducer.ainvoke.assert_not_awaited()
+
+
+async def test_apply_map_reduce_unrated_batch_degrades_to_concat_over_unrated() -> None:
+    # One batch rated every point irrelevant, the other failed (throttled): the
+    # failed batch's reports were never judged, so "no relevant data" would be
+    # an unfounded verdict. Synthesize from the unrated reports instead.
+    reducer = _reducer("CONCAT SUMMARY")
+    strat = _strategy(
+        map_batch_size=1,
+        map_reduce_min_results=2,
+        map_relevance_threshold=50,
+        map_outputs=[_map_payload(("low", 0)), {}],  # type: ignore[list-item]
         reducer=reducer,
     )
     out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
     assert out[0].content == "CONCAT SUMMARY"
-    assert "ranked_key_points" not in out[0].metadata
+    assert out[0].metadata["synthesized"] is True
+    assert [r.source for r in out[1:]] == ["c1"]
+    sent = reducer.ainvoke.await_args.args[0]
+    assert "community report 1" in sent["summaries"]
+    assert "community report 0" not in sent["summaries"]
+
+
+async def test_apply_map_reduce_map_exception_concats_all_reports() -> None:
+    reducer = _reducer("CONCAT SUMMARY")
+    strat = _strategy(map_reduce_min_results=2, reducer=reducer)
+    strat._run_map_phase = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("map down")
+    )
+    out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
+    assert out[0].content == "CONCAT SUMMARY"
+    assert [r.source for r in out[1:]] == ["c0", "c1"]
+
+
+async def test_asearch_all_filtered_yields_empty_result_with_flag() -> None:
+    # End to end through asearch: an all-below-threshold map phase surfaces as an
+    # empty SearchResult (no reports leak through as answer context) and is
+    # flagged in metadata so callers can tell it apart from a retrieval miss.
+    strat = _strategy(
+        map_batch_size=1,
+        map_reduce_min_results=1,
+        map_relevance_threshold=50,
+        map_outputs=[_map_payload(("low", 5)), _map_payload(("low", 5))],
+    )
+    communities = _communities(2)
+    strat._retrieve_and_fuse_communities = AsyncMock(  # type: ignore[method-assign]
+        return_value=communities
+    )
+    strat._select_relevant_communities = AsyncMock(  # type: ignore[method-assign]
+        return_value=communities
+    )
+    strat._augment_and_rerank_communities = AsyncMock(  # type: ignore[method-assign]
+        return_value=communities
+    )
+    strat._record_search_metrics = lambda *a, **k: None  # type: ignore[method-assign]
+
+    result = await strat.asearch(SearchQuery(query="q"))
+
+    assert result.results == []
+    assert result.total_results == 0
+    assert result.metadata["map_reduce_no_relevant_points"] is True
+    assert result.metadata["map_reduce_applied"] is False

@@ -21,6 +21,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils import EMBEDDING_FIELD_SUFFIX, strip_embedding_fields
 
 logger = get_logger(__name__)
 
@@ -267,7 +268,13 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             filters,
         )
 
-        search_body = {"size": size, "query": main_query}
+        # Embedding vectors are only needed server-side for kNN scoring; never
+        # ship them back (community reports alone carry three per hit).
+        search_body = {
+            "size": size,
+            "query": main_query,
+            "_source": {"excludes": [f"*{EMBEDDING_FIELD_SUFFIX}"]},
+        }
         params = {}
 
         if search_type == SearchType.HYBRID:
@@ -537,12 +544,15 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         section_type = self._determine_section_type(index_name)
         content = self._extract_content(source)
 
+        # Defensive twin of the `_source` excludes in the request: a custom
+        # client or a cluster that ignores excludes must still not leak vectors
+        # into result metadata (and from there into reported sources).
         return RetrievalResult(
             content=content,
             score=hit.get("_score", 0.0),
             source=source_id,
             retriever_type=str(section_type.value),
-            metadata={**source, "_search_index": index_name},
+            metadata={**strip_embedding_fields(source), "_search_index": index_name},
         )
 
     def _extract_content(self, source: dict[str, Any]) -> str:

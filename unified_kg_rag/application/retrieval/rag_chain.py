@@ -36,6 +36,9 @@ from unified_kg_rag.adapters.retrieval.base import (
 from unified_kg_rag.adapters.retrieval.memory_manager import get_memory_manager
 from unified_kg_rag.adapters.retrieval.token_manager import (
     EMPTY_CONTEXT_PLACEHOLDER,
+    ContextSection,
+    OptimizedContext,
+    SectionType,
     TokenManager,
 )
 from unified_kg_rag.adapters.retrievers import NeptuneRetriever, OpenSearchRetriever
@@ -53,6 +56,7 @@ from unified_kg_rag.domain.models import (
     Config,
     LanguageModelId,
     MessageRole,
+    RetrievalResult,
     RetrieverRole,
     SearchQuery,
     SearchResult,
@@ -71,6 +75,7 @@ from unified_kg_rag.domain.prompts import (
 from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils import strip_embedding_fields
 
 logger = get_logger(__name__)
 
@@ -82,6 +87,20 @@ DEFAULT_ERROR_MESSAGE: str = (
 # GraphRAG community-summary methodology.
 LIGHTRAG_STRATEGIES: frozenset[SearchStrategy] = frozenset(
     {SearchStrategy.MIX, SearchStrategy.HYBRID, SearchStrategy.NAIVE}
+)
+
+# Strategies whose retrieval reads ``SearchQuery.entity_focus`` (local search
+# seeds entities from it; DRIFT sizes its per-iteration entity candidate pool by
+# it). Every other strategy ignores it, so the query-side entity-extraction LLM
+# call is skipped for them.
+ENTITY_FOCUS_STRATEGIES: frozenset[SearchStrategy] = frozenset(
+    {SearchStrategy.LOCAL, SearchStrategy.DRIFT}
+)
+
+# LightRAG modes that consume high/low-level keywords. NAIVE is chunk-only
+# vector retrieval and never reads them, so it skips keyword extraction.
+DUAL_KEYWORD_STRATEGIES: frozenset[SearchStrategy] = frozenset(
+    {SearchStrategy.MIX, SearchStrategy.HYBRID}
 )
 
 
@@ -228,7 +247,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         )
 
         rag_branch = (
-            RunnablePassthrough.assign(context=self._context_building_step)
+            RunnablePassthrough.assign(
+                optimized_context=self._context_optimization_step
+            )
+            | RunnablePassthrough.assign(context=self._context_building_step)
             | RunnablePassthrough.assign(answer=self._answer_generation_step)
             | RunnableLambda(self._format_output_step)
         )
@@ -365,15 +387,26 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 and self.config.processing.translation.is_noop
             )
 
-            entity_extractor = self._get_chain_for_prompt(
-                EntityExtractionPrompt, CommaSeparatedListOutputParser()
-            )
+            # The strategy is resolved (AUTO routing included) before this step,
+            # so only pay for the LLM extractions the resolved strategy reads.
+            needs_entities = self._needs_query_entities(inputs)
+            needs_keywords = self._needs_dual_keywords(inputs)
 
-            tasks: dict[str, Any] = {
-                "entities": entity_extractor.ainvoke(
+            tasks: dict[str, Any] = {}
+            if needs_entities:
+                entity_extractor = self._get_chain_for_prompt(
+                    EntityExtractionPrompt, CommaSeparatedListOutputParser()
+                )
+                tasks["entities"] = entity_extractor.ainvoke(
                     {"query": original_query, "target_language": target_language}
-                ),
-            }
+                )
+            # Keyword extraction runs on the final (possibly translated) query.
+            # When translation is skipped that is the original query, so it can
+            # run concurrently with entity extraction instead of after it.
+            if needs_keywords and skip_translation:
+                tasks["keywords"] = self._extract_dual_keywords(
+                    original_query, target_language
+                )
             if not skip_translation:
                 translator = self._get_chain_for_prompt(
                     TranslationPrompt, StrOutputParser()
@@ -382,7 +415,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                     {"query": original_query, "target_language": target_language}
                 )
 
-            results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+            results = (
+                await asyncio.gather(*tasks.values(), return_exceptions=True)
+                if tasks
+                else []
+            )
             results_map = dict(zip(tasks.keys(), results, strict=True))
             translated_query = results_map.get("translation")
             if not isinstance(translated_query, str):
@@ -415,7 +452,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             final_query = translated_query or original_query
             hl_keywords: list[str] = []
             ll_keywords: list[str] = []
-            if self._is_lightrag_mode(inputs):
+            if "keywords" in results_map:
+                keyword_data = results_map["keywords"]
+                if isinstance(keyword_data, BaseException):
+                    # _extract_dual_keywords already degrades to ([], []) under
+                    # ignore_errors, so an exception here must propagate.
+                    raise keyword_data
+                hl_keywords, ll_keywords = keyword_data
+            elif needs_keywords:
                 hl_keywords, ll_keywords = await self._extract_dual_keywords(
                     final_query, target_language
                 )
@@ -440,6 +484,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     def _is_lightrag_mode(state: dict[str, Any]) -> bool:
         strategy = state.get("resolved_strategy")
         return strategy in LIGHTRAG_STRATEGIES
+
+    @staticmethod
+    def _needs_query_entities(state: dict[str, Any]) -> bool:
+        # Without a resolved strategy (direct step invocation) stay conservative
+        # and extract, matching the pre-gating behavior.
+        strategy = state.get("resolved_strategy")
+        return strategy is None or strategy in ENTITY_FOCUS_STRATEGIES
+
+    @staticmethod
+    def _needs_dual_keywords(state: dict[str, Any]) -> bool:
+        return state.get("resolved_strategy") in DUAL_KEYWORD_STRATEGIES
 
     # Phrases that signal the model returned commentary about the request rather
     # than a translation of it (seen when the query is already in the target
@@ -530,8 +585,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # one query against another query's strategy (silent cross-contamination).
         strategy_instance = self._get_strategy_instance(state["resolved_strategy"])
         processed: ProcessedQuery = state["processed_query"]
+        # Ordered dedupe (not set()) so the joined entity query, and hence its
+        # embedding, is reproducible across processes.
         entity_focus = list(
-            set(processed.entities + state.get("relevant_entities", []))
+            dict.fromkeys(processed.entities + state.get("relevant_entities", []))
         )
 
         resolved_strategy: SearchStrategy = state["resolved_strategy"]
@@ -649,26 +706,55 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                     logger.debug("Error closing retriever %r: %s", retriever, e)
         self._retriever_cache.clear()
 
-    def _context_building_step(self, state: dict[str, Any]) -> str:
+    def _optimize_context(self, state: dict[str, Any]) -> OptimizedContext:
+        query: ProcessedQuery = state["processed_query"]
+        search_results: SearchResult = state["search_results"]
+        return self.token_manager.optimize_context(
+            retrieval_results=search_results.results,
+            query=query.final_query,
+            max_tokens=state.get("max_tokens"),
+        )
+
+    def _context_optimization_step(self, state: dict[str, Any]) -> OptimizedContext:
+        """Select the budgeted sections once and keep them in chain state.
+
+        Both the context string and the reported ``sources`` are built from this
+        selection, so sources reflect exactly what the answer model was given.
+        """
+        try:
+            return self._optimize_context(state)
+        except Exception as e:
+            if not self.ignore_errors:
+                raise
+            logger.warning("Context optimization failed: %s", e, exc_info=True)
+            return OptimizedContext(
+                sections=[],
+                total_tokens=0,
+                sections_included=0,
+                sections_excluded=len(state["search_results"].results),
+                quality_score=0.0,
+            )
+
+    async def _context_building_step(self, state: dict[str, Any]) -> str:
         try:
             query: ProcessedQuery = state["processed_query"]
-            search_results: SearchResult = state["search_results"]
-
-            optimized = self.token_manager.optimize_context(
-                retrieval_results=search_results.results,
-                query=query.final_query,
-                max_tokens=state.get("max_tokens"),
-            )
+            optimized: OptimizedContext | None = state.get("optimized_context")
+            if optimized is None:
+                optimized = self._optimize_context(state)
             search_context = self.token_manager.build_context_string(optimized)
             history = state.get("history")
 
-            if not history:
+            # Decide emptiness on what retrieval actually produced, BEFORE the
+            # history-aware rewrite: the builder LLM can turn an empty context
+            # plus conversation history into a plausible narrative that would
+            # slip past the answer step's empty-context guard.
+            if not history or not optimized.sections:
                 return search_context
 
             context_builder = self._get_chain_for_prompt(
                 ContextBuildingPrompt, StrOutputParser()
             )
-            result = context_builder.invoke(
+            result = await context_builder.ainvoke(
                 {
                     "query": query.original_query,
                     "search_results": search_context,
@@ -711,10 +797,28 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # silently zeroed offline context-recall scoring AND starved the RAGAS context
         # metrics for the highest-scoring results. Retrieval and generation are
         # unaffected — this is what gets REPORTED, not what gets retrieved.
-        sources = [
-            r.model_dump(include={"content", "source", "score", "metadata"})
-            for r in sr.results
-        ]
+        #
+        # Sources are what the answer model actually SAW: the token budgeter's
+        # selection, not every search result (sections cut for budget were never
+        # in the prompt). Without a selection in state (direct callers), fall
+        # back to reporting every result. Synthesized results (e.g. the global
+        # map-reduce summary) are LLM output the model may read, not retrieved
+        # evidence, so they are never reported as sources on either path.
+        optimized: OptimizedContext | None = state.get("optimized_context")
+        context = str(state.get("context") or "").strip()
+        if optimized is None:
+            sources = [
+                GraphRAGChain._source_entry(r, r.content, truncated=False)
+                for r in sr.results
+                if not GraphRAGChain._is_synthesized(r.metadata)
+            ]
+        elif not context or context == EMPTY_CONTEXT_PLACEHOLDER:
+            # The answer step short-circuited: the model saw no context at all.
+            sources = []
+        else:
+            sources = GraphRAGChain._sources_from_sections(
+                optimized.sections, sr.results
+            )
 
         metadata = {
             "search_strategy": sr.search_strategy,
@@ -722,6 +826,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             "total_results": len(sr.results),
             **sr.metadata,
         }
+        if optimized is not None:
+            metadata["context_sections_included"] = optimized.sections_included
+            metadata["context_sections_excluded"] = optimized.sections_excluded
 
         return RAGOutput(
             answer=state["answer"],
@@ -731,6 +838,88 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             processed_query=state["processed_query"],
             metadata=metadata,
         )
+
+    @staticmethod
+    def _is_synthesized(metadata: dict[str, Any] | None) -> bool:
+        return bool((metadata or {}).get("synthesized"))
+
+    @staticmethod
+    def _source_entry(
+        result: RetrievalResult, content: str, *, truncated: bool
+    ) -> dict[str, Any]:
+        """One reported source: the text the model saw plus its provenance.
+
+        Embedding vectors are dropped (any retriever, not only OpenSearch, may
+        carry them in metadata). Provenance keys are added without overwriting
+        retriever-supplied metadata of the same name.
+        """
+        metadata = strip_embedding_fields(result.metadata or {})
+        metadata.pop("truncated", None)
+        raw_doc_ids = metadata.get("document_ids") or metadata.get("document_id")
+        document_ids = (
+            [str(d) for d in raw_doc_ids]
+            if isinstance(raw_doc_ids, list | tuple | set)
+            else [str(raw_doc_ids)] if raw_doc_ids else []
+        )
+        chunk_id = result.chunk_id
+        if chunk_id is None and result.retriever_type == SectionType.TEXT.value:
+            chunk_id = metadata.get("id") or result.source
+        provenance = {
+            "source_id": result.source,
+            "document_ids": document_ids,
+            "chunk_id": chunk_id,
+            "section_type": result.retriever_type,
+            "score": result.score,
+        }
+        for key, value in provenance.items():
+            metadata.setdefault(key, value)
+        metadata["truncated"] = truncated
+        return {
+            "content": content,
+            "source": result.source,
+            "score": result.score,
+            "metadata": metadata,
+            "truncated": truncated,
+        }
+
+    @staticmethod
+    def _sources_from_sections(
+        sections: list[ContextSection], results: list[RetrievalResult]
+    ) -> list[dict[str, Any]]:
+        """Map the budgeter's selected sections back to their results.
+
+        Reported in retrieval-rank order (the selection itself is grouped by
+        section type). A section without a usable ``result_index`` (a custom
+        token manager) is reported from the section alone. Synthesized results
+        are skipped (see ``_format_output_step``).
+        """
+
+        def _rank(section: ContextSection) -> int:
+            index = section.result_index
+            return index if index is not None else len(results)
+
+        sources: list[dict[str, Any]] = []
+        for section in sorted(sections, key=_rank):
+            truncated = bool(section.metadata.get("truncated"))
+            index = section.result_index
+            if index is not None and 0 <= index < len(results):
+                result = results[index]
+            else:
+                result = RetrievalResult(
+                    content=section.content,
+                    score=section.priority,
+                    source=section.source_id,
+                    retriever_type=section.section_type.value,
+                    metadata=section.metadata,
+                )
+            if GraphRAGChain._is_synthesized(result.metadata):
+                continue
+            sources.append(
+                GraphRAGChain._source_entry(
+                    result, section.content, truncated=truncated
+                )
+            )
+        return sources
 
     @staticmethod
     def _format_search_output_step(state: dict[str, Any]) -> dict[str, Any]:

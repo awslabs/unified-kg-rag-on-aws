@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from .cache_keys import stage_cache_key, stage_input_fingerprint
 from .common import (
+    EMBEDDING_FIELD_SUFFIX,
     compute_hash,
     default_max_workers,
     ensure_list,
@@ -9,6 +10,7 @@ from .common import (
     normalize_name,
     parse_llm_json,
     safe_float_parse,
+    strip_embedding_fields,
 )
 from .display import (
     console,
@@ -29,6 +31,7 @@ from .langchain import BatchProcessor, RobustXMLOutputParser
 # not depend on adapters). Import them from there.
 
 __all__ = [
+    "EMBEDDING_FIELD_SUFFIX",
     "BatchProcessor",
     "RobustXMLOutputParser",
     "compute_hash",
@@ -50,4 +53,5 @@ __all__ = [
     "safe_float_parse",
     "stage_cache_key",
     "stage_input_fingerprint",
+    "strip_embedding_fields",
 ]
