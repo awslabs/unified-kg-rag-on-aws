@@ -899,7 +899,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             "source": result.source,
             "score": result.score,
             "metadata": metadata,
-            "truncated": truncated,
         }
 
     @staticmethod

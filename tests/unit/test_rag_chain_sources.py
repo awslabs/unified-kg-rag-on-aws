@@ -124,10 +124,10 @@ def test_sources_exclude_budget_cut_sections_and_flag_truncation(
     assert "chunk-3" not in {s["source"] for s in out.sources}
 
     by_source = {s["source"]: s for s in out.sources}
-    assert by_source["chunk-0"]["truncated"] is False
+    assert by_source["chunk-0"]["metadata"]["truncated"] is False
     assert by_source["chunk-0"]["content"] == results[0].content
     truncated = by_source["chunk-2"]
-    assert truncated["truncated"] is True
+    assert "truncated" not in truncated
     assert truncated["metadata"]["truncated"] is True
     # The reported content is the truncated text the model saw, not the original.
     assert truncated["content"] != results[2].content

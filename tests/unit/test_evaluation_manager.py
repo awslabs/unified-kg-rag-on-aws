@@ -528,7 +528,6 @@ class TestSummaryBackwardCompat:
                     "content": "Vendor ships parts…",
                     "source": "r1",
                     "score": 0.7,
-                    "truncated": True,
                     "metadata": {
                         "truncated": True,
                         "description": "Vendor ships parts to Buyer every month.",
@@ -539,23 +538,11 @@ class TestSummaryBackwardCompat:
         )
         assert out == [str({"content": "Vendor ships parts…"})]
 
-    def test_truncated_flag_in_metadata_only_is_honoured(self, config: Config) -> None:
-        out = _graph_aware_manager(config).create_lean_context_strings(
-            [
-                {
-                    "content": "short",
-                    "metadata": {"truncated": True, "summary": "long summary"},
-                }
-            ]
-        )
-        assert out == [str({"content": "short"})]
-
     def test_untruncated_source_keeps_metadata_fields(self, config: Config) -> None:
         out = _graph_aware_manager(config).create_lean_context_strings(
             [
                 {
                     "content": "c",
-                    "truncated": False,
                     "metadata": {"truncated": False, "description": "d"},
                 }
             ]

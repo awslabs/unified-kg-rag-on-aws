@@ -323,9 +323,7 @@ class EvaluationManager:
     @staticmethod
     def _is_truncated(item: dict[str, Any]) -> bool:
         metadata = item.get("metadata")
-        return bool(item.get("truncated")) or (
-            isinstance(metadata, dict) and bool(metadata.get("truncated"))
-        )
+        return isinstance(metadata, dict) and bool(metadata.get("truncated"))
 
     @staticmethod
     def _get_payloads_to_search(item: dict[str, Any]) -> list[dict[str, Any]]:
