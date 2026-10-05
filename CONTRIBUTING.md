@@ -25,7 +25,7 @@ We welcome contributions to the Unified Knowledge Graph RAG on AWS framework! Th
 
 3. **Install Dependencies**
    ```bash
-   pip install -e ".[dev]"
+   pip install -e . --group dev  # pip >= 25.1; or simply: uv sync
    ```
 
 4. **Set Up Pre-commit Hooks** (if available)

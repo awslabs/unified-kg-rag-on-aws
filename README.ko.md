@@ -165,7 +165,7 @@ git clone <repository-url>
 cd unified-kg-rag-on-aws
 
 # 설치 (uv 권장)
-uv sync --extra dev        # 또는: pip install -e .
+uv sync                    # 또는: pip install -e .
 
 # 설정 복사 및 편집
 cp config-template.yaml config.yaml

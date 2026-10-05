@@ -221,7 +221,7 @@ git clone <repository-url>
 cd unified-kg-rag-on-aws
 
 # Install the framework (uv recommended; or: pip install -e .)
-uv sync --extra dev
+uv sync
 
 # Copy and configure settings
 cp config-template.yaml config.yaml

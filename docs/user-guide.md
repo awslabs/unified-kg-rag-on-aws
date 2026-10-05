@@ -79,7 +79,7 @@ git clone <repository-url>
 cd unified-kg-rag-on-aws
 
 # uv (recommended)
-uv sync --extra dev
+uv sync
 
 # or pip
 pip install -e .

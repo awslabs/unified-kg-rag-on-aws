@@ -92,7 +92,7 @@ See `docs/design.md` §2 for the full layer map and dependency rule.
 - **Types**: modern built-ins (`list`, `dict`, `X | None`); no legacy `typing.List`.
 - **Models**: Pydantic at all boundaries (not dataclasses, except frozen config records).
 - **Files**: `pathlib`, not `os.path`.
-- **Packages**: `uv` (`uv sync --extra dev`), not pip.
+- **Packages**: `uv` (`uv sync`, which includes the dev group), not pip.
 - **Logging**: `%`-formatting, not f-strings — `logger.info("did %s", x)`.
 - **LLM calls**: LangChain LCEL (`prompt | llm | parser`); prompts live in
   `unified_kg_rag/domain/prompts/*.py` for version control, overridable via

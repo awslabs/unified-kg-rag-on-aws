@@ -5,7 +5,7 @@
 # (language: system) rather than pre-commit's isolated, separately-pinned envs.
 # This guarantees the hooks execute the *same* tool versions as CI's
 # `uv run ruff/black/isort/mypy`, so a local pre-commit pass and CI never
-# disagree because of version drift. Requires `uv sync --extra dev` first.
+# disagree because of version drift. Requires `uv sync` first.
 repos:
   - repo: local
     hooks:
