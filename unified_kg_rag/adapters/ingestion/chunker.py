@@ -17,7 +17,10 @@ from pydantic import BaseModel, Field
 from tqdm import tqdm
 
 from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
-from unified_kg_rag.adapters.aws.bedrock import get_assumed_role_boto_session
+from unified_kg_rag.adapters.aws.bedrock import (
+    get_assumed_role_boto_session,
+    get_embedding_model_info,
+)
 from unified_kg_rag.adapters.aws.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
@@ -372,9 +375,12 @@ class BaseChunker(ABC):
             region_name=config.aws.bedrock.region_name,
             config=BotoConfig(retries={"max_attempts": 3}),
         )
+        embedding_model_id = config.indexing.opensearch.embedding_model_id
+        embedding_info = get_embedding_model_info(embedding_model_id)
         self._token_counter = BedrockTokenCounter(
-            model_id=config.indexing.opensearch.embedding_model_id.value,
+            model_id=embedding_model_id.value,
             client=bedrock_client,
+            api_supported=bool(embedding_info and embedding_info.supports_count_tokens),
         )
 
         self.fallback_splitter = self._create_splitter(
