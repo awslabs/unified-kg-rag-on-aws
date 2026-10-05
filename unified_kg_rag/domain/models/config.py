@@ -2162,6 +2162,19 @@ class EvaluationConfig(BaseModel):
             "(180s) is too tight for thinking judges."
         ),
     )
+    ragas_max_contexts: int | None = Field(
+        default=20,
+        ge=1,
+        description=(
+            "Maximum number of top-ranked retrieved contexts per sample passed "
+            "to the RAGAS judge, applied before max_context_tokens. Context "
+            "precision makes one judge call per context, so its cost scales "
+            "with the context count; strategies that report 100+ sources time "
+            "out otherwise. Only what the judge scores is capped (context "
+            "metrics become '@N'); the answer model's context is unaffected. "
+            "null disables the cap."
+        ),
+    )
     ragas_max_workers: int = Field(
         default=8,
         ge=1,

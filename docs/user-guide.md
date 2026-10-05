@@ -943,7 +943,14 @@ Selected via `evaluation.enabled_evaluators`:
 - **`langchain`** — LangChain-based text similarity (`langchain_metrics`:
   `correctness`, `partial_correctness`). Needs `answer` ground truth.
 - **`ragas`** — RAGAS metrics (`answer_correctness`, `answer_relevancy`,
-  `context_precision`, `context_recall`, `faithfulness`).
+  `context_precision`, `context_recall`, `faithfulness`). The judge scores at
+  most `evaluation.ragas_max_contexts` (default 20; `null` = no cap) top-ranked
+  sources per query, applied before the `max_context_tokens` budget.
+  `context_precision` makes one judge call per context, so its cost scales with
+  the context count — strategies that report 100+ sources (e.g. LightRAG `mix`)
+  otherwise hit `ragas_timeout`. This caps only what the judge scores, not what
+  the answer model saw, so the context metrics are effectively
+  `context_precision@N` / `context_recall@N`.
 - **`graph_aware`** — deterministic, **LLM-free** entity/relationship
   **coverage = recall**: of the expected graph artifacts, how many appear in the
   generated answer (case-insensitive whole-word match; substring match for
