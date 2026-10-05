@@ -367,9 +367,10 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 ## 14. CI/CD와 보안
 
-- **CI** (`.github/workflows/`): `quality` 워크플로(ruff/black/isort/mypy + pytest+coverage 게이트, PR/기본 브랜치 트리거), `security` 워크플로(ASH 스캔 비차단, 리포트 전용).
+- **CI** (`.github/workflows/`): `quality` 워크플로는 PR과 `main` 푸시에서 실행됩니다. ruff/black/isort/mypy와 커버리지 게이트를 포함한 pytest, 지원 최저 버전인 Python 3.10에서의 테스트, property·integration 스위트 단독 실행, 선택 파서 보안 검사, cdk-nag를 켠 `cdk synth`와 IaC 단언 테스트를 수행합니다. `security` 워크플로는 `main` 푸시 시 차단 없이 보고만 하는 ASH 스캔을 실행합니다.
+- **Dependabot** (`.github/dependabot.yml`): `uv` 잠금 파일(`/`), IaC `pip` 요구사항(`/iac`), SHA로 고정한 GitHub Actions를 매주 갱신합니다. 호환성이 깨지는 것으로 확인된 버전은 `ignore` 항목에 이유와 함께 제외합니다.
 - **pre-commit** (`.pre-commit-config.yaml`): CI 게이트 미러링. `pre-commit install`.
-- **보안 하드닝**: 콘텐츠 해시는 SHA-256 전용(MD5 제거, CWE-327 해소). 의존성은 `uv lock --upgrade`로 정기 갱신해 의존성 스캔 CVE 대응. 토큰은 환경/설정으로 주입(코드 하드코딩 없음).
+- **보안 하드닝**: 콘텐츠 해시는 SHA-256 전용(MD5 제거, CWE-327 해소). 의존성 스캔 CVE는 위 Dependabot PR로 대응합니다. 토큰은 환경/설정으로 주입(코드 하드코딩 없음).
 
 ---
 
@@ -427,8 +428,8 @@ chain = GraphRAGChain(config=cfg, model_factory=OllamaModelFactory())
 
 ### 의도적 설계 경계
 
-코드베이스가 명시적으로 밝혀두는 경계 결정이 하나 있습니다 — 누락이 아니라
-의도된 결정으로 읽히도록:
+코드베이스가 명시적으로 밝혀두는 경계 결정은 세 가지입니다. 누락이 아니라
+의도된 결정이라는 점을 분명히 하기 위해 적어 둡니다.
 
 - **`SearchQuery`는 어댑터 어휘(label/index prefix)를 의도적으로 보유합니다.**
   도메인 질의 모델이 인덱스/라벨 prefix를 노출하고 검색 전략·두 리트리버가 이를
