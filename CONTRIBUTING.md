@@ -93,11 +93,13 @@ mypy unified_kg_rag
 - Use **pytest** for testing framework
 - Prefer the port-based in-memory fakes in `tests/fixtures/fakes/` (e.g.
   `FakeDocStatusStore`) over ad-hoc boto3 mocking; use `moto` when an adapter
-  must be exercised against a real boto3 surface
+  must be exercised against a real boto3 surface. In practice DynamoDB and S3
+  are tested with `moto`, Neptune and OpenSearch with the in-memory fakes
+- Tests that need real AWS services carry the `aws` marker and are excluded in CI
 
 Run tests (AWS-free by default):
 ```bash
-# Run all non-AWS tests
+# Run all non-AWS tests (unit, integration, property)
 uv run pytest -m "not aws"
 
 # Run with coverage
@@ -106,6 +108,12 @@ uv run pytest -m "not aws" --cov=unified_kg_rag --cov-report=html
 # Run a specific test file
 uv run pytest tests/unit/test_chunker_logic.py
 ```
+
+CI (`.github/workflows/quality.yml`) runs ruff, black, isort, mypy, and pytest
+with the coverage gate, plus the oldest supported Python (3.10), the property
+and integration suites in isolation, the optional-parser checks, and
+`cdk synth` with cdk-nag for `iac/`. `.github/workflows/security.yml` runs a
+non-blocking ASH security scan on pushes to `main`.
 
 ## 🔄 Contribution Process
 
@@ -148,17 +156,17 @@ Example:
 ```python
 def extract_entities(text: str, model_id: str) -> list[Entity]:
     """Extract entities from text using specified LLM model.
-    
+
     Args:
         text: Input text to process
         model_id: Bedrock model identifier for entity extraction
-        
+
     Returns:
         List of extracted Entity objects with names and types
-        
+
     Raises:
         ExtractionError: If entity extraction fails
-        
+
     Example:
         >>> entities = extract_entities("John works at AWS", "claude-3")
         >>> print(entities[0].name)

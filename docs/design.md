@@ -21,6 +21,7 @@ This document is a **design reference for contributors and advanced users**, cov
 13. [Testing Strategy](#13-testing-strategy)
 14. [CI/CD and Security](#14-cicd-and-security)
 15. [Extension Guide](#15-extension-guide)
+16. [Further Reading](#16-further-reading)
 
 ---
 
@@ -287,7 +288,7 @@ Per-source behavior:
 |---|---|---|
 | **Bedrock** | `adapters/aws/bedrock.py` | LLM/embedding/reranking. Automatic cross-region inference profile resolution, provider-aware request shaping (Anthropic adaptive thinking + `effort` on Claude 4.6+, `budget_tokens` on older Claude; `reasoning.effort` on OpenAI GPT via Converse), 1M context, prompt caching where the model supports explicit cache points, capability table |
 | **Neptune** | `adapters/aws/neptune.py` | Gremlin over `wss://`, SigV4 IAM, batch upsert/delete. Write batches submit concurrently via a thread pool when `indexing.neptune.index_concurrency` > 1 (per-batch independent `IndexingStats` → merged on the main thread, no shared mutation), with `aws.neptune.pool_size` multiplexing the Gremlin connection pool. Default 1 = sequential |
-| **OpenSearch** | `adapters/aws/opensearch.py` | Vector (kNN/HNSW, default engine **faiss** — nmslib is deprecated) + BM25, async SigV4, sync/async clients, hybrid search pipeline, alias management, bulk upsert/delete, per-language analyzers (en→english, ko→nori, etc.) |
+| **OpenSearch** | `adapters/aws/opensearch.py` | Vector (kNN/HNSW, default engine **lucene**, which supports `cosinesimil` on OpenSearch 2.13 as deployed by `iac/`; faiss rejects `cosinesimil` before 2.19, so use it only with `innerproduct` for >1024-dim models — see the engine note in `config-template.yaml`) + BM25, async SigV4, sync/async clients, hybrid search pipeline, alias management, bulk upsert/delete, per-language analyzers (en→english, ko→nori, etc.) |
 | **S3** | `adapters/aws/s3_cache.py` | Pipeline cache sync (encryption defaults to `BUCKET_DEFAULT` — the bucket's default encryption, e.g. a CMK; `AES256`/`aws:kms` force per-object SSE) |
 | **DynamoDB** | `adapters/aws/dynamodb.py` | Incremental-indexing document-status registry |
 
@@ -368,9 +369,10 @@ Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 
 ## 14. CI/CD and Security
 
-- **CI** (`.github/workflows/`): the `quality` workflow (ruff/black/isort/mypy + pytest+coverage gate, triggered on PR/default branch), the `security` workflow (ASH scan, non-blocking, report-only).
+- **CI** (`.github/workflows/`): the `quality` workflow runs on pull requests and pushes to `main` — ruff/black/isort/mypy + pytest with the coverage gate, the suite on the oldest supported Python (3.10), the property and integration suites in isolation, the optional-parser security checks, and `cdk synth` with cdk-nag plus the IaC assertion tests. The `security` workflow runs a non-blocking, report-only ASH scan on pushes to `main`.
+- **Dependabot** (`.github/dependabot.yml`): weekly version updates for the `uv` lock (`/`), the IaC `pip` requirements (`/iac`), and the SHA-pinned GitHub Actions. Known-breaking bumps are held back with an `ignore` entry that records the reason.
 - **pre-commit** (`.pre-commit-config.yaml`): Mirrors the CI gates. `pre-commit install`.
-- **Security hardening**: Content hashes use SHA-256 exclusively (CWE-327-safe). Dependencies are refreshed regularly via `uv lock --upgrade` to address dependency-scan CVEs. Tokens are injected via environment/config (no hardcoding in code).
+- **Security hardening**: Content hashes use SHA-256 exclusively (CWE-327-safe). Dependency-scan CVEs are addressed through the Dependabot pull requests above. Tokens are injected via environment/config (no hardcoding in code).
 
 ---
 
@@ -430,8 +432,8 @@ Ollama) are intended as add-on packages that implement these ports.
 
 ### Deliberate Design Boundaries
 
-The codebase makes one boundary call worth stating explicitly, so it reads as an
-intentional decision rather than an oversight:
+The codebase makes three boundary calls worth stating explicitly, so they read as
+intentional decisions rather than oversights:
 
 - **`SearchQuery` carries adapter vocabulary (label/index prefixes) by design.**
   The domain query model exposes index/label prefixes that the search strategies
@@ -466,3 +468,17 @@ intentional decision rather than an oversight:
   type with a `tenant` filter field + routing (delete-by-query instead of index
   drop) — a behavior-affecting change across the index/search/delete paths,
   deferred as a dedicated migration rather than bundled here.
+
+---
+
+## 16. Further Reading
+
+Microsoft Research posts on GraphRAG and its follow-up methods, useful background for §6:
+
+- [GraphRAG: Unlocking LLM Discovery on Narrative Private Data](https://www.microsoft.com/en-us/research/blog/graphrag-unlocking-llm-discovery-on-narrative-private-data/)
+- [GraphRAG: New Tool for Complex Data Discovery Now on GitHub](https://www.microsoft.com/en-us/research/blog/graphrag-new-tool-for-complex-data-discovery-now-on-github/)
+- [GraphRAG Auto-Tuning Provides Rapid Adaptation to New Domains](https://www.microsoft.com/en-us/research/blog/graphrag-auto-tuning-provides-rapid-adaptation-to-new-domains/)
+- [Introducing DRIFT Search: Combining Global and Local Search Methods to Improve Quality and Efficiency](https://www.microsoft.com/en-us/research/blog/introducing-drift-search-combining-global-and-local-search-methods-to-improve-quality-and-efficiency/)
+- [GraphRAG: Improving Global Search via Dynamic Community Selection](https://www.microsoft.com/en-us/research/blog/graphrag-improving-global-search-via-dynamic-community-selection/)
+- [LazyGraphRAG: Setting a New Standard for Quality and Cost](https://www.microsoft.com/en-us/research/blog/lazygraphrag-setting-a-new-standard-for-quality-and-cost/)
+- [Introducing GraphRAG 1.0](https://www.microsoft.com/en-us/research/blog/moving-to-graphrag-1-0-streamlining-ergonomics-for-developers-and-users/)

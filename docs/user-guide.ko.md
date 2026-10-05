@@ -477,7 +477,8 @@ indexing:
       m: 24
       ef_search: 100
       space_type: "cosinesimil"
-      engine: "faiss"               # faiss is the modern kNN engine (nmslib deprecated)
+      engine: "lucene"              # 모든 버전에서 cosinesimil 지원, 최대 1024차원
+                                    # (config-template.yaml의 엔진 설명 참고)
 
   neptune:
     batch_size: 100
@@ -799,6 +800,11 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 
 CLI에서 단발 멀티턴을 하려면 동일한 `--conversation-id`를 `--use-memory`와 함께
 재사용하세요. 메모리 제한은 `memory` 설정 섹션 아래에 있습니다.
+
+메모리는 대화 턴 사이의 엔티티도 추적합니다. 사용자 메시지마다 LLM
+(`search.entity_extraction_model_id`)이 언급된 엔티티를 추출하고, 이전 턴에서 나온
+주요 엔티티를 다음 질의의 엔티티 초점에 더합니다. 그래서 "그 회사의 공급업체는?"
+같은 후속 질문도 앞선 턴에서 언급한 엔티티를 중심으로 검색합니다.
 
 ---
 

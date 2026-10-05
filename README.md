@@ -9,398 +9,132 @@
   <img src="./assets/profile.png" alt="Unified Knowledge Graph RAG on AWS" width="320">
 </p>
 
-An AWS-native knowledge graph RAG (Retrieval-Augmented Generation) framework that turns large multilingual document corpora into knowledge graphs and answers questions over them with multi-hop graph traversal.
+An AWS-native knowledge graph RAG (Retrieval-Augmented Generation) framework that turns large, multilingual document corpora into a knowledge graph on Amazon Neptune and Amazon OpenSearch Service and answers questions over it with Amazon Bedrock, using multi-hop graph traversal to reason across document boundaries. It reimplements Microsoft GraphRAG and LightRAG on one shared stack, so you choose the retrieval methodology per query rather than per deployment. Running both methodologies on one stack, triple-hybrid search, incremental indexing, and multilingual processing are deliberate enhancements over the source papers.
 
-It reimplements two retrieval methodologies — Microsoft's GraphRAG ("From Local to Global: A Graph RAG Approach to Query-Focused Summarization") and LightRAG ("Simple and Fast Retrieval-Augmented Generation") — over a single AWS-native stack. The two are selectable per query and share one ingestion, indexing, caching, multilingual, and hybrid (lexical + semantic + graph) search infrastructure; only the retrieval algorithm differs.
+Read the [AWS Open Source Blog introduction](https://aws.amazon.com/ko/blogs/opensource/unified-knowledge-graph-rag-on-aws-graphrag-and-lightrag-on-one-stack/) for an overview of the architecture, both retrieval methodologies, and benchmark results.
 
-Read the [AWS Open Source Blog introduction](https://aws.amazon.com/ko/blogs/opensource/unified-knowledge-graph-rag-on-aws-graphrag-and-lightrag-on-one-stack/) for an overview of the architecture, GraphRAG and LightRAG retrieval, and benchmark results.
+## Why this framework
 
-> **Highlights**
-> - **Two methodologies, one stack.** GraphRAG community-summary (`auto`/`drift`/`global`/`local`/`simple`) and LightRAG dual-level keyword (`mix`/`hybrid`/`naive`), chosen per query via `search_strategy`.
-> - **Incremental indexing.** The DynamoDB document-status registry (`aws.dynamodb`) diffs a corpus by content hash and re-indexes only new/changed documents, merging into the live graph (idempotent upserts; deletions remove a document's exclusive artifacts).
-> - **Prompt tuning.** `run-prompt-tuning` profiles a corpus (domain/language/persona/entity-types) and emits domain-adapted `custom_prompts`.
-> - **Standalone visualization & graph-aware evaluation.** `run-visualization` renders from exported graph data without re-ingesting; the `graph_aware` evaluator scores entity/relationship coverage.
-> - **Hexagonal architecture.** Ports & adapters + registries make storage backends, retrieval strategies, evaluators, and renderers pluggable. See `docs/design.md`.
+- **Two methodologies on one AWS stack.** GraphRAG (community summaries) and LightRAG (dual-level keywords) share ingestion, indexing, caching, and search infrastructure; only the retrieval algorithm differs, selected per query. Every answer returns the sources that were actually placed in the model's context.
+- **Triple-hybrid search.** BM25 lexical search, vector semantic search, and Neptune graph traversal are fused with Reciprocal Rank Fusion (RRF) and reranked with a Bedrock rerank model.
+- **Incremental indexing.** With `aws.dynamodb` enabled, a content-hash registry re-indexes only new or changed documents and merges them into the live graph. Deleting a document removes only the artifacts no other document shares.
+- **Multilingual.** Optional translation at indexing and query time, per-language OpenSearch analyzers (for example `nori` for Korean), and multilingual keyword extraction, for both methodologies.
+- **Prompt tuning.** `run-prompt-tuning` profiles a sample of your corpus (domain, language, persona, entity types) and writes domain-adapted `custom_prompts`.
+- **Graph-aware evaluation and standalone visualization.** `run-eval` adds deterministic entity and relationship coverage to LangChain and RAGAS metrics, and `run-visualization` renders an exported graph without re-ingesting.
+- **Pluggable hexagonal design.** Storage and model backends sit behind ports; search strategies, evaluators, and renderers register through registries, so you extend the framework without editing dispatch code.
 
-## 📋 Table of Contents
+## Architecture
 
-- [✨ Features & Advantages](#-features--advantages)
-- [🏛️ Architecture Overview](#-architecture-overview)
-- [🚀 Installation](#-installation)
-- [📖 Usage](#-usage)
-- [🧪 Testing & Quality](#-testing--quality)
-- [🔒 Security & Disclaimer](#-security--disclaimer)
-- [🤝 Contributing](#-contributing)
-- [📄 License](#-license)
-- [📚 References](#-references)
-
-## ✨ Features & Advantages
-
-### 🏗️ **AWS-Native Design**
-- **AWS service integration**: Bedrock, Neptune, OpenSearch, S3, and DynamoDB
-- **Scalable**: parallel, batched processing for large document corpora
-- **Caching**: local + S3-synced stage cache with task retry to avoid recomputation
-- **Security**: S3 encryption and private-VPC deployment
-
-### 🚀 **Triple Hybrid Search Architecture**
-- **Semantic Search**: High-quality vector search based on Amazon Bedrock embedding models
-- **Lexical Search**: Precise keyword matching using BM25 algorithm
-- **Relationship-based Search**: Connectivity analysis through knowledge graph traversal
-- **Result Optimization**: Enhanced search accuracy with the RRF (Reciprocal Rank Fusion) algorithm and Amazon Bedrock reranking models
-
-### 🧠 **Advanced Knowledge Graph Processing**
-- **Precise Entity Resolution**: Automatic detection and integration of duplicate entities
-- **Topic Clustering**: Efficient community detection based on Leiden algorithm
-- **Complex Reasoning**: Multi-hop reasoning capabilities across document boundaries
-- **Source Transparency**: Verifiable information sources provided for all responses
-
-### 🔍 **Two Selectable Methodologies, One Infrastructure**
-Pick per query via `search_strategy`; both share the same ingestion, indexing,
-caching, multilingual, and hybrid-scoring stack — only the retrieval algorithm differs.
-- **GraphRAG (community-summary)**: `simple` (direct), `local` (entity-focused),
-  `global` (community-based), `drift` (progressive exploration), `auto` (LLM router)
-- **LightRAG (dual-level keyword)**: `mix`, `hybrid`, `naive` — high/low keyword
-  extraction over an entity index + a relationship vector index + graph expansion
-
-### ♻️ **Incremental Indexing**
-- **Content-hash delta detection**: a DynamoDB document-status registry fingerprints
-  each document, so re-runs re-index only new/changed documents and merge into the
-  live graph (idempotent upserts)
-- **Deletion lineage**: removing a document deletes only its *exclusive* artifacts
-  (entities shared with surviving documents are preserved)
-
-### 🎯 **Comprehensive Evaluation Framework**
-- **LangChain-based Evaluation**: `correctness` and `partial_correctness` via built-in evaluators
-- **RAGAS Metrics**: answer correctness, answer relevancy, faithfulness, context precision, and context recall
-- **Graph-aware Evaluation**: entity/relationship coverage (recall of expected
-  graph artifacts surfaced in the answer) against ground-truth expectations
-  (deterministic, LLM-free, word-boundary matching). Precision/F1 are
-  intentionally not emitted — a free-text answer cannot be enumerated into a
-  closed set of entities, so a false-positive count would be meaningless.
-
-### 🔧 **User Support**
-- **Domain-specific Prompts**: customizable per-prompt overrides via config
-- **Automatic Prompt Tuning**: profile a corpus (domain/language/persona/entity-types)
-  and emit domain-adapted prompts (`run-prompt-tuning`)
-- **Flexible Configuration**: detailed option adjustment through YAML configuration files
-- **Comprehensive Monitoring**: structured logging and performance metrics
-
-### 🌍 **Multilingual Support**
-- **Automatic Language Processing**: translation during indexing/search, language-aware
-  analyzers, and multilingual keyword extraction — applied to both methodologies
-
-### 📊 **Visualization & Analytics Tools**
-- **Interactive Graph**: Node2Vec + UMAP graph visualization
-- **Network Analysis**: centrality metrics and graph statistics
-- **Standalone CLI**: render from exported graph data without re-ingesting (`run-visualization`)
-
-### 🧱 **Hexagonal Architecture**
-- **Ports & adapters**: pluggable storage/retrieval backends and a registry for
-  strategies, evaluators, and renderers — extend without editing dispatch code (see `CLAUDE.md`)
-
-## 🏛️ Architecture Overview
-
-The framework implements a sophisticated indexing and retrieval pipeline:
-
-### Data Ingestion Pipeline
 ![Data Ingestion Pipeline](./assets/ingestion_pipeline.png)
 
-#### Core Stages:
-- **Document Loading/Parsing**: PDF, TXT, CSV, JSON out of the box (plus MD/HTML when the optional `unstructured` extra is installed)
-- **Text Chunking**: Simple/intelligent strategies with context preservation
-- **Graph Extraction**: Entity/relationship extraction via LLM
-- **Graph Resolution**: Fuzzy matching and deduplication of entities/relationships
-- **Graph Analysis**: Centrality metrics (degree, betweenness, PageRank, eigenvector) and graph statistics
-- **Community Detection**: Leiden algorithm for topic clustering
-- **Indexing**: Storage backend integration (OpenSearch + Neptune)
+Ingestion is a resumable 12-stage pipeline: parse, load, chunk, optionally translate, extract entities and relationships with an LLM, optionally glean, resolve duplicates, optionally extract claims, compute graph metrics, detect Leiden communities with LLM-written reports, and index into OpenSearch and Neptune. Stage checkpoints are cached locally and can be synced to S3.
 
-#### Optional Stages:
-- **Translation**: Multi-language support with automatic language detection
-- **Gleaning**: Iterative graph refinement for improved accuracy
-- **Claim Extraction/Resolution**: Factual assertions extraction and validation
-  (opt-in: `processing.claim_extraction.enabled`, off by default). When enabled,
-  claims are embedded into a dedicated index and injected into `local`/`simple`
-  search context as covariates.
-
-#### Key Features:
-- **Incremental Indexing**: content-hash delta detection + merge (DynamoDB registry)
-- **Resumable Pipeline**: Stage checkpointing for interrupted runs
-- **Comprehensive Caching**: S3 sync with local cache management
-- **Parallel Processing**: Batch optimization and concurrent execution
-- **Configurable Strategies**: Flexible processing approaches per stage
-- **Error Handling**: Optional continuation on stage failures
-
-### Retrieval Pipeline
 ![Retrieval Pipeline](./assets/retrieval_pipeline.png)
 
-#### Multi-Strategy Architecture
+Every strategy runs through the same hybrid scorer and token budget. Pick one with `--search-strategy` (CLI) or `RAGInput.search_strategy` (Python):
 
-The framework offers two retrieval methodologies — GraphRAG community-summary
-and LightRAG dual-level keyword — sharing one ingestion/indexing/caching/
-hybrid-search infrastructure and selectable per query via
-`RAGInput.search_strategy`. The GraphRAG `auto` strategy automatically selects
-the optimal approach based on query analysis.
+| Strategy | Methodology | Use when |
+|---|---|---|
+| `auto` (default) | GraphRAG | You are not sure; an LLM router picks `simple`, `local`, `global`, or `drift` per query |
+| `simple` | GraphRAG | Fast factual lookups; vector + keyword search without graph traversal |
+| `local` | GraphRAG | Questions about specific entities and their relationships |
+| `global` | GraphRAG | Broad or thematic questions, answered by map-reduce over community reports |
+| `drift` | GraphRAG | Complex questions that need iterative exploration |
+| `mix` | LightRAG | General LightRAG use; entity and relationship keyword retrieval plus chunk retrieval |
+| `hybrid` | LightRAG | Keyword-driven graph questions, without the extra chunk retrieval |
+| `naive` | LightRAG | A fast vector-only baseline and comparison runs |
 
-##### GraphRAG strategies
+See the [User Guide §4](./docs/user-guide.md#4-querying-run-rag) for per-strategy behavior and the [Design Doc](./docs/design.md) for the layer map, algorithms, and data model.
 
-**Simple Strategy**: Direct OpenSearch retrieval for basic queries
-- Vector and keyword search without graph traversal
-- Fastest response time for straightforward questions
-- Ideal for factual lookups and simple information retrieval
-
-**Local Strategy**: Entity-focused search using graph traversal + text retrieval
-- Identifies key entities in the query
-- Performs graph traversal to find related entities and relationships
-- Combines graph context with vector/keyword search results
-- Optimal for detailed analysis of specific entities or concepts
-
-**Global Strategy**: Community-based analysis for broad questions
-- Leverages community detection results for comprehensive coverage
-- Uses map-reduce approach for large-scale information synthesis
-- Dynamic community selection based on query relevance
-- Best for high-level insights and thematic analysis
-
-**Drift Strategy**: Iterative query evolution with convergence detection
-- Starts with initial search and iteratively refines based on results
-- Expands context through multiple search rounds
-- Convergence detection prevents infinite loops
-- Excellent for complex, multi-faceted questions requiring exploration
-
-##### LightRAG strategies (dual-level keyword)
-
-**Mix / Hybrid Strategy**: Extracts high-level and low-level keywords
-(`KeywordsExtractionPrompt`), then queries the relationship vector index
-(high-level) + entity index (low-level) with Neptune neighborhood expansion.
-`mix` additionally blends naive vector chunk retrieval. Both run through the
-same `HybridScorer` (lexical + semantic + graph, RRF + Bedrock rerank).
-
-**Naive Strategy**: Pure vector chunk retrieval — the LightRAG baseline, useful
-as a fast lexical/semantic fallback and for comparison evaluation.
-
-#### Component Architecture
-
-**Dual Retriever System**:
-- **Neptune Graph DB**: Relationship traversal and entity-centric search
-- **OpenSearch**: Vector similarity and keyword matching with BM25
-
-**Query Processing Pipeline**:
-- Language detection and translation (if needed)
-- Entity extraction using LLM
-- Strategy selection based on query characteristics
-- Multi-retriever coordination and result fusion
-
-**Fusion and Ranking Mechanisms**:
-- **RRF (Reciprocal Rank Fusion)**: Combines scores from different retrievers
-- **Diversity Filtering**: Reduces redundancy in search results
-- **LLM Reranking**: Context-aware result prioritization using Bedrock models
-- **Hybrid Scoring**: Weighted combination of lexical and semantic similarity
-
-**Context Optimization**:
-- **Token Management**: Dynamic context sizing within model limits
-- **Priority Scoring**: Relevance-based content selection
-- **Memory Integration**: Conversational context tracking for multi-turn queries
-- **Entity Tracking**: Maintains entity focus across conversation turns
-
-## 🚀 Installation
+## Quickstart
 
 ### Prerequisites
-- **Python 3.10–3.12** (`uv` recommended)
-- **AWS CLI** configured with appropriate permissions
-- **AWS Services** deployed and accessible (provision them yourself, or use the
-  optional CDK app — see [Provision the AWS stack](#-provision-the-aws-stack-optional) below):
-  - Amazon Bedrock (with model access enabled)
-  - Amazon Neptune cluster
-  - Amazon OpenSearch domain
-  - Amazon S3 bucket
-  - Amazon DynamoDB (only if you want incremental indexing)
 
-### Quick Start
+- Python 3.10–3.12 and [uv](https://docs.astral.sh/uv/) (`pip` also works).
+- AWS credentials with access to Amazon Bedrock (model access enabled for the models you configure), an Amazon Neptune cluster, an Amazon OpenSearch Service domain, an S3 bucket, and, for incremental indexing only, DynamoDB. The framework connects to existing services; to create them, see [Deploy on AWS](#deploy-on-aws-optional).
+
+### Install and configure
+
 ```bash
-# Clone the repository (replace <repository-url> with this repo's Git URL)
-git clone <repository-url>
+git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-
-# Install the framework (uv recommended; or: pip install -e .)
-uv sync --extra dev
-
-# Copy and configure settings
-cp config-template.yaml config.yaml
-# Edit config.yaml with your AWS service endpoints
-
-# Copy and configure environment variables (if using username/password authentication)
-cp .env-template .env
-# Edit .env file with your OpenSearch credentials if not using IAM authentication
+uv sync --extra dev                     # or: pip install -e .
+cp config-template.yaml config.yaml     # then set your Bedrock region and service endpoints
 ```
 
-### 📦 Provision the AWS stack (optional)
+If OpenSearch uses username/password instead of IAM (`aws.opensearch.use_iam: false`), copy `.env-template` to `.env` and fill in the credentials. Parsing Markdown and HTML needs the optional `unstructured` extra (Python 3.11+: `uv sync --extra unstructured`); PDF, TXT, CSV, and JSON work out of the box.
 
-The framework talks to **existing** AWS services — it does not create them. You
-have two ways to get those services in place:
-
-- **Already have them?** Skip this section. Just put your Bedrock region and your
-  Neptune / OpenSearch / S3 (and optional DynamoDB) endpoints into `config.yaml`
-  and go straight to [Usage](#-usage).
-- **Starting from scratch?** The repo ships an **optional, batteries-included AWS
-  CDK app** in [`iac/`](./iac/README.md) that provisions the entire stack for you
-  — VPC + endpoints, a Neptune cluster, an OpenSearch domain, the DynamoDB
-  doc-status table, an S3 cache bucket, an ECS Fargate data plane, a Step
-  Functions ingestion pipeline, CloudWatch dashboards/alarms, and an optional
-  Bedrock Guardrail — with Well-Architected defaults (private-VPC isolation, KMS
-  at-rest encryption, enforced TLS, least-privilege IAM).
-
-Using the CDK app is a short, self-contained flow:
+### Ingest, query, evaluate
 
 ```bash
-cd iac
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
-
-# See what would be created — no AWS changes, no cost:
-cdk synth
-
-# First time in this account/region only:
-cdk bootstrap
-
-# Deploy everything (creates billable resources — see the cost note below):
-cdk deploy --all
-```
-
-After the deploy finishes, CloudFormation prints the Neptune / OpenSearch / S3
-outputs — copy those endpoints into your `config.yaml`, and you're ready to
-[ingest and query](#-usage).
-
-> **💡 Heads-up on cost & teardown.** Deploying creates Neptune and OpenSearch
-> (both billed hourly) plus, in `public` network mode, NAT gateways. In the
-> default `dev` profile everything tears down cleanly with `cdk destroy --all`.
-> For production, review the hardening flags (`use_cmk`, `deletion_protection`,
-> Multi-AZ sizing, `vpc_flow_logs`, …) first.
-
-The [`iac/README.md`](./iac/README.md) is the full reference: every stack, all
-`-c key=value` configuration knobs, VPC reuse, the region-pinned Bedrock
-Guardrail two-step, cdk-nag validation, and how to kick off an ingestion run via
-Step Functions once the stack is up.
-
-### Environment Configuration
-
-If your OpenSearch cluster uses username/password authentication instead of IAM, create a `.env` file:
-
-```bash
-cp .env-template .env
-```
-
-Then edit the `.env` file with your OpenSearch credentials:
-
-```bash
-# OpenSearch Authentication (only required if use_iam is false in config.yaml)
-OPENSEARCH_USERNAME=your_opensearch_username
-OPENSEARCH_PASSWORD=your_opensearch_password
-```
-
-**Note**: The `.env` file is only needed when `use_iam: false` is set in your `config.yaml` OpenSearch configuration. If you're using IAM authentication (`use_iam: true`), you can skip this step.
-
-## 📖 Usage
-
-All behavior is driven by `config.yaml` (schema: `config-template.yaml`). The five
-CLIs (pyproject scripts) cover the full workflow:
-
-```bash
-# 1) Index a corpus (full 12-stage pipeline; incremental when DynamoDB is enabled)
+# Index a corpus (incremental when aws.dynamodb is enabled)
 run-ingestion --source-directory ./source --config-path config.yaml
 
-# 2) Query — GraphRAG (community-summary) or LightRAG (dual-level keyword)
+# Query with either methodology, or chat with conversation memory
 run-rag --query "What are the main themes?" --search-strategy global --config-path config.yaml
 run-rag --query "How are Alice and Acme related?" --search-strategy mix --config-path config.yaml
 run-rag --interactive --use-memory --conversation-id my-session --config-path config.yaml
 
-# 3) Evaluate (langchain + ragas + graph-aware)
+# Evaluate (LangChain + RAGAS + graph-aware coverage)
 run-eval --eval-data-path eval_data.json --config-path config.yaml
 
-# 4) Visualize an exported graph (no re-ingestion)
+# Optional: render an exported graph, or tune prompts to your domain
 run-visualization --data-path visualization_data.json --output-dir ./viz --config-path config.yaml
-
-# 5) Auto-tune prompts to a domain corpus
 run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
 ```
 
-**Choosing a strategy** — GraphRAG: `simple` (direct vector/lexical), `local`
-(entity-centric), `global` (community-summary, map-reduce), `drift` (iterative),
-`auto` (LLM router). LightRAG: `mix` / `hybrid` / `naive` (dual-level keyword).
+The graph-aware evaluator reports entity and relationship coverage (recall) against `expected_entities` / `expected_relationships`, without an LLM. It matches on word boundaries for space-delimited scripts and falls back to substring matching for CJK text. The [User Guide](./docs/user-guide.md) covers every configuration section, CLI flag, and the evaluation data format.
 
-See the **[User Guide](./docs/user-guide.md)** for configuration, CLI flags, the
-Python API, and incremental indexing, and the **[Design Doc](./docs/design.md)**
-for architecture and algorithms.
+## Deploy on AWS (optional)
 
-## 🧪 Testing & Quality
+The [`iac/`](./iac/README.md) AWS CDK app provisions the whole stack: a VPC with endpoints, Neptune, OpenSearch, the DynamoDB document-status table, an S3 cache bucket, an ECS Fargate data plane, a Step Functions ingestion pipeline, CloudWatch dashboards and alarms, and an optional Bedrock Guardrail.
 
 ```bash
-uv run pytest -m "not aws"                    # AWS-free tests (unit/integration/property)
-uv run pytest -m "not aws" --cov=unified_kg_rag # with coverage
-uv run ruff check unified_kg_rag tests
-uv run mypy unified_kg_rag
+cd iac && python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+cdk synth          # preview only: no AWS changes, no cost
+cdk bootstrap      # once per account and region
+cdk deploy --all   # creates billable resources
 ```
 
-- The `aws` marker isolates tests that need real AWS services; they are excluded in CI.
-- DynamoDB/S3 are tested with `moto`; Neptune/OpenSearch with port-based in-memory fakes.
-- CI (`.github/workflows/`): ruff/black/isort/mypy + pytest+coverage gate, plus a non-blocking ASH security scan.
+Copy the Neptune, OpenSearch, and S3 values from the stack outputs into `config.yaml`.
 
-## 🔒 Security & Disclaimer
+> **Cost and teardown.** Neptune and OpenSearch bill hourly, and `public` network mode adds NAT gateways. The default `dev` environment tears down with `cdk destroy --all`; non-dev environments default to retaining stateful stores with deletion protection on. Review the hardening options (`use_cmk`, `deletion_protection`, Multi-AZ sizing, `vpc_flow_logs`) in [`iac/README.md`](./iac/README.md) before production use.
 
-This project is a **reference framework provided for educational and
-illustrative purposes**. It is offered "AS IS" without warranty of any kind (see
-[LICENSE](LICENSE)). **It should not be deployed to a production environment
-without your own additional security testing, threat modeling, and hardening.**
+## Documentation
 
-- Run it in your own AWS account against your own resources; you are responsible
-  for IAM policies, network configuration, data classification, and end-user
-  authentication in your deployment.
-- The optional CDK stack (`iac/`) provides secure defaults (private-VPC
-  isolation, KMS at-rest encryption, enforced TLS, least-privilege IAM, an
-  optional Bedrock Guardrail for PII/prompt-attack filtering), but you own the
-  deployment and should review it for your environment.
-- Enable the Bedrock Guardrail (`aws.bedrock.guardrail`) and apply rate limiting
-  / monitoring appropriate to your use case before production use.
-- To report a security issue, see [SECURITY.md](SECURITY.md) — please do not
-  open a public issue.
+| Document | Covers |
+|---|---|
+| [User Guide](./docs/user-guide.md) ([한국어](./docs/user-guide.ko.md)) | Configuration, CLI flags, incremental indexing, evaluation, operations |
+| [Design Doc](./docs/design.md) ([한국어](./docs/design.ko.md)) | Hexagonal architecture, algorithms, data model, extension guide, further reading |
+| [`iac/README.md`](./iac/README.md) | CDK stacks, `-c key=value` options, Guardrail deployment, Step Functions ingestion runs |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Development setup, tests, quality gate, extension recipes |
+| [CHANGELOG.md](./CHANGELOG.md) | Release notes |
+| [SECURITY.md](./SECURITY.md) | Reporting security issues |
 
-## 🤝 Contributing
+## Security & Disclaimer
 
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
+This project is a **reference framework provided for educational and illustrative purposes**. It is offered "AS IS" without warranty of any kind (see [LICENSE](LICENSE)). **It should not be deployed to a production environment without your own additional security testing, threat modeling, and hardening.**
 
-For extension recipes (adding a search strategy, storage backend, evaluator, or
-renderer), see [CONTRIBUTING.md](CONTRIBUTING.md) and [CLAUDE.md](CLAUDE.md) —
-most extensions are a registry registration and need no dispatch-code edits.
+- Run it in your own AWS account against your own resources; you are responsible for IAM policies, network configuration, data classification, and end-user authentication in your deployment.
+- The optional CDK stack (`iac/`) provides secure defaults (private-VPC isolation, encryption at rest with AWS-managed keys or an optional customer-managed KMS key via `use_cmk`, enforced TLS, least-privilege IAM, an optional Bedrock Guardrail for PII and prompt-attack filtering), but you own the deployment and should review it for your environment.
+- Enable the Bedrock Guardrail (`aws.bedrock.guardrail`) and apply rate limiting and monitoring appropriate to your use case before production use.
+- To report a security issue, see [SECURITY.md](SECURITY.md); please do not open a public issue.
 
-## 📄 License
+## Contributing
 
-This project is licensed under the Apache-2.0 License - see the [LICENSE](LICENSE) file for details.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, tests, and extension recipes; most extensions are a registry registration and need no dispatch-code edits.
 
-## 📚 References
+## License
 
-**GraphRAG (Microsoft)**
+This project is licensed under the Apache-2.0 License. See the [LICENSE](LICENSE) file for details. Maintained by AWS under the awslabs organization.
 
-- [From Local to Global: A Graph RAG Approach to Query-Focused Summarization](https://arxiv.org/abs/2404.16130)
-- [GraphRAG: Unlocking LLM Discovery on Narrative Private Data](https://www.microsoft.com/en-us/research/blog/graphrag-unlocking-llm-discovery-on-narrative-private-data/)
-- [GraphRAG: New Tool for Complex Data Discovery Now on GitHub](https://www.microsoft.com/en-us/research/blog/graphrag-new-tool-for-complex-data-discovery-now-on-github/)
-- [GraphRAG Auto-Tuning Provides Rapid Adaptation to New Domains](https://www.microsoft.com/en-us/research/blog/graphrag-auto-tuning-provides-rapid-adaptation-to-new-domains/)
-- [Introducing DRIFT Search: Combining Global and Local Search Methods to Improve Quality and Efficiency](https://www.microsoft.com/en-us/research/blog/introducing-drift-search-combining-global-and-local-search-methods-to-improve-quality-and-efficiency/)
-- [GraphRAG: Improving Global Search via Dynamic Community Selection](https://www.microsoft.com/en-us/research/blog/graphrag-improving-global-search-via-dynamic-community-selection/)
-- [LazyGraphRAG: Setting a New Standard for Quality and Cost](https://www.microsoft.com/en-us/research/blog/lazygraphrag-setting-a-new-standard-for-quality-and-cost/)
-- [Introducing GraphRAG 1.0](https://www.microsoft.com/en-us/research/blog/moving-to-graphrag-1-0-streamlining-ergonomics-for-developers-and-users/)
-- [Microsoft GraphRAG Library](https://github.com/microsoft/graphrag)
+## Acknowledgments
 
-**LightRAG (HKUDS)**
+Thanks to **Jihyeon Kang** for significant contributions to the library's feature development and validation, and to **Yusuke Tanimiya** for a thorough review and real-corpus testing — both of which strengthened the framework ahead of release.
 
-- [LightRAG: Simple and Fast Retrieval-Augmented Generation](https://arxiv.org/abs/2410.05779)
-- [HKUDS/LightRAG Library](https://github.com/HKUDS/LightRAG)
+## References
 
-## 🙏 Acknowledgments
+- Microsoft GraphRAG: [From Local to Global: A Graph RAG Approach to Query-Focused Summarization](https://arxiv.org/abs/2404.16130) · [library](https://github.com/microsoft/graphrag)
+- LightRAG: [Simple and Fast Retrieval-Augmented Generation](https://arxiv.org/abs/2410.05779) · [library](https://github.com/HKUDS/LightRAG)
 
-Thanks to **Jihyeon Kang** for significant contributions to the library's
-feature development and validation, and to **Yusuke Tanimiya** for a thorough
-review and real-corpus testing — both of which strengthened the framework ahead
-of release.
-
-## 🏢 About
-
-Maintained by AWS under the awslabs organization. Licensed under Apache-2.0.
-Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Further reading on GraphRAG (DRIFT search, dynamic community selection, auto-tuning, LazyGraphRAG) is listed in the [Design Doc](./docs/design.md#16-further-reading).
