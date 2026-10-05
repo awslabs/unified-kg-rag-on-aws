@@ -110,7 +110,9 @@ class LocalSearchStrategy(BaseSearchStrategy):
             "..." if len(text_unit_ids) > 5 else "",
         )
 
-        text_units = await self._retrieve_documents(text_unit_ids, query.suffix)
+        text_units = await self._retrieve_documents(
+            text_unit_ids, query.suffix, filters=query.filters
+        )
         all_results = {"graph_entities": expanded_entity_nodes, **text_units}
 
         # MS GraphRAG local search builds context from entities + the community
@@ -187,6 +189,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
             top_k=n_candidates,
             index_prefixes=[self.config.indexing.opensearch.entities_index_prefix],
             suffix=query.suffix,
+            filters=self._scoped_filters(query),
         )
 
         try:
@@ -221,6 +224,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
             top_k=query.top_k,
             index_prefixes=[self.config.indexing.opensearch.claims_index_prefix],
             suffix=query.suffix,
+            filters=self._scoped_filters(query),
         )
 
         try:
@@ -255,6 +259,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
                 self.config.indexing.opensearch.community_reports_index_prefix
             ],
             suffix=query.suffix,
+            filters=self._scoped_filters(query),
         )
 
         try:
@@ -288,6 +293,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
             top_k=query.top_k,
             index_prefixes=[self.config.indexing.opensearch.relationships_index_prefix],
             suffix=query.suffix,
+            filters=self._scoped_filters(query),
         )
 
         try:
@@ -395,7 +401,10 @@ class LocalSearchStrategy(BaseSearchStrategy):
         return filtered_nodes
 
     async def _retrieve_documents(
-        self, text_unit_ids: list[str], suffix: str | None
+        self,
+        text_unit_ids: list[str],
+        suffix: str | None,
+        filters: dict[str, Any] | None = None,
     ) -> dict[str, list[RetrievalResult]]:
         if not self.document_retriever or not text_unit_ids:
             return {}
@@ -406,7 +415,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
             top_k=len(text_unit_ids),
             index_prefixes=[self.config.indexing.opensearch.text_units_index_prefix],
             suffix=suffix,
-            filters={"id": text_unit_ids},
+            filters={**(filters or {}), "id": text_unit_ids},
         )
 
         try:

@@ -410,6 +410,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             top_k=self._kg_stream_top_k(query.top_k),
             index_prefixes=[self._os_config.entities_index_prefix],
             suffix=query.suffix,
+            filters=self._scoped_filters(query),
         )
         try:
             results = await self.document_retriever.aretrieve(search_query)
@@ -432,6 +433,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             top_k=self._kg_stream_top_k(query.top_k),
             index_prefixes=[self._os_config.relationships_index_prefix],
             suffix=query.suffix,
+            filters=self._scoped_filters(query),
         )
         try:
             results = await self.document_retriever.aretrieve(search_query)
@@ -454,6 +456,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             top_k=self._chunk_stream_top_k(query.top_k),
             index_prefixes=[self._os_config.text_units_index_prefix],
             suffix=query.suffix,
+            filters=self._scoped_filters(query),
         )
         try:
             results = await self.document_retriever.aretrieve(search_query)
@@ -567,7 +570,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             top_k=len(chunk_ids),
             index_prefixes=[self._os_config.text_units_index_prefix],
             suffix=query.suffix,
-            filters={"id": chunk_ids},
+            filters=self._scoped_filters(query, id=chunk_ids),
         )
         try:
             results = await self.document_retriever.aretrieve(search_query)
@@ -646,7 +649,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             top_k=len(endpoint_ids),
             index_prefixes=[self._os_config.entities_index_prefix],
             suffix=query.suffix,
-            filters={"id": endpoint_ids},
+            filters=self._scoped_filters(query, id=endpoint_ids),
         )
         try:
             results = await retriever.aretrieve(search_query)
@@ -723,7 +726,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
                 top_k=page,
                 index_prefixes=[self._os_config.relationships_index_prefix],
                 suffix=query.suffix,
-                filters={field: entity_ids},
+                filters=self._scoped_filters(query, **{field: entity_ids}),
             )
             side = await retriever.aretrieve(search_query)
             # A full page means the count cap bound and edges were dropped —

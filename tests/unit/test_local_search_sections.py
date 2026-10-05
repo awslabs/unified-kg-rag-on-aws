@@ -159,3 +159,69 @@ def test_per_type_quota_floors_hold_at_a_tiny_top_k(config: Config) -> None:
     assert quota["relationship"] == quota_config.relationship_floor
     assert quota["community"] == quota_config.community_floor
     assert quota["claim"] == quota_config.claim_floor
+
+
+class LineageRetriever(FakeRetriever):
+    """FakeRetriever whose hits cite one text unit, so the chunk fetch runs."""
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        results = await super().aretrieve(query)
+        for result in results:
+            result.metadata["text_unit_ids"] = ["chunk-1"]
+        return results
+
+
+def _make_lineage_strategy(config: Config):
+    strategy, _, _ = _make_strategy(config)
+    os_r, neptune_r = LineageRetriever("document"), LineageRetriever("graph")
+    strategy.retrievers = {
+        RetrieverRole.DOCUMENT.value: os_r,
+        RetrieverRole.GRAPH.value: neptune_r,
+    }
+    return strategy, os_r, neptune_r
+
+
+async def test_caller_filters_reach_every_sub_query(config: Config) -> None:
+    # Each section builds a fresh SearchQuery; before the fix none carried
+    # query.filters, so `--filters` was silently dropped on the local path.
+    config.processing.claim_extraction.enabled = True
+    config.indexing.opensearch.build_relationship_vector_index = True
+    strategy, os_r, neptune_r = _make_lineage_strategy(config)
+    filters = {"doc_type": "contract"}
+    query = _query(filters=dict(filters))
+
+    await strategy.asearch(query)
+
+    os_cfg = config.indexing.opensearch
+    assert set(_doc_index_prefixes(os_r)) == {
+        os_cfg.entities_index_prefix,
+        os_cfg.text_units_index_prefix,
+        os_cfg.community_reports_index_prefix,
+        os_cfg.relationships_index_prefix,
+        os_cfg.claims_index_prefix,
+    }
+    for call in [*os_r.calls, *neptune_r.calls]:
+        assert call.filters is not None
+        assert call.filters["doc_type"] == "contract"
+    # The chunk fetch-by-id keeps its id scope alongside the caller filters.
+    chunk_calls = [
+        q for q in os_r.calls if q.index_prefixes == [os_cfg.text_units_index_prefix]
+    ]
+    assert chunk_calls and chunk_calls[0].filters == {
+        "doc_type": "contract",
+        "id": ["chunk-1"],
+    }
+    assert query.filters == filters  # caller's dict not mutated
+
+
+async def test_unfiltered_query_sends_no_filters(config: Config) -> None:
+    strategy, os_r, _ = _make_lineage_strategy(config)
+
+    await strategy.asearch(_query())
+
+    os_cfg = config.indexing.opensearch
+    for call in os_r.calls:
+        if call.index_prefixes == [os_cfg.text_units_index_prefix]:
+            assert call.filters == {"id": ["chunk-1"]}
+        else:
+            assert call.filters is None

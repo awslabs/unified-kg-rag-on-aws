@@ -186,3 +186,17 @@ class BaseSearchStrategy(MetricsMixin, ABC):
                 else:
                     ids_set.add(str(ids))
         return list(ids_set)
+
+    @staticmethod
+    def _scoped_filters(query: SearchQuery, **scope: Any) -> dict[str, Any] | None:
+        """Caller filters (``query.filters``) merged with sub-query scope filters.
+
+        Strategies that build a fresh ``SearchQuery`` for a sub-retrieval must
+        carry the caller's attribute filters through, or ``--filters`` is
+        silently dropped on that path. ``scope`` holds the filters the strategy
+        itself adds (e.g. ``id=[...]`` for a fetch-by-id); on a key collision
+        the scope wins, since it pins the fetch to specific artifacts. Returns a
+        new dict (never the caller's) or ``None`` when there is nothing to apply.
+        """
+        merged = {**(query.filters or {}), **scope}
+        return merged or None
