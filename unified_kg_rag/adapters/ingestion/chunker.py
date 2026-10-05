@@ -426,7 +426,7 @@ class BaseChunker(ABC):
                 total=len(documents),
                 desc=f"Chunking Documents ({self.__class__.__name__})",
                 unit="doc",
-                disable=not self.show_progress,
+                disable=None if self.show_progress else True,
             ) as pbar:
                 for doc in documents:
                     self._process_document_with_stats(doc, all_text_units)
