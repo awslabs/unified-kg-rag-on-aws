@@ -14,7 +14,6 @@ from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
-    is_fatal_retrieval_error,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
@@ -158,8 +157,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             "..." if len(final_results) > 5 else "",
         )
 
+        no_relevant_points = False
         if self.global_search_config.enable_map_reduce:
+            pre_map_count = len(final_results)
             final_results = await self._apply_map_reduce(final_results, query)
+            # Only an all-below-threshold map phase empties a non-empty input.
+            no_relevant_points = pre_map_count > 0 and not final_results
 
         final_results = final_results[: query.top_k]
         processing_time = time.time() - start_time
@@ -187,6 +190,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 "retrieved_community_count": len(retrieved_communities),
                 "selected_community_count": len(selected_communities),
                 "map_reduce_applied": self._was_map_reduce_applied(final_results),
+                "map_reduce_no_relevant_points": no_relevant_points,
             },
         )
 
@@ -254,22 +258,16 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         if not self.document_retriever or not community_ids:
             return []
 
-        try:
-            search_query = query.model_copy(deep=True)
-            search_query.query = ""
-            search_query.filters = (search_query.filters or {}).copy()
-            search_query.filters["community_id"] = community_ids
-            search_query.top_k = len(community_ids)
+        search_query = query.model_copy(deep=True)
+        search_query.query = ""
+        search_query.filters = (search_query.filters or {}).copy()
+        search_query.filters["community_id"] = community_ids
+        search_query.top_k = len(community_ids)
 
-            index_prefixes = [
-                self.config.indexing.opensearch.community_reports_index_prefix
-            ]
-            return await self._retrieve_documents(search_query, index_prefixes)
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("OpenSearch retrieval failed: %s", e)
-            return []
+        index_prefixes = [
+            self.config.indexing.opensearch.community_reports_index_prefix
+        ]
+        return await self._retrieve_documents(search_query, index_prefixes)
 
     async def _retrieve_documents(
         self, query: SearchQuery, index_prefixes: list[str]
@@ -277,15 +275,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         if not self.document_retriever:
             return []
 
-        try:
-            search_query = query.model_copy(deep=True)
-            search_query.index_prefixes = index_prefixes
-            return await self.document_retriever.aretrieve(search_query)
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("OpenSearch retrieval failed: %s", e)
-            return []
+        search_query = query.model_copy(deep=True)
+        search_query.index_prefixes = index_prefixes
+        return await self._safe_aretrieve(
+            self.document_retriever, search_query, "OpenSearch retrieval"
+        )
 
     async def _retrieve_community_nodes(
         self, query: SearchQuery, community_ids: list[str]
@@ -293,24 +287,20 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         if not self.graph_retriever:
             return []
 
-        try:
-            search_query = query.model_copy(deep=True)
-            search_query.query = ""
-            search_query.filters = (search_query.filters or {}).copy()
-            search_query.filters["id"] = community_ids
-            search_query.label_prefixes = [
-                self.config.indexing.neptune.community_label_prefix
-            ]
+        search_query = query.model_copy(deep=True)
+        search_query.query = ""
+        search_query.filters = (search_query.filters or {}).copy()
+        search_query.filters["id"] = community_ids
+        search_query.label_prefixes = [
+            self.config.indexing.neptune.community_label_prefix
+        ]
 
-            return await asyncio.wait_for(
-                self.graph_retriever.aretrieve(search_query),
-                timeout=self.global_search_config.graph_timeout_seconds,
-            )
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error("Neptune community retrieval failed: %s", e)
-            return []
+        return await self._safe_aretrieve(
+            self.graph_retriever,
+            search_query,
+            "Neptune community retrieval",
+            timeout=self.global_search_config.graph_timeout_seconds,
+        )
 
     async def _select_relevant_communities(
         self, all_communities: list[RetrievalResult], query: SearchQuery
@@ -441,45 +431,60 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         existing direct path). If the map phase yields no usable scored points
         (e.g. every map call failed to parse), it degrades to the legacy
         concat-and-reduce path so global search never hard-fails.
+
+        If the map phase DID rate the reports but every key point scored at or
+        below ``map_relevance_threshold``, the reports were judged irrelevant to
+        the query: this returns no results (MS GraphRAG answers with its no-data
+        response here), so the chain's empty-context guard answers "cannot
+        answer" instead of synthesizing from reports the map step rejected.
+        That verdict needs every batch to have been rated: when some batches
+        failed (throttling, timeout) or returned unparseable output, their
+        reports were never judged, so it degrades to concat-and-reduce over
+        just those unrated reports instead.
         """
         if len(results) < self.global_search_config.map_reduce_min_results:
             return results
 
         try:
-            map_points = await self._run_map_phase(results, query)
+            map_points, unrated = await self._run_map_phase(results, query)
         except Exception as e:
             if not self.ignore_errors:
                 raise
             logger.error("Map phase failed: %s", e)
-            map_points = []
-
-        if not map_points:
-            logger.warning(
-                "Map phase produced no usable key points; degrading to "
-                "concat-and-reduce synthesis."
-            )
-            return await self._concat_reduce(results, query)
+            map_points, unrated = [], list(results)
 
         ranked_points = self._filter_and_rank_points(map_points)
         if not ranked_points:
+            if unrated:
+                logger.warning(
+                    "No relevant map key point among the rated reports, but %s/%s "
+                    "reports were never rated (failed or unparseable map calls); "
+                    "degrading to concat-and-reduce over the unrated reports.",
+                    len(unrated),
+                    len(results),
+                )
+                return await self._concat_reduce(unrated, query)
             logger.warning(
-                "All %s map key points were filtered out by threshold %s; "
-                "degrading to concat-and-reduce synthesis.",
+                "All %s map key points scored at or below threshold %s; "
+                "no relevant community data for the query, returning no context.",
                 len(map_points),
                 self.global_search_config.map_relevance_threshold,
             )
-            return await self._concat_reduce(results, query)
+            return []
 
         packed_points = self._pack_points_within_budget(ranked_points)
         return await self._reduce_from_points(packed_points, results, query)
 
     async def _run_map_phase(
         self, results: list[RetrievalResult], query: SearchQuery
-    ) -> list[_MapPoint]:
+    ) -> tuple[list[_MapPoint], list[RetrievalResult]]:
         """Fan map calls over batches of reports and parse the scored points.
 
         Each batch of ``map_batch_size`` reports becomes one map LLM call;
         BatchProcessor runs them concurrently with graceful per-item fallback.
+        Returns the scored points and the reports of every batch that was NOT
+        rated (the call failed, or its output was not parseable map JSON), so
+        the caller can tell "rated irrelevant" apart from "never rated".
         """
         batch_size = self.global_search_config.map_batch_size
         report_batches = [
@@ -499,9 +504,17 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             ]
 
         def batch_func(
-            inputs: list[dict[str, Any]], config: RunnableConfig | None = None
-        ) -> list[str]:
-            return list(self.map_rater.batch(inputs, config=config))
+            inputs: list[dict[str, Any]],
+            config: RunnableConfig | None = None,
+            return_exceptions: bool = False,
+        ) -> list[Any]:
+            # Forward return_exceptions so one failed map call is retried alone
+            # instead of re-running every map call in its chunk.
+            return list(
+                self.map_rater.batch(
+                    inputs, config=config, return_exceptions=return_exceptions
+                )
+            )
 
         def sequential_func(single_input: dict[str, Any]) -> str:
             return str(self.map_rater.invoke(single_input))
@@ -517,12 +530,25 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         )
 
         points: list[_MapPoint] = []
-        for raw in raw_outputs:
-            if not isinstance(raw, str) or not raw:
-                # Sequential fallback inserts {} for a failed item.
+        unrated: list[RetrievalResult] = []
+        for i, batch in enumerate(report_batches):
+            raw = raw_outputs[i] if i < len(raw_outputs) else None
+            # Sequential fallback inserts {} for a failed item.
+            batch_points = (
+                self._parse_map_payload(raw) if isinstance(raw, str) and raw else None
+            )
+            if batch_points is None:
+                unrated.extend(batch)
                 continue
-            points.extend(self._parse_map_points(raw))
-        return points
+            points.extend(batch_points)
+        if unrated:
+            logger.warning(
+                "Global map phase left %s/%s reports unrated (failed or "
+                "unparseable map calls)",
+                len(unrated),
+                len(results),
+            )
+        return points, unrated
 
     @staticmethod
     def _format_reports(reports: list[RetrievalResult]) -> str:
@@ -540,9 +566,17 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         empty list on any parse failure (the caller degrades gracefully) so a
         single bad map response never aborts global search.
         """
+        return GlobalSearchStrategy._parse_map_payload(raw) or []
+
+    @staticmethod
+    def _parse_map_payload(raw: str) -> list[_MapPoint] | None:
+        """Like ``_parse_map_points`` but ``None`` when ``raw`` is not map JSON.
+
+        An empty list means the batch WAS rated and yielded no key points.
+        """
         payload = parse_llm_json(raw)
         if not payload:
-            return []
+            return None
 
         points: list[_MapPoint] = []
         for item in payload.get("points", []) or []:
@@ -619,6 +653,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             source="synthesized_summary",
             retriever_type=SectionType.GENERAL.value,
             metadata={
+                # LLM output, not retrieved evidence: kept in the answer context
+                # (design §6.1.1) but excluded from the reported sources.
+                "synthesized": True,
                 "source_results_count": len(results),
                 "ranked_key_points": len(points),
             },
@@ -643,7 +680,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 score=1.0,
                 source="synthesized_summary",
                 retriever_type=SectionType.GENERAL.value,
-                metadata={"source_results_count": len(results)},
+                metadata={
+                    "synthesized": True,
+                    "source_results_count": len(results),
+                },
             )
             return [summary_result] + results
         except Exception as e:

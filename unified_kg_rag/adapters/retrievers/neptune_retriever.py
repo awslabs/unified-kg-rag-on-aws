@@ -43,6 +43,7 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         self._max_hops = self._neptune_config.max_hops
         self._max_results_per_hop = self._neptune_config.max_results_per_hop
         self._min_entity_importance = self._neptune_config.min_entity_importance
+        self._label_property_cache: dict[tuple[str, str], bool] = {}
 
     def close(self) -> None:
         """Close the underlying Neptune websocket + thread pool (best-effort)."""
@@ -175,7 +176,8 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             )
             traversal = traversal.where(text_search_filter)
 
-        traversal = self._apply_filters(traversal, query.filters)
+        filters, exempt = await self._scope_filters_to_labels(g, [label], query.filters)
+        traversal = self._apply_filters(traversal, filters, exempt)
 
         if min_prop_value is not None:
             traversal = traversal.has(order_by_prop, P.gte(min_prop_value))
@@ -190,9 +192,91 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         raw_results = await self._execute_traversal(traversal)
         return [self._clean_property_map(r) for r in raw_results]
 
+    async def _label_has_property(
+        self, g: GraphTraversalSource, label: str, key: str
+    ) -> bool:
+        """Whether any ``label`` vertex carries property ``key`` (cached).
+
+        A transient probe failure counts as "has it" so the filter still
+        applies (the pre-scoping behaviour); a fatal error propagates.
+        """
+        cache_key = (label, key)
+        if cache_key in self._label_property_cache:
+            return self._label_property_cache[cache_key]
+        try:
+            counts = await self._execute_traversal(
+                g.V().hasLabel(label).has(key).limit(1).count()
+            )
+        except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
+            logger.warning(
+                "Property probe failed for '%s.%s'; applying the filter: %s",
+                label,
+                key,
+                e,
+            )
+            return True
+        present = bool(counts and counts[0])
+        self._label_property_cache[cache_key] = present
+        return present
+
+    async def _scope_filters_to_labels(
+        self,
+        g: GraphTraversalSource,
+        labels: list[str],
+        filters: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any] | None, dict[str, list[str]]]:
+        """Restrict caller filters to the vertex labels that carry each key.
+
+        Mirrors the OpenSearch per-index scoping: ``has(key, ...)`` drops every
+        vertex lacking ``key``, so a filter on a property only some labels have
+        (e.g. a text-unit attribute) would otherwise empty the traversal. Keys
+        no target label carries are dropped; for a key only some labels carry,
+        the returned ``exempt`` map lists the labels the filter must not touch.
+        The reserved ``id`` key is left to ``_apply_filters`` (it skips it).
+        """
+        if not filters:
+            return filters, {}
+        kept: dict[str, Any] = {}
+        exempt: dict[str, list[str]] = {}
+        for key, value in filters.items():
+            if key == "id":
+                kept[key] = value
+                continue
+            present = [await self._label_has_property(g, lbl, key) for lbl in labels]
+            if not any(present):
+                logger.debug(
+                    "Dropped filter key '%s': no %s vertex carries it",
+                    key,
+                    "/".join(labels),
+                )
+                continue
+            kept[key] = value
+            lacking = [lbl for lbl, has in zip(labels, present, strict=True) if not has]
+            if lacking:
+                exempt[key] = lacking
+        return kept or None, exempt
+
     @staticmethod
+    def _filter_steps(key: str, value: Any) -> list[tuple[str, Any]]:
+        """``(key, predicate)`` pairs for one filter entry (``has`` arguments)."""
+        if isinstance(value, list):
+            return [(key, P.within(value))]
+        if isinstance(value, dict):
+            return [
+                (key, getattr(P, op)(val))
+                for op, val in value.items()
+                if op in {"gte", "lte", "gt", "lt", "eq", "neq"}
+            ]
+        return [(key, value)]
+
+    @classmethod
     def _apply_filters(
-        traversal: GraphTraversal, filters: dict[str, Any] | None
+        cls,
+        traversal: GraphTraversal,
+        filters: dict[str, Any] | None,
+        exempt_labels: dict[str, list[str]] | None = None,
     ) -> GraphTraversal:
         if not filters:
             return traversal
@@ -200,14 +284,20 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         for key, value in filters.items():
             if key == "id":
                 continue
-            if isinstance(value, list):
-                traversal = traversal.has(key, P.within(value))
-            elif isinstance(value, dict):
-                for op, val in value.items():
-                    if op in {"gte", "lte", "gt", "lt", "eq", "neq"}:
-                        traversal = traversal.has(key, getattr(P, op)(val))
-            else:
-                traversal = traversal.has(key, value)
+            steps = cls._filter_steps(key, value)
+            if not steps:
+                continue
+            exempt = (exempt_labels or {}).get(key)
+            if exempt:
+                # Only the labels that carry ``key`` are filtered; vertices of
+                # the exempt labels pass through untouched.
+                guarded = __.has(*steps[0])
+                for step in steps[1:]:
+                    guarded = guarded.has(*step)
+                traversal = traversal.or_(__.hasLabel(*exempt), guarded)
+                continue
+            for step in steps:
+                traversal = traversal.has(*step)
         return traversal
 
     async def _traverse_from_seeds(
@@ -262,7 +352,10 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             .hasLabel(entity_label)
             .limit(query.top_k * query.retrieval_multiplier)
         )
-        traversal = self._apply_filters(traversal, query.filters)
+        filters, exempt = await self._scope_filters_to_labels(
+            g, [entity_label], query.filters
+        )
+        traversal = self._apply_filters(traversal, filters, exempt)
         traversal = self._with_projection(traversal)
         return await self._execute_traversal(traversal)
 
@@ -306,7 +399,10 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             .dedup()
             .limit(query.top_k * query.retrieval_multiplier)
         )
-        traversal = self._apply_filters(traversal, query.filters)
+        filters, exempt = await self._scope_filters_to_labels(
+            g, [community_label, entity_label], query.filters
+        )
+        traversal = self._apply_filters(traversal, filters, exempt)
         traversal = self._with_projection(traversal)
         return await self._execute_traversal(traversal)
 
@@ -333,6 +429,11 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             result: list[Any] = await asyncio.to_thread(traversal.to_list)
             return result
         except Exception as e:
+            # Fatal errors (auth/credentials/endpoint/connection) must reach
+            # `aretrieve`, which re-raises them; swallowing them here turned a
+            # broken Neptune configuration into a silent "no seed nodes found".
+            if is_fatal_retrieval_error(e):
+                raise
             logger.error("Gremlin traversal execution failed: %s", e)
             return []
 

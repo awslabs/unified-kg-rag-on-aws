@@ -415,12 +415,27 @@ class HybridScorer(MetricsMixin):
             else:
                 word_sets[i] = set()
 
+        # Min-max normalize relevance to [0, 1] over the candidate set so it is
+        # on the same scale as the Jaccard penalty. Post-fusion scores are not
+        # unit-scaled (RRF yields ~1/(k+rank), i.e. ~0.009-0.016 at k=60), and
+        # comparing them raw against a 0..1 similarity lets the penalty dominate:
+        # MMR then keeps whatever is least like rank 1, i.e. off-topic results.
+        # All-equal scores carry no relevance signal, so they map to 1.0 and the
+        # ordering falls to the diversity term alone.
+        raw_scores = [r.score or 0.0 for r in results]
+        max_score = raw_scores[0]
+        min_score = raw_scores[-1]
+        score_range = max_score - min_score
+        if score_range > 0:
+            relevances = [(s - min_score) / score_range for s in raw_scores]
+        else:
+            relevances = [1.0] * len(raw_scores)
+
         selected_indices: list[int] = [0]
         remaining_indices = set(range(1, len(results)))
 
         def calculate_mmr(candidate_idx: int) -> float:
-            candidate = results[candidate_idx]
-            relevance = candidate.score or 0.0
+            relevance = relevances[candidate_idx]
 
             candidate_words = word_sets[candidate_idx]
             max_similarity = max(
@@ -434,7 +449,8 @@ class HybridScorer(MetricsMixin):
             return lambda_val * relevance - (1 - lambda_val) * max_similarity
 
         while remaining_indices and len(selected_indices) < target_count:
-            best_idx = max(remaining_indices, key=calculate_mmr)
+            # Sorted so ties resolve to the more relevant (lower-index) item.
+            best_idx = max(sorted(remaining_indices), key=calculate_mmr)
             selected_indices.append(best_idx)
             remaining_indices.remove(best_idx)
 

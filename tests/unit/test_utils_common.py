@@ -16,9 +16,26 @@ from unified_kg_rag.shared.utils.common import (
     normalize_name,
     parse_llm_json,
     safe_float_parse,
+    strip_embedding_fields,
 )
 
 pytestmark = pytest.mark.unit
+
+
+class TestStripEmbeddingFields:
+    def test_drops_only_embedding_suffixed_keys(self) -> None:
+        data = {
+            "id": "x",
+            "text": "Vendor",
+            "text_embedding": [0.1],
+            "embedding_model": "m",  # prefix, not suffix: kept
+        }
+        assert strip_embedding_fields(data) == {
+            "id": "x",
+            "text": "Vendor",
+            "embedding_model": "m",
+        }
+        assert "text_embedding" in data  # input not mutated
 
 
 class TestComputeHash:

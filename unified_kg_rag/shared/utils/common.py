@@ -175,3 +175,18 @@ def parse_llm_json(raw: str) -> dict[str, Any]:
     except (json.JSONDecodeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+# Every vector field the indexers write ends in this suffix (``text_embedding``,
+# ``name_embedding``, ``full_content_embedding``, ...).
+EMBEDDING_FIELD_SUFFIX = "_embedding"
+
+
+def strip_embedding_fields(data: dict[str, Any]) -> dict[str, Any]:
+    """Return a shallow copy of ``data`` without ``*_embedding`` vector fields.
+
+    Vectors are only needed for scoring; carried into result metadata they bloat
+    every payload (a community report holds three) and leak into reported
+    sources.
+    """
+    return {k: v for k, v in data.items() if not k.endswith(EMBEDDING_FIELD_SUFFIX)}

@@ -183,6 +183,61 @@ def test_upload_applies_kms_extra_args(s3_setup, tmp_path, mocker) -> None:
     assert captured["ExtraArgs"]["SSEKMSKeyId"] == "key-123"
 
 
+def test_default_encryption_is_bucket_default() -> None:
+    assert Config().aws.s3.encryption.encryption_type is S3EncryptionType.BUCKET_DEFAULT
+
+
+@pytest.mark.parametrize(
+    ("encryption_type", "kms_key_id", "expected"),
+    [
+        # No header => the bucket's default encryption (e.g. its CMK) applies.
+        (S3EncryptionType.BUCKET_DEFAULT, None, {}),
+        # Legacy alias: same behaviour as BUCKET_DEFAULT.
+        (S3EncryptionType.NONE, None, {}),
+        (S3EncryptionType.AES256, None, {"ServerSideEncryption": "AES256"}),
+        (
+            S3EncryptionType.KMS,
+            "key-123",
+            {"ServerSideEncryption": "aws:kms", "SSEKMSKeyId": "key-123"},
+        ),
+    ],
+)
+def test_sse_extra_args_selection(
+    s3_setup, encryption_type, kms_key_id, expected
+) -> None:
+    config, session = s3_setup
+    config.aws.s3.encryption.encryption_type = encryption_type
+    config.aws.s3.encryption.kms_key_id = kms_key_id
+    assert _manager(config, session)._sse_extra_args() == expected
+
+
+def test_default_upload_sends_no_sse_header(s3_setup, tmp_path, mocker) -> None:
+    """With the default config the upload must not override the bucket's CMK."""
+    config, session = s3_setup
+    mgr = _manager(config, session)
+    captured: dict = {}
+
+    def _fake_upload(local, bucket, key, ExtraArgs):  # noqa: N803
+        captured["ExtraArgs"] = ExtraArgs
+
+    mocker.patch.object(mgr, "_s3_client", mocker.MagicMock(upload_file=_fake_upload))
+    f = tmp_path / "x.json"
+    f.write_text("{}", encoding="utf-8")
+    assert mgr._upload_file_to_s3(f, "k/x.json") is True
+    assert "ServerSideEncryption" not in captured["ExtraArgs"]
+    assert "SSEKMSKeyId" not in captured["ExtraArgs"]
+
+
+def test_bucket_default_round_trip_against_moto(s3_setup, tmp_path) -> None:
+    config, session = s3_setup
+    mgr = _manager(config, session)
+    f = tmp_path / "x.json"
+    f.write_text('{"v": 1}', encoding="utf-8")
+    assert mgr._upload_file_to_s3(f, "cache/p/x.json") is True
+    body = session.client("s3").get_object(Bucket=_BUCKET, Key="cache/p/x.json")
+    assert body["Body"].read() == b'{"v": 1}'
+
+
 def test_upload_missing_file_returns_false(s3_setup, tmp_path) -> None:
     config, session = s3_setup
     mgr = _manager(config, session)

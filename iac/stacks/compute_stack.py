@@ -203,7 +203,13 @@ class ComputeStack(Stack):
             # via use_ssl; passing https:// here yields https://[https://…].
             "OPENSEARCH_ENDPOINT": storage.opensearch_domain.domain_endpoint,
             "S3_BUCKET_NAME": storage.cache_bucket.bucket_name,
+            # Maps to aws.dynamodb.table_name. The table is IaC-managed (KMS,
+            # PITR, alarms) and the task role has no dynamodb:CreateTable, so
+            # disable app-side auto-creation: a missing table fails fast with
+            # ResourceNotFound instead of an AccessDenied on CreateTable.
+            # aws.dynamodb.enabled stays a config.yaml decision.
             "GRAPHRAG_DOC_STATUS_TABLE": self.config.doc_status_table,
+            "GRAPHRAG_DOC_STATUS_CREATE_TABLE": "false",
             # "structured" => JSON-structured logs (CloudWatch-friendly); the
             # config model only accepts "structured" | "plain".
             "LOG_FORMAT": "structured",
