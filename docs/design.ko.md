@@ -21,6 +21,7 @@
 13. [테스트 전략](#13-테스트-전략)
 14. [CI/CD와 보안](#14-cicd와-보안)
 15. [확장 가이드](#15-확장-가이드)
+16. [참고 자료](#16-참고-자료)
 
 ---
 
@@ -275,7 +276,7 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 - **HybridScorer** (`adapters/retrieval/hybrid_scorer.py`): 소스별 결과를 RRF(`rrf_k`) 또는 가중 융합, 다양성 필터링(`diversity_lambda`), Bedrock 리랭킹으로 결합. 가중치·방법은 `config.search.fusion`/`hybrid`. 리랭킹은 `search.reranking.enabled`일 때만 활성화되며, `compress_documents`로 `top_n`을 문서 수에 맞춰 일시 조정 후 복원합니다. 초기화 실패 시 리랭커는 비활성(`None`)으로 degrade.
   - **IAM 주의**: Bedrock Rerank는 `bedrock:Rerank` 권한을 `Resource:*`로 요구합니다(실 AWS E2E에서 발견 — 모델 ARN으로 좁히면 AccessDenied). IaC에 전용 statement로 분리합니다.
 - **TokenManager** (`adapters/retrieval/token_manager.py`): 모델 한도 내 컨텍스트 최적화. 섹션 타입별 우선순위 배수로 가중(`PRIORITY_MULTIPLIERS`: TEXT 1.3 / ENTITY 1.2 / RELATIONSHIP 1.1 / CLAIM 1.1 / COMMUNITY 1.0 / GENERAL 0.8), 우선순위 내림차순으로 예산 내 섹션을 선택. `SectionType.CLAIM`은 query-time claims 주입(§6.1)을 토큰 예산에 편입하기 위한 타입입니다. 체인은 이 선택 결과(`OptimizedContext`)를 상태에 유지하고 그것으로 `RAGOutput.sources`를 만들기 때문에, sources에는 답변 모델이 실제로 본 섹션만 검색 순위 순서로 들어갑니다. 예산 때문에 잘린 섹션은 보고하지 않고, 예산에 맞춰 일부만 넣은 섹션은 `truncated: true`와 잘린 텍스트를 함께 보고합니다. 각 source의 metadata에는 `source_id` / `document_ids` / `chunk_id` / `section_type` / `score`를 유지하고 `*_embedding` 벡터는 제거합니다. 빈 컨텍스트로 답변 단계가 바로 종료되면 `sources`는 비어 있습니다.
-- **토큰 카운팅** (`adapters/aws/token_counter.py`): Bedrock `count_tokens` API가 단일 진실 소스. 실패 시에만 문자 체계 인식 추정치로 degrade(서드파티 토크나이저 미사용). 일시적이지 않은 실패(`AccessDeniedException`, 메시지가 모델의 기능 미지원을 뜻하는 `ValidationException` 등)가 나면 해당 모델을 프로세스 전체에서 미지원으로 기록해 이후 API를 호출하지 않으며, 스로틀링·타임아웃·입력 문제로 인한 `ValidationException`은 기록하지 않음. 비어 있거나 공백만 있는 텍스트는 API를 호출하지 않음. 임베딩·리랭크 모델은 기능 플래그(`supports_count_tokens`)로 API를 건너뜀. 절단은 char 비율로 후보를 잡고 API로 검증하는 수렴 루프.
+- **토큰 카운팅** (`adapters/aws/token_counter.py`): Bedrock `count_tokens` API가 단일 진실 소스. 실패 시에만 문자 체계 인식 추정치로 degrade(서드파티 토크나이저 미사용). 일시적이지 않은 실패(`AccessDeniedException`, 메시지가 모델의 기능 미지원을 뜻하는 `ValidationException` 등)가 나면 해당 모델을 프로세스 전체에서 미지원으로 기록해 이후 API를 호출하지 않으며, 스로틀링·타임아웃·입력 문제로 인한 `ValidationException`은 기록하지 않음. 비어 있거나 공백만 있는 텍스트는 API를 호출하지 않음. 임베딩·리랭크 모델과 CountTokens가 거부하는 언어 모델(Claude 4.7+/5.x, OpenAI GPT)은 기능 플래그(`supports_count_tokens`)로 API를 건너뜀. 절단은 char 비율로 후보를 잡고 API로 검증하는 수렴 루프.
 
 ---
 
@@ -283,9 +284,9 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 
 | 서비스 | 모듈 | 용도 |
 |---|---|---|
-| **Bedrock** | `adapters/aws/bedrock.py` | LLM/임베딩/리랭킹. cross-region inference profile 자동 해석, thinking 모드(Claude 4.7+는 adaptive + `effort`, 이전 모델은 `budget_tokens`), 1M 컨텍스트, prompt 캐싱, capability 테이블 |
+| **Bedrock** | `adapters/aws/bedrock.py` | LLM/임베딩/리랭킹. cross-region inference profile 자동 해석, 공급자별 요청 구성(Claude 4.6+는 Anthropic adaptive thinking + `effort`, 이전 Claude는 `budget_tokens`, OpenAI GPT는 Converse의 `reasoning.effort`), 1M 컨텍스트, 명시적 캐시 지점을 지원하는 모델의 prompt 캐싱, capability 테이블 |
 | **Neptune** | `adapters/aws/neptune.py` | Gremlin over `wss://`, SigV4 IAM, 배치 upsert/삭제. 쓰기 배치는 `indexing.neptune.index_concurrency`>1이면 스레드 풀로 동시 제출(배치별 독립 `IndexingStats` → 메인 스레드 병합, 공유 변경 없음), `aws.neptune.pool_size`로 Gremlin 커넥션 풀 다중화. 기본 1=순차 |
-| **OpenSearch** | `adapters/aws/opensearch.py` | 벡터(kNN/HNSW, 기본 엔진 **faiss** — nmslib는 deprecated) + BM25, async SigV4, sync/async 클라이언트, hybrid search pipeline, alias 관리, bulk upsert/delete, 언어별 분석기(en→english, ko→nori 등) |
+| **OpenSearch** | `adapters/aws/opensearch.py` | 벡터(kNN/HNSW, 기본 엔진 **lucene**. `iac/`가 배포하는 OpenSearch 2.13에서 `cosinesimil`을 지원합니다. faiss는 2.19 이전 버전에서 `cosinesimil`을 거부하므로 1024차원을 넘는 모델에서 `innerproduct`와 함께만 쓰세요. `config-template.yaml`의 엔진 설명 참고) + BM25, async SigV4, sync/async 클라이언트, hybrid search pipeline, alias 관리, bulk upsert/delete, 언어별 분석기(en→english, ko→nori 등) |
 | **S3** | `adapters/aws/s3_cache.py` | 파이프라인 캐시 동기화(암호화 기본값 `BUCKET_DEFAULT`는 버킷 기본 암호화(예: CMK)를 따르고, `AES256`/`aws:kms`는 객체별 SSE를 강제) |
 | **DynamoDB** | `adapters/aws/dynamodb.py` | 증분 인덱싱 문서-상태 레지스트리 |
 
@@ -366,9 +367,10 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 ## 14. CI/CD와 보안
 
-- **CI** (`.github/workflows/`): `quality` 워크플로(ruff/black/isort/mypy + pytest+coverage 게이트, PR/기본 브랜치 트리거), `security` 워크플로(ASH 스캔 비차단, 리포트 전용).
+- **CI** (`.github/workflows/`): `quality` 워크플로는 PR과 `main` 푸시에서 실행됩니다. ruff/black/isort/mypy와 커버리지 게이트를 포함한 pytest, 지원 최저 버전인 Python 3.10에서의 테스트, property·integration 스위트 단독 실행, 선택 파서 보안 검사, cdk-nag를 켠 `cdk synth`와 IaC 단언 테스트를 수행합니다. `security` 워크플로는 `main` 푸시 시 차단 없이 보고만 하는 ASH 스캔을 실행합니다.
+- **Dependabot** (`.github/dependabot.yml`): `uv` 잠금 파일(`/`), IaC `pip` 요구사항(`/iac`), SHA로 고정한 GitHub Actions를 매주 갱신합니다. 호환성이 깨지는 것으로 확인된 버전은 `ignore` 항목에 이유와 함께 제외합니다.
 - **pre-commit** (`.pre-commit-config.yaml`): CI 게이트 미러링. `pre-commit install`.
-- **보안 하드닝**: 콘텐츠 해시는 SHA-256 전용(MD5 제거, CWE-327 해소). 의존성은 `uv lock --upgrade`로 정기 갱신해 의존성 스캔 CVE 대응. 토큰은 환경/설정으로 주입(코드 하드코딩 없음).
+- **보안 하드닝**: 콘텐츠 해시는 SHA-256 전용(MD5 제거, CWE-327 해소). 의존성 스캔 CVE는 위 Dependabot PR로 대응합니다. 토큰은 환경/설정으로 주입(코드 하드코딩 없음).
 
 ---
 
@@ -426,8 +428,8 @@ chain = GraphRAGChain(config=cfg, model_factory=OllamaModelFactory())
 
 ### 의도적 설계 경계
 
-코드베이스가 명시적으로 밝혀두는 경계 결정이 하나 있습니다 — 누락이 아니라
-의도된 결정으로 읽히도록:
+코드베이스가 명시적으로 밝혀두는 경계 결정은 세 가지입니다. 누락이 아니라
+의도된 결정이라는 점을 분명히 하기 위해 적어 둡니다.
 
 - **`SearchQuery`는 어댑터 어휘(label/index prefix)를 의도적으로 보유합니다.**
   도메인 질의 모델이 인덱스/라벨 prefix를 노출하고 검색 전략·두 리트리버가 이를
@@ -456,3 +458,17 @@ chain = GraphRAGChain(config=cfg, model_factory=OllamaModelFactory())
   오버헤드가 급증합니다. 확장 해법은 아티팩트 타입당 단일 인덱스 + `tenant` 필터
   필드 + routing(인덱스 drop 대신 delete-by-query)이며 — 인덱스/검색/삭제 경로를
   모두 건드리는 동작 변경이라 별도 마이그레이션으로 분리합니다.
+
+---
+
+## 16. 참고 자료
+
+§6의 배경 자료로 참고할 만한 Microsoft Research의 GraphRAG 및 후속 기법 소개 글입니다.
+
+- [GraphRAG: Unlocking LLM Discovery on Narrative Private Data](https://www.microsoft.com/en-us/research/blog/graphrag-unlocking-llm-discovery-on-narrative-private-data/)
+- [GraphRAG: New Tool for Complex Data Discovery Now on GitHub](https://www.microsoft.com/en-us/research/blog/graphrag-new-tool-for-complex-data-discovery-now-on-github/)
+- [GraphRAG Auto-Tuning Provides Rapid Adaptation to New Domains](https://www.microsoft.com/en-us/research/blog/graphrag-auto-tuning-provides-rapid-adaptation-to-new-domains/)
+- [Introducing DRIFT Search: Combining Global and Local Search Methods to Improve Quality and Efficiency](https://www.microsoft.com/en-us/research/blog/introducing-drift-search-combining-global-and-local-search-methods-to-improve-quality-and-efficiency/)
+- [GraphRAG: Improving Global Search via Dynamic Community Selection](https://www.microsoft.com/en-us/research/blog/graphrag-improving-global-search-via-dynamic-community-selection/)
+- [LazyGraphRAG: Setting a New Standard for Quality and Cost](https://www.microsoft.com/en-us/research/blog/lazygraphrag-setting-a-new-standard-for-quality-and-cost/)
+- [Introducing GraphRAG 1.0](https://www.microsoft.com/en-us/research/blog/moving-to-graphrag-1-0-streamlining-ergonomics-for-developers-and-users/)

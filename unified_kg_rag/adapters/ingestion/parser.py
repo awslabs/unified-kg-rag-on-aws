@@ -165,8 +165,8 @@ class FileParser(BaseParser):
 # (e.g. cp949, latin-1) raises UnicodeDecodeError, FileParser re-detects the
 # encoding with charset-normalizer and retries with an explicit ``encoding=``.
 # We deliberately do NOT use LangChain's ``autodetect_encoding=True`` because it
-# imports ``chardet`` (an extra dependency); charset-normalizer is already
-# vendored (it ships with requests) and is reused here and in
+# imports ``chardet`` (an extra dependency); charset-normalizer is a declared
+# dependency and is reused here and in
 # ``Document._read_text_autodetect`` for one consistent detection path.
 _ENCODING_AWARE_LOADERS = (CSVLoader, TextLoader)
 

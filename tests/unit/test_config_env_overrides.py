@@ -57,3 +57,32 @@ def test_unset_env_keeps_defaults() -> None:
     cfg = ConfigLoader().load_config()
     assert cfg.aws.dynamodb.table_name == "unified-kg-rag-on-aws-doc-status"
     assert cfg.aws.dynamodb.create_table_if_missing is True
+
+
+def test_docker_image_config_takes_endpoints_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # docker/config.yaml is baked into the image and stays endpoint-free: every
+    # deployment-specific value comes from the compute stack's env vars.
+    image_config = Path(__file__).resolve().parents[2] / "docker" / "config.yaml"
+    env = {
+        "AWS_REGION": "us-east-1",
+        "BEDROCK_REGION": "us-east-1",
+        "NEPTUNE_ENDPOINT": "neptune.example.internal",
+        "OPENSEARCH_ENDPOINT": "opensearch.example.internal",
+        "S3_BUCKET_NAME": "example-cache-bucket",
+        "GRAPHRAG_DOC_STATUS_TABLE": "example-doc-status",
+        "GRAPHRAG_DOC_STATUS_CREATE_TABLE": "false",
+    }
+    for var, value in env.items():
+        monkeypatch.setenv(var, value)
+    cfg = ConfigLoader(image_config).load_config()
+    assert cfg.aws.region_name == "us-east-1"
+    assert cfg.aws.bedrock.region_name == "us-east-1"
+    assert cfg.aws.neptune.endpoint == "neptune.example.internal"
+    assert cfg.aws.opensearch.endpoint == "opensearch.example.internal"
+    assert cfg.aws.opensearch.use_iam is True
+    assert cfg.aws.s3.bucket_name == "example-cache-bucket"
+    assert cfg.aws.dynamodb.table_name == "example-doc-status"
+    assert cfg.aws.dynamodb.create_table_if_missing is False
+    assert cfg.graph.visualization.enabled is False
