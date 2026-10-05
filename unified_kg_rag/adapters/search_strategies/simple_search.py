@@ -6,6 +6,10 @@ from unified_kg_rag.adapters.retrieval.base import (
     BaseSearchStrategy,
     is_fatal_retrieval_error,
 )
+from unified_kg_rag.adapters.retrievers.opensearch_retriever import (
+    all_index_prefixes,
+    configured_index_prefixes,
+)
 from unified_kg_rag.domain.models import (
     RetrievalResult,
     RetrieverRole,
@@ -84,22 +88,17 @@ class SimpleSearchStrategy(BaseSearchStrategy):
             return {}
 
     def _apply_claim_gate(self, query: SearchQuery) -> SearchQuery:
-        # Simple search sweeps every index by default (index_prefixes=None ->
-        # all mappings, which includes the claims index). Keep claims inclusion
-        # consistently gated on the enabled flag: when the caller hasn't pinned
-        # index_prefixes and claim extraction is off, restrict the sweep to the
-        # non-claims indexes so a claims-off run never queries that index.
-        opensearch = self.config.indexing.opensearch
-        if query.index_prefixes or self.config.processing.claim_extraction.enabled:
+        # Simple search sweeps every index by default. When the caller hasn't
+        # pinned index_prefixes and some optional index is not built by the
+        # configured pipeline (claims off, no relationship vector index, no
+        # community detection), pin the sweep to the indices that do exist so
+        # any document backend honours the same gates as OpenSearchRetriever.
+        if query.index_prefixes:
             return query
-
-        non_claims_prefixes = [
-            opensearch.text_units_index_prefix,
-            opensearch.entities_index_prefix,
-            opensearch.relationships_index_prefix,
-            opensearch.community_reports_index_prefix,
-        ]
-        return query.model_copy(update={"index_prefixes": non_claims_prefixes})
+        configured = configured_index_prefixes(self.config)
+        if configured == all_index_prefixes(self.config):
+            return query
+        return query.model_copy(update={"index_prefixes": configured})
 
     def _record_search_metrics(
         self, processing_time: float, retrieved_count: int

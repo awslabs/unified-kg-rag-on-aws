@@ -12,6 +12,7 @@ empty list only on genuinely-transient failures.
 from __future__ import annotations
 
 import pytest
+from opensearchpy.exceptions import NotFoundError
 
 from unified_kg_rag.adapters.retrieval.base import is_fatal_retrieval_error
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
@@ -184,3 +185,67 @@ async def test_neptune_retriever_degrades_on_transient(config: Config) -> None:
     retriever = _neptune_retriever(config, client)
     results = await retriever.aretrieve(SearchQuery(query="hello"))
     assert results == []
+
+
+# --- OpenSearchRetriever: missing index (config mismatch) ------------------
+
+
+class _RecordingLogger:
+    def __init__(self) -> None:
+        self.warnings: list[tuple] = []
+        self.errors: list[tuple] = []
+
+    def warning(self, *args, **_kwargs) -> None:
+        self.warnings.append(args)
+
+    def error(self, *args, **_kwargs) -> None:
+        self.errors.append(args)
+
+    def __getattr__(self, _name):
+        return lambda *a, **k: None
+
+
+@pytest.fixture
+def recording_logger(monkeypatch) -> _RecordingLogger:
+    from unified_kg_rag.adapters.retrievers import opensearch_retriever as mod
+
+    rec = _RecordingLogger()
+    monkeypatch.setattr(mod, "logger", rec)
+    monkeypatch.setattr(mod, "_warned_missing_aliases", set())
+    return rec
+
+
+async def test_index_not_found_warns_once_per_alias(
+    config: Config, recording_logger: _RecordingLogger
+) -> None:
+    # A 404 index_not_found is a config/index mismatch, not a transient
+    # failure: one WARNING per alias, no ERROR per query, empty results.
+    retriever = _opensearch_retriever(config)
+    _set_asearch_raising(
+        retriever,
+        NotFoundError(404, "index_not_found_exception", {"error": "no such index"}),
+    )
+    prefix = config.indexing.opensearch.entities_index_prefix
+    for _ in range(3):
+        results = await retriever.aretrieve(
+            SearchQuery(query="hello", index_prefixes=[prefix])
+        )
+        assert results == []
+
+    assert len(recording_logger.warnings) == 1
+    assert recording_logger.errors == []
+
+
+async def test_other_not_found_still_logs_error(
+    config: Config, recording_logger: _RecordingLogger
+) -> None:
+    retriever = _opensearch_retriever(config)
+    _set_asearch_raising(retriever, NotFoundError(404, "resource_not_found", {}))
+    prefix = config.indexing.opensearch.entities_index_prefix
+    results = await retriever.aretrieve(
+        SearchQuery(query="hello", index_prefixes=[prefix])
+    )
+
+    assert results == []
+    assert recording_logger.warnings == []
+    assert len(recording_logger.errors) == 1

@@ -74,9 +74,47 @@ def test_normalize_index_prefixes_string(retriever) -> None:
     ]
 
 
-def test_normalize_index_prefixes_none_returns_all(retriever) -> None:
+def test_normalize_index_prefixes_none_skips_unbuilt_claims(retriever, config) -> None:
+    # Default config: claim extraction OFF -> no claims index is ever built, so
+    # the default sweep must not query it (it 404s on every query otherwise).
+    assert config.processing.claim_extraction.enabled is False
+    o = config.indexing.opensearch
+    out = retriever._normalize_index_prefixes(None)
+    assert o.claims_index_prefix not in out
+    assert out == [
+        o.text_units_index_prefix,
+        o.entities_index_prefix,
+        o.relationships_index_prefix,
+        o.community_reports_index_prefix,
+    ]
+
+
+def test_normalize_index_prefixes_none_all_when_everything_built(
+    retriever, config
+) -> None:
+    config.processing.claim_extraction.enabled = True
     out = retriever._normalize_index_prefixes(None)
     assert set(out) == set(retriever._field_mappings.keys())
+
+
+def test_normalize_index_prefixes_none_follows_optional_index_flags(
+    retriever, config
+) -> None:
+    config.processing.claim_extraction.enabled = True
+    config.indexing.opensearch.build_relationship_vector_index = False
+    config.graph.community_detection.enabled = False
+    o = config.indexing.opensearch
+    assert retriever._normalize_index_prefixes(None) == [
+        o.text_units_index_prefix,
+        o.entities_index_prefix,
+        o.claims_index_prefix,
+    ]
+
+
+def test_explicit_prefixes_reach_unbuilt_optional_index(retriever, config) -> None:
+    # Gating applies only to the default sweep; a pinned prefix is honoured.
+    claims = config.indexing.opensearch.claims_index_prefix
+    assert retriever._normalize_index_prefixes([claims]) == [claims]
 
 
 def test_normalize_index_prefixes_list_passthrough(retriever) -> None:
