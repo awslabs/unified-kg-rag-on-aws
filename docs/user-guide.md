@@ -847,8 +847,11 @@ Selected via `evaluation.enabled_evaluators`:
   `context_precision`, `context_recall`, `faithfulness`).
 - **`graph_aware`** — deterministic, **LLM-free** entity/relationship
   **coverage = recall**: of the expected graph artifacts, how many appear in the
-  generated answer (case-insensitive substring match). Needs `expected_entities`
-  / `expected_relationships` in the dataset. **Precision and F1 are deliberately
+  generated answer (case-insensitive whole-word match; substring match for
+  space-less CJK text). A relationship given as `{"source": "A", "target": "B"}`
+  or `"A -> B"` counts when the answer mentions both endpoints; any other string
+  must appear as a phrase. Needs `expected_entities` / `expected_relationships`
+  in the dataset. **Precision and F1 are deliberately
   NOT emitted** — enumerating every entity in a free-text answer isn't reliably
   possible, so reporting precision/F1 would only re-label the recall signal.
   (Opt in by uncommenting `graph_aware` in `enabled_evaluators`.)
@@ -869,7 +872,10 @@ the `graph_aware` evaluator.
     "difficulty": "easy",
     "reference_sources": ["doc1.pdf", "doc2.txt"],
     "expected_entities": ["AI", "machine learning", "data processing"],
-    "expected_relationships": ["AI enables machine learning"],
+    "expected_relationships": [
+      { "source": "AI", "target": "machine learning" },
+      "machine learning -> data processing"
+    ],
     "metadata": { "search_strategy": "global" }
   },
   {

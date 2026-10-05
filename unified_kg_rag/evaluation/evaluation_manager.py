@@ -499,9 +499,10 @@ class EvaluationManager:
                 # Copy so a downstream in-place mutation of result.metadata does
                 # not corrupt the shared ground-truth lists.
                 result.metadata["expected_entities"] = list(gt.expected_entities)
-                result.metadata["expected_relationships"] = list(
-                    gt.expected_relationships
-                )
+                result.metadata["expected_relationships"] = [
+                    dict(rel) if isinstance(rel, dict) else rel
+                    for rel in gt.expected_relationships
+                ]
                 result.metadata["reference_sources"] = list(gt.reference_sources)
 
         # A failed answer generation (RAG error fallback text or an empty

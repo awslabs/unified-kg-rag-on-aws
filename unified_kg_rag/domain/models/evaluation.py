@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class EvaluationMetricType(str, Enum):
@@ -67,14 +67,34 @@ class EvaluationGroundTruth(BaseModel):
         default_factory=list,
         description="List of entities that should be present in the answer.",
     )
-    expected_relationships: list[str] = Field(
+    expected_relationships: list[str | dict[str, str]] = Field(
         default_factory=list,
-        description="List of relationships that should be identified in the answer.",
+        description=(
+            "Relationships that should be identified in the answer: a "
+            '{"source": A, "target": B} pair or an "A -> B" string (counted when '
+            "both endpoints are mentioned), or any other string (counted when the "
+            "phrase appears verbatim)."
+        ),
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional metadata and custom attributes for the ground truth.",
     )
+
+    @field_validator("expected_relationships")
+    @classmethod
+    def _require_pair_endpoints(
+        cls, value: list[str | dict[str, str]]
+    ) -> list[str | dict[str, str]]:
+        for item in value:
+            if isinstance(item, dict) and not (
+                str(item.get("source", "")).strip()
+                and str(item.get("target", "")).strip()
+            ):
+                raise ValueError(
+                    "relationship objects need non-empty 'source' and 'target'"
+                )
+        return value
 
 
 class EvaluationResult(BaseModel):

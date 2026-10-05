@@ -163,6 +163,52 @@ class TestEvaluateSingle:
         assert all("relationship" not in m.metric_type.value for m in report.metrics)
 
 
+class TestRelationshipCoverage:
+    ANSWER = "The Vendor ships spare parts to the Buyer every month."
+
+    def _cov(self, evaluator: GraphAwareEvaluator, expected: list) -> tuple:
+        return evaluator._coverage(expected, self.ANSWER, relationships=True)
+
+    def test_pair_counts_when_both_endpoints_mentioned(
+        self, evaluator: GraphAwareEvaluator
+    ) -> None:
+        assert self._cov(evaluator, [{"source": "Vendor", "target": "Buyer"}]) == (
+            1.0,
+            1,
+        )
+
+    def test_pair_needs_both_endpoints(self, evaluator: GraphAwareEvaluator) -> None:
+        assert self._cov(evaluator, [{"source": "Vendor", "target": "Auditor"}]) == (
+            0.0,
+            0,
+        )
+
+    def test_arrow_string_is_a_pair(self, evaluator: GraphAwareEvaluator) -> None:
+        assert self._cov(evaluator, ["vendor -> buyer", "Vendor -> Auditor"]) == (
+            0.5,
+            1,
+        )
+
+    def test_plain_string_still_needs_the_phrase(
+        self, evaluator: GraphAwareEvaluator
+    ) -> None:
+        assert self._cov(evaluator, ["ships spare parts"]) == (1.0, 1)
+        assert self._cov(evaluator, ["Vendor supplies Buyer"]) == (0.0, 0)
+
+    def test_arrow_not_parsed_for_entities(
+        self, evaluator: GraphAwareEvaluator
+    ) -> None:
+        assert evaluator._coverage(["Vendor -> Buyer"], self.ANSWER) == (0.0, 0)
+
+    def test_pair_without_target_rejected_at_load(self) -> None:
+        with pytest.raises(ValueError, match="source.*target"):
+            EvaluationGroundTruth(
+                query_id="q",
+                ground_truth="",
+                expected_relationships=[{"source": "Vendor"}],
+            )
+
+
 class TestManagerThreading:
     """Verify EvaluationManager threads expected_* onto result.metadata."""
 

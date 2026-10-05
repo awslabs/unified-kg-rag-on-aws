@@ -836,8 +836,10 @@ aws:
   `context_precision`, `context_recall`, `faithfulness`).
 - **`graph_aware`** — 결정적이고 **LLM 불필요**한 엔티티/관계 **커버리지 =
   recall**: 기대되는 그래프 아티팩트 중 몇 개가 생성된 답변에 나타나는지(대소문자
-  무관 부분 문자열 매칭). 데이터셋에 `expected_entities` /
-  `expected_relationships`가 필요합니다. **precision과 F1은 의도적으로
+  무관 단어 단위 매칭, 띄어쓰기 없는 CJK 텍스트는 부분 문자열 매칭).
+  `{"source": "A", "target": "B"}` 또는 `"A -> B"` 형식의 관계는 답변이 양 끝
+  엔티티를 모두 언급하면 매칭으로 보고, 그 밖의 문자열은 구문 그대로 나타나야
+  합니다. 데이터셋에 `expected_entities` / `expected_relationships`가 필요합니다. **precision과 F1은 의도적으로
   미산출**됩니다 — 자유 텍스트 답변에서 모든 엔티티를 열거하는 것은 신뢰성 있게
   불가능하므로, precision/F1을 보고하는 것은 recall 신호에 다른 이름표만
   붙이는 셈이기 때문입니다. (`enabled_evaluators`에서 `graph_aware`의 주석을
@@ -859,7 +861,10 @@ aws:
     "difficulty": "easy",
     "reference_sources": ["doc1.pdf", "doc2.txt"],
     "expected_entities": ["AI", "machine learning", "data processing"],
-    "expected_relationships": ["AI enables machine learning"],
+    "expected_relationships": [
+      { "source": "AI", "target": "machine learning" },
+      "machine learning -> data processing"
+    ],
     "metadata": { "search_strategy": "global" }
   },
   {
