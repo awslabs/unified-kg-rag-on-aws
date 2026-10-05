@@ -300,15 +300,50 @@ async def test_apply_map_reduce_parse_failure_degrades_to_concat() -> None:
     assert "community report 0" in sent["summaries"]
 
 
-async def test_apply_map_reduce_all_filtered_degrades_to_concat() -> None:
+async def test_apply_map_reduce_all_filtered_returns_no_context() -> None:
+    # Every map point scored at/below the threshold: the map step judged the
+    # reports irrelevant to the query. Synthesizing from them anyway (the old
+    # concat-and-reduce degradation) produced an answer with no supporting
+    # evidence. MS GraphRAG returns its no-data answer here, so the strategy
+    # returns no context and the chain's empty-context guard answers instead.
     reducer = _reducer("CONCAT SUMMARY")
     strat = _strategy(
         map_batch_size=1,
         map_reduce_min_results=2,
         map_relevance_threshold=50,
-        map_outputs=[_map_payload(("low1", 10)), _map_payload(("low2", 20))],
+        map_outputs=[_map_payload(("low1", 10)), _map_payload(("low2", 50))],
         reducer=reducer,
     )
     out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
-    assert out[0].content == "CONCAT SUMMARY"
-    assert "ranked_key_points" not in out[0].metadata
+    assert out == []
+    reducer.ainvoke.assert_not_awaited()
+
+
+async def test_asearch_all_filtered_yields_empty_result_with_flag() -> None:
+    # End to end through asearch: an all-below-threshold map phase surfaces as an
+    # empty SearchResult (no reports leak through as answer context) and is
+    # flagged in metadata so callers can tell it apart from a retrieval miss.
+    strat = _strategy(
+        map_batch_size=1,
+        map_reduce_min_results=1,
+        map_relevance_threshold=50,
+        map_outputs=[_map_payload(("low", 5)), _map_payload(("low", 5))],
+    )
+    communities = _communities(2)
+    strat._retrieve_and_fuse_communities = AsyncMock(  # type: ignore[method-assign]
+        return_value=communities
+    )
+    strat._select_relevant_communities = AsyncMock(  # type: ignore[method-assign]
+        return_value=communities
+    )
+    strat._augment_and_rerank_communities = AsyncMock(  # type: ignore[method-assign]
+        return_value=communities
+    )
+    strat._record_search_metrics = lambda *a, **k: None  # type: ignore[method-assign]
+
+    result = await strat.asearch(SearchQuery(query="q"))
+
+    assert result.results == []
+    assert result.total_results == 0
+    assert result.metadata["map_reduce_no_relevant_points"] is True
+    assert result.metadata["map_reduce_applied"] is False

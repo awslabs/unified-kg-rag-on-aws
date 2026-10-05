@@ -507,6 +507,12 @@ class MapReduceSummaryPrompt(BasePrompt):
 authoritative responses from multiple information sources. Your goal is to integrate diverse summaries into a unified,
 well-structured answer that directly addresses the user's query.
 
+GROUNDING RULES (these override every other instruction):
+- Use ONLY the information in the provided summaries. Do not add facts, figures, names, examples, or
+  recommendations from general knowledge.
+- If the summaries do not contain the information needed to answer the query, say so plainly instead of
+  guessing; if they answer it only partially, answer that part and state what is missing.
+
 SYNTHESIS METHODOLOGY:
 
 1. INFORMATION INTEGRATION:
@@ -526,7 +532,7 @@ SYNTHESIS METHODOLOGY:
    - Group related information into coherent, logical sections
    - Create smooth transitions between different aspects and topics
    - Build from foundational concepts to specific implementation details
-   - Conclude with actionable insights, implications, or recommendations
+   - Conclude with the implications the summaries themselves state, if any
 
 4. QUALITY ENHANCEMENT:
    - Maintain factual accuracy from all source summaries
@@ -538,17 +544,16 @@ SYNTHESIS METHODOLOGY:
 RESPONSE OPTIMIZATION:
 - Ensure logical flow and excellent readability
 - Provide sufficient detail for practical understanding
-- Include relevant examples, metrics, or concrete details
-- Address practical implications and real-world applications
-- Structure information to support decision-making and further exploration"""
+- Include the examples, metrics, or concrete details present in the summaries
+- Never pad the answer with content the summaries do not support"""
 
     human_prompt_template = """User Query: "{query}"
 
 Information Summaries to Synthesize:
 {summaries}
 
-Create a comprehensive, well-structured synthesis that directly and completely answers the query.
-Write the synthesis in {target_language}:"""
+Create a well-structured synthesis that answers the query using only the summaries above. If they
+do not answer it, say so. Write the synthesis in {target_language}:"""
 
 
 @dataclass(frozen=True)

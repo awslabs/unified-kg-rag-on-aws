@@ -158,8 +158,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             "..." if len(final_results) > 5 else "",
         )
 
+        no_relevant_points = False
         if self.global_search_config.enable_map_reduce:
+            pre_map_count = len(final_results)
             final_results = await self._apply_map_reduce(final_results, query)
+            # Only an all-below-threshold map phase empties a non-empty input.
+            no_relevant_points = pre_map_count > 0 and not final_results
 
         final_results = final_results[: query.top_k]
         processing_time = time.time() - start_time
@@ -187,6 +191,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 "retrieved_community_count": len(retrieved_communities),
                 "selected_community_count": len(selected_communities),
                 "map_reduce_applied": self._was_map_reduce_applied(final_results),
+                "map_reduce_no_relevant_points": no_relevant_points,
             },
         )
 
@@ -441,6 +446,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         existing direct path). If the map phase yields no usable scored points
         (e.g. every map call failed to parse), it degrades to the legacy
         concat-and-reduce path so global search never hard-fails.
+
+        If the map phase DID rate the reports but every key point scored at or
+        below ``map_relevance_threshold``, the reports were judged irrelevant to
+        the query: this returns no results (MS GraphRAG answers with its no-data
+        response here), so the chain's empty-context guard answers "cannot
+        answer" instead of synthesizing from reports the map step rejected.
         """
         if len(results) < self.global_search_config.map_reduce_min_results:
             return results
@@ -463,12 +474,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         ranked_points = self._filter_and_rank_points(map_points)
         if not ranked_points:
             logger.warning(
-                "All %s map key points were filtered out by threshold %s; "
-                "degrading to concat-and-reduce synthesis.",
+                "All %s map key points scored at or below threshold %s; "
+                "no relevant community data for the query, returning no context.",
                 len(map_points),
                 self.global_search_config.map_relevance_threshold,
             )
-            return await self._concat_reduce(results, query)
+            return []
 
         packed_points = self._pack_points_within_budget(ranked_points)
         return await self._reduce_from_points(packed_points, results, query)
