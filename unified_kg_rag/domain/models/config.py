@@ -303,7 +303,12 @@ class DocumentParsingConfig(BaseModel):
         default="source", description="Directory to load documents from"
     )
     target_directory: str | Path | None = Field(
-        default=None, description="Directory to save parsed documents to"
+        default=None,
+        description=(
+            "Directory to export parsed documents to as JSON. None = "
+            "<cache directory>/parsed_documents/<pipeline id>. Must not be the "
+            "source directory."
+        ),
     )
     index_value: str | None = Field(
         default=None, description="Value to index the parsed documents with"

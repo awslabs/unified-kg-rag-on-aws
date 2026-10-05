@@ -71,7 +71,8 @@ def _pipeline_for_init(config: Config) -> DataIngestionPipeline:
     pipe = object.__new__(DataIngestionPipeline)
     pipe.config = config
     pipe.pipeline_config = SimpleNamespace(
-        stages_enabled=dict.fromkeys(PipelineStageType, True)
+        stages_enabled=dict.fromkeys(PipelineStageType, True),
+        local_directory="/tmp/cache",
     )
     pipe.source_directory = Path("/tmp/src")
     pipe.target_directory = Path("/tmp/out")
@@ -166,6 +167,8 @@ def test_initialize_stages_injects_directories_and_config() -> None:
     parsing = by_name["document_parsing"]
     assert parsing.kwargs["source_directory"] == pipe.source_directory
     assert parsing.kwargs["target_directory"] == pipe.target_directory
+    # The cache dir is passed so the default parsed-output dir is pipeline-owned.
+    assert parsing.kwargs["cache_directory"] == Path("/tmp/cache")
     loading = by_name["document_loading"]
     assert loading.kwargs["source_directory"] == pipe.source_directory
     # Every stage receives the config.

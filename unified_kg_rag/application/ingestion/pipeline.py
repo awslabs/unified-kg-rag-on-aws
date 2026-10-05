@@ -152,10 +152,14 @@ class DataIngestionPipeline:
         self.source_directory = source_directory or Path(
             self.config.processing.document_parsing.source_directory
         )
-        self.target_directory = Path(
-            target_directory
-            or self.config.processing.document_parsing.target_directory
-            or self.source_directory
+        # Explicit parsed-output directory, if any. Unset means the parsing
+        # stage writes to a pipeline-owned directory under the cache dir; it
+        # must never default to the source corpus (see DocumentParsingStage).
+        explicit_target = (
+            target_directory or self.config.processing.document_parsing.target_directory
+        )
+        self.target_directory: Path | None = (
+            Path(explicit_target) if explicit_target else None
         )
         self.boto_session = boto_session or boto3.Session(
             profile_name=self.config.aws.profile_name
@@ -267,6 +271,9 @@ class DataIngestionPipeline:
                     kwargs["boto_session"] = self.boto_session
                 if stage_type == PipelineStageType.DOCUMENT_PARSING:
                     kwargs["target_directory"] = self.target_directory
+                    kwargs["cache_directory"] = Path(
+                        self.pipeline_config.local_directory
+                    )
                 if stage_type in self.DOC_STATUS_STAGES and doc_status is not None:
                     kwargs["doc_status"] = doc_status
 
