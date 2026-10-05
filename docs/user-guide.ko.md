@@ -212,7 +212,8 @@ aws:
 > 동작을 유지하려면 `apply_to: "all"`로 설정합니다. 질의가 아닌 작업에서
 > `setup_chain`으로 체인을 만들거나 `get_model`을 직접 호출하는 사용자 코드는
 > `model_purpose=ModelPurpose.INGESTION`(또는 `EVALUATION`)을 넘겨야 합니다.
-> 지정하지 않은 호출은 `QUERY`로 간주해 Guardrail이 계속 적용됩니다.
+> 지정하지 않은 호출은 `QUERY`로 간주해 Guardrail이 계속 적용되고, `setup_chain`이
+> 질의 시점의 일시적 오류 재시도도 함께 적용합니다.
 
 > **S3 캐시 암호화:** 기본값 `encryption_type: "BUCKET_DEFAULT"`는 객체별 SSE
 > 헤더를 보내지 않으므로 S3가 버킷의 기본 암호화를 적용합니다. CDK 스택에서
@@ -319,12 +320,12 @@ processing:
     index_value: null
 ```
 
-> **파싱 결과 위치:** `document_parsing` 스테이지는 확인용으로 파싱한 파일마다
-> `<stem>.json`을 하나씩 기록합니다. `target_directory`를 지정하지 않으면(기본값)
-> 소스 코퍼스가 아니라 `<cache-directory>/parsed_documents/<pipeline-id>/`에
-> 기록합니다. `target_directory`(또는 `--target-directory`)를 명시하면 그 위치를
-> 그대로 사용하지만, 소스 디렉터리 자체로 지정할 수는 없습니다. 소스 디렉터리 안에
-> 있는 대상 디렉터리와 캐시 디렉터리는 소스 파일 탐색에서 제외합니다. 이 JSON은 확인용일
+> **파싱 결과 내보내기:** `document_parsing` 스테이지의 결과를 확인하려면
+> `target_directory`를 지정하거나 `--target-directory`를 넘깁니다. 그러면 파싱한
+> 파일마다 `<stem>.json`을 그 위치에 하나씩 기록합니다. `target_directory`를
+> 지정하지 않으면(기본값) 내보내지 않습니다. 소스 디렉터리 자체로는 지정할 수
+> 없습니다. 소스 디렉터리 안에 있는 대상 디렉터리와 캐시 디렉터리는 소스 파일
+> 탐색에서 제외합니다. 이 JSON은 확인용일
 > 뿐이며, `document_loading`은 이 디렉터리를 읽지 않고 파싱 스테이지의 결과(재개 시에는
 > 해당 스테이지 캐시)를 그대로 사용합니다.
 
@@ -618,7 +619,7 @@ evaluation:
 | 플래그 | 기본값 | 의미 |
 |---|---|---|
 | `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | 소스 문서 디렉터리. 실행에 필수이며, 플래그를 생략하면 `GRAPHRAG_SOURCE_DIRECTORY` 환경 변수로 대체됩니다. |
-| `--target-directory` | `<cache-directory>/parsed_documents/<pipeline-id>` | 파싱된 문서를 JSON으로 내보낼 위치(소스 디렉터리는 지정 불가) |
+| `--target-directory` | 없음(내보내지 않음) | 파싱된 문서를 확인용 JSON으로 내보낼 위치(소스 디렉터리는 지정 불가) |
 | `--cache-directory` | `cache` | 파이프라인 캐시 + 중간 결과 |
 | `--force-rebuild` | off | 기존 캐시를 모두 무시하고 처음부터 재구축 |
 | `--s3-sync` | off | 캐시를 S3에 동기화 (`--s3-bucket-name` 필요) |
@@ -792,8 +793,47 @@ run-rag --query "..." --mode search --output-format json --config-path config.ya
 run-rag --query "..." --verbose --config-path config.yaml
 
 # Attribute filters
-run-rag --query "..." --filters category:research entity_type:person --config-path config.yaml
+run-rag --query "..." --filters attr_category:research type:PERSON --config-path config.yaml
 ```
+
+필터는 OpenSearch에서 `term`/`terms`/`range` 절로, Neptune에서 `has` 단계로
+변환됩니다. 각 저장소는 인덱서가 기록하는 필드를 받습니다.
+
+| 저장소 | 필터 가능 필드 |
+|---|---|
+| Text unit | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.<path>` |
+| Entity | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
+| Relationship | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids` |
+| Claim | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text` |
+| Community report | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `attr_<key>`, `attributes.<path>` |
+| Neptune entity 정점 | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>`(있는 경우에만) |
+| Neptune community 정점 | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
+
+OpenSearch에서 `attr_<key>`는 문서 속성입니다. 문서 `filters` 메타데이터의
+`<key>` 항목이 `attr_<key>`로 색인됩니다. Neptune entity 정점의 `attr_<key>`는
+entity 자체에서 추출한 속성(예: `attr_role`)입니다. 정확한 필터링에는 완전 일치 필드(keyword 또는 숫자)를
+사용하십시오. `description`처럼 분석되는 텍스트 필드에 대한 `term` 필터는 소문자
+단일 토큰과 일치합니다. 범위 필터는 Python API에서 `{"gte": ..., "lte": ...}`로
+지정합니다.
+
+각 필터는 해당 필드를 선언한 저장소에만 적용되므로 `type:PERSON`은 entity, claim,
+Neptune entity만 좁히고 text unit에는 적용되지 않습니다. 두 저장소는
+`attr_<key>`를 다르게 적용합니다.
+
+- OpenSearch는 text unit, entity, community report에 `attr_<key>`와
+  `attributes.<path>`를 엄격하게 적용합니다. 해당 속성이 없는 문서는 제외되므로
+  보통 문서 속성이 없는 community report는 속성 필터 질의에서 빠집니다. 이는 의도한
+  동작(fail-closed)으로, 속성 필터가 확인할 수 없는 내용을 반환하지 않게 합니다.
+- Neptune은 entity 정점에 `attr_<key>`를 속성이 있는 경우에만 적용합니다. 속성이
+  일치하거나 해당 속성이 없는 정점은 통과합니다. 따라서 `attr_category` 같은 문서
+  속성 필터는 그래프 확장을 비우지 않고, `attr_role:buyer` 같은 entity 속성 필터는
+  역할이 다른 entity를 제외합니다. 그 밖의 키는 두 저장소 모두 엄격하게 적용합니다.
+
+선택한 전략이 읽는 어떤 저장소도 선언하지 않은 필터 키(예: 이전 예시의 `category`,
+`entity_type`)는 `InvalidFilterError`를 발생시키며, 오류 메시지에 필터 가능 키
+목록이 포함됩니다. 이전 릴리스는 이런 키를 조용히 무시하고 필터링되지 않은 결과를
+반환했습니다. 스키마는 `unified_kg_rag/adapters/storage/filter_schema.py`에
+정의되어 있습니다.
 
 ### 인터랙티브 모드 & 대화 메모리
 

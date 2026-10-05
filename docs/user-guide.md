@@ -213,7 +213,8 @@ aws:
 > `apply_to: "all"`. Custom code that builds chains with `setup_chain` or calls
 > `get_model` for non-query work should pass
 > `model_purpose=ModelPurpose.INGESTION` (or `EVALUATION`). Unmarked calls
-> default to `QUERY` and stay guarded.
+> default to `QUERY`: they stay guarded and `setup_chain` also wraps them in the
+> query-time transient-error retry.
 
 > **S3 cache encryption:** the default `encryption_type: "BUCKET_DEFAULT"` sends
 > no per-object SSE header, so S3 applies the bucket's default encryption. With
@@ -321,11 +322,10 @@ processing:
     index_value: null
 ```
 
-> **Parsed output location:** the `document_parsing` stage writes one
-> `<stem>.json` per parsed file for inspection. With `target_directory` unset
-> (default) it goes to `<cache-directory>/parsed_documents/<pipeline-id>/`, never
-> into the source corpus. An explicit `target_directory` (or
-> `--target-directory`) is still honoured, but it must not be the source
+> **Parsed output export:** to inspect what the `document_parsing` stage
+> produced, set `target_directory` (or pass `--target-directory`); the stage
+> then writes one `<stem>.json` per parsed file there. With `target_directory`
+> unset (default) nothing is exported. The target must not be the source
 > directory itself; a target nested inside the source directory is skipped when
 > discovering source files, as is the cache directory. The export is
 > informational only: `document_loading` reuses the parsed documents from the
@@ -625,7 +625,7 @@ OpenSearch + Neptune.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | Directory of source documents. Required to run; if the flag is omitted it falls back to the `GRAPHRAG_SOURCE_DIRECTORY` environment variable. |
-| `--target-directory` | `<cache-directory>/parsed_documents/<pipeline-id>` | Where parsed documents are exported as JSON (must not be the source directory) |
+| `--target-directory` | none (no export) | Export parsed documents as JSON here for inspection (must not be the source directory) |
 | `--cache-directory` | `cache` | Pipeline cache + intermediate results |
 | `--force-rebuild` | off | Ignore all existing cache; rebuild from scratch |
 | `--s3-sync` | off | Sync cache to S3 (requires `--s3-bucket-name`) |
@@ -802,8 +802,51 @@ run-rag --query "..." --mode search --output-format json --config-path config.ya
 run-rag --query "..." --verbose --config-path config.yaml
 
 # Attribute filters
-run-rag --query "..." --filters category:research entity_type:person --config-path config.yaml
+run-rag --query "..." --filters attr_category:research type:PERSON --config-path config.yaml
 ```
+
+Filters compile to `term`/`terms`/`range` clauses on OpenSearch and `has`
+steps on Neptune. Each store accepts the fields its indexer writes:
+
+| Store | Filterable fields |
+|---|---|
+| Text units | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.<path>` |
+| Entities | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `attr_<key>`, `attributes.<path>` |
+| Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids` |
+| Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `description`, `source_text` |
+| Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `attr_<key>`, `attributes.<path>` |
+| Neptune entity vertices | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `attr_<key>` (where present) |
+| Neptune community vertices | `id`, `name`, `level`, `parent`, `size`, `period`, `children` |
+
+On OpenSearch, `attr_<key>` is a document attribute: entry `<key>` of a
+document's `filters` metadata is indexed as `attr_<key>`. On Neptune entity
+vertices, `attr_<key>` holds the entity's own extracted attributes (for example
+`attr_role`). Use exact-match fields (keyword or
+numeric) for precise filtering; a `term` filter on an analyzed text field such
+as `description` matches single lowercase tokens. A range filter takes
+`{"gte": ..., "lte": ...}` through the Python API.
+
+Each filter applies only to the stores that declare its field, so
+`type:PERSON` narrows entities, claims, and Neptune entities and leaves text
+units unfiltered. The two stores treat `attr_<key>` differently:
+
+- OpenSearch applies `attr_<key>` and `attributes.<path>` strictly on text
+  units, entities, and community reports. A document without the attribute is
+  excluded, so community reports, which usually lack document attributes, drop
+  out of an attribute-filtered query. This is deliberate (fail-closed): an
+  attribute filter never returns content it cannot vouch for.
+- Neptune applies `attr_<key>` on entity vertices where present: a vertex
+  passes when the property matches or when it has no such property. A
+  document-attribute filter such as `attr_category` therefore leaves graph
+  expansion intact, while an entity-attribute filter such as `attr_role:buyer`
+  removes entities whose role differs. Every other key is strict on both
+  stores.
+
+A filter key that no store the selected strategy reads declares (for example
+the earlier `category` or `entity_type`) raises `InvalidFilterError`, whose
+message lists the filterable keys. Earlier releases ignored such keys silently
+and returned unfiltered results. The schema is defined in
+`unified_kg_rag/adapters/storage/filter_schema.py`.
 
 ### Interactive mode & conversation memory
 

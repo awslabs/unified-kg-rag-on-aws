@@ -81,12 +81,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 model_id=self.global_search_config.community_relevance_model_id,
                 prompt_class=CommunityRelevancePrompt,
                 parser=str_output_parser,
-                retry=config.search.llm_retry,
+                custom_prompts=config.custom_prompts,
             )
         # MAP step: rate community-report key points (0-100) for the query. Cheap
         # model by default since rating is cheap. StrOutputParser + a robust JSON
-        # parse below keeps map output handling fault-tolerant. No ``retry`` here:
-        # the map calls run through BatchProcessor, which already retries them.
+        # parse below keeps map output handling fault-tolerant.
         self.map_rater: Runnable = setup_chain(
             factory=factory,
             model_id=self.global_search_config.map_model_id,
@@ -100,13 +99,17 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             model_id=self.global_search_config.map_reduce_model_id,
             prompt_class=MapReduceSummaryPrompt,
             parser=str_output_parser,
-            retry=config.search.llm_retry,
+            custom_prompts=config.custom_prompts,
         )
         # One prepared input per map LLM call (each input already packs
         # ``map_batch_size`` reports), so BatchProcessor's own batch_size is 1;
-        # max_concurrency fans the map calls out over the report batches.
+        # max_concurrency fans the map calls out over the report batches. The
+        # map chain already retries transient Bedrock errors as a query chain,
+        # so BatchProcessor adds no retry of its own (max_retries=1).
         self.batch_processor = BatchProcessor(
-            batch_size=1, max_concurrency=config.processing.max_concurrency
+            batch_size=1,
+            max_concurrency=config.processing.max_concurrency,
+            max_retries=1,
         )
 
     async def asearch(self, query: SearchQuery) -> SearchResult:

@@ -15,6 +15,7 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
     SectionType,
     TokenManager,
 )
+from unified_kg_rag.adapters.storage.filter_schema import FilterFields
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -112,6 +113,14 @@ class BaseGraphRAGRetriever(BaseRetriever, MetricsMixin, ABC):
     @abstractmethod
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         pass
+
+    def filter_fields(self) -> FilterFields | None:
+        """Filter keys some index or label this retriever searches can match.
+
+        Used to reject caller filters no target store can apply. ``None`` (the
+        default, for backends without a declared schema) accepts every key.
+        """
+        return None
 
     def _get_name(
         self, base: str, suffix: str | None, add_timestamp: bool = False

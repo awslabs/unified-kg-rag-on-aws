@@ -469,12 +469,6 @@ class OpenSearchClient:
         result = await self.async_client.search(**kwargs)
         return dict(result)
 
-    @_handle_async_opensearch_errors
-    async def aget_mapping(self, index: str) -> dict[str, Any]:
-        """Mappings of every concrete index behind ``index`` (an alias or name)."""
-        result = await self.async_client.indices.get_mapping(index=index)
-        return dict(result)
-
     @_handle_opensearch_errors
     def update_alias(
         self,

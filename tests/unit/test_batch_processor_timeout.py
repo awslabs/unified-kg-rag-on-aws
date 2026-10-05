@@ -36,7 +36,9 @@ def test_batch_timeout_falls_back_to_sequential() -> None:
     # A batch that hangs should time out, then the sequential path handles items.
     bp = BatchProcessor(call_timeout_seconds=1, batch_size=10)
 
-    def hung_batch(_inputs, config=None):  # noqa: ANN001, ARG001
+    def hung_batch(
+        _inputs, config=None, return_exceptions=False
+    ):  # noqa: ANN001, ARG001
         time.sleep(30)
         return []
 
@@ -59,7 +61,7 @@ def test_chunk_results_preserve_order_when_concurrent() -> None:
     # order; results must still be reassembled in input order.
     bp = BatchProcessor(batch_size=1, chunk_concurrency=4, call_timeout_seconds=0)
 
-    def batch(inputs, config=None):  # noqa: ANN001, ARG001
+    def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
         # Later items return faster, so completion order != submission order.
         v = inputs[0]["v"]
         time.sleep((10 - v) * 0.02)
@@ -81,7 +83,7 @@ def test_chunks_run_concurrently() -> None:
     # with chunk_concurrency=4 (overlapping), proving they are not serial.
     bp = BatchProcessor(batch_size=1, chunk_concurrency=4, call_timeout_seconds=0)
 
-    def batch(inputs, config=None):  # noqa: ANN001, ARG001
+    def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
         time.sleep(0.3)
         return [{"echo": inputs[0]["v"]}]
 
@@ -106,7 +108,7 @@ def test_chunk_concurrency_one_is_serial() -> None:
     results = bp.execute_with_fallback(
         items_to_process=[1, 2, 3],
         prepare_inputs_func=lambda items: [{"v": i} for i in items],
-        batch_func=lambda inputs, config=None: [{"echo": inputs[0]["v"]}],
+        batch_func=lambda inputs, **_: [{"echo": inputs[0]["v"]}],
         sequential_func=lambda item: {"echo": item["v"]},
         task_name="t",
         show_progress=False,

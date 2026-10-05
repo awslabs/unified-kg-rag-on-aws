@@ -2,17 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for the transient-error retry on query-time LLM chains.
 
-AWS-free: chains are built by ``setup_chain`` from a fake model factory whose
-model raises scripted botocore ``ClientError`` s shaped like Bedrock's HTTP 424
-``ModelErrorException`` before answering. Backoff delays are configured to zero
-so no test waits.
+AWS-free: chains are built by ``setup_chain`` from a Bedrock factory stand-in
+(no boto client) whose model raises scripted botocore ``ClientError`` s shaped
+like Bedrock's HTTP 424 ``ModelErrorException`` before answering. Backoff
+delays are configured to zero so no test waits.
 """
 
 from __future__ import annotations
 
-import ast
 from collections.abc import AsyncIterator, Iterator
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -21,6 +19,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.chain_factory import (
     TransientRetryRunnable,
     setup_chain,
@@ -35,22 +34,22 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 from unified_kg_rag.domain.models import (
     Config,
     LanguageModelId,
+    ModelPurpose,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
     SearchStrategy,
 )
-from unified_kg_rag.domain.models.config import QueryLLMRetryConfig
+from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.domain.prompts import StrategySelectionPrompt
 from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 pytestmark = pytest.mark.unit
 
 _ANSWER = "Vendor ships parts to Buyer every quarter."
-_NO_WAIT = QueryLLMRetryConfig(
+_NO_WAIT = TransientRetryConfig(
     max_attempts=3, base_delay_seconds=0.0, max_delay_seconds=0.0
 )
-_PACKAGE = Path(__file__).resolve().parents[2] / "unified_kg_rag"
 
 
 def _client_error(code: str, status: int) -> ClientError:
@@ -122,10 +121,11 @@ class _ScriptedModel(Runnable[Any, str]):
             yield chunk
 
 
-class _FakeFactory:
-    """LLMFactoryPort returning one shared scripted model."""
+class _FakeBedrockFactory(BedrockLanguageModelFactory):
+    """Bedrock factory without a boto client, returning one scripted model."""
 
-    def __init__(self, model: _ScriptedModel) -> None:
+    def __init__(self, model: _ScriptedModel, config: Config) -> None:
+        self.config = config
         self.model = model
 
     def get_model(self, model_id: Any, **kwargs: Any) -> Any:
@@ -135,15 +135,23 @@ class _FakeFactory:
         return None
 
 
+def _config(retry: TransientRetryConfig = _NO_WAIT) -> Config:
+    config = Config()
+    config.aws.bedrock.transient_retry = retry
+    return config
+
+
 def _query_chain(
-    model: _ScriptedModel, retry: QueryLLMRetryConfig | None = _NO_WAIT
+    model: _ScriptedModel,
+    retry: TransientRetryConfig = _NO_WAIT,
+    purpose: ModelPurpose = ModelPurpose.QUERY,
 ) -> Runnable:
     return setup_chain(
-        factory=_FakeFactory(model),
+        factory=_FakeBedrockFactory(model, _config(retry)),
         model_id=LanguageModelId.CLAUDE_V4_5_HAIKU,
         prompt_class=StrategySelectionPrompt,
         parser=StrOutputParser(),
-        retry=retry,
+        model_purpose=purpose,
     )
 
 
@@ -185,7 +193,7 @@ async def test_exhausted_retries_reraise_last_transient_error() -> None:
 
 async def test_retry_budget_bounds_attempts() -> None:
     # A backoff that would cross the wall-clock budget is not taken.
-    retry = QueryLLMRetryConfig(
+    retry = TransientRetryConfig(
         max_attempts=5,
         base_delay_seconds=30.0,
         max_delay_seconds=30.0,
@@ -230,9 +238,39 @@ def test_sync_stream_does_not_retry_after_output_was_emitted() -> None:
 def test_retry_disabled_returns_plain_chain() -> None:
     chain = RunnableLambda(lambda x: x)
     assert with_transient_retry(chain, operation="op", retry=None) is chain
-    off = QueryLLMRetryConfig(max_attempts=1)
+    off = TransientRetryConfig(max_attempts=1)
     assert with_transient_retry(chain, operation="op", retry=off) is chain
-    assert not isinstance(_query_chain(_ScriptedModel(), None), TransientRetryRunnable)
+    assert not isinstance(_query_chain(_ScriptedModel(), off), TransientRetryRunnable)
+
+
+@pytest.mark.parametrize(
+    ("purpose", "wrapped"),
+    [
+        (ModelPurpose.QUERY, True),
+        (ModelPurpose.INGESTION, False),
+        (ModelPurpose.EVALUATION, False),
+    ],
+)
+def test_retry_is_derived_from_purpose(purpose: ModelPurpose, wrapped: bool) -> None:
+    chain = _query_chain(_ScriptedModel(), purpose=purpose)
+    assert isinstance(chain, TransientRetryRunnable) is wrapped
+
+
+def test_non_bedrock_factory_gets_no_chain_retry() -> None:
+    class _PortOnlyFactory:
+        def get_model(self, model_id: Any, **kwargs: Any) -> Any:
+            return _ScriptedModel()
+
+        def get_model_info(self, model_id: Any) -> Any:
+            return None
+
+    chain = setup_chain(
+        factory=_PortOnlyFactory(),
+        model_id=LanguageModelId.CLAUDE_V4_5_HAIKU,
+        prompt_class=StrategySelectionPrompt,
+        parser=StrOutputParser(),
+    )
+    assert not isinstance(chain, TransientRetryRunnable)
 
 
 # --- end-to-end through GraphRAGChain -------------------------------------
@@ -252,13 +290,12 @@ class _FakeRetriever:
 
 
 def _rag_chain(model: _ScriptedModel) -> GraphRAGChain:
-    config = Config()
-    config.search.llm_retry = _NO_WAIT
+    config = _config()
     retriever = _FakeRetriever()
     chain = GraphRAGChain(
         config=config,
         mode=ChainMode.RAG,
-        model_factory=_FakeFactory(model),
+        model_factory=_FakeBedrockFactory(model, config),
         retriever_builders={
             RetrieverRole.DOCUMENT: lambda: retriever,
             RetrieverRole.GRAPH: lambda: retriever,
@@ -294,15 +331,15 @@ async def test_rag_query_non_transient_error_fails_after_one_call() -> None:
 
 
 def test_batch_processor_chain_is_not_double_retried() -> None:
-    # Ingestion chains are built without ``retry``; BatchProcessor's tenacity
+    # Ingestion chains get no chain-level retry; BatchProcessor's tenacity
     # retry is the only one, so N attempts => N model calls (not N * 3).
     model = _ScriptedModel([_model_error() for _ in range(10)])
-    chain = _query_chain(model, retry=None)
+    chain = _query_chain(model, purpose=ModelPurpose.INGESTION)
     processor = BatchProcessor(
         batch_size=1, max_retries=2, retry_multiplier=1.0, retry_max_wait=0
     )
 
-    def batch_func(inputs: list[dict[str, Any]], config: Any = None) -> list[Any]:
+    def batch_func(inputs: list[dict[str, Any]], **_: Any) -> list[Any]:
         raise RuntimeError("force the per-item sequential path")
 
     results = processor.execute_with_fallback(
@@ -315,57 +352,3 @@ def test_batch_processor_chain_is_not_double_retried() -> None:
     )
     assert model.calls == 2
     assert results == [{}]
-
-
-def _setup_chain_calls(path: Path) -> list[tuple[str, ast.Call]]:
-    """Return (assigned attribute name, call) for each ``setup_chain`` call."""
-    tree = ast.parse(path.read_text())
-    calls: list[tuple[str, ast.Call]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign | ast.AnnAssign | ast.Return):
-            continue
-        value = node.value
-        if not (
-            isinstance(value, ast.Call)
-            and isinstance(value.func, ast.Name)
-            and value.func.id == "setup_chain"
-        ):
-            continue
-        target = ""
-        targets = node.targets if isinstance(node, ast.Assign) else []
-        if isinstance(node, ast.AnnAssign):
-            targets = [node.target]
-        if targets and isinstance(targets[0], ast.Attribute | ast.Name):
-            first = targets[0]
-            target = first.attr if isinstance(first, ast.Attribute) else first.id
-        calls.append((target, value))
-    return calls
-
-
-def _has_retry(call: ast.Call) -> bool:
-    return any(kw.arg == "retry" for kw in call.keywords)
-
-
-@pytest.mark.parametrize(
-    "path", sorted((_PACKAGE / "adapters" / "ingestion").glob("*.py")), ids=str
-)
-def test_ingestion_chains_do_not_add_query_retry(path: Path) -> None:
-    for target, call in _setup_chain_calls(path):
-        assert not _has_retry(call), f"{path.name}:{target} stacks on BatchProcessor"
-
-
-@pytest.mark.parametrize(
-    ("relative", "unwrapped"),
-    [
-        ("application/retrieval/rag_chain.py", set()),
-        ("adapters/retrieval/memory_manager.py", set()),
-        ("adapters/search_strategies/drift_search.py", set()),
-        # map_rater runs under BatchProcessor, which already retries it.
-        ("adapters/search_strategies/global_search.py", {"map_rater"}),
-    ],
-)
-def test_query_chains_use_transient_retry(relative: str, unwrapped: set[str]) -> None:
-    calls = _setup_chain_calls(_PACKAGE / relative)
-    assert calls
-    for target, call in calls:
-        assert _has_retry(call) is (target not in unwrapped), f"{relative}:{target}"

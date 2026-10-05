@@ -30,7 +30,10 @@ from unified_kg_rag.domain.prompts import (
     KeywordExpansionPrompt,
     QueryRefinementPrompt,
 )
-from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
+from unified_kg_rag.domain.retrieval.strategy_registry import (
+    QueryInput,
+    register_strategy,
+)
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
     compute_hash,
@@ -41,7 +44,7 @@ from unified_kg_rag.shared.utils import (
 logger = get_logger(__name__)
 
 
-@register_strategy(SearchStrategy.DRIFT)
+@register_strategy(SearchStrategy.DRIFT, query_inputs=frozenset({QueryInput.ENTITIES}))
 class DriftSearchStrategy(BaseSearchStrategy):
     def __init__(
         self,
@@ -71,14 +74,14 @@ class DriftSearchStrategy(BaseSearchStrategy):
             model_id=self.drift_config.query_refinement_model_id,
             prompt_class=QueryRefinementPrompt,
             parser=str_output_parser,
-            retry=self.config.search.llm_retry,
+            custom_prompts=self.config.custom_prompts,
         )
         self.keyword_expander = setup_chain(
             factory=factory,
             model_id=self.drift_config.keyword_expansion_model_id,
             prompt_class=KeywordExpansionPrompt,
             parser=CommaSeparatedListOutputParser(),
-            retry=self.config.search.llm_retry,
+            custom_prompts=self.config.custom_prompts,
         )
         # Built only when the opt-in LLM convergence check is enabled.
         if self.drift_config.enable_llm_convergence:
@@ -87,7 +90,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 model_id=self.drift_config.convergence_assessment_model_id,
                 prompt_class=ConvergenceAssessmentPrompt,
                 parser=str_output_parser,
-                retry=self.config.search.llm_retry,
+                custom_prompts=self.config.custom_prompts,
             )
         # The HyDE primer chain is only built when the primer path is enabled,
         # so the default DRIFT flow constructs no extra chain.
@@ -97,7 +100,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 model_id=self.drift_config.primer_model_id,
                 prompt_class=DriftPrimerPrompt,
                 parser=str_output_parser,
-                retry=self.config.search.llm_retry,
+                custom_prompts=self.config.custom_prompts,
             )
 
     async def asearch(self, query: SearchQuery) -> SearchResult:

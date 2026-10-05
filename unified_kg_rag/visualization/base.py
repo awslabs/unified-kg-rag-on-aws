@@ -16,6 +16,7 @@ from unified_kg_rag.adapters.renderers import (
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils import strip_embedding_fields
 
 from .embeddings.dimensionality import DimensionalityReducer
 from .embeddings.node2vec import BedrockNodeEmbedder
@@ -28,25 +29,13 @@ logger = get_logger(__name__)
 VISUALIZATION_DATA_FILENAME = "visualization_data.json"
 
 
-def _is_heavy_attribute(key: str) -> bool:
-    """Vector attributes (``embedding``/``*_embedding``) are excluded from the
-    export: they are large, unused by any renderer, and dominate file size."""
-    return key == "embedding" or key.endswith("_embedding")
-
-
 def _strip_heavy_attributes(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    stripped: list[dict[str, Any]] = []
-    for item in items:
-        attrs = item.get("attributes") or {}
-        stripped.append(
-            {
-                **item,
-                "attributes": {
-                    k: v for k, v in attrs.items() if not _is_heavy_attribute(k)
-                },
-            }
-        )
-    return stripped
+    """Drop vector attributes from exported items: they are large, unused by any
+    renderer, and dominate file size."""
+    return [
+        {**item, "attributes": strip_embedding_fields(item.get("attributes") or {})}
+        for item in items
+    ]
 
 
 DEFAULT_OUTPUTS_DIRECTORY = "outputs/visualization"
@@ -137,7 +126,8 @@ class GraphVisualizationManager:
             return {}
 
         embeddings = self.embedder.generate_embeddings(self.analyzer.graph)
-        if embeddings.degraded or not embeddings.embeddings:
+        # Failed generation yields no embeddings (never random substitutes).
+        if not embeddings.embeddings:
             self.layout_degraded = True
             logger.error(
                 "Node embedding generation failed; the layout is DEGRADED "

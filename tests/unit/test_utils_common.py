@@ -23,11 +23,12 @@ pytestmark = pytest.mark.unit
 
 
 class TestStripEmbeddingFields:
-    def test_drops_only_embedding_suffixed_keys(self) -> None:
+    def test_drops_only_embedding_keys(self) -> None:
         data = {
             "id": "x",
             "text": "Vendor",
             "text_embedding": [0.1],
+            "embedding": [0.2],
             "embedding_model": "m",  # prefix, not suffix: kept
         }
         assert strip_embedding_fields(data) == {

@@ -65,16 +65,19 @@ class S3EncryptionType(str, Enum):
     """Server-side encryption header sent on cache uploads.
 
     ``BUCKET_DEFAULT`` sends no SSE header, so S3 applies the bucket's default
-    encryption (SSE-S3 at minimum, or the bucket's SSE-KMS CMK). ``NONE`` is a
-    legacy alias with the same behaviour: S3 encrypts every new object, so it
-    never meant "unencrypted". ``AES256`` / ``aws:kms`` force a per-object
-    header that OVERRIDES the bucket default.
+    encryption (SSE-S3 at minimum, or the bucket's SSE-KMS CMK). ``AES256`` /
+    ``aws:kms`` force a per-object header that OVERRIDES the bucket default.
+    The legacy value ``"NONE"`` is still accepted and means ``BUCKET_DEFAULT``:
+    S3 encrypts every new object, so it never meant "unencrypted".
     """
 
     BUCKET_DEFAULT = "BUCKET_DEFAULT"
-    NONE = "NONE"
     AES256 = "AES256"
     KMS = "aws:kms"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "S3EncryptionType | None":
+        return cls.BUCKET_DEFAULT if value == "NONE" else None
 
 
 class EmbeddingModelId(str, Enum):
@@ -199,6 +202,43 @@ class GuardrailConfig(BaseModel):
         return self.apply_to == "all" or purpose is ModelPurpose.QUERY
 
 
+class TransientRetryConfig(BaseModel):
+    """Bounded retry on transient Bedrock errors that botocore does not retry.
+
+    botocore's retry modes do not retry Bedrock's HTTP 424
+    ``ModelErrorException`` (or ``ModelNotReadyException``), so without this a
+    single transient model fault fails a user query or drops an item from the
+    vector index. Applied to every embedding request and to query-time LLM
+    chains; ingestion LLM chains are retried by ``BatchProcessor`` instead.
+    Only transient errors are retried; validation and access errors still fail
+    fast.
+    """
+
+    max_attempts: int = Field(
+        default=5,
+        ge=1,
+        description="Total attempts per call, including the first (1 disables "
+        "the retry)",
+    )
+    base_delay_seconds: float = Field(
+        default=2.0,
+        ge=0.0,
+        description="Backoff ceiling for the first retry; doubles per attempt "
+        "with equal jitter",
+    )
+    max_delay_seconds: float = Field(
+        default=16.0,
+        ge=0.0,
+        description="Upper bound on a single backoff delay in seconds",
+    )
+    max_total_seconds: float = Field(
+        default=60.0,
+        ge=0.0,
+        description="Wall-clock retry budget per call; no retry starts once the "
+        "next backoff would cross it",
+    )
+
+
 class BedrockConfig(BaseModel):
     region_name: str = Field(
         default="us-west-2", min_length=1, description="AWS Bedrock service region"
@@ -232,6 +272,11 @@ class BedrockConfig(BaseModel):
     guardrail: GuardrailConfig = Field(
         default_factory=GuardrailConfig,
         description="Amazon Bedrock Guardrails configuration (disabled unless identifier set)",
+    )
+    transient_retry: TransientRetryConfig = Field(
+        default_factory=TransientRetryConfig,
+        description="Retry for embedding and query-time LLM calls on transient "
+        "Bedrock errors",
     )
 
 
@@ -381,9 +426,8 @@ class DocumentParsingConfig(BaseModel):
     target_directory: str | Path | None = Field(
         default=None,
         description=(
-            "Directory to export parsed documents to as JSON. None = "
-            "<cache directory>/parsed_documents/<pipeline id>. Must not be the "
-            "source directory."
+            "Directory to export each parsed document to as <stem>.json for "
+            "inspection. None = no export. Must not be the source directory."
         ),
     )
     index_value: str | None = Field(
@@ -1790,41 +1834,6 @@ class LightRAGSearchConfig(BaseModel):
     )
 
 
-class QueryLLMRetryConfig(BaseModel):
-    """Bounded retry for query-time LLM calls on transient Bedrock errors.
-
-    botocore's retry modes do not retry Bedrock's HTTP 424
-    ``ModelErrorException`` (or ``ModelNotReadyException``), so without this a
-    single transient model fault fails the whole user query. Only transient
-    errors are retried; validation and access errors still fail fast. Ingestion
-    LLM calls are retried by ``BatchProcessor`` and do not use this setting.
-    """
-
-    max_attempts: int = Field(
-        default=3,
-        ge=1,
-        description="Total attempts per query-time LLM call, including the first "
-        "(1 disables the retry)",
-    )
-    base_delay_seconds: float = Field(
-        default=1.0,
-        ge=0.0,
-        description="Backoff ceiling for the first retry; doubles per attempt "
-        "with equal jitter",
-    )
-    max_delay_seconds: float = Field(
-        default=8.0,
-        ge=0.0,
-        description="Upper bound on a single backoff delay in seconds",
-    )
-    max_total_seconds: float = Field(
-        default=20.0,
-        ge=0.0,
-        description="Wall-clock retry budget per call; no retry starts once the "
-        "next backoff would cross it",
-    )
-
-
 class SearchConfig(BaseModel):
     translation_model_id: LanguageModelId = Field(
         default=LanguageModelId.CLAUDE_V4_5_HAIKU,
@@ -1891,10 +1900,6 @@ class SearchConfig(BaseModel):
     )
     token_manager: TokenManagerConfig = Field(
         default_factory=TokenManagerConfig, description="Token management configuration"
-    )
-    llm_retry: QueryLLMRetryConfig = Field(
-        default_factory=QueryLLMRetryConfig,
-        description="Retry for query-time LLM calls on transient Bedrock errors",
     )
 
 
@@ -2223,6 +2228,25 @@ class Config(BaseModel):
     custom_prompts: CustomPromptConfig = Field(
         default_factory=CustomPromptConfig, description="Custom prompt configuration"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_llm_retry(cls, data: Any) -> Any:
+        """Map the former ``search.llm_retry`` key to ``aws.bedrock.transient_retry``.
+
+        An explicit ``aws.bedrock.transient_retry`` wins over the legacy key.
+        """
+        if not isinstance(data, dict):
+            return data
+        search = data.get("search")
+        if not isinstance(search, dict) or "llm_retry" not in search:
+            return data
+        search = {k: v for k, v in search.items() if k != "llm_retry"}
+        aws = dict(data.get("aws") or {})
+        bedrock = dict(aws.get("bedrock") or {})
+        bedrock.setdefault("transient_retry", data["search"]["llm_retry"])
+        aws["bedrock"] = bedrock
+        return {**data, "search": search, "aws": aws}
 
 
 class PipelineConfig(BaseModel):
