@@ -23,7 +23,8 @@ Context keys (all optional; sensible defaults shown):
 
   # --- Storage: reuse vs create ---
   cache_bucket_name   None             reuse an existing S3 cache bucket (else
-                                       create one, KMS-encrypted)
+                                       create one; SSE-S3, or the CMK when
+                                       use_cmk=true)
   neptune_instance    "db.r6g.large"   Neptune instance class (Graviton)
   neptune_instances   dev:1/else:2     Neptune instances (>=2 => Multi-AZ HA)
   opensearch_instance "r6g.large.search"  OpenSearch data node type (Graviton)

@@ -107,9 +107,15 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             region_name=config.aws.bedrock.region_name,
             config=BotoConfig(retries={"max_attempts": 3}),
         )
+        eval_model_info = get_language_model_info(config.evaluation.evaluation_model_id)
         self._token_counter = BedrockTokenCounter(
             model_id=config.evaluation.evaluation_model_id.value,
             client=bedrock_client,
+            api_supported=(
+                eval_model_info.supports_count_tokens
+                if eval_model_info is not None
+                else True
+            ),
         )
         self.ignore_errors = config.processing.ignore_errors
         super().__init__(

@@ -8,9 +8,14 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: quality-${{ github.ref }}
-  cancel-in-progress: true
+  # Supersede stale PR runs only; every push to main runs to completion so each
+  # merged commit keeps its own result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   optional-parsers:
@@ -24,7 +29,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install patched optional parsers
-        run: uv sync --frozen --extra dev --extra unstructured
+        run: uv sync --locked --extra unstructured
       - name: Check optional parsing and private URL rejection
         run: uv run --frozen pytest tests/unit/test_optional_parser_security.py -q
 
@@ -39,7 +44,8 @@ jobs:
           python-version: "3.12"
 
       - name: Sync dependencies
-        run: uv sync --extra dev
+        # --locked: fail if uv.lock is stale relative to pyproject.toml.
+        run: uv sync --locked
 
       - name: Ruff (lint)
         run: uv run ruff check unified_kg_rag tests
@@ -55,13 +61,14 @@ jobs:
 
       - name: pytest + coverage
         # The `aws` marker gates tests needing real AWS services; excluded in CI.
-        # The coverage floor tracks the actual ratchet (currently ~79%) so new
-        # untested code cannot silently regress coverage; raise toward 80%.
+        # This one run also covers the property and integration suites. The
+        # coverage floor sits just under the measured level (~86%) so new
+        # untested code cannot silently regress it; ratchet it up as it grows.
         run: >-
           uv run pytest -m "not aws"
           --cov=unified_kg_rag --cov-report=term-missing
           --cov-report=xml:coverage.xml --junitxml=report.xml
-          --cov-fail-under=78
+          --cov-fail-under=84
 
       - name: Upload coverage + test report
         # Surface coverage.xml / report.xml as artifacts for inspection on each run.
@@ -91,31 +98,10 @@ jobs:
       - name: Sync dependencies
         # --frozen: resolve nothing, install exactly what the committed lock
         # pins, so this also proves the lock itself is installable on the floor.
-        run: uv sync --python 3.10 --frozen --extra dev
+        run: uv sync --python 3.10 --frozen
 
       - name: pytest
         run: uv run --python 3.10 --frozen pytest -m "not aws" -q
-
-  markers:
-    # Verify the property and integration suites pass in isolation, so a suite
-    # that is accidentally excluded from the default selection can't rot unseen.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          python-version: "3.12"
-
-      - name: Sync dependencies
-        run: uv sync --extra dev
-
-      - name: Property suite
-        run: uv run pytest -m "property" -q
-
-      - name: Integration suite (AWS-free)
-        run: uv run pytest -m "integration and not aws" -q
 
   iac:
     # Synthesize the CDK app with cdk-nag enabled so the Well-Architected
@@ -137,10 +123,10 @@ jobs:
           node-version: "20"
 
       - name: Install AWS CDK CLI
-        run: npm install -g aws-cdk
+        run: npm install -g aws-cdk@2.1143.0
 
       - name: Install IaC dependencies
-        run: pip install -r iac/requirements.txt
+        run: pip install -r iac/requirements.txt pytest==9.1.1
 
       - name: cdk synth with cdk-nag (fails on any unsuppressed finding)
         working-directory: iac
@@ -148,11 +134,25 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: cdk synth --all -c enable_cdk_nag=true -q
 
+      - name: cdk synth with cdk-nag, production-hardened flags
+        # The README's zero-findings claim covers the hardened shape too: CMK,
+        # flow logs, Multi-AZ Neptune, zone-aware OpenSearch (no OS4/OS7
+        # suppression applies when opensearch_count > 1), retained storage.
+        working-directory: iac
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: >-
+          cdk synth --all -q
+          -c enable_cdk_nag=true
+          -c use_cmk=true
+          -c vpc_flow_logs=true
+          -c neptune_instances=2
+          -c opensearch_count=2
+          -c deletion_protection=true
+          -c removal_destroy=false
+
       - name: IaC assertion tests
         working-directory: iac
         env:
           PYTHONPATH: ${{ github.workspace }}
-        # Only run if a test suite exists; keeps the job green before tests land.
-        run: |
-          pip install pytest
-          if [ -d tests ]; then python -m pytest tests -q; else echo "no iac/tests yet"; fi
+        run: python -m pytest tests -q
