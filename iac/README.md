@@ -134,11 +134,14 @@ hardening is opt-in via the flags above. Validate with:
 ```bash
 cdk synth -c enable_cdk_nag=true                       # dev
 cdk synth -c enable_cdk_nag=true -c use_cmk=true \
-  -c vpc_flow_logs=true -c neptune_instances=2 \
+  -c vpc_flow_logs=true -c neptune_instances=2 -c opensearch_count=2 \
   -c deletion_protection=true -c removal_destroy=false  # prod-hardened
 ```
-Both report zero AwsSolutions findings (accepted findings are documented in
-`iac/nag_suppressions.py`).
+Both report zero AwsSolutions findings, and CI runs both. Accepted findings are
+documented in `iac/nag_suppressions.py`: `AwsSolutions-IAM5` is suppressed per
+role for the listed wildcards only (`appliesTo`), so a new wildcard fails the
+synth, and the OpenSearch HA findings (OS4/OS7) are accepted only for a
+single-node domain.
 
 > **A few Bedrock read actions use `Resource: "*"` by necessity**, not oversight:
 > `bedrock:Rerank` (authorizes against a different resource shape than
