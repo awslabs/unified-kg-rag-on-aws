@@ -5,6 +5,7 @@ fake embedding factory (EmbeddingFactoryPort)."""
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 import networkx as nx
@@ -12,6 +13,7 @@ import numpy as np
 import pytest
 
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.shared import EmbeddingModelError
 from unified_kg_rag.visualization.embeddings.node2vec import (
     BedrockNodeEmbedder,
     NodeEmbeddings,
@@ -75,20 +77,47 @@ def test_embedding_text_includes_name_and_description(embedder) -> None:
     assert embedder.embedding_model.seen == ["Alice: a person"]
 
 
-def test_fallback_to_random_on_embed_error(config: Config, mocker) -> None:
-    factory = _FakeEmbeddingFactory()
-    embedder = BedrockNodeEmbedder(config=config, embedding_factory=factory)
+def _failing_embedder(config: Config, mocker) -> BedrockNodeEmbedder:  # noqa: ANN001
+    embedder = BedrockNodeEmbedder(
+        config=config, embedding_factory=_FakeEmbeddingFactory()
+    )
     mocker.patch.object(
         embedder.embedding_model,
         "embed_documents",
         side_effect=RuntimeError("bedrock down"),
     )
+    return embedder
+
+
+def _one_node_graph() -> nx.Graph:
     g = nx.Graph()
     g.add_node("e1", name="Alice")
-    out = embedder.generate_embeddings(g)
-    # Degrades to random embeddings of the right dimension rather than raising.
-    assert out.nodes == ["e1"]
-    assert out.embeddings["e1"].shape == (4,)
+    return g
+
+
+def test_embed_error_raises_by_default(config: Config, mocker) -> None:
+    # Fail fast (ignore_errors=False): random vectors would produce a
+    # meaningless layout that still looks valid.
+    embedder = _failing_embedder(config, mocker)
+    with pytest.raises(EmbeddingModelError, match="bedrock down"):
+        embedder.generate_embeddings(_one_node_graph())
+
+
+def test_embed_error_with_ignore_errors_is_marked_degraded(
+    config: Config, mocker, caplog
+) -> None:
+    config.processing.ignore_errors = True
+    embedder = _failing_embedder(config, mocker)
+    with caplog.at_level(logging.ERROR):
+        out = embedder.generate_embeddings(_one_node_graph())
+    # No random substitute: an explicitly degraded, empty result.
+    assert out.degraded is True
+    assert out.nodes == [] and out.embeddings == {}
+    assert any("DEGRADED" in r.getMessage() for r in caplog.records)
+
+
+def test_successful_embeddings_are_not_degraded(embedder) -> None:
+    assert embedder.generate_embeddings(_one_node_graph()).degraded is False
 
 
 def test_unsupported_model_raises(config: Config) -> None:

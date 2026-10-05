@@ -78,6 +78,14 @@ class ConfigLoader:
                 "identifier",
             ),
             "S3_BUCKET_NAME": ("aws", "s3", "bucket_name"),
+            # Injected by the CDK compute stack so the app uses the IaC-managed
+            # doc-status table (and never auto-creates an unmanaged one).
+            "GRAPHRAG_DOC_STATUS_TABLE": ("aws", "dynamodb", "table_name"),
+            "GRAPHRAG_DOC_STATUS_CREATE_TABLE": (
+                "aws",
+                "dynamodb",
+                "create_table_if_missing",
+            ),
         }
 
         for env_var, config_path in env_overrides.items():

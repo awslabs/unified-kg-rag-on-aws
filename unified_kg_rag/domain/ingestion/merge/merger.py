@@ -165,12 +165,19 @@ def _find_fuzzy_old_match(
     Considers only *old* candidate names (delta entities are never matcher
     candidates), so the collapse target is stable regardless of delta ordering.
     Ties break on the higher score, then the lexicographically smaller name, so
-    the choice is deterministic.
+    the choice is deterministic. Old entities with an incompatible type are
+    skipped, matching the full-build resolver's grouping guard (identifier
+    conflicts are already filtered by ``find_all_matches``).
     """
+    from unified_kg_rag.domain.ingestion.base_resolver import (
+        entity_types_compatible,
+    )
+
     matches = [
         (name, score)
         for name, score in fuzzy_matcher.find_all_matches(entity.name)
         if name in old_key_by_name
+        and entity_types_compatible(entity.type, by_key[old_key_by_name[name]].type)
     ]
     if not matches:
         return None

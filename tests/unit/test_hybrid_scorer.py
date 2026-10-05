@@ -488,6 +488,120 @@ class TestDiversityFiltering:
         assert out[1].content == "completely different content here"
 
 
+class TestDiversityRelevanceScale:
+    """MMR must compare relevance and similarity on the same [0, 1] scale.
+
+    RRF scores are ~1/(k+rank) (~0.009-0.016 at k=60), so comparing them raw
+    against a 0..1 Jaccard penalty lets the penalty dominate and keeps the
+    results LEAST similar to rank 1 (off-topic) instead of the relevant ones.
+    """
+
+    _ON_TOPIC_WORDS = "vendor invoice"
+    _OFF_TOPIC_WORDS = (
+        "lunar orbit telescope",
+        "garden tomato soil",
+        "jazz piano chord",
+        "mountain trail weather",
+        "ocean coral reef",
+        "chess opening gambit",
+    )
+
+    def _scenario(self) -> list[RetrievalResult]:
+        # Six on-topic chunks sharing the query vocabulary (Jaccard ~0.14 between
+        # any two) and six off-topic chunks with disjoint vocabulary, ranked
+        # on-topic first.
+        on_topic = [
+            _r(
+                f"{self._ON_TOPIC_WORDS} payment{i} terms{i} net{i} days{i} "
+                f"fee{i} clause{i}",
+                0.9 - i * 0.01,
+                f"t{i}",
+            )
+            for i in range(6)
+        ]
+        off_topic = [
+            _r(words, 0.5 - i * 0.01, f"o{i}")
+            for i, words in enumerate(self._OFF_TOPIC_WORDS)
+        ]
+        return on_topic + off_topic
+
+    def test_rrf_scores_keep_on_topic_results(self) -> None:
+        config = Config()
+        config.search.reranking.enabled = False
+        config.search.fusion.method = FusionMethod.RRF
+        config.search.fusion.diversity_lambda = 0.5  # the shipped default
+        scorer = HybridScorer(config)
+
+        out = scorer.fuse_and_rerank_results({"text_units": self._scenario()}, top_k=4)
+
+        assert [r.source for r in out] == ["t0", "t1", "t2", "t3"]
+
+    def test_mmr_on_raw_rrf_scale_scores(self) -> None:
+        config = Config()
+        config.search.reranking.enabled = False
+        config.search.fusion.diversity_lambda = 0.5
+        scorer = HybridScorer(config)
+        results = self._scenario()
+        for rank, result in enumerate(results, start=1):
+            result.score = 1.0 / (60 + rank)
+
+        out = scorer._apply_diversity_filtering(results, top_k=4)
+
+        assert [r.source for r in out] == ["t0", "t1", "t2", "t3"]
+
+    def test_scale_invariant(self) -> None:
+        config = Config()
+        config.search.reranking.enabled = False
+        config.search.fusion.diversity_lambda = 0.3
+        scorer = HybridScorer(config)
+        small = self._scenario()
+        large = self._scenario()
+        for rank, (a, b) in enumerate(zip(small, large, strict=True), start=1):
+            a.score = 1.0 / (60 + rank)
+            b.score = 1000.0 / (60 + rank)
+
+        out_small = scorer._apply_diversity_filtering(small, top_k=5)
+        out_large = scorer._apply_diversity_filtering(large, top_k=5)
+
+        assert [r.source for r in out_small] == [r.source for r in out_large]
+
+    def test_single_item_returned_unchanged(self) -> None:
+        config = Config()
+        config.search.reranking.enabled = False
+        config.search.fusion.diversity_lambda = 0.5
+        scorer = HybridScorer(config)
+        only = [_r("alpha beta", 0.01, "1")]
+
+        assert scorer._apply_diversity_filtering(only, top_k=4) == only
+
+    def test_equal_scores_fall_back_to_diversity(self) -> None:
+        config = Config()
+        config.search.reranking.enabled = False
+        config.search.fusion.diversity_lambda = 0.5
+        scorer = HybridScorer(config)
+        results = [
+            _r("alpha beta gamma", 0.5, "1"),
+            _r("alpha beta gamma delta", 0.5, "2"),
+            _r("completely different content here", 0.5, "3"),
+        ]
+
+        out = scorer._apply_diversity_filtering(results, top_k=2)
+
+        # No relevance signal: the first item seeds the set, the most dissimilar
+        # candidate wins the next slot, and nothing raises on a zero score range.
+        assert [r.source for r in out] == ["1", "3"]
+
+    def test_lambda_one_preserves_relevance_order(self) -> None:
+        config = Config()
+        config.search.reranking.enabled = False
+        config.search.fusion.diversity_lambda = 1.0
+        scorer = HybridScorer(config)
+
+        out = scorer.fuse_and_rerank_results({"text_units": self._scenario()}, top_k=4)
+
+        assert [r.source for r in out] == ["t0", "t1", "t2", "t3"]
+
+
 class TestRerankDegradation:
     def test_returns_original_when_rerank_model_raises(self) -> None:
         scorer = _scorer()

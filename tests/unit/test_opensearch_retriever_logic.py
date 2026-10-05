@@ -336,6 +336,40 @@ def test_parse_hit_basic(retriever) -> None:
     assert "Description: researcher" in result.content
 
 
+def test_build_search_request_excludes_embedding_fields(retriever) -> None:
+    # Vectors are only needed server-side for kNN scoring; the response must not
+    # ship them back (community reports alone carry three per hit).
+    q = SearchQuery(query="x", search_type=SearchType.HYBRID)
+    body, _params = retriever._build_search_request(
+        q, SearchType.HYBRID, ["name"], ["name_embedding"], [0.1]
+    )
+    assert body["_source"] == {"excludes": ["*_embedding"]}
+
+
+def test_parse_hit_drops_embedding_fields_from_metadata(retriever) -> None:
+    # Defensive: even if the cluster/client returns vectors anyway, they never
+    # reach RetrievalResult.metadata (and from there the reported sources).
+    hit = {
+        "_index": "graphrag-community-reports-default-1",
+        "_id": "r1",
+        "_score": 0.7,
+        "_source": {
+            "id": "r1",
+            "name": "Vendor network",
+            "summary": "Vendor supplies Buyer.",
+            "full_content": "Vendor supplies Buyer with parts.",
+            "name_embedding": [0.1, 0.2],
+            "summary_embedding": [0.3, 0.4],
+            "full_content_embedding": [0.5, 0.6],
+            "document_ids": ["doc-1"],
+        },
+    }
+    result = retriever._parse_hit(hit)
+    assert not [k for k in result.metadata if k.endswith("_embedding")]
+    assert result.metadata["document_ids"] == ["doc-1"]
+    assert result.metadata["summary"] == "Vendor supplies Buyer."
+
+
 def test_parse_hit_falls_back_to_underscore_id(retriever) -> None:
     hit = {"_index": "graphrag-text-units-default", "_id": "x9", "_source": {}}
     result = retriever._parse_hit(hit)

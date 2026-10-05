@@ -11,6 +11,6 @@
     "network_mode": "private",
     "max_azs": 2,
 
-    "_doc": "Sizing/HA + lifecycle defaults are env-aware in iac/config.py (dev: single Neptune/OpenSearch node, auto-destroy; non-dev: 2-instance HA, retain + deletion protection). Override with -c key=value, e.g. -c neptune_instance=db.r6g.xlarge -c opensearch_count=2. Reuse infra: -c vpc_id=vpc-xxx -c cache_bucket_name=my-bucket. Public egress: -c network_mode=public. Existing guardrail: -c guardrail_identifier=gr-xxx."
+    "_doc": "Sizing/HA + lifecycle defaults are env-aware in iac/config.py (dev: single Neptune/OpenSearch node, auto-destroy; non-dev: 2-instance HA, retain + deletion protection). Override with -c key=value, e.g. -c neptune_instance=db.r6g.xlarge -c opensearch_count=2. Reuse infra: -c vpc_id=vpc-xxx -c cache_bucket_name=my-bucket. Public egress: -c network_mode=public. Attach the created guardrail: -c guardrail_identifier=<GuardrailIdentifier output>; external guardrail: -c create_guardrail=false -c guardrail_identifier=gr-xxx."
   }
 }
