@@ -349,3 +349,12 @@ class TestValidateConfig:
         )
         ev.config.evaluation.langchain_metrics = [EvaluationMetricType.FAITHFULNESS]
         assert ev.validate_config() is False
+
+
+def test_judge_model_requested_without_sampling_params(mocker) -> None:
+    # The judge must not force temperature/top_p/top_k: the factory decides
+    # per model capability (Claude 5 rejects them outright).
+    _make_evaluator(mocker)
+    factory = lc_module.BedrockLanguageModelFactory.return_value
+    _, kwargs = factory.get_model.call_args
+    assert not {"temperature", "top_p", "top_k"} & set(kwargs)

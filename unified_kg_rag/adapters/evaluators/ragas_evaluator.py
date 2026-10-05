@@ -13,6 +13,7 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseLanguageModel
 from ragas import evaluate
 from ragas.dataset_schema import EvaluationResult as RagasEvaluationResult
+from ragas.llms.base import LangchainLLMWrapper
 from ragas.metrics import (
     answer_correctness,
     answer_relevancy,
@@ -25,7 +26,10 @@ from unified_kg_rag.adapters.aws import (
     BedrockEmbeddingModelFactory,
     BedrockLanguageModelFactory,
 )
-from unified_kg_rag.adapters.aws.bedrock import get_assumed_role_boto_session
+from unified_kg_rag.adapters.aws.bedrock import (
+    get_assumed_role_boto_session,
+    get_language_model_info,
+)
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.domain.models import (
     Config,
@@ -71,6 +75,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
     ) -> None:
         self.embeddings: Embeddings | None = None
         self.llm: BaseLanguageModel | None = None
+        self.ragas_llm: LangchainLLMWrapper | None = None
         self._embedding_factory = embedding_factory
         self.boto_session = boto_session or boto3.Session(
             profile_name=config.aws.profile_name
@@ -122,8 +127,15 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             boto_session=self.boto_session,
             region_name=self.config.aws.bedrock.region_name,
         )
-        self.llm = llm_factory.get_model(
-            model_id=self.config.evaluation.evaluation_model_id
+        model_id = self.config.evaluation.evaluation_model_id
+        self.llm = llm_factory.get_model(model_id=model_id)
+        # ragas sets ``llm.temperature`` on every judge call (and never resets
+        # it when the original was None). Claude 4.7+/5 reject sampling params,
+        # so langchain-aws drops it with a warning per call — bypass it instead.
+        model_info = get_language_model_info(model_id)
+        supports_sampling = model_info is None or model_info.supports_sampling_params
+        self.ragas_llm = LangchainLLMWrapper(
+            self.llm, bypass_temperature=not supports_sampling
         )
 
     def _truncate_contexts(self, results: list[EvaluationResult]) -> list[list[str]]:
@@ -228,7 +240,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 evaluate,
                 dataset=eval_dataset,
                 metrics=metrics_to_use,
-                llm=self.llm,
+                llm=self.ragas_llm or self.llm,
                 embeddings=self.embeddings,
                 raise_exceptions=False,
                 show_progress=self.show_progress,
