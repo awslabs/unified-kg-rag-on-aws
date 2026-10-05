@@ -14,8 +14,10 @@ phases:
   index        indexing
 
 Each phase has bounded retries; any failure is caught and published to an SNS
-topic. The state machine input selects a full vs incremental run (the
-incremental path simply enables aws.dynamodb via config; the same phases run).
+topic. The state machine input carries only ``source_directory`` (an s3:// URI
+the container entrypoint syncs locally) and ``pipeline_id``. There is no
+full-vs-incremental switch: a run is incremental when ``aws.dynamodb`` is
+enabled in the baked-in config, and the same phases run either way.
 """
 
 from __future__ import annotations

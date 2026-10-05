@@ -7,8 +7,10 @@ Bedrock Guardrail.
 
 ## Stacks
 
-Stack ids are PascalCase with a `GraphRag` prefix and no env segment;
-environments are separated by account/region and tracked via the `env` tag.
+Stack ids are PascalCase with a `GraphRag` prefix. The default `dev` env keeps
+the bare ids below (`GraphRagNetwork`, …); any other `env_name` adds an env
+segment (`-c env_name=prod` → `GraphRagProdNetwork`, …) so several environments
+can coexist in one account/region. Every resource also carries an `env` tag.
 
 | Stack | Resources |
 |---|---|
@@ -22,9 +24,10 @@ environments are separated by account/region and tracked via the `env` tag.
 
 ### Resource naming
 
-Physical resources share a single lowercase `graphrag-<purpose>` scheme (no env
-segment — environments are separated by account/region), following a common
-`<app>-<purpose>-…` convention (e.g. `myapp-alb-logs-…`, `myapp-state-…`):
+Physical resources share a single lowercase `<prefix>-<purpose>` scheme,
+following a common `<app>-<purpose>-…` convention. The prefix is `graphrag` in
+the default `dev` env and `<env>-graphrag` otherwise (e.g. `prod-graphrag-doc-status`),
+so physical names do not collide across environments. Names below are for `dev`:
 
 | Resource | Name |
 |---|---|
@@ -110,13 +113,13 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `guardrail_identifier` | _(none)_ | guardrail id the compute task **uses**, injected as `BEDROCK_GUARDRAIL_IDENTIFIER`. The created guardrail's id is **not** injected automatically: pass the `GuardrailIdentifier` output of `GraphRagGuardrail` here (two-step flow above), or an external id with `create_guardrail=false`. Unset = no guardrail on the task |
 | `use_cmk` | `false` | customer-managed KMS key for at-rest encryption (S3/Neptune/OpenSearch/SNS/DDB) |
 | `vpc_flow_logs` | `false` (dev) / `true` (non-dev) | enable VPC flow logs (created VPC only) |
-| `deletion_protection` | `false` | protect Neptune/OpenSearch from deletion |
+| `deletion_protection` | `false` (dev) / `true` (non-dev) | protect Neptune/OpenSearch from deletion |
 | `bedrock_model_arns` | _(none)_ | scope Bedrock IAM to specific model ARNs (list) |
 | `alarm_email` | _(none)_ | subscribe an email to the pipeline alarm topic |
 | `enable_cdk_nag` | `false` | run cdk-nag AwsSolutions (Well-Architected) checks at synth |
 | `owner` | `aws-proserve` | `owner` tag applied to every resource |
 | `cost_center` | `unified-kg-rag-on-aws` | `cost-center` tag applied to every resource |
-| `removal_destroy` | `true` | `DESTROY` (dev) vs `RETAIN` (prod) on stack deletion |
+| `removal_destroy` | `true` (dev) / `false` (non-dev) | `DESTROY` vs `RETAIN` stateful resources on stack deletion |
 
 > Every resource is tagged `project=unified-kg-rag-on-aws`, `env=<env_name>`,
 > `managed-by=cdk`, `owner`, and `cost-center` for cost allocation and ownership.
@@ -171,7 +174,8 @@ cdk deploy --all
 
 > **Cost / approval:** deploying creates Neptune + OpenSearch (hourly billed) and
 > NAT gateways in `public` mode. `removal_destroy=true` (dev default) tears
-> everything down on `cdk destroy --all`; set `removal_destroy=false` for prod.
+> everything down on `cdk destroy --all`; non-dev envs default to
+> `removal_destroy=false` and `deletion_protection=true`.
 
 ## After deploy
 
@@ -187,11 +191,16 @@ cdk deploy --all
    S3 cache uploads default to the bucket's own encryption
    (`aws.s3.encryption.encryption_type: BUCKET_DEFAULT`), so `use_cmk=true`
    objects are encrypted with the CMK.
-2. Start an ingestion run:
+2. Upload the corpus under a prefix of the cache bucket and start an ingestion run:
    ```bash
    aws stepfunctions start-execution \
      --state-machine-arn <…-ingestion arn> \
-     --input '{"source_directory":"/data/docs","pipeline_id":"run-001","config_path":"/app/config.yaml"}'
+     --input '{"source_directory":"s3://<cache-bucket>/<corpus-prefix>/","pipeline_id":"run-001"}'
    ```
-   (`source_directory` / `pipeline_id` are passed to the tasks as
-   `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID`.)
+   The input takes exactly these two keys, passed to every phase as
+   `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID`. Each phase runs in a
+   fresh Fargate task, so `source_directory` must be an `s3://` URI: the
+   container entrypoint (`docker/entrypoint.sh`) syncs it to local scratch
+   before running the CLI. The config file is fixed at `/app/config.yaml` in
+   the image. The task role is granted read/write on the cache bucket only;
+   to read a corpus from another bucket, grant the role access to it.
