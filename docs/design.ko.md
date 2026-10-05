@@ -407,6 +407,15 @@ class OllamaModelFactory:                 # 구조적으로 LLMFactoryPort
 chain = GraphRAGChain(config=cfg, model_factory=OllamaModelFactory())
 ```
 
+> **알 수 없는 kwargs는 받아서 무시합니다.** 호출 측은 `get_model(model_id, **kwargs)`로
+> 프레임워크 전용 키워드 인자를 넘깁니다. 예를 들어
+> `model_purpose=ModelPurpose.QUERY | INGESTION | EVALUATION`은 Bedrock 팩토리가
+> Guardrail 적용 범위를 정할 때 사용하며, 이후 릴리스에서 인자가 추가될 수 있습니다.
+> 커스텀 팩토리는 `**kwargs` 매개변수를 유지하고 이해하지 못하는 키는 무시해야 합니다.
+> 알 수 없는 인자를 거부하는 모델 생성자에 그대로 전달해서도 안 됩니다.
+> `get_model(self, model_id, temperature=0.0)`처럼 시그니처를 엄격하게 정의하면
+> `model_purpose`를 넘기는 첫 호출에서 `TypeError`가 발생합니다.
+
 `tests/fixtures/fakes/`의 인메모리 fake(`FakeGraphStore`/`FakeVectorStore`)가 인덱서
 포트의 동작하는 참조 구현이며 — 전체 인제스천+인덱싱 파이프라인이 AWS 없이 이들로
 돌아갑니다. 커스텀 스토어의 출발점으로 권장합니다. 이 프레임워크는 AWS 어댑터만

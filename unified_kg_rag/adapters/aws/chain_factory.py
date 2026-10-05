@@ -21,7 +21,7 @@ from langchain_core.prompts import (
 )
 from langchain_core.runnables import Runnable
 
-from unified_kg_rag.domain.models import LanguageModelId
+from unified_kg_rag.domain.models import LanguageModelId, ModelPurpose
 from unified_kg_rag.domain.prompts import BasePrompt, ResolvedPrompt
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import GraphRAGException, get_logger
@@ -68,13 +68,21 @@ def create_robust_xml_output_parser(
     factory: LLMFactoryPort,
     enable_output_fixing: bool,
     output_fixing_model_id: LanguageModelId,
+    model_purpose: ModelPurpose = ModelPurpose.QUERY,
 ) -> BaseOutputParser:
+    """Build the XML parser, optionally wrapped in an LLM output fixer.
+
+    ``model_purpose`` is forwarded to the fixing LLM so it gets the same
+    per-path policy (e.g. guardrail scope) as the chain it repairs.
+    """
     base_parser = RobustXMLOutputParser()
     if not enable_output_fixing:
         return base_parser
 
     try:
-        fixing_llm = factory.get_model(model_id=output_fixing_model_id)
+        fixing_llm = factory.get_model(
+            model_id=output_fixing_model_id, model_purpose=model_purpose
+        )
         logger.info(
             "Created OutputFixingParser with model: '%s'", output_fixing_model_id.value
         )
@@ -94,10 +102,20 @@ def setup_chain(
     prompt_class: type[BasePrompt],
     parser: BaseOutputParser,
     custom_prompts: CustomPromptConfig | None = None,
+    model_purpose: ModelPurpose = ModelPurpose.QUERY,
     **kwargs: Any,
 ) -> Runnable:
+    """Build ``prompt | llm | parser``.
+
+    ``model_purpose`` tells the factory which path the model serves; ingestion
+    and evaluation call sites must pass it explicitly so query-only policies
+    (guardrails with ``apply_to: query``) are not applied to them. The default
+    ``QUERY`` keeps an unmarked call site on the guarded, conservative side.
+    """
     try:
-        llm = factory.get_model(model_id=model_id, **kwargs)
+        llm = factory.get_model(
+            model_id=model_id, model_purpose=model_purpose, **kwargs
+        )
         model_info = factory.get_model_info(model_id)
         enable_prompt_cache = (
             model_info.supports_prompt_caching if model_info else False

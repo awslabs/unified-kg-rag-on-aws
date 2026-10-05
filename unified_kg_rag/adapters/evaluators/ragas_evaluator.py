@@ -35,6 +35,7 @@ from unified_kg_rag.domain.models import (
     EvaluationReport,
     EvaluationResult,
     EvaluatorType,
+    ModelPurpose,
 )
 from unified_kg_rag.evaluation.base import (
     FAILED_METRICS_KEY,
@@ -139,7 +140,8 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             region_name=self.config.aws.bedrock.region_name,
         )
         self.llm = llm_factory.get_model(
-            model_id=self.config.evaluation.evaluation_model_id
+            model_id=self.config.evaluation.evaluation_model_id,
+            model_purpose=ModelPurpose.EVALUATION,
         )
 
     def _truncate_contexts(self, results: list[EvaluationResult]) -> list[list[str]]:

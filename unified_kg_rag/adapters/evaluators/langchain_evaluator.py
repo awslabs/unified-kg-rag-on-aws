@@ -22,6 +22,7 @@ from unified_kg_rag.domain.models import (
     EvaluationReport,
     EvaluationResult,
     EvaluatorType,
+    ModelPurpose,
 )
 from unified_kg_rag.evaluation.base import (
     FAILED_METRICS_KEY,
@@ -112,6 +113,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             )
             self.llm = llm_factory.get_model(
                 model_id=self.config.evaluation.evaluation_model_id,
+                model_purpose=ModelPurpose.EVALUATION,
             )
             self._initialize_metric_evaluators()
             logger.info(

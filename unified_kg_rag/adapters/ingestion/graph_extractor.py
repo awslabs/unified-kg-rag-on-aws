@@ -14,7 +14,13 @@ from unified_kg_rag.adapters.aws.chain_factory import (
 )
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.entity_grounding import is_grounded
-from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
+from unified_kg_rag.domain.models import (
+    Config,
+    Entity,
+    ModelPurpose,
+    Relationship,
+    TextUnit,
+)
 from unified_kg_rag.domain.prompts import GraphExtractionPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
@@ -107,11 +113,13 @@ class GraphExtractor(BaseProcessor):
         self.batch_processor = BatchProcessor()
 
         robust_xml_output_parser = create_robust_xml_output_parser(
+            model_purpose=ModelPurpose.INGESTION,
             enable_output_fixing=self.config.fixing.enabled,
             output_fixing_model_id=self.config.fixing.fixing_model_id,
             factory=self.factory,
         )
         self.graph_extractor = setup_chain(
+            model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
             model_id=self.extraction_config.extraction_model_id,
             prompt_class=GraphExtractionPrompt,

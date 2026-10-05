@@ -98,6 +98,22 @@ class LanguageModelId(str, Enum):
     # NOTE: add new models here
 
 
+class ModelPurpose(str, Enum):
+    """Why a language model is being created, so per-path policies can differ.
+
+    Callers pass it to the LLM factory (``get_model(model_purpose=...)``). The
+    Bedrock factory uses it to scope guardrails (``GuardrailConfig.apply_to``):
+    a user-facing guardrail that anonymizes PII or blocks instruction-like text
+    is appropriate for queries, but corrupts graph extraction over a corpus.
+    Unspecified means ``QUERY`` so an unmarked call site keeps the guarded,
+    conservative behaviour.
+    """
+
+    QUERY = "query"
+    INGESTION = "ingestion"
+    EVALUATION = "evaluation"
+
+
 class RerankModelId(str, Enum):
     AMAZON_RERANK_V1 = "amazon.rerank-v1:0"
     COHERE_RERANK_V3_5 = "cohere.rerank-v3-5:0"
@@ -105,11 +121,21 @@ class RerankModelId(str, Enum):
 
 
 class GuardrailConfig(BaseModel):
-    """Amazon Bedrock Guardrails applied to every model invocation.
+    """Amazon Bedrock Guardrails applied to language-model invocations.
 
     Disabled by default; set ``identifier`` (and optionally ``version``) to
     enforce content/PII/grounding policies on prompts and completions — the
     WAF security-pillar control for a user-facing LLM RAG application.
+
+    ``apply_to`` scopes the guardrail. The default ``"query"`` guards only the
+    user-facing query path (answer generation, query refinement and
+    query-time entity/keyword extraction, global/DRIFT map-reduce). Ingestion
+    (chunking, translation, graph extraction, gleaning, claims, description
+    summarization, community reports) and evaluation judges run unguarded,
+    because a PII-anonymizing guardrail rewrites names to placeholders (every
+    person merges into one entity) and a prompt-attack filter blocks
+    instruction-like corpus text, which silently yields empty extractions.
+    ``"all"`` restores the previous guard-everything behaviour.
     """
 
     identifier: str | None = Field(
@@ -125,10 +151,24 @@ class GuardrailConfig(BaseModel):
         default=False,
         description="Emit guardrail trace details for observability/auditing",
     )
+    apply_to: Literal["query", "all"] = Field(
+        default="query",
+        description=(
+            "Which model invocations the guardrail is attached to: 'query' "
+            "(user-facing query path only; ingestion and evaluation models run "
+            "unguarded) or 'all' (every model, including ingestion)"
+        ),
+    )
 
     @property
     def enabled(self) -> bool:
         return bool(self.identifier)
+
+    def applies_to(self, purpose: ModelPurpose) -> bool:
+        """Whether a model created for ``purpose`` gets this guardrail."""
+        if not self.enabled:
+            return False
+        return self.apply_to == "all" or purpose is ModelPurpose.QUERY
 
 
 class BedrockConfig(BaseModel):

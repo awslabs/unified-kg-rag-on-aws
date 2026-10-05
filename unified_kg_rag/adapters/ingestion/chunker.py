@@ -29,7 +29,13 @@ from unified_kg_rag.adapters.aws.token_counter import (
     BedrockTokenCounter,
     estimate_token_count,
 )
-from unified_kg_rag.domain.models import ChunkingStrategy, Config, Document, TextUnit
+from unified_kg_rag.domain.models import (
+    ChunkingStrategy,
+    Config,
+    Document,
+    ModelPurpose,
+    TextUnit,
+)
 from unified_kg_rag.domain.prompts import TextChunkingPrompt
 from unified_kg_rag.shared import DataProcessingError, get_logger
 from unified_kg_rag.shared.utils import (
@@ -629,11 +635,13 @@ class IntelligentTextChunker(BaseChunker):
         self.batch_processor = BatchProcessor()
 
         robust_xml_output_parser = create_robust_xml_output_parser(
+            model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
             enable_output_fixing=self.config.fixing.enabled,
             output_fixing_model_id=self.config.fixing.fixing_model_id,
         )
         self.chunker = setup_chain(
+            model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
             model_id=self.chunking_config.chunking_model_id,
             prompt_class=TextChunkingPrompt,

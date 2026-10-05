@@ -144,10 +144,11 @@ aws:
     enable_global_profile: true   # use cross-region (global) Bedrock inference profiles for higher throughput/availability
     enable_1m_context: false      # opt into the 1M window on models where it's a beta (premium billing); Claude 5 is native 1M
     effort: "high"                # reasoning depth for adaptive-thinking models: low | medium | high | xhigh | max
-    guardrail:                    # optional Bedrock Guardrails on every LLM call
+    guardrail:                    # optional Bedrock Guardrails (query path by default)
       identifier: null            # set a guardrail ID/ARN to enable
       version: "DRAFT"
       trace: false
+      apply_to: "query"           # query | all — see the guardrail scope note below
 
   neptune:
     endpoint:                     # REQUIRED — Neptune cluster endpoint
@@ -178,6 +179,33 @@ aws:
 > **Guardrail placement note:** when deploying multi-region, the Bedrock
 > Guardrail must exist in `bedrock.region_name` (the region LLM calls go to),
 > not necessarily `region_name`.
+
+> **Guardrail scope:** `apply_to: "query"` (default) attaches the guardrail only
+> to the user-facing query path: answer generation, query refinement,
+> query-time entity/keyword extraction, and global/DRIFT map-reduce. Ingestion
+> models (chunking, translation, graph extraction, gleaning, claims, description
+> summarization, community reports), the prompt tuner, and evaluation judges
+> run unguarded. The reason is that a PII guardrail that anonymizes `NAME`
+> rewrites extracted entity names to a placeholder such as `{NAME}`, so distinct
+> people merge into a single node, and a `PROMPT_ATTACK` filter can block
+> instruction-like corpus text, leaving that chunk with no entities. Set
+> `apply_to: "all"` only if your guardrail policy is safe for extraction (for
+> example, it blocks harmful content but does not mask PII). Every intervention
+> is logged at WARNING (`Bedrock guardrail '<id>' intervened on a <purpose>
+> model call ...`) with a running count. Detection is reliable on the Converse
+> API path (`stopReason: guardrail_intervened`, used with cross-region inference
+> profiles) whatever `trace` is set to. On the InvokeModel path (`ChatBedrock`,
+> used for non-cross-region model ids) `langchain_aws` reports an intervention
+> only when `trace: true`: with the default `trace: false` the guardrail is still
+> enforced (blocked/masked responses are returned), but no WARNING is logged and
+> the count stays at zero. Set `trace: true` if you need intervention visibility
+> on that path; it adds the guardrail trace to every response.
+>
+> Upgrading: earlier releases guarded every call. To keep that behaviour, set
+> `apply_to: "all"`. Custom code that builds chains with `setup_chain` or calls
+> `get_model` for non-query work should pass
+> `model_purpose=ModelPurpose.INGESTION` (or `EVALUATION`). Unmarked calls
+> default to `QUERY` and stay guarded.
 
 #### Model selection notes
 
