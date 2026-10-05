@@ -22,12 +22,24 @@ aws:
     # Ignored by older models, which still use thinking_budget_tokens.
     effort: "high"
     # Amazon Bedrock Guardrails (WAF security pillar). Disabled unless an
-    # identifier is set; when set, every LLM call enforces the guardrail's
-    # content/PII/grounding policies on prompts and completions.
+    # identifier is set; when set, the guarded LLM calls enforce the
+    # guardrail's content/PII/grounding policies on prompts and completions.
+    # Interventions are logged at WARNING ("Bedrock guardrail ... intervened").
     guardrail:
       identifier: null # Guardrail ID or ARN, e.g. "abcd1234efgh"
       version: "DRAFT" # "DRAFT" or a published version number
       trace: false # Emit guardrail trace for auditing/observability
+      # Which calls are guarded:
+      #   query - (default) user-facing query path only: answer generation,
+      #           query refinement, query-time entity/keyword extraction,
+      #           global/DRIFT map-reduce. Ingestion (chunking, translation,
+      #           graph extraction, gleaning, claims, summarization, community
+      #           reports) and evaluation judges run unguarded.
+      #   all   - every LLM call. A PII-anonymizing guardrail then rewrites
+      #           names in extraction output to placeholders (distinct people
+      #           merge into one entity) and a prompt-attack filter can block
+      #           instruction-like corpus text (that chunk yields no entities).
+      apply_to: "query"
 
   # Neptune Configuration
   neptune:

@@ -24,6 +24,7 @@ from unified_kg_rag.domain.models import (
     CommunityMetrics,
     CommunityReport,
     Config,
+    ModelPurpose,
     TextUnit,
 )
 from unified_kg_rag.domain.prompts import CommunityReportPrompt
@@ -88,11 +89,13 @@ class CommunityDetector(BaseProcessor):
 
         if self.community_detection_config.report_generation.enabled:
             parser = create_robust_xml_output_parser(
+                model_purpose=ModelPurpose.INGESTION,
                 factory=self.factory,
                 enable_output_fixing=self.config.fixing.enabled,
                 output_fixing_model_id=self.config.fixing.fixing_model_id,
             )
             self.report_generator = setup_chain(
+                model_purpose=ModelPurpose.INGESTION,
                 factory=self.factory,
                 model_id=self.community_detection_config.report_generation.report_generation_model_id,
                 prompt_class=CommunityReportPrompt,
