@@ -178,10 +178,15 @@ cdk deploy --all
 1. Build & push the app image to the created ECR repo (tag `latest`); the image
    must contain a `/app/config.yaml` with the deployed endpoints (or rely on the
    injected `NEPTUNE_ENDPOINT` / `OPENSEARCH_ENDPOINT` / `S3_BUCKET_NAME` /
-   `BEDROCK_REGION` env vars the app reads). If you enable incremental indexing,
-   set `aws.dynamodb.table_name` to the table this stack created
-   (`graphrag-doc-status` in `dev`) so the app and the CloudWatch alarms track
-   the same table — the config template's default name differs.
+   `BEDROCK_REGION` env vars the app reads). The task also injects
+   `GRAPHRAG_DOC_STATUS_TABLE` (the table this stack created,
+   `graphrag-doc-status` in `dev`) and `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false`,
+   which override `aws.dynamodb.table_name` / `create_table_if_missing`, so the
+   app and the CloudWatch alarms track the same IaC-managed table. Incremental
+   indexing still needs `aws.dynamodb.enabled: true` in `config.yaml`.
+   S3 cache uploads default to the bucket's own encryption
+   (`aws.s3.encryption.encryption_type: BUCKET_DEFAULT`), so `use_cmk=true`
+   objects are encrypted with the CMK.
 2. Start an ingestion run:
    ```bash
    aws stepfunctions start-execution \

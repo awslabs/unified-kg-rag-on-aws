@@ -62,6 +62,16 @@ class RetrieverType(str, Enum):
 
 
 class S3EncryptionType(str, Enum):
+    """Server-side encryption header sent on cache uploads.
+
+    ``BUCKET_DEFAULT`` sends no SSE header, so S3 applies the bucket's default
+    encryption (SSE-S3 at minimum, or the bucket's SSE-KMS CMK). ``NONE`` is a
+    legacy alias with the same behaviour: S3 encrypts every new object, so it
+    never meant "unencrypted". ``AES256`` / ``aws:kms`` force a per-object
+    header that OVERRIDES the bucket default.
+    """
+
+    BUCKET_DEFAULT = "BUCKET_DEFAULT"
     NONE = "NONE"
     AES256 = "AES256"
     KMS = "aws:kms"
@@ -258,7 +268,13 @@ class OpenSearchConfig(BaseModel):
 
 class S3EncryptionConfig(BaseModel):
     encryption_type: S3EncryptionType = Field(
-        default=S3EncryptionType.AES256, description="S3 server-side encryption method"
+        default=S3EncryptionType.BUCKET_DEFAULT,
+        description=(
+            "S3 server-side encryption for cache uploads: BUCKET_DEFAULT (send no "
+            "header; the bucket's default encryption, e.g. its KMS CMK, applies), "
+            "AES256 (force SSE-S3) or aws:kms (force SSE-KMS with kms_key_id). "
+            "NONE is a legacy alias of BUCKET_DEFAULT."
+        ),
     )
     kms_key_id: str | None = Field(
         default=None,

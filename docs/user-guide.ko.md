@@ -167,7 +167,7 @@ aws:
   s3:
     bucket_name:                  # REQUIRED for cache sync / embedding-cache persistence
     encryption:
-      encryption_type: "AES256"   # NONE | AES256 | aws:kms
+      encryption_type: "BUCKET_DEFAULT"  # BUCKET_DEFAULT | AES256 | aws:kms (NONE = BUCKET_DEFAULT의 레거시 별칭)
       kms_key_id: null
 
   dynamodb:                       # incremental indexing registry
@@ -205,6 +205,22 @@ aws:
 > `setup_chain`으로 체인을 만들거나 `get_model`을 직접 호출하는 사용자 코드는
 > `model_purpose=ModelPurpose.INGESTION`(또는 `EVALUATION`)을 넘겨야 합니다.
 > 지정하지 않은 호출은 `QUERY`로 간주해 Guardrail이 계속 적용됩니다.
+
+> **S3 캐시 암호화:** 기본값 `encryption_type: "BUCKET_DEFAULT"`는 객체별 SSE
+> 헤더를 보내지 않으므로 S3가 버킷의 기본 암호화를 적용합니다. CDK 스택에서
+> `use_cmk=true`이면 고객 관리형 KMS 키, 아니면 SSE-S3입니다. `AES256`과
+> `aws:kms`는 버킷 기본값을 덮어쓰는 객체별 헤더를 강제합니다. 이 변경 이전
+> 릴리스는 기본값이 `AES256`이어서 버킷의 CMK를 조용히 우회했습니다. 기본 암호화가
+> SSE-KMS인 기존 버킷을 재사용하면 업로드 주체에 해당 키의 `kms:GenerateDataKey`와
+> `kms:Decrypt` 권한이 필요합니다.
+
+> **환경 변수로 지정하는 doc-status 테이블:** `GRAPHRAG_DOC_STATUS_TABLE`은
+> `aws.dynamodb.table_name`을, `GRAPHRAG_DOC_STATUS_CREATE_TABLE`(`true`/`false`)은
+> `aws.dynamodb.create_table_if_missing`을 덮어씁니다. CDK compute 스택은 두 값을
+> 모두 설정합니다. 테이블 이름은 IaC 테이블로, 생성 여부는 `false`로 지정합니다.
+> 테이블을 IaC가 관리하고 태스크 역할에는 테이블 생성 권한이 없기 때문입니다.
+> 증분 인덱싱을 쓰려면 여전히 설정 파일에서 `aws.dynamodb.enabled: true`가
+> 필요합니다.
 
 #### 모델 선택 주의사항
 

@@ -166,7 +166,7 @@ aws:
   s3:
     bucket_name:                  # REQUIRED for cache sync / embedding-cache persistence
     encryption:
-      encryption_type: "AES256"   # NONE | AES256 | aws:kms
+      encryption_type: "BUCKET_DEFAULT"  # BUCKET_DEFAULT | AES256 | aws:kms (NONE = legacy alias of BUCKET_DEFAULT)
       kms_key_id: null
 
   dynamodb:                       # incremental indexing registry
@@ -206,6 +206,21 @@ aws:
 > `get_model` for non-query work should pass
 > `model_purpose=ModelPurpose.INGESTION` (or `EVALUATION`). Unmarked calls
 > default to `QUERY` and stay guarded.
+
+> **S3 cache encryption:** the default `encryption_type: "BUCKET_DEFAULT"` sends
+> no per-object SSE header, so S3 applies the bucket's default encryption. With
+> the CDK stack's `use_cmk=true` that is the customer-managed KMS key; otherwise
+> it is SSE-S3. `AES256` and `aws:kms` force a per-object header that overrides
+> the bucket default. Releases before this change defaulted to `AES256`, which
+> silently bypassed a bucket's CMK. When you reuse a bucket whose default is
+> SSE-KMS, the writer needs `kms:GenerateDataKey` and `kms:Decrypt` on that key.
+
+> **Doc-status table from the environment:** `GRAPHRAG_DOC_STATUS_TABLE`
+> overrides `aws.dynamodb.table_name` and `GRAPHRAG_DOC_STATUS_CREATE_TABLE`
+> (`true`/`false`) overrides `aws.dynamodb.create_table_if_missing`. The CDK
+> compute stack sets both: the IaC table name, and `false` because the table is
+> IaC-managed and the task role cannot create tables. Incremental indexing still
+> requires `aws.dynamodb.enabled: true` in your config.
 
 #### Model selection notes
 
