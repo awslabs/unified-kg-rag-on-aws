@@ -193,8 +193,12 @@ aws:
 > `apply_to: "all"`을 사용합니다. Guardrail이 개입할 때마다 누적 횟수와 함께
 > WARNING 로그(`Bedrock guardrail '<id>' intervened on a <purpose> model call ...`)를
 > 남깁니다. Converse API 경로(크로스 리전 추론 프로파일 사용 시,
-> `stopReason: guardrail_intervened`)에서는 안정적으로 감지하며, InvokeModel
-> 경로에서는 `trace: true`가 필요합니다.
+> `stopReason: guardrail_intervened`)에서는 `trace` 설정과 관계없이 안정적으로
+> 감지합니다. InvokeModel 경로(`ChatBedrock`, 크로스 리전이 아닌 모델 ID 사용 시)에서는
+> `langchain_aws`가 `trace: true`일 때만 개입을 알립니다. 기본값 `trace: false`에서도
+> Guardrail은 그대로 적용되어 차단·마스킹된 응답이 반환되지만, WARNING 로그가 남지 않고
+> 누적 횟수도 0으로 유지됩니다. 이 경로에서 개입 여부를 확인해야 한다면
+> `trace: true`로 설정합니다. 이 경우 모든 응답에 Guardrail trace가 추가됩니다.
 >
 > 업그레이드 시 참고: 이전 릴리스는 모든 호출에 Guardrail을 적용했습니다. 같은
 > 동작을 유지하려면 `apply_to: "all"`로 설정합니다. 질의가 아닌 작업에서

@@ -409,6 +409,16 @@ class OllamaModelFactory:                 # structurally an LLMFactoryPort
 chain = GraphRAGChain(config=cfg, model_factory=OllamaModelFactory())
 ```
 
+> **Accept and ignore unknown kwargs.** Callers pass framework-specific keyword
+> arguments through `get_model(model_id, **kwargs)` — for example
+> `model_purpose=ModelPurpose.QUERY | INGESTION | EVALUATION`, which the Bedrock
+> factory uses to scope guardrails. New ones may be added in later releases. A
+> custom factory must keep the `**kwargs` catch-all and ignore keys it does not
+> understand (and must not forward them blindly to a model constructor that
+> rejects unknown arguments); a strict signature such as
+> `get_model(self, model_id, temperature=0.0)` raises `TypeError` on the first
+> call that passes `model_purpose`.
+
 The in-memory fakes in `tests/fixtures/fakes/` (e.g. `FakeGraphStore`,
 `FakeVectorStore`) are working reference implementations of the indexer ports —
 the whole ingestion+indexing pipeline runs against them with no AWS. They are

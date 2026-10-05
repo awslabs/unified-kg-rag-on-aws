@@ -974,7 +974,11 @@ class BedrockLanguageModelFactory(
         if callbacks is None:
             config["callbacks"] = [handler]
         elif isinstance(callbacks, BaseCallbackManager):
-            callbacks.add_handler(handler, inherit=False)
+            # Copy first: the manager is caller-owned and may be shared by other
+            # (unguarded) models, which must not start counting interventions.
+            manager = callbacks.copy()
+            manager.add_handler(handler, inherit=False)
+            config["callbacks"] = manager
         else:
             config["callbacks"] = [*callbacks, handler]
         logger.debug(

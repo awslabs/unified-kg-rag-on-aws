@@ -174,6 +174,41 @@ def test_handler_appended_to_existing_callbacks() -> None:
     assert isinstance(config["callbacks"][1], GuardrailInterventionHandler)
 
 
+def test_handler_added_to_copy_of_caller_callback_manager() -> None:
+    from langchain_core.callbacks import BaseCallbackHandler, CallbackManager
+
+    existing = BaseCallbackHandler()
+    caller_manager = CallbackManager(handlers=[existing])
+    f = _factory_with(_guarded_config())
+    config: dict = {"callbacks": caller_manager}
+    f._apply_guardrail(config, is_cross_region=True)
+
+    # The caller's manager is untouched (it may be shared by unguarded models).
+    assert caller_manager.handlers == [existing]
+    assert config["callbacks"] is not caller_manager
+    assert isinstance(config["callbacks"], CallbackManager)
+    assert config["callbacks"].handlers[0] is existing
+    assert isinstance(config["callbacks"].handlers[1], GuardrailInterventionHandler)
+    assert not any(
+        isinstance(h, GuardrailInterventionHandler)
+        for h in config["callbacks"].inheritable_handlers
+    )
+
+
+def test_shared_callback_manager_not_polluted_across_models() -> None:
+    from langchain_core.callbacks import CallbackManager
+
+    shared = CallbackManager(handlers=[])
+    f = _factory_with(_guarded_config())
+    first: dict = {"callbacks": shared}
+    second: dict = {"callbacks": shared}
+    f._apply_guardrail(first, is_cross_region=True)
+    f._apply_guardrail(second, is_cross_region=False)
+    assert shared.handlers == []
+    assert len(first["callbacks"].handlers) == 1
+    assert len(second["callbacks"].handlers) == 1
+
+
 def _llm_result(metadata: dict) -> LLMResult:
     message = AIMessage(content="x", response_metadata=metadata)
     return LLMResult(generations=[[ChatGeneration(message=message)]])

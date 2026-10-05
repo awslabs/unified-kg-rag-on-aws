@@ -28,7 +28,14 @@ aws:
     guardrail:
       identifier: null # Guardrail ID or ARN, e.g. "abcd1234efgh"
       version: "DRAFT" # "DRAFT" or a published version number
-      trace: false # Emit guardrail trace for auditing/observability
+      # Emit guardrail trace for auditing/observability. Also decides whether
+      # interventions are DETECTED on the InvokeModel path (ChatBedrock, used
+      # for non-cross-region model ids): langchain_aws only signals an
+      # intervention there when trace is true, so with trace: false the
+      # guardrail is still enforced but its interventions are neither logged
+      # nor counted. The Converse path (cross-region inference profiles)
+      # detects interventions via stopReason regardless of trace.
+      trace: false
       # Which calls are guarded:
       #   query - (default) user-facing query path only: answer generation,
       #           query refinement, query-time entity/keyword extraction,

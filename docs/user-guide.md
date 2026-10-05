@@ -194,7 +194,12 @@ aws:
 > is logged at WARNING (`Bedrock guardrail '<id>' intervened on a <purpose>
 > model call ...`) with a running count. Detection is reliable on the Converse
 > API path (`stopReason: guardrail_intervened`, used with cross-region inference
-> profiles); on the InvokeModel path it depends on `trace: true`.
+> profiles) whatever `trace` is set to. On the InvokeModel path (`ChatBedrock`,
+> used for non-cross-region model ids) `langchain_aws` reports an intervention
+> only when `trace: true`: with the default `trace: false` the guardrail is still
+> enforced (blocked/masked responses are returned), but no WARNING is logged and
+> the count stays at zero. Set `trace: true` if you need intervention visibility
+> on that path; it adds the guardrail trace to every response.
 >
 > Upgrading: earlier releases guarded every call. To keep that behaviour, set
 > `apply_to: "all"`. Custom code that builds chains with `setup_chain` or calls
