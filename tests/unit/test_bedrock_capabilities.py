@@ -21,6 +21,7 @@ from unified_kg_rag.adapters.aws.bedrock import (
     BedrockCrossRegionModelHelper,
     BedrockEmbeddingModelFactory,
     BedrockLanguageModelFactory,
+    BedrockRerankModelFactory,
     LanguageModelInfo,
     get_assumed_role_boto_session,
 )
@@ -28,6 +29,7 @@ from unified_kg_rag.domain.models import (
     Config,
     EmbeddingModelId,
     LanguageModelId,
+    RerankModelId,
 )
 from unified_kg_rag.shared import EmbeddingModelError, LanguageModelError
 
@@ -515,6 +517,26 @@ def test_assumed_role_session_calls_assume_role(mocker) -> None:
     _, kwargs = spy.call_args
     assert kwargs["RoleSessionName"] == bedrock_mod.DEFAULT_ROLE_SESSION_NAME
     assert kwargs["DurationSeconds"] == 3600
+
+
+# --- CountTokens capability ------------------------------------------------
+
+
+def test_embedding_counter_skips_count_tokens_api(mocker) -> None:
+    spy = mocker.patch.object(bedrock_mod, "BedrockTokenCounter")
+    _embed_factory().get_model(EmbeddingModelId.TITAN_EMBED_V2)
+    assert spy.call_args.kwargs["api_supported"] is False
+
+
+def test_rerank_factory_opens_no_runtime_client_for_counting(mocker) -> None:
+    session = _FakeSession()
+    factory = BedrockRerankModelFactory(Config(), boto_session=session)
+    spy = mocker.patch.object(bedrock_mod, "BedrockTokenCounter")
+    mocker.patch.object(bedrock_mod, "BedrockRerankWrapper")
+    factory.get_model(RerankModelId.COHERE_RERANK_V3_5)
+    assert "bedrock-runtime" not in session.clients_requested
+    assert spy.call_args.kwargs["client"] is None
+    assert spy.call_args.kwargs["api_supported"] is False
 
 
 # --- get_model: kwargs reaching the LangChain chat class ------------------

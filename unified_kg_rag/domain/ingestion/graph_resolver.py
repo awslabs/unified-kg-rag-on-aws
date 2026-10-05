@@ -8,7 +8,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
+from unified_kg_rag.domain.ingestion.base_resolver import (
+    BaseResolver,
+    FuzzyMatcher,
+    normalize_entity_type,
+)
 from unified_kg_rag.domain.models import Config, Entity, Relationship
 from unified_kg_rag.shared import get_logger
 
@@ -39,7 +43,7 @@ def _init_worker_fuzzy_matcher(fuzzy_matcher: FuzzyMatcher) -> None:
 
 def find_all_matches_for_entity_task(
     entity_name: str, fuzzy_matcher: FuzzyMatcher | None = None
-) -> list[str]:
+) -> list[tuple[str, float]]:
     # Prefer the explicit argument (kept for direct/back-compat calls and tests);
     # otherwise use the per-worker matcher installed by _init_worker_fuzzy_matcher.
     matcher = fuzzy_matcher if fuzzy_matcher is not None else _worker_fuzzy_matcher
@@ -48,8 +52,52 @@ def find_all_matches_for_entity_task(
             "FuzzyMatcher not initialized: pass one explicitly or run inside a "
             "pool started with _init_worker_fuzzy_matcher"
         )
-    match_result = matcher.find_all_matches(entity_name)
-    return [match[0] for match in match_result]
+    return matcher.find_all_matches(entity_name)
+
+
+class _TypeAwareUnionFind:
+    """Union-find over entity names that refuses type-conflicting unions.
+
+    Each component tracks the type every typed member shares: ``None`` while
+    no member carries a known type, otherwise the set of types common to all
+    typed members (empty once members disagree, e.g. a surface name extracted
+    as both ``organization`` and ``person``). A union is allowed only while
+    that common set stays non-empty, so every pair of typed members drawn from
+    different names in a finished group has the same type. This blocks the
+    transitive chain the previous BFS allowed (``organization`` ~ untyped ~
+    ``person`` collapsing into one entity). Identifier (discriminator)
+    conflicts need no tracking here: the matcher only links names with
+    *identical* discriminator tokens, and equality is transitive.
+    """
+
+    def __init__(self, common_types: dict[str, frozenset[str] | None]) -> None:
+        self._parent = {name: name for name in common_types}
+        self._common = dict(common_types)
+
+    def find(self, name: str) -> str:
+        root = name
+        while self._parent[root] != root:
+            root = self._parent[root]
+        while self._parent[name] != root:
+            self._parent[name], name = root, self._parent[name]
+        return root
+
+    def union(self, a: str, b: str) -> bool:
+        root_a, root_b = self.find(a), self.find(b)
+        if root_a == root_b:
+            return True
+        common_a, common_b = self._common[root_a], self._common[root_b]
+        if common_a is None or common_b is None:
+            merged = common_a if common_b is None else common_b
+        else:
+            merged = common_a & common_b
+            if not merged:
+                return False
+        # Deterministic root choice keeps grouping order-independent.
+        root, child = sorted((root_a, root_b))
+        self._parent[child] = root
+        self._common[root] = merged
+        return True
 
 
 class EntityResolutionStats(BaseModel):
@@ -180,7 +228,9 @@ class EntityResolver(BaseResolver):
 
         fuzzy_matcher = self._create_fuzzy_matcher(candidate_texts=entity_names)
 
-        adjacency_list = defaultdict(set)
+        # Best score per undirected name pair; the matcher already drops pairs
+        # whose identifier tokens differ ("purchase order 1001" vs "... 1002").
+        pair_scores: dict[tuple[str, str], float] = {}
         executor_class = (
             ProcessPoolExecutor if self.use_process_pool else ThreadPoolExecutor
         )
@@ -206,33 +256,50 @@ class EntityResolver(BaseResolver):
                 if self.show_progress and done % _RESOLVE_PROGRESS_EVERY == 0:
                     logger.info("  ...resolved %s/%s entities", done, total)
                 try:
-                    matched_names = future.result()
-                    for matched_name in matched_names:
-                        if original_name != matched_name:
-                            adjacency_list[original_name].add(matched_name)
-                            adjacency_list[matched_name].add(original_name)
+                    for matched_name, score in future.result():
+                        if matched_name == original_name:
+                            continue
+                        pair = (
+                            (original_name, matched_name)
+                            if original_name < matched_name
+                            else (matched_name, original_name)
+                        )
+                        pair_scores[pair] = max(score, pair_scores.get(pair, 0.0))
                 except Exception as e:
                     logger.warning(
                         "Failed to find matches for entity '%s': %s", original_name, e
                     )
 
-        groups = []
-        visited = set()
+        # Union strongest links first (ties broken by name for determinism),
+        # rejecting any union that would put two type-incompatible members in
+        # one group. Entities sharing an exact name always stay together.
+        common_types: dict[str, frozenset[str] | None] = {}
+        for name, members in entity_map.items():
+            known = {t for t in (normalize_entity_type(e.type) for e in members) if t}
+            common_types[name] = (
+                None
+                if not known
+                else frozenset(known) if len(known) == 1 else frozenset()
+            )
+        union_find = _TypeAwareUnionFind(common_types)
+        rejected = 0
+        for (name_a, name_b), _score in sorted(
+            pair_scores.items(), key=lambda item: (-item[1], item[0])
+        ):
+            if not union_find.union(name_a, name_b):
+                rejected += 1
+        if rejected:
+            logger.info(
+                "Skipped %s fuzzy entity links between incompatible types", rejected
+            )
+
+        names_by_root: dict[str, list[str]] = defaultdict(list)
         for name in entity_names:
-            if name not in visited:
-                current_group_names = set()
-                q = [name]
-                visited.add(name)
-                head = 0
-                while head < len(q):
-                    u = q[head]
-                    head += 1
-                    current_group_names.add(u)
-                    for v in adjacency_list[u]:
-                        if v not in visited:
-                            visited.add(v)
-                            q.append(v)
-                groups.append([e for n in current_group_names for e in entity_map[n]])
+            names_by_root[union_find.find(name)].append(name)
+        groups = [
+            [e for n in group_names for e in entity_map[n]]
+            for group_names in names_by_root.values()
+        ]
 
         logger.info("Created %s entity groups", len(groups))
         return groups

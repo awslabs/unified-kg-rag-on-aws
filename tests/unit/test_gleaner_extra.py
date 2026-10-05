@@ -318,18 +318,21 @@ class TestCorrectionIssues:
         # A correction is not a new artifact.
         assert ents == [] and rels == []
 
-    def test_entity_rename_normalizes_and_keeps_the_id(self, gleaner) -> None:
+    def test_entity_rename_keeps_display_form_and_the_id(self, gleaner) -> None:
         entity = _ent("e1", "acme")
         entity.name_embedding = [0.1, 0.2]
         gleaner._parse_refinement_output(
             self._plan(
-                self._entity_correction(name="acme", corrected_name="Acme Corporation")
+                self._entity_correction(
+                    name="acme", corrected_name="  Acme   Corporation "
+                )
             ),
             self.UNIT,
             [entity],
         )
-        # Extracted names are normalized, so a corrected one must be too.
-        assert entity.name == "acme corporation"
+        # Extracted names keep their display form (whitespace cleaned only), so
+        # a corrected one is cleaned the same way.
+        assert entity.name == "Acme Corporation"
         # Relationships reference the id; re-deriving it would orphan them.
         assert entity.id == "e1"
         # The stored embedding described the old name.

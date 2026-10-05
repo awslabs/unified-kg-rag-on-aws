@@ -74,7 +74,9 @@ security = SecurityStack(app, stack_id("Security"), config=config, env=env)
 # Instead the guardrail id flows to compute via the `guardrail_identifier`
 # context value: deploy the guardrail stack first, then pass its id with
 # `-c guardrail_identifier=<id>` on subsequent deploys. When unset, compute
-# simply injects no guardrail env var (guardrails disabled).
+# simply injects no guardrail env var (guardrails disabled). Passing the id does
+# NOT stop the guardrail stack from owning its guardrail (`create_guardrail`
+# controls that), so step 2 never deletes what step 1 created.
 GuardrailStack(app, stack_id("Guardrail"), config=config, env=bedrock_env)
 networking = NetworkingStack(app, stack_id("Network"), config=config, env=env)
 storage = StorageStack(

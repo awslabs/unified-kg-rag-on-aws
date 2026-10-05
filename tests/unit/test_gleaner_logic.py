@@ -291,7 +291,7 @@ class TestGleanerGrounding:
             new_r,
         )
         assert len(new_e) == 1
-        assert new_e[0].name == "acme corp"
+        assert new_e[0].name == "Acme Corp"
 
     def test_ungrounded_addition_dropped(self, gleaner) -> None:
         gleaner.extraction_config.entity_grounding.enabled = True

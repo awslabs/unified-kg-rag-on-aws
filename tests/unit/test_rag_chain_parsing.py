@@ -17,6 +17,7 @@ import json
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from unified_kg_rag.adapters.retrieval.token_manager import EMPTY_CONTEXT_PLACEHOLDER
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     ProcessedQuery,
@@ -231,10 +232,44 @@ def test_format_output_step_builds_rag_output() -> None:
     # highest-scoring sources with no text for RAGAS / recall scoring to match on.
     assert out.sources[0]["source"] == "doc-1"
     assert out.sources[0]["content"] == "c1"
-    assert set(out.sources[0].keys()) == {"content", "source", "score", "metadata"}
+    # `truncated` is additive (budget-truncation flag); the original four keys stay.
+    assert set(out.sources[0].keys()) == {
+        "content",
+        "source",
+        "score",
+        "metadata",
+        "truncated",
+    }
+    assert out.sources[0]["truncated"] is False
     # retriever_type / chunk_id stay out — the projection is still explicit, not a
     # full model_dump.
     assert "retriever_type" not in out.sources[0]
+
+
+def test_format_output_step_excludes_synthesized_results_from_sources() -> None:
+    # The global map-reduce summary stays in the search results (and thus the
+    # answer context) but is LLM output, so it must not be reported as a source.
+    sr = _search_result()
+    sr.results.insert(
+        0,
+        RetrievalResult(
+            content="summary of the reports",
+            score=1.0,
+            source="synthesized_summary",
+            retriever_type="general",
+            metadata={"synthesized": True},
+        ),
+    )
+    state = {
+        "search_results": sr,
+        "resolved_strategy": SearchStrategy.GLOBAL,
+        "start_time": 0.0,
+        "answer": "the answer",
+        "processed_query": ProcessedQuery(original_query="q", final_query="q"),
+    }
+    out = GraphRAGChain._format_output_step(state)
+    assert [s["source"] for s in out.sources] == ["doc-1"]
+    assert len(out.search_results.results) == 2
 
 
 def test_format_search_output_step_returns_serializable_dict() -> None:
@@ -278,28 +313,64 @@ def _ctx_state(history: str) -> dict:
     }
 
 
-def test_context_building_no_history_returns_raw_context(config: Config) -> None:
+async def test_context_building_no_history_returns_raw_context(
+    config: Config,
+) -> None:
     chain = GraphRAGChain(config=config)
-    out = chain._context_building_step(_ctx_state(""))
+    out = await chain._context_building_step(_ctx_state(""))
     # No history -> the raw (token-optimized) search context is returned as-is,
     # with no ContextBuildingPrompt LLM call.
     assert isinstance(out, str)
     assert out  # non-empty (the one result's content)
 
 
-def test_context_building_with_history_invokes_llm(config: Config) -> None:
+async def test_context_building_with_history_invokes_llm_async(
+    config: Config,
+) -> None:
     chain = GraphRAGChain(config=config)
 
     class _FakeBuilder:
-        def invoke(self, _inputs):
+        # Only the async entry point exists: a blocking .invoke inside the
+        # async chain would stall the event loop.
+        async def ainvoke(self, _inputs):
             return "FOLDED-WITH-HISTORY"
 
     chain._get_chain_for_prompt = lambda *a, **k: _FakeBuilder()  # type: ignore[assignment]
-    out = chain._context_building_step(_ctx_state("earlier turn"))
+    out = await chain._context_building_step(_ctx_state("earlier turn"))
     assert out == "FOLDED-WITH-HISTORY"
 
 
-def test_context_building_ignore_errors_degrades_to_empty(config: Config) -> None:
+async def test_context_building_empty_retrieval_with_history_skips_builder(
+    config: Config,
+) -> None:
+    # Empty retrieval + conversation history must NOT reach the builder LLM:
+    # it could synthesize a narrative from the history alone, which would pass
+    # the empty-context guard and be answered as if it were evidence.
+    chain = GraphRAGChain(config=config)
+
+    def _must_not_build(*a, **k):
+        raise AssertionError("context builder must not run on empty retrieval")
+
+    chain._get_chain_for_prompt = _must_not_build  # type: ignore[assignment]
+    state = _ctx_state("earlier turn about the Vendor")
+    state["search_results"] = SearchResult(
+        query=SearchQuery(query="q"),
+        results=[],
+        total_results=0,
+        search_strategy="local",
+        processing_time=0.0,
+    )
+    context = await chain._context_building_step(state)
+    assert context == EMPTY_CONTEXT_PLACEHOLDER
+
+    # ...and the answer step short-circuits to the standard no-data answer.
+    answer = chain._answer_generation_step({"context": context}).invoke({})
+    assert answer.startswith("I could not find relevant information")
+
+
+async def test_context_building_ignore_errors_degrades_to_empty(
+    config: Config,
+) -> None:
     chain = GraphRAGChain(config=config)
     chain.ignore_errors = True
 
@@ -307,7 +378,7 @@ def test_context_building_ignore_errors_degrades_to_empty(config: Config) -> Non
         raise RuntimeError("context builder down")
 
     chain._get_chain_for_prompt = _boom  # type: ignore[assignment]
-    out = chain._context_building_step(_ctx_state("earlier turn"))
+    out = await chain._context_building_step(_ctx_state("earlier turn"))
     assert out == ""
 
 

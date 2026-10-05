@@ -17,7 +17,10 @@ from pydantic import BaseModel, Field
 from tqdm import tqdm
 
 from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
-from unified_kg_rag.adapters.aws.bedrock import get_assumed_role_boto_session
+from unified_kg_rag.adapters.aws.bedrock import (
+    get_assumed_role_boto_session,
+    get_embedding_model_info,
+)
 from unified_kg_rag.adapters.aws.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
@@ -26,7 +29,13 @@ from unified_kg_rag.adapters.aws.token_counter import (
     BedrockTokenCounter,
     estimate_token_count,
 )
-from unified_kg_rag.domain.models import ChunkingStrategy, Config, Document, TextUnit
+from unified_kg_rag.domain.models import (
+    ChunkingStrategy,
+    Config,
+    Document,
+    ModelPurpose,
+    TextUnit,
+)
 from unified_kg_rag.domain.prompts import TextChunkingPrompt
 from unified_kg_rag.shared import DataProcessingError, get_logger
 from unified_kg_rag.shared.utils import (
@@ -372,9 +381,12 @@ class BaseChunker(ABC):
             region_name=config.aws.bedrock.region_name,
             config=BotoConfig(retries={"max_attempts": 3}),
         )
+        embedding_model_id = config.indexing.opensearch.embedding_model_id
+        embedding_info = get_embedding_model_info(embedding_model_id)
         self._token_counter = BedrockTokenCounter(
-            model_id=config.indexing.opensearch.embedding_model_id.value,
+            model_id=embedding_model_id.value,
             client=bedrock_client,
+            api_supported=bool(embedding_info and embedding_info.supports_count_tokens),
         )
 
         self.fallback_splitter = self._create_splitter(
@@ -623,11 +635,13 @@ class IntelligentTextChunker(BaseChunker):
         self.batch_processor = BatchProcessor()
 
         robust_xml_output_parser = create_robust_xml_output_parser(
+            model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
             enable_output_fixing=self.config.fixing.enabled,
             output_fixing_model_id=self.config.fixing.fixing_model_id,
         )
         self.chunker = setup_chain(
+            model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
             model_id=self.chunking_config.chunking_model_id,
             prompt_class=TextChunkingPrompt,

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
-from unified_kg_rag.domain.models import Config, LanguageCode, TextUnit
+from unified_kg_rag.domain.models import Config, LanguageCode, ModelPurpose, TextUnit
 from unified_kg_rag.domain.prompts import TextTranslationPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import BatchProcessor
@@ -84,6 +84,7 @@ class TextUnitTranslator:
         self.batch_processor = BatchProcessor()
 
         self.translator = setup_chain(
+            model_purpose=ModelPurpose.INGESTION,
             factory=self.factory,
             model_id=self.translation_config.translation_model_id,
             prompt_class=TextTranslationPrompt,

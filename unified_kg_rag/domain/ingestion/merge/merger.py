@@ -21,7 +21,7 @@ from unified_kg_rag.domain.models import (
     Relationship,
 )
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils.common import normalize_name
+from unified_kg_rag.shared.utils.common import entity_key
 
 if TYPE_CHECKING:
     from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
@@ -102,7 +102,7 @@ def merge_entities(
     delta: list[Entity],
     fuzzy_matcher: FuzzyMatcher | None = None,
 ) -> tuple[list[Entity], dict[str, str]]:
-    """Merge delta entities into old ones by normalized name.
+    """Merge delta entities into old ones by identity key (``entity_key``).
 
     Returns the merged entity list and ``{delta_id: surviving_id}`` for entities
     that merged into an existing one (so relationships can be remapped).
@@ -124,12 +124,12 @@ def merge_entities(
     id_remap: dict[str, str] = {}
 
     for entity in old:
-        key = normalize_name(entity.name)
+        key = entity_key(entity.name)
         by_key[key] = entity.model_copy(deep=True)
         old_key_by_name[entity.name] = key
 
     for entity in delta:
-        key = normalize_name(entity.name)
+        key = entity_key(entity.name)
         existing = by_key.get(key)
         if existing is None and fuzzy_matcher is not None:
             existing = _find_fuzzy_old_match(
@@ -165,12 +165,19 @@ def _find_fuzzy_old_match(
     Considers only *old* candidate names (delta entities are never matcher
     candidates), so the collapse target is stable regardless of delta ordering.
     Ties break on the higher score, then the lexicographically smaller name, so
-    the choice is deterministic.
+    the choice is deterministic. Old entities with an incompatible type are
+    skipped, matching the full-build resolver's grouping guard (identifier
+    conflicts are already filtered by ``find_all_matches``).
     """
+    from unified_kg_rag.domain.ingestion.base_resolver import (
+        entity_types_compatible,
+    )
+
     matches = [
         (name, score)
         for name, score in fuzzy_matcher.find_all_matches(entity.name)
         if name in old_key_by_name
+        and entity_types_compatible(entity.type, by_key[old_key_by_name[name]].type)
     ]
     if not matches:
         return None

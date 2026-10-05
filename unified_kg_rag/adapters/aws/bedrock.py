@@ -1,8 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, ClassVar, Generic, Literal, TypeVar
+from uuid import UUID
 
 import boto3
 from aws_assume_role_lib.aws_assume_role_lib import assume_role
@@ -11,6 +13,7 @@ from langchain_aws import BedrockEmbeddings, ChatBedrock, ChatBedrockConverse
 from langchain_aws.document_compressors.rerank import BedrockRerank
 from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
 from langchain_core.documents import Document
+from langchain_core.outputs import ChatGeneration, LLMResult
 from pydantic import BaseModel, Field, PrivateAttr
 
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
@@ -18,6 +21,7 @@ from unified_kg_rag.domain.models import (
     Config,
     EmbeddingModelId,
     LanguageModelId,
+    ModelPurpose,
     RerankModelId,
 )
 from unified_kg_rag.shared import (
@@ -46,6 +50,15 @@ class EmbeddingModelInfo(BaseModel):
     max_sequence_tokens: int | None = Field(
         default=None,
         description="Maximum number of tokens the model can process in a single sequence.",
+    )
+    supports_count_tokens: bool = Field(
+        default=False,
+        description=(
+            "Whether BedrockTokenCounter may call CountTokens for this model. The "
+            "counter sends a Converse-shaped input, which embedding models do not "
+            "accept, so truncation uses the script-aware estimate directly "
+            "instead of paying a failing round trip per text."
+        ),
     )
 
 
@@ -144,6 +157,15 @@ class RerankModelInfo(BaseModel):
     )
     max_document_tokens: int | None = Field(
         default=None, description="Maximum number of tokens allowed per document."
+    )
+    supports_count_tokens: bool = Field(
+        default=False,
+        description=(
+            "Whether BedrockTokenCounter may call CountTokens for this model. "
+            "Rerank models do not support Converse, the input shape the counter "
+            "sends, so query/document truncation uses the script-aware estimate "
+            "and no bedrock-runtime client is created for counting."
+        ),
     )
 
 
@@ -300,6 +322,11 @@ def get_language_model_info(model_id: LanguageModelId) -> LanguageModelInfo | No
     don't reach into the private dict.
     """
     return _LANGUAGE_MODEL_INFO.get(model_id)
+
+
+def get_embedding_model_info(model_id: EmbeddingModelId) -> EmbeddingModelInfo | None:
+    """Capability record for an embedding model, or None if unregistered."""
+    return _EMBEDDING_MODEL_INFO.get(model_id)
 
 
 ModelIdT = TypeVar("ModelIdT")
@@ -603,7 +630,9 @@ class BedrockEmbeddingModelFactory(
                 model_kwargs["dimensions"] = dimensions
 
         token_counter = BedrockTokenCounter(
-            model_id=model_id.value, client=self._client
+            model_id=model_id.value,
+            client=self._client,
+            api_supported=model_info.supports_count_tokens,
         )
         model = BedrockEmbeddingsWrapper(
             client=self._client,
@@ -618,6 +647,93 @@ class BedrockEmbeddingModelFactory(
         )
         logger.debug("Created embedding model: '%s'", model_id.value)
         return model
+
+
+_GUARDRAIL_INTERVENED_STOP_REASON = "guardrail_intervened"
+# InvokeModel response-body flag (langchain_aws GUARDRAILS_BODY_KEY).
+_GUARDRAIL_ACTION_KEY = "amazon-bedrock-guardrailAction"
+
+
+def _message_guardrail_intervened(metadata: dict[str, Any]) -> bool:
+    """Best-effort detection of a guardrail intervention in response metadata.
+
+    Converse (``ChatBedrockConverse``) reports ``stopReason ==
+    "guardrail_intervened"``; InvokeModel surfaces the body flag
+    ``amazon-bedrock-guardrailAction == "INTERVENED"`` when langchain_aws
+    propagates it. Anything else is treated as "not intervened".
+    """
+    stop_reason = metadata.get("stopReason") or metadata.get("stop_reason")
+    if stop_reason == _GUARDRAIL_INTERVENED_STOP_REASON:
+        return True
+    return metadata.get(_GUARDRAIL_ACTION_KEY) == "INTERVENED"
+
+
+class GuardrailInterventionHandler(BaseCallbackHandler):
+    """Make guardrail interventions visible instead of silently degrading.
+
+    When a guardrail blocks or masks a call, Bedrock still returns a normal
+    response (the configured "blocked" message), so a downstream parser just
+    sees text with no entities/answer. This handler logs each intervention at
+    WARNING with the model purpose and a process-wide running count.
+
+    It deliberately does NOT raise: on the query path the blocked message *is*
+    the intended user-facing response, and raising from a callback would turn
+    it into an opaque chain error. Operators alert on the WARNING (or read
+    :meth:`intervention_count`).
+    """
+
+    _count: ClassVar[int] = 0
+    _lock: ClassVar[threading.Lock] = threading.Lock()
+
+    def __init__(self, guardrail_identifier: str, purpose: ModelPurpose) -> None:
+        self.guardrail_identifier = guardrail_identifier
+        self.purpose = purpose
+        # InvokeModel with trace enabled reports through on_llm_error and then
+        # still calls on_llm_end; remember those runs to count each call once.
+        self._flagged_runs: set[UUID] = set()
+
+    @classmethod
+    def intervention_count(cls) -> int:
+        with cls._lock:
+            return cls._count
+
+    @classmethod
+    def reset_count(cls) -> None:
+        with cls._lock:
+            cls._count = 0
+
+    def _record(self) -> None:
+        with self._lock:
+            type(self)._count += 1
+            total = type(self)._count
+        logger.warning(
+            "Bedrock guardrail '%s' intervened on a %s model call; the response "
+            "was blocked or masked (interventions in this process: %d)",
+            self.guardrail_identifier,
+            self.purpose.value,
+            total,
+        )
+
+    def on_llm_error(
+        self, error: BaseException, *, run_id: UUID, **kwargs: Any
+    ) -> None:
+        if kwargs.get("reason") == "GUARDRAIL_INTERVENED":
+            self._flagged_runs.add(run_id)
+            self._record()
+
+    def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
+        if run_id in self._flagged_runs:
+            self._flagged_runs.discard(run_id)
+            return
+        for generations in response.generations:
+            for generation in generations:
+                if isinstance(
+                    generation, ChatGeneration
+                ) and _message_guardrail_intervened(
+                    generation.message.response_metadata
+                ):
+                    self._record()
+                    return
 
 
 class BedrockLanguageModelFactory(
@@ -802,7 +918,11 @@ class BedrockLanguageModelFactory(
                 )
             else:
                 config.setdefault("model_kwargs", {}).update(think_config)
-        self._apply_guardrail(config, is_cross_region)
+        self._apply_guardrail(
+            config,
+            is_cross_region,
+            ModelPurpose(kwargs.get("model_purpose", ModelPurpose.QUERY)),
+        )
 
     def _build_thinking_config(
         self, model_info: LanguageModelInfo, **kwargs: Any
@@ -833,15 +953,29 @@ class BedrockLanguageModelFactory(
             "output_config": {"effort": effort},
         }
 
-    def _apply_guardrail(self, config: dict[str, Any], is_cross_region: bool) -> None:
+    def _apply_guardrail(
+        self,
+        config: dict[str, Any],
+        is_cross_region: bool,
+        purpose: ModelPurpose = ModelPurpose.QUERY,
+    ) -> None:
         """Attach Bedrock Guardrails to the model when configured.
 
         ChatBedrockConverse exposes ``guardrail_config`` (Converse-API shape);
         ChatBedrock exposes ``guardrails`` (InvokeModel shape). When no guardrail
         identifier is set the model is created without guardrails (no-op).
+        ``purpose`` scopes it via ``guardrail.apply_to``: by default only
+        query-path models are guarded. A guarded model also gets a
+        :class:`GuardrailInterventionHandler` so interventions are logged.
         """
         guardrail = self.config.aws.bedrock.guardrail
-        if not guardrail.enabled:
+        if guardrail.identifier is None or not guardrail.applies_to(purpose):
+            if guardrail.enabled:
+                logger.debug(
+                    "Skipping Bedrock guardrail for %s model (apply_to='%s')",
+                    purpose.value,
+                    guardrail.apply_to,
+                )
             return
         if is_cross_region:
             # ChatBedrockConverse passes guardrail_config straight to the
@@ -860,7 +994,23 @@ class BedrockLanguageModelFactory(
                 "guardrailVersion": guardrail.version,
                 "trace": guardrail.trace,
             }
-        logger.debug("Applied Bedrock guardrail '%s'", guardrail.identifier)
+        handler = GuardrailInterventionHandler(guardrail.identifier, purpose)
+        callbacks = config.get("callbacks")
+        if callbacks is None:
+            config["callbacks"] = [handler]
+        elif isinstance(callbacks, BaseCallbackManager):
+            # Copy first: the manager is caller-owned and may be shared by other
+            # (unguarded) models, which must not start counting interventions.
+            manager = callbacks.copy()
+            manager.add_handler(handler, inherit=False)
+            config["callbacks"] = manager
+        else:
+            config["callbacks"] = [*callbacks, handler]
+        logger.debug(
+            "Applied Bedrock guardrail '%s' to %s model",
+            guardrail.identifier,
+            purpose.value,
+        )
 
     @staticmethod
     def _validate_max_tokens(
@@ -992,13 +1142,22 @@ class BedrockRerankModelFactory(
             f"arn:aws:bedrock:{self.region_name}::foundation-model/{model_id.value}"
         )
 
-        bedrock_runtime_client = self.boto_session.client(
-            "bedrock-runtime",
-            region_name=self.region_name,
-            config=self._boto_config(),
+        # Only open a bedrock-runtime client when the counter will actually use
+        # it; for rerank models CountTokens is unsupported, so counting goes
+        # straight to the estimate.
+        bedrock_runtime_client = (
+            self.boto_session.client(
+                "bedrock-runtime",
+                region_name=self.region_name,
+                config=self._boto_config(),
+            )
+            if model_info.supports_count_tokens
+            else None
         )
         token_counter = BedrockTokenCounter(
-            model_id=model_id.value, client=bedrock_runtime_client
+            model_id=model_id.value,
+            client=bedrock_runtime_client,
+            api_supported=model_info.supports_count_tokens,
         )
         model = BedrockRerankWrapper(
             model_arn=model_arn,

@@ -146,6 +146,38 @@ class TestParseRagasReports:
         df = pd.DataFrame({"faithfulness": [float("nan")]})
         reports = ev._parse_ragas_reports(df, [_query()], [_result()])
         assert reports[0].metrics == []
+        assert "faithfulness" in reports[0].metadata["failed_metrics"]
+
+    def test_empty_reference_skips_reference_metrics(self, mocker) -> None:
+        ev, _ = _make_evaluator(
+            mocker,
+            ragas_metrics=[
+                EvaluationMetricType.ANSWER_CORRECTNESS,
+                EvaluationMetricType.CONTEXT_RECALL,
+                EvaluationMetricType.FAITHFULNESS,
+            ],
+        )
+        df = pd.DataFrame(
+            {
+                "answer_correctness": [0.0, 0.7],
+                "context_recall": [0.0, 0.5],
+                "faithfulness": [0.9, 0.9],
+            }
+        )
+        reports = ev._parse_ragas_reports(
+            df, [_query("q1"), _query("q2")], [_result(), _result()], ["", "truth"]
+        )
+        # Row without a reference: only the reference-free metric is scored.
+        assert {m.metric_type for m in reports[0].metrics} == {
+            EvaluationMetricType.FAITHFULNESS
+        }
+        assert reports[0].metadata["skipped_metrics"] == {
+            "answer_correctness": "empty_reference",
+            "context_recall": "empty_reference",
+        }
+        # Row with a reference: everything scored.
+        assert len(reports[1].metrics) == 3
+        assert "skipped_metrics" not in reports[1].metadata
 
     def test_nan_excluded_from_overall_score(self, mocker) -> None:
         # A NaN metric must not drag the overall score: only the real metric counts.
@@ -268,6 +300,51 @@ class TestAevaluateBatch:
         reports = await ev.aevaluate_batch([_query()], [_result()], [""])
         assert len(reports) == 1
         assert reports[0].metrics == []
+        assert "ragas down" in reports[0].metadata["failed_metrics"]["faithfulness"]
+
+    async def test_reference_metrics_not_run_when_no_row_has_reference(
+        self, mocker
+    ) -> None:
+        ev, _ = _make_evaluator(
+            mocker,
+            ragas_metrics=[
+                EvaluationMetricType.ANSWER_CORRECTNESS,
+                EvaluationMetricType.FAITHFULNESS,
+            ],
+        )
+        captured = {}
+
+        class _FakeRagasResult:
+            def to_pandas(self):
+                return pd.DataFrame({"faithfulness": [0.9]})
+
+        def fake_evaluate(*, dataset, metrics, **kwargs):
+            captured["metrics"] = metrics
+            return _FakeRagasResult()
+
+        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
+        reports = await ev.aevaluate_batch([_query()], [_result()], [""])
+        assert captured["metrics"] == [
+            rg_module.RagasEvaluator.RAGAS_METRICS[EvaluationMetricType.FAITHFULNESS]
+        ]
+        assert reports[0].metadata["skipped_metrics"] == {
+            "answer_correctness": "empty_reference"
+        }
+
+    async def test_only_reference_metrics_and_no_reference_skips_all(
+        self, mocker
+    ) -> None:
+        ev, _ = _make_evaluator(
+            mocker, ragas_metrics=[EvaluationMetricType.ANSWER_CORRECTNESS]
+        )
+        evaluate = mocker.patch.object(rg_module, "evaluate")
+        reports = await ev.aevaluate_batch([_query()], [_result()], [""])
+        evaluate.assert_not_called()
+        assert reports[0].metrics == []
+        assert reports[0].metadata["skipped_metrics"] == {
+            "answer_correctness": "empty_reference"
+        }
 
 
 class TestValidateConfig:
