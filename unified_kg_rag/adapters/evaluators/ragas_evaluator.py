@@ -20,6 +20,7 @@ from ragas.metrics import (
     context_recall,
     faithfulness,
 )
+from ragas.run_config import RunConfig
 
 from unified_kg_rag.adapters.aws import (
     BedrockEmbeddingModelFactory,
@@ -36,7 +37,7 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluatorType,
 )
-from unified_kg_rag.evaluation.base import BaseGraphRAGEvaluator
+from unified_kg_rag.evaluation.base import BaseGraphRAGEvaluator, judge_model_kwargs
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import EvaluationException, get_logger
 
@@ -123,7 +124,16 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             region_name=self.config.aws.bedrock.region_name,
         )
         self.llm = llm_factory.get_model(
-            model_id=self.config.evaluation.evaluation_model_id
+            model_id=self.config.evaluation.evaluation_model_id,
+            **judge_model_kwargs(self.config),
+        )
+
+    def _build_run_config(self) -> RunConfig:
+        evaluation = self.config.evaluation
+        return RunConfig(
+            timeout=evaluation.ragas_timeout,
+            max_workers=evaluation.ragas_max_workers,
+            max_retries=evaluation.ragas_max_retries,
         )
 
     def _truncate_contexts(self, results: list[EvaluationResult]) -> list[list[str]]:
@@ -231,6 +241,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 llm=self.llm,
                 embeddings=self.embeddings,
                 raise_exceptions=False,
+                run_config=self._build_run_config(),
                 show_progress=self.show_progress,
                 batch_size=self.config.processing.batch_size,
             )

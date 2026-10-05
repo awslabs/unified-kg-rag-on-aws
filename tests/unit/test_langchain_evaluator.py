@@ -349,3 +349,10 @@ class TestValidateConfig:
         )
         ev.config.evaluation.langchain_metrics = [EvaluationMetricType.FAITHFULNESS]
         assert ev.validate_config() is False
+
+
+def test_judge_model_uses_configured_judge_effort(mocker) -> None:
+    _make_evaluator(mocker)
+    factory = lc_module.BedrockLanguageModelFactory.return_value
+    _, kwargs = factory.get_model.call_args
+    assert kwargs["effort"] == Config().evaluation.judge_effort == "low"

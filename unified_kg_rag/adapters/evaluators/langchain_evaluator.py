@@ -23,7 +23,7 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluatorType,
 )
-from unified_kg_rag.evaluation.base import BaseGraphRAGEvaluator
+from unified_kg_rag.evaluation.base import BaseGraphRAGEvaluator, judge_model_kwargs
 from unified_kg_rag.shared import EvaluationException, get_logger
 
 logger = get_logger(__name__)
@@ -107,6 +107,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             )
             self.llm = llm_factory.get_model(
                 model_id=self.config.evaluation.evaluation_model_id,
+                **judge_model_kwargs(self.config),
             )
             self._initialize_metric_evaluators()
             logger.info(

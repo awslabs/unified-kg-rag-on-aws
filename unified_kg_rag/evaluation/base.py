@@ -20,6 +20,16 @@ from unified_kg_rag.shared import get_logger
 logger = get_logger(__name__)
 
 
+def judge_model_kwargs(config: Config) -> dict[str, Any]:
+    """Per-call ``get_model`` overrides for an LLM judge.
+
+    Applies ``evaluation.judge_effort`` (when set) so evaluation calls can run
+    at a lower reasoning effort than the RAG pipeline's ``aws.bedrock.effort``.
+    """
+    effort = config.evaluation.judge_effort
+    return {"effort": effort} if effort else {}
+
+
 class BaseEvaluator(ABC):
     def __init__(
         self,

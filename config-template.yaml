@@ -589,6 +589,20 @@ evaluation:
     - context_recall
     - faithfulness
   max_context_tokens: 8192
+  # Reasoning effort for the LLM judge (ragas + langchain evaluators) on
+  # adaptive-thinking models (Claude 4.7+). Judge calls are short
+  # extraction/classification prompts; "low" keeps each RAGAS metric well inside
+  # ragas_timeout. null inherits aws.bedrock.effort. Ignored by other models.
+  judge_effort: "low"
+  # RAGAS RunConfig. ragas_timeout is the budget (seconds) for scoring ONE
+  # metric on ONE sample, including all of its judge calls and retries; a
+  # timed-out job yields NaN for that metric. RAGAS' own default (180s) is too
+  # tight for thinking judges. Lower ragas_max_workers if Bedrock throttles the
+  # judge (throttled calls burn the per-job timeout). ragas_max_retries is the
+  # total attempts per judge call.
+  ragas_timeout: 300
+  ragas_max_workers: 8
+  ragas_max_retries: 3
   save_detailed_results: true
 
 # Custom Prompts Configuration
