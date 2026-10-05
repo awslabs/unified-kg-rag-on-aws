@@ -955,7 +955,7 @@ run-visualization --data-path visualization_data.json --renderers interactive --
 
 | 플래그 | 기본값 | 의미 |
 |---|---|---|
-| `--source-directory` | **필수** | 텍스트 문서 디렉터리 (`.txt`, `.md`, `.markdown`); `--source-dir`도 별칭으로 허용 |
+| `--source-directory` | **필수** | 문서 디렉터리 (`.txt`/`.md`/`.markdown`과 `run-ingestion`이 파싱하는 모든 포맷, 예: `.pdf`); `--source-dir`도 별칭으로 허용 |
 | `--output` | `tuned_prompts.yaml` | 출력 YAML 경로 |
 | `--max-docs` | `20` | 샘플링할 최대 문서 수 |
 | `--config-path` | — | `config.yaml` 경로 |
@@ -966,8 +966,9 @@ run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --conf
 
 출력 YAML에는 `custom_prompts` 블록(과 감지된 도메인이 담긴 `profile`)이
 포함됩니다. **검토한 후** 원하는 프롬프트를 `config.yaml`의 `custom_prompts:`
-아래로 복사하세요. 프로파일링에는 일반 텍스트 포맷(`.txt`/`.md`/`.markdown`)만
-읽는다는 점에 유의하세요.
+아래로 복사하세요. 일반 텍스트 파일은 그대로 읽고, 그 밖의 포맷(PDF, CSV, JSON,
+`ParserFactory.register_loader`로 등록한 포맷)은 인제스션과 같은 로더로 파싱합니다.
+파싱에 실패한 파일은 경고를 남기고 건너뜁니다.
 
 ---
 

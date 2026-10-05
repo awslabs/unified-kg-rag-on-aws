@@ -967,7 +967,7 @@ persona / entity types) via Bedrock, and writes a domain-adapted
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--source-directory` | **required** | Directory of text documents (`.txt`, `.md`, `.markdown`); `--source-dir` is accepted as an alias |
+| `--source-directory` | **required** | Directory of documents (`.txt`/`.md`/`.markdown` plus every format `run-ingestion` parses, e.g. `.pdf`); `--source-dir` is accepted as an alias |
 | `--output` | `tuned_prompts.yaml` | Output YAML path |
 | `--max-docs` | `20` | Max documents to sample |
 | `--config-path` | — | Path to `config.yaml` |
@@ -978,8 +978,10 @@ run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --conf
 
 The output YAML contains a `custom_prompts` block (and a `profile` with the
 detected domain). **Review it**, then copy the prompts you want into your
-`config.yaml` under `custom_prompts:`. Note it only reads plain-text formats
-(`.txt`/`.md`/`.markdown`) for profiling.
+`config.yaml` under `custom_prompts:`. Plain-text files are read as-is; other
+formats (PDF, CSV, JSON, custom `ParserFactory.register_loader` formats) go
+through the same loaders as ingestion. Files that fail to parse are skipped
+with a warning.
 
 ---
 

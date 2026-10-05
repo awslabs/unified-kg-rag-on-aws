@@ -429,9 +429,39 @@ def test_load_corpus_texts_filters_and_limits(tmp_path) -> None:
     (tmp_path / "a.txt").write_text("alpha", encoding="utf-8")
     (tmp_path / "b.md").write_text("beta", encoding="utf-8")
     (tmp_path / "c.markdown").write_text("gamma", encoding="utf-8")
-    (tmp_path / "skip.pdf").write_text("ignored", encoding="utf-8")
+    (tmp_path / "broken.pdf").write_text("not a pdf", encoding="utf-8")
+    (tmp_path / "skip.bin").write_text("ignored", encoding="utf-8")
     texts = run_prompt_tuning.load_corpus_texts(tmp_path, max_docs=10)
     assert set(texts) == {"alpha", "beta", "gamma"}
+
+
+def _minimal_pdf(text: str) -> bytes:
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\n" % (len(objects) + 1)
+    out += b"startxref\n%d\n%%%%EOF\n" % xref
+    return bytes(out)
+
+
+def test_load_corpus_texts_parses_pdf_with_ingestion_loaders(tmp_path) -> None:
+    (tmp_path / "terms.pdf").write_bytes(_minimal_pdf("Vendor ships to Buyer"))
+    texts = run_prompt_tuning.load_corpus_texts(tmp_path, max_docs=10)
+    assert len(texts) == 1 and "Vendor ships to Buyer" in texts[0]
 
 
 def test_load_corpus_texts_respects_max_docs(tmp_path) -> None:
