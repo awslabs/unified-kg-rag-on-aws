@@ -289,6 +289,16 @@ and their output fixer 32768, document translation 65536. Raise the value if
 answers are cut off (`stopReason: max_tokens`), or set it to `null` to send the
 model maximum as before.
 
+**Prompt caching.** On Claude models that support explicit prompt caching, the
+end of each system prompt is marked as a cache checkpoint: a `cachePoint` block
+on the Converse API (every inference profile) and `cache_control` on
+InvokeModel. A system prompt shorter than the model's minimum checkpoint size
+(512 tokens on Claude Sonnet/Opus 5.5 and Opus 5, 1024 on most others, 4096 on
+Claude Haiku 4.5 and Opus 4.5-4.7) gets no marker, because Bedrock would accept
+it but cache nothing. Cache reads show up as `cache_read` in the response's
+`usage_metadata.input_token_details`, and cached input tokens do not count
+against the tokens-per-minute quota.
+
 | Model id | Provider | Context / max output | Reasoning control |
 | --- | --- | --- | --- |
 | `anthropic.claude-sonnet-5-5` (default) | Anthropic | 1M / 128K | adaptive, always on; `effort` low–max |

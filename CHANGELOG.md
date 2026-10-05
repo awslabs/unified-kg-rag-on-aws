@@ -55,6 +55,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   the other profile-only models.
 
 ### Fixed
+- Prompt caching now takes effect on the Converse API, which every Claude
+  4.5+/5.x inference profile uses. The system prompt carried an Anthropic
+  `cache_control` key that langchain-aws drops when it builds a Converse
+  request, so nothing was ever cached there; Converse requests now end the
+  system prompt with a native `cachePoint` block, and InvokeModel keeps
+  `cache_control`. A marker is only added when the system prompt reaches the
+  model's minimum checkpoint size (`min_cache_tokens` in the capability record).
 - LLM requests no longer ask for the model's maximum output by default.
   Bedrock reserves input + `max_tokens` against the tokens-per-minute quota at
   request start, so sending 128K on Claude 5.x throttled concurrent calls far

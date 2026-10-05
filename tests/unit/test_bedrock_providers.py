@@ -30,9 +30,7 @@ from unified_kg_rag.adapters.aws.bedrock import (
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.domain.models import Config, LanguageModelId
-from unified_kg_rag.domain.prompts.data_processing import (
-    DescriptionSummarizationPrompt,
-)
+from unified_kg_rag.domain.prompts.graph_extraction import GraphRefinementPrompt
 from unified_kg_rag.shared import LanguageModelError
 
 pytestmark = pytest.mark.unit
@@ -337,7 +335,7 @@ def _system_message(model_id: LanguageModelId) -> Any:
     chain = setup_chain(
         _StubFactory(),  # type: ignore[arg-type]
         model_id,
-        DescriptionSummarizationPrompt,
+        GraphRefinementPrompt,
         StrOutputParser(),
     )
     prompt = chain.first  # type: ignore[attr-defined]

@@ -286,6 +286,15 @@ thinking 토큰도 `max_tokens`에 포함됩니다. 출력이 긴 프롬프트�
 출력 수정기는 32768, 문서 번역은 65536입니다. 답변이 잘리면(`stopReason:
 max_tokens`) 값을 올리고, 이전처럼 모델 최대값을 보내려면 `null`로 설정합니다.
 
+**프롬프트 캐싱.** 명시적 프롬프트 캐싱을 지원하는 Claude 모델에서는 각 시스템
+프롬프트 끝을 캐시 지점으로 표시합니다. Converse API(모든 추론 프로파일)에서는
+`cachePoint` 블록, InvokeModel에서는 `cache_control`을 씁니다. 시스템 프롬프트가
+모델의 최소 캐시 지점 크기(Claude Sonnet/Opus 5.5와 Opus 5는 512토큰, 대부분은
+1024토큰, Claude Haiku 4.5와 Opus 4.5-4.7은 4096토큰)보다 짧으면 표시하지
+않습니다. Bedrock이 요청은 받지만 아무것도 캐시하지 않기 때문입니다. 캐시 적중은
+응답의 `usage_metadata.input_token_details`에 `cache_read`로 나타나며, 캐시에서
+읽은 입력 토큰은 분당 토큰 할당량에 포함되지 않습니다.
+
 | 모델 ID | 공급자 | 컨텍스트 / 최대 출력 | 추론 제어 |
 | --- | --- | --- | --- |
 | `anthropic.claude-sonnet-5-5`(기본값) | Anthropic | 1M / 128K | adaptive, 항상 켜짐. `effort` low–max |

@@ -102,6 +102,15 @@ class LanguageModelInfo(BaseModel):
         default=False,
         description="Whether the model supports prompt caching to improve performance.",
     )
+    min_cache_tokens: int = Field(
+        default=1024,
+        ge=0,
+        description=(
+            "Minimum prompt-prefix tokens for a cache checkpoint. A shorter "
+            "system prompt gets no cache marker: Bedrock would accept it but "
+            "cache nothing."
+        ),
+    )
     supports_thinking: bool = Field(
         default=False,
         description="Whether the model supports thinking/reasoning capabilities.",
@@ -257,8 +266,9 @@ _EMBEDDING_MODEL_INFO: dict[EmbeddingModelId, EmbeddingModelInfo] = {
 }
 
 # Capability sources: the Amazon Bedrock model cards
-# (docs.aws.amazon.com/bedrock/latest/userguide/model-card-<provider>-<model>.html)
-# and the adaptive-thinking guide (claude-messages-adaptive-thinking.html).
+# (docs.aws.amazon.com/bedrock/latest/userguide/model-card-<provider>-<model>.html),
+# the adaptive-thinking guide (claude-messages-adaptive-thinking.html) and, for
+# min_cache_tokens, the prompt-caching guide (prompt-caching.html).
 # Request-shape fields (effort levels, thinking/temperature acceptance,
 # CountTokens) for the Claude 4.6+ and GPT entries were checked against live
 # bedrock-runtime responses.
@@ -271,6 +281,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         context_window_size=1000000,
         max_output_tokens=128000,
         supports_prompt_caching=True,
+        min_cache_tokens=512,
         supports_thinking=True,
         supports_1m_context_window=True,
         native_1m_context_window=True,
@@ -284,6 +295,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         context_window_size=1000000,
         max_output_tokens=128000,
         supports_prompt_caching=True,
+        min_cache_tokens=512,
         supports_thinking=True,
         supports_1m_context_window=True,
         native_1m_context_window=True,
@@ -312,6 +324,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         context_window_size=1000000,
         max_output_tokens=128000,
         supports_prompt_caching=True,
+        min_cache_tokens=512,
         supports_thinking=True,
         supports_1m_context_window=True,
         native_1m_context_window=True,
@@ -344,6 +357,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         context_window_size=1000000,
         max_output_tokens=128000,
         supports_prompt_caching=True,
+        min_cache_tokens=4096,
         supports_thinking=True,
         supports_1m_context_window=True,
         native_1m_context_window=True,
@@ -361,6 +375,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         context_window_size=1000000,
         max_output_tokens=128000,
         supports_prompt_caching=True,
+        min_cache_tokens=4096,
         supports_thinking=True,
         supports_1m_context_window=True,
         native_1m_context_window=True,
@@ -403,11 +418,13 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         max_output_tokens=8192,
         supports_performance_optimization=True,
         supports_prompt_caching=True,
+        min_cache_tokens=2048,
     ),
     LanguageModelId.CLAUDE_V4_5_HAIKU: LanguageModelInfo(
         context_window_size=200000,
         max_output_tokens=64000,
         supports_prompt_caching=True,
+        min_cache_tokens=4096,
         requires_inference_profile=True,
     ),
     LanguageModelId.CLAUDE_V3_5_SONNET: LanguageModelInfo(
@@ -455,6 +472,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         context_window_size=200000,
         max_output_tokens=64000,
         supports_prompt_caching=True,
+        min_cache_tokens=4096,
         supports_thinking=True,
         supports_1m_context_window=True,
         requires_inference_profile=True,
