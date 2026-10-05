@@ -54,7 +54,12 @@ aws:
   s3:
     bucket_name: # Add bucket name here
     encryption:
-      encryption_type: "AES256"
+      # BUCKET_DEFAULT (default): send no SSE header, so the bucket's default
+      #   encryption applies (e.g. the CDK stack's KMS CMK with use_cmk=true).
+      # AES256: force SSE-S3 per object (overrides a bucket CMK default).
+      # aws:kms: force SSE-KMS with kms_key_id (required).
+      # NONE: legacy alias of BUCKET_DEFAULT (S3 always encrypts new objects).
+      encryption_type: "BUCKET_DEFAULT"
       kms_key_id: null
   # DynamoDB document-status registry for incremental indexing. When enabled,
   # each indexing run diffs the corpus against this table (by content hash) and

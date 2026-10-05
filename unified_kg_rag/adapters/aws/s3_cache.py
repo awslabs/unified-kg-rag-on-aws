@@ -199,18 +199,26 @@ class S3CacheManager:
             )
             return False
 
+    def _sse_extra_args(self) -> dict[str, str]:
+        """Per-object SSE upload args for the configured encryption type.
+
+        BUCKET_DEFAULT (and the legacy NONE) send no header so the bucket's
+        default encryption applies. Sending ``ServerSideEncryption=AES256``
+        would silently override a bucket whose default is a KMS CMK.
+        """
+        encryption_conf = self.s3_config.encryption
+        if encryption_conf.encryption_type == S3EncryptionType.AES256:
+            return {"ServerSideEncryption": "AES256"}
+        if encryption_conf.encryption_type == S3EncryptionType.KMS:
+            extra_args = {"ServerSideEncryption": "aws:kms"}
+            if encryption_conf.kms_key_id:
+                extra_args["SSEKMSKeyId"] = encryption_conf.kms_key_id
+            return extra_args
+        return {}
+
     def _upload_file_to_s3(self, local_path: Path, s3_key: str) -> bool:
         try:
-            extra_args = {}
-            encryption_conf = self.s3_config.encryption
-
-            if encryption_conf.encryption_type == S3EncryptionType.AES256:
-                extra_args["ServerSideEncryption"] = "AES256"
-            elif encryption_conf.encryption_type == S3EncryptionType.KMS:
-                extra_args["ServerSideEncryption"] = "aws:kms"
-                if encryption_conf.kms_key_id:
-                    extra_args["SSEKMSKeyId"] = encryption_conf.kms_key_id
-
+            extra_args = self._sse_extra_args()
             self.s3_client.upload_file(
                 str(local_path), str(self.bucket_name), s3_key, ExtraArgs=extra_args
             )

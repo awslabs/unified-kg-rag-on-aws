@@ -161,6 +161,9 @@ cdk deploy --all
    which override `aws.dynamodb.table_name` / `create_table_if_missing`, so the
    app and the CloudWatch alarms track the same IaC-managed table. Incremental
    indexing still needs `aws.dynamodb.enabled: true` in `config.yaml`.
+   S3 cache uploads default to the bucket's own encryption
+   (`aws.s3.encryption.encryption_type: BUCKET_DEFAULT`), so `use_cmk=true`
+   objects are encrypted with the CMK.
 2. Start an ingestion run:
    ```bash
    aws stepfunctions start-execution \
