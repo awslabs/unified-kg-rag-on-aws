@@ -630,6 +630,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             source="synthesized_summary",
             retriever_type=SectionType.GENERAL.value,
             metadata={
+                # LLM output, not retrieved evidence: kept in the answer context
+                # (design §6.1.1) but excluded from the reported sources.
+                "synthesized": True,
                 "source_results_count": len(results),
                 "ranked_key_points": len(points),
             },
@@ -654,7 +657,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 score=1.0,
                 source="synthesized_summary",
                 retriever_type=SectionType.GENERAL.value,
-                metadata={"source_results_count": len(results)},
+                metadata={
+                    "synthesized": True,
+                    "source_results_count": len(results),
+                },
             )
             return [summary_result] + results
         except Exception as e:

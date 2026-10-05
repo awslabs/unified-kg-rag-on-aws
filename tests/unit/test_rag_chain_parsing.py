@@ -238,6 +238,32 @@ def test_format_output_step_builds_rag_output() -> None:
     assert "retriever_type" not in out.sources[0]
 
 
+def test_format_output_step_excludes_synthesized_results_from_sources() -> None:
+    # The global map-reduce summary stays in the search results (and thus the
+    # answer context) but is LLM output, so it must not be reported as a source.
+    sr = _search_result()
+    sr.results.insert(
+        0,
+        RetrievalResult(
+            content="summary of the reports",
+            score=1.0,
+            source="synthesized_summary",
+            retriever_type="general",
+            metadata={"synthesized": True},
+        ),
+    )
+    state = {
+        "search_results": sr,
+        "resolved_strategy": SearchStrategy.GLOBAL,
+        "start_time": 0.0,
+        "answer": "the answer",
+        "processed_query": ProcessedQuery(original_query="q", final_query="q"),
+    }
+    out = GraphRAGChain._format_output_step(state)
+    assert [s["source"] for s in out.sources] == ["doc-1"]
+    assert len(out.search_results.results) == 2
+
+
 def test_format_search_output_step_returns_serializable_dict() -> None:
     state = {
         "search_results": _search_result(),

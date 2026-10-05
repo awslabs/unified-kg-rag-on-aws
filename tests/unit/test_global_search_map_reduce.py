@@ -257,6 +257,8 @@ async def test_apply_map_reduce_full_pipeline_prepends_synthesis() -> None:
     out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
     assert out[0].content == "THE ANSWER"
     assert out[0].metadata["ranked_key_points"] == 1  # only the 95 survived
+    # LLM synthesis, not evidence: flagged so it is never reported as a source.
+    assert out[0].metadata["synthesized"] is True
     assert [r.source for r in out[1:]] == ["c0", "c1"]
 
 
@@ -293,6 +295,7 @@ async def test_apply_map_reduce_parse_failure_degrades_to_concat() -> None:
     results = _communities(2)
     out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
     assert out[0].content == "CONCAT SUMMARY"
+    assert out[0].metadata["synthesized"] is True
     # Concat path metadata has no ranked_key_points key.
     assert "ranked_key_points" not in out[0].metadata
     # Reduce was fed the raw report bodies (concat path).

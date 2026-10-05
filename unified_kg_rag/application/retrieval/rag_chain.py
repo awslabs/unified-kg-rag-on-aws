@@ -715,9 +715,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # silently zeroed offline context-recall scoring AND starved the RAGAS context
         # metrics for the highest-scoring results. Retrieval and generation are
         # unaffected — this is what gets REPORTED, not what gets retrieved.
+        # Synthesized results (e.g. the global map-reduce summary) are LLM output
+        # the answer model may read, not retrieved evidence, so they are never
+        # reported as sources.
         sources = [
             r.model_dump(include={"content", "source", "score", "metadata"})
             for r in sr.results
+            if not (r.metadata or {}).get("synthesized")
         ]
 
         metadata = {
