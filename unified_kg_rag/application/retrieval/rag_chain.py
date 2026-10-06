@@ -233,8 +233,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # ("graph"/"document") to swap Neptune/OpenSearch for another store
         # without subclassing. Unspecified roles fall back to the AWS defaults.
         self._retriever_builders_override = retriever_builders or {}
+        # Retrievers and strategy instances are built once per event loop and
+        # reused across queries: retrievers hold loop-bound async clients, and a
+        # strategy holds its retrievers, so both caches are dropped together
+        # when the loop changes. Strategies keep no per-query state on the
+        # instance (see BaseSearchStrategy), so concurrent queries on one loop
+        # share an instance.
         self._retriever_cache: dict[
             tuple[RetrieverRole, int | None], BaseGraphRAGRetriever
+        ] = {}
+        self._strategy_cache: dict[
+            tuple[SearchStrategy, int | None], BaseSearchStrategy
         ] = {}
         # The loop the cached retrievers are bound to. Held by reference, not
         # id: a dead loop's id can be reused by a new loop.
@@ -594,10 +603,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
     async def _search_step(self, state: dict[str, Any]) -> SearchResult:
         # A single GraphRAGChain is reused for concurrent invocations (the
-        # evaluation path runs queries through `abatch`). Keep the per-query
-        # strategy instance LOCAL — storing it on `self` lets a concurrent
+        # evaluation path runs queries through `abatch`). Keep the resolved
+        # strategy in a LOCAL — storing it on `self` lets a concurrent
         # `_search_step` overwrite it between assignment and `await`, executing
         # one query against another query's strategy (silent cross-contamination).
+        # The instance itself is cached per loop and holds no per-query state.
         strategy_instance = self._get_strategy_instance(state["resolved_strategy"])
         if state.get("filters"):
             self._validate_filter_keys(
@@ -656,6 +666,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     def _get_strategy_instance(
         self, strategy_type: SearchStrategy
     ) -> BaseSearchStrategy:
+        current_loop_id = self._sync_loop_caches()
+        cache_key = (strategy_type, current_loop_id)
+        if (cached := self._strategy_cache.get(cache_key)) is not None:
+            return cached
+
         spec = get_strategy_spec(strategy_type)
 
         # Inject retrievers keyed by abstract role ("graph"/"document"), so the
@@ -664,9 +679,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             role.value: self._get_retriever(role) for role in spec.required_roles
         }
 
-        return spec.strategy_class(
+        strategy = spec.strategy_class(
             config=self.config, retrievers=retrievers, providers=self.providers
         )
+        self._strategy_cache[cache_key] = strategy
+        return strategy
 
     def _build_graph_retriever(self) -> BaseGraphRAGRetriever:
         neptune_client = NeptuneClient(
@@ -728,7 +745,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             return None
         if current is not self._cached_loop:
             logger.debug(
-                "Event loop changed (old=%s, new=%s), releasing cached retrievers",
+                "Event loop changed (old=%s, new=%s), releasing cached retrievers "
+                "and strategies",
                 id(self._cached_loop) if self._cached_loop else None,
                 id(current),
             )
@@ -743,6 +761,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         retrievers = list(self._retriever_cache.values())
         loop = getattr(self, "_cached_loop", None)
         self._retriever_cache.clear()
+        # Strategies hold the retrievers, so they go with them.
+        getattr(self, "_strategy_cache", {}).clear()
         self._cached_loop = None
         return retrievers, loop
 
