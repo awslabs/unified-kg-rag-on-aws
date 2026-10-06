@@ -242,6 +242,8 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   behaviour actually in effect until now: with the sweep working, global
   search lost 3 of 20 answers on the E2E corpus. Cached community-detection
   output is recomputed once (#141).
+- A conversation turn (question and answer) is appended to memory as one
+  unit, so concurrent turns on one conversation no longer interleave (#PR).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on

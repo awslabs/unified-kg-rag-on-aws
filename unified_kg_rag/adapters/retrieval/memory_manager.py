@@ -321,6 +321,32 @@ class MemoryManager:
         else:
             await asyncio.to_thread(memory.update_context, message)
 
+    async def add_turn(
+        self,
+        conv_id: str,
+        user_content: str,
+        assistant_content: str,
+        *,
+        entities: Sequence[str] | None = None,
+    ) -> None:
+        """Append a user message and its answer as one unit.
+
+        Two ``add_message`` calls let a concurrent turn on the same
+        conversation land between them (user, user, answer, answer). Both
+        messages are appended under one lock hold; the user message's entity
+        context is updated afterwards, as in ``add_message``.
+        """
+        memory = await self.get_or_create_memory(conv_id)
+        user_message = HumanMessage(content=user_content)
+        async with self._lock:
+            memory.append_message(user_message)
+            memory.append_message(AIMessage(content=assistant_content))
+
+        if entities is not None:
+            memory.record_entities(entities)
+        else:
+            await asyncio.to_thread(memory.update_context, user_message)
+
     async def _cleanup_oldest_unsafe(self, count: int) -> None:
         if count <= 0:
             return

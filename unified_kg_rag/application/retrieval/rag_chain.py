@@ -59,7 +59,6 @@ from unified_kg_rag.adapters.search_strategies import (  # noqa: F401
 from unified_kg_rag.adapters.storage.filter_schema import union_filter_fields
 from unified_kg_rag.domain.models import (
     Config,
-    MessageRole,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -1187,19 +1186,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             query = (
                 output.processed_query.original_query if output.processed_query else ""
             )
+            # Reuse the query step's extraction (same prompt and model), when
+            # it ran, instead of a second entity-extraction LLM call.
             entities = self._query_step_entities(output) if query_processing else None
-            if entities is None:
-                await self.memory_manager.add_message(
-                    output.conversation_id, MessageRole.USER, query
-                )
-            else:
-                # Reuse the query step's extraction (same prompt and model)
-                # instead of a second entity-extraction LLM call.
-                await self.memory_manager.add_message(
-                    output.conversation_id, MessageRole.USER, query, entities=entities
-                )
-            await self.memory_manager.add_message(
-                output.conversation_id, MessageRole.ASSISTANT, output.answer
+            await self.memory_manager.add_turn(
+                output.conversation_id, query, output.answer, entities=entities
             )
         except Exception as e:
             logger.error(
