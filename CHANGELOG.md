@@ -85,6 +85,16 @@ Each previous behaviour stays available through the setting in parentheses.
   upsert (`cross_run_merge: false` restores overwriting).
 
 ### Fixed
+- An incremental run no longer overwrites the corpus's communities and
+  community reports. Community ids were positional (`L0_C0`, ...) and report
+  ids hash them, so a delta run, which clusters only the delta subgraph,
+  upserted its `L0_C0` over the full corpus's. Community ids are now a hash of
+  the level and the sorted member entity ids (the positional label remains as
+  `short_id`/`name`), so delta communities and reports are appended. Nodes and
+  edges are also sorted before Leiden, which otherwise partitions the same
+  graph differently depending on insertion order. **Re-index required:**
+  community and report ids change; an existing index keeps its positional
+  communities next to new ones until it is rebuilt.
 - Incremental deletion is scoped to the run's tenant and corpus. `deleted`
   was every registry document missing from the run's input across the whole
   table, and the registry key hashed only the local path, so a per-file parse
