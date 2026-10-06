@@ -4,16 +4,14 @@ from enum import Enum
 from typing import Any, ClassVar
 
 import boto3
-from botocore.config import Config as BotoConfig
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.aws.bedrock import (
     LanguageModelInfo,
     effective_max_output_tokens,
-    get_assumed_role_boto_session,
     get_language_model_info,
 )
-from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, RetrievalResult
 from unified_kg_rag.domain.prompts import AnswerGenerationPrompt
 from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
@@ -89,33 +87,27 @@ class TokenManager(MetricsMixin):
     }
 
     def __init__(
-        self, config: Config, boto_session: boto3.Session | None = None, **kwargs: Any
+        self,
+        config: Config,
+        boto_session: boto3.Session | None = None,
+        *,
+        providers: Providers | None = None,
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.config = config.search.token_manager
-
-        boto_session = boto_session or boto3.Session(
-            profile_name=config.aws.profile_name
-        )
-        boto_session = get_assumed_role_boto_session(
-            boto_session, assumed_role_arn=config.aws.bedrock.assumed_role_arn
-        )
-        bedrock_client = boto_session.client(
-            "bedrock-runtime",
-            region_name=config.aws.bedrock.region_name,
-            config=BotoConfig(
-                retries={"max_attempts": 3},
-            ),
-        )
+        # The token counter comes from the shared provider bundle, so a chain
+        # and its strategies reuse one bedrock-runtime client (and a custom
+        # backend's counter) instead of each building its own.
+        providers = Providers.resolve(config, providers, boto_session)
 
         answer_model_id = config.search.answer_generation_model_id
         self._enable_1m_context = config.aws.bedrock.enable_1m_context
         answer_model_info = get_language_model_info(
             answer_model_id, config.aws.bedrock.model_overrides
         )
-        self._token_counter = BedrockTokenCounter(
-            model_id=answer_model_id,
-            client=bedrock_client,
+        self._token_counter = providers.token_counter(
+            answer_model_id,
             cache_maxsize=self.config.token_count_cache_size,
             api_supported=answer_model_info.supports_count_tokens,
         )

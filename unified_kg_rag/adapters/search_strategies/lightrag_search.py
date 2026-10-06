@@ -283,7 +283,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             if mode in (SearchStrategy.MIX.value, SearchStrategy.HYBRID.value)
             else None
         )
-        final_results = self.hybrid_scorer.fuse_and_rerank_results(
+        final_results = await self._fuse_and_rerank(
             results_by_source,
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,

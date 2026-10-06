@@ -16,6 +16,7 @@ from __future__ import annotations
 import pytest
 
 import unified_kg_rag.adapters.ingestion.chunker as chunker_module
+from unified_kg_rag.adapters import providers as providers_module
 from unified_kg_rag.adapters.ingestion.chunker import (
     ChunkerFactory,
     ChunkingStats,
@@ -376,7 +377,7 @@ class TestChunkProcessorExtra:
 def _patch_bedrock(mocker):
     """Patch every AWS/Bedrock seam so chunker __init__ never touches AWS."""
     mocker.patch.object(chunker_module, "boto3")
-    mocker.patch.object(chunker_module, "BedrockLanguageModelFactory")
+    mocker.patch.object(providers_module, "BedrockLanguageModelFactory")
     mocker.patch.object(chunker_module, "create_robust_xml_output_parser")
     mocker.patch.object(chunker_module, "setup_chain")
 

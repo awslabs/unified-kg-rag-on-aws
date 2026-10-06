@@ -7,9 +7,9 @@ import boto3
 from langchain_core.output_parsers import StrOutputParser
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, LanguageCode, ModelPurpose, TextUnit
 from unified_kg_rag.domain.prompts import TextTranslationPrompt
 from unified_kg_rag.shared import get_logger
@@ -60,6 +60,8 @@ class TextUnitTranslator:
         config: Config,
         boto_session: boto3.Session | None = None,
         show_progress: bool = True,
+        *,
+        providers: Providers | None = None,
     ) -> None:
         self.config = config
         self.translation_config = config.processing.translation
@@ -70,18 +72,13 @@ class TextUnitTranslator:
         self.all_target_languages = [
             self.target_language
         ] + self.additional_target_languages
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=config.aws.profile_name
-        )
+        self.providers = Providers.resolve(config, providers, boto_session)
+        self.boto_session = self.providers.boto_session
         self.ignore_errors = config.processing.ignore_errors
         self.show_progress = show_progress
         self.stats: TranslationStats | None = None
 
-        self.factory = BedrockLanguageModelFactory(
-            config=config,
-            boto_session=self.boto_session,
-            region_name=config.aws.bedrock.region_name,
-        )
+        self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor(
             is_transient_error=is_transient_bedrock_error
         )

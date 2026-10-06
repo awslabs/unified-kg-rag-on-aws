@@ -105,6 +105,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (5 attempts, 60 s budget) (#120).
 - Development tools live only in the `dev` dependency group (`uv sync`); the
   Docker image config is tracked and uv is pinned by digest (#119).
+- One `Providers` bundle (`unified_kg_rag.adapters.providers`) carries the
+  boto3 session and the LLM, embedding, rerank and token-counter providers;
+  `GraphRAGChain`, `DataIngestionPipeline` and `EvaluationManager` build it
+  once (or accept `providers=`) and hand it to every component they construct.
+- `GraphRAGChain` reuses search-strategy instances per event loop instead of
+  building one per query.
+- Conversation memory stays process-wide by default and is created from the
+  first chain's config; `GraphRAGChain(memory_manager=MemoryManager(config))`
+  isolates a chain.
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
@@ -170,6 +179,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `source`) and documents the betweenness sampling and auto-resolution knobs;
   the user guides list common knobs in tables checked against `Config()`
   instead of copied YAML (#129).
+- `GraphRAGChain.invoke`/`batch`/`stream` run on one chain-owned event loop,
+  so `invoke` works inside a running loop and `batch` no longer leaks a
+  retriever set per item.
+- Reranking passes `top_n` per call instead of mutating the shared rerank
+  model, and fusion + rerank run off the event-loop thread.
+- Neptune opens and closes its connection off the event-loop thread, and a
+  discarded `AsyncOpenSearch` client is closed.
+- Conversation memory reuses the query step's entity extraction instead of a
+  second LLM call per user turn.
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on

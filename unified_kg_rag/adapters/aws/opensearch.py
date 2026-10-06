@@ -65,6 +65,39 @@ def _handle_async_opensearch_errors(func: Callable) -> Callable:
     return async_wrapper
 
 
+# Strong references to close tasks scheduled from sync code, so they are not
+# garbage-collected before they finish.
+_PENDING_CLOSES: set[asyncio.Task[Any]] = set()
+
+
+def _running_loop() -> asyncio.AbstractEventLoop | None:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
+def _finish_without_loop(awaitable: Any) -> None:
+    """Run an awaitable whose event loop is gone, as far as it can go.
+
+    aiohttp's ``TCPConnector.close()`` is a coroutine: un-awaited it closes
+    nothing (and warns "never awaited"). Once the connector's loop is closed
+    its close steps complete without suspending, so stepping the coroutine
+    directly finishes it. If it does suspend, nothing could resume it, so it
+    is closed instead. A Future/Task belongs to a loop and is left alone.
+    """
+    if isinstance(awaitable, asyncio.Future) or not hasattr(awaitable, "__await__"):
+        return
+    iterator = awaitable.__await__()
+    try:
+        iterator.send(None)
+    except StopIteration:
+        return
+    close = getattr(iterator, "close", None)
+    if close is not None:
+        close()
+
+
 class OpenSearchClient:
     def __init__(self, config: Config, boto_session: boto3.Session | None = None):
         self.config = config
@@ -76,6 +109,9 @@ class OpenSearchClient:
         self._client: OpenSearch | None = None
         self._async_client: AsyncOpenSearch | None = None
         self._bound_loop_id: int | None = None
+        # The loop object itself: keeps its id from being reused while bound,
+        # and lets a rotated client be closed (awaited) on its own loop.
+        self._bound_loop: asyncio.AbstractEventLoop | None = None
 
     @property
     def client(self) -> OpenSearch:
@@ -101,28 +137,48 @@ class OpenSearchClient:
                 # and cannot await its aclose() here) so the replacement does
                 # not silently leak the old aiohttp session/connection pool.
                 # Best effort: close the underlying connector(s) synchronously.
-                self._discard_async_client(self._async_client)
+                self._discard_async_client(
+                    self._async_client, getattr(self, "_bound_loop", None)
+                )
             self._async_client = self._create_async_client()
             self._bound_loop_id = current_loop_id
+            self._bound_loop = _running_loop()
 
         return self._async_client
 
     @staticmethod
-    def _discard_async_client(async_client: AsyncOpenSearch) -> None:
-        """Best-effort, non-awaiting close of an async client from sync code.
+    def _discard_async_client(
+        async_client: AsyncOpenSearch,
+        bound_loop: asyncio.AbstractEventLoop | None = None,
+    ) -> None:
+        """Best-effort close of an async client from sync code. Never raises.
 
-        Used when the bound event loop has rotated: the old client's coroutine
-        ``transport.close()`` cannot be awaited here. Close the underlying
-        aiohttp connector(s) synchronously instead. Never raises.
+        Used when the bound event loop has rotated, or from ``close()``. While
+        the client's loop is still running, its awaited ``close()`` is
+        scheduled there (the clean path). Otherwise the loop is gone, and the
+        underlying aiohttp connectors' ``close()`` coroutines are run to
+        completion without a loop (see ``_finish_without_loop``).
         """
         try:
+            if (
+                bound_loop is not None
+                and bound_loop.is_running()
+                and not bound_loop.is_closed()
+            ):
+                if bound_loop is _running_loop():
+                    task = bound_loop.create_task(async_client.close())
+                    _PENDING_CLOSES.add(task)
+                    task.add_done_callback(_PENDING_CLOSES.discard)
+                else:
+                    asyncio.run_coroutine_threadsafe(async_client.close(), bound_loop)
+                return
             transport = getattr(async_client, "transport", None)
             pool = getattr(transport, "connection_pool", None)
             for connection in getattr(pool, "connections", []) or []:
                 session = getattr(connection, "session", None)
                 connector = getattr(session, "connector", None)
                 if connector is not None:
-                    connector.close()
+                    _finish_without_loop(connector.close())
         except Exception as e:  # noqa: BLE001 - teardown must never raise
             logger.debug("Could not eagerly close rotated async client: %s", e)
 
@@ -148,9 +204,12 @@ class OpenSearchClient:
                 logger.debug("Error closing sync OpenSearch client: %s", e)
             self._client = None
         if self._async_client is not None:
-            self._discard_async_client(self._async_client)
+            self._discard_async_client(
+                self._async_client, getattr(self, "_bound_loop", None)
+            )
             self._async_client = None
             self._bound_loop_id = None
+            self._bound_loop = None
 
     async def aclose(self) -> None:
         """Async teardown: await the AsyncOpenSearch transport close.
@@ -167,6 +226,7 @@ class OpenSearchClient:
                 logger.debug("Error closing async OpenSearch client: %s", e)
             self._async_client = None
             self._bound_loop_id = None
+            self._bound_loop = None
         if self._client is not None:
             try:
                 self._client.close()

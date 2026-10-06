@@ -160,6 +160,20 @@ def _offline_inference_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def _fresh_shared_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test without the process-wide conversation memory.
+
+    Default chains share one ``MemoryManager`` created from the first chain's
+    config and providers; without a reset, one test's fakes would leak into
+    the next test's chains.
+    """
+    from unified_kg_rag.adapters.retrieval import memory_manager
+
+    monkeypatch.setattr(memory_manager, "_memory_manager", None)
+    monkeypatch.setattr(memory_manager, "_mismatch_logged", False)
+
+
 @pytest.fixture
 def config() -> Config:
     """A default ``Config`` (all nested defaults, no external services)."""
