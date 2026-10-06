@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -52,6 +52,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from unified_kg_rag.domain.models import Config, PipelineStageType
+from unified_kg_rag.domain.models.config import BedrockConfig
 
 from ..logging import get_logger
 from .common import compute_hash
@@ -89,6 +90,7 @@ _STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
         # LLM knobs that change generated content. Region, role and profile
         # routing are excluded: they change WHERE the call goes, not its output.
         "aws.bedrock.effort",
+        "aws.bedrock.fast_effort",
         "aws.bedrock.enable_1m_context",
         "aws.bedrock.guardrail",
         # The per-request output cap truncates long generations, and per-model
@@ -132,7 +134,22 @@ _STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
 }
 
 
+def _effective_default_effort(config: Config) -> Any:
+    return config.aws.bedrock.tier_effort("default")
+
+
+# Paths fingerprinted by a derived value instead of the raw attribute.
+# "aws.bedrock.effort" stands for the default tier's effective effort (the
+# legacy key or default_effort), so an unchanged configuration keeps the key
+# it had before effort was split per tier.
+_DERIVED_PATHS: dict[str, Callable[[Config], Any]] = {
+    "aws.bedrock.effort": _effective_default_effort,
+}
+
+
 def _resolve_path(config: Config, path: str) -> Any:
+    if path in _DERIVED_PATHS:
+        return _DERIVED_PATHS[path](config)
     node: Any = config
     for attribute in path.split("."):
         node = getattr(node, attribute)
@@ -145,6 +162,30 @@ def _canonicalize(value: Any) -> Any:
     if isinstance(value, Enum):
         return value.value
     return value
+
+
+# Paths added after the key format shipped: folded in only when set away from
+# their default, so existing caches stay valid on upgrade.
+_OMIT_WHEN_DEFAULT: dict[str, Any] = {
+    path: _canonicalize(
+        BedrockConfig.model_fields[path.rsplit(".", 1)[1]].get_default(
+            call_default_factory=True
+        )
+    )
+    for path in (
+        "aws.bedrock.fast_effort",
+        "aws.bedrock.default_max_output_tokens",
+        "aws.bedrock.model_overrides",
+    )
+}
+
+
+# Fields inside a fingerprinted subtree that do not shape stage output and are
+# dropped from it: ``source_scope`` only scopes incremental deletion in the
+# registry (and the corpus itself is fingerprinted by its manifest).
+_NON_OUTPUT_SUBFIELDS: dict[str, frozenset[str]] = {
+    "processing.document_parsing": frozenset({"source_scope"}),
+}
 
 
 def _input_paths_through(stage_type: PipelineStageType) -> list[str]:
@@ -245,10 +286,16 @@ def stage_input_fingerprint(
         >>> len(fp)
         12
     """
-    projection = [
-        (path, _canonicalize(_resolve_path(config, path)))
-        for path in _input_paths_through(stage_type)
-    ]
+    projection: list[tuple[str, Any]] = []
+    for path in _input_paths_through(stage_type):
+        value = _canonicalize(_resolve_path(config, path))
+        if path in _NON_OUTPUT_SUBFIELDS and isinstance(value, dict):
+            value = {
+                k: v for k, v in value.items() if k not in _NON_OUTPUT_SUBFIELDS[path]
+            }
+        if path in _OMIT_WHEN_DEFAULT and value == _OMIT_WHEN_DEFAULT[path]:
+            continue
+        projection.append((path, value))
     if corpus_fingerprint is not None:
         projection.append(("corpus_manifest", corpus_fingerprint))
     payload = json.dumps(projection, sort_keys=True, default=str)

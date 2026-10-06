@@ -53,14 +53,22 @@ aws:
     # billed at a premium there. Claude 5 has a native 1M window and ignores
     # this. Turning it on also widens the derived retrieval context budget.
     enable_1m_context: false
-    # Reasoning effort. Sent as output_config.effort to Anthropic adaptive-
-    # thinking models (Claude 4.6 and later), which replaced the fixed thinking
-    # token budget, and as reasoning.effort to OpenAI GPT models. One of: low,
-    # medium, high (default), xhigh, max. Lower levels trade reasoning depth
-    # for cost and latency; xhigh/max are only accepted by some models (e.g.
-    # Claude 4.6 has no xhigh) and an unsupported level fails fast.
+    # Reasoning effort, per model tier. Sent as output_config.effort to
+    # Anthropic adaptive-thinking models (Claude 4.6 and later), which replaced
+    # the fixed thinking token budget, and as reasoning.effort to OpenAI GPT
+    # models. One of: low, medium, high, xhigh, max. Lower levels trade
+    # reasoning depth for cost and latency; xhigh/max are only accepted by some
+    # models (e.g. Claude 4.6 has no xhigh) and an unsupported level fails fast.
     # Ignored by older Claude models, which still use thinking_budget_tokens.
-    effort: "high"
+    # A call's tier follows its model id: a call on fast_model_id (when it
+    # differs from default_model_id) uses fast_effort, every other call uses
+    # default_effort. The shipped fast model (Claude Haiku 4.5) does not reason
+    # on these calls, so fast_effort only matters once fast_model_id is an
+    # adaptive-thinking or GPT model. The older single `effort` key still works
+    # as an alias for default_effort (deprecated; default_effort wins if both
+    # are set).
+    default_effort: "high"
+    fast_effort: "low"
     # Amazon Bedrock Guardrails (WAF security pillar). Disabled unless an
     # identifier is set; when set, the guarded LLM calls enforce the
     # guardrail's content/PII/grounding policies on prompts and completions.
@@ -168,7 +176,9 @@ processing:
 
   # Document Parsing
   document_parsing:
-    source_directory: # Add source directory here
+    # Fallback for library callers. run-ingestion requires --source-directory
+    # (or GRAPHRAG_SOURCE_DIRECTORY) and ignores this value.
+    source_directory: "source"
     # Set a directory to export each parsed document as <stem>.json for
     # inspection (or pass --target-directory); null = no export. The loading
     # stage reuses the parsed documents in memory and never reads the export.
@@ -300,6 +310,12 @@ graph:
       pagerank_alpha: 0.85
       pagerank_max_iter: 100
       betweenness_k: null
+      # With betweenness_k null (exact), graphs larger than this many nodes
+      # switch to sampled betweenness with this pivot count; exact all-pairs
+      # betweenness is O(V*E) and stalls on large graphs.
+      betweenness_auto_sample_threshold: 2000
+      # Seed for sampled betweenness, so centrality is reproducible.
+      betweenness_seed: 42
       eigenvector_max_iter: 1000
       eigenvector_tol: 0.001
 
@@ -328,6 +344,9 @@ graph:
     # maximizes modularity (the static `resolution` above is used when false).
     auto_resolution: true
     auto_resolution_candidates: [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0]
+    # Skip the sweep (one full Leiden run per candidate at every level) on
+    # graphs larger than this many nodes and use `resolution` instead.
+    auto_resolution_max_nodes: 10000
 
     # Community report generation
     report_generation:
@@ -512,9 +531,10 @@ search:
     rrf_k: 60
     # MMR: 1.0 = pure relevance (filtering skipped), 0.0 = maximum diversity.
     diversity_lambda: 0.5
-    # Per-source-bucket weights, only applied when method is "weighted" (the
-    # default "rrf" ignores them). Keys are the retrieval source buckets the
-    # strategies emit; a bucket without a key defaults to 1.0.
+    # Per-source-bucket weights. Both methods apply them: "rrf" scales each
+    # bucket's 1/(rrf_k + rank) term, "weighted" scales its scores. Keys are
+    # the retrieval source buckets the strategies emit; a bucket without a key
+    # defaults to 1.0.
     fusion_weights:
       graph_entities: 1.0
       text_units: 1.0
@@ -710,7 +730,8 @@ evaluation:
   # Reasoning effort for the LLM judge (ragas + langchain evaluators) on
   # adaptive-thinking models (Claude 4.7+). Judge calls are short
   # extraction/classification prompts; "low" keeps each RAGAS metric well inside
-  # ragas_timeout. null inherits aws.bedrock.effort. Ignored by other models.
+  # ragas_timeout. null inherits the judge model's tier effort
+  # (aws.bedrock.default_effort by default). Ignored by other models.
   judge_effort: "low"
   # RAGAS RunConfig. ragas_timeout is the budget (seconds) for scoring ONE
   # metric on ONE sample, including all of its judge calls and retries; a

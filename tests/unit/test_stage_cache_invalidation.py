@@ -235,6 +235,64 @@ class TestFingerprintScope:
             "not_a_pipeline_stage"  # type: ignore[arg-type]
         ) == cache_keys._input_paths_through(PipelineStageType.INDEXING)
 
+    # Default-config fingerprints of every cached stage as released before the
+    # per-tier effort split (#128) and before the fields added since. They must
+    # not move, or every existing stage cache turns into a miss on upgrade.
+    _RELEASED_DEFAULT_FINGERPRINTS = {
+        PipelineStageType.DOCUMENT_PARSING: "1035b7a62512",
+        PipelineStageType.DOCUMENT_LOADING: "ac616352a4e7",
+        PipelineStageType.TEXT_CHUNKING: "4f4d6918f24f",
+        PipelineStageType.TRANSLATION: "f7885a7f8b8f",
+        PipelineStageType.GRAPH_EXTRACTION: "f5679b85b1b0",
+        PipelineStageType.GLEANING: "3154dc9fb4f4",
+        PipelineStageType.GRAPH_RESOLUTION: "09067b47d9fb",
+        PipelineStageType.CLAIM_EXTRACTION: "96015659a99b",
+        PipelineStageType.CLAIM_RESOLUTION: "96015659a99b",
+        PipelineStageType.GRAPH_ANALYSIS: "6b559362dde3",
+        PipelineStageType.COMMUNITY_DETECTION: "c89105d3a95c",
+    }
+
+    def test_default_config_fingerprints_are_unchanged(self) -> None:
+        # Derived effort (#128) and the omit-when-default fields
+        # (fast_effort, default_max_output_tokens, model_overrides) and the
+        # non-output source_scope keep the released keys for a default config.
+        config = Config()
+        assert {
+            stage: stage_input_fingerprint(config, stage)
+            for stage in self._RELEASED_DEFAULT_FINGERPRINTS
+        } == self._RELEASED_DEFAULT_FINGERPRINTS
+
+    def test_corpus_manifest_changes_every_cached_stage_key(self) -> None:
+        config = Config()
+        for stage in self._RELEASED_DEFAULT_FINGERPRINTS:
+            unchanged = stage_input_fingerprint(config, stage, "corpus-v1")
+            assert unchanged == stage_input_fingerprint(config, stage, "corpus-v1")
+            assert unchanged != stage_input_fingerprint(config, stage, "corpus-v2")
+            assert unchanged != stage_input_fingerprint(config, stage)
+
+    def test_source_scope_does_not_change_the_fingerprint(self) -> None:
+        changed = Config()
+        changed.processing.document_parsing.source_scope = "s3://example/corpus/"
+        assert stage_input_fingerprint(
+            changed, PipelineStageType.DOCUMENT_PARSING
+        ) == stage_input_fingerprint(Config(), PipelineStageType.DOCUMENT_PARSING)
+
+    def test_tier_efforts_fold_into_the_fingerprint(self) -> None:
+        stage = PipelineStageType.DOCUMENT_PARSING
+
+        def fingerprint(bedrock: dict[str, str]) -> str:
+            config = Config.model_validate({"aws": {"bedrock": bedrock}})
+            return stage_input_fingerprint(config, stage)
+
+        baseline = fingerprint({})
+        # The legacy key and default_effort are the same input.
+        assert fingerprint({"effort": "medium"}) == fingerprint(
+            {"default_effort": "medium"}
+        )
+        assert fingerprint({"default_effort": "medium"}) != baseline
+        assert fingerprint({"fast_effort": "low"}) == baseline
+        assert fingerprint({"fast_effort": "medium"}) != baseline
+
     def test_key_is_the_attribute_plus_the_fingerprint(self) -> None:
         config = Config()
         expected = stage_input_fingerprint(config, PipelineStageType.DOCUMENT_LOADING)
