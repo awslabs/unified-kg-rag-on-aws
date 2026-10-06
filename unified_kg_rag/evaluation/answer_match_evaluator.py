@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Answer-match evaluator: SQuAD-style exact match and token F1.
+"""Answer-match evaluator: answer containment, SQuAD-style exact match and token F1.
 
 Deterministic and LLM-free, so scores are reproducible across runs and judge
 models. Both the generated answer and each reference are normalized as in the
@@ -8,6 +8,11 @@ official SQuAD v1.1 script, after Unicode NFKC (``text_matching.normalize_answer
 lowercase, delete punctuation, drop the English articles ``a``/``an``/``the``,
 collapse whitespace), then:
 
+- ``answer_contains``: 1.0 if the gold answer appears in the generated answer
+  as a whole-word phrase (``text_matching.phrase_in_text``: Korean particles
+  tolerated, substring match for single-word CJK phrases). Long-form RAG
+  answers rarely equal a short gold span, so this is the headline
+  deterministic answer metric.
 - ``exact_match``: 1.0 if the normalized strings are equal.
 - ``token_f1``: harmonic mean of token precision/recall over whitespace tokens
   (multiset overlap).
@@ -42,13 +47,23 @@ from .base import (
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
 )
-from .text_matching import normalize_answer
+from .text_matching import normalize_answer, phrase_in_text
 
-__all__ = ["AnswerMatchEvaluator", "exact_match", "normalize_answer", "token_f1"]
+__all__ = [
+    "AnswerMatchEvaluator",
+    "answer_contains",
+    "exact_match",
+    "normalize_answer",
+    "token_f1",
+]
 
 
 def exact_match(prediction: str, reference: str) -> float:
     return float(normalize_answer(prediction) == normalize_answer(reference))
+
+
+def answer_contains(prediction: str, reference: str) -> float:
+    return float(phrase_in_text(reference, prediction))
 
 
 def token_f1(prediction: str, reference: str) -> float:
@@ -65,7 +80,7 @@ def token_f1(prediction: str, reference: str) -> float:
 
 
 class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
-    """Scores exact match and token F1 of the answer against reference answers."""
+    """Scores containment, exact match and token F1 against reference answers."""
 
     def __init__(self, config: Config, rag_chain: Any | None = None, **kwargs: Any):
         super().__init__(
@@ -77,7 +92,11 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
         pass
 
     def metric_types(self) -> list[EvaluationMetricType]:
-        return [EvaluationMetricType.EXACT_MATCH, EvaluationMetricType.TOKEN_F1]
+        return [
+            EvaluationMetricType.ANSWER_CONTAINS,
+            EvaluationMetricType.EXACT_MATCH,
+            EvaluationMetricType.TOKEN_F1,
+        ]
 
     @staticmethod
     def _references(ground_truth: str, metadata: dict[str, Any]) -> list[str]:
@@ -109,6 +128,7 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
                 },
             )
         answer = result.generated_answer or ""
+        contains = max(answer_contains(answer, ref) for ref in references)
         em = max(exact_match(answer, ref) for ref in references)
         f1 = max(token_f1(answer, ref) for ref in references)
         return EvaluationReport(
@@ -116,11 +136,14 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
             evaluator_type=self.evaluator_type,
             metrics=[
                 EvaluationMetric(
+                    metric_type=EvaluationMetricType.ANSWER_CONTAINS, value=contains
+                ),
+                EvaluationMetric(
                     metric_type=EvaluationMetricType.EXACT_MATCH, value=em
                 ),
                 EvaluationMetric(metric_type=EvaluationMetricType.TOKEN_F1, value=f1),
             ],
-            overall_score=(em + f1) / 2,
+            overall_score=(contains + em + f1) / 3,
             evaluation_time=datetime.now(),
             metadata={
                 **self._extract_search_metadata(result),

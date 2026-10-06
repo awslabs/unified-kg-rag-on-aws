@@ -999,8 +999,9 @@ Selected via `evaluation.enabled_evaluators`:
   `context_precision@N` / `context_recall@N`.
 - **`graph_aware`** — deterministic, **LLM-free** entity/relationship
   **coverage = recall**: of the expected graph artifacts, how many appear in the
-  generated answer (case-insensitive whole-word match; substring match for
-  space-less CJK text). A relationship given as `{"source": "A", "target": "B"}`
+  generated answer, using the same normalization and phrase matcher as
+  `answer_contains` (whole-word match; Korean particles tolerated; substring
+  match for single-word CJK text). A relationship given as `{"source": "A", "target": "B"}`
   or `"A -> B"` counts when the answer mentions both endpoints; any other string
   must appear as a phrase. Needs `expected_entities` / `expected_relationships`
   in the dataset. **Precision and F1 are deliberately
@@ -1017,9 +1018,15 @@ Selected via `evaluation.enabled_evaluators`:
   or a leading `/`, `./`, `~/`), so titles such as `St. Louis Cardinals` or
   `AC/DC` are compared whole. Skipped when a query has no `reference_sources` or no
   source carries a document id / file name.
-- **`answer_match`** — deterministic, LLM-free SQuAD-style `exact_match` and
-  `token_f1` against `answer` and optional `metadata.answer_aliases`, taking
-  the max. Text is NFKC-normalized, then normalized as in the official SQuAD
+- **`answer_match`** — deterministic, LLM-free answer scores against `answer`
+  and optional `metadata.answer_aliases`, taking the max over them.
+  **`answer_contains`** (1.0 when the gold answer or an alias appears in the
+  generated answer as a whole-word phrase) is the headline deterministic
+  metric: long-form RAG answers rarely equal a short gold span, so it tracks
+  correctness far better than exact match. Korean particles are tolerated
+  (gold `서울 특별시` matches `서울 특별시는`), and a single-word CJK gold is
+  matched as a substring. SQuAD-style `exact_match` and `token_f1` are also
+  emitted for comparison with published benchmarks. Text is NFKC-normalized, then normalized as in the official SQuAD
   v1.1 script: lowercase, punctuation deleted (`1,000` = `1000`), English
   articles dropped, whitespace collapsed. Token F1 splits on whitespace, so for
   Chinese/Japanese text it degrades to exact match; Korean particles

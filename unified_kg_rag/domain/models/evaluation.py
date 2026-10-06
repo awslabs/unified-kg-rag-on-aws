@@ -31,6 +31,8 @@ class EvaluationMetricType(str, Enum):
     # Deterministic SQuAD-style answer metrics (max over answer + aliases).
     EXACT_MATCH = "exact_match"
     TOKEN_F1 = "token_f1"
+    # 1.0 if the normalized answer contains the gold answer or an alias.
+    ANSWER_CONTAINS = "answer_contains"
 
 
 class EvaluatorType(str, Enum):

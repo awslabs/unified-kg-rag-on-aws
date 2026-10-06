@@ -14,6 +14,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.evaluation import AnswerMatchEvaluator, EvaluationManager
 from unified_kg_rag.evaluation.answer_match_evaluator import (
+    answer_contains,
     exact_match,
     normalize_answer,
     token_f1,
@@ -44,6 +45,13 @@ class TestNormalization:
 
     def test_decimal_point_deleted_like_squad(self) -> None:
         assert normalize_answer("3.5 days") == "35 days"
+
+    def test_answer_contains_korean_particle(self) -> None:
+        assert (
+            answer_contains("공급사의 본사는 서울은 아니고 부산입니다.", "부산") == 1.0
+        )
+        assert answer_contains("본사는 서울 특별시에 있습니다.", "서울 특별시") == 1.0
+        assert answer_contains("본사는 부산에 있습니다.", "서울") == 0.0
 
     def test_articles_only_as_whole_words(self) -> None:
         assert normalize_answer("Theater an Anchor") == "theater anchor"
@@ -85,11 +93,12 @@ class TestEvaluator:
             {"answer_aliases": ["net 30 days", "30 days"]},
         )
         values = {m.metric_type.value: m.value for m in report.metrics}
-        assert values == {"exact_match": 1.0, "token_f1": 1.0}
+        assert values == {"answer_contains": 1.0, "exact_match": 1.0, "token_f1": 1.0}
 
     def test_single_string_alias_accepted(self, config: Config) -> None:
         report = _report(config, "USD 500", "", {"answer_aliases": "usd 500"})
         assert {m.metric_type.value: m.value for m in report.metrics} == {
+            "answer_contains": 1.0,
             "exact_match": 1.0,
             "token_f1": 1.0,
         }
@@ -97,7 +106,34 @@ class TestEvaluator:
     def test_no_reference_skipped(self, config: Config) -> None:
         report = _report(config, "anything", "", {})
         assert report.metrics == []
-        assert set(report.metadata["skipped_metrics"]) == {"exact_match", "token_f1"}
+        assert set(report.metadata["skipped_metrics"]) == {
+            "answer_contains",
+            "exact_match",
+            "token_f1",
+        }
+
+    def test_long_answer_contains_gold(self, config: Config) -> None:
+        report = _report(
+            config, "Payment is due within net 30 days of invoice.", "Net 30 days", {}
+        )
+        values = {m.metric_type.value: m.value for m in report.metrics}
+        assert values["answer_contains"] == 1.0
+        assert values["exact_match"] == 0.0
+
+    def test_contains_matches_alias(self, config: Config) -> None:
+        report = _report(
+            config,
+            "The Buyer pays USD 1,000.",
+            "one thousand",
+            {"answer_aliases": ["1000"]},
+        )
+        values = {m.metric_type.value: m.value for m in report.metrics}
+        assert values["answer_contains"] == 1.0
+
+    def test_contains_miss(self, config: Config) -> None:
+        report = _report(config, "The Vendor ships parts.", "Buyer", {})
+        values = {m.metric_type.value: m.value for m in report.metrics}
+        assert values["answer_contains"] == 0.0
 
     def test_resolver_maps_type(self) -> None:
         assert (
