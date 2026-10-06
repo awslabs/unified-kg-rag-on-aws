@@ -3,10 +3,11 @@
 import asyncio
 import json
 import re
+import threading
 import time
 import uuid
+import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from typing import Any, ClassVar, TypeVar
 
@@ -235,7 +236,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         self._retriever_cache: dict[
             tuple[RetrieverRole, int | None], BaseGraphRAGRetriever
         ] = {}
-        self._cached_loop_id: int | None = None
+        # The loop the cached retrievers are bound to. Held by reference, not
+        # id: a dead loop's id can be reused by a new loop.
+        self._cached_loop: asyncio.AbstractEventLoop | None = None
+        # The sync entry points (invoke/batch/stream) run on this one
+        # long-lived loop instead of a fresh loop per call, so their
+        # loop-bound retrievers are built once and reused.
+        self._loop_runner = _LoopRunner()
+        weakref.finalize(self, self._loop_runner.stop)
         self.chain = self._build_chain()
 
     def _build_chain(self) -> Runnable:
@@ -682,17 +690,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         )
 
     def _get_retriever(self, role: RetrieverRole) -> BaseGraphRAGRetriever:
-        current_loop_id = self._get_current_loop_id()
-
-        # Invalidate cache if event loop changed
-        if current_loop_id is not None and self._cached_loop_id != current_loop_id:
-            logger.debug(
-                "Event loop changed (old=%s, new=%s), clearing retriever cache",
-                self._cached_loop_id,
-                current_loop_id,
-            )
-            self._retriever_cache.clear()
-            self._cached_loop_id = current_loop_id
+        current_loop_id = self._sync_loop_caches()
 
         cache_key = (role, current_loop_id)
         if cache_key in self._retriever_cache:
@@ -715,11 +713,80 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         self._retriever_cache[cache_key] = retriever
         return retriever
 
-    def _get_current_loop_id(self) -> int | None:
+    def _sync_loop_caches(self) -> int | None:
+        """Release loop-bound caches when the running event loop changed.
+
+        Retrievers hold clients bound to the loop they were built on, so a
+        query on another loop needs new ones. The evicted retrievers are closed
+        (on their own loop when it is still running) instead of being left to
+        leak their connection pools. Returns the current loop id (``None``
+        outside a running loop).
+        """
         try:
-            return id(asyncio.get_running_loop())
+            current = asyncio.get_running_loop()
         except RuntimeError:
             return None
+        if current is not self._cached_loop:
+            logger.debug(
+                "Event loop changed (old=%s, new=%s), releasing cached retrievers",
+                id(self._cached_loop) if self._cached_loop else None,
+                id(current),
+            )
+            evicted, evicted_loop = self._take_cached_retrievers()
+            self._release_retrievers(evicted, evicted_loop, wait=False)
+            self._cached_loop = current
+        return id(current)
+
+    def _take_cached_retrievers(
+        self,
+    ) -> tuple[list[BaseGraphRAGRetriever], asyncio.AbstractEventLoop | None]:
+        retrievers = list(self._retriever_cache.values())
+        loop = getattr(self, "_cached_loop", None)
+        self._retriever_cache.clear()
+        self._cached_loop = None
+        return retrievers, loop
+
+    @staticmethod
+    def _release_retrievers(
+        retrievers: list[BaseGraphRAGRetriever],
+        loop: asyncio.AbstractEventLoop | None,
+        *,
+        wait: bool,
+    ) -> None:
+        """Close retrievers from sync code (best-effort, never raises).
+
+        Retrievers bound to a loop that is still running on another thread are
+        closed there with their awaited ``aclose``; otherwise (no loop, or the
+        loop is gone) their synchronous ``close`` releases what it can.
+        """
+        if not retrievers:
+            return
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        if (
+            loop is not None
+            and loop is not current
+            and loop.is_running()
+            and not loop.is_closed()
+        ):
+            future = asyncio.run_coroutine_threadsafe(
+                _aclose_retrievers(retrievers), loop
+            )
+            if wait:
+                try:
+                    future.result(timeout=_TEARDOWN_TIMEOUT_SECONDS)
+                except Exception as e:  # noqa: BLE001 - teardown must never raise
+                    logger.debug("Error closing retrievers on their loop: %s", e)
+            return
+        for retriever in retrievers:
+            close = getattr(retriever, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except Exception as e:  # noqa: BLE001 - teardown must never raise
+                    logger.debug("Error closing retriever %r: %s", retriever, e)
 
     async def aclose(self) -> None:
         """Close every cached retriever's backing client (best-effort).
@@ -727,27 +794,42 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         Each retriever build opens a Neptune websocket + thread pool and/or an
         OpenSearch (a)sync HTTP pool that otherwise survive until GC. Call this
         when the chain is done (e.g. from the CLI ``finally``) so a process that
-        finishes a query releases its sockets. Never raises.
+        finishes a query releases its sockets. Retrievers are closed on the
+        loop they are bound to, then the chain's sync-API loop is stopped.
+        Never raises.
         """
-        for retriever in self._retriever_cache.values():
-            aclose = getattr(retriever, "aclose", None)
-            if aclose is not None:
-                try:
-                    await aclose()
-                except Exception as e:  # noqa: BLE001 - teardown must never raise
-                    logger.debug("Error closing retriever %r: %s", retriever, e)
-        self._retriever_cache.clear()
+        retrievers, loop = self._take_cached_retrievers()
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        if loop is None or loop is current:
+            await _aclose_retrievers(retrievers)
+        elif loop.is_running() and not loop.is_closed():
+            try:
+                await asyncio.wait_for(
+                    asyncio.wrap_future(
+                        asyncio.run_coroutine_threadsafe(
+                            _aclose_retrievers(retrievers), loop
+                        )
+                    ),
+                    timeout=_TEARDOWN_TIMEOUT_SECONDS,
+                )
+            except Exception as e:  # noqa: BLE001 - teardown must never raise
+                logger.debug("Error closing retrievers on their loop: %s", e)
+        else:
+            self._release_retrievers(retrievers, None, wait=False)
+        runner = getattr(self, "_loop_runner", None)
+        if runner is not None:
+            await asyncio.to_thread(runner.stop)
 
     def close(self) -> None:
-        """Synchronous teardown of cached retrievers' backing clients."""
-        for retriever in self._retriever_cache.values():
-            close = getattr(retriever, "close", None)
-            if close is not None:
-                try:
-                    close()
-                except Exception as e:  # noqa: BLE001 - teardown must never raise
-                    logger.debug("Error closing retriever %r: %s", retriever, e)
-        self._retriever_cache.clear()
+        """Synchronous teardown of cached retrievers and the sync-API loop."""
+        retrievers, loop = self._take_cached_retrievers()
+        self._release_retrievers(retrievers, loop, wait=True)
+        runner = getattr(self, "_loop_runner", None)
+        if runner is not None:
+            runner.stop()
 
     def _optimize_context(self, state: dict[str, Any]) -> OptimizedContext:
         query: ProcessedQuery = state["processed_query"]
@@ -987,7 +1069,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> RAGOutput | dict[str, Any]:
-        return asyncio.run(self.ainvoke(input, config, **kwargs))
+        # Runs on the chain's long-lived loop (not asyncio.run per call), so it
+        # also works from a thread that already runs an event loop and reuses
+        # the loop-bound retrievers across calls (batch() fans out to here).
+        result: RAGOutput | dict[str, Any] = self._loop_runner.run(
+            self.ainvoke(input, config, **kwargs)
+        )
+        return result
 
     async def ainvoke(
         self,
@@ -1094,17 +1182,19 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     ) -> Iterator[str]:
         """Synchronously stream answer chunks.
 
-        Drives :meth:`astream` on a private event loop owned by a dedicated
-        worker thread, pulling one chunk at a time. This works both from plain
-        sync code and from a thread that already runs an event loop (where
-        ``asyncio.run`` would raise), while still delivering chunks as they are
-        produced rather than after the whole answer is generated.
+        Drives :meth:`astream` on the chain's long-lived event loop (the one
+        ``invoke`` uses), pulling one chunk at a time. This works both from
+        plain sync code and from a thread that already runs an event loop
+        (where ``asyncio.run`` would raise), while still delivering chunks as
+        they are produced rather than after the whole answer is generated.
         """
         if self.mode == ChainMode.SEARCH:
             logger.warning("Streaming is not supported in SEARCH mode.")
             return
 
-        yield from _iterate_async_generator(self.astream(input, config, **kwargs))
+        yield from _iterate_async_generator(
+            self.astream(input, config, **kwargs), self._loop_runner
+        )
 
     async def astream(  # type: ignore[override]
         self,
@@ -1159,27 +1249,90 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 _T = TypeVar("_T")
 
 
-def _iterate_async_generator(agen: AsyncIterator[_T]) -> Iterator[_T]:
-    """Consume an async iterator from sync code, one item at a time.
+# Upper bound on waiting for retrievers to close on another thread's loop.
+_TEARDOWN_TIMEOUT_SECONDS = 30.0
 
-    The iterator runs on a fresh event loop confined to a single worker thread,
-    so it never collides with an event loop already running in the caller's
-    thread. Closing the returned iterator early (``break``) closes the async
-    iterator on its own loop.
+
+async def _aclose_retrievers(retrievers: list[BaseGraphRAGRetriever]) -> None:
+    for retriever in retrievers:
+        aclose = getattr(retriever, "aclose", None)
+        if aclose is None:
+            continue
+        try:
+            await aclose()
+        except Exception as e:  # noqa: BLE001 - teardown must never raise
+            logger.debug("Error closing retriever %r: %s", retriever, e)
+
+
+class _LoopRunner:
+    """One event loop on a daemon thread, started on first use.
+
+    Backs the chain's synchronous entry points: each call submits its
+    coroutine to this loop and blocks for the result, so every sync call
+    shares one loop (and the clients bound to it) and none needs a loop of
+    its own in the calling thread.
     """
-    loop = asyncio.new_event_loop()
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rag-stream")
 
-    def _run(awaitable: Awaitable[Any]) -> Any:
-        async def _await() -> Any:
+    def __init__(self) -> None:
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
+        with self._lock:
+            if self._loop is None:
+                loop = asyncio.new_event_loop()
+                thread = threading.Thread(
+                    target=loop.run_forever, name="graphrag-chain-loop", daemon=True
+                )
+                thread.start()
+                self._loop, self._thread = loop, thread
+            return self._loop
+
+    def run(self, awaitable: Awaitable[_T]) -> _T:
+        loop = self._ensure_loop()
+        if threading.current_thread() is self._thread:
+            raise RuntimeError(
+                "A synchronous GraphRAGChain method was called from the chain's "
+                "own event loop; await the async variant instead."
+            )
+
+        async def _await() -> _T:
             return await awaitable
 
-        return executor.submit(loop.run_until_complete, _await()).result()
+        return asyncio.run_coroutine_threadsafe(_await(), loop).result()
 
+    def stop(self) -> None:
+        """Stop and close the loop (idempotent; restarted on next use)."""
+        with self._lock:
+            loop, thread = self._loop, self._thread
+            self._loop = self._thread = None
+        if loop is None or thread is None:
+            return
+        loop.call_soon_threadsafe(loop.stop)
+        if thread is threading.current_thread():
+            return  # stopping from inside the loop: it closes once unwound
+        thread.join(timeout=_TEARDOWN_TIMEOUT_SECONDS)
+        if not thread.is_alive():
+            loop.close()
+
+
+def _iterate_async_generator(
+    agen: AsyncIterator[_T], runner: _LoopRunner | None = None
+) -> Iterator[_T]:
+    """Consume an async iterator from sync code, one item at a time.
+
+    Each step runs on ``runner``'s loop (a private one when omitted), so it
+    never collides with an event loop already running in the caller's thread.
+    Closing the returned iterator early (``break``) closes the async iterator
+    on that loop.
+    """
+    owned = runner is None
+    loop_runner = runner if runner is not None else _LoopRunner()
     try:
         while True:
             try:
-                item = _run(agen.__anext__())
+                item = loop_runner.run(agen.__anext__())
             except StopAsyncIteration:
                 return
             yield item
@@ -1187,11 +1340,10 @@ def _iterate_async_generator(agen: AsyncIterator[_T]) -> Iterator[_T]:
         try:
             aclose = getattr(agen, "aclose", None)
             if aclose is not None:
-                _run(aclose())
-            _run(loop.shutdown_asyncgens())
+                loop_runner.run(aclose())
         finally:
-            executor.submit(loop.close).result()
-            executor.shutdown(wait=True)
+            if owned:
+                loop_runner.stop()
 
 
 async def create_rag_chain(
