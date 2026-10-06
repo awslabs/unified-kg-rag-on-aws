@@ -204,6 +204,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   discarded `AsyncOpenSearch` client is closed.
 - Conversation memory reuses the query step's entity extraction instead of a
   second LLM call per user turn.
+- `processing.max_retries` now sets the ingestion LLM retry count; the
+  stages passed it but the batch processor kept its own default. The default
+  is 5, the value previously in effect (#PR).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on

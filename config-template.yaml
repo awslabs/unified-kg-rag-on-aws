@@ -168,7 +168,7 @@ processing:
   max_concurrency: 20
   chunk_concurrency: 4
   batch_size: 10
-  max_retries: 3
+  max_retries: 5
   ignore_errors: false
   deduplicate: false
   resolution_method: "minhash"

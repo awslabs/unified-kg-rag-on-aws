@@ -971,9 +971,10 @@ class ProcessingConfig(BaseModel):
         description="Number of items to process in each batch for optimal memory usage and performance",
     )
     max_retries: int = Field(
-        default=3,
-        ge=0,
-        description="Maximum number of retry attempts for failed operations",
+        default=5,
+        ge=1,
+        description="Retries of an ingestion LLM item after its batch attempt "
+        "fails with a retryable error",
     )
     ignore_errors: bool = Field(
         default=False,
