@@ -79,6 +79,11 @@ class TestSourceKeys:
     def test_titles_kept_whole(self, title: str, key: str) -> None:
         assert source_keys(title) == {key}
 
+    def test_file_name_matches_its_spaced_title(self) -> None:
+        file_keys = source_keys("docs/Vendor_Terms_(2024).txt")
+        assert source_keys("Vendor Terms (2024)") <= file_keys
+        assert source_keys("Vendor  Terms (2024)") <= file_keys
+
     def test_leading_slash_is_a_path(self) -> None:
         assert source_keys("/data/in/Buyer Notes") == {"buyer notes"}
 

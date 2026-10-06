@@ -76,7 +76,10 @@ def source_keys(identifier: str) -> frozenset[str]:
     name = identifier.strip()
     if _is_path_like(name):
         name = re.split(r"[/\\]", name)[-1]
-    name = name.strip().lower()
+    # Underscores stand for spaces in file names derived from titles
+    # ("Miquette_Giraudy.txt" for the title "Miquette Giraudy"), so both sides
+    # compare with underscores folded to spaces.
+    name = " ".join(name.replace("_", " ").split()).lower()
     if not name:
         return frozenset()
     stem = _EXTENSION.sub("", name).strip()
