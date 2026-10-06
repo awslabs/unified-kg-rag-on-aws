@@ -109,6 +109,14 @@ class ConfigLoader:
             # Injected by the CDK compute stack so the app uses the IaC-managed
             # doc-status table (and never auto-creates an unmanaged one).
             "GRAPHRAG_DOC_STATUS_TABLE": ("aws", "dynamodb", "table_name"),
+            # Set by the container entrypoint to the S3 URI the corpus was
+            # synced from, so incremental deletion is scoped to that corpus
+            # rather than the shared local staging directory.
+            "GRAPHRAG_SOURCE_SCOPE": (
+                "processing",
+                "document_parsing",
+                "source_scope",
+            ),
             "GRAPHRAG_DOC_STATUS_CREATE_TABLE": (
                 "aws",
                 "dynamodb",

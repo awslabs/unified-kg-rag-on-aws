@@ -114,6 +114,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - Conversation memory stays process-wide by default and is created from the
   first chain's config; `GraphRAGChain(memory_manager=MemoryManager(config))`
   isolates a chain.
+- Incremental runs merge a touched entity or relationship with its graph
+  state by default (`indexing.cross_run_merge: true`), so an entity shared
+  with unchanged documents keeps their description and lineage (#134).
+- **Breaking (index data):** community ids hash the level and sorted members
+  (Leiden input is sorted), document ids hash the corpus-relative path and the
+  full text, and registry keys hash the index namespace and relative path;
+  rebuild existing indexes (`indexing.reset: true`) (#134).
 - The answer prompt asks the model to chain facts across sources and answer
   directly before the support; the previous wording can be restored through
   `custom_prompts.answer_generation_system`/`_human` (#132).
@@ -204,6 +211,27 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   discarded `AsyncOpenSearch` client is closed.
 - Conversation memory reuses the query step's entity extraction instead of a
   second LLM call per user turn.
+- Extraction drops relationships whose endpoint entity was dropped instead of
+  recreating it, reads an integer confidence of 1 as the scale minimum, and
+  treats single letters of any script as designators in entity resolution
+  (#130).
+- Items without a description get a surrogate embedding text instead of being
+  skipped from the vector indexes (#130).
+- Communities are detected on the entity-only subgraph, so claim nodes no
+  longer join communities or become singleton reports (#130).
+- `.json` sources parse without the optional `jq` package, exclude patterns
+  match relative to the source root, and repeated claim tags no longer drop
+  the claim (#130).
+- Incremental deletion is scoped to the run's namespace and corpus
+  (`processing.document_parsing.source_scope`, set from
+  `GRAPHRAG_SOURCE_SCOPE`); files that fail to parse are reported as `failed`
+  instead of deleted, and delta runs no longer overwrite the corpus's
+  communities and reports (#134).
+- A changed corpus is a stage-cache miss (keys carry a corpus manifest), a
+  resume after gleaning keeps the gleaned relationships, and a failed removal
+  of stale artifacts blocks the commit (#134).
+- The Neptune relationship pre-drop is scoped to the run's entity label, so
+  one index suffix no longer deletes another's edges (#134).
 - `processing.max_retries` now sets the ingestion LLM retry count; the
   stages passed it but the batch processor kept its own default. The default
   is 5, the value previously in effect (#140).

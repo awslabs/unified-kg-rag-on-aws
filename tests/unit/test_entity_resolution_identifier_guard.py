@@ -67,7 +67,14 @@ def _together(groups: list[set], a: str, b: str) -> bool:
         ("Model v2", {"v2"}),
         ("Acme Corporation", set()),
         ("Mix Studio", set()),  # "mix" is not a Roman numeral
-        ("가 나다", set()),  # single non-ASCII letters are not identifiers
+        ("가 나다", {"가"}),  # single letters of any script are designators
+        ("Party 甲", {"甲"}),
+        ("Party 을", {"을"}),
+        ("Vendor α", {"α"}),
+        ("Supplier Ä", {"ä"}),
+        ("Vendor Ａ", {"a"}),  # full-width letter NFKC-folds to ASCII
+        ("Phase IV", {"iv"}),  # multi-letter Roman numerals are kept
+        ("계약 당사자", set()),  # multi-character words are not designators
     ],
 )
 def test_discriminator_tokens(name: str, expected: set[str]) -> None:
@@ -111,6 +118,11 @@ def test_find_all_matches_drops_identifier_conflicts(method) -> None:
         ["Article 12", "Article 13 Termination", "Article 12 Termination"],
         ["Vendor A", "Vendor B"],
         ["Phase 1", "Phase 2", "Phase II"],
+        ["Party 甲", "Party 乙"],
+        ["Party 갑", "Party 을"],
+        ["Vendor α", "Vendor β"],
+        ["Supplier Ä", "Supplier Ö"],
+        ["Annex II", "Annex III"],
     ],
 )
 def test_distinct_identifiers_stay_separate(names: list[str]) -> None:

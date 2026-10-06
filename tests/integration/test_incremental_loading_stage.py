@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import boto3
 import pytest
 from moto import mock_aws
@@ -25,6 +28,8 @@ class _Ctx:
     incremental_delta = None
     incremental_fingerprints: dict[str, str] = {}
     documents: list[Document] = []
+    incremental_scope: str | None = None
+    failed_source_files: list[str] = []
 
 
 def test_deletion_only_run_allows_empty_output() -> None:
@@ -67,6 +72,7 @@ def _stage(config: Config, session: boto3.Session) -> DocumentLoadingStage:
     stage.boto_session = session  # type: ignore[attr-defined]
     # No injected port -> the stage builds the default DynamoDB adapter itself.
     stage._doc_status = None  # type: ignore[attr-defined]
+    stage.loader = SimpleNamespace(source_directory=Path("/"))  # type: ignore[attr-defined]
     return stage
 
 

@@ -333,42 +333,49 @@ class PipelineStateManager:
         self.save_pipeline_metadata(context)
 
 
-class PipelineResumeManager:
-    STAGE_CACHE_MAPPING = {
-        PipelineStageType.CLAIM_EXTRACTION: {"claims": "claims.json"},
-        PipelineStageType.CLAIM_RESOLUTION: {"resolved_claims": "resolved_claims.json"},
-        PipelineStageType.COMMUNITY_DETECTION: {
-            "communities": "communities.json",
-            "community_reports": "community_reports.json",
-        },
-        PipelineStageType.DOCUMENT_LOADING: {"documents": "documents.json"},
-        PipelineStageType.GLEANING: {"entities": "entities.json"},
-        PipelineStageType.GRAPH_ANALYSIS: {
-            "resolved_entities": "resolved_entities.json"
-        },
-        PipelineStageType.GRAPH_EXTRACTION: {
-            "entities": "entities.json",
-            "relationships": "relationships.json",
-        },
-        PipelineStageType.GRAPH_RESOLUTION: {
-            "resolved_entities": "resolved_entities.json",
-            "resolved_relationships": "resolved_relationships.json",
-        },
-        PipelineStageType.TEXT_CHUNKING: {"text_units": "text_units.json"},
-        PipelineStageType.TRANSLATION: {"translated_units": "translated_units.json"},
-    }
-    CONTEXT_ATTR_TO_MODEL = {
-        "claims": Claim,
-        "communities": Community,
-        "community_reports": CommunityReport,
-        "documents": Document,
+# Single source of truth for what each stage caches: stage -> {context
+# attribute: model class}. The pipeline saves exactly these attributes after a
+# stage completes and the resume manager loads exactly these back. Two
+# hand-written mappings drifted: gleaning's relationships were saved but never
+# restored, so a resume after gleaning silently dropped every gleaned
+# relationship (the context kept extraction's relationships only).
+STAGE_OUTPUTS: dict[PipelineStageType, dict[str, type[Any]]] = {
+    PipelineStageType.DOCUMENT_PARSING: {"documents": Document},
+    PipelineStageType.DOCUMENT_LOADING: {"documents": Document},
+    PipelineStageType.TEXT_CHUNKING: {"text_units": TextUnit},
+    PipelineStageType.TRANSLATION: {"translated_units": TextUnit},
+    PipelineStageType.GRAPH_EXTRACTION: {
         "entities": Entity,
         "relationships": Relationship,
-        "resolved_claims": Claim,
+    },
+    PipelineStageType.GLEANING: {"entities": Entity, "relationships": Relationship},
+    PipelineStageType.GRAPH_RESOLUTION: {
         "resolved_entities": Entity,
         "resolved_relationships": Relationship,
-        "text_units": TextUnit,
-        "translated_units": TextUnit,
+    },
+    PipelineStageType.CLAIM_EXTRACTION: {"claims": Claim},
+    PipelineStageType.CLAIM_RESOLUTION: {"resolved_claims": Claim},
+    PipelineStageType.GRAPH_ANALYSIS: {
+        "resolved_entities": Entity,
+        "resolved_relationships": Relationship,
+    },
+    PipelineStageType.COMMUNITY_DETECTION: {
+        "communities": Community,
+        "community_reports": CommunityReport,
+    },
+}
+
+
+class PipelineResumeManager:
+    # Derived from STAGE_OUTPUTS (never edit separately).
+    STAGE_CACHE_MAPPING: dict[PipelineStageType, dict[str, str]] = {
+        stage: {attr: f"{attr}.json" for attr in outputs}
+        for stage, outputs in STAGE_OUTPUTS.items()
+    }
+    CONTEXT_ATTR_TO_MODEL: dict[str, type[Any]] = {
+        attr: model
+        for outputs in STAGE_OUTPUTS.values()
+        for attr, model in outputs.items()
     }
 
     def __init__(
@@ -382,6 +389,9 @@ class PipelineResumeManager:
         # key for any customised run — a cache miss (recompute), never a stale
         # hit.
         self.config = config or Config()
+        # Set by the pipeline once the run's corpus is known; folded into the
+        # cache keys exactly as the save path folds it.
+        self.corpus_fingerprint: str | None = None
 
     def determine_resume_strategy(
         self, pipeline_id: str, explicit_stage: str | None = None
@@ -552,7 +562,9 @@ class PipelineResumeManager:
 
         missing = []
         for context_attr in self.STAGE_CACHE_MAPPING.get(stage_type, {}):
-            cache_key = stage_cache_key(self.config, stage_type, context_attr)
+            cache_key = stage_cache_key(
+                self.config, stage_type, context_attr, self.corpus_fingerprint
+            )
             if not self.cache_manager.cache_exists(cache_key, pipeline_id):
                 missing.append((context_attr, cache_key))
         return missing
@@ -642,7 +654,9 @@ class PipelineResumeManager:
             try:
                 model_class = self.CONTEXT_ATTR_TO_MODEL.get(context_attr)
                 data: Any = self.cache_manager.load_stage_result(
-                    cache_key=stage_cache_key(self.config, stage_type, context_attr),
+                    cache_key=stage_cache_key(
+                        self.config, stage_type, context_attr, self.corpus_fingerprint
+                    ),
                     pipeline_id=pipeline_id,
                     data_type=model_class if model_class else None,
                 )

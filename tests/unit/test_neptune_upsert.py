@@ -252,3 +252,45 @@ def test_delete_by_id_unscoped_without_suffix(indexer) -> None:
     indexer.neptune_client.g = LabelRecorder()
     indexer.delete_by_id(["id1"])
     assert labels == [], "unscoped delete must not call hasLabel"
+
+
+def test_relationship_pre_drop_is_scoped_to_the_suffix(indexer, mocker) -> None:
+    # Relationship ids are suffix-independent, so the idempotency pre-drop must
+    # only match edges whose source vertex carries THIS suffix's entity label;
+    # an unscoped g.E().has("id", ...) would drop tenant B's identical edge when
+    # tenant A is indexed. The scope mirrors delete_by_id: where(outV().hasLabel).
+    from unified_kg_rag.domain.models import Constants
+
+    steps: list[tuple[str, tuple]] = []
+
+    class Recorder:
+        def __getattr__(self, name):
+            def _step(*args, **kwargs):
+                steps.append((name, args))
+                return self
+
+            return _step
+
+    indexer.neptune_client.g = Recorder()
+    mocker.patch.object(indexer, "_execute_with_retries")
+    mocker.patch.object(indexer, "_build_add_edge_traversal")
+
+    indexer.upsert_relationships(
+        [
+            Relationship(
+                id="r1",
+                source_id="e1",
+                target_id="e2",
+                attributes={Constants.INDEX.value: "tenant-a"},
+            )
+        ]
+    )
+
+    names = [name for name, _ in steps]
+    # The edge drop is filtered by an endpoint-vertex label before drop().
+    assert names.index("where") < names.index("drop")
+    where_args = next(args for name, args in steps if name == "where")
+    # The anonymous where() traversal is outV().hasLabel(<this suffix's label>).
+    rendered = repr(where_args[0].bytecode)
+    assert "outV" in rendered
+    assert "Entity-tenant-a" in rendered

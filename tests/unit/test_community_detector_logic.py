@@ -18,6 +18,7 @@ import pytest
 from unified_kg_rag.adapters.ingestion.community_detector import (
     CommunityDetector,
     HierarchicalCommunity,
+    community_content_id,
 )
 from unified_kg_rag.domain.models import Community, Config
 from unified_kg_rag.shared import GraphError
@@ -232,11 +233,15 @@ class TestHierarchyProcessing:
         cd.graph = _two_triangle_graph()
         partitions = [[{"n0", "n1", "n2"}, {"n3", "n4", "n5"}]]
         cd._process_hierarchical_partitions(partitions)
-        assert set(cd.all_communities) == {"L0_C0", "L0_C1"}
+        first = community_content_id(0, {"n0", "n1", "n2"})
+        second = community_content_id(0, {"n3", "n4", "n5"})
+        assert set(cd.all_communities) == {first, second}
         assert all(c.level == 0 for c in cd.all_communities.values())
+        # The positional label survives for display only.
+        assert cd.all_communities[first].label == "L0_C0"
         # node_to_community_l0 maps every node to its L0 community.
-        assert cd.node_to_community_l0["n0"] == "L0_C0"
-        assert cd.node_to_community_l0["n3"] == "L0_C1"
+        assert cd.node_to_community_l0["n0"] == first
+        assert cd.node_to_community_l0["n3"] == second
 
     def test_two_levels_builds_parent_child_links(self) -> None:
         cd = _detector()
@@ -247,15 +252,19 @@ class TestHierarchyProcessing:
             [{0, 1}],
         ]
         cd._process_hierarchical_partitions(partitions)
-        assert "L1_C0" in cd.all_communities
-        parent = cd.all_communities["L1_C0"]
+        first = community_content_id(0, {"n0", "n1", "n2"})
+        second = community_content_id(0, {"n3", "n4", "n5"})
+        parent_id = community_content_id(1, {"n0", "n1", "n2", "n3", "n4", "n5"})
+        assert parent_id in cd.all_communities
+        parent = cd.all_communities[parent_id]
         assert parent.level == 1
-        assert set(parent.children_ids) == {"L0_C0", "L0_C1"}
+        assert parent.label == "L1_C0"
+        assert set(parent.children_ids) == {first, second}
         # Parent's node set is the union of children.
         assert parent.nodes == {"n0", "n1", "n2", "n3", "n4", "n5"}
         # Children point back at the parent.
-        assert cd.all_communities["L0_C0"].parent_id == "L1_C0"
-        assert cd.all_communities["L0_C1"].parent_id == "L1_C0"
+        assert cd.all_communities[first].parent_id == parent_id
+        assert cd.all_communities[second].parent_id == parent_id
 
 
 class TestEndToEndDetection:
@@ -931,3 +940,171 @@ class TestSubCommunityRollup:
         )
         cd.generate_reports([_community(["e0"])])
         assert called["flat"] and not called["rollup"]
+
+
+class TestClaimNodesExcluded:
+    """Claim nodes from GraphBuilder must not take part in community detection."""
+
+    @staticmethod
+    def _graph() -> nx.Graph:
+        from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
+        from unified_kg_rag.domain.models import Claim, Entity, Relationship
+
+        entities = [
+            Entity(id=f"e{i}", name=f"Vendor {i}", type="ORGANIZATION")
+            for i in range(6)
+        ]
+        pairs = [(0, 1), (1, 2), (0, 2), (3, 4), (4, 5), (3, 5), (2, 3)]
+        relationships = [
+            Relationship(id=f"r{a}{b}", source_id=f"e{a}", target_id=f"e{b}")
+            for a, b in pairs
+        ]
+        claims = [
+            # Connected to an entity.
+            Claim(
+                id="c_linked",
+                subject_id="e0",
+                subject_name="Vendor 0",
+                object_name="NONE",
+                type="DELIVERY",
+            ),
+            # Subject did not resolve: an isolated claim node.
+            Claim(
+                id="c_orphan",
+                subject_id="missing",
+                subject_name="Unknown Party",
+                object_name="NONE",
+                type="PAYMENT",
+            ),
+        ]
+        return GraphBuilder(entities, relationships, claims).build()
+
+    def test_communities_contain_only_entities(self) -> None:
+        cd = _detector(min_community_size=1)
+        cd(self._graph())
+        members = {node for comm in cd.all_communities.values() for node in comm.nodes}
+        assert members == {f"e{i}" for i in range(6)}
+        objects = cd.generate_community_objects()
+        assert all(
+            not eid.startswith("c_") for c in objects for eid in c.entity_ids or []
+        )
+
+    def test_input_graph_keeps_claim_nodes(self) -> None:
+        graph = self._graph()
+        _detector(min_community_size=1)(graph)
+        assert graph.has_node("c_orphan") and graph.has_node("c_linked")
+
+    def test_graph_without_node_type_is_used_as_is(self) -> None:
+        graph = _two_triangle_graph()
+        assert CommunityDetector._entity_subgraph(graph) is graph
+
+
+def _triangles(prefix: str, count: int) -> nx.Graph:
+    """``count`` triangles of ``prefix``-named nodes chained by bridge edges."""
+    g = nx.Graph()
+    for t in range(count):
+        a, b, c = (f"{prefix}{3 * t + k}" for k in range(3))
+        for node in (a, b, c):
+            g.add_node(node, name=node.upper(), text_unit_ids=[f"tu-{node}"])
+        g.add_edges_from([(a, b), (b, c), (a, c)])
+        if t:
+            g.add_edge(f"{prefix}{3 * t - 1}", a)
+    return g
+
+
+def _stub_report_chain():
+    """A report chain stand-in; the stubbed batch processor never calls it."""
+
+    class _StubChain:
+        batch = staticmethod(lambda *a, **k: [])
+        invoke = staticmethod(lambda *a, **k: {})
+
+    return _StubChain()
+
+
+def _shuffled_copy(graph: nx.Graph) -> nx.Graph:
+    import random
+
+    rng = random.Random(0)
+    nodes = list(graph.nodes(data=True))
+    edges = list(graph.edges(data=True))
+    rng.shuffle(nodes)
+    rng.shuffle(edges)
+    g = nx.Graph()
+    g.add_nodes_from(nodes)
+    g.add_edges_from(edges)
+    return g
+
+
+class TestStableCommunityIds:
+    """Community ids are content-derived and independent of insertion order."""
+
+    @staticmethod
+    def _detect(graph: nx.Graph) -> list[Community]:
+        cd = _detector(min_community_size=1)
+        cd(graph)
+        return cd.generate_community_objects()
+
+    def test_insertion_order_does_not_change_the_partition_or_ids(self) -> None:
+        # Large and ambiguous enough that raw Leiden (fixed seed) partitions a
+        # shuffled insertion order differently.
+        random_graph = nx.gnm_random_graph(80, 200, seed=0)
+        graph = nx.relabel_nodes(random_graph, {i: f"e{i:03d}" for i in random_graph})
+        forward = self._detect(graph)
+        backward = self._detect(_shuffled_copy(graph))
+        assert forward
+        assert {(c.id, tuple(c.entity_ids)) for c in forward} == {
+            (c.id, tuple(c.entity_ids)) for c in backward
+        }
+
+    def test_delta_run_does_not_overwrite_the_full_corpus_communities(self) -> None:
+        # A delta run clusters only the delta subgraph. With positional ids its
+        # L0_C0 (and that community's report) replaced the corpus's L0_C0.
+        from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+        from unified_kg_rag.application.storage.indexing_manager import (
+            IndexingManager,
+        )
+
+        def _detect_with_reports(graph: nx.Graph):
+            cd = _detector(min_community_size=1)
+            cd(graph)
+            communities = cd.generate_community_objects()
+            cd.community_detection_config.report_generation.enabled = True
+            cd.community_detection_config.report_generation.enable_sub_community_rollup = (
+                False
+            )
+            cd.report_generator = _stub_report_chain()
+            cd.batch_processor = _StubBatchProcessor(
+                [{"community_name": c.name, "summary": "s"} for c in communities]
+            )
+            return communities, cd.generate_reports(communities)
+
+        corpus_communities, corpus_reports = _detect_with_reports(_triangles("n", 3))
+        delta_communities, delta_reports = _detect_with_reports(_triangles("d", 1))
+        assert corpus_reports and delta_reports
+        assert {c.short_id for c in delta_communities} & {
+            c.short_id for c in corpus_communities
+        }, "positional labels overlap, which is what used to collide"
+        assert not {c.id for c in delta_communities} & {
+            c.id for c in corpus_communities
+        }
+
+        config = Config()
+        graph_store = FakeGraphStore()
+        vector_store = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+        manager = IndexingManager(
+            config=config, vector_indexer=vector_store, graph_indexer=graph_store
+        )
+        manager.index_delta(
+            communities=corpus_communities, community_reports=corpus_reports
+        )
+        manager.index_delta(
+            communities=delta_communities, community_reports=delta_reports
+        )
+
+        assert graph_store.ids("communities") == {
+            c.id for c in corpus_communities + delta_communities
+        }
+        assert vector_store.ids("community_reports") == {
+            r.id for r in corpus_reports + delta_reports
+        }

@@ -508,11 +508,16 @@ class NeptuneIndexer(GraphIndexer):
 
             # Drop existing edges by id first (batched) for idempotency. Edges
             # are not removed by the entity label-clear, so without this a re-run
-            # would create duplicate parallel edges with the same id.
+            # would create duplicate parallel edges with the same id. Relationship
+            # ids are suffix-independent (the same "Vendor -> Buyer" edge has the
+            # same id in every tenant), so the drop is scoped to edges whose
+            # source vertex carries THIS suffix's entity label (the scope
+            # delete_by_id uses); unscoped, indexing one tenant would drop
+            # another tenant's identical edges.
             for id_batch in self._batch_iterator([rel.id for rel in rels]):
                 try:
-                    self.neptune_client.g.E().has(
-                        "id", P.within(id_batch)
+                    self.neptune_client.g.E().has("id", P.within(id_batch)).where(
+                        __.outV().hasLabel(entity_label)
                     ).drop().iterate()
                 except Exception as e:
                     logger.warning("Failed dropping existing edge batch: %s", e)
