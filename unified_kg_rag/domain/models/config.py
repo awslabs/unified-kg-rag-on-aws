@@ -1200,8 +1200,11 @@ class CommunityDetectionConfig(BaseModel):
         description="Minimum nodes per community (smaller ones merged to neighbors)",
     )
     auto_resolution: bool = Field(
-        default=True,
-        description="Automatically find optimal resolution via modularity maximization",
+        default=False,
+        description="Sweep auto_resolution_candidates at every hierarchy level and "
+        "keep the most modular resolution. Off by default: maximizing modularity "
+        "on the coarse upper-level graphs picks low resolutions that merge "
+        "unrelated communities, which cost global search accuracy in testing.",
     )
     auto_resolution_candidates: list[float] = Field(
         default_factory=lambda: [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0],

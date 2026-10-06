@@ -235,6 +235,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - `processing.max_retries` now sets the ingestion LLM retry count; the
   stages passed it but the batch processor kept its own default. The default
   is 5, the value previously in effect (#140).
+- The community auto-resolution sweep scores complete partitions. Leiden
+  leaves isolated nodes out and modularity rejects a partial partition, so
+  every candidate failed silently and `resolution` was always used.
+  `graph.community_detection.auto_resolution` now defaults to `false`, the
+  behaviour actually in effect until now: with the sweep working, global
+  search lost 3 of 20 answers on the E2E corpus. Cached community-detection
+  output is recomputed once (#141).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on

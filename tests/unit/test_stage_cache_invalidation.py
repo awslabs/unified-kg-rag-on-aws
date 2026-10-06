@@ -249,7 +249,8 @@ class TestFingerprintScope:
         PipelineStageType.CLAIM_EXTRACTION: "96015659a99b",
         PipelineStageType.CLAIM_RESOLUTION: "96015659a99b",
         PipelineStageType.GRAPH_ANALYSIS: "6b559362dde3",
-        PipelineStageType.COMMUNITY_DETECTION: "c89105d3a95c",
+        # auto_resolution now defaults to false.
+        PipelineStageType.COMMUNITY_DETECTION: "b815bca04521",
     }
 
     def test_default_config_fingerprints_are_unchanged(self) -> None:

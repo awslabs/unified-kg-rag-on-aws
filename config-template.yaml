@@ -342,7 +342,9 @@ graph:
     min_community_size: 3
     # When true, sweep auto_resolution_candidates and keep the resolution that
     # maximizes modularity (the static `resolution` above is used when false).
-    auto_resolution: true
+    # Off by default: on the coarse upper-level graphs the most modular
+    # resolution is a low one that merges unrelated communities.
+    auto_resolution: false
     auto_resolution_candidates: [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0]
     # Skip the sweep (one full Leiden run per candidate at every level) on
     # graphs larger than this many nodes and use `resolution` instead.
