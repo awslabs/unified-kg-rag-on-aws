@@ -98,8 +98,10 @@ class NeptuneClient:
         if not self.neptune_config.endpoint:
             raise AWSServiceError("Neptune endpoint is not configured")
 
+        scheme = "wss" if self.neptune_config.use_ssl else "ws"
         connection_url = (
-            f"wss://{self.neptune_config.endpoint}:{self.neptune_config.port}/gremlin"
+            f"{scheme}://{self.neptune_config.endpoint}:"
+            f"{self.neptune_config.port}/gremlin"
         )
         headers = (
             self._get_auth_headers(connection_url)

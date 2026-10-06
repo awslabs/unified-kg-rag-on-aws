@@ -1,0 +1,50 @@
+# Local stand-ins for the AWS stores, for development only.
+#
+#   docker compose -f docker/compose.local.yaml up -d --wait
+#   docker compose -f docker/compose.local.yaml down -v
+#
+# - OpenSearch: single node, security plugin disabled (plain http, no auth),
+#   with the analysis-nori plugin that the Korean text mappings use (Amazon
+#   OpenSearch Service ships nori built in). Version matches the IaC domain.
+# - Gremlin Server: in-memory TinkerGraph over plain ws:// with no auth. Its
+#   TinkerPop line (3.7) matches the gremlinpython client.
+#
+# docker/config.local.yaml points the framework at them. Nothing here is
+# hardened: ports bind to 127.0.0.1, the graph lives in memory, and the
+# OpenSearch volume is removed by `down -v`.
+
+name: unified-kg-rag-local
+
+services:
+  opensearch:
+    build:
+      dockerfile_inline: |
+        FROM opensearchproject/opensearch:2.13.0
+        RUN /usr/share/opensearch/bin/opensearch-plugin install --batch analysis-nori
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_JAVA_OPTS: -Xms1g -Xmx1g
+    ports:
+      - 127.0.0.1:9200:9200
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health?wait_for_status=yellow"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  gremlin-server:
+    image: tinkerpop/gremlin-server:3.7.7
+    ports:
+      - 127.0.0.1:8182:8182
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/$$(hostname -i)/8182'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  opensearch-data:

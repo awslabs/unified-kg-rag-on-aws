@@ -124,6 +124,37 @@ Two independent auth concerns:
    The `.env` file is loaded automatically by the CLIs (`run-ingestion`,
    `run-rag`). When `use_iam: true`, no `.env` is needed.
 
+### Local stores (development)
+
+For development you can replace Neptune and OpenSearch with local containers.
+Models still come from Bedrock, so you need AWS credentials with Bedrock
+access. S3 is needed only for `--s3-sync`, DynamoDB only for incremental
+indexing.
+
+```bash
+docker compose -f docker/compose.local.yaml up -d --wait
+uv run run-ingestion --config-path docker/config.local.yaml --source-directory ./docs-in
+uv run run-rag --config-path docker/config.local.yaml --query "..."
+docker compose -f docker/compose.local.yaml down -v
+```
+
+[`docker/compose.local.yaml`](../docker/compose.local.yaml) runs a TinkerPop
+Gremlin Server (in-memory TinkerGraph) and a single-node OpenSearch 2.13 with
+the security plugin disabled and the `analysis-nori` plugin installed (the
+Korean mappings use `nori`; Amazon OpenSearch Service ships it built in).
+[`docker/config.local.yaml`](../docker/config.local.yaml) points the framework
+at them with `aws.neptune.use_ssl: false` and `use_iam: false` (plain `ws://`,
+no SigV4) and `aws.opensearch.allow_anonymous: true` with `use_ssl: false`
+(plain `http://`, no auth).
+
+To check the stores without Bedrock, run the smoke test, which uses a hashing
+embedding provider: `LOCAL_STORES=1 uv run pytest tests/integration/test_local_stores.py`.
+
+Known differences from Neptune: TinkerGraph keeps the graph in memory only,
+and a list property written when a vertex is created keeps duplicate values
+(Neptune stores them once). Nothing in the compose file is hardened; it binds
+to `127.0.0.1` only.
+
 ---
 
 ## 2. Configuration
@@ -200,9 +231,11 @@ the same values.
 | `aws.bedrock.transient_retry.max_attempts` | `5` | Attempts per call for transient Bedrock errors that botocore does not retry (such as HTTP 424), on embeddings and query-time calls. `1` disables the retry. |
 | `aws.neptune.endpoint` | `null` | **Required.** Neptune cluster endpoint. |
 | `aws.neptune.use_iam` | `true` | SigV4-sign Neptune requests. |
+| `aws.neptune.use_ssl` | `true` | Connect over `wss://`. Neptune requires it; set `false` (with `use_iam: false`) only for a local Gremlin Server (§1 Local stores). |
 | `aws.neptune.pool_size` | `4` | Gremlin connection pool size. The client raises it to `indexing.neptune.index_concurrency` when that is larger. |
 | `aws.opensearch.endpoint` | `null` | **Required.** OpenSearch domain endpoint. |
 | `aws.opensearch.use_iam` | `false` | `false` reads `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD` from the environment (§1 Authentication). |
+| `aws.opensearch.allow_anonymous` | `false` | Connect with no auth, for a local OpenSearch with the security plugin disabled (§1 Local stores). Cannot be combined with `use_iam` or username/password. |
 | `aws.opensearch.sigv4_service_name` | `"es"` | `es` for a managed domain, `aoss` for OpenSearch Serverless. A wrong value often shows up as zero search hits. |
 | `aws.s3.bucket_name` | `null` | Bucket for cache sync and embedding-cache persistence. |
 | `aws.s3.encryption.encryption_type` | `"BUCKET_DEFAULT"` | `BUCKET_DEFAULT` lets the bucket's default encryption apply; `AES256` or `aws:kms` (with `kms_key_id`) force a per-object header. |
