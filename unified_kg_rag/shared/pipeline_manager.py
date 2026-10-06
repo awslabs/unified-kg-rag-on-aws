@@ -333,42 +333,49 @@ class PipelineStateManager:
         self.save_pipeline_metadata(context)
 
 
-class PipelineResumeManager:
-    STAGE_CACHE_MAPPING = {
-        PipelineStageType.CLAIM_EXTRACTION: {"claims": "claims.json"},
-        PipelineStageType.CLAIM_RESOLUTION: {"resolved_claims": "resolved_claims.json"},
-        PipelineStageType.COMMUNITY_DETECTION: {
-            "communities": "communities.json",
-            "community_reports": "community_reports.json",
-        },
-        PipelineStageType.DOCUMENT_LOADING: {"documents": "documents.json"},
-        PipelineStageType.GLEANING: {"entities": "entities.json"},
-        PipelineStageType.GRAPH_ANALYSIS: {
-            "resolved_entities": "resolved_entities.json"
-        },
-        PipelineStageType.GRAPH_EXTRACTION: {
-            "entities": "entities.json",
-            "relationships": "relationships.json",
-        },
-        PipelineStageType.GRAPH_RESOLUTION: {
-            "resolved_entities": "resolved_entities.json",
-            "resolved_relationships": "resolved_relationships.json",
-        },
-        PipelineStageType.TEXT_CHUNKING: {"text_units": "text_units.json"},
-        PipelineStageType.TRANSLATION: {"translated_units": "translated_units.json"},
-    }
-    CONTEXT_ATTR_TO_MODEL = {
-        "claims": Claim,
-        "communities": Community,
-        "community_reports": CommunityReport,
-        "documents": Document,
+# Single source of truth for what each stage caches: stage -> {context
+# attribute: model class}. The pipeline saves exactly these attributes after a
+# stage completes and the resume manager loads exactly these back. Two
+# hand-written mappings drifted: gleaning's relationships were saved but never
+# restored, so a resume after gleaning silently dropped every gleaned
+# relationship (the context kept extraction's relationships only).
+STAGE_OUTPUTS: dict[PipelineStageType, dict[str, type[Any]]] = {
+    PipelineStageType.DOCUMENT_PARSING: {"documents": Document},
+    PipelineStageType.DOCUMENT_LOADING: {"documents": Document},
+    PipelineStageType.TEXT_CHUNKING: {"text_units": TextUnit},
+    PipelineStageType.TRANSLATION: {"translated_units": TextUnit},
+    PipelineStageType.GRAPH_EXTRACTION: {
         "entities": Entity,
         "relationships": Relationship,
-        "resolved_claims": Claim,
+    },
+    PipelineStageType.GLEANING: {"entities": Entity, "relationships": Relationship},
+    PipelineStageType.GRAPH_RESOLUTION: {
         "resolved_entities": Entity,
         "resolved_relationships": Relationship,
-        "text_units": TextUnit,
-        "translated_units": TextUnit,
+    },
+    PipelineStageType.CLAIM_EXTRACTION: {"claims": Claim},
+    PipelineStageType.CLAIM_RESOLUTION: {"resolved_claims": Claim},
+    PipelineStageType.GRAPH_ANALYSIS: {
+        "resolved_entities": Entity,
+        "resolved_relationships": Relationship,
+    },
+    PipelineStageType.COMMUNITY_DETECTION: {
+        "communities": Community,
+        "community_reports": CommunityReport,
+    },
+}
+
+
+class PipelineResumeManager:
+    # Derived from STAGE_OUTPUTS (never edit separately).
+    STAGE_CACHE_MAPPING: dict[PipelineStageType, dict[str, str]] = {
+        stage: {attr: f"{attr}.json" for attr in outputs}
+        for stage, outputs in STAGE_OUTPUTS.items()
+    }
+    CONTEXT_ATTR_TO_MODEL: dict[str, type[Any]] = {
+        attr: model
+        for outputs in STAGE_OUTPUTS.values()
+        for attr, model in outputs.items()
     }
 
     def __init__(

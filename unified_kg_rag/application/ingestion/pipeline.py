@@ -26,20 +26,13 @@ from unified_kg_rag.application.ingestion.pipeline_stages import (
     TranslationStage,
 )
 from unified_kg_rag.domain.models import (
-    Claim,
-    Community,
-    CommunityReport,
     Config,
-    Document,
-    Entity,
     PipelineConfig,
     PipelineContext,
     PipelineMetrics,
     PipelineStageResult,
     PipelineStageStatus,
     PipelineStageType,
-    Relationship,
-    TextUnit,
 )
 from unified_kg_rag.shared import (
     CacheSyncError,
@@ -54,6 +47,7 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.cache_manager import CacheStrategy
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
+from unified_kg_rag.shared.pipeline_manager import STAGE_OUTPUTS
 from unified_kg_rag.shared.utils import compute_hash, stage_cache_key
 
 logger = get_logger(__name__)
@@ -102,39 +96,13 @@ class DataIngestionPipeline:
         PipelineStageType.INDEXING,
     }
 
+    # What each stage caches, derived from the single shared definition the
+    # resume manager also reads, so save and restore cannot drift apart.
     STAGE_OUTPUT_MAPPING: dict[
         PipelineStageType, dict[str, tuple[type[BaseModel], str]]
     ] = {
-        PipelineStageType.CLAIM_EXTRACTION: {"claims": (Claim, "claims")},
-        PipelineStageType.CLAIM_RESOLUTION: {
-            "resolved_claims": (Claim, "resolved_claims")
-        },
-        PipelineStageType.COMMUNITY_DETECTION: {
-            "communities": (Community, "communities"),
-            "community_reports": (CommunityReport, "community_reports"),
-        },
-        PipelineStageType.DOCUMENT_LOADING: {"documents": (Document, "documents")},
-        PipelineStageType.DOCUMENT_PARSING: {"documents": (Document, "documents")},
-        PipelineStageType.GLEANING: {
-            "entities": (Entity, "entities"),
-            "relationships": (Relationship, "relationships"),
-        },
-        PipelineStageType.GRAPH_ANALYSIS: {
-            "resolved_entities": (Entity, "resolved_entities"),
-            "resolved_relationships": (Relationship, "resolved_relationships"),
-        },
-        PipelineStageType.GRAPH_EXTRACTION: {
-            "entities": (Entity, "entities"),
-            "relationships": (Relationship, "relationships"),
-        },
-        PipelineStageType.GRAPH_RESOLUTION: {
-            "resolved_entities": (Entity, "resolved_entities"),
-            "resolved_relationships": (Relationship, "resolved_relationships"),
-        },
-        PipelineStageType.TEXT_CHUNKING: {"text_units": (TextUnit, "text_units")},
-        PipelineStageType.TRANSLATION: {
-            "translated_units": (TextUnit, "translated_units")
-        },
+        stage: {attr: (model, attr) for attr, model in outputs.items()}
+        for stage, outputs in STAGE_OUTPUTS.items()
     }
 
     def __init__(

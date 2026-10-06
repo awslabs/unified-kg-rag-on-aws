@@ -78,6 +78,13 @@ Each previous behaviour stays available through the setting in parentheses.
   `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).
 
 ### Fixed
+- Resuming a pipeline after the gleaning stage keeps the gleaned
+  relationships. The save and restore paths used two separately maintained
+  stage-output mappings, and the restore one loaded only gleaning's entities.
+  Both now derive from one definition (`shared.pipeline_manager.STAGE_OUTPUTS`),
+  which also restores the parsing stage's documents (a resume from
+  `document_loading` previously started with none) and graph analysis's
+  relationships.
 - An incremental run now fails before committing when removing the stale
   artifacts of changed documents fails. The commit replaced those documents'
   registry lineage, so the artifacts that failed to delete were no longer
