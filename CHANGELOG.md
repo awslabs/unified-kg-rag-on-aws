@@ -174,7 +174,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - LLM JSON responses are parsed by one helper, `parse_llm_json`; its
   `strict=True` mode raises on unparseable text for LightRAG keyword
   extraction. LangChain judge scores and `partial_correctness` reasoning now
-  also accept JSON wrapped in prose (#PR).
+  also accept JSON wrapped in prose (#153).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
