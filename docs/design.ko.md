@@ -420,7 +420,10 @@ composition root입니다. 오케스트레이터마다 하나를 만들거나 �
 
 - `GraphRAGChain`: 체인 자체 프롬프트, 모든 검색 전략(global map/reduce와 DRIFT 체인
   포함), 하이브리드 스코어러의 리랭커, 두 토큰 매니저, 대화 메모리, 기본 OpenSearch
-  리트리버의 임베딩
+  리트리버의 임베딩. 대화 메모리는 기본적으로 프로세스 전체에서 공유되므로 요청마다
+  체인을 새로 만들어도 대화 기록이 유지되며, 첫 체인의 설정과 제공자로 생성됩니다. 이후
+  메모리 설정이 다른 체인도 공유 매니저를 그대로 쓰고 경고를 한 번 남깁니다. 체인의 대화를
+  분리하려면 `GraphRAGChain(memory_manager=MemoryManager(cfg, providers=...))`를 넘깁니다.
 - `DataIngestionPipeline`: 청커, 번역기, 그래프·클레임 추출, gleaning, 설명 요약,
   커뮤니티 리포트, 기본 OpenSearch 인덱서의 임베딩, 시각화 임베더
 - `EvaluationManager`: LangChain·RAGAS 평가기(LLM, 임베딩, 토큰 카운터). 기본값으로

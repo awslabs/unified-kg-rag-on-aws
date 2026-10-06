@@ -341,13 +341,49 @@ class MemoryManager:
 
 _memory_manager: MemoryManager | None = None
 _manager_lock = threading.Lock()
+_mismatch_logged = False
 
 
-def get_memory_manager() -> MemoryManager:
-    global _memory_manager
+def _memory_fingerprint(config: Config) -> tuple[str, str, str]:
+    """The config parts conversation memory is built from."""
+    return (
+        config.memory.model_dump_json(),
+        str(config.search.entity_extraction_model_id),
+        config.custom_prompts.model_dump_json(),
+    )
+
+
+def get_memory_manager(
+    config: Config | None = None, providers: Providers | None = None
+) -> MemoryManager:
+    """The process-wide conversation memory, shared by every default chain.
+
+    Created on first use from the first caller's ``config`` and ``providers``
+    (``get_config()`` and a default bundle when omitted), so conversations
+    survive across chain instances, e.g. a chain built per request. A later
+    caller whose memory-relevant config (``memory`` limits, entity-extraction
+    model, ``custom_prompts``) differs keeps using the shared manager; the
+    mismatch is logged once. Pass a chain its own ``MemoryManager`` to isolate
+    it instead.
+    """
+    global _memory_manager, _mismatch_logged
 
     if _memory_manager is None:
         with _manager_lock:
             if _memory_manager is None:
-                _memory_manager = MemoryManager(config=get_config())
+                _memory_manager = MemoryManager(
+                    config=config or get_config(), providers=providers
+                )
+                return _memory_manager
+    if (
+        config is not None
+        and not _mismatch_logged
+        and _memory_fingerprint(config) != _memory_fingerprint(_memory_manager.config)
+    ):
+        _mismatch_logged = True
+        logger.warning(
+            "The shared conversation memory was created from a different memory "
+            "config than this chain's; it keeps the first config. Pass "
+            "GraphRAGChain(memory_manager=MemoryManager(config)) to isolate a chain."
+        )
     return _memory_manager

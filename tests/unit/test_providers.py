@@ -207,7 +207,7 @@ def test_injected_llm_factory_reaches_conversation_memory(no_bedrock) -> None:
     providers = _fake_providers(config)
     chain = GraphRAGChain(config=config, providers=providers)
 
-    # The chain owns its memory manager, built over the chain's providers.
+    # The first chain creates the shared memory from its config and providers.
     assert isinstance(chain.memory_manager, MemoryManager)
     assert chain.memory_manager.providers is providers
     history = asyncio.run(chain.memory_manager.get_or_create_memory("c-1"))
@@ -217,17 +217,64 @@ def test_injected_llm_factory_reaches_conversation_memory(no_bedrock) -> None:
     )
 
 
-def test_default_chain_memory_follows_the_chain_config(mocker) -> None:
-    from unified_kg_rag.application.retrieval import rag_chain
+def test_default_chains_share_conversation_history(no_bedrock) -> None:
+    from unified_kg_rag.domain.models import MessageRole
 
-    spy = mocker.spy(rag_chain, "MemoryManager")
     config = Config()
-    config.memory.max_conversations = 3
-    chain = GraphRAGChain(config=config, boto_session=MagicMock())
-    # Not the process-wide manager pinned to get_config(): the chain's own.
-    assert chain.memory_manager.config is config
-    assert chain.memory_manager.providers is chain.providers
-    spy.assert_called_once()
+    first = GraphRAGChain(config=config, providers=_fake_providers(config))
+    second = GraphRAGChain(config=config, providers=_fake_providers(config))
+
+    async def scenario() -> list[str]:
+        await first.memory_manager.add_message(
+            "conv-1", MessageRole.USER, "about Vendor", entities=["Vendor"]
+        )
+        history = await second.memory_manager.get_or_create_memory("conv-1")
+        return [str(m.content) for m in history.messages]
+
+    # A chain built per request still sees the earlier request's turn.
+    assert second.memory_manager is first.memory_manager
+    assert asyncio.run(scenario()) == ["about Vendor"]
+
+
+def test_injected_memory_manager_isolates_a_chain(no_bedrock) -> None:
+    from unified_kg_rag.domain.models import MessageRole
+
+    config = Config()
+    shared = GraphRAGChain(config=config, providers=_fake_providers(config))
+    isolated_manager = MemoryManager(config, providers=_fake_providers(config))
+    isolated = GraphRAGChain(
+        config=config,
+        providers=_fake_providers(config),
+        memory_manager=isolated_manager,
+    )
+
+    async def scenario() -> list[str]:
+        await shared.memory_manager.add_message(
+            "conv-1", MessageRole.USER, "about Vendor", entities=["Vendor"]
+        )
+        history = await isolated.memory_manager.get_or_create_memory("conv-1")
+        return [str(m.content) for m in history.messages]
+
+    assert isolated.memory_manager is isolated_manager
+    assert asyncio.run(scenario()) == []
+
+
+def test_mismatched_config_keeps_shared_memory_and_logs_once(
+    no_bedrock, mocker
+) -> None:
+    from unified_kg_rag.adapters.retrieval import memory_manager as mm
+
+    warn = mocker.spy(mm.logger, "warning")
+    config = Config()
+    first = GraphRAGChain(config=config, providers=_fake_providers(config))
+    other = Config()
+    other.memory.max_conversations = 3
+    second = GraphRAGChain(config=other, providers=_fake_providers(other))
+    third = GraphRAGChain(config=other, providers=_fake_providers(other))
+
+    assert first.memory_manager is second.memory_manager is third.memory_manager
+    assert first.memory_manager.config is config
+    assert warn.call_count == 1
 
 
 def test_providers_and_model_factory_are_exclusive() -> None:

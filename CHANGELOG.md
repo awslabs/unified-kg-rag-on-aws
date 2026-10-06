@@ -64,10 +64,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   defaults.
 - `GraphRAGChain` reuses search-strategy instances per event loop instead of
   building one (with its own boto3 clients and LLM chains) per query.
-- Each `GraphRAGChain` owns its conversation memory, built from the chain's
-  config and providers. Conversations are no longer shared between chain
-  instances through the process-wide `get_memory_manager()`, which remains
-  available for direct use.
+- Conversation memory stays process-wide by default, so history survives
+  across chain instances (e.g. a chain per request). It is now created from the
+  first chain's config and providers instead of `get_config()`; a later chain
+  with a different memory config keeps using it and a warning is logged once.
+  `GraphRAGChain(memory_manager=MemoryManager(config))` isolates a chain.
 
 Retrieval and indexing defaults changed for latency, cost, and upstream parity.
 Each previous behaviour stays available through the setting in parentheses.
@@ -107,10 +108,10 @@ Each previous behaviour stays available through the setting in parentheses.
 - A discarded `AsyncOpenSearch` client is actually closed: aiohttp's
   `TCPConnector.close()` coroutine was called without being awaited, leaving
   "Unclosed client session" warnings.
-- Conversation memory follows the chain's `--config-path` config instead of
-  the global `get_config()`, shares one entity extractor across conversations,
-  and reuses the query step's entity extraction instead of a second LLM call
-  per user turn.
+- Conversation memory is created from the first chain's `--config-path`
+  config instead of the global `get_config()`, shares one entity extractor
+  across conversations, and reuses the query step's entity extraction instead
+  of a second LLM call per user turn.
 - Prompt caching now takes effect on the Converse API, which every Claude
   4.5+/5.x inference profile uses. The system prompt carried an Anthropic
   `cache_control` key that langchain-aws drops when it builds a Converse

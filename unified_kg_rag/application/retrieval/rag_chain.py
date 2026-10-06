@@ -34,7 +34,10 @@ from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
-from unified_kg_rag.adapters.retrieval.memory_manager import MemoryManager
+from unified_kg_rag.adapters.retrieval.memory_manager import (
+    MemoryManager,
+    get_memory_manager,
+)
 from unified_kg_rag.adapters.retrieval.token_manager import (
     EMPTY_CONTEXT_PLACEHOLDER,
     ContextSection,
@@ -190,6 +193,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         *,
         model_factory: LLMFactoryPort | None = None,
         providers: Providers | None = None,
+        memory_manager: MemoryManager | None = None,
         retriever_builders: (
             dict[RetrieverRole, Callable[[], BaseGraphRAGRetriever]] | None
         ) = None,
@@ -214,11 +218,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         self.boto_session = self.providers.boto_session
         self.mode = mode
         self.ignore_errors = self.config.processing.ignore_errors
-        # Conversation memory is owned by the chain: it follows the chain's
-        # config (limits, entity model, custom prompts) and providers, unlike
-        # the process-wide get_memory_manager(), which is pinned to the global
-        # get_config().
-        self.memory_manager = MemoryManager(config, providers=self.providers)
+        # Conversation memory is process-wide by default, so history survives
+        # across chain instances (e.g. a chain per request); the first chain's
+        # config and providers create it. Inject a MemoryManager to isolate a
+        # chain's conversations.
+        self.memory_manager: MemoryManager = memory_manager or get_memory_manager(
+            config, self.providers
+        )
         self.token_manager = TokenManager(self.config, providers=self.providers)
         self.factory: LLMFactoryPort = self.providers.llm_factory
         # Backend seam: inject custom retriever builders keyed by abstract role

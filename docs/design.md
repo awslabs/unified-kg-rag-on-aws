@@ -424,7 +424,12 @@ constructs, so an injected provider reaches all of them:
 - `GraphRAGChain`: its own prompts, every search strategy (including the
   global map/reduce and DRIFT chains), the hybrid scorer's reranker, both token
   managers, conversation memory, and the default OpenSearch retriever's
-  embeddings.
+  embeddings. Conversation memory is process-wide by default (so history
+  survives a chain built per request) and is created from the first chain's
+  config and providers; a later chain with a different memory config keeps the
+  shared manager and logs a warning once. Pass
+  `GraphRAGChain(memory_manager=MemoryManager(cfg, providers=...))` to isolate a
+  chain's conversations.
 - `DataIngestionPipeline`: the chunker, translator, graph/claim extraction,
   gleaning, description summarization, community reports, the default
   OpenSearch indexer's embeddings and the visualization embedder.
