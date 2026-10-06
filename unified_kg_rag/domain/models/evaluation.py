@@ -28,6 +28,9 @@ class EvaluationMetricType(str, Enum):
     HIT_AT_K = "hit_at_k"
     RECALL_AT_K = "recall_at_k"
     MRR = "mrr"
+    # Share of reported sources attributable to a file (the rank metrics above
+    # see only those).
+    ATTRIBUTABLE_FRACTION = "attributable_fraction"
     # Deterministic SQuAD-style answer metrics (max over answer + aliases).
     EXACT_MATCH = "exact_match"
     TOKEN_F1 = "token_f1"
@@ -112,7 +115,9 @@ class EvaluationResult(BaseModel):
         default_factory=list,
         description=(
             "Provenance of the reported sources, in rank order: for each source, "
-            "the document ids and file names it carries (empty when it has none)."
+            "the file names it is attributed to — named directly (text units) or "
+            "via its text_unit_ids lineage (entities, relationships, community "
+            "reports); empty when unattributable."
         ),
     )
     response_time: float | None = Field(

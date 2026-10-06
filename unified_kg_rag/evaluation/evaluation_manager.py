@@ -13,7 +13,12 @@ from typing import Any
 from langchain_core.runnables import Runnable
 from pydantic import ValidationError
 
-from unified_kg_rag.application.retrieval.rag_chain import RAGInput, RAGOutput
+from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.application.retrieval.rag_chain import (
+    GraphRAGChain,
+    RAGInput,
+    RAGOutput,
+)
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationGroundTruth,
@@ -22,6 +27,7 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluationSummary,
     EvaluatorType,
+    RetrieverRole,
 )
 from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.utils import BatchProcessor
@@ -30,8 +36,13 @@ from .answer_match_evaluator import AnswerMatchEvaluator
 from .base import FAILED_METRICS_KEY, SKIPPED_METRICS_KEY, BaseEvaluator
 from .graph_aware_evaluator import GraphAwareEvaluator
 from .retrieval_evaluator import RetrievalEvaluator
+from .source_resolver import SourceFileResolver, TextUnitFileResolver, file_name_of
 
 logger = get_logger(__name__)
+
+# Per reported source, in rank order: (file names it names directly,
+# text-unit ids whose files it derives from).
+SourceProvenance = list[tuple[list[str], list[str]]]
 
 
 class EvaluationManager:
@@ -71,14 +82,39 @@ class EvaluationManager:
         # the ignore — the branch is real once a new member is added.
         return None  # type: ignore[unreachable]
 
-    def __init__(self, config: Config, rag_chain: Runnable | None = None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        rag_chain: Runnable | None = None,
+        source_resolver: SourceFileResolver | None = None,
+    ) -> None:
         self.config = config
         if rag_chain is None:
             raise EvaluationException("RAG chain not provided for evaluation.")
         self.rag_chain = rag_chain
+        self.source_resolver = source_resolver or self._default_source_resolver(
+            config, rag_chain
+        )
         self.evaluators: dict[EvaluatorType, BaseEvaluator] = {}
         self._initialize_evaluators()
         self.batch_processor = BatchProcessor()
+
+    @staticmethod
+    def _default_source_resolver(
+        config: Config, rag_chain: Runnable
+    ) -> SourceFileResolver | None:
+        """Resolve graph-source lineage through the chain's own document store.
+
+        Reuses the retriever the chain binds to the DOCUMENT role (including an
+        injected ``retriever_builders`` backend), so attribution reads the same
+        indices the answers were retrieved from. Other runnables get no
+        resolver: only sources that name a file directly are attributable.
+        """
+        if not isinstance(rag_chain, GraphRAGChain):
+            return None
+        return TextUnitFileResolver(
+            config, lambda: rag_chain._get_retriever(RetrieverRole.DOCUMENT)
+        )
 
     def _initialize_evaluators(self) -> None:
         enabled_count = 0
@@ -275,7 +311,9 @@ class EvaluationManager:
         )
 
         results = []
+        provenance: list[SourceProvenance] = []
         for query, raw_result in zip(queries, raw_results, strict=True):
+            provenance.append(self._extract_source_provenance(raw_result))
             try:
                 rag_metadata = self._extract_from_result(raw_result, "metadata", {})
                 error_message = self._detect_generation_error(raw_result, rag_metadata)
@@ -290,7 +328,6 @@ class EvaluationManager:
                         retrieved_contexts=self._extract_from_result(
                             raw_result, "sources", []
                         ),
-                        retrieved_source_ids=self._extract_source_ids(raw_result),
                         enable_thinking=rag_metadata.get("enable_thinking", False),
                         search_strategy=rag_metadata.get("search_strategy"),
                         response_time=rag_metadata.get("processing_time"),
@@ -317,7 +354,50 @@ class EvaluationManager:
                         error_message=str(e),
                     )
                 )
+        await self._attribute_sources(queries, results, provenance)
         return results
+
+    async def _attribute_sources(
+        self,
+        queries: list[EvaluationQuery],
+        results: list[EvaluationResult],
+        provenance: list[SourceProvenance],
+    ) -> None:
+        """Set ``retrieved_source_ids``: per source, the file names it maps to.
+
+        A source that names no file directly (entity, relationship, community
+        report) is attributed to the files of the text units in its lineage,
+        resolved in one batched lookup per index suffix. A source that still
+        maps to no file stays ``[]`` (unattributable).
+        """
+        resolved: dict[str | None, dict[str, str]] = {}
+        if self.source_resolver is not None:
+            pending: dict[str | None, set[str]] = defaultdict(set)
+            for query, sources in zip(queries, provenance, strict=True):
+                for files, unit_ids in sources:
+                    if not files:
+                        pending[query.metadata.get("suffix")].update(unit_ids)
+            for suffix, wanted in pending.items():
+                if not wanted:
+                    continue
+                try:
+                    resolved[suffix] = await self.source_resolver.aresolve(
+                        sorted(wanted), suffix
+                    )
+                except Exception as e:  # noqa: BLE001 - attribution is best-effort
+                    logger.warning(
+                        "Could not resolve %s text-unit ids to files (suffix "
+                        "'%s'); those sources stay unattributable: %s",
+                        len(wanted),
+                        suffix,
+                        e,
+                    )
+        for query, result, sources in zip(queries, results, provenance, strict=True):
+            mapping = resolved.get(query.metadata.get("suffix"), {})
+            result.retrieved_source_ids = [
+                files or sorted({mapping[u] for u in unit_ids if u in mapping})
+                for files, unit_ids in sources
+            ]
 
     @staticmethod
     def _detect_generation_error(raw_result: Any, rag_metadata: Any) -> str | None:
@@ -339,12 +419,14 @@ class EvaluationManager:
         return str(detail) if detail else "RAG chain returned an error response"
 
     @staticmethod
-    def _extract_source_ids(raw_result: Any) -> list[list[str]]:
-        """Per reported source, in rank order: its document ids and file names.
+    def _extract_source_provenance(raw_result: Any) -> SourceProvenance:
+        """Per reported source, in rank order: file names and text-unit lineage.
 
-        Read from the provenance the RAG chain attaches to each source
-        (``metadata.document_ids``) and the chunk attributes the indexer stores
+        File names come from the chunk attributes the indexer stores
         (``file_name`` / ``file_path``, top-level or under ``attributes``).
+        Lineage is the source's ``text_unit_ids`` (entities, relationships,
+        community reports) or, for a text unit without a file name, its own id.
+        Document ids are not used: they are content hashes no dataset names.
         """
         if isinstance(raw_result, RAGOutput):
             sources: Any = raw_result.sources
@@ -355,28 +437,34 @@ class EvaluationManager:
         if not isinstance(sources, list):
             return []
 
-        ranked: list[list[str]] = []
+        provenance: SourceProvenance = []
         for source in sources:
-            ids: list[str] = []
+            files: list[str] = []
+            unit_ids: list[str] = []
             if isinstance(source, dict):
                 metadata = source.get("metadata")
                 payloads = [source]
                 if isinstance(metadata, dict):
                     payloads.append(metadata)
-                    if isinstance(metadata.get("attributes"), dict):
-                        payloads.append(metadata["attributes"])
                 for payload in payloads:
-                    doc_ids = payload.get("document_ids") or payload.get("document_id")
-                    if isinstance(doc_ids, str):
-                        doc_ids = [doc_ids]
-                    if isinstance(doc_ids, list | tuple):
-                        ids.extend(str(d) for d in doc_ids if d)
-                    for key in ("file_name", "file_path"):
-                        value = payload.get(key)
-                        if isinstance(value, str) and value.strip():
-                            ids.append(Path(value).name)
-            ranked.append(list(dict.fromkeys(ids)))
-        return ranked
+                    if name := file_name_of(payload):
+                        files.append(name)
+                    lineage = payload.get("text_unit_ids") or []
+                    if isinstance(lineage, str):
+                        lineage = [lineage]
+                    if isinstance(lineage, list | tuple):
+                        unit_ids.extend(str(u) for u in lineage if u)
+                if (
+                    isinstance(metadata, dict)
+                    and metadata.get("section_type") == SectionType.TEXT.value
+                ):
+                    own_id = metadata.get("chunk_id") or metadata.get("source_id")
+                    if own_id:
+                        unit_ids.append(str(own_id))
+            provenance.append(
+                (list(dict.fromkeys(files)), list(dict.fromkeys(unit_ids)))
+            )
+        return provenance
 
     def create_lean_context_strings(
         self, sources_list: list[dict[str, Any]]

@@ -990,13 +990,19 @@ aws:
   해제하여 opt-in.)
 - **`retrieval`** — 결정적이고 LLM 불필요: 답변 모델이 본 소스에 정답 문서가
   포함됐는지를 `reference_sources`와 비교해 `hit_at_k`, `recall_at_k`(k =
-  `evaluation.retrieval_k`, 기본값 5), `mrr`(보고된 전체 소스 기준)로 산출합니다.
+  `evaluation.retrieval_k`, 기본값 5), `mrr`로 산출합니다. 텍스트 유닛 소스는 파일
+  이름을 직접 갖고, 엔티티·관계·커뮤니티 리포트 소스는 계보(`text_unit_ids`)에
+  있는 텍스트 유닛의 파일로 귀속합니다(체인의 문서 저장소에서 접미사별로 한 번에
+  조회). 커뮤니티 리포트의 계보는 커뮤니티 전체이므로 `global`/`drift` 점수는
+  답변 모델이 실제로 읽은 범위의 상한입니다. 순위는 귀속 가능한 소스만으로 매기며,
+  `attributable_fraction`(귀속 가능한 소스 / 보고된 소스, `grouped_statistics`에서
+  전략별로도 제공)으로 순위 지표가 컨텍스트를 얼마나 보는지 알 수 있습니다.
   매칭은 대소문자를 구분하지 않고 전체 이름으로 하며, 이름이 파일 확장자(`.` +
   영문자·숫자 1-5자, 영문자 1개 이상)로 끝나면 stem으로도 비교합니다:
   `docs/Terms.pdf` = `terms.pdf` = `terms`. `/`는 경로처럼 보이는 값(파일 확장자,
   URI 스킴, `/`·`./`·`~/`로 시작)에서만 디렉터리 구분자로 보므로 `St. Louis
   Cardinals`, `AC/DC` 같은 제목은 통째로 비교합니다. `reference_sources`가
-  없거나, 소스는 있지만 문서 ID/파일 이름을 가진 소스가 하나도 없으면 건너뜁니다.
+  없거나, 소스는 있지만 귀속 가능한 소스가 하나도 없으면 순위 지표를 건너뜁니다.
   소스를 하나도 검색하지 못한 질의는 0점(miss)입니다.
 - **`answer_match`** — 결정적이고 LLM 불필요한 답변 지표를 `answer`와 선택 항목
   `metadata.answer_aliases`에 대해 계산하고 최댓값을 씁니다. 대표 결정적 지표는
@@ -1067,8 +1073,8 @@ run-eval --eval-data-path my_eval_data.json \
 - `run_manifest` — CLI 인자, 모델 ID(답변 생성, 평가 judge/임베딩), 패키지 버전,
   데이터셋 경로와 sha256, UTC 타임스탬프. 두 실행을 비교할 때 사용합니다.
 
-각 결과에는 `retrieved_source_ids`(보고된 소스별 문서 ID와 파일 이름, 순위 순)도
-기록됩니다.
+각 결과에는 `retrieved_source_ids`(보고된 소스별로 귀속된 파일 이름, 순위 순,
+귀속할 수 없으면 `[]`)도 기록됩니다.
 
 ---
 

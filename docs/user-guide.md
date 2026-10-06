@@ -1010,15 +1010,23 @@ Selected via `evaluation.enabled_evaluators`:
   (Opt in by uncommenting `graph_aware` in `enabled_evaluators`.)
 - **`retrieval`** — deterministic, LLM-free: did the sources the answer model saw
   include the gold documents? `hit_at_k`, `recall_at_k` (k =
-  `evaluation.retrieval_k`, default 5) and `mrr` (over all reported sources)
-  against `reference_sources`. Matching is case-insensitive on the full name
-  or, when the name ends in a file extension (`.` + 1-5 letters/digits, at least
-  one letter), its stem: `docs/Terms.pdf` = `terms.pdf` = `terms`. A `/` is a
-  directory separator only in a path-like value (a file extension, a URI scheme,
-  or a leading `/`, `./`, `~/`), so titles such as `St. Louis Cardinals` or
-  `AC/DC` are compared whole. Skipped when a query has no `reference_sources`,
-  or has sources but none carries a document id / file name; a query that
-  retrieved no sources at all scores 0 (a miss).
+  `evaluation.retrieval_k`, default 5) and `mrr` against `reference_sources`.
+  Text-unit sources name their file directly; entity, relationship and
+  community-report sources are attributed to the files of the text units in
+  their lineage (`text_unit_ids`, looked up in the chain's document store in
+  one batch per suffix). A community report's lineage is its whole community,
+  so `global`/`drift` scores are an upper bound on what the answer model read.
+  Only attributable sources are ranked, and `attributable_fraction`
+  (attributable / reported sources, also in `grouped_statistics` per strategy)
+  shows how much of the context the rank metrics cover. Matching is
+  case-insensitive on the full name or, when the name ends in a file extension
+  (`.` + 1-5 letters/digits, at least one letter), its stem: `docs/Terms.pdf` =
+  `terms.pdf` = `terms`. A `/` is a directory separator only in a path-like
+  value (a file extension, a URI scheme, or a leading `/`, `./`, `~/`), so
+  titles such as `St. Louis Cardinals` or `AC/DC` are compared whole. The rank
+  metrics are skipped when a query has no `reference_sources`, or has sources
+  but none is attributable; a query that retrieved no sources at all scores 0
+  (a miss).
 - **`answer_match`** — deterministic, LLM-free answer scores against `answer`
   and optional `metadata.answer_aliases`, taking the max over them.
   **`answer_contains`** (1.0 when the gold answer or an alias appears in the
@@ -1093,7 +1101,7 @@ The summary holds, per metric, mean/median/stdev/min/max/count
   so two runs can be compared.
 
 Each result also records `retrieved_source_ids`: per reported source, in rank
-order, the document ids and file names it carries.
+order, the file names it is attributed to (`[]` when unattributable).
 
 ---
 

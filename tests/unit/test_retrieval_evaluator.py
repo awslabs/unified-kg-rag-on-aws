@@ -42,8 +42,10 @@ def _score(
     report = evaluator.evaluate_single(
         EvaluationQuery(query_id="q", question="?"), result, ""
     )
+    values = {m.metric_type.value: m.value for m in report.metrics}
     return {
-        "metrics": {m.metric_type.value: m.value for m in report.metrics},
+        "fraction": values.pop("attributable_fraction", None),
+        "metrics": values,
         "metadata": report.metadata,
     }
 
@@ -124,21 +126,38 @@ class TestMetrics:
     def test_no_references_skipped(self, evaluator: RetrievalEvaluator) -> None:
         out = _score(evaluator, [["a.pdf"]], [])
         assert out["metrics"] == {}
-        assert set(out["metadata"]["skipped_metrics"].values()) == {
-            "no_reference_sources"
+        assert out["fraction"] == 1.0  # attribution is measured regardless
+        assert out["metadata"]["skipped_metrics"] == {
+            "hit_at_k": "no_reference_sources",
+            "recall_at_k": "no_reference_sources",
+            "mrr": "no_reference_sources",
         }
 
     def test_no_sources_is_a_miss(self, evaluator: RetrievalEvaluator) -> None:
         out = _score(evaluator, [], ["a.pdf"])
         assert out["metrics"] == {"hit_at_k": 0.0, "recall_at_k": 0.0, "mrr": 0.0}
+        assert out["fraction"] is None
         assert out["metadata"]["num_sources"] == 0
+        assert out["metadata"]["skipped_metrics"] == {
+            "attributable_fraction": "no_sources"
+        }
 
     def test_no_provenance_skipped(self, evaluator: RetrievalEvaluator) -> None:
         out = _score(evaluator, [[], []], ["a.pdf"])
         assert out["metrics"] == {}
+        assert out["fraction"] == 0.0
         assert set(out["metadata"]["skipped_metrics"].values()) == {
             "no_source_provenance"
         }
+
+    def test_unattributable_sources_do_not_take_top_k_slots(
+        self, evaluator: RetrievalEvaluator
+    ) -> None:
+        # Two unattributable sources ahead of the gold one: k=2 still sees it.
+        out = _score(evaluator, [[], [], ["other.pdf"], ["gold.pdf"]], ["gold.pdf"])
+        assert out["metrics"] == {"hit_at_k": 1.0, "recall_at_k": 1.0, "mrr": 0.5}
+        assert out["fraction"] == 0.5
+        assert out["metadata"]["num_attributable_sources"] == 2
 
 
 def _output(sources: list[dict]) -> RAGOutput:
@@ -170,7 +189,7 @@ class _Chain:
 
 
 class TestManagerIntegration:
-    def test_source_ids_extracted_in_rank_order(self) -> None:
+    def test_source_provenance_extracted_in_rank_order(self) -> None:
         out = _output(
             [
                 {
@@ -180,14 +199,24 @@ class TestManagerIntegration:
                         "attributes": {"file_name": "vendor.pdf"},
                     },
                 },
-                {"content": "report", "metadata": {"document_ids": []}},
+                {
+                    "content": "report",
+                    "metadata": {"document_ids": ["h1"], "text_unit_ids": ["t1", "t2"]},
+                },
                 {"content": "x", "metadata": {"file_path": "/data/in/buyer.txt"}},
+                {"content": "entity", "metadata": {"text_unit_ids": "t3"}},
+                {
+                    "content": "bare chunk",
+                    "metadata": {"section_type": "text", "chunk_id": "t4"},
+                },
             ]
         )
-        assert EvaluationManager._extract_source_ids(out) == [
-            ["doc-1", "vendor.pdf"],
-            [],
-            ["buyer.txt"],
+        assert EvaluationManager._extract_source_provenance(out) == [
+            (["vendor.pdf"], []),
+            ([], ["t1", "t2"]),  # document ids (content hashes) are not used
+            (["buyer.txt"], []),
+            ([], ["t3"]),  # Neptune unwraps a single-element list to a str
+            ([], ["t4"]),
         ]
 
     async def test_reference_sources_scored_end_to_end(self, config: Config) -> None:
@@ -213,3 +242,77 @@ class TestManagerIntegration:
         assert results[0].retrieved_source_ids == [["terms.pdf"], ["vendor.pdf"]]
         assert summary.metric_statistics["mrr"]["mean"] == pytest.approx(0.5)
         assert summary.metric_statistics["hit_at_k"]["mean"] == 1.0
+
+
+class _Resolver:
+    def __init__(self, mapping: dict[str, str], fail: bool = False) -> None:
+        self.mapping = mapping
+        self.fail = fail
+        self.calls: list[tuple[list[str], str | None]] = []
+
+    async def aresolve(self, text_unit_ids, suffix):
+        ids = list(text_unit_ids)
+        self.calls.append((ids, suffix))
+        if self.fail:
+            raise RuntimeError("store unavailable")
+        return {i: self.mapping[i] for i in ids if i in self.mapping}
+
+
+class TestGraphSourceAttribution:
+    def _chain(self) -> _Chain:
+        return _Chain(
+            _output(
+                [
+                    # A community report: no file, lineage only.
+                    {"content": "report", "metadata": {"text_unit_ids": ["t1", "t2"]}},
+                    {"content": "entity", "metadata": {"text_unit_ids": ["t9"]}},
+                    {"content": "chunk", "metadata": {"file_name": "terms.pdf"}},
+                ]
+            )
+        )
+
+    async def _run(self, config: Config, resolver: _Resolver):
+        config.evaluation.enabled_evaluators = [EvaluatorType.RETRIEVAL]
+        manager = EvaluationManager(
+            config, rag_chain=self._chain(), source_resolver=resolver
+        )
+        queries = [
+            EvaluationQuery(
+                query_id="q1", question="Who ships?", metadata={"suffix": "v2"}
+            )
+        ]
+        gts = [
+            EvaluationGroundTruth(
+                query_id="q1", ground_truth="", reference_sources=["vendor.pdf"]
+            )
+        ]
+        return await manager.evaluate_dataset(queries, gts, show_progress=False)
+
+    async def test_lineage_resolved_to_files(self, config: Config) -> None:
+        resolver = _Resolver({"t1": "vendor.pdf", "t2": "buyer.pdf"})
+        results, _, summary = await self._run(config, resolver)
+        assert results[0].retrieved_source_ids == [
+            ["buyer.pdf", "vendor.pdf"],
+            [],  # t9 unknown to the store: unattributable
+            ["terms.pdf"],
+        ]
+        # One batched lookup per suffix, only for sources without a file name.
+        assert resolver.calls == [(["t1", "t2", "t9"], "v2")]
+        assert summary.metric_statistics["mrr"]["mean"] == 1.0
+        assert summary.metric_statistics["attributable_fraction"][
+            "mean"
+        ] == pytest.approx(2 / 3)
+        assert summary.grouped_statistics["search_strategy"]["local"][
+            "attributable_fraction"
+        ]["mean"] == pytest.approx(2 / 3)
+
+    async def test_resolver_failure_leaves_sources_unattributable(
+        self, config: Config
+    ) -> None:
+        results, _, summary = await self._run(config, _Resolver({}, fail=True))
+        assert results[0].retrieved_source_ids == [[], [], ["terms.pdf"]]
+        assert summary.metric_statistics["hit_at_k"]["mean"] == 0.0
+
+    def test_default_resolver_only_for_graph_rag_chain(self, config: Config) -> None:
+        manager = EvaluationManager(config, rag_chain=self._chain())
+        assert manager.source_resolver is None
