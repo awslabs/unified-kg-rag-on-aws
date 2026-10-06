@@ -497,12 +497,24 @@ indexing:
     index_concurrency: 1
     max_retries: 3
     retry_delay_seconds: 2
-    property_max_length: 1000
+    # Max characters per Neptune property value. Keep it above the longest
+    # description that is not re-summarized (description_summarization only
+    # triggers above 600 tokens, ~2,400 characters).
+    property_max_length: 4000
     # Graph-traversal tuning for retrieval (neighbor expansion). max_hops is
     # honored directly by the retriever (NeptuneIndexingConfig default 3).
     max_hops: 3
     max_results_per_hop: 50
     min_entity_importance: 0.5
+    # Graph-expansion relevance = mean(entity importance, proximity to seeds).
+    # Importance: "rank" (indexed entity rank), "degree" (edge count, computed
+    # at query time) or "none" (neutral 0.5 for every entity, the old
+    # behaviour). Each is normalized by the largest value in the result.
+    entity_importance_source: "rank"
+    # Expansion fetches top_k * retrieval_multiplier * this many entities,
+    # ranks them, and keeps top_k * retrieval_multiplier. 1 = the old
+    # behaviour (cut in traversal order, before ranking).
+    traversal_fetch_multiplier: 3
 
 # Search Configuration
 search:
@@ -592,11 +604,25 @@ search:
     map_relevance_threshold: 0
     # Token budget for the ranked key points fed to the reduce step.
     max_map_reduce_tokens: 8000
+    # false (default): the packed key points go straight to the answer model.
+    # true: a reduce LLM first summarizes them and the answer model rewrites
+    # that summary (the previous two-step behaviour, one extra LLM call).
+    reduce_with_llm: false
+    # Reserve max_communities * retrieval_multiplier fusion slots for the
+    # community reports and cap their text units at text_unit_slots (null =
+    # the query's top_k). false = the old flat top_k cut, which often kept
+    # mostly chunks and dropped one more result for the synthesized item.
+    reserve_report_slots: true
+    text_unit_slots: null
 
   local_search:
     # Drop graph-expanded entities appearing in more than this many text units
     # (too generic to be discriminative for local search).
     entity_frequency_threshold: 20
+    # Also fetch the relationships incident to the graph-expanded entities,
+    # edges between two retrieved entities first (needs the relationship
+    # index). false = only the relationship vector query, as before.
+    include_bridge_relationships: true
     # Reserved fusion slots per section type, as max(multiplier * top_k, floor).
     # Without reserved slots one type takes the whole flat top_k cut and crowds
     # out the document chunks that carry the answer.

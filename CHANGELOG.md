@@ -114,6 +114,22 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - Conversation memory stays process-wide by default and is created from the
   first chain's config; `GraphRAGChain(memory_manager=MemoryManager(config))`
   isolates a chain.
+- The answer prompt asks the model to chain facts across sources and answer
+  directly before the support; the previous wording can be restored through
+  `custom_prompts.answer_generation_system`/`_human` (#132).
+- Neptune graph expansion fetches `traversal_fetch_multiplier` (3) times the
+  result width and keeps the entities closest to the seeds and most important
+  (`indexing.neptune.entity_importance_source`: `rank`, `degree` or `none`);
+  importance used to read a property no vertex stored (#132).
+- Local search adds the relationships incident to its expanded entities,
+  in-network edges first (`search.local_search.include_bridge_relationships`),
+  and queries its report, relationship and claim sections concurrently (#132).
+- Global search passes the ranked map key points to the answer model without
+  a reduce LLM call (`search.global_search.reduce_with_llm: true` restores it)
+  and reserves fusion slots for community reports
+  (`reserve_report_slots`, `text_unit_slots`) (#132).
+- Fusion's MMR filter is quadratic instead of cubic and is skipped when the
+  cut keeps every candidate; results are unchanged (#132).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).

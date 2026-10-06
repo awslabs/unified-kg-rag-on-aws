@@ -339,6 +339,16 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             hops,
         )
 
+        # Over-fetch, then let `_process_traversal_results` rank and cut to
+        # top_k * retrieval_multiplier: the limit here runs in emit order, which
+        # carries no relevance, so a limit at the final width kept an arbitrary
+        # subset. The repeat().times().emit() shape stays (an emit() before
+        # repeat() is not optimized by Neptune and times out).
+        fetch_limit = (
+            query.top_k
+            * query.retrieval_multiplier
+            * self._neptune_config.traversal_fetch_multiplier
+        )
         traversal = (
             g.V()
             .hasLabel(entity_label)
@@ -348,13 +358,16 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             .emit()
             .dedup()
             .hasLabel(entity_label)
-            .limit(query.top_k * query.retrieval_multiplier)
+            .limit(fetch_limit)
         )
         filters, exempt = self._scope_filters_to_labels(
             {entity_label: "entity"}, query.filters
         )
         traversal = self._apply_filters(traversal, filters, exempt)
-        traversal = self._with_projection(traversal)
+        traversal = self._with_projection(
+            traversal,
+            with_degree=self._neptune_config.entity_importance_source == "degree",
+        )
         return await self._execute_traversal(traversal)
 
     async def _traverse_from_communities(
@@ -405,17 +418,25 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         return await self._execute_traversal(traversal)
 
     @staticmethod
-    def _with_projection(traversal: GraphTraversal) -> GraphTraversal:
-        return (
-            traversal.project("node", "path", "node_type")
+    def _with_projection(
+        traversal: GraphTraversal, with_degree: bool = False
+    ) -> GraphTraversal:
+        # `rank` is what the indexer writes on entity vertices (see
+        # NeptuneIndexer.index_entities); `size` is the community counterpart.
+        keys = ["node", "path", "node_type"] + (["degree"] if with_degree else [])
+        projected = (
+            traversal.project(*keys)
             .by(
                 __.value_map(
-                    "id", "name", "description", "importance", "text_unit_ids", "size"
+                    "id", "name", "description", "rank", "text_unit_ids", "size"
                 )
             )
             .by(__.path().by(__.value_map("name")))
             .by(__.label())
         )
+        if with_degree:
+            projected = projected.by(__.bothE().count())
+        return projected
 
     @staticmethod
     async def _execute_traversal(traversal: Traversal) -> list[Any]:
@@ -453,21 +474,80 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             in str(item.get("node_type", ""))
         ]
         max_community_size = max(community_sizes, default=0.0)
+        importance_key = self._entity_importance_key()
+        max_importance = 0.0
+        if importance_key is not None:
+            max_importance = max(
+                (
+                    self._as_float(self._node_data(item).get(importance_key)) or 0.0
+                    for item in traversal_results
+                    if self._neptune_config.community_label_prefix
+                    not in str(item.get("node_type", ""))
+                ),
+                default=0.0,
+            )
 
         for item in traversal_results:
-            node_data = self._clean_property_map(item.get("node", {}))
+            node_data = self._node_data(item)
             node_id = node_data.get("id")
             if not node_id or node_id in seen_ids:
                 continue
 
             result = self._create_retrieval_result(
-                item, node_data, query, max_community_size=max_community_size
+                item,
+                node_data,
+                query,
+                max_community_size=max_community_size,
+                importance_key=importance_key,
+                max_importance=max_importance,
             )
             results.append(result)
             seen_ids.add(node_id)
 
         results.sort(key=lambda x: x.score or 0.0, reverse=True)
+        if self._neptune_config.traversal_fetch_multiplier > 1:
+            results = self._cut_entities(
+                results, query.top_k * query.retrieval_multiplier
+            )
         return results
+
+    def _entity_importance_key(self) -> str | None:
+        """The node property graph expansion reads as entity importance."""
+        source = self._neptune_config.entity_importance_source
+        return None if source == "none" else source
+
+    def _node_data(self, item: dict[str, Any]) -> dict[str, Any]:
+        """The cleaned property map, with the projected degree folded in."""
+        node_data = self._clean_property_map(item.get("node", {}))
+        if "degree" in item:
+            node_data["degree"] = item["degree"]
+        return node_data
+
+    @staticmethod
+    def _as_float(value: Any) -> float | None:
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _cut_entities(
+        ranked: list[RetrievalResult], limit: int
+    ) -> list[RetrievalResult]:
+        """Keep the ``limit`` best-ranked entities; community results pass through.
+
+        The entity traversal over-fetches (``traversal_fetch_multiplier``) so the
+        cut happens here, after relevance ranking, instead of in emit order.
+        """
+        kept: list[RetrievalResult] = []
+        entities = 0
+        for result in ranked:
+            if result.retriever_type == SectionType.ENTITY.value:
+                if entities >= limit:
+                    continue
+                entities += 1
+            kept.append(result)
+        return kept
 
     def _create_retrieval_result(
         self,
@@ -475,6 +555,8 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         node_data: dict[str, Any],
         query: SearchQuery,
         max_community_size: float = 0.0,
+        importance_key: str | None = None,
+        max_importance: float = 0.0,
     ) -> RetrievalResult:
         node_id = str(node_data.get("id"))
         node_type_str = item.get("node_type", "unknown")
@@ -485,7 +567,12 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         path_data = item.get("path", [])
         content = self._build_content(node_data, path_data, is_community)
         score = self._calculate_relevance(
-            node_data, path_data, is_community, max_community_size
+            node_data,
+            path_data,
+            is_community,
+            max_community_size,
+            importance_key=importance_key,
+            max_importance=max_importance,
         )
 
         return RetrievalResult(
@@ -523,22 +610,33 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         path: list[dict[str, Any]],
         is_community: bool,
         max_community_size: float = 0.0,
+        importance_key: str | None = None,
+        max_importance: float = 0.0,
     ) -> float:
         """Mean of the node's importance and its proximity to the seeds, in [0, 1].
 
         ``proximity = 1 / path length`` (1.0 for a seed, 0.5 one hop out), so
         nearer nodes rank first and importance breaks ties among equally near
-        ones. Entity importance is the indexed ``importance`` (0-1, neutral 0.5
-        when missing); a community's is its size relative to the largest
-        community in the same result, so no corpus-size constant is needed.
-        The two terms are weighted equally because neither has a measured
-        reason to dominate. (A query-text term was dropped: graph expansion
-        passes the whole question, which never occurs inside a node name.)
+        ones. An entity's importance is its ``importance_key`` value (indexed
+        ``rank`` or projected ``degree``) relative to the largest one in the
+        same result, neutral 0.5 when absent; a community's is its size
+        relative to the largest community in the same result, so no
+        corpus-size constant is needed. Without an ``importance_key`` the
+        legacy ``importance`` property is read (entity vertices never store it,
+        so this is the neutral 0.5). The two terms are weighted equally because
+        neither has a measured reason to dominate. (A query-text term was
+        dropped: graph expansion passes the whole question, which never occurs
+        inside a node name.)
         """
         proximity = 1.0 / (len(path) or 1)
         if is_community:
             size = float(node.get("size") or 0)
             importance = size / max_community_size if max_community_size > 0 else 0.0
+        elif importance_key is not None:
+            raw = NeptuneRetriever._as_float(node.get(importance_key))
+            importance = (
+                raw / max_importance if raw is not None and max_importance > 0 else 0.5
+            )
         else:
             importance = float(node.get("importance", 0.5))
         importance = min(max(importance, 0.0), 1.0)

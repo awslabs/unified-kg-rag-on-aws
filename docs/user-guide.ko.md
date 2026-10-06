@@ -404,6 +404,9 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `indexing.neptune.batch_size` | `100` | Neptune 쓰기 배치당 항목 수입니다. |
 | `indexing.neptune.index_concurrency` | `1` | 동시에 보내는 쓰기 배치 수입니다. 올리면 `aws.neptune.pool_size`도 맞춰 올립니다. |
 | `indexing.neptune.max_hops` | `3` | 검색 시점의 이웃 확장 깊이입니다. |
+| `indexing.neptune.property_max_length` | `4000` | Neptune 속성 값의 최대 문자 수입니다. 재요약되지 않는 가장 긴 설명보다 커야 합니다(요약은 600토큰, 영어 약 2,400자를 넘을 때만 실행). 재인제스트해야 반영됩니다. |
+| `indexing.neptune.entity_importance_source` | `"rank"` | 그래프 확장 관련도에 쓰는 엔터티 중요도입니다. `rank`(인덱싱된 엔터티 rank), `degree`(질의 시 계산한 엣지 수), `none`(모두 0.5, 이전 동작). |
+| `indexing.neptune.traversal_fetch_multiplier` | `3` | 그래프 확장이 결과 폭의 이 배수만큼 가져와 순위를 매긴 뒤 자릅니다. `1`이면 순회 순서대로 자릅니다(이전 동작). |
 
 ### 2.6 `search` — 검색, 융합, 리랭킹, 전략별 항목
 
@@ -423,7 +426,11 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `search.global_search.max_communities` | `10` | `global` 검색이 살펴보는 커뮤니티 리포트 수입니다. |
 | `search.global_search.map_batch_size` | `5` | map 단계 LLM 호출 하나에 넣는 리포트 수입니다. 리포트가 길면 낮춥니다. |
 | `search.global_search.max_map_reduce_tokens` | `8000` | reduce 단계에 넣는, 순위를 매긴 핵심 내용의 토큰 예산입니다. |
+| `search.global_search.reduce_with_llm` | `false` | `true`이면 reduce LLM이 팩된 핵심 내용을 먼저 요약하고 답변 모델이 이를 다시 씁니다(LLM 호출 1회 추가). `false`이면 핵심 내용을 답변 모델에 바로 넘깁니다. |
+| `search.global_search.reserve_report_slots` | `true` | 커뮤니티 리포트에 `max_communities`개 융합 슬롯을 예약하고 텍스트 단위는 `text_unit_slots`개로 제한합니다. `false`이면 리포트와 청크를 한 번의 `top_k` 컷으로 자릅니다(이전 동작). |
+| `search.global_search.text_unit_slots` | `null` | 예약된 리포트 슬롯과 함께 둘 텍스트 단위 슬롯 수입니다. `null`이면 질의의 `top_k`입니다. |
 | `search.local_search.entity_frequency_threshold` | `20` | 그래프 확장으로 얻은 엔터티 중 이보다 많은 텍스트 단위에 나오는 것(너무 일반적인 것)을 버립니다. |
+| `search.local_search.include_bridge_relationships` | `true` | 확장된 엔터티에 연결된 관계도 가져오며, 조회된 두 엔터티를 잇는 엣지(다중 홉 연결 고리)를 먼저 둡니다. 관계 인덱스가 필요합니다. `false`이면 관계 벡터 질의만 씁니다. |
 | `search.drift_search.max_iterations` | `3` | DRIFT 반복 횟수 상한입니다. |
 | `search.drift_search.enable_primer` | `false` | MS GraphRAG의 primer → follow-up 흐름을 씁니다(처음에 LLM 호출 1회 추가). |
 | `search.drift_search.enable_llm_convergence` | `false` | 반복마다 LLM으로 수렴 여부를 판단합니다(반복당 호출 1회 추가). |

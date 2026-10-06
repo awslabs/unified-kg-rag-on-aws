@@ -413,6 +413,9 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.neptune.batch_size` | `100` | Items per Neptune write batch. |
 | `indexing.neptune.index_concurrency` | `1` | Concurrent write batches; raise `aws.neptune.pool_size` to match. |
 | `indexing.neptune.max_hops` | `3` | Neighbour-expansion depth at retrieval time. |
+| `indexing.neptune.property_max_length` | `4000` | Character cap per Neptune property value. Keep it above the longest description that is not re-summarized (summarization triggers above 600 tokens, ~2,400 characters). Takes effect on re-ingestion. |
+| `indexing.neptune.entity_importance_source` | `"rank"` | Entity importance in graph-expansion relevance: `rank` (indexed entity rank), `degree` (edge count at query time) or `none` (neutral 0.5, the old behaviour). |
+| `indexing.neptune.traversal_fetch_multiplier` | `3` | Graph expansion fetches this many times the result width, ranks, then cuts. `1` = cut in traversal order (old behaviour). |
 
 ### 2.6 `search` — retrieval, fusion, reranking, per-strategy knobs
 
@@ -432,7 +435,11 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `search.global_search.max_communities` | `10` | Community reports considered by `global` search. |
 | `search.global_search.map_batch_size` | `5` | Reports per map-step LLM call; lower it for long reports. |
 | `search.global_search.max_map_reduce_tokens` | `8000` | Token budget for ranked key points fed to the reduce step. |
+| `search.global_search.reduce_with_llm` | `false` | `true` = a reduce LLM summarizes the packed key points before the answer model rewrites them (one extra LLM call). `false` passes the points straight to the answer model. |
+| `search.global_search.reserve_report_slots` | `true` | Reserve `max_communities` fusion slots for community reports and cap their text units at `text_unit_slots`. `false` = one flat `top_k` cut over reports and chunks (old behaviour). |
+| `search.global_search.text_unit_slots` | `null` | Text-unit slots next to the reserved report slots; `null` = the query's `top_k`. |
 | `search.local_search.entity_frequency_threshold` | `20` | Drop graph-expanded entities that appear in more text units than this (too generic). |
+| `search.local_search.include_bridge_relationships` | `true` | Also fetch relationships incident to the expanded entities, edges between two retrieved entities first (multi-hop bridges). Needs the relationship index. `false` = relationship vector query only. |
 | `search.drift_search.max_iterations` | `3` | DRIFT iteration budget. |
 | `search.drift_search.enable_primer` | `false` | MS GraphRAG primer → follow-up flow (one extra LLM call up front). |
 | `search.drift_search.enable_llm_convergence` | `false` | LLM convergence check after each iteration (one extra call per iteration). |

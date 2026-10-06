@@ -90,6 +90,9 @@ def _bare_strategy(
         map_batch_size=2,
         map_relevance_threshold=0,
         max_map_reduce_tokens=8000,
+        reduce_with_llm=False,
+        reserve_report_slots=True,
+        text_unit_slots=None,
     )
     strat.ignore_errors = ignore_errors
     strat.target_language = "en"
@@ -431,3 +434,98 @@ def test_default_global_config_skips_per_report_llm_scoring() -> None:
     assert gs.map_batch_size == 5
     strategy = GlobalSearchStrategy(config=config, retrievers={})
     assert not hasattr(strategy, "community_relevance_scorer")
+
+
+# --------------------------------------------------------------------------- #
+# Reserved community-report slots (reserve_report_slots)
+# --------------------------------------------------------------------------- #
+
+
+def _typed(prefix: str, rtype: str, n: int) -> list[RetrievalResult]:
+    return [
+        RetrievalResult(
+            content=f"{prefix} {i} " + " ".join(f"w{prefix}{i}{j}" for j in range(5)),
+            score=1.0 - i * 0.01,
+            source=f"{prefix}{i}",
+            retriever_type=rtype,
+            metadata={"community_id": f"{prefix}{i}"} if rtype == "community" else {},
+        )
+        for i in range(n)
+    ]
+
+
+def _fusing_strategy(reserve: bool) -> GlobalSearchStrategy:
+    from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
+    from unified_kg_rag.domain.models import Config
+
+    config = Config()
+    config.search.reranking.enabled = False
+    strat = _bare_strategy(max_communities=10)
+    strat.global_search_config.reserve_report_slots = reserve
+    strat.hybrid_scorer = HybridScorer(config)
+    return strat
+
+
+@pytest.mark.parametrize("reserve", [True, False])
+async def test_report_slots_keep_every_selected_report(reserve: bool) -> None:
+    strat = _fusing_strategy(reserve)
+    reports = _typed("r", "community", 10)
+    chunks = _typed("t", "text", 30)
+
+    async def _context(_communities, _query):
+        return chunks
+
+    strat._retrieve_community_context = _context  # type: ignore[method-assign]
+
+    out = await strat._augment_and_rerank_communities(
+        reports, reports, SearchQuery(query="q", top_k=10)
+    )
+
+    kept_reports = [r for r in out if r.retriever_type == "community"]
+    kept_chunks = [r for r in out if r.retriever_type == "text"]
+    if reserve:
+        assert len(kept_reports) == 10
+        assert len(kept_chunks) == 10  # text_unit_slots defaults to top_k
+    else:
+        # The previous flat cut: reports and chunks share ten slots.
+        assert len(out) == 10
+        assert len(kept_reports) < 10
+
+
+def test_report_quota_honors_text_unit_slots_and_multiplier() -> None:
+    strat = _bare_strategy(max_communities=4)
+    strat.global_search_config.text_unit_slots = 3
+    quota = strat._report_quota(
+        SearchQuery(query="q", top_k=10, retrieval_multiplier=2)
+    )
+    assert quota == {"community": 8, "text": 3}
+    strat.global_search_config.reserve_report_slots = False
+    assert strat._report_quota(SearchQuery(query="q")) is None
+
+
+@pytest.mark.parametrize(("reserve", "expected"), [(True, 21), (False, 10)])
+async def test_synthesized_item_does_not_take_an_evidence_slot(
+    reserve: bool, expected: int
+) -> None:
+    from unittest.mock import AsyncMock
+
+    strat = _bare_strategy()
+    strat.global_search_config.reserve_report_slots = reserve
+    evidence = _typed("r", "community", 10) + _typed("t", "text", 10)
+    synthesized = RetrievalResult(
+        content="points",
+        score=1.0,
+        source="synthesized_key_points",
+        retriever_type="general",
+        metadata={"synthesized": True},
+    )
+    strat._retrieve_and_fuse_communities = AsyncMock(return_value=evidence)  # type: ignore[method-assign]
+    strat._select_relevant_communities = AsyncMock(return_value=evidence[:10])  # type: ignore[method-assign]
+    strat._augment_and_rerank_communities = AsyncMock(return_value=evidence)  # type: ignore[method-assign]
+    strat._apply_map_reduce = AsyncMock(return_value=[synthesized, *evidence])  # type: ignore[method-assign]
+    strat._record_search_metrics = lambda *a, **k: None  # type: ignore[method-assign]
+
+    result = await strat.asearch(SearchQuery(query="q", top_k=10))
+
+    assert len(result.results) == expected
+    assert result.results[0].source == "synthesized_key_points"

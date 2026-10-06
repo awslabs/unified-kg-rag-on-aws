@@ -1313,9 +1313,17 @@ class NeptuneIndexingConfig(BaseModel):
         default=2, ge=0, description="Delay in seconds between retry attempts"
     )
     property_max_length: int = Field(
-        default=1000,
+        default=4000,
         ge=1,
-        description="Maximum character length for Neptune property values",
+        description=(
+            "Maximum character length for Neptune property values (entity and "
+            "relationship descriptions are read back from Neptune into the "
+            "local/DRIFT context). Keep it well above the longest description "
+            "that is not re-summarized: processing.description_summarization "
+            "only triggers above force_summary_threshold_tokens (600 tokens, "
+            "~2,400 English characters), so the former 1,000-character default "
+            "cut such descriptions mid-sentence."
+        ),
     )
     max_hops: int = Field(
         default=3,
@@ -1332,6 +1340,29 @@ class NeptuneIndexingConfig(BaseModel):
         ge=0.0,
         le=1.0,
         description="Minimum importance score for entities to be included in query results",
+    )
+    entity_importance_source: Literal["rank", "degree", "none"] = Field(
+        default="rank",
+        description=(
+            "Graph-expansion relevance is the mean of an entity's importance and "
+            "its proximity to the seeds. 'rank' uses the indexed entity `rank`, "
+            "'degree' counts the entity's edges at query time (MS GraphRAG ranks "
+            "entities by degree), and each is normalized by the largest value in "
+            "the same result. 'none' gives every entity a neutral 0.5, the "
+            "previous behaviour (it read an `importance` property that entity "
+            "vertices never store), so expansion ranks by proximity alone."
+        ),
+    )
+    traversal_fetch_multiplier: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Graph expansion fetches top_k * retrieval_multiplier * this many "
+            "entities, ranks them by relevance, then keeps the top "
+            "top_k * retrieval_multiplier. 1 = the previous behaviour: the "
+            "traversal's limit cut entities in Neptune's arbitrary emit order, "
+            "before any ranking."
+        ),
     )
 
     @model_validator(mode="after")
@@ -1693,6 +1724,39 @@ class GlobalSearchConfig(BaseModel):
         "reduce step; the highest-scored points are taken until this budget is "
         "reached, so the reduce LLM synthesizes from focused, ranked evidence.",
     )
+    reduce_with_llm: bool = Field(
+        default=False,
+        description=(
+            "Run the REDUCE step as its own LLM call that writes a summary of the "
+            "packed key points, which the answer model then rewrites. Off by "
+            "default: the packed points go straight to the answer model as one "
+            "ranked context section, saving one LLM call per query and avoiding "
+            "a second synthesis that can drop facts or assert that the summaries "
+            "lack them. When off, the degraded path (map calls that failed) also "
+            "passes the unrated reports through instead of summarizing them. "
+            "true = the previous two-step behaviour."
+        ),
+    )
+    reserve_report_slots: bool = Field(
+        default=True,
+        description=(
+            "When fusing the selected community reports with their text units, "
+            "reserve max_communities * retrieval_multiplier slots for the reports "
+            "and cap the text units at text_unit_slots, and keep the synthesized "
+            "map-reduce item in addition to (not inside) that width. false = the "
+            "previous flat top_k cut, which reranked reports and chunks together "
+            "and often kept mostly chunks, then cut to top_k after prepending the "
+            "synthesized item (dropping one more result)."
+        ),
+    )
+    text_unit_slots: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Text-unit slots next to the reserved report slots "
+            "(reserve_report_slots). null = the query's top_k."
+        ),
+    )
 
 
 class LocalSearchQuotaConfig(BaseModel):
@@ -1748,6 +1812,18 @@ class LocalSearchConfig(BaseModel):
     type_quota: LocalSearchQuotaConfig = Field(
         default_factory=LocalSearchQuotaConfig,
         description="Reserved fusion slots per section type",
+    )
+    include_bridge_relationships: bool = Field(
+        default=True,
+        description=(
+            "Also fetch the relationships incident to the graph-expanded "
+            "entities, edges between two of those entities first (MS GraphRAG "
+            "local's in-network relationships). These bridge edges carry the hops "
+            "of a multi-hop chain, which the relationship vector query alone "
+            "often misses. Needs the relationship index "
+            "(indexing.opensearch.build_relationship_vector_index). false = the "
+            "previous behaviour: only the vector query on the relationship index."
+        ),
     )
 
 
