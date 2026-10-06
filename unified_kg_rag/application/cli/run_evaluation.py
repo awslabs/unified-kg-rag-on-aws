@@ -1,7 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import argparse
-import asyncio
 import logging
 import sys
 import time
@@ -22,7 +21,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.shared import get_config, get_logger, setup_logging
-from unified_kg_rag.shared.utils import console, display_ascii_art
+from unified_kg_rag.shared.utils import console, display_ascii_art, event_loop
 
 nest_asyncio.apply()
 logger = get_logger(__name__)
@@ -297,7 +296,9 @@ def main() -> None:
 
         rag_chain = GraphRAGChain(config)
         runner = EvaluationRunner(args, rag_chain)
-        exit_code = asyncio.run(runner.run())
+        exit_code = event_loop.run(
+            runner.run(), io_workers=config.processing.io_workers
+        )
         if exit_code:
             sys.exit(exit_code)
 

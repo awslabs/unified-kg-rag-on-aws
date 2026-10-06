@@ -988,6 +988,16 @@ class ProcessingConfig(BaseModel):
         description="Retries of an ingestion LLM item after its batch attempt "
         "fails with a retryable error",
     )
+    io_workers: int = Field(
+        default=64,
+        ge=1,
+        description="Threads for blocking I/O on the query path (Bedrock calls "
+        "LangChain runs in the event loop's default executor, Neptune "
+        "traversals, reranking) in the CLIs and GraphRAGChain's sync methods. "
+        "Python's default is min(32, CPUs + 4), which caps concurrent Bedrock "
+        "calls on small tasks; async hosts call "
+        "unified_kg_rag.shared.utils.configure_event_loop themselves.",
+    )
     ignore_errors: bool = Field(
         default=False,
         description="Ignore errors and continue processing",
