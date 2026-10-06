@@ -641,12 +641,12 @@ logging:
 ```yaml
 evaluation:
   outputs_directory: "outputs/evaluation"
-  enabled_evaluators:
+  enabled_evaluators:            # deterministic ones skip queries lacking their fields
     - langchain
     - ragas
-    # - graph_aware                # opt-in; needs expected_entities/relationships
-    # - retrieval                  # opt-in; needs reference_sources
-    # - answer_match               # opt-in; needs answer (or metadata.answer_aliases)
+    - answer_match                 # needs answer (or metadata.answer_aliases)
+    - retrieval                    # needs reference_sources
+    - graph_aware                  # needs expected_entities/relationships
   langchain_metrics: [correctness, partial_correctness]
   ragas_metrics: [answer_correctness, answer_relevancy, context_precision, context_recall, faithfulness]
   retrieval_k: 5                   # cutoff for the retrieval evaluator's hit@k / recall@k
@@ -987,7 +987,10 @@ a graph adapter that supports read-back. Off by default.
 Selected via `evaluation.enabled_evaluators`. An enabled evaluator that cannot
 be built (e.g. no Bedrock access for the judge) or rejects its configuration
 stops the run; with `processing.ignore_errors: true` it is dropped instead and
-listed in `run_manifest.dropped_evaluators`.
+listed in `run_manifest.dropped_evaluators`. By default all five are enabled:
+the deterministic, LLM-free ones (`answer_match`, `retrieval`, `graph_aware`)
+are free and skip a query that lacks their dataset fields; for a judge-free run
+set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
 
 - **`langchain`** — LangChain-based text similarity (`langchain_metrics`:
   `correctness`, `partial_correctness`). Needs `answer` ground truth.
@@ -1013,7 +1016,6 @@ listed in `run_manifest.dropped_evaluators`.
   in the dataset. **Precision and F1 are deliberately
   NOT emitted** — enumerating every entity in a free-text answer isn't reliably
   possible, so reporting precision/F1 would only re-label the recall signal.
-  (Opt in by uncommenting `graph_aware` in `enabled_evaluators`.)
 - **`retrieval`** — deterministic, LLM-free: did the sources the answer model saw
   include the gold documents? `hit_at_k`, `recall_at_k` (k =
   `evaluation.retrieval_k`, default 5) and `mrr` against `reference_sources`.

@@ -632,12 +632,12 @@ logging:
 ```yaml
 evaluation:
   outputs_directory: "outputs/evaluation"
-  enabled_evaluators:
+  enabled_evaluators:            # deterministic ones skip queries lacking their fields
     - langchain
     - ragas
-    # - graph_aware                # opt-in; needs expected_entities/relationships
-    # - retrieval                  # opt-in; needs reference_sources
-    # - answer_match               # opt-in; needs answer (or metadata.answer_aliases)
+    - answer_match                 # needs answer (or metadata.answer_aliases)
+    - retrieval                    # needs reference_sources
+    - graph_aware                  # needs expected_entities/relationships
   langchain_metrics: [correctness, partial_correctness]
   ragas_metrics: [answer_correctness, answer_relevancy, context_precision, context_recall, faithfulness]
   retrieval_k: 5                   # cutoff for the retrieval evaluator's hit@k / recall@k
@@ -967,7 +967,11 @@ aws:
 `evaluation.enabled_evaluators`로 선택합니다. 활성화한 평가자를 만들 수 없거나
 (예: judge용 Bedrock 접근 불가) 설정이 잘못되면 실행을 멈춥니다.
 `processing.ignore_errors: true`이면 해당 평가자를 빼고 계속하며
-`run_manifest.dropped_evaluators`에 기록합니다.
+`run_manifest.dropped_evaluators`에 기록합니다. 기본값은 다섯 개 모두
+활성화입니다. 결정적이고 LLM이 필요 없는 평가자(`answer_match`, `retrieval`,
+`graph_aware`)는 비용이 없고 필요한 데이터셋 필드가 없는 질의는 건너뜁니다. LLM
+judge 없이 실행하려면 `enabled_evaluators: [answer_match, retrieval, graph_aware]`로
+설정합니다.
 
 - **`langchain`** — LangChain 기반 텍스트 유사도(`langchain_metrics`:
   `correctness`, `partial_correctness`). `answer` 정답이 필요합니다.
@@ -992,8 +996,7 @@ aws:
   합니다. 데이터셋에 `expected_entities` / `expected_relationships`가 필요합니다. **precision과 F1은 의도적으로
   미산출**됩니다 — 자유 텍스트 답변에서 모든 엔티티를 열거하는 것은 신뢰성 있게
   불가능하므로, precision/F1을 보고하는 것은 recall 신호에 다른 이름표만
-  붙이는 셈이기 때문입니다. (`enabled_evaluators`에서 `graph_aware`의 주석을
-  해제하여 opt-in.)
+  붙이는 셈이기 때문입니다.
 - **`retrieval`** — 결정적이고 LLM 불필요: 답변 모델이 본 소스에 정답 문서가
   포함됐는지를 `reference_sources`와 비교해 `hit_at_k`, `recall_at_k`(k =
   `evaluation.retrieval_k`, 기본값 5), `mrr`로 산출합니다. 텍스트 유닛 소스는 파일

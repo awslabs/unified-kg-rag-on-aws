@@ -228,6 +228,26 @@ class TestInitialization:
             is GraphAwareEvaluator
         )
 
+    def test_deterministic_evaluators_enabled_by_default(self) -> None:
+        assert Config().evaluation.enabled_evaluators == [
+            EvaluatorType.LANGCHAIN,
+            EvaluatorType.RAGAS,
+            EvaluatorType.ANSWER_MATCH,
+            EvaluatorType.RETRIEVAL,
+            EvaluatorType.GRAPH_AWARE,
+        ]
+
+    def test_config_template_matches_default_evaluators(self) -> None:
+        from pathlib import Path
+
+        import yaml
+
+        template_path = Path(__file__).resolve().parents[2] / "config-template.yaml"
+        template = yaml.safe_load(template_path.read_text(encoding="utf-8"))
+        assert template["evaluation"]["enabled_evaluators"] == [
+            e.value for e in Config().evaluation.enabled_evaluators
+        ]
+
     def test_only_enabled_evaluators_initialized(self, config: Config) -> None:
         manager = _graph_aware_manager(config)
         assert set(manager.evaluators) == {EvaluatorType.GRAPH_AWARE}

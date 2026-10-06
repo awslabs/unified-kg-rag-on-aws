@@ -677,18 +677,17 @@ logging:
 evaluation:
   outputs_directory: "outputs/evaluation"
   embedding_model_id: "amazon.titan-embed-text-v2:0"
+  # The deterministic, LLM-free evaluators cost nothing and skip a query
+  # that lacks their dataset fields, so they are on by default.
   enabled_evaluators:
-    - langchain
-    - ragas
-    # - graph_aware  # deterministic, LLM-free entity/relationship coverage
-    #                (= recall of expected graph artifacts; precision/F1 are
-    #                intentionally not emitted). Requires `expected_entities` /
-    #                `expected_relationships` in the evaluation dataset.
-    # - retrieval    # deterministic hit@k / recall@k / MRR of the reported
-    #                sources vs `reference_sources` (matched by file-name stem
-    #                or document id, case-insensitive).
-    # - answer_match # deterministic SQuAD-style exact_match / token_f1 vs
-    #                `answer` (+ optional `metadata.answer_aliases`).
+    - langchain      # LLM judge: correctness / partial_correctness
+    - ragas          # LLM judge: RAGAS metrics below
+    - answer_match   # answer_contains (headline) + SQuAD exact_match /
+    #                  token_f1 vs `answer` (+ `metadata.answer_aliases`)
+    - retrieval      # hit@k / recall@k / MRR of the reported sources vs
+    #                  `reference_sources` (+ attributable_fraction)
+    - graph_aware    # entity/relationship coverage (= recall) vs
+    #                  `expected_entities` / `expected_relationships`
   langchain_metrics:
     - correctness
     - partial_correctness
