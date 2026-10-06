@@ -1,6 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import logging
 import math
+from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -16,6 +18,9 @@ from pydantic import (
 
 from .evaluation import EvaluationMetricType, EvaluatorType
 from .retrieval import FusionMethod, SearchStrategy
+
+# Stdlib logger: shared.logging imports this module, so get_logger would cycle.
+_logger = logging.getLogger(__name__)
 
 
 class PipelineStageType(Enum):
@@ -1006,11 +1011,11 @@ class ProcessingConfig(BaseModel):
         ge=1,
         description="Number of items to process in each batch for optimal memory usage and performance",
     )
-    max_retries: int = Field(
+    max_attempts: int = Field(
         default=5,
         ge=1,
-        description="Retries of an ingestion LLM item after its batch attempt "
-        "fails with a retryable error",
+        description="Total attempts for an ingestion LLM item called on its own "
+        "after its batch call fails, including the first (1 disables the retry)",
     )
     io_workers: int = Field(
         default=64,
@@ -1354,10 +1359,12 @@ class NeptuneIndexingConfig(BaseModel):
             "Prefer 1 unless you have measured a net win on your data/cluster."
         ),
     )
-    max_retries: int = Field(
-        default=3,
-        ge=0,
-        description="Maximum number of retry attempts for failed Neptune operations",
+    max_attempts: int = Field(
+        default=4,
+        ge=1,
+        description="Total attempts per Neptune write on transient errors "
+        "(throttling, concurrent modification, connection loss), including the "
+        "first (1 disables the retry). Other errors fail on the first attempt.",
     )
     retry_delay_seconds: int = Field(
         default=2, ge=0, description="Delay in seconds between retry attempts"
@@ -1417,9 +1424,9 @@ class NeptuneIndexingConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_retry_configuration(self) -> "NeptuneIndexingConfig":
-        if self.max_retries > 0 and self.retry_delay_seconds == 0:
+        if self.max_attempts > 1 and self.retry_delay_seconds == 0:
             raise ValueError(
-                "retry_delay_seconds should be greater than 0 when max_retries is enabled"
+                "retry_delay_seconds should be greater than 0 when max_attempts > 1"
             )
         return self
 
@@ -2513,13 +2520,14 @@ class EvaluationConfig(BaseModel):
             "per-job timeout)."
         ),
     )
-    ragas_max_retries: int = Field(
+    ragas_max_attempts: int = Field(
         default=3,
         ge=1,
         description=(
-            "RAGAS RunConfig.max_retries: total attempts per judge call (RAGAS "
-            "applies it as stop_after_attempt, with exponential backoff). "
-            "Attempts count against ragas_timeout."
+            "Total attempts per judge call, including the first (passed as "
+            "RAGAS RunConfig.max_retries, which RAGAS applies as "
+            "stop_after_attempt, with exponential backoff). Attempts count "
+            "against ragas_timeout."
         ),
     )
     retrieval_k: int = Field(
@@ -2534,6 +2542,82 @@ class EvaluationConfig(BaseModel):
         default=True,
         description="Whether to save detailed evaluation results and reports.",
     )
+
+
+_MISSING = object()
+
+
+def _get_path(tree: Any, keys: list[str]) -> Any:
+    for key in keys:
+        if isinstance(tree, BaseModel):
+            # A section passed as a model instance: its fields are all set.
+            return getattr(tree, key, _MISSING)
+        if not isinstance(tree, dict) or key not in tree:
+            return _MISSING
+        tree = tree[key]
+    return tree
+
+
+def _with_path(tree: dict[str, Any], keys: list[str], value: Any) -> dict[str, Any]:
+    """Copy of ``tree`` with ``value`` at ``keys`` (``_MISSING`` deletes it)."""
+    head, *rest = keys
+    out = dict(tree)
+    if rest:
+        child = out.get(head)
+        out[head] = _with_path(child if isinstance(child, dict) else {}, rest, value)
+    elif value is _MISSING:
+        out.pop(head, None)
+    else:
+        out[head] = value
+    return out
+
+
+def _retries_to_attempts(value: Any) -> Any:
+    # The old key counted retries after the first try; attempts include it.
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value + 1
+    return value
+
+
+# Renamed config keys: legacy dotted path -> (replacement path, value mapping).
+# Still accepted so existing YAML keeps working, with a deprecation WARNING.
+# Every *max_attempts knob counts total attempts, including the first.
+LEGACY_CONFIG_KEYS: dict[str, tuple[str, Callable[[Any], Any]]] = {
+    "search.llm_retry": ("aws.bedrock.transient_retry", lambda value: value),
+    "processing.max_retries": ("processing.max_attempts", lambda value: value),
+    "indexing.neptune.max_retries": (
+        "indexing.neptune.max_attempts",
+        _retries_to_attempts,
+    ),
+    "evaluation.ragas_max_retries": (
+        "evaluation.ragas_max_attempts",
+        lambda value: value,
+    ),
+}
+
+
+def _migrate_legacy_key(
+    data: dict[str, Any], old: str, new: str, convert: Callable[[Any], Any]
+) -> dict[str, Any]:
+    old_keys, new_keys = old.split("."), new.split(".")
+    value = _get_path(data, old_keys)
+    if value is _MISSING:
+        return data
+    data = _with_path(data, old_keys, _MISSING)
+    if _get_path(data, new_keys) is not _MISSING:
+        _logger.warning(
+            "Deprecated config key '%s' is ignored because '%s' is set", old, new
+        )
+        return data
+    mapped = convert(value)
+    _logger.warning(
+        "Config key '%s' is deprecated; applied as '%s: %s'. Rename it in your "
+        "config.",
+        old,
+        new,
+        mapped,
+    )
+    return _with_path(data, new_keys, mapped)
 
 
 class Config(BaseModel):
@@ -2573,22 +2657,17 @@ class Config(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _accept_legacy_llm_retry(cls, data: Any) -> Any:
-        """Map the former ``search.llm_retry`` key to ``aws.bedrock.transient_retry``.
+    def _accept_legacy_keys(cls, data: Any) -> Any:
+        """Map each key in ``LEGACY_CONFIG_KEYS`` to its replacement.
 
-        An explicit ``aws.bedrock.transient_retry`` wins over the legacy key.
+        An explicitly set replacement wins over the legacy key. Either way the
+        legacy key is dropped with a WARNING naming the replacement.
         """
         if not isinstance(data, dict):
             return data
-        search = data.get("search")
-        if not isinstance(search, dict) or "llm_retry" not in search:
-            return data
-        search = {k: v for k, v in search.items() if k != "llm_retry"}
-        aws = dict(data.get("aws") or {})
-        bedrock = dict(aws.get("bedrock") or {})
-        bedrock.setdefault("transient_retry", data["search"]["llm_retry"])
-        aws["bedrock"] = bedrock
-        return {**data, "search": search, "aws": aws}
+        for old, (new, convert) in LEGACY_CONFIG_KEYS.items():
+            data = _migrate_legacy_key(data, old, new, convert)
+        return data
 
     @model_validator(mode="after")
     def _inherit_tier_models(self) -> "Config":
@@ -2635,12 +2714,6 @@ class PipelineConfig(BaseModel):
         ge=1,
         le=10000,
         description="The number of items to process in a single batch.",
-    )
-    max_retries: int = Field(
-        default=3,
-        ge=0,
-        le=10,
-        description="The maximum number of retries for a failed operation.",
     )
     continue_on_error: bool = Field(
         default=False,

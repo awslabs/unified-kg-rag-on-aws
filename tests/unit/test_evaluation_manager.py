@@ -489,7 +489,7 @@ class TestErroredQueries:
                 return _rag_output("Vendor ships.", {"processing_time": 0.1})
 
         manager = EvaluationManager(config, rag_chain=_FailingBatchChain())
-        assert manager.batch_processor.max_retries == 1
+        assert manager.batch_processor.max_attempts == 1
         assert manager.batch_processor.max_concurrency == 3
         results, _, _ = await manager.evaluate_dataset(
             [EvaluationQuery(query_id="q1", question="Who ships?")],

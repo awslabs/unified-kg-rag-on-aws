@@ -134,7 +134,7 @@ class TestSavedKeyTracksInputs:
         retuned = Config()
         retuned.processing.max_concurrency += 7
         retuned.processing.batch_size += 3
-        retuned.processing.max_retries += 1
+        retuned.processing.max_attempts += 1
         assert _save_and_list_keys(Config(), tmp_path / "base") == _save_and_list_keys(
             retuned, tmp_path / "retuned"
         )

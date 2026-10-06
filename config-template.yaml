@@ -104,8 +104,8 @@ aws:
     # query-time LLM calls (strategy routing, query entity/keyword extraction,
     # translation, context building, answer generation, global/DRIFT steps).
     # Validation/access errors still fail fast. Ingestion LLM calls are
-    # retried by their batch processor instead. The former search.llm_retry
-    # key is still accepted and maps here.
+    # retried by their batch processor instead (processing.max_attempts). The
+    # former search.llm_retry key is still accepted and maps here.
     transient_retry:
       max_attempts: 5  # total attempts per call; 1 disables the retry
       base_delay_seconds: 2.0  # first backoff ceiling; doubles with jitter
@@ -172,7 +172,9 @@ processing:
   max_concurrency: 20
   chunk_concurrency: 4
   batch_size: 10
-  max_retries: 5
+  # Attempts for an ingestion LLM item called on its own after its batch call
+  # fails (transient errors, timeouts, unparseable output); 1 = no retry.
+  max_attempts: 5
   # Threads for blocking query-path I/O (Bedrock calls LangChain runs in the
   # event loop's default executor, Neptune, reranking). Python's default is
   # min(32, CPUs + 4), six on a 2-vCPU task, which caps concurrent queries.
@@ -513,7 +515,12 @@ indexing:
     # Gremlin connection pool (size aws.neptune.pool_size to match). Each batch
     # accumulates its own stats, merged on completion.
     index_concurrency: 1
-    max_retries: 3
+    # Attempts per Neptune write, including the first (1 = no retry). Only
+    # transient errors (throttling, ConcurrentModificationException, connection
+    # loss, timeouts) are retried, with jittered exponential backoff from
+    # retry_delay_seconds. The former max_retries key counted retries after the
+    # first try: max_retries: N is read as max_attempts: N+1.
+    max_attempts: 4
     retry_delay_seconds: 2
     # Max characters per Neptune property value. Keep it above the longest
     # description that is not re-summarized (description_summarization only
@@ -772,8 +779,8 @@ evaluation:
   # metric on ONE sample, including all of its judge calls and retries; a
   # timed-out job yields NaN for that metric. RAGAS' own default (180s) is too
   # tight for thinking judges. Lower ragas_max_workers if Bedrock throttles the
-  # judge (throttled calls burn the per-job timeout). ragas_max_retries is the
-  # total attempts per judge call.
+  # judge (throttled calls burn the per-job timeout). ragas_max_attempts is the
+  # total attempts per judge call (the former ragas_max_retries key).
   ragas_timeout: 300
   # Top-ranked contexts per sample scored by RAGAS context_precision (applied
   # before max_context_tokens), which makes one judge call PER context, so
@@ -784,7 +791,7 @@ evaluation:
   # in the report metadata. null = no cap.
   ragas_max_contexts: 20
   ragas_max_workers: 8
-  ragas_max_retries: 3
+  ragas_max_attempts: 3
   # Cutoff k for the retrieval evaluator's hit@k / recall@k.
   retrieval_k: 5
   save_detailed_results: true

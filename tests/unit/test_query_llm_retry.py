@@ -336,7 +336,7 @@ def test_batch_processor_chain_is_not_double_retried() -> None:
     model = _ScriptedModel([_model_error() for _ in range(10)])
     chain = _query_chain(model, purpose=ModelPurpose.INGESTION)
     processor = BatchProcessor(
-        batch_size=1, max_retries=2, retry_multiplier=1.0, retry_max_wait=0
+        batch_size=1, max_attempts=2, retry_multiplier=1.0, retry_max_wait=0
     )
 
     def batch_func(inputs: list[dict[str, Any]], **_: Any) -> list[Any]:

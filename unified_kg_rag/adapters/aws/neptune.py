@@ -1,15 +1,18 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
 import functools
 import threading
 import time
 from collections.abc import Callable
 from typing import Any
 
+import aiohttp
 import boto3
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
+from gremlin_python.driver.protocol import GremlinServerError
 from gremlin_python.process.anonymous_traversal import traversal
 from gremlin_python.process.graph_traversal import GraphTraversal, GraphTraversalSource
 
@@ -17,6 +20,42 @@ from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import AWSServiceError, get_logger
 
 logger = get_logger(__name__)
+
+# Neptune engine error codes documented as OK to retry (Neptune user guide,
+# "Graph Engine Error Messages and Codes"). ConstraintViolationException is
+# listed because it arises from concurrent modifications to the graph.
+TRANSIENT_NEPTUNE_ERROR_CODES: frozenset[str] = frozenset(
+    {
+        "CancelledByUserException",
+        "ConcurrentModificationException",
+        "ConstraintViolationException",
+        "MemoryLimitExceededException",
+        "QueryLimitExceededException",
+        "ThrottlingException",
+        "TooManyRequestsException",
+    }
+)
+
+
+def is_transient_neptune_error(exc: BaseException) -> bool:
+    """Return True if a Gremlin request failed for a reason worth retrying.
+
+    Neptune reports engine errors as a ``GremlinServerError`` whose status
+    message carries the JSON error body, ``"code"`` included; the code names
+    are distinct identifiers, so matching them in the message is matching the
+    code. Connection loss and timeouts are transient too. Anything else
+    (malformed traversal, access denied, bad request) fails fast.
+    """
+    if isinstance(exc, GremlinServerError):
+        message = str(exc.status_message)
+        return any(code in message for code in TRANSIENT_NEPTUNE_ERROR_CODES)
+    return isinstance(
+        exc,
+        ConnectionError
+        | TimeoutError
+        | asyncio.TimeoutError
+        | aiohttp.ClientConnectionError,
+    )
 
 
 def _handle_neptune_errors(func: Callable) -> Callable:

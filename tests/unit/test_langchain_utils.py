@@ -201,7 +201,7 @@ class TestRetryDecorator:
     def test_retries_then_succeeds(self) -> None:
         # multiplier tiny so backoff sleep is negligible; succeeds on 3rd call.
         bp = BatchProcessor(
-            max_retries=5, retry_multiplier=1.0, retry_max_wait=0, batch_size=10
+            max_attempts=5, retry_multiplier=1.0, retry_max_wait=0, batch_size=10
         )
         decorator = bp._create_retry_decorator("op")
         attempts = {"n": 0}
@@ -218,7 +218,7 @@ class TestRetryDecorator:
 
     def test_reraises_after_exhausting_attempts(self) -> None:
         bp = BatchProcessor(
-            max_retries=2, retry_multiplier=1.0, retry_max_wait=0, batch_size=10
+            max_attempts=2, retry_multiplier=1.0, retry_max_wait=0, batch_size=10
         )
         decorator = bp._create_retry_decorator("op")
         attempts = {"n": 0}
@@ -246,7 +246,7 @@ class TestRetryDecorator:
         self, error: Exception, attempts_made: int
     ) -> None:
         bp = BatchProcessor(
-            max_retries=3,
+            max_attempts=3,
             is_transient_error=lambda e: isinstance(e, _TransientError),
             **_NO_BACKOFF,
         )
@@ -399,7 +399,7 @@ def _fast_bp(**kwargs: Any) -> BatchProcessor:
 class TestRetryFailedItemsOnly:
     def test_one_failure_reinvokes_only_that_item(self) -> None:
         fake = _CountingRunnable(fail_first={4: 1})  # item 4 fails once
-        bp = _fast_bp(batch_size=10, max_retries=3)
+        bp = _fast_bp(batch_size=10, max_attempts=3)
         out = bp.execute_with_fallback(
             items_to_process=list(range(10)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
@@ -414,7 +414,7 @@ class TestRetryFailedItemsOnly:
 
     def test_permanently_failing_item_gets_sentinel_in_place(self) -> None:
         fake = _CountingRunnable(fail_first={0: None, 7: None})
-        bp = _fast_bp(batch_size=10, max_retries=2)
+        bp = _fast_bp(batch_size=10, max_attempts=2)
         out = bp.execute_with_fallback(
             items_to_process=list(range(10)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
@@ -427,32 +427,32 @@ class TestRetryFailedItemsOnly:
         expected[0] = {}
         expected[7] = {}
         assert out == expected
-        assert fake.calls[0] == 3  # batch attempt + max_retries
+        assert fake.calls[0] == 3  # batch attempt + max_attempts
         assert fake.calls[7] == 3
         assert all(fake.calls[i] == 1 for i in range(1, 10) if i != 7)
 
     def test_run_config_sets_the_retry_count(self) -> None:
         # Ingestion stages pass config.processing as run_config; its
-        # max_retries used to be ignored in favour of the processor default.
+        # retry setting used to be ignored in favour of the processor default.
         fake = _CountingRunnable(fail_first={0: None})
-        bp = _fast_bp(batch_size=10, max_retries=4)
+        bp = _fast_bp(batch_size=10, max_attempts=4)
         bp.execute_with_fallback(
             items_to_process=list(range(3)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
             batch_func=fake.runnable.batch,
             sequential_func=fake.runnable.invoke,
             task_name="t",
-            run_config={"max_retries": 1},
+            run_config={"max_attempts": 1},
             show_progress=False,
         )
-        assert fake.calls[0] == 2  # batch attempt + one retry
+        assert fake.calls[0] == 2  # batch attempt + one per-item attempt
 
     def test_order_preserved_across_concurrent_chunks(self) -> None:
         fake = _CountingRunnable(fail_first={2: 1, 9: 1, 13: 1})
         bp = BatchProcessor(
             batch_size=4,
             chunk_concurrency=3,
-            max_retries=3,
+            max_attempts=3,
             retry_multiplier=1.0,
             retry_max_wait=0,
             call_timeout_seconds=0,
@@ -470,7 +470,7 @@ class TestRetryFailedItemsOnly:
 
     def test_all_items_failing_behaves_as_before(self) -> None:
         fake = _CountingRunnable(fail_first=dict.fromkeys(range(4)))
-        bp = _fast_bp(batch_size=10, max_retries=2)
+        bp = _fast_bp(batch_size=10, max_attempts=2)
         out = bp.execute_with_fallback(
             items_to_process=list(range(4)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
@@ -526,7 +526,7 @@ class TestRetryFailedItemsOnly:
 
     async def test_async_one_failure_reinvokes_only_that_item(self) -> None:
         fake = _CountingRunnable(fail_first={3: 1})
-        bp = _fast_bp(batch_size=10, max_retries=3)
+        bp = _fast_bp(batch_size=10, max_attempts=3)
         out = await bp.aexecute_with_fallback(
             items_to_process=list(range(10)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
@@ -541,7 +541,7 @@ class TestRetryFailedItemsOnly:
 
     async def test_async_all_failing_keeps_sentinels(self) -> None:
         fake = _CountingRunnable(fail_first=dict.fromkeys(range(3)))
-        bp = _fast_bp(batch_size=10, max_retries=2)
+        bp = _fast_bp(batch_size=10, max_attempts=2)
         out = await bp.aexecute_with_fallback(
             items_to_process=list(range(3)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],

@@ -88,10 +88,11 @@ class BatchProcessor(BaseModel):
         ge=0,
         description="Maximum allowed wait time between retry attempts in seconds",
     )
-    max_retries: int = Field(
+    max_attempts: int = Field(
         default=5,
         ge=1,
-        description="Maximum number of retry attempts before giving up on a failed operation",
+        description="Total attempts for an item called on its own after its "
+        "batch call fails, including the first (1 disables the retry)",
     )
     batch_size: int = Field(
         default=10,
@@ -190,7 +191,7 @@ class BatchProcessor(BaseModel):
             self.chunk_concurrency = run_config.get(
                 "chunk_concurrency", self.chunk_concurrency
             )
-            self.max_retries = run_config.get("max_retries", self.max_retries)
+            self.max_attempts = run_config.get("max_attempts", self.max_attempts)
 
         prepared_batch_func = self._create_batch_func(batch_func)
 
@@ -373,7 +374,7 @@ class BatchProcessor(BaseModel):
             wait=tenacity.wait_random_exponential(
                 multiplier=self.retry_multiplier, max=self.retry_max_wait
             ),
-            stop=tenacity.stop_after_attempt(self.max_retries),
+            stop=tenacity.stop_after_attempt(self.max_attempts),
             before_sleep=self._create_retry_log_callback(operation_name),
             reraise=True,
         )
@@ -449,7 +450,7 @@ class BatchProcessor(BaseModel):
                 "max_concurrency", self.max_concurrency
             )
             self.batch_size = run_config.get("batch_size", self.batch_size)
-            self.max_retries = run_config.get("max_retries", self.max_retries)
+            self.max_attempts = run_config.get("max_attempts", self.max_attempts)
 
         prepared_batch_func = self._create_async_batch_func(batch_func)
         retrying_sequential_func = self._create_retry_decorator(task_name)(

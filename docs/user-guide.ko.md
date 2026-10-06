@@ -158,8 +158,21 @@ YAML 값은 파일을 읽을 때 검증합니다. 타입이 틀리거나 지원�
 `Configuration validation error: ...`로 CLI가 중단됩니다. 알 수 없는 키(오타나 새
 릴리스에서 제거된 키)는 실행을 멈추지 않고 `Unknown config key '<path>' is
 ignored` WARNING 로그를 남긴 뒤 버려집니다. 파일을 고치거나 업그레이드한 뒤에는
-로그를 확인하세요. 이름이 바뀐 `search.llm_retry` 키는 여전히 받아들이며
-`aws.bedrock.transient_retry`로 옮겨 적용합니다.
+로그를 확인하세요.
+
+이름이 바뀐 키도 계속 받아들입니다. 이전 키의 값은 새 키에 적용되고
+`Config key '<old>' is deprecated; applied as '<new>: <value>'` WARNING 로그가
+남습니다. 새 키도 함께 지정했다면 이전 키는 무시합니다.
+
+| 이전 키 | 새 키 |
+|---|---|
+| `search.llm_retry` | `aws.bedrock.transient_retry` |
+| `processing.max_retries` | `processing.max_attempts`(값 그대로) |
+| `indexing.neptune.max_retries` | `indexing.neptune.max_attempts`(값에 1을 더함. 이전 키는 첫 시도를 뺀 재시도 횟수였습니다) |
+| `evaluation.ragas_max_retries` | `evaluation.ragas_max_attempts`(값 그대로) |
+
+`max_attempts` 키는 모두 첫 시도를 포함한 총 시도 횟수이며, `1`이면 재시도하지
+않습니다.
 
 아래 표의 기본값은 내장 기본값입니다. `config-template.yaml`도 같은 값을 씁니다.
 
@@ -357,6 +370,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 |---|---|---|
 | `processing.max_concurrency` | `20` | 배치 하나에서 동시에 보내는 LLM 호출 수입니다. Bedrock 스로틀링이 나면 낮추고, 할당량에 여유가 있으면 올립니다. |
 | `processing.chunk_concurrency` | `4` | 동시에 실행하는 미니 배치 수입니다. Bedrock 연결 풀은 `max_concurrency` × `chunk_concurrency`로 잡힙니다. |
+| `processing.max_attempts` | `5` | 배치 호출이 실패한 인제스천 LLM 항목을 하나씩 다시 호출할 때의 시도 횟수입니다. 일시적인 Bedrock 오류, 호출 시간 초과, 파싱할 수 없는 출력만 재시도하고 나머지 오류는 바로 실패합니다. `1`이면 재시도하지 않습니다. |
 | `processing.io_workers` | `64` | CLI와 체인 동기 메서드에서 질의 경로의 블로킹 I/O(Bedrock 호출, Neptune 순회, 재순위)를 처리하는 스레드 수입니다. Python 기본값은 `min(32, CPU 수 + 4)`라서 vCPU 2개 작업에서는 6개입니다. 비동기 서버는 시작할 때 `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`(`unified_kg_rag.shared.utils`)를 호출합니다. |
 | `processing.ignore_errors` | `false` | LLM 단계가 실패한 항목을 건너뛰고 실행을 계속합니다. |
 | `processing.deduplicate` | `false` | 추출 전에 중복 문서를 제거합니다. |
@@ -417,6 +431,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `indexing.opensearch.index_settings.refresh_interval` | `"1s"` | 대량 적재 속도를 높이려면 늘리거나 `"-1"`로 두고, 실제 질의 전에 되돌립니다. |
 | `indexing.neptune.batch_size` | `100` | Neptune 쓰기 배치당 항목 수입니다. |
 | `indexing.neptune.index_concurrency` | `1` | 동시에 보내는 쓰기 배치 수입니다. 올리면 `aws.neptune.pool_size`도 맞춰 올립니다. |
+| `indexing.neptune.max_attempts` | `4` | 첫 시도를 포함한 Neptune 쓰기당 시도 횟수입니다. 스로틀링, `ConcurrentModificationException` 등 재시도 가능한 Neptune 오류와 연결 끊김, 시간 초과만 `retry_delay_seconds`(`2`)에서 시작하는 지수 백오프(지터 포함)로 재시도하고, 나머지 오류는 첫 시도에서 바로 실패합니다. `1`이면 재시도하지 않습니다. |
 | `indexing.neptune.max_hops` | `3` | 검색 시점의 이웃 확장 깊이입니다. |
 | `indexing.neptune.property_max_length` | `4000` | Neptune 속성 값의 최대 문자 수입니다. 재요약되지 않는 가장 긴 설명보다 커야 합니다(요약은 600토큰, 영어 약 2,400자를 넘을 때만 실행). 재인제스트해야 반영됩니다. |
 | `indexing.neptune.entity_importance_source` | `"rank"` | 그래프 확장 관련도에 쓰는 엔터티 중요도입니다. `rank`(인덱싱된 엔터티 rank), `degree`(질의 시 계산한 엣지 수), `none`(모두 0.5, 이전 동작). |
@@ -485,7 +500,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `evaluation.ragas_timeout` | `300` | 샘플 하나의 지표 하나를 계산하는 제한 시간(초)입니다. 넘으면 NaN이 됩니다. |
 | `evaluation.ragas_max_contexts` | `20` | RAGAS `context_precision`이 채점하는 샘플별 상위 컨텍스트 수입니다("@20"). faithfulness와 context_recall은 토큰 예산 안의 전체 컨텍스트를 봅니다. `null`이면 제한하지 않습니다. |
 | `evaluation.ragas_max_workers` | `8` | 동시에 실행하는 RAGAS 작업 수입니다. 평가 모델 호출이 스로틀링되면 낮춥니다. |
-| `evaluation.ragas_max_retries` | `3` | 평가 모델 호출당 총 시도 횟수입니다. |
+| `evaluation.ragas_max_attempts` | `3` | 평가 모델 호출당 총 시도 횟수입니다. |
 | `evaluation.max_context_tokens` | `8192` | 평가 모델에 넘기는 컨텍스트의 토큰 상한입니다. |
 | `evaluation.retrieval_k` | `5` | `retrieval` 평가자의 hit@k / recall@k 기준값입니다. |
 | `evaluation.outputs_directory` | `"outputs/evaluation"` | 결과를 기록하는 디렉터리입니다. |

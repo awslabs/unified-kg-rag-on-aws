@@ -74,7 +74,7 @@ def test_truncation_floor_matches_model_default(template_search: SearchConfig) -
 
 @pytest.mark.parametrize(
     "field",
-    ["judge_effort", "ragas_timeout", "ragas_max_workers", "ragas_max_retries"],
+    ["judge_effort", "ragas_timeout", "ragas_max_workers", "ragas_max_attempts"],
 )
 def test_evaluation_judge_knobs_match_model_defaults(field: str) -> None:
     from unified_kg_rag.domain.models.config import EvaluationConfig
