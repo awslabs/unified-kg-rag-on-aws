@@ -78,6 +78,10 @@ Each previous behaviour stays available through the setting in parentheses.
   `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).
 
 ### Fixed
+- Indexing relationships for one index suffix no longer deletes another
+  suffix's edges. The Neptune idempotency pre-drop matched edges by id alone,
+  and relationship ids do not depend on the suffix; it is now scoped to edges
+  whose source vertex carries the run's entity label, like `delete_by_id`.
 - Prompt caching now takes effect on the Converse API, which every Claude
   4.5+/5.x inference profile uses. The system prompt carried an Anthropic
   `cache_control` key that langchain-aws drops when it builds a Converse
