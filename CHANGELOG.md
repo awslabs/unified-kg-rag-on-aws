@@ -100,6 +100,9 @@ Each previous behaviour stays available through the setting in parentheses.
   running max-similarity per candidate (quadratic), and it is skipped when the
   cut is at least as wide as the candidate set, which is every `mix`/`hybrid`
   query. The kept results and their scores are unchanged.
+- Local search queries its community-report, relationship and claim sections
+  concurrently with the entity -> graph expansion -> text-unit chain instead
+  of after it; they depend only on the query.
 - Prompt caching now takes effect on the Converse API, which every Claude
   4.5+/5.x inference profile uses. The system prompt carried an Anthropic
   `cache_control` key that langchain-aws drops when it builds a Converse

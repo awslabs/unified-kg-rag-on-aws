@@ -245,3 +245,62 @@ async def test_no_entity_focus_falls_back_to_raw_query(config: Config) -> None:
     assert entity_calls[0].top_k == 7
     assert len(neptune_r.calls) == 1  # graph expansion is seeded
     assert result.metadata["text_unit_count"] == 1
+
+
+class GatedRetriever(LineageRetriever):
+    """Holds the graph expansion until every independent section has started.
+
+    If the community-report / relationship / claim lookups still waited for the
+    entity chain, the expansion would never be released and the search would
+    time out.
+    """
+
+    def __init__(self, tag: str, started: dict[str, int], release) -> None:
+        super().__init__(tag)
+        self.started = started
+        self.release = release
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        prefix = query.index_prefixes[0] if query.index_prefixes else self.tag
+        self.started[prefix] = self.started.get(prefix, 0) + 1
+        if self.tag == "graph":
+            await self.release.wait()
+        return await super().aretrieve(query)
+
+
+async def test_independent_sections_run_concurrently_with_entity_chain(
+    config: Config,
+) -> None:
+    import asyncio
+
+    config.processing.claim_extraction.enabled = True
+    config.indexing.opensearch.build_relationship_vector_index = True
+    os_cfg = config.indexing.opensearch
+    side_prefixes = {
+        os_cfg.community_reports_index_prefix,
+        os_cfg.relationships_index_prefix,
+        os_cfg.claims_index_prefix,
+    }
+    started: dict[str, int] = {}
+    release = asyncio.Event()
+    strategy, _, _ = _make_strategy(config)
+    os_r = GatedRetriever("document", started, release)
+    neptune_r = GatedRetriever("graph", started, release)
+    strategy.retrievers = {
+        RetrieverRole.DOCUMENT.value: os_r,
+        RetrieverRole.GRAPH.value: neptune_r,
+    }
+
+    async def _release_when_sides_started() -> None:
+        while not side_prefixes <= set(started):
+            await asyncio.sleep(0)
+        release.set()
+
+    result, _ = await asyncio.wait_for(
+        asyncio.gather(strategy.asearch(_query()), _release_when_sides_started()),
+        timeout=5,
+    )
+
+    sources = {r.source for r in result.results}
+    assert {f"{p}-1" for p in side_prefixes} <= sources
+    assert result.metadata["text_unit_count"] == 1
