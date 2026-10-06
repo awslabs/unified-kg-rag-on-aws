@@ -428,6 +428,34 @@ class _FakeChain:
 
 
 class TestErroredQueries:
+    async def test_batch_failure_is_not_retried_with_backoff(
+        self, config: Config
+    ) -> None:
+        config.processing.max_concurrency = 3
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+
+        class _FailingBatchChain:
+            batch_calls = 0
+
+            async def abatch(self, inputs, config=None, return_exceptions=False):
+                type(self).batch_calls += 1
+                raise ValueError("invalid filter")  # deterministic, not transient
+
+            async def ainvoke(self, inputs, config=None):
+                return _rag_output("Vendor ships.", {"processing_time": 0.1})
+
+        manager = EvaluationManager(config, rag_chain=_FailingBatchChain())
+        assert manager.batch_processor.max_retries == 1
+        assert manager.batch_processor.max_concurrency == 3
+        results, _, _ = await manager.evaluate_dataset(
+            [EvaluationQuery(query_id="q1", question="Who ships?")],
+            [EvaluationGroundTruth(query_id="q1", ground_truth="Vendor")],
+            show_progress=False,
+        )
+        # One batch attempt, then the per-item sequential fallback answers it.
+        assert _FailingBatchChain.batch_calls == 1
+        assert results[0].generated_answer == "Vendor ships."
+
     async def test_rag_error_fallback_flagged_counted_failed_and_not_scored(
         self, config: Config
     ) -> None:

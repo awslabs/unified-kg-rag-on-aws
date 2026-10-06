@@ -98,7 +98,13 @@ class EvaluationManager:
         )
         self.evaluators: dict[EvaluatorType, BaseEvaluator] = {}
         self._initialize_evaluators()
-        self.batch_processor = BatchProcessor()
+        # One attempt per batch: the RAG chain already retries transient
+        # Bedrock/store errors itself (and botocore under it), so retrying here
+        # only re-runs deterministic failures (invalid filter, validation) with
+        # minutes of backoff. A failed item still gets its sequential fallback.
+        self.batch_processor = BatchProcessor(
+            max_retries=1, max_concurrency=config.processing.max_concurrency
+        )
 
     @staticmethod
     def _default_source_resolver(
