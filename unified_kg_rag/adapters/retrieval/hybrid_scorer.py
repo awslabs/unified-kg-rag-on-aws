@@ -7,7 +7,7 @@ from typing import Any
 
 from langchain_core.documents import Document
 
-from unified_kg_rag.adapters.aws import BedrockRerankModelFactory
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, FusionMethod, RetrievalResult
 from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
 from unified_kg_rag.ports.model_factory import RerankFactoryPort
@@ -23,15 +23,18 @@ class HybridScorer(MetricsMixin):
         config: Config,
         boto_session: Any | None = None,
         rerank_factory: RerankFactoryPort | None = None,
+        *,
+        providers: Providers | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.config = config
         self.boto_session = boto_session
         self.fusion_config = config.search.fusion
-        # Injected rerank provider (port); defaults to Bedrock when reranking is
-        # enabled and none is supplied.
+        # Injected rerank provider (port). Otherwise it comes from the shared
+        # provider bundle (Bedrock by default), and only when reranking is on.
         self.rerank_factory: RerankFactoryPort | None = rerank_factory
+        self._providers = providers
         self.rerank_model: Any = None
         self._initialize_reranking()
 
@@ -43,11 +46,9 @@ class HybridScorer(MetricsMixin):
                 return
 
             if self.rerank_factory is None:
-                self.rerank_factory = BedrockRerankModelFactory(
-                    config=self.config,
-                    boto_session=self.boto_session,
-                    region_name=self.config.aws.bedrock.region_name,
-                )
+                self.rerank_factory = Providers.resolve(
+                    self.config, self._providers, self.boto_session
+                ).rerank_factory
 
             self.rerank_model = self.rerank_factory.get_model(
                 model_id=rerank_config.rerank_model_id,

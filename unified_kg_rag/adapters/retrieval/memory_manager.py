@@ -14,8 +14,8 @@ from langchain_core.messages.utils import get_buffer_string
 from langchain_core.output_parsers import CommaSeparatedListOutputParser
 from pydantic import Field
 
-from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, ConversationContext, MessageRole
 from unified_kg_rag.domain.prompts import EntityExtractionPrompt
 from unified_kg_rag.shared import get_config, get_logger
@@ -32,11 +32,12 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
         ttl_hours: int = 24,
         boto_session: boto3.Session | None = None,
         n_entities: int = 5,
+        *,
+        providers: Providers | None = None,
     ):
         self.config = config
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=self.config.aws.profile_name
-        )
+        providers = Providers.resolve(config, providers, boto_session)
+        self.boto_session = providers.boto_session
         self.conversation_id = conversation_id
         self.max_messages = max_messages
         self.ttl = timedelta(hours=ttl_hours)
@@ -45,12 +46,9 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
         self._context = ConversationContext()
         self.updated_at = datetime.now()
 
-        factory = BedrockLanguageModelFactory(
-            config=self.config, boto_session=self.boto_session
-        )
         self.entity_extractor = setup_chain(
             model_id=self.config.search.entity_extraction_model_id,
-            factory=factory,
+            factory=providers.llm_factory,
             prompt_class=EntityExtractionPrompt,
             parser=CommaSeparatedListOutputParser(),
             custom_prompts=self.config.custom_prompts,
@@ -229,8 +227,11 @@ class GraphRAGConversationBufferMemory(BaseChatMemory):
 
 
 class MemoryManager:
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, *, providers: Providers | None = None) -> None:
         self.config = config
+        # One provider bundle for every conversation: each history reuses the
+        # same LLM factory instead of building a Bedrock client per conversation.
+        self.providers = Providers.resolve(config, providers)
         self._memories: dict[str, GraphRAGChatMessageHistory] = {}
         self._lock = asyncio.Lock()
 
@@ -247,6 +248,7 @@ class MemoryManager:
                 conversation_id=conv_id,
                 max_messages=self.config.memory.max_messages_per_conversation,
                 ttl_hours=self.config.memory.max_conversation_age_hours,
+                providers=self.providers,
             )
             self._memories[conv_id] = memory
             return memory

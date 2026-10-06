@@ -16,6 +16,8 @@ Catalog:
   ``RerankFactoryPort`` aliases) — the LLM/Embedding/Rerank provider boundary
   (``Protocol``; the Bedrock factories in ``adapters.aws.bedrock`` conform
   structurally). Annotate against these for provider-agnostic call sites.
+- ``TokenCounterPort`` — token counting/truncation for one model (``Protocol``;
+  ``adapters.aws.token_counter.BedrockTokenCounter`` conforms structurally).
 - ``CachePort`` — the stage-result persistence boundary (``Protocol``; the
   filesystem ``CacheManager`` in ``shared.cache_manager`` conforms structurally).
 
@@ -41,6 +43,7 @@ from unified_kg_rag.ports.model_factory import (
     LLMFactoryPort,
     ModelFactoryPort,
     RerankFactoryPort,
+    TokenCounterPort,
 )
 
 __all__ = [
@@ -53,5 +56,6 @@ __all__ = [
     "LLMFactoryPort",
     "ModelFactoryPort",
     "RerankFactoryPort",
+    "TokenCounterPort",
     "VectorIndexer",
 ]

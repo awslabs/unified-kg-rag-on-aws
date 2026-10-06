@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """AWS-free unit tests for the conversation-memory adapter.
 
-``GraphRAGChatMessageHistory.__init__`` constructs a boto3 Session, a
-``BedrockLanguageModelFactory`` and an entity-extraction chain. All three are
+``GraphRAGChatMessageHistory.__init__`` obtains a boto3 Session and a
+``BedrockLanguageModelFactory`` (through its ``Providers`` bundle) and builds an
+entity-extraction chain. All three are
 patched out so the message buffering, entity-context tracking, trimming, the
 LangChain ``GraphRAGConversationBufferMemory`` glue, and the async
 ``MemoryManager`` capacity/eviction logic can be exercised without AWS or a
@@ -17,6 +18,7 @@ from datetime import datetime, timedelta
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
+from unified_kg_rag.adapters import providers as providers_module
 from unified_kg_rag.adapters.retrieval import memory_manager as mm
 from unified_kg_rag.domain.models import Config, MessageRole
 
@@ -31,7 +33,9 @@ def patched_history(mocker):
     invokable (default: returns a comma-separated entity list shape).
     """
     mocker.patch.object(mm.boto3, "Session", return_value=object())
-    mocker.patch.object(mm, "BedrockLanguageModelFactory", return_value=object())
+    mocker.patch.object(
+        providers_module, "BedrockLanguageModelFactory", return_value=object()
+    )
 
     extractor = mocker.MagicMock()
     extractor.invoke.return_value = ["Alice", "Bob"]

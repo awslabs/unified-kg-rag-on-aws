@@ -26,17 +26,17 @@ from langchain_core.runnables import (
 from pydantic import BaseModel, Field
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
-from unified_kg_rag.adapters.aws import (
-    BedrockLanguageModelFactory,
-    NeptuneClient,
-    OpenSearchClient,
-)
+from unified_kg_rag.adapters.aws import NeptuneClient, OpenSearchClient
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
-from unified_kg_rag.adapters.retrieval.memory_manager import get_memory_manager
+from unified_kg_rag.adapters.retrieval.memory_manager import (
+    MemoryManager,
+    get_memory_manager,
+)
 from unified_kg_rag.adapters.retrieval.token_manager import (
     EMPTY_CONTEXT_PLACEHOLDER,
     ContextSection,
@@ -191,6 +191,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         mode: ChainMode = ChainMode.RAG,
         *,
         model_factory: LLMFactoryPort | None = None,
+        providers: Providers | None = None,
         retriever_builders: (
             dict[RetrieverRole, Callable[[], BaseGraphRAGRetriever]] | None
         ) = None,
@@ -198,21 +199,35 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     ) -> None:
         super().__init__()
         self.config = config
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=self.config.aws.profile_name
+        if providers is not None and model_factory is not None:
+            raise ValueError(
+                "Pass either model_factory or providers, not both; set the LLM "
+                "factory on the Providers bundle instead."
+            )
+        # Composition root (hexagonal): ONE provider bundle — session plus
+        # LLM/embedding/rerank/token-counter factories — built here (or
+        # injected) and passed explicitly to every component the chain builds
+        # (strategies, scorer, token manager, memory, retrievers). An injected
+        # factory, e.g. a local Ollama-backed LLMFactoryPort, therefore
+        # reaches all of them; anything not injected defaults to Bedrock.
+        self._default_providers = providers is None and model_factory is None
+        self.providers = providers or Providers(
+            config, boto_session, llm_factory=model_factory
         )
+        self.boto_session = self.providers.boto_session
         self.mode = mode
         self.ignore_errors = self.config.processing.ignore_errors
-        self.memory_manager = get_memory_manager()
-        self.token_manager = TokenManager(self.config, boto_session=self.boto_session)
-        # Provider seam (hexagonal): inject a custom LLM factory (any
-        # LLMFactoryPort — e.g. a local Ollama-backed one) instead of Bedrock.
-        # Defaults to Bedrock so existing callers are unchanged.
-        self.factory: LLMFactoryPort = model_factory or BedrockLanguageModelFactory(
-            config=config,
-            boto_session=boto_session,
-            region_name=config.aws.bedrock.region_name,
+        # The process-wide memory manager is kept for the all-default chain so
+        # conversations still survive across chain instances. A chain with
+        # injected providers gets its own, so its conversation-entity
+        # extraction uses the injected LLM factory rather than Bedrock.
+        self.memory_manager = (
+            get_memory_manager()
+            if self._default_providers
+            else MemoryManager(config, providers=self.providers)
         )
+        self.token_manager = TokenManager(self.config, providers=self.providers)
+        self.factory: LLMFactoryPort = self.providers.llm_factory
         # Backend seam: inject custom retriever builders keyed by abstract role
         # ("graph"/"document") to swap Neptune/OpenSearch for another store
         # without subclassing. Unspecified roles fall back to the AWS defaults.
@@ -641,20 +656,29 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             role.value: self._get_retriever(role) for role in spec.required_roles
         }
 
-        return spec.strategy_class(config=self.config, retrievers=retrievers)
+        return spec.strategy_class(
+            config=self.config, retrievers=retrievers, providers=self.providers
+        )
 
     def _build_graph_retriever(self) -> BaseGraphRAGRetriever:
         neptune_client = NeptuneClient(
             config=self.config, boto_session=self.boto_session
         )
-        return NeptuneRetriever(config=self.config, neptune_client=neptune_client)
+        return NeptuneRetriever(
+            config=self.config,
+            neptune_client=neptune_client,
+            boto_session=self.boto_session,
+        )
 
     def _build_document_retriever(self) -> BaseGraphRAGRetriever:
         opensearch_client = OpenSearchClient(
             config=self.config, boto_session=self.boto_session
         )
         return OpenSearchRetriever(
-            config=self.config, opensearch_client=opensearch_client
+            config=self.config,
+            opensearch_client=opensearch_client,
+            boto_session=self.boto_session,
+            embedding_factory=self.providers.embedding_factory,
         )
 
     def _get_retriever(self, role: RetrieverRole) -> BaseGraphRAGRetriever:

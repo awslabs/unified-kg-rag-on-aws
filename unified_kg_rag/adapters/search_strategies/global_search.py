@@ -9,7 +9,6 @@ import boto3
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
 
-from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
@@ -67,11 +66,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         self.ignore_errors = config.processing.ignore_errors
         self.target_language = config.processing.translation.target_language.value
 
-        factory = BedrockLanguageModelFactory(
-            config=config,
-            boto_session=boto_session,
-            region_name=config.aws.bedrock.region_name,
-        )
+        factory = self.providers.llm_factory
 
         str_output_parser = StrOutputParser()
         # Built only when the opt-in per-report LLM relevance scoring is on.

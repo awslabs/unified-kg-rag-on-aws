@@ -18,7 +18,7 @@ from unified_kg_rag.adapters.aws.bedrock import (
     effective_max_output_tokens,
     get_language_model_info,
 )
-from unified_kg_rag.adapters.retrieval import token_manager as tm_module
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.token_manager import (
     ContextSection,
     OptimizedContext,
@@ -44,12 +44,8 @@ def _make_manager(
     ``max_context_tokens=None`` (the default) exercises the production path where
     the budget is derived from the answer model's context window.
     """
-    mocker.patch.object(tm_module, "boto3")
-    mocker.patch.object(tm_module, "get_assumed_role_boto_session")
-
     fake_counter = mocker.Mock()
     fake_counter.count_tokens.side_effect = lambda text: len(text.split())
-    mocker.patch.object(tm_module, "BedrockTokenCounter", return_value=fake_counter)
 
     config = Config()
     config.search.token_manager.max_context_tokens = max_context_tokens
@@ -57,7 +53,12 @@ def _make_manager(
     config.aws.bedrock.default_max_output_tokens = default_max_output_tokens
     if answer_model_id is not None:
         config.search.answer_generation_model_id = answer_model_id
-    return TokenManager(config)
+    providers = Providers(
+        config,
+        boto_session=mocker.Mock(),
+        token_counter_factory=lambda *_, **__: fake_counter,
+    )
+    return TokenManager(config, providers=providers)
 
 
 def _r(content: str, score: float, retriever_type: str, source: str) -> RetrievalResult:
@@ -637,9 +638,11 @@ class TestContextTypeBudgetConfig:
 def test_default_config_budget_is_fixed_not_window_derived(mocker) -> None:
     # The shipped default binds (30K, upstream LightRAG parity) instead of the
     # ~785K a 1M-window derivation yields; it stays clamped to the model.
-    mocker.patch.object(tm_module, "boto3")
-    mocker.patch.object(tm_module, "get_assumed_role_boto_session")
-    mocker.patch.object(tm_module, "BedrockTokenCounter", return_value=mocker.Mock())
     config = Config()
+    providers = Providers(
+        config,
+        boto_session=mocker.Mock(),
+        token_counter_factory=lambda *_, **__: mocker.Mock(),
+    )
     assert config.search.token_manager.max_context_tokens == 30_000
-    assert TokenManager(config)._max_context_tokens == 30_000
+    assert TokenManager(config, providers=providers)._max_context_tokens == 30_000
