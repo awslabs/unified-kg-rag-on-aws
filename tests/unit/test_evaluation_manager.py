@@ -241,9 +241,7 @@ class TestInitialization:
         manager = EvaluationManager(config, rag_chain=object())
         assert manager.evaluators == {}
 
-    def test_init_failure_of_one_evaluator_does_not_crash(
-        self, config: Config, mocker
-    ) -> None:
+    def test_init_failure_aborts_by_default(self, config: Config, mocker) -> None:
         config.evaluation.enabled_evaluators = [EvaluatorType.GRAPH_AWARE]
 
         class _Boom:
@@ -253,8 +251,34 @@ class TestInitialization:
         mocker.patch.object(
             EvaluationManager, "_resolve_evaluator_class", return_value=_Boom
         )
+        with pytest.raises(EvaluationException, match="graph_aware.*init failed"):
+            EvaluationManager(config, rag_chain=object())
+
+    def test_invalid_config_aborts_by_default(self, config: Config, mocker) -> None:
+        config.evaluation.enabled_evaluators = [EvaluatorType.GRAPH_AWARE]
+        mocker.patch.object(GraphAwareEvaluator, "validate_config", return_value=False)
+        with pytest.raises(EvaluationException, match="invalid configuration"):
+            EvaluationManager(config, rag_chain=object())
+
+    def test_init_failure_dropped_and_recorded_with_ignore_errors(
+        self, config: Config, mocker
+    ) -> None:
+        config.processing.ignore_errors = True
+        config.evaluation.enabled_evaluators = [
+            EvaluatorType.GRAPH_AWARE,
+            EvaluatorType.ANSWER_MATCH,
+        ]
+        mocker.patch.object(
+            GraphAwareEvaluator, "__init__", side_effect=RuntimeError("init failed")
+        )
         manager = EvaluationManager(config, rag_chain=object())
-        assert manager.evaluators == {}
+        assert set(manager.evaluators) == {EvaluatorType.ANSWER_MATCH}
+        assert manager.dropped_evaluators == {
+            "graph_aware": "initialization failed: init failed"
+        }
+        manifest = manager.build_run_manifest()
+        assert manifest["dropped_evaluators"] == manager.dropped_evaluators
+        assert manifest["enabled_evaluators"] == ["answer_match"]
 
 
 class TestEvaluateResults:

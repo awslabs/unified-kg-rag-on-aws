@@ -126,33 +126,48 @@ class EvaluationManager:
         )
 
     def _initialize_evaluators(self) -> None:
-        enabled_count = 0
+        """Build every enabled evaluator; fail fast unless ignore_errors.
+
+        An evaluator that cannot be built (e.g. no Bedrock access for the
+        judge) or rejects its configuration aborts the run with an
+        ``EvaluationException`` — silently dropping it would publish a summary
+        without metrics the user asked for. With ``processing.ignore_errors``
+        it is dropped instead and recorded in ``dropped_evaluators`` (and the
+        run manifest).
+        """
+        self.dropped_evaluators: dict[str, str] = {}
         for evaluator_type in self.config.evaluation.enabled_evaluators:
             evaluator_class = self._resolve_evaluator_class(evaluator_type)
             if not evaluator_class:
                 logger.warning("Unknown evaluator type: '%s'", evaluator_type)
+                self.dropped_evaluators[str(evaluator_type)] = "unknown evaluator type"
                 continue
 
             try:
                 evaluator = evaluator_class(
                     config=self.config, rag_chain=self.rag_chain
                 )
-                if evaluator.validate_config():
-                    self.evaluators[evaluator_type] = evaluator
-                    enabled_count += 1
-                else:
-                    logger.error(
-                        "Invalid configuration for '%s' evaluator", evaluator_type.value
-                    )
-            except Exception as e:
-                logger.error(
-                    "Failed to initialize '%s' evaluator: %s", evaluator_type.value, e
+                reason = (
+                    None if evaluator.validate_config() else "invalid configuration"
                 )
+            except Exception as e:
+                evaluator, reason = None, f"initialization failed: {e}"
+            if evaluator is not None and reason is None:
+                self.evaluators[evaluator_type] = evaluator
+                continue
+            message = f"'{evaluator_type.value}' evaluator {reason}"
+            if not self.config.processing.ignore_errors:
+                raise EvaluationException(
+                    f"{message} (set processing.ignore_errors to drop it and "
+                    "continue)"
+                )
+            logger.error("Dropping %s", message)
+            self.dropped_evaluators[evaluator_type.value] = str(reason)
 
-        if enabled_count == 0:
+        if not self.evaluators:
             logger.warning("No evaluators were successfully initialized")
         else:
-            logger.info("Initialized %s evaluators", enabled_count)
+            logger.info("Initialized %s evaluators", len(self.evaluators))
 
     @staticmethod
     def load_data(
@@ -823,6 +838,7 @@ class EvaluationManager:
                 ),
             },
             "enabled_evaluators": sorted(e.value for e in enabled),
+            "dropped_evaluators": dict(self.dropped_evaluators),
         }
 
     @staticmethod

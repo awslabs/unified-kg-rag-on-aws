@@ -964,7 +964,10 @@ aws:
 
 ### 평가자
 
-`evaluation.enabled_evaluators`로 선택합니다.
+`evaluation.enabled_evaluators`로 선택합니다. 활성화한 평가자를 만들 수 없거나
+(예: judge용 Bedrock 접근 불가) 설정이 잘못되면 실행을 멈춥니다.
+`processing.ignore_errors: true`이면 해당 평가자를 빼고 계속하며
+`run_manifest.dropped_evaluators`에 기록합니다.
 
 - **`langchain`** — LangChain 기반 텍스트 유사도(`langchain_metrics`:
   `correctness`, `partial_correctness`). `answer` 정답이 필요합니다.
@@ -1085,8 +1088,9 @@ run-eval --eval-data-path my_eval_data.json \
   git 커밋(`git_sha`, 체크아웃에서 실행한 경우), 전체 확정 설정의
   `config_sha256`, `library_versions`(ragas, langchain*), 데이터셋(경로와 파일
   sha256, 질문 수, 파싱된 내용의 해시), UTC 타임스탬프. 두 실행을 비교할 때
-  사용합니다. `EvaluationManager.evaluate_dataset`이 만들기 때문에 라이브러리로
-  호출해도 포함됩니다(`dataset_path=` / `cli_args=`를 넘기면 함께 기록).
+  사용합니다. 제외된 평가자(`dropped_evaluators`)도 담깁니다.
+  `EvaluationManager.evaluate_dataset`이 만들기 때문에 라이브러리로 호출해도
+  포함됩니다(`dataset_path=` / `cli_args=`를 넘기면 함께 기록).
 
 각 결과에는 `retrieved_source_ids`(보고된 소스별로 귀속된 파일 이름, 순위 순,
 귀속할 수 없으면 `[]`)도 기록됩니다.

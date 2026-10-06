@@ -984,7 +984,10 @@ a graph adapter that supports read-back. Off by default.
 
 ### Evaluators
 
-Selected via `evaluation.enabled_evaluators`:
+Selected via `evaluation.enabled_evaluators`. An enabled evaluator that cannot
+be built (e.g. no Bedrock access for the judge) or rejects its configuration
+stops the run; with `processing.ignore_errors: true` it is dropped instead and
+listed in `run_manifest.dropped_evaluators`.
 
 - **`langchain`** — LangChain-based text similarity (`langchain_metrics`:
   `correctness`, `partial_correctness`). Needs `answer` ground truth.
@@ -1112,8 +1115,9 @@ The summary holds, per metric, mean/median/stdev/min/max/count
   checkout), `config_sha256` of the full resolved config, `library_versions`
   (ragas, langchain*), the dataset (path + file sha256, query count and a hash
   of the parsed content) and a UTC timestamp, so two runs can be compared.
-  `EvaluationManager.evaluate_dataset` builds it, so library callers get it
-  too (pass `dataset_path=` / `cli_args=` to record those).
+  It also lists `dropped_evaluators`. `EvaluationManager.evaluate_dataset`
+  builds it, so library callers get it too (pass `dataset_path=` / `cli_args=`
+  to record those).
 
 Each result also records `retrieved_source_ids`: per reported source, in rank
 order, the file names it is attributed to (`[]` when unattributable).
