@@ -57,7 +57,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   strategies: `GraphRAGChain` calls `asearch(query, config=...)`, so an
   override must accept `config=None` (and should pass it to its own LLM
   calls). Every `setup_chain` chain is named
-  after its prompt (e.g. `AnswerGenerationPrompt`) in traces (#PR).
+  after its prompt (e.g. `AnswerGenerationPrompt`) in traces (#156).
 
 ### Changed
 - Model ids are free-form strings; `aws.bedrock.default_model_id` and
@@ -334,12 +334,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `ContextThreadPoolExecutor`s, which run each task in a copy of the
   submitter's `contextvars`. `pipeline_id` is now bound for the whole
   `run-ingestion` run, including the S3 cache sync and the failure report
-  (#PR).
+  (#156).
 
 ### Security
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or
   `LANGCHAIN_TRACING_V2` enables LangSmith tracing, which uploads prompts,
-  retrieved context and model outputs. Tracing is not turned off (#PR).
+  retrieved context and model outputs. Tracing is not turned off (#156).
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on
   Python 3.11+ (GHSA-4mvj-m6j5-pmf7), which also drops NLTK and its model
   artifact path traversal (GHSA-8mgp-746c-j5xp); Python 3.10 keeps the core
