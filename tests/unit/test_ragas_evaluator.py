@@ -81,11 +81,16 @@ def _result(contexts=None, qid="q1") -> EvaluationResult:
     )
 
 
+def _contexts(ev, results, capped: bool = False) -> list[list[str]]:
+    cap = ev.config.evaluation.ragas_max_contexts if capped else None
+    return [contexts for contexts, _ in ev._truncate_contexts(results, cap)]
+
+
 class TestTruncateContexts:
     def test_contexts_within_budget_kept_whole(self, mocker) -> None:
         ev, _ = _make_evaluator(mocker, max_context_tokens=1000)
         res = _result(contexts=["alpha beta", "gamma delta"])
-        out = ev._truncate_contexts([res])
+        out = _contexts(ev, [res])
         assert out == [["alpha beta", "gamma delta"]]
 
     def test_overflowing_context_is_truncated_with_ellipsis(self, mocker) -> None:
@@ -94,7 +99,7 @@ class TestTruncateContexts:
         ev, _ = _make_evaluator(mocker, max_context_tokens=200)
         first = " ".join(["w"] * 50)  # 50 tokens
         second = " ".join(["x"] * 100)  # would overflow
-        out = ev._truncate_contexts([_result(contexts=[first, second])])
+        out = _contexts(ev, [_result(contexts=[first, second])])
         contexts = out[0]
         # First fits whole; second is truncated and gets an ellipsis suffix.
         assert contexts[0] == first
@@ -110,25 +115,23 @@ class TestTruncateContexts:
         # overflowing second context is dropped with no truncated fragment.
         first = " ".join(["w"] * 72)
         second = " ".join(["x"] * 50)
-        out = ev._truncate_contexts([_result(contexts=[first, second])])
+        out = _contexts(ev, [_result(contexts=[first, second])])
         assert out[0] == [first]
 
     def test_per_result_independence(self, mocker) -> None:
         ev, _ = _make_evaluator(mocker, max_context_tokens=1000)
-        out = ev._truncate_contexts(
-            [_result(contexts=["a b"]), _result(contexts=["c"])]
-        )
+        out = _contexts(ev, [_result(contexts=["a b"]), _result(contexts=["c"])])
         assert out == [["a b"], ["c"]]
 
     def test_count_cap_keeps_top_ranked_contexts(self, mocker) -> None:
         ev, _ = _make_evaluator(mocker, ragas_max_contexts=2)
-        out = ev._truncate_contexts([_result(contexts=["r1", "r2", "r3", "r4"])])
+        out = _contexts(ev, [_result(contexts=["r1", "r2", "r3", "r4"])], capped=True)
         assert out == [["r1", "r2"]]
 
     def test_count_cap_none_disables(self, mocker) -> None:
         ev, _ = _make_evaluator(mocker, ragas_max_contexts=None)
         contexts = [f"c{i}" for i in range(50)]
-        out = ev._truncate_contexts([_result(contexts=contexts)])
+        out = _contexts(ev, [_result(contexts=contexts)], capped=True)
         assert out == [contexts]
 
     def test_count_cap_applies_before_token_budget(self, mocker) -> None:
@@ -139,14 +142,24 @@ class TestTruncateContexts:
         first = " ".join(["a"] * 30)
         second = " ".join(["b"] * 30)
         third = " ".join(["c"] * 300)
-        out = ev._truncate_contexts([_result(contexts=[first, second, third])])
+        out = _contexts(ev, [_result(contexts=[first, second, third])], capped=True)
         assert out == [[first, second]]
 
     def test_token_budget_still_binds_under_count_cap(self, mocker) -> None:
         ev, _ = _make_evaluator(mocker, max_context_tokens=200, ragas_max_contexts=5)
         first = " ".join(["w"] * 72)
-        out = ev._truncate_contexts([_result(contexts=[first, "x y", "z"])])
+        out = _contexts(ev, [_result(contexts=[first, "x y", "z"])], capped=True)
         assert out == [[first]]
+
+    def test_reports_tokens_seen(self, mocker) -> None:
+        ev, _ = _make_evaluator(mocker, max_context_tokens=200)
+        first = " ".join(["w"] * 50)
+        second = " ".join(["x"] * 100)
+        [(contexts, tokens)] = ev._truncate_contexts(
+            [_result(contexts=[first, second])]
+        )
+        # 50 whole + the second truncated into the remaining 150 tokens.
+        assert len(contexts) == 2 and tokens == 200
 
     def test_default_cap_is_twenty(self) -> None:
         assert Config().evaluation.ragas_max_contexts == 20
@@ -310,6 +323,68 @@ class TestAevaluateBatch:
             rg_module.RagasEvaluator.RAGAS_METRICS[EvaluationMetricType.FAITHFULNESS]
         ]
         assert reports[0].metrics[0].value == 0.9
+
+    async def test_count_cap_applies_only_to_context_precision(self, mocker) -> None:
+        ev, _ = _make_evaluator(
+            mocker,
+            ragas_metrics=[
+                EvaluationMetricType.CONTEXT_PRECISION,
+                EvaluationMetricType.FAITHFULNESS,
+            ],
+            ragas_max_contexts=2,
+        )
+        runs: list[tuple[list, list]] = []
+
+        class _FakeRagasResult:
+            def __init__(self, columns: dict) -> None:
+                self.columns = columns
+
+            def to_pandas(self):
+                return pd.DataFrame({**self.columns, "user_input": ["q"]})
+
+        def fake_evaluate(*, dataset, metrics, **kwargs):
+            runs.append((metrics, dataset["contexts"]))
+            name = metrics[0].name
+            return _FakeRagasResult({name: [0.5 if name == "faithfulness" else 0.25]})
+
+        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
+        contexts = ["c1", "c2", "c3", "c4"]
+        reports = await ev.aevaluate_batch(
+            [_query()], [_result(contexts=contexts)], ["truth"]
+        )
+        metrics = rg_module.RagasEvaluator.RAGAS_METRICS
+        assert runs == [
+            ([metrics[EvaluationMetricType.FAITHFULNESS]], [contexts]),
+            ([metrics[EvaluationMetricType.CONTEXT_PRECISION]], [["c1", "c2"]]),
+        ]
+        values = {m.metric_type.value: m.value for m in reports[0].metrics}
+        assert values == {"context_precision": 0.25, "faithfulness": 0.5}
+        md = reports[0].metadata
+        assert md["judge_contexts"] == 4 and md["judge_context_tokens"] == 4
+        assert md["context_precision_contexts"] == 2
+        assert md["context_precision_context_tokens"] == 2
+
+    async def test_single_run_when_cap_does_not_bind(self, mocker) -> None:
+        ev, _ = _make_evaluator(
+            mocker,
+            ragas_metrics=[
+                EvaluationMetricType.CONTEXT_PRECISION,
+                EvaluationMetricType.FAITHFULNESS,
+            ],
+            ragas_max_contexts=5,
+        )
+
+        class _FakeRagasResult:
+            def to_pandas(self):
+                return pd.DataFrame({"context_precision": [1.0], "faithfulness": [1.0]})
+
+        evaluate = mocker.patch.object(
+            rg_module, "evaluate", return_value=_FakeRagasResult()
+        )
+        mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
+        await ev.aevaluate_batch([_query()], [_result(contexts=["c1"])], ["truth"])
+        assert evaluate.call_count == 1
 
     async def test_failure_reraises_when_not_ignore_errors(self, mocker) -> None:
         # ignore_errors=False (strict): a batch failure must propagate.

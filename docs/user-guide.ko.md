@@ -969,14 +969,17 @@ aws:
 - **`langchain`** — LangChain 기반 텍스트 유사도(`langchain_metrics`:
   `correctness`, `partial_correctness`). `answer` 정답이 필요합니다.
 - **`ragas`** — RAGAS 지표(`answer_correctness`, `answer_relevancy`,
-  `context_precision`, `context_recall`, `faithfulness`). 판정 모델은 질의마다
-  순위 상위 소스를 최대 `evaluation.ragas_max_contexts`개(기본값 20, `null`이면
-  제한 없음)까지만 채점하며, 이 제한은 `max_context_tokens` 예산보다 먼저
-  적용됩니다. `context_precision`은 컨텍스트마다 판정 호출을 한 번씩 하므로 비용이
-  컨텍스트 수에 비례합니다. 소스를 100개 이상 보고하는 전략(예: LightRAG `mix`)은
-  제한이 없으면 `ragas_timeout`에 걸립니다. 답변 모델이 본 컨텍스트는 그대로이고
-  판정 모델이 채점하는 범위만 줄어들므로, 컨텍스트 지표는 사실상
-  `context_precision@N` / `context_recall@N`입니다.
+  `context_precision`, `context_recall`, `faithfulness`). `context_precision`은
+  컨텍스트마다 판정 호출을 한 번씩 하므로 질의마다 순위 상위 소스를 최대
+  `evaluation.ragas_max_contexts`개(기본값 20, `null`이면 제한 없음)까지만
+  채점하며, 이 제한은 `max_context_tokens` 예산보다 먼저 적용됩니다. 즉 이 지표는
+  `context_precision@N`입니다. 제한이 없으면 소스를 100개 이상 보고하는 전략(예:
+  LightRAG `mix`)은 `ragas_timeout`에 걸립니다. `faithfulness`와
+  `context_recall`은 `max_context_tokens` 안의 모든 소스를 보므로, 순위가 낮은
+  소스가 뒷받침하는 주장도 근거 없음으로 처리되지 않습니다. 각 리포트에는 판정
+  모델이 본 범위(`judge_contexts` / `judge_context_tokens`,
+  `context_precision_contexts` / `context_precision_context_tokens`)가 기록됩니다.
+  답변 모델이 본 컨텍스트는 바뀌지 않습니다.
 - **`graph_aware`** — 결정적이고 **LLM 불필요**한 엔티티/관계 **커버리지 =
   recall**: 기대되는 그래프 아티팩트 중 몇 개가 생성된 답변에 나타나는지
   (`answer_contains`와 같은 정규화·구문 매칭 사용: 단어 단위 매칭, 한국어 조사
