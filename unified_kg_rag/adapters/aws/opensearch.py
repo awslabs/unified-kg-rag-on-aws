@@ -321,7 +321,7 @@ class OpenSearchClient:
 
     def _get_auth(
         self, async_mode: bool
-    ) -> AWSV4SignerAuth | AWSV4SignerAsyncAuth | tuple[str, str]:
+    ) -> AWSV4SignerAuth | AWSV4SignerAsyncAuth | tuple[str, str] | None:
         if self.opensearch_config.use_iam:
             creds = self.boto_session.get_credentials()
             if not creds:
@@ -346,7 +346,13 @@ class OpenSearchClient:
                 self.opensearch_config.password.get_secret_value(),
             )
 
-        raise AWSServiceError("No OpenSearch auth method configured (IAM or basic).")
+        if self.opensearch_config.allow_anonymous:
+            logger.debug("Connecting to OpenSearch without authentication")
+            return None
+
+        raise AWSServiceError(
+            "No OpenSearch auth method configured (IAM, basic or allow_anonymous)."
+        )
 
     @_handle_opensearch_errors
     def bulk_index(

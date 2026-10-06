@@ -155,6 +155,18 @@ def test_create_connection_no_iam_empty_headers(mocker) -> None:
     assert captured["headers"] == {}
 
 
+def test_create_connection_without_ssl_uses_plain_websocket(mocker) -> None:
+    # A local TinkerPop Gremlin Server listens on ws:// without TLS or IAM.
+    config = _config_with_neptune(endpoint="localhost", use_iam=False)
+    config.aws.neptune.use_ssl = False
+    connection = mocker.patch.object(neptune_mod, "DriverRemoteConnection")
+    mocker.patch.object(neptune_mod, "traversal")
+    _client(config)._create_connection()
+    kwargs = connection.call_args.kwargs
+    assert kwargs["url"] == "ws://localhost:8182/gremlin"
+    assert kwargs["headers"] == {}
+
+
 @pytest.mark.parametrize(
     ("pool_size", "index_concurrency", "expected"),
     [(4, 1, 4), (4, 8, 8), (8, 8, 8)],

@@ -117,6 +117,9 @@ aws:
     endpoint: # Add endpoint here
     port: 8182
     use_iam: true
+    # TLS (wss://). Neptune requires it; set false (with use_iam: false) only
+    # for a plain TinkerPop Gremlin Server, e.g. docker/compose.local.yaml.
+    use_ssl: true
     # Gremlin connection pool size (max concurrent in-flight requests over the
     # websocket). Raised to indexing.neptune.index_concurrency when that is
     # larger, so concurrent write batches are not serialized.
@@ -129,6 +132,10 @@ aws:
     use_ssl: true
     verify_certs: true
     use_iam: false
+    # Connect with no auth at all, for a local OpenSearch with the security
+    # plugin disabled (docker/compose.local.yaml). Cannot be combined with
+    # use_iam or username/password.
+    allow_anonymous: false
     # SigV4 signing service name for IAM auth. "es" for Amazon OpenSearch Service
     # (managed domains); "aoss" for OpenSearch Serverless collections.
     sigv4_service_name: "es"

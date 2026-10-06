@@ -45,6 +45,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - Per-tier reasoning effort: `aws.bedrock.default_effort` (default `high`) and
   `fast_effort` (default `low`, used for calls on `fast_model_id`); a per-call
   effort such as `evaluation.judge_effort` still wins (#128).
+- Local stores for development: `docker/compose.local.yaml` (Gremlin Server
+  and OpenSearch with nori) with `docker/config.local.yaml`, enabled by
+  `aws.neptune.use_ssl: false` (plain `ws://`) and
+  `aws.opensearch.allow_anonymous: true`; models still use Bedrock. A smoke
+  test runs the graph and vector adapters against them when `LOCAL_STORES=1`
+  (#154).
 
 ### Changed
 - Model ids are free-form strings; `aws.bedrock.default_model_id` and

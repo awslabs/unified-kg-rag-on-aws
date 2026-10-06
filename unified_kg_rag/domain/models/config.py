@@ -487,6 +487,14 @@ class NeptuneConfig(BaseModel):
     use_iam: bool = Field(
         default=True, description="Enable IAM authentication for Neptune"
     )
+    use_ssl: bool = Field(
+        default=True,
+        description=(
+            "Connect over TLS (wss://). Neptune requires it; set false only for "
+            "a plain TinkerPop Gremlin Server (ws://), together with "
+            "use_iam: false."
+        ),
+    )
     pool_size: int = Field(
         default=4,
         ge=1,
@@ -518,6 +526,14 @@ class OpenSearchConfig(BaseModel):
     use_iam: bool = Field(
         default=False, description="Enable IAM authentication for OpenSearch"
     )
+    allow_anonymous: bool = Field(
+        default=False,
+        description=(
+            "Connect without authentication, for a local OpenSearch with the "
+            "security plugin disabled. Mutually exclusive with use_iam and "
+            "username/password."
+        ),
+    )
     sigv4_service_name: str = Field(
         default="es",
         description=(
@@ -526,6 +542,14 @@ class OpenSearchConfig(BaseModel):
             "value fails auth (often surfacing as zero search hits)."
         ),
     )
+
+    @model_validator(mode="after")
+    def validate_anonymous_auth(self) -> "OpenSearchConfig":
+        if self.allow_anonymous and (self.use_iam or self.username):
+            raise ValueError(
+                "allow_anonymous cannot be combined with use_iam or username/password"
+            )
+        return self
 
 
 class S3EncryptionConfig(BaseModel):

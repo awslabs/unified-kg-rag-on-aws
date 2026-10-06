@@ -1,0 +1,27 @@
+# Development config for the local stores in docker/compose.local.yaml.
+#
+# Graph and vector storage run in local containers (Gremlin Server and
+# OpenSearch). Models still come from Amazon Bedrock, so AWS credentials with
+# Bedrock access are required. Every key not listed here uses the default
+# documented in config-template.yaml.
+#
+#   docker compose -f docker/compose.local.yaml up -d --wait
+#   uv run run-ingestion --config-path docker/config.local.yaml ...
+
+aws:
+  neptune:
+    # TinkerPop Gremlin Server: plain ws://, no SigV4.
+    endpoint: localhost
+    port: 8182
+    use_ssl: false
+    use_iam: false
+  opensearch:
+    # Security plugin disabled: plain http, no auth.
+    endpoint: localhost
+    port: 9200
+    use_ssl: false
+    verify_certs: false
+    allow_anonymous: true
+
+logging:
+  log_to_file: false

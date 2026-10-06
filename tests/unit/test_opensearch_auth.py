@@ -17,11 +17,15 @@ import pytest
 from opensearchpy import AWSV4SignerAsyncAuth, AWSV4SignerAuth
 
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
+from unified_kg_rag.domain.models.config import OpenSearchConfig
+from unified_kg_rag.shared import AWSServiceError
 
 pytestmark = pytest.mark.unit
 
 
-def _client(*, use_iam: bool, username: str | None = None) -> OpenSearchClient:
+def _client(
+    *, use_iam: bool, username: str | None = None, allow_anonymous: bool = False
+) -> OpenSearchClient:
     client = OpenSearchClient.__new__(OpenSearchClient)
     oc = MagicMock()
     oc.use_iam = use_iam
@@ -29,6 +33,7 @@ def _client(*, use_iam: bool, username: str | None = None) -> OpenSearchClient:
     oc.port = 443
     oc.username = username
     oc.password = None
+    oc.allow_anonymous = allow_anonymous
     client.opensearch_config = oc
     cfg = MagicMock()
     cfg.aws.region_name = "ap-northeast-2"
@@ -87,3 +92,23 @@ def test_basic_auth_tuple_when_iam_disabled() -> None:
     for async_mode in (True, False):
         auth = client._get_auth(async_mode=async_mode)
         assert auth == ("admin", "pw")
+
+
+def test_anonymous_auth_sends_no_credentials() -> None:
+    # A local OpenSearch with the security plugin disabled takes no auth.
+    client = _client(use_iam=False, allow_anonymous=True)
+    for async_mode in (True, False):
+        assert client._get_auth(async_mode=async_mode) is None
+
+
+def test_missing_auth_still_fails_fast_by_default() -> None:
+    with pytest.raises(AWSServiceError, match="No OpenSearch auth method"):
+        _client(use_iam=False)._get_auth(async_mode=False)
+
+
+@pytest.mark.parametrize(
+    "auth", [{"use_iam": True}, {"username": "admin", "password": "pw"}]
+)
+def test_anonymous_auth_rejects_other_auth(auth: dict) -> None:
+    with pytest.raises(ValueError, match="allow_anonymous cannot be combined"):
+        OpenSearchConfig(allow_anonymous=True, **auth)

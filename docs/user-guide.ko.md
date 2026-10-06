@@ -125,6 +125,35 @@ compute 스택이 환경 변수로 주입합니다.
    `.env` 파일은 CLI(`run-ingestion`, `run-rag`)가 자동으로 로드합니다.
    `use_iam: true`일 때는 `.env`가 필요하지 않습니다.
 
+### 로컬 저장소 (개발용)
+
+개발할 때는 Neptune과 OpenSearch 대신 로컬 컨테이너를 쓸 수 있습니다. 모델은
+여전히 Bedrock을 호출하므로 Bedrock 접근 권한이 있는 AWS 자격증명이 필요합니다.
+S3는 `--s3-sync`를 쓸 때만, DynamoDB는 증분 인덱싱을 쓸 때만 필요합니다.
+
+```bash
+docker compose -f docker/compose.local.yaml up -d --wait
+uv run run-ingestion --config-path docker/config.local.yaml --source-directory ./docs-in
+uv run run-rag --config-path docker/config.local.yaml --query "..."
+docker compose -f docker/compose.local.yaml down -v
+```
+
+[`docker/compose.local.yaml`](../docker/compose.local.yaml)은 TinkerPop Gremlin
+Server(메모리 기반 TinkerGraph)와 단일 노드 OpenSearch 2.13을 띄웁니다.
+OpenSearch는 보안 플러그인을 끄고 `analysis-nori` 플러그인을 설치합니다. 한국어
+매핑이 `nori`를 쓰기 때문이며, Amazon OpenSearch Service에는 기본으로 들어 있습니다.
+[`docker/config.local.yaml`](../docker/config.local.yaml)은
+`aws.neptune.use_ssl: false`, `use_iam: false`(SigV4 없는 `ws://`)와
+`aws.opensearch.allow_anonymous: true`, `use_ssl: false`(인증 없는 `http://`)로
+이 컨테이너에 연결합니다.
+
+Bedrock 없이 저장소만 확인하려면 해싱 임베딩을 쓰는 스모크 테스트를 실행합니다:
+`LOCAL_STORES=1 uv run pytest tests/integration/test_local_stores.py`.
+
+Neptune과 다른 점: TinkerGraph는 그래프를 메모리에만 두고, 정점을 만들 때 쓴 리스트
+속성은 중복 값을 그대로 저장합니다(Neptune은 한 번만 저장). compose 파일은 보안
+설정을 하지 않았으며 `127.0.0.1`에만 바인딩합니다.
+
 ---
 
 ## 2. 설정
@@ -198,9 +227,11 @@ ignored` WARNING 로그를 남긴 뒤 버려집니다. 파일을 고치거나 �
 | `aws.bedrock.transient_retry.max_attempts` | `5` | botocore가 재시도하지 않는 일시적 Bedrock 오류(HTTP 424 등)에 대한 호출당 시도 횟수입니다. 임베딩과 질의 시점 호출에 적용하며 `1`이면 재시도하지 않습니다. |
 | `aws.neptune.endpoint` | `null` | **필수.** Neptune 클러스터 엔드포인트입니다. |
 | `aws.neptune.use_iam` | `true` | Neptune 요청에 SigV4 서명을 붙입니다. |
+| `aws.neptune.use_ssl` | `true` | `wss://`로 연결합니다. Neptune에는 필수이며, 로컬 Gremlin Server에서만 `use_iam: false`와 함께 `false`로 둡니다(§1 로컬 저장소). |
 | `aws.neptune.pool_size` | `4` | Gremlin 연결 풀 크기입니다. `indexing.neptune.index_concurrency`가 더 크면 클라이언트가 그 값으로 늘립니다. |
 | `aws.opensearch.endpoint` | `null` | **필수.** OpenSearch 도메인 엔드포인트입니다. |
 | `aws.opensearch.use_iam` | `false` | `false`이면 환경 변수 `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD`를 씁니다(§1 인증). |
+| `aws.opensearch.allow_anonymous` | `false` | 인증 없이 연결합니다. 보안 플러그인을 끈 로컬 OpenSearch용입니다(§1 로컬 저장소). `use_iam`이나 username/password와 함께 쓸 수 없습니다. |
 | `aws.opensearch.sigv4_service_name` | `"es"` | 관리형 도메인은 `es`, OpenSearch Serverless는 `aoss`입니다. 값이 틀리면 검색 결과가 0건으로 나오는 경우가 많습니다. |
 | `aws.s3.bucket_name` | `null` | 캐시 동기화와 임베딩 캐시 저장에 쓰는 버킷입니다. |
 | `aws.s3.encryption.encryption_type` | `"BUCKET_DEFAULT"` | `BUCKET_DEFAULT`는 버킷 기본 암호화를 따릅니다. `AES256`이나 `aws:kms`(`kms_key_id` 필요)는 객체별 헤더를 강제합니다. |
