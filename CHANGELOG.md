@@ -50,7 +50,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `aws.neptune.use_ssl: false` (plain `ws://`) and
   `aws.opensearch.allow_anonymous: true`; models still use Bedrock. A smoke
   test runs the graph and vector adapters against them when `LOCAL_STORES=1`
-  (#PR).
+  (#154).
 
 ### Changed
 - Model ids are free-form strings; `aws.bedrock.default_model_id` and
