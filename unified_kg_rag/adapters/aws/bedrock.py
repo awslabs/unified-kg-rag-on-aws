@@ -98,10 +98,6 @@ class LanguageModelInfo(BaseModel):
     max_output_tokens: int = Field(
         description="Maximum number of tokens the model can generate in a single response."
     )
-    supports_performance_optimization: bool = Field(
-        default=False,
-        description="Whether the model supports performance optimization features.",
-    )
     supports_prompt_caching: bool = Field(
         default=False,
         description="Whether the model supports prompt caching to improve performance.",
@@ -420,7 +416,6 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
     LanguageModelId.CLAUDE_V3_5_HAIKU: LanguageModelInfo(
         context_window_size=200000,
         max_output_tokens=8192,
-        supports_performance_optimization=True,
         supports_prompt_caching=True,
         min_cache_tokens=2048,
     ),
@@ -1236,7 +1231,6 @@ class BedrockLanguageModelFactory(
     DEFAULT_TEMPERATURE: ClassVar[float] = 0.0
     DEFAULT_TOP_K: ClassVar[int] = 50
     DEFAULT_THINKING_BUDGET_TOKENS: ClassVar[int] = 2048
-    DEFAULT_LATENCY_MODE: ClassVar[str] = "normal"
     # Effort replaces budget_tokens on adaptive-thinking models. "high" is the
     # Bedrock default; "medium" trades some depth for tokens and latency.
     DEFAULT_EFFORT: ClassVar[str] = "high"
@@ -1413,16 +1407,7 @@ class BedrockLanguageModelFactory(
         is_cross_region: bool,
         **kwargs: Any,
     ) -> None:
-        enable_perf = kwargs.get("enable_performance_optimization", False)
         enable_think = kwargs.get("enable_thinking", False)
-        if self._should_enable_performance_optimization(
-            enable_perf, model_info, is_cross_region
-        ):
-            latency = kwargs.get("latency_mode", self.DEFAULT_LATENCY_MODE)
-            config.setdefault("performanceConfig", {}).update({"latency": latency})
-            logger.debug(
-                "Applied performance optimization (latency_mode='%s')", latency
-            )
         if self._should_enable_thinking(enable_think, model_info):
             think_config = self._build_thinking_config(model_info, **kwargs)
             if is_cross_region:
@@ -1567,16 +1552,6 @@ class BedrockLanguageModelFactory(
             )
             return model_info.max_output_tokens
         return max_tokens
-
-    @staticmethod
-    def _should_enable_performance_optimization(
-        enable: bool, model_info: LanguageModelInfo, is_cross_region: bool
-    ) -> bool:
-        return (
-            enable
-            and model_info.supports_performance_optimization
-            and not is_cross_region
-        )
 
     @staticmethod
     def _should_enable_thinking(enable: bool, model_info: LanguageModelInfo) -> bool:
