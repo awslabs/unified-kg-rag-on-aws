@@ -27,6 +27,10 @@ from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
 
+# Retry back-off sleep, a module-level hook so tests can stub it without
+# patching the process-wide time.sleep (which other threads also call).
+_sleep = time.sleep
+
 
 class NeptuneIndexer(GraphIndexer):
     # Emit a progress line every N edges during the per-edge relationship write
@@ -906,7 +910,7 @@ class NeptuneIndexer(GraphIndexer):
                     sleep_for,
                     e,
                 )
-                time.sleep(sleep_for)
+                _sleep(sleep_for)
 
     def _batch_iterator(self, items: list[Any]) -> Iterator[list[Any]]:
         batch_size = self.neptune_config.batch_size

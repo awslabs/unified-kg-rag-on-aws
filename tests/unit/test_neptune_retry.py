@@ -44,7 +44,7 @@ def indexer(mocker):
 def _no_sleep(mocker):
     # Keep retries instant and deterministic.
     mocker.patch(
-        "unified_kg_rag.adapters.storage.neptune_indexer.time.sleep", return_value=None
+        "unified_kg_rag.adapters.storage.neptune_indexer._sleep", return_value=None
     )
     mocker.patch(
         "unified_kg_rag.adapters.storage.neptune_indexer.random.uniform",
@@ -56,7 +56,7 @@ def test_returns_after_transient_failures_then_success(indexer, mocker) -> None:
     indexer.neptune_config.max_retries = 3
     indexer.neptune_config.retry_delay_seconds = 1
     sleep = mocker.patch(
-        "unified_kg_rag.adapters.storage.neptune_indexer.time.sleep", return_value=None
+        "unified_kg_rag.adapters.storage.neptune_indexer._sleep", return_value=None
     )
     # Fails twice (ConcurrentModificationException), succeeds on the 3rd attempt.
     traversal = _FlakyTraversal(
@@ -81,7 +81,7 @@ def test_succeeds_on_first_attempt_does_not_sleep(indexer, mocker) -> None:
     indexer.neptune_config.max_retries = 3
     indexer.neptune_config.retry_delay_seconds = 1
     sleep = mocker.patch(
-        "unified_kg_rag.adapters.storage.neptune_indexer.time.sleep", return_value=None
+        "unified_kg_rag.adapters.storage.neptune_indexer._sleep", return_value=None
     )
     traversal = _FlakyTraversal(fail_times=0, exc=Exception("never raised"))
     indexer._execute_with_retries(traversal, "upsert entities")
