@@ -178,7 +178,7 @@ ignored` WARNING 로그를 남긴 뒤 버려집니다. 파일을 고치거나 �
 | `aws.bedrock.fast_effort` | `"low"` | `fast_model_id`가 `default_model_id`와 다를 때 fast 모델 호출의 추론 깊이입니다. 기본 fast 모델인 Claude Haiku 4.5에서는 효과가 없고, fast 등급에 사고 모델을 지정했을 때 의미가 있습니다. |
 | `aws.bedrock.effort` | `null` | `default_effort`의 이전 이름으로, 기존 설정 호환용입니다(사용 중단 예정). 둘 다 지정하면 `default_effort`가 우선합니다. |
 | `aws.bedrock.enable_1m_context` | `false` | 1M 컨텍스트가 베타인 모델에서 이를 사용합니다(추가 요금). Claude 5는 기본으로 1M입니다. |
-| `aws.bedrock.model_overrides` | `{}` | 패키지가 모르는 모델의 기능 정보를 지정합니다(모델 선택 주의사항 참고). |
+| `aws.bedrock.model_overrides` | `{}` | 패키지가 모르는 언어 모델의 기능 정보를 지정합니다(모델 선택 주의사항 참고). 임베딩·리랭킹 모델은 정해진 목록에서만 고릅니다. |
 | `aws.bedrock.guardrail.identifier` | `null` | Bedrock Guardrail ID 또는 ARN입니다. 지정하면 Guardrail이 켜집니다. |
 | `aws.bedrock.guardrail.apply_to` | `"query"` | `query`는 사용자 질의 경로에만, `all`은 모든 호출에 Guardrail을 적용합니다(아래 Guardrail 참고 사항). |
 | `aws.bedrock.guardrail.trace` | `false` | Guardrail trace를 출력합니다. InvokeModel 경로에서 개입을 감지하려면 필요합니다. |
@@ -257,6 +257,19 @@ aws:
         context_window_size: 300000
         max_output_tokens: 10000
 ```
+
+임베딩·리랭킹 모델 ID는 다르게 동작합니다. 정해진 목록의 값만 받으며
+`model_overrides`도 적용되지 않습니다. `embedding_model_id`에는
+`amazon.titan-embed-text-v2:0`, `amazon.titan-embed-text-v1`,
+`cohere.embed-v4:0`, `cohere.embed-english-v3`, `cohere.embed-multilingual-v3`
+중 하나를, `rerank_model_id`에는 `cohere.rerank-v3-5:0`이나
+`amazon.rerank-v1:0`을 지정합니다. 그 밖의 ID는 설정 검증에서 오류가 납니다.
+임베딩 차원은 OpenSearch 벡터 매핑에 기록되고 모델 정보와 대조하므로, 모르는
+모델에는 안전한 기본값이 없기 때문입니다. `indexing.opensearch.embedding_dimension`은
+목록에 있는 모델이 지원하는 차원 중 하나를 고릅니다(Titan Embed V2는 256, 512,
+1024이며 지정하지 않으면 가장 큰 값). 모델을 추가하려면 코드를 바꿔야 합니다.
+`domain/models/config.py`의 `EmbeddingModelId`/`RerankModelId`에 항목을,
+`adapters/aws/bedrock_models.py`에 기능 정보를 추가합니다.
 
 **출력 상한.** Bedrock은 요청 시작 시 입력 + `max_tokens`를 분당 토큰 할당량에서
 미리 차감하므로, 모델 최대값(Claude 5.x는 128K)을 요청하면 실제 사용량보다 훨씬
@@ -396,7 +409,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `indexing.cross_run_merge` | `true` | 증분 실행에서 기존 그래프를 덮어쓰지 않고 새 데이터와 합쳐, 변경되지 않은 문서와 공유되는 엔터티의 계보를 유지합니다(§5). `false`면 덮어씁니다. |
 | `indexing.cross_run_fuzzy_merge` | `false` | `cross_run_merge`에 엔터티 이름 유사도 매칭을 더합니다. |
 | `indexing.max_failure_rate` | `0.2` | 인덱스 유형별 쓰기 실패율이 이 값을 넘으면 인덱싱 스테이지를 실패로 처리합니다. `1.0`이면 부분 실패 검사를 끕니다. |
-| `indexing.opensearch.embedding_model_id` | `"amazon.titan-embed-text-v2:0"` | 임베딩 모델입니다. 바꾸면 다시 인덱싱해야 합니다. |
+| `indexing.opensearch.embedding_model_id` | `"amazon.titan-embed-text-v2:0"` | 임베딩 모델이며 정해진 목록에서 고릅니다(모델 선택 주의사항 참고). 바꾸면 다시 인덱싱해야 합니다. |
 | `indexing.opensearch.build_relationship_vector_index` | `true` | LightRAG `mix`/`hybrid`가 쓰는 관계 벡터 인덱스를 만듭니다. GraphRAG만 쓰는 배포라면 `false`로 둡니다. |
 | `indexing.opensearch.persist_embedding_cache` | `false` | 임베딩 캐시를 S3에 저장해 바뀌지 않은 텍스트를 실행마다 다시 임베딩하지 않습니다. `aws.s3.bucket_name`이 필요합니다. |
 | `indexing.opensearch.language_analyzers` | `{en: english, ko: nori}` | 언어 코드별 텍스트 분석기입니다. 목록에 없는 언어는 `default_analyzer`(`standard`)를 씁니다. |

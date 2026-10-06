@@ -153,6 +153,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `effective_max_output_tokens`) moved from `adapters.aws.bedrock` to
   `adapters.aws.bedrock_models`; `bedrock.py` keeps the factories, the
   guardrail handler and the cross-region helper (#PR).
+- The user guide and config field descriptions state that embedding and rerank
+  model ids, unlike language-model ids, are a closed list that
+  `aws.bedrock.model_overrides` does not cover: the embedding dimension is
+  fixed into the OpenSearch vector mappings (#PR).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).

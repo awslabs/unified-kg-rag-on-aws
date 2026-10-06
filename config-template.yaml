@@ -41,8 +41,8 @@ aws:
     # a higher floor that wins (graph/claim extraction, gleaning and community
     # reports 32K, document translation 64K). null sends the model maximum.
     default_max_output_tokens: 16384
-    # Capability overrides for a model without a curated record (or to correct
-    # one). Unlisted models get provider-family defaults ('anthropic.claude-*',
+    # Capability overrides for a language model without a curated record (or to
+    # correct one); embedding and rerank ids are a closed list instead. Unlisted models get provider-family defaults ('anthropic.claude-*',
     # 'openai.gpt-*') or, for other providers, conservative ones (Converse, no
     # reasoning/sampling params, 32K window, 4K output) with one warning.
     # Keys: context_window_size, max_output_tokens, supports_thinking,
