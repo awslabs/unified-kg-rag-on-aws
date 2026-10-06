@@ -207,8 +207,7 @@ def test_injected_llm_factory_reaches_conversation_memory(no_bedrock) -> None:
     providers = _fake_providers(config)
     chain = GraphRAGChain(config=config, providers=providers)
 
-    # A chain with injected providers owns its memory manager (the process-wide
-    # one is pinned to the global config and the default Bedrock factory).
+    # The chain owns its memory manager, built over the chain's providers.
     assert isinstance(chain.memory_manager, MemoryManager)
     assert chain.memory_manager.providers is providers
     history = asyncio.run(chain.memory_manager.get_or_create_memory("c-1"))
@@ -218,13 +217,17 @@ def test_injected_llm_factory_reaches_conversation_memory(no_bedrock) -> None:
     )
 
 
-def test_default_chain_keeps_the_process_wide_memory_manager(mocker) -> None:
+def test_default_chain_memory_follows_the_chain_config(mocker) -> None:
     from unified_kg_rag.application.retrieval import rag_chain
 
-    shared = MagicMock()
-    mocker.patch.object(rag_chain, "get_memory_manager", return_value=shared)
-    chain = GraphRAGChain(config=Config(), boto_session=MagicMock())
-    assert chain.memory_manager is shared
+    spy = mocker.spy(rag_chain, "MemoryManager")
+    config = Config()
+    config.memory.max_conversations = 3
+    chain = GraphRAGChain(config=config, boto_session=MagicMock())
+    # Not the process-wide manager pinned to get_config(): the chain's own.
+    assert chain.memory_manager.config is config
+    assert chain.memory_manager.providers is chain.providers
+    spy.assert_called_once()
 
 
 def test_providers_and_model_factory_are_exclusive() -> None:
@@ -246,3 +249,50 @@ def test_strategy_without_providers_still_constructs(mocker) -> None:
     strategy = LocalSearchStrategy(config=Config(), retrievers={}, boto_session=session)
     assert strategy.boto_session is session
     assert strategy.providers.boto_session is session
+
+
+@pytest.mark.parametrize(
+    ("strategy", "expected"),
+    [(SearchStrategy.LOCAL, ["Vendor"]), (SearchStrategy.SIMPLE, None)],
+)
+async def test_memory_save_reuses_query_step_entities(
+    strategy: SearchStrategy, expected: list[str] | None
+) -> None:
+    from unified_kg_rag.application.retrieval.rag_chain import (
+        ProcessedQuery,
+        RAGOutput,
+    )
+    from unified_kg_rag.domain.models import SearchQuery, SearchResult
+
+    config = Config()
+    chain = GraphRAGChain(config=config, providers=_fake_providers(config))
+    calls: list[dict[str, Any]] = []
+
+    class _Recorder:
+        async def add_message(
+            self, conv_id: str, role: Any, content: str, **kw: Any
+        ) -> None:
+            calls.append({"role": role, **kw})
+
+    chain.memory_manager = _Recorder()  # type: ignore[assignment]
+    output = RAGOutput(
+        answer="a",
+        sources=[],
+        search_results=SearchResult(
+            query=SearchQuery(query="q"),
+            results=[],
+            total_results=0,
+            search_strategy=strategy.value,
+            processing_time=0.0,
+        ),
+        conversation_id="c-1",
+        processed_query=ProcessedQuery(
+            original_query="q", final_query="q", entities=["Vendor"]
+        ),
+    )
+
+    await chain._save_memory(output, query_processing=True)
+    await chain._save_memory(output)  # query processing off: never reused
+
+    assert calls[0].get("entities") == expected
+    assert "entities" not in calls[2]

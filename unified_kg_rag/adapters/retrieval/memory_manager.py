@@ -12,6 +12,7 @@ from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.messages.utils import get_buffer_string
 from langchain_core.output_parsers import CommaSeparatedListOutputParser
+from langchain_core.runnables import Runnable
 from pydantic import Field
 
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
@@ -21,6 +22,17 @@ from unified_kg_rag.domain.prompts import EntityExtractionPrompt
 from unified_kg_rag.shared import get_config, get_logger
 
 logger = get_logger(__name__)
+
+
+def build_entity_extractor(config: Config, providers: Providers) -> Runnable:
+    """The conversation entity-extraction chain (shared by conversations)."""
+    return setup_chain(
+        model_id=config.search.entity_extraction_model_id,
+        factory=providers.llm_factory,
+        prompt_class=EntityExtractionPrompt,
+        parser=CommaSeparatedListOutputParser(),
+        custom_prompts=config.custom_prompts,
+    )
 
 
 class GraphRAGChatMessageHistory(BaseChatMessageHistory):
@@ -34,6 +46,7 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
         n_entities: int = 5,
         *,
         providers: Providers | None = None,
+        entity_extractor: Runnable | None = None,
     ):
         self.config = config
         providers = Providers.resolve(config, providers, boto_session)
@@ -46,12 +59,9 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
         self._context = ConversationContext()
         self.updated_at = datetime.now()
 
-        self.entity_extractor = setup_chain(
-            model_id=self.config.search.entity_extraction_model_id,
-            factory=providers.llm_factory,
-            prompt_class=EntityExtractionPrompt,
-            parser=CommaSeparatedListOutputParser(),
-            custom_prompts=self.config.custom_prompts,
+        # MemoryManager passes one shared extractor to every conversation.
+        self.entity_extractor = entity_extractor or build_entity_extractor(
+            self.config, providers
         )
 
     def add_message(self, message: BaseMessage) -> None:
@@ -109,16 +119,7 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
                 raw_entities = result.get("entities", [])
             else:
                 raw_entities = result or []
-
-            entity_names = [
-                str(entity).strip() for entity in raw_entities if str(entity).strip()
-            ]
-
-            if entity_names:
-                current_entities = set(self._context.mentioned_entities)
-                current_entities.update(entity_names)
-                self._context.mentioned_entities = sorted(current_entities)
-                self._context.focused_entities = entity_names[: self.n_entities]
+            self.record_entities(raw_entities)
 
         except Exception as e:
             logger.warning(
@@ -126,6 +127,17 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
                 self.conversation_id,
                 e,
             )
+
+    def record_entities(self, entities: Sequence[Any]) -> None:
+        """Merge entity names already extracted for a user message."""
+        entity_names = [
+            str(entity).strip() for entity in entities if str(entity).strip()
+        ]
+        if entity_names:
+            current_entities = set(self._context.mentioned_entities)
+            current_entities.update(entity_names)
+            self._context.mentioned_entities = sorted(current_entities)
+            self._context.focused_entities = entity_names[: self.n_entities]
 
     def get_context_summary(self) -> str:
         parts = []
@@ -232,10 +244,21 @@ class MemoryManager:
         # One provider bundle for every conversation: each history reuses the
         # same LLM factory instead of building a Bedrock client per conversation.
         self.providers = Providers.resolve(config, providers)
+        self._entity_extractor: Runnable | None = None
         self._memories: dict[str, GraphRAGChatMessageHistory] = {}
         self._lock = asyncio.Lock()
 
+    def _shared_entity_extractor(self) -> Runnable:
+        if self._entity_extractor is None:
+            self._entity_extractor = build_entity_extractor(self.config, self.providers)
+        return self._entity_extractor
+
     async def get_or_create_memory(self, conv_id: str) -> GraphRAGChatMessageHistory:
+        if (memory := self._memories.get(conv_id)) is not None:
+            return memory
+        # Built once, outside the lock: a new conversation then costs no
+        # model construction while other queries wait on the lock.
+        extractor = self._shared_entity_extractor()
         async with self._lock:
             if memory := self._memories.get(conv_id):
                 return memory
@@ -249,6 +272,7 @@ class MemoryManager:
                 max_messages=self.config.memory.max_messages_per_conversation,
                 ttl_hours=self.config.memory.max_conversation_age_hours,
                 providers=self.providers,
+                entity_extractor=extractor,
             )
             self._memories[conv_id] = memory
             return memory
@@ -259,7 +283,20 @@ class MemoryManager:
         history = await self.get_or_create_memory(conv_id)
         return GraphRAGConversationBufferMemory(chat_memory=history, **kwargs)
 
-    async def add_message(self, conv_id: str, role: MessageRole, content: str) -> None:
+    async def add_message(
+        self,
+        conv_id: str,
+        role: MessageRole,
+        content: str,
+        *,
+        entities: Sequence[str] | None = None,
+    ) -> None:
+        """Append a message; for a user message, update the entity context.
+
+        ``entities`` are the names already extracted from this user message
+        (the chain's query step extracts them with the same prompt); when given,
+        they are recorded directly instead of paying a second LLM call.
+        """
         memory = await self.get_or_create_memory(conv_id)
         message_map = {
             MessageRole.USER: HumanMessage,
@@ -277,7 +314,11 @@ class MemoryManager:
         async with self._lock:
             memory.append_message(message)
 
-        if isinstance(message, HumanMessage):
+        if not isinstance(message, HumanMessage):
+            return
+        if entities is not None:
+            memory.record_entities(entities)
+        else:
             await asyncio.to_thread(memory.update_context, message)
 
     async def _cleanup_oldest_unsafe(self, count: int) -> None:

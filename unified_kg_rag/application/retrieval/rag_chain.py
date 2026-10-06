@@ -34,10 +34,7 @@ from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
 )
-from unified_kg_rag.adapters.retrieval.memory_manager import (
-    MemoryManager,
-    get_memory_manager,
-)
+from unified_kg_rag.adapters.retrieval.memory_manager import MemoryManager
 from unified_kg_rag.adapters.retrieval.token_manager import (
     EMPTY_CONTEXT_PLACEHOLDER,
     ContextSection,
@@ -211,22 +208,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # (strategies, scorer, token manager, memory, retrievers). An injected
         # factory, e.g. a local Ollama-backed LLMFactoryPort, therefore
         # reaches all of them; anything not injected defaults to Bedrock.
-        self._default_providers = providers is None and model_factory is None
         self.providers = providers or Providers(
             config, boto_session, llm_factory=model_factory
         )
         self.boto_session = self.providers.boto_session
         self.mode = mode
         self.ignore_errors = self.config.processing.ignore_errors
-        # The process-wide memory manager is kept for the all-default chain so
-        # conversations still survive across chain instances. A chain with
-        # injected providers gets its own, so its conversation-entity
-        # extraction uses the injected LLM factory rather than Bedrock.
-        self.memory_manager = (
-            get_memory_manager()
-            if self._default_providers
-            else MemoryManager(config, providers=self.providers)
-        )
+        # Conversation memory is owned by the chain: it follows the chain's
+        # config (limits, entity model, custom prompts) and providers, unlike
+        # the process-wide get_memory_manager(), which is pinned to the global
+        # get_config().
+        self.memory_manager = MemoryManager(config, providers=self.providers)
         self.token_manager = TokenManager(self.config, providers=self.providers)
         self.factory: LLMFactoryPort = self.providers.llm_factory
         # Backend seam: inject custom retriever builders keyed by abstract role
@@ -1112,7 +1104,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             output: RAGOutput | dict[str, Any] = await self.chain.ainvoke(
                 input_dict, config
             )
-            await self._save_memory(output)
+            await self._save_memory(
+                output, query_processing=rag_input.enable_query_processing
+            )
             if isinstance(output, RAGOutput):
                 return output
             if self.mode == ChainMode.SEARCH:
@@ -1170,7 +1164,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         input_dict["start_time"] = time.time()
         return rag_input, input_dict
 
-    async def _save_memory(self, output: RAGOutput | dict | None) -> None:
+    async def _save_memory(
+        self, output: RAGOutput | dict | None, *, query_processing: bool = False
+    ) -> None:
         if not isinstance(output, RAGOutput) or not output.conversation_id:
             return
 
@@ -1178,9 +1174,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             query = (
                 output.processed_query.original_query if output.processed_query else ""
             )
-            await self.memory_manager.add_message(
-                output.conversation_id, MessageRole.USER, query
-            )
+            entities = self._query_step_entities(output) if query_processing else None
+            if entities is None:
+                await self.memory_manager.add_message(
+                    output.conversation_id, MessageRole.USER, query
+                )
+            else:
+                # Reuse the query step's extraction (same prompt and model)
+                # instead of a second entity-extraction LLM call.
+                await self.memory_manager.add_message(
+                    output.conversation_id, MessageRole.USER, query, entities=entities
+                )
             await self.memory_manager.add_message(
                 output.conversation_id, MessageRole.ASSISTANT, output.answer
             )
@@ -1190,6 +1194,23 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 output.conversation_id,
                 e,
             )
+
+    @staticmethod
+    def _query_step_entities(output: RAGOutput) -> list[str] | None:
+        """The entities the query step extracted, or None when it did not run.
+
+        Extraction is gated on the resolved strategy declaring
+        ``QueryInput.ENTITIES``; otherwise ``processed_query.entities`` is
+        empty because nothing was extracted, not because there were none.
+        """
+        try:
+            strategy = SearchStrategy(output.search_results.search_strategy)
+            spec = get_strategy_spec(strategy)
+        except (KeyError, ValueError):
+            return None
+        if QueryInput.ENTITIES not in spec.query_inputs:
+            return None
+        return list(output.processed_query.entities)
 
     # Streaming yields answer TEXT chunks (str), not RAGOutput: callers of a
     # streamed answer want tokens as they arrive. Sources/metadata stay on the
@@ -1263,7 +1284,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             return
 
         state["answer"] = "".join(chunks)
-        await self._save_memory(self._format_output_step(state))
+        await self._save_memory(
+            self._format_output_step(state),
+            query_processing=rag_input.enable_query_processing,
+        )
 
 
 _T = TypeVar("_T")

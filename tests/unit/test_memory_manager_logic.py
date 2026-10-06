@@ -289,3 +289,38 @@ def test_get_memory_manager_is_singleton(patched_history, mocker) -> None:
     m1 = mm.get_memory_manager()
     m2 = mm.get_memory_manager()
     assert m1 is m2
+
+
+# --- shared extractor / reuse of query-step entities ---------------------
+
+
+def test_conversations_share_one_entity_extractor(patched_history, mocker) -> None:
+    import asyncio
+
+    setup = mm.setup_chain
+    manager = mm.MemoryManager(config=Config())
+
+    async def scenario():
+        a = await manager.get_or_create_memory("a")
+        b = await manager.get_or_create_memory("b")
+        return a, b
+
+    a, b = asyncio.run(scenario())
+    assert a.entity_extractor is b.entity_extractor
+    assert setup.call_count == 1  # type: ignore[attr-defined]
+
+
+def test_add_message_with_known_entities_skips_the_llm(patched_history) -> None:
+    import asyncio
+
+    manager = mm.MemoryManager(config=Config())
+
+    async def scenario():
+        await manager.add_message(
+            "c1", MessageRole.USER, "about Vendor", entities=["Vendor", " "]
+        )
+        return await manager.get_or_create_memory("c1")
+
+    history = asyncio.run(scenario())
+    patched_history.extractor.invoke.assert_not_called()
+    assert history.get_relevant_entities() == ["Vendor"]
