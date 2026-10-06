@@ -27,6 +27,7 @@ from unified_kg_rag.adapters.ingestion.gleaner import (
 )
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
+from unified_kg_rag.shared.utils import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
 
@@ -783,8 +784,12 @@ class TestGleanGraphOrchestration:
         units = [TextUnit(id="t1", text="a"), TextUnit(id="t2", text="b")]
         gleaner.gleaning_config.max_rounds = 1
         gleaner.graph_refiner = mocker.Mock()
-        # execute_with_fallback yields {} for an item that failed every retry.
-        gleaner.graph_refiner.batch.return_value = [self._plan_for("Alpha"), {}]
+        gleaner.batch_processor = mocker.Mock()
+        # execute_with_fallback marks an item that failed every retry.
+        gleaner.batch_processor.execute_with_fallback.return_value = [
+            self._plan_for("Alpha"),
+            BATCH_ITEM_FAILED,
+        ]
 
         _, _, stats = gleaner.glean_graph(units, [], [])
 

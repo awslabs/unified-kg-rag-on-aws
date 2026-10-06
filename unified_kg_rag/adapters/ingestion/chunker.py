@@ -32,6 +32,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.prompts import TextChunkingPrompt
 from unified_kg_rag.shared import DataProcessingError, get_logger
 from unified_kg_rag.shared.utils import (
+    BATCH_ITEM_FAILED,
     BatchProcessor,
     generate_stable_id,
 )
@@ -712,7 +713,7 @@ class IntelligentTextChunker(BaseChunker):
         self, pre_chunks: list[str], doc_name: str
     ) -> list[dict[str, Any] | None]:
         try:
-            return self.batch_processor.execute_with_fallback(
+            results = self.batch_processor.execute_with_fallback(
                 items_to_process=pre_chunks,
                 prepare_inputs_func=self._create_chain_inputs,
                 batch_func=self.chunker.batch,
@@ -727,6 +728,7 @@ class IntelligentTextChunker(BaseChunker):
 
             logger.error("Failed to get boundary results for '%s': %s", doc_name, e)
             return [None] * len(pre_chunks)
+        return [None if r is BATCH_ITEM_FAILED else r for r in results]
 
     def _get_chunks_from_response(
         self, pre_chunk: str, llm_response: dict[str, Any] | None

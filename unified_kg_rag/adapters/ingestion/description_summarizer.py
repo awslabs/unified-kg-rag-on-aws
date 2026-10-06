@@ -186,11 +186,9 @@ class DescriptionSummarizer:
     def _coerce_summary(result: object) -> str | None:
         """Normalize a chain result into a clean summary string (or None).
 
-        ``BatchProcessor`` inserts an empty ``{}`` (not a string) for any item
-        whose per-item LLM call failed during the sequential fallback. We must
-        return ``None`` for such non-string results so the caller keeps the
-        concatenated original — ``str({})`` would otherwise overwrite the
-        description with the literal ``"{}"``.
+        Any non-string result — including ``BATCH_ITEM_FAILED`` for an item
+        whose LLM call failed every attempt — yields ``None`` so the caller
+        keeps the concatenated original instead of its ``str()``.
         """
         if not isinstance(result, str):
             return None

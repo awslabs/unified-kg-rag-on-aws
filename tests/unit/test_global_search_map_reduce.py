@@ -26,6 +26,7 @@ from unified_kg_rag.adapters.search_strategies.global_search import (
     _MapPoint,
 )
 from unified_kg_rag.domain.models import RetrievalResult, SearchQuery
+from unified_kg_rag.shared.utils import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
 
@@ -149,10 +150,10 @@ async def test_map_phase_produces_scored_points() -> None:
 
 async def test_map_phase_reports_unrated_batches() -> None:
     # Batch 0 is rated (even with no points); batch 1 is unparseable; batch 2
-    # failed (the sequential fallback yields {}). Only 1 and 2 are unrated.
+    # failed (marked BATCH_ITEM_FAILED). Only 1 and 2 are unrated.
     strat = _strategy(
         map_batch_size=1,
-        map_outputs=[json.dumps({"points": []}), "not json", {}],  # type: ignore[list-item]
+        map_outputs=[json.dumps({"points": []}), "not json", BATCH_ITEM_FAILED],  # type: ignore[list-item]
     )
     communities = _communities(3)
     points, unrated = await strat._run_map_phase(communities, SearchQuery(query="q"))
@@ -357,7 +358,7 @@ async def test_apply_map_reduce_unrated_batch_degrades_to_concat_over_unrated() 
         map_batch_size=1,
         map_reduce_min_results=2,
         map_relevance_threshold=50,
-        map_outputs=[_map_payload(("low", 0)), {}],  # type: ignore[list-item]
+        map_outputs=[_map_payload(("low", 0)), BATCH_ITEM_FAILED],  # type: ignore[list-item]
         reducer=reducer,
         reduce_with_llm=True,
     )

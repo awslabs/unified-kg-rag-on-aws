@@ -31,13 +31,14 @@ from .display import (
 )
 from .document_converter import convert_langchain_to_document
 from .event_loop import configure_event_loop
-from .langchain import BatchProcessor, RobustXMLOutputParser
+from .langchain import BATCH_ITEM_FAILED, BatchProcessor, RobustXMLOutputParser
 
 # NOTE: `setup_chain` / `create_robust_xml_output_parser` are Bedrock-coupled and
 # now live in `unified_kg_rag.adapters.aws.chain_factory` (the shared kernel must
 # not depend on adapters). Import them from there.
 
 __all__ = [
+    "BATCH_ITEM_FAILED",
     "EMBEDDING_FIELD_SUFFIX",
     "BatchProcessor",
     "RobustXMLOutputParser",

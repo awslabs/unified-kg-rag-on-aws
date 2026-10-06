@@ -42,7 +42,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.domain.prompts import StrategySelectionPrompt
-from unified_kg_rag.shared.utils.langchain import BatchProcessor
+from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 pytestmark = pytest.mark.unit
 
@@ -351,4 +351,4 @@ def test_batch_processor_chain_is_not_double_retried() -> None:
         show_progress=False,
     )
     assert model.calls == 2
-    assert results == [{}]
+    assert results == [BATCH_ITEM_FAILED]

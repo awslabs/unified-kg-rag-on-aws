@@ -21,6 +21,7 @@ from unified_kg_rag.adapters.ingestion.description_summarizer import (
 from unified_kg_rag.domain.models import Config, Entity, Relationship
 from unified_kg_rag.domain.models.config import DescriptionSummarizationConfig
 from unified_kg_rag.domain.prompts import DescriptionSummarizationPrompt
+from unified_kg_rag.shared.utils import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
 
@@ -140,15 +141,15 @@ class TestSummarizeEntities:
     def test_per_item_failure_sentinel_keeps_concatenation(
         self, summarizer, mocker
     ) -> None:
-        # BatchProcessor inserts an empty dict ``{}`` (not a string) for any
-        # item whose per-item sequential LLM call failed. That sentinel must NOT
-        # become the literal ``"{}"`` description — the original is kept.
+        # A failed item must NOT become its str() description; the original
+        # concatenation is kept.
         summarizer.batch_processor = mocker.Mock()
-        summarizer.batch_processor.execute_with_fallback.return_value = [{}]
+        summarizer.batch_processor.execute_with_fallback.return_value = [
+            BATCH_ITEM_FAILED
+        ]
         ents = [Entity(id="e1", name="Alice", description=LONG_DESCRIPTION)]
         out = summarizer.summarize_entities(ents)
         assert out[0].description == LONG_DESCRIPTION
-        assert "{}" not in out[0].description
 
     def test_non_description_fields_preserved(self, summarizer, mocker) -> None:
         summarizer.summarizer.batch = mocker.Mock(return_value=["summary"])

@@ -13,7 +13,7 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, LanguageCode, ModelPurpose, TextUnit
 from unified_kg_rag.domain.prompts import TextTranslationPrompt
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import BatchProcessor
+from unified_kg_rag.shared.utils import BATCH_ITEM_FAILED, BatchProcessor
 
 logger = get_logger(__name__)
 
@@ -153,7 +153,11 @@ class TextUnitTranslator:
             return
 
         for text_unit, result in zip(text_units, translation_results, strict=True):
-            self._apply_translation_result(text_unit, result, target_language)
+            self._apply_translation_result(
+                text_unit,
+                None if result is BATCH_ITEM_FAILED else result,
+                target_language,
+            )
 
     @staticmethod
     def _create_chain_inputs(

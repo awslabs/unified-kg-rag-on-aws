@@ -8,7 +8,7 @@ import re
 import time
 from collections import defaultdict
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 import tenacity
 from langchain_core.exceptions import OutputParserException
@@ -26,6 +26,24 @@ if TYPE_CHECKING:
     pass
 
 logger = get_logger(__name__)
+
+
+class _BatchItemFailed:
+    """Type of :data:`BATCH_ITEM_FAILED`; there is only one instance."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "BATCH_ITEM_FAILED"
+
+
+BATCH_ITEM_FAILED: Final = _BatchItemFailed()
+"""Result placeholder for an item that failed every attempt.
+
+``BatchProcessor`` keeps its results 1:1 with the inputs, so a failed item is
+returned in place as this marker. Test it with ``result is BATCH_ITEM_FAILED``;
+an empty result (``{}``, ``""``) is a real LLM output, not a failure.
+"""
 
 
 class ProgressLogger:
@@ -418,11 +436,8 @@ class BatchProcessor(BaseModel):
                     task_name,
                     e,
                 )
-                # Note.
-                # If not processed, add an empty dict
-                # To fill in results for all inputs -> later map them one by one using zip
-                results.append({})
-                continue
+                # Keep results 1:1 with inputs so callers can zip them back.
+                results.append(BATCH_ITEM_FAILED)
 
         logger.info(
             "Sequential processing completed for '%s': %s/%s items processed successfully",
@@ -557,23 +572,19 @@ class BatchProcessor(BaseModel):
                         task_name,
                         e,
                     )
-                    return None
+                    return BATCH_ITEM_FAILED
 
         tasks = [_process_one(single_input) for single_input in inputs]
 
         progress_desc = f"Concurrent Fallback: '{task_name}'"
-        results = await async_tqdm.gather(
+        results: list[Any] = await async_tqdm.gather(
             *tasks, disable=None if show_progress else True, desc=progress_desc
         )
 
-        # Preserve positional alignment with `inputs`: failed items are kept as
-        # an empty-dict sentinel (mirrors the sync `_process_sequentially_with_
-        # fallback` path), NOT dropped. Callers zip the result back against the
-        # original inputs (e.g. EvaluationManager zips with `strict=True`), so a
-        # dropped item would raise a length-mismatch and abort the whole run
-        # instead of recording a single failure.
-        results = [{} if res is None else res for res in results]
-        successful = sum(1 for res in results if res != {})
+        # Failed items stay in place as BATCH_ITEM_FAILED, NOT dropped: callers
+        # zip the results back against the inputs (e.g. EvaluationManager with
+        # strict=True), so a dropped item would abort the whole run.
+        successful = sum(1 for res in results if res is not BATCH_ITEM_FAILED)
         logger.info(
             "Concurrent sequential processing completed for '%s': %s/%s items processed successfully",
             task_name,

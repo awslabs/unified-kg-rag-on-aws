@@ -31,6 +31,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.prompts import CommunityReportPrompt
 from unified_kg_rag.shared import GraphError, get_logger
 from unified_kg_rag.shared.utils import (
+    BATCH_ITEM_FAILED,
     BatchProcessor,
     generate_stable_id,
 )
@@ -844,7 +845,7 @@ class CommunityDetector(BaseProcessor):
         reports: list[CommunityReport] = []
         failed = 0
         for community, result in zip(communities, report_results, strict=True):
-            if result:
+            if result and result is not BATCH_ITEM_FAILED:
                 reports.append(
                     self._create_community_report(community, result, graph_attributes)
                 )

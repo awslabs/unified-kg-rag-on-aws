@@ -21,6 +21,8 @@ from unified_kg_rag.adapters.ingestion.graph_extractor import (
 )
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
+from unified_kg_rag.shared import DataProcessingError
+from unified_kg_rag.shared.utils import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
 
@@ -404,13 +406,33 @@ class TestFormatEntityTypes:
 # _parse_extraction_result
 # --------------------------------------------------------------------------- #
 class TestParseExtractionResult:
-    def test_non_dict_returns_empty(self, extractor, text_unit) -> None:
-        ents, rels = extractor._parse_extraction_result("nope", text_unit)
-        assert ents == [] and rels == []
+    def test_non_dict_is_malformed(self, extractor, text_unit) -> None:
+        with pytest.raises(DataProcessingError):
+            extractor._parse_extraction_result("nope", text_unit)
 
-    def test_missing_keys_returns_empty(self, extractor, text_unit) -> None:
+    @pytest.mark.parametrize(
+        "result",
+        [
+            {"relationships": {}},
+            {"entities": "Alice"},
+            {"entities": {}, "relationships": "x"},
+        ],
+    )
+    def test_missing_or_mistyped_section_is_malformed(
+        self, extractor, text_unit, result
+    ) -> None:
+        with pytest.raises(DataProcessingError):
+            extractor._parse_extraction_result(result, text_unit)
+
+    def test_empty_entities_section_is_valid(self, extractor, text_unit) -> None:
         ents, rels = extractor._parse_extraction_result({"entities": {}}, text_unit)
         assert ents == [] and rels == []
+
+    def test_missing_relationships_keeps_entities(self, extractor, text_unit) -> None:
+        # The XML parser drops an empty <relationships/> section.
+        result = {"entities": {"entity": {"name": "Bob", "type": "PERSON"}}}
+        ents, rels = extractor._parse_extraction_result(result, text_unit)
+        assert [e.name for e in ents] == ["Bob"] and rels == []
 
     def test_entities_and_relationships_parsed(self, extractor, text_unit) -> None:
         result = {
@@ -551,6 +573,20 @@ class TestExtractFromTextUnits:
         assert stats.total_entities_extracted == 2
         assert stats.total_relationships_extracted == 1
         assert stats.num_total_units == 1
+
+    def test_failed_and_malformed_items_count_as_failures(
+        self, extractor, mocker
+    ) -> None:
+        extractor.batch_processor = mocker.Mock()
+        extractor.batch_processor.execute_with_fallback.return_value = [
+            BATCH_ITEM_FAILED,
+            {"unexpected": "shape"},
+            {"entities": {}},
+        ]
+        units = [TextUnit(id=f"t{i}", text="x") for i in range(3)]
+        _, _, stats = extractor.extract_from_text_units(units)
+        assert stats.num_failed_extractions == 2
+        assert stats.num_successful_extractions == 1
 
     def test_batch_error_with_ignore_errors_returns_empty(
         self, extractor, mocker
