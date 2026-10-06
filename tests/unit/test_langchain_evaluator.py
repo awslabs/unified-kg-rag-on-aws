@@ -54,7 +54,7 @@ def _make_evaluator(mocker, *, langchain_metrics=None) -> LangChainEvaluator:
     config = Config()
     if langchain_metrics is not None:
         config.evaluation.langchain_metrics = langchain_metrics
-    return LangChainEvaluator(config=config, rag_chain=None)
+    return LangChainEvaluator(config=config)
 
 
 def _query() -> EvaluationQuery:
@@ -184,7 +184,7 @@ class TestInitialization:
             side_effect=RuntimeError("boom"),
         )
         with pytest.raises(EvaluationException):
-            LangChainEvaluator(config=Config(), rag_chain=None)
+            LangChainEvaluator(config=Config())
 
 
 class TestEvaluateWithMetric:
@@ -261,7 +261,7 @@ class TestHandleEvaluationError:
 
 
 class TestEvaluateSingle:
-    def test_aggregates_metrics_and_overall_score(self, mocker) -> None:
+    def test_scores_metric(self, mocker) -> None:
         ev = _make_evaluator(
             mocker, langchain_metrics=[EvaluationMetricType.CORRECTNESS]
         )
@@ -272,8 +272,8 @@ class TestEvaluateSingle:
         }
         report = ev.evaluate_single(_query(), _result(), ground_truth="gt")
         assert report.evaluator_type == EvaluatorType.LANGCHAIN
-        assert len(report.metrics) == 1
-        assert report.overall_score == pytest.approx(0.8)
+        assert [m.value for m in report.metrics] == [pytest.approx(0.8)]
+        assert report.overall_score is None
 
     def test_skips_metric_without_evaluator(self, mocker) -> None:
         ev = _make_evaluator(
@@ -282,7 +282,6 @@ class TestEvaluateSingle:
         ev.evaluators = {}  # nothing registered
         report = ev.evaluate_single(_query(), _result(), ground_truth="gt")
         assert report.metrics == []
-        assert report.overall_score == 0.0
 
     def test_error_swallowed_when_ignore_errors(self, mocker) -> None:
         ev = _make_evaluator(
@@ -297,7 +296,7 @@ class TestEvaluateSingle:
         assert report.metrics == []
         assert "correctness" in report.metadata["failed_metrics"]
 
-    def test_failed_metric_excluded_from_overall_score(self, mocker) -> None:
+    def test_failed_metric_not_scored(self, mocker) -> None:
         ev = _make_evaluator(
             mocker,
             langchain_metrics=[
@@ -316,7 +315,7 @@ class TestEvaluateSingle:
         assert [m.metric_type for m in report.metrics] == [
             EvaluationMetricType.PARTIAL_CORRECTNESS
         ]
-        assert report.overall_score == pytest.approx(0.8)
+        assert report.metrics[0].value == pytest.approx(0.8)
 
     def test_empty_reference_skips_reference_metrics(self, mocker) -> None:
         ev = _make_evaluator(
@@ -364,7 +363,7 @@ class TestAevaluateSingle:
             )
         }
         report = await ev.aevaluate_single(_query(), _result(), ground_truth="gt")
-        assert report.overall_score == pytest.approx(0.6)
+        assert [m.value for m in report.metrics] == [pytest.approx(0.6)]
 
     async def test_async_error_handled_when_ignore_errors(self, mocker) -> None:
         ev = _make_evaluator(

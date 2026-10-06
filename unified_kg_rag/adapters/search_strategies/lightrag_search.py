@@ -176,20 +176,6 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         """Width of the chunk vector query (`QueryParam.chunk_top_k`)."""
         return max(self._lightrag_config.chunk_stream_top_k, top_k)
 
-    def _incident_fetch_limit(self) -> int:
-        """How many incident edges to request per endpoint side.
-
-        Upstream's entity->incident-edge expansion has NO count limit — it fetches
-        every edge touching the entity hits and lets the per-type TOKEN budget
-        (DEFAULT_MAX_RELATION_TOKENS = 8000) do the trimming. An OpenSearch query
-        cannot be unbounded, so ask for the largest page the retriever will
-        actually grant (`opensearch.max_query_size`) rather than a larger constant
-        the retriever would silently clamp. Applied per endpoint side, so up to
-        ~2x that many edges reach the dedup, which keeps the token budget rather
-        than a count the binding constraint, as upstream.
-        """
-        return self._os_config.max_query_size
-
     def _mode(self, query: SearchQuery) -> str:
         metadata = query.metadata
         mode = metadata.get("search_strategy") or metadata.get("lightrag_mode")
@@ -680,14 +666,6 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         )
         return {"lightrag_endpoint_entities": results}
 
-    @staticmethod
-    def _endpoint_pair(result: RetrievalResult) -> tuple[str, str]:
-        """The undirected endpoint key upstream dedups edges by (`tuple(sorted(e))`)."""
-        metadata = result.metadata or {}
-        return tuple(  # type: ignore[return-value]
-            sorted((str(metadata.get("source_id")), str(metadata.get("target_id"))))
-        )
-
     async def _retrieve_incident_relationships(
         self,
         query: SearchQuery,
@@ -712,68 +690,12 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         local and global relation lists dedups on (`_merge_context` builds
         `rel_key = tuple(sorted([src_id, tgt_id]))` over one `seen_relations` set).
         """
-        retriever = self.document_retriever
-        if not retriever:
-            return {}
         entity_ids = [eid for eid in self._get_ids(entity_results, "id") if eid]
-        if not entity_ids:
-            return {}
-
-        page = self._incident_fetch_limit()
-
-        async def _by_endpoint(field: str) -> list[RetrievalResult]:
-            search_query = SearchQuery(
-                query="",
-                search_type=SearchType.LEXICAL,
-                top_k=page,
-                index_prefixes=[self._os_config.relationships_index_prefix],
-                suffix=query.suffix,
-                filters=self._scoped_filters(query, **{field: entity_ids}),
-            )
-            side = await self._safe_aretrieve(
-                retriever, search_query, f"Incident relationship retrieval ({field})"
-            )
-            # A full page means the count cap bound and edges were dropped —
-            # upstream drops none. Say so rather than let a silent truncation read
-            # as "all edges".
-            if len(side) >= page:
-                logger.warning(
-                    "Incident-edge fetch on %s hit the %s-hit page cap; "
-                    "the expansion is truncated (upstream truncates by tokens only)",
-                    field,
-                    page,
-                )
-            return side
-
-        sides = await asyncio.gather(
-            _by_endpoint("source_id"), _by_endpoint("target_id")
+        deduped = await self._fetch_incident_relationships(
+            query, entity_ids, known_relationships
         )
-
-        # Dedup by the undirected endpoint pair, as upstream does (`tuple(sorted(e))`),
-        # so an edge reachable from both of its endpoints is carried once — and so an
-        # edge the hl vector query already returned is not paid for twice.
-        seen: set[tuple[str, str]] = {
-            self._endpoint_pair(r) for r in (known_relationships or [])
-        }
-        deduped: list[RetrievalResult] = []
-        for result in [r for side in sides for r in side]:
-            pair = self._endpoint_pair(result)
-            if pair in seen:
-                continue
-            seen.add(pair)
-            deduped.append(result)
-
         if not deduped:
             return {}
-        # Upstream orders these by (rank, weight) descending — degree first, so the
-        # hub edges that carry a multi-hop chain outrank incidental leaf edges.
-        deduped.sort(
-            key=lambda r: (
-                float((r.metadata or {}).get("rank") or 0.0),
-                float((r.metadata or {}).get("weight") or 0.0),
-            ),
-            reverse=True,
-        )
         logger.info(
             "Incident expansion: %s entity hits -> %s incident relationships",
             len(entity_ids),

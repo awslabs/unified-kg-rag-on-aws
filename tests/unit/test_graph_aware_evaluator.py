@@ -21,7 +21,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def evaluator(config: Config) -> GraphAwareEvaluator:
-    return GraphAwareEvaluator(config, rag_chain=None)
+    return GraphAwareEvaluator(config)
 
 
 class TestCoverage:
@@ -109,7 +109,11 @@ class TestEvaluateSingle:
             ),
             ground_truth="",
         )
-        assert report.overall_score == 1.0
+        assert {m.metric_type.value: m.value for m in report.metrics} == {
+            "entity_coverage": 1.0,
+            "relationship_coverage": 1.0,
+        }
+        assert report.overall_score is None  # deprecated, never averaged
         assert report.metadata["matched_entity_count"] == 1
         assert report.metadata["matched_relationship_count"] == 1
         assert "skipped_metrics" not in report.metadata
@@ -146,19 +150,18 @@ class TestEvaluateSingle:
         result = self._result("Alice", expected_entities=["Alice"])
         sync = evaluator.evaluate_single(query, result, "")
         asyncr = await evaluator.aevaluate_single(query, result, "")
-        assert sync.overall_score == asyncr.overall_score
+        assert sync.metrics == asyncr.metrics
 
     def test_missing_dimension_not_penalized(
         self, evaluator: GraphAwareEvaluator
     ) -> None:
-        # Only entities expected; perfect entity match -> overall 1.0 (no
-        # relationship dimension dragging it to ~0.5).
+        # Only entities expected: the relationship dimension is not scored 0.
         report = evaluator.evaluate_single(
             EvaluationQuery(query_id="q1", question="?"),
             self._result("Alice", expected_entities=["Alice"]),
             ground_truth="",
         )
-        assert report.overall_score == 1.0
+        assert [m.value for m in report.metrics] == [1.0]
         # No relationship metrics emitted when none are expected.
         assert all("relationship" not in m.metric_type.value for m in report.metrics)
 
@@ -235,7 +238,7 @@ class TestManagerThreading:
         reports = await manager._evaluate_results([query], [result], [gt])
         # Manager copied the expectations onto the result metadata.
         assert result.metadata["expected_entities"] == ["Alice", "Acme"]
-        assert reports and reports[0].overall_score == 1.0
+        assert reports and {m.value for m in reports[0].metrics} == {1.0}
 
     async def test_query_id_mismatch_is_safe(self, config: Config) -> None:
         manager = self._manager(config)
@@ -247,4 +250,4 @@ class TestManagerThreading:
         reports = await manager._evaluate_results([query], [result], [gt])
         # No matching ground truth -> no expectations -> zero coverage, no crash.
         assert "expected_entities" not in result.metadata
-        assert reports and reports[0].overall_score == 0.0
+        assert reports and reports[0].metrics == []

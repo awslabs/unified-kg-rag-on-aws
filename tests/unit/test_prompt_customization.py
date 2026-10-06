@@ -120,3 +120,34 @@ def test_format_entity_types(types: list[str], expected: str) -> None:
 def test_format_entity_types_empty_lets_model_choose() -> None:
     out = GraphExtractor._format_entity_types([])
     assert "any entity types" in out.lower()
+
+
+# --- answer prompt contract ---------------------------------------------------
+
+
+def test_answer_prompt_asks_to_chain_facts_before_declaring_insufficiency() -> None:
+    system = AnswerGenerationPrompt.system_prompt_template
+    assert "Chain facts across sources" in system
+    assert "name variants of the same entity" in system
+    assert "Only after trying to chain" in system
+    assert system.index("Chain facts") < system.index("does not cover")
+
+
+def test_answer_prompt_keeps_grounding_rules_and_direct_answer_first() -> None:
+    system = AnswerGenerationPrompt.system_prompt_template
+    assert "Use only the provided context" in system
+    assert "general knowledge" in system
+    assert "same language as the user's query" in system
+    assert "First line: a one-sentence direct answer" in system
+    # The verbose-answer pressure the multi-hop rewrite removed.
+    assert "actionable insights" not in system
+    assert "comprehensive coverage" not in system.lower()
+
+
+def test_previous_answer_wording_restorable_through_custom_prompts() -> None:
+    cp = CustomPromptConfig(
+        answer_generation_system="LEGACY SYSTEM", answer_generation_human="{query}"
+    )
+    resolved = AnswerGenerationPrompt.resolve(cp)
+    assert resolved.system_prompt_template == "LEGACY SYSTEM"
+    assert resolved.human_prompt_template == "{query}"
