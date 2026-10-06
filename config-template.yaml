@@ -537,7 +537,6 @@ indexing:
     # honored directly by the retriever (NeptuneIndexingConfig default 3).
     max_hops: 3
     max_results_per_hop: 50
-    min_entity_importance: 0.5
     # Graph-expansion relevance = mean(entity importance, proximity to seeds).
     # Importance: "rank" (indexed entity rank), "degree" (edge count, computed
     # at query time) or "none" (neutral 0.5 for every entity, the old

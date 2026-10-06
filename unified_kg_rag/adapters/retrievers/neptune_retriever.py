@@ -48,7 +48,6 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         self._neptune_config = config.indexing.neptune
         self._max_hops = self._neptune_config.max_hops
         self._max_results_per_hop = self._neptune_config.max_results_per_hop
-        self._min_entity_importance = self._neptune_config.min_entity_importance
 
     def close(self) -> None:
         """Close the underlying Neptune websocket + thread pool (best-effort)."""
@@ -167,8 +166,9 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             if is_community
             else self._neptune_config.entity_label_prefix
         )
-        order_by_prop = "size" if is_community else "importance"
-        min_prop_value = None if is_community else self._min_entity_importance
+        # Entity vertices store "rank" (the indexed entity rank) and community
+        # vertices "size"; seeds are the highest-valued matches.
+        order_by_prop = "size" if is_community else "rank"
 
         label = self._get_name(label_prefix.capitalize(), query.suffix)
         traversal = g.V().hasLabel(label)
@@ -188,9 +188,6 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         kind = "community" if is_community else "entity"
         filters, exempt = self._scope_filters_to_labels({label: kind}, query.filters)
         traversal = self._apply_filters(traversal, filters, exempt)
-
-        if min_prop_value is not None:
-            traversal = traversal.has(order_by_prop, P.gte(min_prop_value))
 
         traversal = (
             traversal.order()
