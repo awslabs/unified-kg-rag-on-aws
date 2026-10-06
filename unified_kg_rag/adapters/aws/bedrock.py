@@ -1597,14 +1597,16 @@ class BedrockRerankWrapper(BaseBedrockWrapper, BedrockRerank):
             )
             documents = documents[: self.max_documents]
 
-        original_top_n = self.top_n
         if self.top_n is not None and len(documents) < self.top_n:
-            self.top_n = len(documents)
+            # Clamp on a copy: this model is shared by concurrent queries, so
+            # mutating its top_n (even temporarily) would race.
             logger.info(
                 "Adjusted top_n from %s to %s to match document count",
-                original_top_n,
                 self.top_n,
+                len(documents),
             )
+            clamped = self.model_copy(update={"top_n": len(documents)})
+            return clamped.compress_documents(documents, query, callbacks=callbacks)
 
         truncated_query = self._truncate_text(
             query, self.max_query_length, self.max_query_tokens, "query"
@@ -1625,8 +1627,6 @@ class BedrockRerankWrapper(BaseBedrockWrapper, BedrockRerank):
             return list(result)
         except Exception as e:
             raise RerankModelError(f"Reranking failed: {e}") from e
-        finally:
-            self.top_n = original_top_n
 
 
 class BedrockRerankModelFactory(

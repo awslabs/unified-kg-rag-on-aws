@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import copy
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -15,6 +16,18 @@ from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import compute_hash
 
 logger = get_logger(__name__)
+
+
+def _with_top_n(model: Any, top_n: int) -> Any:
+    """The rerank model limited to ``top_n`` results, without mutating it."""
+    if getattr(model, "top_n", None) == top_n:
+        return model
+    model_copy = getattr(model, "model_copy", None)
+    if callable(model_copy):  # pydantic models (LangChain compressors)
+        return model_copy(update={"top_n": top_n})
+    clone = copy.copy(model)
+    clone.top_n = top_n
+    return clone
 
 
 class HybridScorer(MetricsMixin):
@@ -488,29 +501,27 @@ class HybridScorer(MetricsMixin):
                 )
                 documents.append(doc)
 
-            original_top_n = self.rerank_model.top_n
+            # top_n is set on a per-call copy, never on the shared model:
+            # strategies (and their scorer) are reused by concurrent queries and
+            # this runs in a worker thread, so a temporary mutation would leak
+            # one query's limit into another's rerank.
+            original_top_n = getattr(self.rerank_model, "top_n", None)
             adjusted_top_n = (
                 min(len(documents), original_top_n)
                 if original_top_n
                 else len(documents)
             )
-
             if adjusted_top_n != original_top_n:
                 logger.debug(
-                    "Adjusting rerank 'top_n' from %s to %s to match document count (%s)",
-                    original_top_n,
+                    "Using rerank 'top_n' %s instead of %s to match document count (%s)",
                     adjusted_top_n,
+                    original_top_n,
                     len(documents),
                 )
-                self.rerank_model.top_n = adjusted_top_n
-
-            try:
-                reranked_docs = self.rerank_model.compress_documents(
-                    documents=documents, query=query
-                )
-            finally:
-                if adjusted_top_n != original_top_n:
-                    self.rerank_model.top_n = original_top_n
+            rerank_model = _with_top_n(self.rerank_model, adjusted_top_n)
+            reranked_docs = rerank_model.compress_documents(
+                documents=documents, query=query
+            )
             reranked_results = []
             for i, doc in enumerate(reranked_docs):
                 key_value = doc.metadata.get("key")

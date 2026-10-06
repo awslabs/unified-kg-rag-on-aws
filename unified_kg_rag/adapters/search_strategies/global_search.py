@@ -237,7 +237,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             "..." if len(expanded_community_ids) > 5 else "",
         )
 
-        return self.hybrid_scorer.fuse_and_rerank_results(
+        return await self._fuse_and_rerank(
             {
                 "opensearch_candidate_community_reports": candidate_community_reports,
                 "opensearch_expanded_community_reports": expanded_community_reports,
@@ -398,7 +398,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             return fallback
 
         context = await self._retrieve_community_context(selected, query)
-        return self.hybrid_scorer.fuse_and_rerank_results(
+        return await self._fuse_and_rerank(
             {
                 "opensearch_community_reports": selected,
                 "text_units": context,

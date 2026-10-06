@@ -44,7 +44,7 @@ class SimpleSearchStrategy(BaseSearchStrategy):
                 metadata={},
             )
 
-        final_results = self.hybrid_scorer.fuse_and_rerank_results(
+        final_results = await self._fuse_and_rerank(
             all_results,
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,

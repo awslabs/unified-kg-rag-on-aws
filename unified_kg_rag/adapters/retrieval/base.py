@@ -225,6 +225,19 @@ class BaseSearchStrategy(MetricsMixin, ABC):
             )
             return []
 
+    async def _fuse_and_rerank(
+        self, *args: Any, **kwargs: Any
+    ) -> list[RetrievalResult]:
+        """``HybridScorer.fuse_and_rerank_results`` off the event-loop thread.
+
+        Reranking is a blocking model call (a Bedrock round trip by default),
+        so running it inline would stall every other query on the loop.
+        """
+        results: list[RetrievalResult] = await asyncio.to_thread(
+            self.hybrid_scorer.fuse_and_rerank_results, *args, **kwargs
+        )
+        return results
+
     def _per_type_quota(self, top_k: int) -> dict[str, int]:
         """Reserved fusion slots per section type, from configured shares of top_k.
 

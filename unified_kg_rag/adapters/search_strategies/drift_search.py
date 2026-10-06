@@ -138,7 +138,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         # from several iterations; reserve slots per section type (shared with
         # local search) so the final cut does not collapse them to one type, and
         # rerank only text chunks, as local search does.
-        final_results = self.hybrid_scorer.fuse_and_rerank_results(
+        final_results = await self._fuse_and_rerank(
             {"results": all_results},
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,
