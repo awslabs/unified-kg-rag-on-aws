@@ -20,11 +20,12 @@ import yaml
 from pydantic import BaseModel, ValidationError
 
 from unified_kg_rag.adapters.aws import bedrock as bedrock_mod
+from unified_kg_rag.adapters.aws import bedrock_models
 from unified_kg_rag.adapters.aws.bedrock import (
     BedrockCrossRegionModelHelper,
     BedrockLanguageModelFactory,
-    get_language_model_info,
 )
+from unified_kg_rag.adapters.aws.bedrock_models import get_language_model_info
 from unified_kg_rag.domain.models import Config, LanguageModelId
 from unified_kg_rag.domain.models.config import (
     DEFAULT_MODEL_ID,
@@ -55,9 +56,9 @@ def _role_fields(model: BaseModel, path: str = "") -> dict[str, tuple[str, str]]
 
 @pytest.fixture(autouse=True)
 def _reset_warnings() -> Any:
-    bedrock_mod._warned_uncurated.clear()
+    bedrock_models._warned_uncurated.clear()
     yield
-    bedrock_mod._warned_uncurated.clear()
+    bedrock_models._warned_uncurated.clear()
 
 
 # --- config ---------------------------------------------------------------
@@ -208,7 +209,7 @@ def test_uncurated_gpt_id_gets_openai_defaults() -> None:
 def test_unknown_provider_is_conservative_and_warns_once(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    with caplog.at_level(logging.WARNING, logger=bedrock_mod.logger.name):
+    with caplog.at_level(logging.WARNING, logger=bedrock_models.logger.name):
         first = get_language_model_info("amazon.nova-pro-v1:0")
         get_language_model_info("amazon.nova-pro-v1:0")
     assert first.provider == "other"
@@ -223,7 +224,7 @@ def test_model_override_applies_and_silences_the_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     overrides = {"amazon.nova-pro-v1:0": {"context_window_size": 300000}}
-    with caplog.at_level(logging.WARNING, logger=bedrock_mod.logger.name):
+    with caplog.at_level(logging.WARNING, logger=bedrock_models.logger.name):
         info = get_language_model_info("us.amazon.nova-pro-v1:0", overrides)
     assert info.context_window_size == 300000
     assert info.max_output_tokens == 4096

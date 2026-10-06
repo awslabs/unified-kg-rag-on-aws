@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 import boto3
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.adapters.aws.bedrock import (
+from unified_kg_rag.adapters.aws.bedrock_models import (
     LanguageModelInfo,
     effective_max_output_tokens,
     get_language_model_info,

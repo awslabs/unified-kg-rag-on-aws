@@ -22,9 +22,9 @@ from unified_kg_rag.adapters.aws.bedrock import (
     BedrockEmbeddingModelFactory,
     BedrockLanguageModelFactory,
     BedrockRerankModelFactory,
-    LanguageModelInfo,
     get_assumed_role_boto_session,
 )
+from unified_kg_rag.adapters.aws.bedrock_models import LanguageModelInfo
 from unified_kg_rag.domain.models import (
     Config,
     EmbeddingModelId,

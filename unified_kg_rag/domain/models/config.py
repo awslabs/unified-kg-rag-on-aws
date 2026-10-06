@@ -83,6 +83,15 @@ class S3EncryptionType(str, Enum):
 
 
 class EmbeddingModelId(str, Enum):
+    """The embedding models the package supports; a closed list.
+
+    Unlike language-model ids, embedding-model config fields accept only these
+    members: the model's vector dimension is fixed into the OpenSearch
+    ``knn_vector`` mappings and validated against its capability record, so an
+    unknown id has no safe default. Adding a model takes a member here plus a
+    record in ``adapters/aws/bedrock_models.py``.
+    """
+
     EMBED_MULTILINGUAL_V3 = "cohere.embed-multilingual-v3"
     EMBED_V4 = "cohere.embed-v4:0"
     EMBED_ENGLISH_V3 = "cohere.embed-english-v3"
@@ -224,6 +233,13 @@ class ModelPurpose(str, Enum):
 
 
 class RerankModelId(str, Enum):
+    """The rerank models the package supports; a closed list.
+
+    Like ``EmbeddingModelId``, and unlike language-model ids, only these
+    members are accepted. Adding a model takes a member here plus a record
+    (document and token limits) in ``adapters/aws/bedrock_models.py``.
+    """
+
     AMAZON_RERANK_V1 = "amazon.rerank-v1:0"
     COHERE_RERANK_V3_5 = "cohere.rerank-v3-5:0"
     # NOTE: add new models here
@@ -371,7 +387,9 @@ class BedrockConfig(BaseModel):
             "are capability-record fields (context_window_size, "
             "max_output_tokens, supports_thinking, supports_sampling_params, "
             "supports_prompt_caching, ...). Use it for a model without a "
-            "curated record, or to correct one, without a release."
+            "curated record, or to correct one, without a release. Language "
+            "models only: embedding and rerank ids are a closed list "
+            "(EmbeddingModelId, RerankModelId)."
         ),
     )
     enable_1m_context: bool = Field(
@@ -1465,12 +1483,19 @@ class OpenSearchIndexingConfig(BaseModel):
     )
     embedding_model_id: EmbeddingModelId = Field(
         default=EmbeddingModelId.TITAN_EMBED_V2,
-        description="Embedding model identifier for vector generation",
+        description=(
+            "Embedding model for vector generation. One of the EmbeddingModelId "
+            "values; unlike language-model ids, other ids are rejected because "
+            "the vector dimension must be known for the index mapping."
+        ),
     )
     embedding_dimension: int | None = Field(
         default=None,
         ge=1,
-        description="Vector embedding dimension (automatically detected from model if None)",
+        description=(
+            "Vector embedding dimension. Must be one the model supports (Titan "
+            "Embed V2: 256, 512 or 1024); None uses the model's largest."
+        ),
     )
     refresh_after_batch: bool = Field(
         default=True,
@@ -1663,7 +1688,10 @@ class RerankingConfig(BaseModel):
     )
     rerank_model_id: RerankModelId = Field(
         default=RerankModelId.COHERE_RERANK_V3_5,
-        description="Bedrock reranking model identifier",
+        description=(
+            "Bedrock reranking model. One of the RerankModelId values; other "
+            "ids are rejected."
+        ),
     )
     top_k: int = Field(
         default=100,
@@ -2396,7 +2424,9 @@ class EvaluationConfig(BaseModel):
     )
     embedding_model_id: EmbeddingModelId = Field(
         default=EmbeddingModelId.TITAN_EMBED_V2,
-        description="Embedding model identifier for evaluation",
+        description=(
+            "Embedding model for evaluation. One of the EmbeddingModelId values."
+        ),
     )
     evaluation_model_id: BedrockModelId = role_model_field(
         "default",

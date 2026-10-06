@@ -180,7 +180,7 @@ the same values.
 | `aws.bedrock.fast_effort` | `"low"` | Reasoning depth for calls on `fast_model_id` when it differs from `default_model_id`. No effect with the shipped Claude Haiku 4.5; matters once the fast tier runs a thinking model. |
 | `aws.bedrock.effort` | `null` | Deprecated alias for `default_effort`, kept for existing configs. `default_effort` wins if both are set. |
 | `aws.bedrock.enable_1m_context` | `false` | Opt into the 1M window on models where it is a beta (premium billing). Claude 5 has a native 1M window. |
-| `aws.bedrock.model_overrides` | `{}` | Capability records for a model the package does not know (see Model selection notes). |
+| `aws.bedrock.model_overrides` | `{}` | Capability records for a language model the package does not know (see Model selection notes). Embedding and rerank models are a closed list. |
 | `aws.bedrock.guardrail.identifier` | `null` | Bedrock guardrail ID or ARN; setting it enables the guardrail. |
 | `aws.bedrock.guardrail.apply_to` | `"query"` | `query` guards only the user-facing query path; `all` guards every call (see the guardrail note below). |
 | `aws.bedrock.guardrail.trace` | `false` | Emit the guardrail trace. Needed to detect interventions on the InvokeModel path. |
@@ -261,6 +261,20 @@ aws:
         context_window_size: 300000
         max_output_tokens: 10000
 ```
+
+Embedding and rerank model ids work differently: they are a closed list, and
+`model_overrides` does not apply to them. `embedding_model_id` accepts
+`amazon.titan-embed-text-v2:0`, `amazon.titan-embed-text-v1`,
+`cohere.embed-v4:0`, `cohere.embed-english-v3` or
+`cohere.embed-multilingual-v3`; `rerank_model_id` accepts
+`cohere.rerank-v3-5:0` or `amazon.rerank-v1:0`. Any other id fails config
+validation. The embedding dimension is written into the OpenSearch vector
+mappings and checked against the model's record, so an unknown model has no
+safe default; `indexing.opensearch.embedding_dimension` picks among the
+dimensions a listed model supports (Titan Embed V2: 256, 512 or 1024; unset
+uses the largest). Adding a model is a code change: a member in
+`EmbeddingModelId`/`RerankModelId` (`domain/models/config.py`) and a record in
+`adapters/aws/bedrock_models.py`.
 
 **Output cap.** Bedrock reserves input + `max_tokens` against the
 tokens-per-minute quota when a request starts, so asking for the model maximum
@@ -405,7 +419,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.cross_run_merge` | `true` | On delta runs, union the delta with existing graph state instead of overwriting, so entities shared with unchanged documents keep their lineage (§5). `false` overwrites. |
 | `indexing.cross_run_fuzzy_merge` | `false` | Extend `cross_run_merge` with fuzzy entity-name matching. |
 | `indexing.max_failure_rate` | `0.2` | Per-index-type write failure rate above which the indexing stage fails. `1.0` disables the partial-failure gate. |
-| `indexing.opensearch.embedding_model_id` | `"amazon.titan-embed-text-v2:0"` | Embedding model. Changing it requires a reindex. |
+| `indexing.opensearch.embedding_model_id` | `"amazon.titan-embed-text-v2:0"` | Embedding model, one of a closed list (see Model selection notes). Changing it requires a reindex. |
 | `indexing.opensearch.build_relationship_vector_index` | `true` | Relationship vector index for LightRAG `mix`/`hybrid`. Set `false` for a GraphRAG-only deployment. |
 | `indexing.opensearch.persist_embedding_cache` | `false` | Persist the embedding cache to S3 so unchanged text is not re-embedded across runs. Requires `aws.s3.bucket_name`. |
 | `indexing.opensearch.language_analyzers` | `{en: english, ko: nori}` | Text analyzer per language code; unlisted languages use `default_analyzer` (`standard`). |

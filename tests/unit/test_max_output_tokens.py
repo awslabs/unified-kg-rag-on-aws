@@ -15,8 +15,8 @@ from typing import Any
 import pytest
 from langchain_core.output_parsers import StrOutputParser
 
-from unified_kg_rag.adapters.aws.bedrock import (
-    BedrockLanguageModelFactory,
+from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
+from unified_kg_rag.adapters.aws.bedrock_models import (
     effective_max_output_tokens,
     get_language_model_info,
 )
