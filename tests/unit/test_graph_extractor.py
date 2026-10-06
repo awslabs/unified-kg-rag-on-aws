@@ -707,3 +707,83 @@ class TestRelationshipGrounding:
         _, rels = extractor._parse_extraction_result(self._result(), text_unit)
         for r in rels:
             assert "_source_text" not in (r.attributes or {})
+
+
+# --------------------------------------------------------------------------- #
+# A relationship must not resurrect an entity dropped by the grounding guard
+# --------------------------------------------------------------------------- #
+class TestDroppedEntityNotResurrected:
+    """Chunk text from `text_unit` fixture: 'Alice works at Acme Corp.'"""
+
+    @staticmethod
+    def _result() -> dict:
+        return {
+            "entities": [
+                {
+                    "name": "Acme Corp",
+                    "type": "ORG",
+                    "source_text": "Alice works at Acme Corp.",
+                },
+                {
+                    "name": "Service Term",
+                    "type": "CONCEPT",
+                    "source_text": "The Vendor grants a long Service Term to Buyer.",
+                },
+            ],
+            "relationships": [
+                {
+                    # Grounded span, but its target is the dropped entity.
+                    "source": "Acme Corp",
+                    "target": "service term",
+                    "type": "OFFERS",
+                    "source_text": "Alice works at Acme Corp.",
+                },
+                {
+                    "source": "Alice",
+                    "target": "Acme Corp",
+                    "type": "WORKS_AT",
+                    "source_text": "Alice works at Acme Corp.",
+                },
+            ],
+        }
+
+    def test_drop_mode_removes_relationship_and_no_stub(
+        self, extractor, text_unit
+    ) -> None:
+        g = extractor.extraction_config.entity_grounding
+        g.enabled = True
+        g.action = "drop"
+        entities, rels = extractor._process_extraction_results(
+            [text_unit], [self._result()]
+        )
+        keys = {e.name.casefold() for e in entities}
+        assert "service term" not in keys  # not recreated as a stub
+        assert {r.type for r in rels} == {"WORKS_AT"}
+        assert "alice" in keys  # a legitimate endpoint stub is still created
+        assert extractor.stats.relationships_dropped_ungrounded_endpoint == 1
+
+    def test_penalize_mode_keeps_relationship(self, extractor, text_unit) -> None:
+        g = extractor.extraction_config.entity_grounding
+        g.enabled = True
+        g.action = "penalize"
+        _, rels = extractor._process_extraction_results([text_unit], [self._result()])
+        assert {r.type for r in rels} == {"OFFERS", "WORKS_AT"}
+        assert extractor.stats.relationships_dropped_ungrounded_endpoint == 0
+
+    def test_grounded_duplicate_keeps_relationship(self, extractor, text_unit) -> None:
+        g = extractor.extraction_config.entity_grounding
+        g.enabled = True
+        g.action = "drop"
+        result = self._result()
+        # The same entity also listed with a grounded span is kept, so its
+        # relationships must be kept too.
+        result["entities"].append(
+            {
+                "name": "Service Term",
+                "type": "CONCEPT",
+                "source_text": "Alice works at Acme Corp.",
+            }
+        )
+        _, rels = extractor._process_extraction_results([text_unit], [result])
+        assert {r.type for r in rels} == {"OFFERS", "WORKS_AT"}
+        assert extractor.stats.relationships_dropped_ungrounded_endpoint == 0
