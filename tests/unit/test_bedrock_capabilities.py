@@ -613,3 +613,114 @@ def test_get_model_keeps_sampling_params_for_supporting_model_invoke(
     assert name == "_FakeChatBedrock"
     assert kwargs["model_kwargs"]["temperature"] == 0.2
     assert kwargs["model_kwargs"]["top_k"] == 7
+
+
+# --- per-tier reasoning effort ---------------------------------------------
+
+# A fast tier that reasons, so its effort is observable (the shipped fast
+# model, Haiku 4.5, sends no reasoning block at all).
+_THINKING_FAST = LanguageModelId.CLAUDE_V4_8_OPUS.value
+
+
+def _tiered_config(**bedrock: Any) -> Config:
+    return Config.model_validate(
+        {"aws": {"bedrock": {"fast_model_id": _THINKING_FAST, **bedrock}}}
+    )
+
+
+def _sent_effort(calls: list[tuple[str, dict[str, Any]]]) -> str:
+    _, kwargs = calls[-1]
+    return kwargs["additional_model_request_fields"]["output_config"]["effort"]
+
+
+def test_fast_tier_role_gets_fast_effort(monkeypatch, recorded_chat) -> None:
+    _resolve_to(monkeypatch, f"global.{_THINKING_FAST}")
+    config = _tiered_config(fast_effort="medium")
+    # Routing is a fast-tier role: its model id inherits fast_model_id.
+    model_id = config.search.strategy_selection_model_id
+    assert model_id == _THINKING_FAST
+    _lang_factory(config).get_model(model_id)
+    assert _sent_effort(recorded_chat) == "medium"
+
+
+def test_default_tier_role_gets_default_effort(monkeypatch, recorded_chat) -> None:
+    _resolve_to(monkeypatch, f"global.{LanguageModelId.CLAUDE_V5_5_SONNET.value}")
+    config = _tiered_config(default_effort="xhigh", fast_effort="low")
+    model_id = config.search.answer_generation_model_id
+    assert model_id == config.aws.bedrock.default_model_id
+    _lang_factory(config).get_model(model_id)
+    assert _sent_effort(recorded_chat) == "xhigh"
+
+
+def test_shipped_tier_efforts_keep_default_quality() -> None:
+    bedrock = Config().aws.bedrock
+    assert bedrock.tier_effort("default") == "high"
+    assert bedrock.tier_effort("fast") == "low"
+    # The shipped fast model has no thinking, so fast_effort is a no-op there.
+    fast_info = _lang_factory().get_model_info(bedrock.fast_model_id)
+    assert not fast_info.supports_thinking
+
+
+def test_same_model_on_both_tiers_uses_default_effort() -> None:
+    config = Config.model_validate(
+        {
+            "aws": {
+                "bedrock": {
+                    "default_model_id": _THINKING_FAST,
+                    "fast_model_id": _THINKING_FAST,
+                }
+            }
+        }
+    )
+    assert config.aws.bedrock.model_tier(_THINKING_FAST) == "default"
+
+
+def test_legacy_effort_key_aliases_default_effort(monkeypatch, recorded_chat) -> None:
+    config = _tiered_config(effort="medium")
+    bedrock = config.aws.bedrock
+    assert bedrock.default_effort == "medium"
+    assert bedrock.tier_effort("default") == "medium"
+    assert bedrock.tier_effort("fast") == "low"
+    # A dumped config reloads with the same effective effort.
+    reloaded = Config.model_validate(config.model_dump())
+    assert reloaded.aws.bedrock.tier_effort("default") == "medium"
+    _resolve_to(monkeypatch, f"global.{LanguageModelId.CLAUDE_V5_5_SONNET.value}")
+    _lang_factory(config).get_model(bedrock.default_model_id)
+    assert _sent_effort(recorded_chat) == "medium"
+
+
+def test_default_effort_wins_over_legacy_effort() -> None:
+    bedrock = _tiered_config(effort="medium", default_effort="max").aws.bedrock
+    assert bedrock.tier_effort("default") == "max"
+
+
+def test_unsupported_tier_effort_fails_fast(monkeypatch, recorded_chat) -> None:
+    # Claude 4.6 rejects 'xhigh'; the error names the config key at fault.
+    sonnet_46 = LanguageModelId.CLAUDE_V4_6_SONNET.value
+    _resolve_to(monkeypatch, f"global.{sonnet_46}")
+    config = Config.model_validate(
+        {"aws": {"bedrock": {"fast_model_id": sonnet_46, "fast_effort": "xhigh"}}}
+    )
+    with pytest.raises(
+        LanguageModelError, match=r"aws\.bedrock\.fast_effort.*not supported"
+    ):
+        _lang_factory(config).get_model(sonnet_46, enable_thinking=True)
+
+
+def test_per_call_effort_overrides_tier(monkeypatch, recorded_chat) -> None:
+    # The evaluation judge passes judge_effort per call; the tier must not win.
+    _resolve_to(monkeypatch, f"global.{LanguageModelId.CLAUDE_V5_5_SONNET.value}")
+    config = _tiered_config(default_effort="max")
+    _lang_factory(config).get_model(
+        config.evaluation.evaluation_model_id, effort=config.evaluation.judge_effort
+    )
+    assert _sent_effort(recorded_chat) == "low"
+
+
+def test_explicit_model_tier_kwarg_wins(monkeypatch, recorded_chat) -> None:
+    _resolve_to(monkeypatch, f"global.{LanguageModelId.CLAUDE_V5_5_SONNET.value}")
+    config = _tiered_config(default_effort="high", fast_effort="medium")
+    _lang_factory(config).get_model(
+        config.aws.bedrock.default_model_id, model_tier="fast"
+    )
+    assert _sent_effort(recorded_chat) == "medium"

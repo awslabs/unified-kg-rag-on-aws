@@ -42,6 +42,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   and query ids bound into log records; periodic INFO progress logs (#122).
 - `evaluation.ragas_timeout`/`ragas_max_workers`/`ragas_max_retries` and
   `evaluation.judge_effort` for thinking-model judges (#113).
+- Per-tier reasoning effort: `aws.bedrock.default_effort` (default `high`) and
+  `fast_effort` (default `low`, used for calls on `fast_model_id`); a per-call
+  effort such as `evaluation.judge_effort` still wins (#128).
 
 ### Changed
 - Model ids are free-form strings; `aws.bedrock.default_model_id` and
@@ -105,6 +108,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
+- `aws.bedrock.effort`; use `aws.bedrock.default_effort` (#128).
 - `SearchQuery.metadata["lightrag_mode"]`; use `search_strategy` (#123).
 
 ### Removed
@@ -162,6 +166,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - Errored answers and unmeasurable metrics are excluded from evaluation means
   (#95).
 - RAGAS no longer forces temperature on Claude 5 judges (#112).
+- `config-template.yaml` validates as shipped (`source_directory` defaults to
+  `source`) and documents the betweenness sampling and auto-resolution knobs;
+  the user guides list common knobs in tables checked against `Config()`
+  instead of copied YAML (#129).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on
