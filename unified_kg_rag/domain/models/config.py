@@ -1416,12 +1416,6 @@ class NeptuneIndexingConfig(BaseModel):
         ge=1,
         description="Maximum number of results to return per traversal hop",
     )
-    min_entity_importance: float = Field(
-        default=0.5,
-        ge=0.0,
-        le=1.0,
-        description="Minimum importance score for entities to be included in query results",
-    )
     entity_importance_source: Literal["rank", "degree", "none"] = Field(
         default="rank",
         description=(

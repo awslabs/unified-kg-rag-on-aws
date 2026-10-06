@@ -192,6 +192,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   being reported as an unknown key that is ignored (#151).
 
 ### Removed
+- `indexing.neptune.min_entity_importance`: it thresholded an `importance`
+  property no vertex stores; the key is now ignored with an unknown-key
+  warning (#PR).
 - The unused `RetrieverType` enum and the latency-optimized inference path
   (`supports_performance_optimization` in model capability records), which no
   caller enabled (#147).
@@ -203,6 +206,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   test-only helpers on the guardrail handler and token counter (#120).
 
 ### Fixed
+- `NeptuneRetriever` seeding by name or query text (no `id` filter) always
+  returned nothing: it required and sorted by an `importance` property that
+  entity vertices never store. It now orders entities by `rank` and
+  communities by `size`, with no threshold. Strategies seed by id, so their
+  results are unchanged (#PR).
 - Prompt caching works on Converse: system prompts end with a native
   `cachePoint` once they reach the model's minimum cache size (#127).
 - Requests cap output at `aws.bedrock.default_max_output_tokens` (16,384, with

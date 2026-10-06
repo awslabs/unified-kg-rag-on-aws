@@ -45,9 +45,6 @@ def retriever(config: Config) -> NeptuneRetriever:
     object.__setattr__(
         inst, "_max_results_per_hop", config.indexing.neptune.max_results_per_hop
     )
-    object.__setattr__(
-        inst, "_min_entity_importance", config.indexing.neptune.min_entity_importance
-    )
     return inst
 
 
@@ -561,3 +558,32 @@ async def test_entity_traversal_limit_scales_with_fetch_multiplier(
 
     # The final width is the last limit() (the per-hop limit is anonymous).
     assert limits[-1] == 4 * 2 * multiplier
+
+
+# --------------------------------------------------------------------------- #
+# _find_seeds_by_type
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(("is_community", "prop"), [(False, "rank"), (True, "size")])
+async def test_text_seeds_rank_by_a_stored_property(
+    retriever, is_community: bool, prop: str
+) -> None:
+    # Seeds are ordered by a property the indexer writes ("rank" on entities,
+    # "size" on communities); no threshold on an unwritten property drops them.
+    calls: list[tuple] = []
+
+    class _G:
+        def V(self):
+            return RecordingTraversal(calls)
+
+    async def _execute(traversal):
+        return [{"id": ["v1"], "name": ["vendor"]}]
+
+    object.__setattr__(retriever, "_execute_traversal", _execute)
+    query = SearchQuery(query="vendor terms", entity_focus=["vendor"])
+    seeds = await retriever._find_seeds_by_type(_G(), query, is_community=is_community)
+    assert seeds == [{"id": "v1", "name": "vendor"}]
+    by_steps = [args for name, args in calls if name == "by"]
+    assert by_steps and by_steps[0][0] == prop
+    assert not any(name == "has" and args[0] == "importance" for name, args in calls)
