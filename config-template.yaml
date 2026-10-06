@@ -168,7 +168,7 @@ processing:
 
   # Document Parsing
   document_parsing:
-    source_directory: # Add source directory here
+    source_directory: source # run-ingestion takes the corpus from --source-directory
     # Set a directory to export each parsed document as <stem>.json for
     # inspection (or pass --target-directory); null = no export. The loading
     # stage reuses the parsed documents in memory and never reads the export.
