@@ -35,12 +35,14 @@ Bump the ``pipeline_id`` or use ``--force-rebuild`` after editing a template.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel
 
 from unified_kg_rag.domain.models import Config, PipelineStageType
+from unified_kg_rag.domain.models.config import BedrockConfig
 
 from ..logging import get_logger
 from .common import compute_hash
@@ -78,6 +80,7 @@ _STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
         # LLM knobs that change generated content. Region, role and profile
         # routing are excluded: they change WHERE the call goes, not its output.
         "aws.bedrock.effort",
+        "aws.bedrock.fast_effort",
         "aws.bedrock.enable_1m_context",
         "aws.bedrock.guardrail",
     ),
@@ -117,7 +120,27 @@ _STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
 }
 
 
+def _effective_default_effort(config: Config) -> Any:
+    return config.aws.bedrock.tier_effort("default")
+
+
+# Paths fingerprinted by a derived value instead of the raw attribute.
+# "aws.bedrock.effort" stands for the default tier's effective effort (the
+# legacy key or default_effort), so an unchanged configuration keeps the key
+# it had before effort was split per tier.
+_DERIVED_PATHS: dict[str, Callable[[Config], Any]] = {
+    "aws.bedrock.effort": _effective_default_effort,
+}
+# Paths added after the key format shipped: folded in only when set away from
+# their default, so existing caches stay valid on upgrade.
+_OMIT_WHEN_DEFAULT: dict[str, Any] = {
+    "aws.bedrock.fast_effort": BedrockConfig.model_fields["fast_effort"].default,
+}
+
+
 def _resolve_path(config: Config, path: str) -> Any:
+    if path in _DERIVED_PATHS:
+        return _DERIVED_PATHS[path](config)
     node: Any = config
     for attribute in path.split("."):
         node = getattr(node, attribute)
@@ -168,10 +191,12 @@ def stage_input_fingerprint(config: Config, stage_type: PipelineStageType) -> st
         >>> len(fp)
         12
     """
-    projection = [
-        (path, _canonicalize(_resolve_path(config, path)))
-        for path in _input_paths_through(stage_type)
-    ]
+    projection = []
+    for path in _input_paths_through(stage_type):
+        value = _canonicalize(_resolve_path(config, path))
+        if path in _OMIT_WHEN_DEFAULT and value == _OMIT_WHEN_DEFAULT[path]:
+            continue
+        projection.append((path, value))
     payload = json.dumps(projection, sort_keys=True, default=str)
     return compute_hash(payload, length=FINGERPRINT_LENGTH)
 
