@@ -997,9 +997,11 @@ aws:
   Cardinals`, `AC/DC` 같은 제목은 통째로 비교합니다. `reference_sources`가 없거나 문서 ID/파일 이름을 가진 소스가 하나도
   없으면 건너뜁니다.
 - **`answer_match`** — 결정적이고 LLM 불필요한 SQuAD 방식 `exact_match`와
-  `token_f1`(소문자화, 문장 부호와 영어 관사 제거)을 `answer`와 선택 항목
-  `metadata.answer_aliases`에 대해 계산하고 최댓값을 씁니다. 토큰 F1은 공백으로
-  나누므로 중국어/일본어 텍스트에서는 exact match와 같아집니다.
+  `token_f1`을 `answer`와 선택 항목 `metadata.answer_aliases`에 대해 계산하고
+  최댓값을 씁니다. 텍스트는 NFKC로 정규화한 뒤 공식 SQuAD v1.1 스크립트와 같이
+  소문자화, 문장 부호 삭제(`1,000` = `1000`), 영어 관사 제거, 공백 정리를
+  거칩니다. 토큰 F1은 공백으로 나누므로 중국어/일본어 텍스트에서는 exact match와
+  같아지고, 한국어는 조사(`서울은`) 때문에 두 지표 모두 낮게 나옵니다.
 
 ### 평가 데이터 포맷
 

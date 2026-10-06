@@ -3,9 +3,10 @@
 """Answer-match evaluator: SQuAD-style exact match and token F1.
 
 Deterministic and LLM-free, so scores are reproducible across runs and judge
-models. Both the generated answer and each reference are normalized the SQuAD
-way — lowercased, punctuation removed (any Unicode punctuation), the English
-articles ``a``/``an``/``the`` dropped, whitespace collapsed — then:
+models. Both the generated answer and each reference are normalized as in the
+official SQuAD v1.1 script, after Unicode NFKC (``text_matching.normalize_answer``:
+lowercase, delete punctuation, drop the English articles ``a``/``an``/``the``,
+collapse whitespace), then:
 
 - ``exact_match``: 1.0 if the normalized strings are equal.
 - ``token_f1``: harmonic mean of token precision/recall over whitespace tokens
@@ -15,12 +16,13 @@ References are the dataset ``answer`` plus optional ``metadata.answer_aliases``
 (a string or list of strings); each metric takes the max over references.
 A query with no reference is skipped. Tokens are whitespace-delimited, so for
 scripts written without spaces (Chinese, Japanese) token F1 degrades to exact
-match; Korean (space-delimited) works as-is.
+match. Korean is space-delimited but attaches particles to words ("서울은"), so
+a correct answer rarely matches a bare gold token exactly; both metrics
+under-count for Korean.
 """
 
 from __future__ import annotations
 
-import unicodedata
 from collections import Counter
 from datetime import datetime
 from typing import Any
@@ -40,16 +42,9 @@ from .base import (
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
 )
+from .text_matching import normalize_answer
 
-_ARTICLES = frozenset({"a", "an", "the"})
-
-
-def normalize_answer(text: str) -> str:
-    """SQuAD normalization, with Unicode-aware punctuation removal."""
-    no_punct = "".join(
-        " " if unicodedata.category(ch).startswith("P") else ch for ch in text.lower()
-    )
-    return " ".join(tok for tok in no_punct.split() if tok not in _ARTICLES)
+__all__ = ["AnswerMatchEvaluator", "exact_match", "normalize_answer", "token_f1"]
 
 
 def exact_match(prediction: str, reference: str) -> float:

@@ -27,7 +27,26 @@ class TestNormalization:
         assert normalize_answer("The  Vendor, Inc.!") == "vendor inc"
 
     def test_unicode_punctuation_removed(self) -> None:
-        assert normalize_answer("「공급사」는…") == "공급사 는"
+        assert normalize_answer("「공급사」는…") == "공급사는"
+
+    @pytest.mark.parametrize(
+        ("prediction", "reference"),
+        [
+            ("1,000", "1000"),  # punctuation deleted, not replaced by a space
+            ("USD 1,000.", "usd 1000"),
+            ("\uff11\uff10\uff10\uff10", "1000"),  # fullwidth digits (NFKC)
+            ("Vendor\u2019s", "Vendors"),
+            ("the U.S.", "US"),
+        ],
+    )
+    def test_squad_equivalences(self, prediction: str, reference: str) -> None:
+        assert exact_match(prediction, reference) == 1.0
+
+    def test_decimal_point_deleted_like_squad(self) -> None:
+        assert normalize_answer("3.5 days") == "35 days"
+
+    def test_articles_only_as_whole_words(self) -> None:
+        assert normalize_answer("Theater an Anchor") == "theater anchor"
 
     def test_exact_match_ignores_case_articles_punctuation(self) -> None:
         assert exact_match("the Buyer.", "Buyer") == 1.0

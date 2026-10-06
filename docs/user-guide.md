@@ -1018,9 +1018,12 @@ Selected via `evaluation.enabled_evaluators`:
   `AC/DC` are compared whole. Skipped when a query has no `reference_sources` or no
   source carries a document id / file name.
 - **`answer_match`** — deterministic, LLM-free SQuAD-style `exact_match` and
-  `token_f1` (lowercase, punctuation and English articles removed) against
-  `answer` and optional `metadata.answer_aliases`, taking the max. Token F1
-  splits on whitespace, so for Chinese/Japanese text it degrades to exact match.
+  `token_f1` against `answer` and optional `metadata.answer_aliases`, taking
+  the max. Text is NFKC-normalized, then normalized as in the official SQuAD
+  v1.1 script: lowercase, punctuation deleted (`1,000` = `1000`), English
+  articles dropped, whitespace collapsed. Token F1 splits on whitespace, so for
+  Chinese/Japanese text it degrades to exact match; Korean particles
+  (`서울은`) make both metrics under-count.
 
 ### Eval data format
 
