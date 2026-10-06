@@ -72,10 +72,6 @@ _COMPONENTS: dict[str, tuple[str, str, dict[str, Any]]] = {
 }
 
 
-# Components that take their LLM factory from a ``Providers`` bundle.
-_TAKES_PROVIDERS = {"memory", "drift", "global"}
-
-
 def _config() -> Config:
     cfg = Config()
     cfg.search.drift_search.enable_primer = True  # build every DRIFT chain
@@ -91,19 +87,11 @@ def test_every_chain_receives_custom_prompts(name: str, mocker) -> None:
     module = importlib.import_module(module_name)
     cfg = _config()
     spy = mocker.patch.object(module, "setup_chain", wraps=chain_factory.setup_chain)
-    if name in _TAKES_PROVIDERS:
-        # The offline factory arrives through the shared provider bundle.
-        providers = Providers(
-            cfg, boto_session=mocker.MagicMock(), llm_factory=_OfflineFactory(cfg)
-        )
-        component = getattr(module, cls_name)(config=cfg, providers=providers, **extra)
-    else:
-        mocker.patch.object(
-            module, "BedrockLanguageModelFactory", return_value=_OfflineFactory(cfg)
-        )
-        component = getattr(module, cls_name)(
-            config=cfg, boto_session=mocker.MagicMock(), **extra
-        )
+    # The offline factory arrives through the shared provider bundle.
+    providers = Providers(
+        cfg, boto_session=mocker.MagicMock(), llm_factory=_OfflineFactory(cfg)
+    )
+    component = getattr(module, cls_name)(config=cfg, providers=providers, **extra)
     if isinstance(component, PromptTuner):  # builds its chain lazily
         asyncio.run(component.profile_corpus(["Vendor ships parts to Buyer."]))
 
@@ -118,13 +106,11 @@ def test_community_report_override_reaches_the_chain(mocker) -> None:
 
     cfg = _config()
     cfg.custom_prompts.community_report_system = "Synthetic report instructions."
-    mocker.patch.object(
-        community_detector,
-        "BedrockLanguageModelFactory",
-        return_value=_OfflineFactory(cfg),
-    )
     detector = community_detector.CommunityDetector(
-        config=cfg, boto_session=mocker.MagicMock()
+        config=cfg,
+        providers=Providers(
+            cfg, boto_session=mocker.MagicMock(), llm_factory=_OfflineFactory(cfg)
+        ),
     )
     prompt = detector.report_generator.first
     rendered = prompt.format_messages(**dict.fromkeys(prompt.input_variables, "x"))

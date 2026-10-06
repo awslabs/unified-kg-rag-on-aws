@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 import unified_kg_rag.adapters.ingestion.gleaner as gleaner_module
+from unified_kg_rag.adapters import providers as providers_module
 from unified_kg_rag.adapters.ingestion.gleaner import (
     GleaningRound,
     GleaningStats,
@@ -33,7 +34,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def gleaner(config: Config, mocker) -> GraphGleaner:
     mocker.patch.object(gleaner_module, "boto3")
-    mocker.patch.object(gleaner_module, "BedrockLanguageModelFactory")
+    mocker.patch.object(providers_module, "BedrockLanguageModelFactory")
     mocker.patch.object(gleaner_module, "create_robust_xml_output_parser")
     mocker.patch.object(gleaner_module, "setup_chain")
     g = GraphGleaner(config, use_process_pool=False, show_progress=False)

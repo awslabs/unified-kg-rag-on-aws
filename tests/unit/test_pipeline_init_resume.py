@@ -77,6 +77,7 @@ def _pipeline_for_init(config: Config) -> DataIngestionPipeline:
     pipe.source_directory = Path("/tmp/src")
     pipe.target_directory = Path("/tmp/out")
     pipe.boto_session = None
+    pipe.providers = None
     pipe.STAGE_CLASSES = _stub_stage_classes()
     return pipe
 

@@ -15,13 +15,13 @@ from langchain_text_splitters import (
 from pydantic import BaseModel, Field
 from tqdm import tqdm
 
-from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.aws.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
 from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     ChunkingStrategy,
     Config,
@@ -590,19 +590,16 @@ class IntelligentTextChunker(BaseChunker):
         config: Config,
         boto_session: boto3.Session | None = None,
         show_progress: bool = True,
+        *,
+        providers: Providers | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(config, show_progress=show_progress)
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=self.config.aws.profile_name
-        )
+        self.providers = Providers.resolve(config, providers, boto_session)
+        self.boto_session = self.providers.boto_session
         self.ignore_errors = self.config.processing.ignore_errors
 
-        self.factory = BedrockLanguageModelFactory(
-            config=self.config,
-            boto_session=self.boto_session,
-            region_name=self.config.aws.bedrock.region_name,
-        )
+        self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor(
             is_transient_error=is_transient_bedrock_error
         )
