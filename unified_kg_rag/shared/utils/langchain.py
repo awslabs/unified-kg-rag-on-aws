@@ -21,6 +21,7 @@ from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
 
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 if TYPE_CHECKING:
     pass
@@ -166,7 +167,7 @@ class BatchProcessor(BaseModel):
         # BOTO_READ_TIMEOUT), defeating the whole point of the timeout. Instead
         # abandon the doomed thread with shutdown(wait=False, cancel_futures=True)
         # so control returns to the caller immediately for the per-item fallback.
-        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        pool = ContextThreadPoolExecutor(max_workers=1)
         future = pool.submit(func)
         try:
             result = future.result(timeout=timeout_seconds)
@@ -311,7 +312,7 @@ class BatchProcessor(BaseModel):
         else:
             workers = min(self.chunk_concurrency, len(chunk_specs))
             chunk_sizes = {num: len(items) for num, items in chunk_specs}
-            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            with ContextThreadPoolExecutor(max_workers=workers) as executor:
                 future_to_num = {
                     executor.submit(process_chunk, num, items): num
                     for num, items in chunk_specs

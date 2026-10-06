@@ -16,6 +16,7 @@ from structlog.contextvars import bound_contextvars
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import get_logger, setup_logging
 from unified_kg_rag.shared.logging import LoggingSetup
+from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 pytestmark = pytest.mark.unit
 
@@ -100,3 +101,14 @@ def test_log_to_file_is_honoured(stream: io.StringIO, tmp_path: Path) -> None:
         handler.flush()
     (written,) = list(tmp_path.glob("run_*.txt"))
     assert json.loads(written.read_text().splitlines()[-1])["event"] == "to file"
+
+
+def test_worker_thread_lines_carry_the_bound_context(stream: io.StringIO) -> None:
+    setup_logging(_config(), stream=stream)
+    log = get_logger("unified_kg_rag.test_worker")
+    with bound_contextvars(pipeline_id="p-1"):
+        with ContextThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(log.info, "from worker").result()
+    (record,) = _records(stream)
+    assert record["event"] == "from worker"
+    assert record["pipeline_id"] == "p-1"

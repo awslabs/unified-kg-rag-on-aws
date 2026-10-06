@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from functools import partial
 from typing import Any
@@ -34,6 +34,7 @@ from unified_kg_rag.shared.utils import (
     entity_key,
     generate_stable_id,
 )
+from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
 
@@ -234,7 +235,7 @@ class ClaimExtractor(BaseProcessor):
         )
 
         executor_class = (
-            ProcessPoolExecutor if self.use_process_pool else ThreadPoolExecutor
+            ProcessPoolExecutor if self.use_process_pool else ContextThreadPoolExecutor
         )
 
         # Key by owning unit, not completion order: as_completed is unordered, so

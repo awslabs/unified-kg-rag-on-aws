@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from functools import partial
 from typing import Any
@@ -39,6 +39,7 @@ from unified_kg_rag.shared.utils import (
     ensure_list,
     entity_key,
 )
+from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
 
@@ -461,7 +462,7 @@ class GraphGleaner(BaseProcessor):
         )
 
         executor_class = (
-            ProcessPoolExecutor if self.use_process_pool else ThreadPoolExecutor
+            ProcessPoolExecutor if self.use_process_pool else ContextThreadPoolExecutor
         )
 
         # Key results by their OWNING unit, not by completion order: as_completed

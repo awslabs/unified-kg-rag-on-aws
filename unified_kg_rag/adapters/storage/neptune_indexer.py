@@ -4,7 +4,7 @@ import json
 import random
 import time
 from collections.abc import Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from typing import Any, cast
 
 from gremlin_python.process.graph_traversal import (
@@ -25,6 +25,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports.indexer import GraphIndexer, IndexingStats
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
 
@@ -829,7 +830,7 @@ class NeptuneIndexer(GraphIndexer):
         # path. (_execute_single_batch only adds successes/errors, so the
         # per-batch total_items seed is what makes success_rate correct.)
         stats.total_items = 0
-        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        with ContextThreadPoolExecutor(max_workers=concurrency) as executor:
             futures = [
                 executor.submit(
                     self._execute_single_batch,

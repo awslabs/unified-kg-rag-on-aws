@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 import boto3
@@ -22,6 +21,7 @@ from unified_kg_rag.ports.indexer import IndexingStats, VectorIndexer
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils.common import compute_hash
+from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 if TYPE_CHECKING:
     from unified_kg_rag.adapters.aws.embedding_cache import S3EmbeddingCache
@@ -832,7 +832,7 @@ class OpenSearchIndexer(VectorIndexer):
         if batches:
             max_workers = min(8, len(batches))
             failed_keys = 0
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            with ContextThreadPoolExecutor(max_workers=max_workers) as executor:
                 for pairs in executor.map(_embed_batch, batches):
                     for key, emb in pairs:
                         if emb is None:

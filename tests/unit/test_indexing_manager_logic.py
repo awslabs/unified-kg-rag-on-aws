@@ -177,7 +177,9 @@ def test_run_indexing_phase_pool_size_capped_at_eight(manager, mocker) -> None:
     mgr, _g, _v, IndexingTask = manager
     captured: dict[str, int] = {}
 
-    real_pool = "unified_kg_rag.application.storage.indexing_manager.ThreadPoolExecutor"
+    real_pool = (
+        "unified_kg_rag.application.storage.indexing_manager.ContextThreadPoolExecutor"
+    )
     RealExecutor = mocker.patch(real_pool, wraps=None)
 
     from concurrent.futures import ThreadPoolExecutor as _Real
@@ -204,7 +206,7 @@ def test_run_indexing_phase_pool_size_matches_task_count_when_small(
     from concurrent.futures import ThreadPoolExecutor as _Real
 
     RealExecutor = mocker.patch(
-        "unified_kg_rag.application.storage.indexing_manager.ThreadPoolExecutor"
+        "unified_kg_rag.application.storage.indexing_manager.ContextThreadPoolExecutor"
     )
     RealExecutor.side_effect = lambda max_workers: (
         captured.update(max_workers=max_workers) or _Real(max_workers=max_workers)

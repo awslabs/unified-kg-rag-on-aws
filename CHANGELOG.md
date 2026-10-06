@@ -321,6 +321,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `entities` section counts toward `total_extraction_failures` instead of
   reading as an empty success, and an output whose empty `relationships`
   section was dropped by the XML parser keeps its entities (#152).
+- Log lines from worker threads (batch processor chunks and call timeouts,
+  indexing, embedding, Neptune batches, file loading, resolution) keep the
+  bound `pipeline_id`/`stage`/`query_id`: the thread pools are
+  `ContextThreadPoolExecutor`s, which run each task in a copy of the
+  submitter's `contextvars`. `pipeline_id` is now bound for the whole
+  `run-ingestion` run, including the S3 cache sync and the failure report
+  (#PR).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on

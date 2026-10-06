@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any
 
@@ -15,6 +15,7 @@ from unified_kg_rag.domain.ingestion.base_resolver import (
 )
 from unified_kg_rag.domain.models import Config, Entity, Relationship
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
 
@@ -232,14 +233,14 @@ class EntityResolver(BaseResolver):
         # whose identifier tokens differ ("purchase order 1001" vs "... 1002").
         pair_scores: dict[tuple[str, str], float] = {}
         executor_class = (
-            ProcessPoolExecutor if self.use_process_pool else ThreadPoolExecutor
+            ProcessPoolExecutor if self.use_process_pool else ContextThreadPoolExecutor
         )
 
         # Send the matcher to each worker ONCE via the pool initializer, then
         # submit only the (tiny) entity name per task. This holds for both the
         # ProcessPoolExecutor (initializer runs once per process) and the
-        # ThreadPoolExecutor path (initializer runs once per thread; the matcher
-        # is shared in-process anyway). ThreadPoolExecutor accepts the same
+        # thread-pool path (initializer runs once per thread; the matcher
+        # is shared in-process anyway). The thread pool accepts the same
         # initializer/initargs signature.
         with executor_class(
             max_workers=self.max_workers,
