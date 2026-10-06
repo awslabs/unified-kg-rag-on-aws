@@ -881,8 +881,9 @@ class TestRegleanOnlyUnitsThatGained:
 
 
 def test_default_gleaning_keeps_three_rounds() -> None:
-    # A real-AWS E2E (MuSiQue subset) lost DRIFT accuracy with one round; the
-    # later rounds stay cheap because they only re-send units that gained items.
+    # Later rounds recover entities the first round misses, which multi-hop
+    # strategies such as DRIFT depend on; they stay cheap because they only
+    # re-send units that gained items.
     from unified_kg_rag.domain.models import Config
 
     assert Config().processing.gleaning.max_rounds == 3

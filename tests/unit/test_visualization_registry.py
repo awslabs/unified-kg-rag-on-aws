@@ -151,10 +151,15 @@ class TestDimensionalityReducer:
         assert len(out) == 20
         assert all(len(coord) == 2 for coord in out.values())
 
-    def test_too_few_points_falls_back_to_pca(self) -> None:
-        # With < n_components+1 points the reducer downgrades to PCA but still
-        # produces a 2D layout for every node.
+    def test_too_few_points_falls_back_to_pca(self, mocker) -> None:
+        # With < n_components+1 points (n_components=2, so 2 points) the
+        # reducer downgrades UMAP to PCA but still lays out every node in 2D.
         reducer = DimensionalityReducer({})
-        out = reducer.reduce_dimensions(_embeddings(3), method="umap")
-        assert len(out) == 3
+        assert reducer.umap_config.n_components == 2
+        umap = mocker.spy(reducer, "_apply_umap")
+        pca = mocker.spy(reducer, "_apply_pca")
+        out = reducer.reduce_dimensions(_embeddings(2), method="umap")
+        assert len(out) == 2
         assert all(len(coord) == 2 for coord in out.values())
+        umap.assert_not_called()
+        pca.assert_called_once()

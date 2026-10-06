@@ -280,8 +280,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
         # chunk stream therefore reached fusion in arbitrary order with score 0,
         # and whatever the per-type quota sliced off was an arbitrary subset.
         # That is invisible while expansion is narrow and every chunk is
-        # on-topic, but it makes widening the expansion actively harmful: a
-        # measured 5x more chunks came with 4x LESS gold in the context.
+        # on-topic, but it makes widening the expansion actively harmful: more
+        # candidate chunks then means fewer relevant ones survive the quota.
         #
         # MS GraphRAG local ranks candidate text units by how many distinct
         # query-relevant entities reference them, with the entity's own rank as

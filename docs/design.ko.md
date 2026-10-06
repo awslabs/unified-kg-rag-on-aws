@@ -32,7 +32,7 @@
 - **두 방법론, 하나의 인프라**: GraphRAG(커뮤니티 요약)와 LightRAG(이중 레벨 키워드)가 동일한 인제스천·인덱싱·캐싱·다국어·하이브리드 검색 인프라를 공유하고, **검색 알고리즘 레이어만 교체**됩니다.
 - **일반화 우선**: 하드코딩·정규표현식 휴리스틱·과적합을 지양합니다. 의미 판단은 LLM 또는 권위 데이터에 위임하고, 토큰 카운팅은 Bedrock `count_tokens` API를 사용하며, 임계값/가중치는 설정 기반입니다.
 - **헥사고날 경계**: 도메인/알고리즘 코드는 추상 포트에 의존하고, 구체 AWS 어댑터는 그 뒤에 둡니다.
-- **레지스트리 기반 확장**: 검색 전략·평가자·렌더러는 데코레이터 레지스트리로 등록되어, 디스패치 코드 수정 없이 확장됩니다.
+- **레지스트리 기반 확장**: 검색 전략·렌더러는 데코레이터 레지스트리로 등록되어, 디스패치 코드 수정 없이 확장됩니다. 평가자는 `EvaluationManager._resolve_evaluator_class` 한 곳에서 `EvaluatorType`별 클래스로 매핑하므로, 새 평가자는 그곳에 분기를 하나 추가합니다.
 
 ---
 
@@ -70,8 +70,8 @@ unified_kg_rag/
 │  ├─ ingestion/        #   LLM/IO 결합: chunker, *_extractor, loader, parser,
 │  │                    #   translator, gleaner, community_detector
 │  ├─ renderers/        #   그래프 시각화 렌더러
-│  └─ evaluators/       #   langchain/ragas 평가자 (순수 graph_aware_evaluator는
-│                       #   evaluation/ 파사드에 co-locate)
+│  └─ evaluators/       #   langchain/ragas 평가자 (LLM을 쓰지 않는 graph_aware·
+│                       #   retrieval·answer_match 평가자는 evaluation/에 위치)
 ├─ application/         # 오케스트레이션 + 엔트리포인트
 │  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning
 │  ├─ ingestion/        #   DataIngestionPipeline + pipeline_stages
@@ -80,12 +80,14 @@ unified_kg_rag/
 │  └─ prompts/          #   PromptTuner (LLM 기반 코퍼스 프로파일링)
 ├─ shared/              # cross-cutting 커널 (config, logging, exceptions, metrics,
 │                       #   cache/pipeline manager, utils)
-├─ evaluation/          # 실제 로직 패키지: evaluation_manager / base / graph_aware
+├─ evaluation/          # 실제 로직 패키지: evaluation_manager / base / graph_aware /
+│                       #   retrieval / answer_match
 └─ visualization/       # 실제 로직 패키지: 렌더 루프 + embeddings/exporters/renderers
 ```
 
 > 레이아웃 주석: `evaluation/`·`visualization/`은 **실제 로직 패키지**입니다 —
-> `evaluation/`은 `evaluation_manager`·`graph_aware_evaluator`·`base`를,
+> `evaluation/`은 `evaluation_manager`·`base`와 LLM을 쓰지 않는
+> `graph_aware_evaluator`·`retrieval_evaluator`·`answer_match_evaluator`를,
 > `visualization/`은 렌더 루프 + `embeddings/`·`exporters/`·`renderers/`
 > 하위패키지를 보유합니다. 그 외에는 모두 실제 위치
 > (`application.retrieval.rag_chain`, `application.storage.indexing_manager`,
@@ -122,7 +124,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 ### 2.3 레지스트리
 
 - **검색 전략**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)`로 `SearchStrategy` enum에 클래스, 필요한 역할, 질의 입력을 등록.
-- **평가자**: `EvaluationManager._resolve_evaluator_class` — `EvaluatorType` → 평가자 클래스(lazy, 사용 시 import).
+- **평가자**: `EvaluationManager._resolve_evaluator_class` — `EvaluatorType`마다 명시적 분기로 평가자 클래스를 반환(lazy, 사용 시 import). 데코레이터 레지스트리가 아니므로 새 평가자는 enum 멤버와 분기를 추가합니다.
 - **렌더러**: `adapters/renderers/base.py` — `@register_renderer("name")`.
 
 이 패턴은 기존의 `ParserFactory._loader_configs`(선언적 파서 등록)와 동일한 철학입니다.
@@ -133,7 +135,8 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 > 렉시컬 검색)는 프레임워크의 본질적 구성이라 런타임 교체 대상이 아니고, 백엔드별
 > fan-out(엔티티를 양쪽 스토어에, 엣지보다 엔티티 먼저, 스토어 간 orphan-edge
 > 캐스케이드)은 임의 디스패치가 아니라 의도된 도메인 지식이기 때문입니다.
-> 따라서 새 검색 전략·평가자·렌더러는 레지스트리 등록만으로 추가되지만, 쓰기측
+> 따라서 새 검색 전략·렌더러는 레지스트리 등록만으로(평가자는
+> `_resolve_evaluator_class`에 분기 하나를 더해) 추가되지만, 쓰기측
 > 스토어 백엔드 교체는 `GraphIndexer`/`VectorIndexer` 포트를 구현해 주입하는
 > 방식입니다(`IndexingManager(vector_indexer=…, graph_indexer=…)` — 매니저 코드
 > 수정은 불필요). (읽기 경로는 `RetrieverRole`→builder 맵으로 이미 일반화됨.)
@@ -316,10 +319,12 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 
 ## 9. 평가 프레임워크
 
-`evaluation/` — `EvaluationManager`가 `_resolve_evaluator_class`(lazy 레지스트리)로 평가자를 디스패치합니다.
+`evaluation/` — `EvaluationManager`가 `_resolve_evaluator_class`(`EvaluatorType`별 lazy import 분기)로 평가자를 디스패치합니다.
 
 - **LangChain 평가자**: correctness / partial_correctness (LLM 기반 루브릭)
 - **RAGAS 평가자**: answer_correctness/relevancy, context_precision/recall, faithfulness
+- **검색 평가자** (`retrieval_evaluator.py`): 순위대로 보고된 출처를 데이터셋의 `reference_sources`와 비교해 `hit_at_k`, `recall_at_k`(k = `evaluation.retrieval_k`), `mrr`를 계산합니다. 파일 이름 stem(대소문자 무시) 또는 문서 id로 매칭합니다. 결정적·LLM 불필요이며, 참조나 출처 정보가 없는 질의는 건너뜁니다.
+- **답변 일치 평가자** (`answer_match_evaluator.py`): `answer`와 선택 항목 `metadata.answer_aliases`(참조 중 최댓값)에 대해 SQuAD 방식으로 정규화한 `exact_match`와 `token_f1`을 계산합니다. 결정적·LLM 불필요이며, 공백 기준 토큰이므로 띄어쓰기가 없는 문자에서는 token F1이 exact match와 같아집니다.
 - **그래프 인식 평가자** (`graph_aware_evaluator.py`): 정답의 `expected_entities`/`expected_relationships`가 생성 답변에 등장하는 비율(= coverage = recall)을 `ENTITY_COVERAGE`/`RELATIONSHIP_COVERAGE`로 계산. 결정적·LLM 불필요. precision/F1은 답변 내 엔티티를 열거해야 하므로(자유 텍스트에서 불가) 산출하지 않습니다 — recall의 복제로 신호를 과장하지 않기 위함. 라틴 문자는 단어 경계 기준 연속 토큰 매칭("AI"가 "airport" 안에서 매칭되지 않음), 공백이 없는 CJK는 부분 문자열 매칭으로 폴백. 매니저가 기대치를 `result.metadata`로 주입하므로 추상 시그니처 변경이 없습니다.
 
 CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
@@ -368,7 +373,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 ## 14. CI/CD와 보안
 
-- **CI** (`.github/workflows/`): `quality` 워크플로는 PR과 `main` 푸시에서 실행됩니다. ruff/black/isort/mypy와 커버리지 게이트를 포함한 pytest, 지원 최저 버전인 Python 3.10에서의 테스트, property·integration 스위트 단독 실행, 선택 파서 보안 검사, cdk-nag를 켠 `cdk synth`와 IaC 단언 테스트를 수행합니다. `security` 워크플로는 `main` 푸시 시 차단 없이 보고만 하는 ASH 스캔을 실행합니다.
+- **CI** (`.github/workflows/`): `quality` 워크플로는 PR과 `main` 푸시에서 실행됩니다. ruff/black/isort/mypy와 커버리지 게이트를 포함한 pytest(단위·property·integration 스위트를 함께 실행하는 `-m "not aws"` 한 번), 지원 최저 버전인 Python 3.10에서의 테스트, 선택 파서 보안 검사, cdk-nag를 켠 `cdk synth`와 IaC 단언 테스트를 수행합니다. `security` 워크플로는 `main` 푸시 시 차단 없이 보고만 하는 ASH 스캔을 실행합니다.
 - **Dependabot** (`.github/dependabot.yml`): `uv` 잠금 파일(`/`), IaC `pip` 요구사항(`/iac`), SHA로 고정한 GitHub Actions를 매주 갱신합니다. 호환성이 깨지는 것으로 확인된 버전은 `ignore` 항목에 이유와 함께 제외합니다.
 - **pre-commit** (`.pre-commit-config.yaml`): CI 게이트 미러링. `pre-commit install`.
 - **보안 하드닝**: 콘텐츠 해시는 SHA-256 전용(MD5 제거, CWE-327 해소). 의존성 스캔 CVE는 위 Dependabot PR로 대응합니다. 토큰은 환경/설정으로 주입(코드 하드코딩 없음).

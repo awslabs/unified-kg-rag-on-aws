@@ -279,8 +279,8 @@ class HybridScorer(MetricsMixin):
         # Plain RRF overwrites each item's score with a flat
         # weight/(k+rank) (~0.0164 at rank1 vs 0.0143 at rank10) — so WITHIN a stream
         # the gold item is indistinguishable from noise, and downstream token_manager
-        # (priority = score*multiplier) fills quota slots with the wrong item (the
-        # "Medavoy retrieved but dropped from context" bug). Upstream LightRAG keeps
+        # (priority = score*multiplier) fills quota slots with the wrong item, so a
+        # relevant item can be retrieved yet dropped from context. Upstream LightRAG keeps
         # the native order (entities by cosine, relations by degree). We preserve that
         # by BLENDING a per-stream min-max-normalized native score into the RRF score:
         # cross-stream fusion still comes from RRF rank; within-stream discrimination

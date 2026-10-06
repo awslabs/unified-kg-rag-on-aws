@@ -10,7 +10,11 @@ be exercised against a boto3 surface.
 
 from __future__ import annotations
 
+import os
+
+import nest_asyncio
 import pytest
+from hypothesis import settings
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.adapters.aws.bedrock import BedrockCrossRegionModelHelper
@@ -23,7 +27,112 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 
+# Hypothesis profiles, selected with HYPOTHESIS_PROFILE (default: "default").
+# "ci" removes the per-example deadline, whose wall-clock limit flakes on
+# shared runners, and derandomizes generation so a failure reproduces on
+# re-run; print_blob makes any failure replayable locally via @reproduce_failure.
+settings.register_profile("ci", deadline=None, derandomize=True, print_blob=True)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
+
+# The run-rag and run-eval CLI modules call nest_asyncio.apply() at import time.
+# That patches the event-loop class for the whole process, and its
+# run_until_complete skips the async-generator hooks, so in every later test a
+# loop's shutdown_asyncgens() can no longer close abandoned generators; they are
+# finalized by GC after their loop has closed and surface as
+# PytestUnraisableExceptionWarning in whichever test happens to be running.
+# Importing a CLI in a test must not change asyncio for the rest of the session.
+nest_asyncio.apply = lambda *args, **kwargs: None
+
 _PROFILE_PREFIXES = ("global", "us", "eu", "apac")
+
+# Ambient AWS settings that would make boto3 resolve the developer's real
+# credentials/profile (or fail with ProfileNotFound when it does not exist).
+_AWS_ENV_TO_CLEAR = (
+    "AWS_PROFILE",
+    "AWS_DEFAULT_PROFILE",
+    "AWS_SESSION_TOKEN",
+    "AWS_SECURITY_TOKEN",
+    "AWS_REGION",
+    "AWS_ROLE_ARN",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+    "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+    "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+)
+# ConfigLoader._apply_environment_overrides (unified_kg_rag/shared/config.py)
+# maps these onto the loaded Config (AWS_PROFILE/AWS_REGION are cleared above),
+# so a value exported in the developer's shell would silently change what the
+# tests exercise.
+_CONFIG_ENV_OVERRIDES = (
+    "LOG_LEVEL",
+    "LOG_FORMAT",
+    "LOG_TO_FILE",
+    "LOG_FILE_PATH",
+    "NEPTUNE_ENDPOINT",
+    "OPENSEARCH_ENDPOINT",
+    "OPENSEARCH_USERNAME",
+    "OPENSEARCH_PASSWORD",
+    "BEDROCK_REGION",
+    "BEDROCK_GUARDRAIL_IDENTIFIER",
+    "S3_BUCKET_NAME",
+    "GRAPHRAG_DOC_STATUS_TABLE",
+    "GRAPHRAG_DOC_STATUS_CREATE_TABLE",
+)
+_FAKE_AWS_ENV = {
+    "AWS_ACCESS_KEY_ID": "testing",
+    "AWS_SECRET_ACCESS_KEY": "testing",  # nosec B105 - placeholder, not a secret
+    "AWS_DEFAULT_REGION": "us-east-1",
+    "AWS_CONFIG_FILE": os.devnull,
+    "AWS_SHARED_CREDENTIALS_FILE": os.devnull,
+    "AWS_EC2_METADATA_DISABLED": "true",
+}
+
+
+@pytest.fixture(autouse=True)
+def _isolated_aws_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin every test to fake, local-only AWS credentials and config.
+
+    Without this the suite inherits the developer's shell: a non-existent
+    ``AWS_PROFILE`` makes boto3 raise ``ProfileNotFound`` in hundreds of tests,
+    and a valid one (or an instance role via IMDS) lets an accidentally
+    unmocked client reach a real account. Config files point at ``/dev/null``
+    and IMDS is disabled so no credential source other than the fake keys is
+    consulted. Tests that need a specific value set it with ``monkeypatch``.
+    """
+    for name in _AWS_ENV_TO_CLEAR + _CONFIG_ENV_OVERRIDES:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in _FAKE_AWS_ENV.items():
+        monkeypatch.setenv(name, value)
+
+
+class RealAWSCallBlocked(RuntimeError):
+    """Raised when a non-``aws`` test lets a botocore request reach the wire."""
+
+
+@pytest.fixture(autouse=True)
+def _block_real_aws_http(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail an unmocked botocore HTTP send immediately instead of dialling AWS.
+
+    botocore treats connection errors as retryable, so an unmocked client used
+    to cost ~20 s of backoff per test offline and silently succeeded (or was
+    denied) against a real account online. A plain ``RuntimeError`` subclass is
+    not retried, so the code under test sees one fast, deterministic failure.
+    ``moto`` intercepts requests before this transport layer and is unaffected;
+    tests marked ``aws`` keep the real transport.
+    """
+    if request.node.get_closest_marker("aws") is not None:
+        return
+    from botocore.httpsession import URLLib3Session
+
+    def _blocked_send(self: URLLib3Session, aws_request: object) -> object:
+        url = getattr(aws_request, "url", "<unknown>")
+        raise RealAWSCallBlocked(f"real AWS HTTP call blocked in tests: {url}")
+
+    monkeypatch.setattr(URLLib3Session, "send", _blocked_send)
+
+
 _OFFLINE_REGIONS = ("us-east-1", "us-west-2", "eu-west-1", "ap-northeast-2")
 
 
