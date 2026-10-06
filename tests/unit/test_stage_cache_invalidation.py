@@ -235,6 +235,22 @@ class TestFingerprintScope:
             "not_a_pipeline_stage"  # type: ignore[arg-type]
         ) == cache_keys._input_paths_through(PipelineStageType.INDEXING)
 
+    def test_tier_efforts_fold_into_the_fingerprint(self) -> None:
+        stage = PipelineStageType.DOCUMENT_PARSING
+
+        def fingerprint(bedrock: dict[str, str]) -> str:
+            config = Config.model_validate({"aws": {"bedrock": bedrock}})
+            return stage_input_fingerprint(config, stage)
+
+        baseline = fingerprint({})
+        # The legacy key and default_effort are the same input.
+        assert fingerprint({"effort": "medium"}) == fingerprint(
+            {"default_effort": "medium"}
+        )
+        assert fingerprint({"default_effort": "medium"}) != baseline
+        assert fingerprint({"fast_effort": "low"}) == baseline
+        assert fingerprint({"fast_effort": "medium"}) != baseline
+
     def test_key_is_the_attribute_plus_the_fingerprint(self) -> None:
         config = Config()
         expected = stage_input_fingerprint(config, PipelineStageType.DOCUMENT_LOADING)
