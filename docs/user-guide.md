@@ -200,7 +200,7 @@ the same values.
 | `aws.bedrock.transient_retry.max_attempts` | `5` | Attempts per call for transient Bedrock errors that botocore does not retry (such as HTTP 424), on embeddings and query-time calls. `1` disables the retry. |
 | `aws.neptune.endpoint` | `null` | **Required.** Neptune cluster endpoint. |
 | `aws.neptune.use_iam` | `true` | SigV4-sign Neptune requests. |
-| `aws.neptune.pool_size` | `4` | Gremlin connection pool size. Keep it at least `indexing.neptune.index_concurrency`. |
+| `aws.neptune.pool_size` | `4` | Gremlin connection pool size. The client raises it to `indexing.neptune.index_concurrency` when that is larger. |
 | `aws.opensearch.endpoint` | `null` | **Required.** OpenSearch domain endpoint. |
 | `aws.opensearch.use_iam` | `false` | `false` reads `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD` from the environment (§1 Authentication). |
 | `aws.opensearch.sigv4_service_name` | `"es"` | `es` for a managed domain, `aoss` for OpenSearch Serverless. A wrong value often shows up as zero search hits. |
@@ -440,7 +440,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.opensearch.vector_search.engine` | `"lucene"` | HNSW engine. `lucene` supports `cosinesimil` up to 1024 dimensions; see the template for `faiss`. |
 | `indexing.opensearch.index_settings.refresh_interval` | `"1s"` | Raise it (or `"-1"`) for faster bulk loads, then reset for live querying. |
 | `indexing.neptune.batch_size` | `100` | Items per Neptune write batch. |
-| `indexing.neptune.index_concurrency` | `1` | Concurrent write batches; raise `aws.neptune.pool_size` to match. |
+| `indexing.neptune.index_concurrency` | `1` | Concurrent write batches. The Gremlin connection pool grows to match if `aws.neptune.pool_size` is smaller. |
 | `indexing.neptune.max_attempts` | `4` | Attempts per Neptune write, including the first. Only throttling, `ConcurrentModificationException` and other retryable Neptune errors, connection loss and timeouts are retried, with jittered exponential backoff from `retry_delay_seconds` (`2`); other errors fail on the first attempt. `1` disables the retry. |
 | `indexing.neptune.max_hops` | `3` | Neighbour-expansion depth at retrieval time. |
 | `indexing.neptune.property_max_length` | `4000` | Character cap per Neptune property value. Keep it above the longest description that is not re-summarized (summarization triggers above 600 tokens, ~2,400 characters). Takes effect on re-ingestion. |
@@ -1256,8 +1256,8 @@ on).
 
 - **Large corpora:** raise `processing.max_concurrency` /
   `processing.chunk_concurrency` (LLM stages are I/O-bound). For graph writes,
-  raise `indexing.neptune.index_concurrency` *and* `aws.neptune.pool_size`
-  together. Enable `indexing.opensearch.persist_embedding_cache` + `--s3-sync`
+  raise `indexing.neptune.index_concurrency`; the Gremlin connection pool grows
+  with it. Enable `indexing.opensearch.persist_embedding_cache` + `--s3-sync`
   so re-runs and multi-phase jobs don't recompute.
 - **Multilingual:** set `processing.translation.source_language` /
   `target_language` (+ `additional_target_languages`) and add language analyzers

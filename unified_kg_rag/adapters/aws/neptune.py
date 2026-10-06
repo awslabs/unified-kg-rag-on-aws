@@ -114,10 +114,13 @@ class NeptuneClient:
 
         try:
             # pool_size bounds concurrent in-flight requests over the websocket.
-            # Sized to cover indexing.neptune.index_concurrency so concurrent
+            # Never below indexing.neptune.index_concurrency, so concurrent
             # write batches are multiplexed rather than serialized; max_workers
             # tracks it so result-handling threads are not the bottleneck.
-            pool_size = self.neptune_config.pool_size
+            pool_size = max(
+                self.neptune_config.pool_size,
+                self.config.indexing.neptune.index_concurrency,
+            )
             remote_connection = DriverRemoteConnection(
                 url=connection_url,
                 traversal_source="g",

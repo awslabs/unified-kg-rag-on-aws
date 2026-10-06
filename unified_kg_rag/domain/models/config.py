@@ -492,9 +492,9 @@ class NeptuneConfig(BaseModel):
         ge=1,
         description=(
             "Gremlin DriverRemoteConnection pool size (max concurrent in-flight "
-            "requests over the websocket). Set >= indexing.neptune."
-            "index_concurrency so concurrent write batches are not serialized on "
-            "a single connection."
+            "requests over the websocket). The client raises it to indexing."
+            "neptune.index_concurrency when that is larger, so concurrent write "
+            "batches are not serialized on fewer connections."
         ),
     )
 
@@ -1350,8 +1350,8 @@ class NeptuneIndexingConfig(BaseModel):
         description=(
             "Number of Neptune write batches to submit concurrently. 1 (default) "
             "preserves sequential indexing; >1 fans batches over a thread pool, "
-            "multiplexed across the Gremlin connection pool (size aws.neptune."
-            "pool_size to match). Each batch accumulates its own stats, merged "
+            "multiplexed across the Gremlin connection pool (sized to at least "
+            "this value). Each batch accumulates its own stats, merged "
             "on completion. NOTE (real-AWS finding): >1 can trigger Neptune "
             "ConcurrentModificationException when batches touch overlapping "
             "vertices/properties; the retry (exponential backoff) recovers but "

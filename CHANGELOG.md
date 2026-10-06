@@ -294,6 +294,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `ConcurrentModificationException` and the other errors Neptune documents as
   retryable, connection loss, timeouts). A malformed traversal or an access
   error used to be retried with backoff before it surfaced (#PR).
+- The Gremlin connection pool is sized to at least
+  `indexing.neptune.index_concurrency`. It used `aws.neptune.pool_size` alone,
+  so a higher write concurrency queued batches on too few connections (#PR).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on

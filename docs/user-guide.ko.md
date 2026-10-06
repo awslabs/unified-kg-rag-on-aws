@@ -198,7 +198,7 @@ ignored` WARNING 로그를 남긴 뒤 버려집니다. 파일을 고치거나 �
 | `aws.bedrock.transient_retry.max_attempts` | `5` | botocore가 재시도하지 않는 일시적 Bedrock 오류(HTTP 424 등)에 대한 호출당 시도 횟수입니다. 임베딩과 질의 시점 호출에 적용하며 `1`이면 재시도하지 않습니다. |
 | `aws.neptune.endpoint` | `null` | **필수.** Neptune 클러스터 엔드포인트입니다. |
 | `aws.neptune.use_iam` | `true` | Neptune 요청에 SigV4 서명을 붙입니다. |
-| `aws.neptune.pool_size` | `4` | Gremlin 연결 풀 크기입니다. `indexing.neptune.index_concurrency` 이상으로 두세요. |
+| `aws.neptune.pool_size` | `4` | Gremlin 연결 풀 크기입니다. `indexing.neptune.index_concurrency`가 더 크면 클라이언트가 그 값으로 늘립니다. |
 | `aws.opensearch.endpoint` | `null` | **필수.** OpenSearch 도메인 엔드포인트입니다. |
 | `aws.opensearch.use_iam` | `false` | `false`이면 환경 변수 `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD`를 씁니다(§1 인증). |
 | `aws.opensearch.sigv4_service_name` | `"es"` | 관리형 도메인은 `es`, OpenSearch Serverless는 `aoss`입니다. 값이 틀리면 검색 결과가 0건으로 나오는 경우가 많습니다. |
@@ -430,7 +430,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `indexing.opensearch.vector_search.engine` | `"lucene"` | HNSW 엔진입니다. `lucene`은 1024차원까지 `cosinesimil`을 지원합니다. `faiss`는 템플릿 주석을 참고하세요. |
 | `indexing.opensearch.index_settings.refresh_interval` | `"1s"` | 대량 적재 속도를 높이려면 늘리거나 `"-1"`로 두고, 실제 질의 전에 되돌립니다. |
 | `indexing.neptune.batch_size` | `100` | Neptune 쓰기 배치당 항목 수입니다. |
-| `indexing.neptune.index_concurrency` | `1` | 동시에 보내는 쓰기 배치 수입니다. 올리면 `aws.neptune.pool_size`도 맞춰 올립니다. |
+| `indexing.neptune.index_concurrency` | `1` | 동시에 보내는 쓰기 배치 수입니다. `aws.neptune.pool_size`가 이보다 작으면 Gremlin 연결 풀을 이 값까지 늘립니다. |
 | `indexing.neptune.max_attempts` | `4` | 첫 시도를 포함한 Neptune 쓰기당 시도 횟수입니다. 스로틀링, `ConcurrentModificationException` 등 재시도 가능한 Neptune 오류와 연결 끊김, 시간 초과만 `retry_delay_seconds`(`2`)에서 시작하는 지수 백오프(지터 포함)로 재시도하고, 나머지 오류는 첫 시도에서 바로 실패합니다. `1`이면 재시도하지 않습니다. |
 | `indexing.neptune.max_hops` | `3` | 검색 시점의 이웃 확장 깊이입니다. |
 | `indexing.neptune.property_max_length` | `4000` | Neptune 속성 값의 최대 문자 수입니다. 재요약되지 않는 가장 긴 설명보다 커야 합니다(요약은 600토큰, 영어 약 2,400자를 넘을 때만 실행). 재인제스트해야 반영됩니다. |
@@ -1222,8 +1222,8 @@ DynamoDB(증분 인덱싱이 켜진 경우).
 
 - **대규모 코퍼스:** `processing.max_concurrency` /
   `processing.chunk_concurrency`를 높이세요(LLM 스테이지는 I/O 바운드). 그래프
-  쓰기는 `indexing.neptune.index_concurrency`*와* `aws.neptune.pool_size`를
-  함께 높이세요. 재실행과 다단계 작업이 재계산하지 않도록
+  쓰기는 `indexing.neptune.index_concurrency`로 높이며, Gremlin 연결 풀도 이
+  값만큼 함께 늘어납니다. 재실행과 다단계 작업이 재계산하지 않도록
   `indexing.opensearch.persist_embedding_cache` + `--s3-sync`를 활성화하세요.
 - **다국어:** `processing.translation.source_language` / `target_language`
   (+ `additional_target_languages`)를 설정하고
