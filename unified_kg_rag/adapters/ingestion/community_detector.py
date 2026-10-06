@@ -281,10 +281,10 @@ class CommunityDetector(BaseProcessor):
             # own community so the partition covers the graph (modularity
             # rejects anything less).
             next_label = max(communities.keys()) + 1 if communities else 0
-            for node in graph.nodes():
-                if node not in partition_dict:
-                    communities[next_label] = {node}
-                    next_label += 1
+            missing = [node for node in graph.nodes() if node not in partition_dict]
+            for node in sorted(missing, key=str):
+                communities[next_label] = {node}
+                next_label += 1
         return dict(communities)
 
     def _find_optimal_resolution(self, graph: nx.Graph) -> float:
