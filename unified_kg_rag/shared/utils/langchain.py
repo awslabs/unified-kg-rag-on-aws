@@ -190,6 +190,7 @@ class BatchProcessor(BaseModel):
             self.chunk_concurrency = run_config.get(
                 "chunk_concurrency", self.chunk_concurrency
             )
+            self.max_retries = run_config.get("max_retries", self.max_retries)
 
         prepared_batch_func = self._create_batch_func(batch_func)
 
@@ -448,6 +449,7 @@ class BatchProcessor(BaseModel):
                 "max_concurrency", self.max_concurrency
             )
             self.batch_size = run_config.get("batch_size", self.batch_size)
+            self.max_retries = run_config.get("max_retries", self.max_retries)
 
         prepared_batch_func = self._create_async_batch_func(batch_func)
         retrying_sequential_func = self._create_retry_decorator(task_name)(

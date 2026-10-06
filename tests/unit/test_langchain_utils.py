@@ -431,6 +431,22 @@ class TestRetryFailedItemsOnly:
         assert fake.calls[7] == 3
         assert all(fake.calls[i] == 1 for i in range(1, 10) if i != 7)
 
+    def test_run_config_sets_the_retry_count(self) -> None:
+        # Ingestion stages pass config.processing as run_config; its
+        # max_retries used to be ignored in favour of the processor default.
+        fake = _CountingRunnable(fail_first={0: None})
+        bp = _fast_bp(batch_size=10, max_retries=4)
+        bp.execute_with_fallback(
+            items_to_process=list(range(3)),
+            prepare_inputs_func=lambda items: [{"v": i} for i in items],
+            batch_func=fake.runnable.batch,
+            sequential_func=fake.runnable.invoke,
+            task_name="t",
+            run_config={"max_retries": 1},
+            show_progress=False,
+        )
+        assert fake.calls[0] == 2  # batch attempt + one retry
+
     def test_order_preserved_across_concurrent_chunks(self) -> None:
         fake = _CountingRunnable(fail_first={2: 1, 9: 1, 13: 1})
         bp = BatchProcessor(
