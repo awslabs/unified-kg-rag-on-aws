@@ -238,7 +238,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `graph.community_detection.auto_resolution` now defaults to `false`, the
   behaviour actually in effect until now: with the sweep working, global
   search lost 3 of 20 answers on the E2E corpus. Cached community-detection
-  output is recomputed once (#PR).
+  output is recomputed once (#141).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on
