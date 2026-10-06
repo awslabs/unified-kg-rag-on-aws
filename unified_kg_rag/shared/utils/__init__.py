@@ -30,6 +30,7 @@ from .display import (
     display_stage_results,
 )
 from .document_converter import convert_langchain_to_document
+from .event_loop import configure_event_loop
 from .langchain import BatchProcessor, RobustXMLOutputParser
 
 # NOTE: `setup_chain` / `create_robust_xml_output_parser` are Bedrock-coupled and
@@ -43,6 +44,7 @@ __all__ = [
     "clean_display_name",
     "compute_hash",
     "console",
+    "configure_event_loop",
     "convert_langchain_to_document",
     "default_max_workers",
     "display_ascii_art",

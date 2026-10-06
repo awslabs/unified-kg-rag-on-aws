@@ -169,6 +169,10 @@ processing:
   chunk_concurrency: 4
   batch_size: 10
   max_retries: 5
+  # Threads for blocking query-path I/O (Bedrock calls LangChain runs in the
+  # event loop's default executor, Neptune, reranking). Python's default is
+  # min(32, CPUs + 4), six on a 2-vCPU task, which caps concurrent queries.
+  io_workers: 64
   ignore_errors: false
   deduplicate: false
   resolution_method: "minhash"

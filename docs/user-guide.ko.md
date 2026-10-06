@@ -345,6 +345,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 |---|---|---|
 | `processing.max_concurrency` | `20` | 배치 하나에서 동시에 보내는 LLM 호출 수입니다. Bedrock 스로틀링이 나면 낮추고, 할당량에 여유가 있으면 올립니다. |
 | `processing.chunk_concurrency` | `4` | 동시에 실행하는 미니 배치 수입니다. Bedrock 연결 풀은 `max_concurrency` × `chunk_concurrency`로 잡힙니다. |
+| `processing.io_workers` | `64` | CLI와 체인 동기 메서드에서 질의 경로의 블로킹 I/O(Bedrock 호출, Neptune 순회, 재순위)를 처리하는 스레드 수입니다. Python 기본값은 `min(32, CPU 수 + 4)`라서 vCPU 2개 작업에서는 6개입니다. 비동기 서버는 시작할 때 `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`(`unified_kg_rag.shared.utils`)를 호출합니다. |
 | `processing.ignore_errors` | `false` | LLM 단계가 실패한 항목을 건너뛰고 실행을 계속합니다. |
 | `processing.deduplicate` | `false` | 추출 전에 중복 문서를 제거합니다. |
 | `processing.resolution_method` | `"minhash"` | 엔터티 해소 방식입니다. `minhash` 또는 `sequence_matcher`입니다. |

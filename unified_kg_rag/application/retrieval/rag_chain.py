@@ -83,7 +83,7 @@ from unified_kg_rag.domain.retrieval.strategy_registry import (
 )
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import InvalidFilterError, get_logger
-from unified_kg_rag.shared.utils import strip_embedding_fields
+from unified_kg_rag.shared.utils import configure_event_loop, strip_embedding_fields
 
 logger = get_logger(__name__)
 
@@ -256,7 +256,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # The sync entry points (invoke/batch/stream) run on this one
         # long-lived loop instead of a fresh loop per call, so their
         # loop-bound retrievers are built once and reused.
-        self._loop_runner = _LoopRunner()
+        self._loop_runner = _LoopRunner(self.config.processing.io_workers)
         weakref.finalize(self, self._loop_runner.stop)
         self.chain = self._build_chain()
 
@@ -1330,7 +1330,8 @@ class _LoopRunner:
     its own in the calling thread.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, io_workers: int | None = None) -> None:
+        self._io_workers = io_workers
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
@@ -1339,6 +1340,8 @@ class _LoopRunner:
         with self._lock:
             if self._loop is None:
                 loop = asyncio.new_event_loop()
+                if self._io_workers is not None:
+                    configure_event_loop(loop, self._io_workers)
                 thread = threading.Thread(
                     target=loop.run_forever, name="graphrag-chain-loop", daemon=True
                 )

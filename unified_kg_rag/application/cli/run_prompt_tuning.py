@@ -10,7 +10,6 @@ fragment the user reviews and merges into their config.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import sys
 from pathlib import Path
 
@@ -20,6 +19,7 @@ from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.application.prompts.tuner import PromptTuner
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import get_config, get_logger, setup_logging
+from unified_kg_rag.shared.utils import event_loop
 
 logger = get_logger(__name__)
 
@@ -97,7 +97,9 @@ def main() -> int:
             return 1
 
         tuner = PromptTuner(config)
-        result = asyncio.run(tuner.tune(texts))
+        result = event_loop.run(
+            tuner.tune(texts), io_workers=config.processing.io_workers
+        )
 
         args.output.write_text(
             yaml.safe_dump(result, sort_keys=False, allow_unicode=True),
