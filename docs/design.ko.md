@@ -100,7 +100,7 @@ unified_kg_rag/
 | `GraphIndexer` (쓰기측) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py` | full + delta(`upsert_*`/`delete_by_id`) 단일 계약 |
 | `VectorIndexer` (쓰기측) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` | 동일 |
 | `BaseGraphRAGRetriever` (읽기측) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch}_retriever.py` | 검색 어댑터 |
-| LLM/Embedding/Rerank 팩토리 | `adapters/aws/bedrock.py` | Bedrock 구현 | `ModelFactoryPort` conform; 임베딩/리랭크 생성 지점에 주입(기본 Bedrock) |
+| LLM/Embedding/Rerank 팩토리, 토큰 카운터 | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`) | `adapters/aws/bedrock.py`, `adapters/aws/token_counter.py` | 오케스트레이터마다 한 번 만드는 `Providers` 묶음(`adapters/providers.py`)에 담아 모든 구성 요소에 전달(기본 Bedrock) |
 
 > 설계 노트: 순수 포트(`DocStatusPort`, 쓰기측 indexer ABC)는 `ports/`에 모읍니다. 읽기측 추상 베이스(`BaseGraphRAGRetriever`/`BaseSearchStrategy`)는 `__init__`에서 인프라(HybridScorer/TokenManager)를 생성하는 "어댑터 베이스"라 `adapters/retrieval/base.py`에 두고 `ports/__init__`에서 발견용으로 re-export합니다(중복 Protocol 정의를 두지 않음).
 
@@ -300,9 +300,10 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 
 각 리트리버 빌드는 Neptune 웹소켓 + 스레드 풀, OpenSearch (a)sync HTTP 풀을 엽니다. 이 자원들은 명시적으로 닫지 않으면 GC까지 누수됩니다. 그래서 전 계층이 best-effort `close()`/`aclose()`를 노출합니다(절대 raise하지 않음):
 
-- **OpenSearchClient**: `close()`/`aclose()` + sync/async 컨텍스트 매니저(NeptuneClient 미러링). 이벤트 루프가 바뀌면 이전 `AsyncOpenSearch`를 즉시 폐기(best-effort connector close)해 루프당 aiohttp 풀이 누수되지 않게 합니다. `aclose()`는 transport close를 await해 "Unclosed client session" 경고를 방지.
+- **OpenSearchClient**: `close()`/`aclose()` + sync/async 컨텍스트 매니저(NeptuneClient 미러링). 이벤트 루프가 바뀌면 이전 `AsyncOpenSearch`를 닫습니다. 원래 루프가 돌고 있으면 그 루프에서 await하고, 아니면 aiohttp connector의 close 코루틴을 루프 없이 끝까지 실행해 루프당 aiohttp 풀이 누수되지 않게 합니다. `aclose()`는 transport close를 await해 "Unclosed client session" 경고를 방지.
 - **NeptuneClient**: Gremlin 커넥션 풀 종료.
 - **체인 배선**: 리트리버/인덱서 → `IndexingManager.close()` / `GraphRAGChain.close()`·`aclose()`(캐시된 리트리버 순회)로 위임. `run-rag` CLI는 `finally`에서 `await rag_chain.aclose()`, `run-ingestion` CLI는 `finally`에서 `pipeline.close()`를 호출해 프로세스 종료 시 소켓을 해제합니다.
+- **이벤트 루프**: `GraphRAGChain`은 리트리버와 검색 전략 인스턴스를 이벤트 루프별로 캐시하며, 루프는 `id()`가 아니라 객체 참조로 추적합니다. 동기 진입점(`invoke`, `batch`, `stream`)은 체인이 소유한 루프 스레드 하나에서 실행됩니다. 이 스레드는 처음 사용할 때 시작되고 `close()`/`aclose()`에서 멈추므로, 동기 호출을 반복해도 루프에 묶인 클라이언트 한 벌을 재사용하고 이미 루프가 도는 스레드에서도 호출할 수 있습니다. 루프가 바뀌면 밀려난 리트리버를 닫으며, 원래 루프가 아직 돌고 있으면 그 루프에서 await합니다. 블로킹 백엔드 호출은 루프 스레드 밖에서 실행합니다. Neptune 연결·종료와 융합·리랭크 단계는 `asyncio.to_thread`로 실행하고, 리랭크 `top_n`은 공유 모델이 아닌 호출별 복사본에 적용합니다.
 
 ### 8.7 다국어 처리
 
@@ -393,7 +394,8 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 | 포트 | 계약 | 기본 어댑터 | 주입 방법 |
 |---|---|---|---|
-| `LLMFactoryPort` / `EmbeddingFactoryPort` (`ports/model_factory.py`, `Protocol`) | LangChain 호환 모델을 반환하는 `get_model()` / `get_model_info()` | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` | `GraphRAGChain(model_factory=...)`; `OpenSearchIndexer(embedding_factory=...)`; `OpenSearchRetriever(embedding_factory=...)` |
+| `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | LangChain 호환 모델을 반환하는 `get_model()` / `get_model_info()` | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory` | `Providers` 묶음(아래 참고): `GraphRAGChain(providers=...)`, `DataIngestionPipeline(..., providers=...)`, `EvaluationManager(..., providers=...)`. `GraphRAGChain(model_factory=...)`는 LLM만 담은 묶음의 축약형 |
+| `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` | `Providers(token_counter_factory=...)` |
 | `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` | `IndexingManager(vector_indexer=..., graph_indexer=...)` |
 | 리트리버(role-keyed builder) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
 | `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `list_all` / `diff` | `DynamoDBDocStatusStore` | 파이프라인이 스토어를 받음; 구조적으로 적합하면 됨 |
@@ -410,6 +412,36 @@ class OllamaModelFactory:                 # 구조적으로 LLMFactoryPort
 
 chain = GraphRAGChain(config=cfg, model_factory=OllamaModelFactory())
 ```
+
+**묶음 하나가 모든 구성 요소에 전달됩니다.** `Providers`(`adapters/providers.py`)는
+boto3 세션과 LLM·임베딩·리랭크·토큰 카운터 제공자를 담는 단순한 값 객체이며, 프레임워크의
+composition root입니다. 오케스트레이터마다 하나를 만들거나 주입받아 자신이 생성하는 구성
+요소에 명시적으로 넘기므로, 주입한 제공자가 다음 구성 요소 모두에 적용됩니다.
+
+- `GraphRAGChain`: 체인 자체 프롬프트, 모든 검색 전략(global map/reduce와 DRIFT 체인
+  포함), 하이브리드 스코어러의 리랭커, 두 토큰 매니저, 대화 메모리, 기본 OpenSearch
+  리트리버의 임베딩
+- `DataIngestionPipeline`: 청커, 번역기, 그래프·클레임 추출, gleaning, 설명 요약,
+  커뮤니티 리포트, 기본 OpenSearch 인덱서의 임베딩, 시각화 임베더
+- `EvaluationManager`: LangChain·RAGAS 평가기(LLM, 임베딩, 토큰 카운터). 기본값으로
+  체인의 묶음을 재사용
+
+```python
+providers = Providers(
+    cfg,
+    llm_factory=OllamaModelFactory(),
+    embedding_factory=MyEmbeddingFactory(),
+    token_counter_factory=lambda model_id, **_: MyTokenCounter(model_id),
+)
+chain = GraphRAGChain(config=cfg, providers=providers)
+pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
+```
+
+지정하지 않은 제공자는 처음 사용할 때 Bedrock 기본값으로 묶음당 한 번만 만들어집니다.
+그래서 체인은 Bedrock 클라이언트를 구성 요소나 쿼리마다가 아니라 한 번만 생성합니다(검색
+전략 인스턴스도 이벤트 루프별로 재사용). 묶음 없이 직접 생성한 구성 요소는 기본 묶음을
+스스로 만들므로 기존 생성자 호출은 그대로 동작합니다. DI 컨테이너는 의도적으로 두지 않으며,
+묶음은 프레임워크가 실제로 쓰는 제공자만 다룹니다.
 
 > **알 수 없는 kwargs는 받아서 무시합니다.** 호출 측은 `get_model(model_id, **kwargs)`로
 > 프레임워크 전용 키워드 인자를 넘깁니다. 예를 들어

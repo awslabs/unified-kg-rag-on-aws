@@ -53,6 +53,21 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   drop `.value`; `LanguageModelId` members remain valid inputs. Claude Haiku,
   Sonnet and Opus 4.5 now fail fast when no inference profile resolves, like
   the other profile-only models.
+- One `Providers` bundle (`unified_kg_rag.adapters.providers`) carries the
+  boto3 session and the LLM, embedding, rerank and token-counter providers.
+  `GraphRAGChain`, `DataIngestionPipeline` and `EvaluationManager` build it
+  once (or accept `providers=`) and pass it to every component they construct,
+  so an injected provider now reaches the search strategies, reranking, token
+  counting, conversation memory, every ingestion LLM stage, the indexer
+  embeddings and the evaluation judges; `GraphRAGChain(model_factory=...)`
+  remains as shorthand. Components constructed directly still build Bedrock
+  defaults.
+- `GraphRAGChain` reuses search-strategy instances per event loop instead of
+  building one (with its own boto3 clients and LLM chains) per query.
+- Each `GraphRAGChain` owns its conversation memory, built from the chain's
+  config and providers. Conversations are no longer shared between chain
+  instances through the process-wide `get_memory_manager()`, which remains
+  available for direct use.
 
 Retrieval and indexing defaults changed for latency, cost, and upstream parity.
 Each previous behaviour stays available through the setting in parentheses.
@@ -78,6 +93,24 @@ Each previous behaviour stays available through the setting in parentheses.
   `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).
 
 ### Fixed
+- `GraphRAGChain.invoke`/`batch`/`stream` run on one chain-owned event loop.
+  `invoke` used `asyncio.run` per call, so `batch` built a new retriever set
+  per item and never closed the old ones, and `invoke` raised inside a running
+  loop. Retrievers evicted on a loop change are now closed, and the cache no
+  longer trusts a reused `id(loop)`.
+- Reranking no longer narrows `top_n` on the shared rerank model (a race
+  between concurrent queries), and fusion + rerank run off the event-loop
+  thread instead of blocking other queries.
+- Neptune retrieval opens and closes its connection off the event-loop thread;
+  the first graph query failed under plain asyncio ("Cannot run the event loop
+  while another loop is running") unless `nest_asyncio` was applied.
+- A discarded `AsyncOpenSearch` client is actually closed: aiohttp's
+  `TCPConnector.close()` coroutine was called without being awaited, leaving
+  "Unclosed client session" warnings.
+- Conversation memory follows the chain's `--config-path` config instead of
+  the global `get_config()`, shares one entity extractor across conversations,
+  and reuses the query step's entity extraction instead of a second LLM call
+  per user turn.
 - Prompt caching now takes effect on the Converse API, which every Claude
   4.5+/5.x inference profile uses. The system prompt carried an Anthropic
   `cache_control` key that langchain-aws drops when it builds a Converse
