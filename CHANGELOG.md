@@ -194,7 +194,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 ### Removed
 - `indexing.neptune.min_entity_importance`: it thresholded an `importance`
   property no vertex stores; the key is now ignored with an unknown-key
-  warning (#PR).
+  warning (#155).
 - The unused `RetrieverType` enum and the latency-optimized inference path
   (`supports_performance_optimization` in model capability records), which no
   caller enabled (#147).
@@ -210,7 +210,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   returned nothing: it required and sorted by an `importance` property that
   entity vertices never store. It now orders entities by `rank` and
   communities by `size`, with no threshold. Strategies seed by id, so their
-  results are unchanged (#PR).
+  results are unchanged (#155).
 - Prompt caching works on Converse: system prompts end with a native
   `cachePoint` once they reach the model's minimum cache size (#127).
 - Requests cap output at `aws.bedrock.default_max_output_tokens` (16,384, with
