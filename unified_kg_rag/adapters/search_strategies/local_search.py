@@ -318,6 +318,13 @@ class LocalSearchStrategy(BaseSearchStrategy):
         relationships = await self._fetch_incident_relationships(
             query, [eid for eid in entity_ids if eid], bridge_first=True
         )
+        # Fusion keeps at most the relationship quota anyway, and every extra
+        # candidate competes in the pre-quota diversity cut (sized to the sum of
+        # the quotas) with the text units the answer usually lives in. Offer
+        # only as many edges as the quota can seat, best (in-network) first.
+        relationships = relationships[
+            : self._per_type_quota(query.top_k)[SectionType.RELATIONSHIP.value]
+        ]
         if relationships:
             logger.debug(
                 "Bridge expansion: %s entities -> %s incident relationships",

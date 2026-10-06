@@ -174,3 +174,17 @@ async def test_bridge_section_off_by_flag_or_missing_index(
         for q in doc.calls
         if q.filters and ({"source_id", "target_id"} & set(q.filters))
     ]
+
+
+async def test_bridge_stream_is_capped_at_the_relationship_quota(
+    config: Config,
+) -> None:
+    config.indexing.opensearch.build_relationship_vector_index = True
+    config.search.local_search.type_quota.relationship_multiplier = 0.1
+    config.search.local_search.type_quota.relationship_floor = 2
+    strategy, _, captured = _make_strategy(config)
+
+    await strategy.asearch(SearchQuery(query="q", entity_focus=["Vendor"], top_k=5))
+
+    # In-network edge first, then the best out-of-network one.
+    assert [r.source for r in captured["bridge_relationships"]] == ["r-bridge", "r-out"]
