@@ -7,7 +7,7 @@ These exercise the pure orchestration / parsing surface of
 no boto3). The wall-clock timeout / chunk-ordering / concurrency cases already
 live in ``test_batch_processor_timeout.py``; this module covers the
 complementary branches: the batch-success happy path, run_config overrides,
-empty input, the sequential ``{}`` filler on per-item failure, the retry
+empty input, the ``BATCH_ITEM_FAILED`` filler on per-item failure, the retry
 decorator, the async ``aexecute_with_fallback`` path, and the multi-stage
 ``RobustXMLOutputParser`` recovery ladder.
 """
@@ -24,6 +24,7 @@ from langchain_core.runnables import RunnableLambda
 
 import unified_kg_rag.shared.utils.langchain as langchain_module
 from unified_kg_rag.shared.utils.langchain import (
+    BATCH_ITEM_FAILED,
     BatchProcessor,
     ProgressLogger,
     RobustXMLOutputParser,
@@ -143,9 +144,9 @@ class TestExecuteWithFallback:
         )
         assert out == []
 
-    def test_sequential_fallback_fills_empty_dict_on_item_failure(self) -> None:
+    def test_sequential_fallback_marks_item_failure_in_place(self) -> None:
         # Batch fails -> sequential path; one item raises and is back-filled with
-        # {} so positional zip alignment downstream is preserved.
+        # BATCH_ITEM_FAILED so positional zip alignment downstream is preserved.
         bp = BatchProcessor(
             batch_size=10, chunk_concurrency=1, call_timeout_seconds=0, **_NO_BACKOFF
         )
@@ -166,8 +167,8 @@ class TestExecuteWithFallback:
             task_name="t",
             show_progress=False,
         )
-        # item 2 failed all retries -> back-filled with {}.
-        assert out == [{"echo": 1}, {}, {"echo": 3}]
+        # item 2 failed all retries -> back-filled with the failure marker.
+        assert out == [{"echo": 1}, BATCH_ITEM_FAILED, {"echo": 3}]
 
     def test_concurrent_chunks_use_distinct_threads(self) -> None:
         # With chunk_concurrency>1 and >1 chunk, process_chunk runs on a pool.
@@ -308,9 +309,31 @@ class TestAExecuteWithFallback:
         assert out == [{"echo": 1}, {"echo": 2}, {"echo": 3}]
         assert bp.max_concurrency == 4
 
+    async def test_empty_results_are_not_failures(self) -> None:
+        # A real empty output ({} / None) stays distinguishable from a failure.
+        bp = BatchProcessor(batch_size=10, max_concurrency=2, **_NO_BACKOFF)
+
+        async def batch(
+            inputs, config=None, return_exceptions=False
+        ):  # noqa: ANN001, ARG001
+            raise RuntimeError("async batch boom")
+
+        async def sequential(item):  # noqa: ANN001
+            return {} if item["v"] == 1 else None
+
+        out = await bp.aexecute_with_fallback(
+            items_to_process=[1, 2],
+            prepare_inputs_func=lambda items: [{"v": i} for i in items],
+            batch_func=batch,
+            sequential_func=sequential,
+            task_name="t",
+            show_progress=False,
+        )
+        assert out == [{}, None]
+
     async def test_async_batch_failure_falls_back_concurrently(self) -> None:
         # Batch raises -> concurrent sequential fallback; a failing item is kept
-        # as an empty-dict sentinel (NOT dropped) so the result list stays
+        # as BATCH_ITEM_FAILED (NOT dropped) so the result list stays
         # positionally aligned with the inputs — callers zip it back with
         # strict=True and a dropped item would abort the whole run.
         bp = BatchProcessor(batch_size=10, max_concurrency=2, **_NO_BACKOFF)
@@ -333,8 +356,8 @@ class TestAExecuteWithFallback:
             task_name="t",
             show_progress=False,
         )
-        # Position preserved: the failing item is {} so len(out) == len(inputs).
-        assert out == [{"echo": 1}, {}, {"echo": 3}]
+        # Position preserved: the failing item is marked, not dropped.
+        assert out == [{"echo": 1}, BATCH_ITEM_FAILED, {"echo": 3}]
         assert len(out) == 3
 
     async def test_async_empty_prepared_chunk_skipped(self) -> None:
@@ -424,8 +447,8 @@ class TestRetryFailedItemsOnly:
             show_progress=False,
         )
         expected: list[Any] = [{"echo": i} for i in range(10)]
-        expected[0] = {}
-        expected[7] = {}
+        expected[0] = BATCH_ITEM_FAILED
+        expected[7] = BATCH_ITEM_FAILED
         assert out == expected
         assert fake.calls[0] == 3  # batch attempt + max_attempts
         assert fake.calls[7] == 3
@@ -479,7 +502,7 @@ class TestRetryFailedItemsOnly:
             task_name="t",
             show_progress=False,
         )
-        assert out == [{}, {}, {}, {}]
+        assert out == [BATCH_ITEM_FAILED] * 4
         assert all(fake.calls[i] == 3 for i in range(4))
 
     def test_whole_batch_exception_still_reruns_every_item(self) -> None:
@@ -550,7 +573,7 @@ class TestRetryFailedItemsOnly:
             task_name="t",
             show_progress=False,
         )
-        assert out == [{}, {}, {}]
+        assert out == [BATCH_ITEM_FAILED] * 3
         assert all(fake.calls[i] == 3 for i in range(3))
 
 

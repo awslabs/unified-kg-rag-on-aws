@@ -38,6 +38,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.evaluation.evaluation_manager import GraphAwareEvaluator
 from unified_kg_rag.shared import EvaluationException
+from unified_kg_rag.shared.utils import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
 
@@ -407,6 +408,10 @@ class TestExtractFromResult:
         manager = _graph_aware_manager(config)
         assert manager._extract_from_result(42, "metadata", {}) == {}
 
+    def test_failed_item_yields_default(self, config: Config) -> None:
+        manager = _graph_aware_manager(config)
+        assert manager._extract_from_result(BATCH_ITEM_FAILED, "answer", "") == ""
+
 
 class TestLeanContextStrings:
     def test_desired_fields_extracted(self, config: Config) -> None:
@@ -549,8 +554,11 @@ class TestErroredQueries:
             "skipped": 1,
         }
 
-    def test_empty_sentinel_is_an_error(self) -> None:
-        assert EvaluationManager._detect_generation_error({}, {}) is not None
+    def test_failed_item_is_an_error(self) -> None:
+        assert (
+            EvaluationManager._detect_generation_error(BATCH_ITEM_FAILED, {})
+            is not None
+        )
         assert EvaluationManager._detect_generation_error(None, {}) is not None
         assert EvaluationManager._detect_generation_error({"answer": "a"}, {}) is None
 

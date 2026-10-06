@@ -32,6 +32,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.prompts import GraphRefinementPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
+    BATCH_ITEM_FAILED,
     BatchProcessor,
     clean_display_name,
     default_max_workers,
@@ -532,10 +533,9 @@ class GraphGleaner(BaseProcessor):
         # This loop is serial, so a correction may mutate an entity or
         # relationship carried by the round in place without racing another chunk.
         for item, result_data in zip(prepared_units, results, strict=True):
-            if not result_data:
-                # execute_with_fallback yields {} for an item that failed
-                # every retry.
+            if result_data is BATCH_ITEM_FAILED:
                 self._failed_units += 1
+                continue
             new_entities, new_relationships, quality_scores = (
                 self._parse_refinement_output(
                     result_data.get("refinement_plan", {}),

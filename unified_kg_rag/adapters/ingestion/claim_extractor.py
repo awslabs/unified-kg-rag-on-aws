@@ -27,6 +27,7 @@ from unified_kg_rag.domain.models import Claim, Config, Entity, ModelPurpose, Te
 from unified_kg_rag.domain.prompts import ClaimExtractionPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
+    BATCH_ITEM_FAILED,
     BatchProcessor,
     default_max_workers,
     ensure_list,
@@ -274,7 +275,7 @@ class ClaimExtractor(BaseProcessor):
             )
 
         for text_unit, result in zip(text_units, extraction_results, strict=False):
-            if result:
+            if result and result is not BATCH_ITEM_FAILED:
                 try:
                     claims = self._parse_extraction_result(result, text_unit)
                     all_claims.extend(claims)

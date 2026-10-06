@@ -34,7 +34,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
 )
 from unified_kg_rag.shared import EvaluationException, get_logger
-from unified_kg_rag.shared.utils import BatchProcessor
+from unified_kg_rag.shared.utils import BATCH_ITEM_FAILED, BatchProcessor
 
 from .answer_match_evaluator import AnswerMatchEvaluator
 from .base import FAILED_METRICS_KEY, SKIPPED_METRICS_KEY, BaseEvaluator
@@ -469,11 +469,11 @@ class EvaluationManager:
 
         Two failure shapes reach here without raising: the RAG chain's
         ignore_errors fallback (answer=DEFAULT_ERROR_MESSAGE, metadata
-        ``{"error": True}``) and the batch processor's per-item sentinel
-        (``None`` / ``{}``) for an item that failed even sequentially. Neither
-        is a real answer, so neither may be scored.
+        ``{"error": True}``) and ``BATCH_ITEM_FAILED`` (or ``None``) for an
+        item that failed even sequentially. Neither is a real answer, so
+        neither may be scored.
         """
-        if raw_result is None or (isinstance(raw_result, dict) and not raw_result):
+        if raw_result is None or raw_result is BATCH_ITEM_FAILED:
             return "answer generation returned no result"
         if not (isinstance(rag_metadata, dict) and rag_metadata.get("error")):
             return None
@@ -616,6 +616,8 @@ class EvaluationManager:
     def _extract_from_result(
         self, raw_result: Any, key: str, default: Any = None
     ) -> Any:
+        if raw_result is BATCH_ITEM_FAILED:
+            return default
         if isinstance(raw_result, RAGOutput):
             if key == "sources" and hasattr(raw_result, key):
                 sources_list = getattr(raw_result, key, [])

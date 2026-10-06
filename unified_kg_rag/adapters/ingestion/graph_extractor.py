@@ -23,8 +23,9 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.domain.prompts import GraphExtractionPrompt
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import DataProcessingError, get_logger
 from unified_kg_rag.shared.utils import (
+    BATCH_ITEM_FAILED,
     BatchProcessor,
     ensure_list,
     entity_key,
@@ -264,24 +265,24 @@ class GraphExtractor(BaseProcessor):
         all_relationships = []
 
         for text_unit, result in zip(text_units, extraction_results, strict=True):
-            if result:
-                try:
-                    entities, relationships = self._parse_extraction_result(
-                        result, text_unit
-                    )
-                    all_entities.extend(entities)
-                    all_relationships.extend(relationships)
-                    self.stats.num_successful_extractions += 1
-                except Exception as e:
-                    self.stats.num_failed_extractions += 1
-                    logger.error(
-                        "Failed to parse extraction result for text unit '%s': %s",
-                        text_unit.id,
-                        str(e),
-                    )
-            else:
+            if result is BATCH_ITEM_FAILED:
                 self.stats.num_failed_extractions += 1
                 logger.warning("No extraction result for text unit '%s'", text_unit.id)
+                continue
+            try:
+                entities, relationships = self._parse_extraction_result(
+                    result, text_unit
+                )
+                all_entities.extend(entities)
+                all_relationships.extend(relationships)
+                self.stats.num_successful_extractions += 1
+            except Exception as e:
+                self.stats.num_failed_extractions += 1
+                logger.error(
+                    "Failed to parse extraction result for text unit '%s': %s",
+                    text_unit.id,
+                    str(e),
+                )
 
         original_entities_count = len(all_entities)
         original_relationships_count = len(all_relationships)
@@ -330,20 +331,30 @@ class GraphExtractor(BaseProcessor):
         result: dict[str, Any],
         text_unit: TextUnit,
     ) -> tuple[list[Entity], list[Relationship]]:
+        """Parse one chain output; raise ``DataProcessingError`` if malformed.
+
+        The output must carry an ``entities`` section. ``relationships`` may be
+        absent: the XML parser drops an empty section, so a unit whose entities
+        are unrelated has none.
+        """
         entities: list[Entity] = []
         relationships: list[Relationship] = []
 
-        if not isinstance(result, dict) or (
-            "entities" not in result or "relationships" not in result
-        ):
-            logger.warning(
-                "Invalid result type for text unit '%s': '%s'",
-                text_unit.id,
-                type(result),
+        if not isinstance(result, dict):
+            raise DataProcessingError(
+                f"extraction output is {type(result).__name__}, not a mapping"
             )
-            return entities, relationships
+        raw_entities = result.get("entities")
+        raw_relationships = result.get("relationships", {})
+        if not isinstance(raw_entities, dict | list) or not isinstance(
+            raw_relationships, dict | list
+        ):
+            raise DataProcessingError(
+                "extraction output lacks well-formed entities/relationships "
+                f"sections (keys: {sorted(result)})"
+            )
 
-        entities_data = ensure_list(result.get("entities"), inner_key="entity")
+        entities_data = ensure_list(raw_entities, inner_key="entity")
         for entity_data in entities_data:
             if entity := self.parse_entity_data(entity_data, text_unit):
                 entities.append(entity)
@@ -351,9 +362,7 @@ class GraphExtractor(BaseProcessor):
         entities, dropped_keys = self._apply_entity_grounding(entities, text_unit)
 
         entity_name_to_id = self.build_entity_key_index(entities)
-        relationships_data = ensure_list(
-            result.get("relationships"), inner_key="relationship"
-        )
+        relationships_data = ensure_list(raw_relationships, inner_key="relationship")
         for rel_data in relationships_data:
             if relationship := self.parse_relationship_data(
                 rel_data, text_unit, entity_name_to_id

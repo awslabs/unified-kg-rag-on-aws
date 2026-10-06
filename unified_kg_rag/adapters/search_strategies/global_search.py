@@ -563,7 +563,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         unrated: list[RetrievalResult] = []
         for i, batch in enumerate(report_batches):
             raw = raw_outputs[i] if i < len(raw_outputs) else None
-            # Sequential fallback inserts {} for a failed item.
+            # A failed item is BATCH_ITEM_FAILED, not a string.
             batch_points = (
                 self._parse_map_payload(raw) if isinstance(raw, str) and raw else None
             )

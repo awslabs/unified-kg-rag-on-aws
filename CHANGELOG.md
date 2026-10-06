@@ -297,6 +297,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - The Gremlin connection pool is sized to at least
   `indexing.neptune.index_concurrency`. It used `aws.neptune.pool_size` alone,
   so a higher write concurrency queued batches on too few connections (#151).
+- The batch processor marks an item that failed every attempt with
+  `BATCH_ITEM_FAILED` instead of `{}`, so stages no longer confuse a failure
+  with an empty LLM result. Graph extraction output without a well-formed
+  `entities` section counts toward `total_extraction_failures` instead of
+  reading as an empty success, and an output whose empty `relationships`
+  section was dropped by the XML parser keeps its entities (#152).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on
