@@ -16,8 +16,19 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in ("GRAPHRAG_DOC_STATUS_TABLE", "GRAPHRAG_DOC_STATUS_CREATE_TABLE"):
+    for var in (
+        "GRAPHRAG_DOC_STATUS_TABLE",
+        "GRAPHRAG_DOC_STATUS_CREATE_TABLE",
+        "GRAPHRAG_SOURCE_SCOPE",
+    ):
         monkeypatch.delenv(var, raising=False)
+
+
+def test_source_scope_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The container entrypoint exports the S3 URI the corpus was synced from.
+    monkeypatch.setenv("GRAPHRAG_SOURCE_SCOPE", "s3://example-bucket/corpus/")
+    cfg = ConfigLoader().load_config()
+    assert cfg.processing.document_parsing.source_scope == "s3://example-bucket/corpus/"
 
 
 def test_doc_status_table_from_env(monkeypatch: pytest.MonkeyPatch) -> None:

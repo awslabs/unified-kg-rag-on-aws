@@ -56,9 +56,47 @@ class HierarchicalCommunity(BaseModel):
         default_factory=list,
         description="Ordered list of child community identifiers at the next lower hierarchical level",
     )
+    label: str = Field(
+        default="",
+        description="Human-readable positional label (e.g. 'L0_C3') for display; "
+        "unlike community_id it is not stable across runs",
+    )
 
     def __hash__(self) -> int:
         return hash(self.community_id)
+
+
+def community_content_id(level: int, nodes: Any) -> str:
+    """Content-derived community id: the level plus the sorted member entity ids.
+
+    Positional ids (``L0_C0`` ...) named a *different* community on every run, so
+    an incremental run that clusters only the delta subgraph upserted its
+    ``L0_C0`` over the full corpus's ``L0_C0`` (and its report, whose id hashes
+    the community id). A content id only matches when the membership matches,
+    so delta communities are appended next to the existing ones instead of
+    replacing them, and an unchanged community keeps its id across rebuilds.
+    """
+    members = "\x1f".join(sorted(str(node) for node in nodes))
+    return generate_stable_id(f"community:{level}:{members}")
+
+
+def _canonical_graph(graph: nx.Graph) -> nx.Graph:
+    """Copy ``graph`` with nodes and edges inserted in sorted order.
+
+    Leiden's result depends on node/edge insertion order even with a fixed seed,
+    and the graph builder inserts in extraction order, which varies with LLM
+    response order. Sorting first makes the same graph partition the same way.
+    """
+    canonical = nx.Graph()
+    canonical.graph.update(graph.graph)
+    canonical.add_nodes_from(sorted(graph.nodes(data=True), key=lambda n: str(n[0])))
+    canonical.add_edges_from(
+        sorted(
+            graph.edges(data=True),
+            key=lambda e: tuple(sorted((str(e[0]), str(e[1])))),
+        )
+    )
+    return canonical
 
 
 class CommunityDetector(BaseProcessor):
@@ -259,7 +297,7 @@ class CommunityDetector(BaseProcessor):
             all_nodes = set(target_graph.nodes())
 
             partition_dict = leiden(
-                target_graph,
+                _canonical_graph(target_graph),
                 resolution=resolution,
                 random_seed=config.random_state,
                 trials=config.trials,
@@ -270,7 +308,7 @@ class CommunityDetector(BaseProcessor):
             partitioned_nodes = set(partition_dict.keys())
             missing_nodes = all_nodes - partitioned_nodes
             next_label = max(communities.keys()) + 1 if communities else 0
-            for node in missing_nodes:
+            for node in sorted(missing_nodes, key=str):
                 communities[next_label] = {node}
                 next_label += 1
 
@@ -332,11 +370,12 @@ class CommunityDetector(BaseProcessor):
         resolution_candidates = (
             self.community_detection_config.auto_resolution_candidates
         )
+        canonical = _canonical_graph(graph)
 
         for resolution in resolution_candidates:
             try:
                 partition_dict = leiden(
-                    graph,
+                    canonical,
                     resolution=resolution,
                     random_seed=self.community_detection_config.random_state,
                     trials=1,
@@ -473,13 +512,17 @@ class CommunityDetector(BaseProcessor):
         level_0_communities: dict[Any, str] = {}
 
         for i, nodes in enumerate(l0_partition):
-            comm_id = f"L0_C{i}"
+            comm_id = community_content_id(0, nodes)
 
             for node_id in nodes:
                 self.node_to_community_l0[node_id] = comm_id
 
             community = HierarchicalCommunity(
-                community_id=comm_id, level=0, nodes=nodes, parent_id=None
+                community_id=comm_id,
+                level=0,
+                nodes=nodes,
+                parent_id=None,
+                label=f"L0_C{i}",
             )
             self.all_communities[comm_id] = community
             level_0_communities[i] = comm_id
@@ -493,27 +536,31 @@ class CommunityDetector(BaseProcessor):
             current_level_map: dict[Any, str] = {}
 
             for i, cluster_nodes in enumerate(partition):
-                parent_comm_id = f"L{level}_C{i}"
                 parent_nodes: set[str] = set()
-                child_comm_ids: list[str] = []
+                children: list[HierarchicalCommunity] = []
 
-                for cluster_idx in cluster_nodes:
+                for cluster_idx in sorted(cluster_nodes, key=str):
                     if cluster_idx in previous_level_map:
-                        child_comm_id = previous_level_map[cluster_idx]
-                        child_comm = self.all_communities.get(child_comm_id)
-
+                        child_comm = self.all_communities.get(
+                            previous_level_map[cluster_idx]
+                        )
                         if child_comm:
-                            child_comm.parent_id = parent_comm_id
                             parent_nodes.update(child_comm.nodes)
-                            child_comm_ids.append(child_comm_id)
+                            children.append(child_comm)
 
                 if parent_nodes:
+                    # The id derives from the members, so it is known only once
+                    # every child has been folded in.
+                    parent_comm_id = community_content_id(level, parent_nodes)
+                    for child_comm in children:
+                        child_comm.parent_id = parent_comm_id
                     parent_community = HierarchicalCommunity(
                         community_id=parent_comm_id,
                         level=level,
                         nodes=parent_nodes,
                         parent_id=None,
-                        children_ids=child_comm_ids,
+                        children_ids=[c.community_id for c in children],
+                        label=f"L{level}_C{i}",
                     )
                     self.all_communities[parent_comm_id] = parent_community
                     current_level_map[i] = parent_comm_id
@@ -627,9 +674,9 @@ class CommunityDetector(BaseProcessor):
         max_entities = (
             self.community_detection_config.report_generation.max_entities_per_report
         )
+        member_ids = sorted(hier_comm.nodes, key=str)
         entity_names = [
-            self.graph.nodes[nid].get("name", nid)
-            for nid in list(hier_comm.nodes)[:max_entities]
+            self.graph.nodes[nid].get("name", nid) for nid in member_ids[:max_entities]
         ]
 
         community_attributes = {
@@ -641,15 +688,16 @@ class CommunityDetector(BaseProcessor):
             "num_relationships": subgraph.number_of_edges(),
         }
 
+        label = hier_comm.label or hier_comm.community_id
         return Community(
             id=hier_comm.community_id,
-            short_id=hier_comm.community_id,
-            name=f"Level {hier_comm.level} Community {hier_comm.community_id.split('_C')[1]}",
+            short_id=label,
+            name=f"Level {hier_comm.level} Community {label.rsplit('_C', 1)[-1]}",
             name_embedding=None,
             level=str(hier_comm.level),
             parent=hier_comm.parent_id or "",
             children=hier_comm.children_ids,
-            entity_ids=list(hier_comm.nodes),
+            entity_ids=member_ids,
             relationship_ids=[
                 rel_id
                 for source, target in subgraph.edges()

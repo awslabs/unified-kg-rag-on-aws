@@ -11,6 +11,9 @@ if [[ "${GRAPHRAG_SOURCE_DIRECTORY:-}" == s3://* ]]; then
     echo "[entrypoint] syncing source corpus ${GRAPHRAG_SOURCE_DIRECTORY} -> ${LOCAL_SOURCE_DIR}"
     mkdir -p "${LOCAL_SOURCE_DIR}"
     aws s3 sync "${GRAPHRAG_SOURCE_DIRECTORY}" "${LOCAL_SOURCE_DIR}" --only-show-errors
+    # Every corpus is staged in the same local dir, so incremental deletion is
+    # scoped to the S3 source rather than the staging path (unless set).
+    export GRAPHRAG_SOURCE_SCOPE="${GRAPHRAG_SOURCE_SCOPE:-${GRAPHRAG_SOURCE_DIRECTORY}}"
     export GRAPHRAG_SOURCE_DIRECTORY="${LOCAL_SOURCE_DIR}"
     echo "[entrypoint] synced $(find "${LOCAL_SOURCE_DIR}" -type f | wc -l) file(s)"
 fi

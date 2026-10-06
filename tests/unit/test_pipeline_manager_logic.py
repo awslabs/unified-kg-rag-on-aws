@@ -351,6 +351,7 @@ def test_determine_resume_strategy_explicit_stage(tmp_path) -> None:
         ],
     )
     state.save_pipeline_metadata(ctx)
+    cache.store[_key("documents", "document_parsing")] = []
     cache.store[_key("documents", "document_loading")] = []
     resume = PipelineResumeManager(state)
 
@@ -367,7 +368,8 @@ def test_determine_resume_strategy_explicit_stage_fails_on_unbacked_prerequisite
     # An explicit resume cannot move its own start point (a phased run may not
     # have the upstream stage in its window), so a prerequisite the cache no
     # longer backs is an error that names the stage to resume from.
-    state = PipelineStateManager(_StubCacheManager(tmp_path))
+    cache = _StubCacheManager(tmp_path)
+    state = PipelineStateManager(cache)
     ctx = _context(
         "pid",
         [
@@ -376,6 +378,7 @@ def test_determine_resume_strategy_explicit_stage_fails_on_unbacked_prerequisite
         ],
     )
     state.save_pipeline_metadata(ctx)
+    cache.store[_key("documents", "document_parsing")] = []
     resume = PipelineResumeManager(state)
 
     with pytest.raises(PipelineResumeError, match="document_loading"):
@@ -516,7 +519,7 @@ def test_validate_integrity_skips_non_completed_and_unmapped(tmp_path) -> None:
                 # Failed stage -> not checked.
                 _stage_result("graph_extraction", "failed"),
                 # Completed but no cache mapping -> nothing to check.
-                _stage_result("document_parsing", "completed"),
+                _stage_result("indexing", "completed"),
             ],
         )
     )
@@ -524,3 +527,60 @@ def test_validate_integrity_skips_non_completed_and_unmapped(tmp_path) -> None:
     ok, errors = resume.validate_pipeline_integrity("pid")
     assert ok is True
     assert errors == []
+
+
+# --- save/restore mapping parity --------------------------------------------
+
+
+def test_save_and_restore_mappings_cover_the_same_outputs() -> None:
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+
+    saved = {
+        stage: set(outputs)
+        for stage, outputs in DataIngestionPipeline.STAGE_OUTPUT_MAPPING.items()
+    }
+    restored = {
+        stage: set(outputs)
+        for stage, outputs in PipelineResumeManager.STAGE_CACHE_MAPPING.items()
+    }
+    assert saved == restored
+
+
+def test_resume_after_gleaning_restores_gleaned_relationships(tmp_path) -> None:
+    # Gleaning adds relationships on top of extraction's; the save path caches
+    # both lists, and a resume must restore the gleaned relationships rather
+    # than fall back to extraction's (which would drop the gleaned edges).
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.domain.models import Relationship
+
+    extracted = [Relationship(id="r1", source_id="e1", target_id="e2")]
+    gleaned = extracted + [Relationship(id="r2", source_id="e2", target_id="e3")]
+    entities = [Entity(id=f"e{i}", name=f"Vendor {i}") for i in (1, 2, 3)]
+    produced = {
+        PipelineStageType.GRAPH_EXTRACTION: {
+            "entities": entities,
+            "relationships": extracted,
+        },
+        PipelineStageType.GLEANING: {"entities": entities, "relationships": gleaned},
+    }
+
+    cache = _StubCacheManager(tmp_path)
+    state = PipelineStateManager(cache)
+    state.save_pipeline_metadata(
+        _context(
+            "pid",
+            [
+                _stage_result("graph_extraction", "completed"),
+                _stage_result("gleaning", "completed"),
+            ],
+        )
+    )
+    # Write exactly what the pipeline's save path writes for each stage.
+    for stage_type, outputs in produced.items():
+        for attr in DataIngestionPipeline.STAGE_OUTPUT_MAPPING[stage_type]:
+            cache.store[_key(attr, stage_type.value)] = outputs[attr]
+
+    context = PipelineResumeManager(state).restore_pipeline_context(
+        "pid", ["graph_extraction", "gleaning"]
+    )
+    assert [r.id for r in context.relationships] == ["r1", "r2"]

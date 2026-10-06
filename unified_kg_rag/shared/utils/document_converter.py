@@ -5,13 +5,17 @@ from pathlib import Path
 from langchain_core.documents import Document as LangChainDocument
 
 from unified_kg_rag.domain.models import Constants, Document, DocumentContent, Page
-from unified_kg_rag.shared.utils import generate_stable_id
+from unified_kg_rag.shared.utils.document_identity import (
+    compute_document_id,
+    compute_text_hash,
+    normalize_source_path,
+)
 
 
 def convert_langchain_to_document(
     langchain_docs: list[LangChainDocument],
     file_path: str | Path,
-    n_chars: int = 100,
+    n_chars: int = 100,  # unused: the id now hashes the full text (kept for API)
     index_value: str | None = None,
 ) -> Document:
     path = Path(file_path)
@@ -32,7 +36,13 @@ def convert_langchain_to_document(
     metadata = dict(langchain_docs[0].metadata) if langchain_docs else {}
     if index_value is not None:
         metadata[Constants.INDEX.value] = index_value
-    document_id = generate_stable_id(f"doc:{path.name}:{combined_text[:n_chars]}")
+    # Path + full-content hash: a name + text-prefix id collided for two files
+    # with the same name in different folders and the same opening lines, which
+    # in turn collided their text-unit ids. The pipeline re-derives this against
+    # the corpus root (delta_detector.assign_document_identity).
+    document_id = compute_document_id(
+        normalize_source_path(path), compute_text_hash(combined_text)
+    )
 
     pages = [
         Page(

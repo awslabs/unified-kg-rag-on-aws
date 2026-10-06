@@ -223,7 +223,10 @@ class DocStatusRecord(BaseModel):
     the affected entities/relationships/text-units/communities.
     """
 
-    doc_id: str = Field(description="Stable document identifier (path-normalized)")
+    doc_id: str = Field(
+        description="Stable document identifier: hash of the index namespace and "
+        "the path relative to the corpus root"
+    )
     content_hash: str = Field(description="Content hash used for change detection")
     status: DocStatus = Field(
         default=DocStatus.PENDING, description="Current processing status"
@@ -232,7 +235,16 @@ class DocStatusRecord(BaseModel):
         default="default",
         description="Index/label suffix the document's artifacts were written under",
     )
-    file_path: str | None = Field(default=None, description="Source file path")
+    scope: str | None = Field(
+        default=None,
+        description="Registry scope (index namespace + corpus source) of the run "
+        "that recorded the document. A run only treats documents of its own scope "
+        "as deleted; None marks a record written before scopes existed, which is "
+        "never deleted automatically",
+    )
+    file_path: str | None = Field(
+        default=None, description="Source file path relative to the corpus root"
+    )
     content_summary: str | None = Field(
         default=None, description="Short summary/preview of the document content"
     )
@@ -283,6 +295,9 @@ class DocumentLineage(BaseModel):
         default="default",
         description="Index/label suffix the artifacts were written under",
     )
+    file_path: str | None = Field(
+        default=None, description="Source file path relative to the corpus root"
+    )
     entity_ids: list[str] = Field(default_factory=list)
     relationship_ids: list[str] = Field(default_factory=list)
     text_unit_ids: list[str] = Field(default_factory=list)
@@ -309,7 +324,14 @@ class DocumentDelta(BaseModel):
         default_factory=list, description="Doc ids with an identical content hash"
     )
     deleted: list[str] = Field(
-        default_factory=list, description="Doc ids removed from the corpus"
+        default_factory=list,
+        description="Doc ids of this run's scope that are no longer in the corpus",
+    )
+    failed: list[str] = Field(
+        default_factory=list,
+        description="Doc ids of corpus files that failed to parse or load this "
+        "run. They are neither processed nor deleted: their indexed content, if "
+        "any, is kept until a run reads them successfully",
     )
 
     @property

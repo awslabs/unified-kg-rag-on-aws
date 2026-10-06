@@ -1,0 +1,229 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Incremental deletion is scoped to the run's tenant and corpus (AWS-free).
+
+``deleted`` used to be every registry document absent from the run's input,
+across the whole table, with the doc id a hash of the local path only. A
+per-file parse failure, a run over a subfolder, or another tenant's run then
+removed indexed content. These tests drive the real parsing and loading stages
+over synthetic files and the in-memory registry (plus the moto-backed DynamoDB
+adapter for the diff contract).
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from pathlib import Path
+
+import boto3
+import pytest
+from moto import mock_aws
+
+from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
+from unified_kg_rag.application.ingestion.incremental import (
+    IncrementalIndexer,
+    build_document_lineage,
+)
+from unified_kg_rag.application.ingestion.pipeline_stages import (
+    DocumentLoadingStage,
+    DocumentParsingStage,
+)
+from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
+from unified_kg_rag.domain.models import (
+    Config,
+    DocStatus,
+    DocStatusRecord,
+    PipelineContext,
+    PipelineStageStatus,
+)
+
+pytestmark = pytest.mark.unit
+
+
+def _config(index_value: str | None = None) -> Config:
+    config = Config()
+    config.aws.dynamodb.enabled = True
+    config.processing.document_parsing.index_value = index_value
+    return config
+
+
+def _write(root: Path, files: dict[str, str]) -> Path:
+    for relative, text in files.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    return root
+
+
+def _run(
+    root: Path, store: FakeDocStatusStore, config: Config, mocker
+) -> PipelineContext:
+    """Parse ``root`` and run the loading stage's incremental filter, then
+    record every processed document the way a successful commit does."""
+    mocker.patch("boto3.Session")
+    context = PipelineContext(
+        pipeline_id="pid",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=root,
+    )
+    DocumentParsingStage(config, source_directory=root)._execute_core(context)
+    loading = DocumentLoadingStage(config, source_directory=root, doc_status=store)
+    kept, _ = loading._apply_incremental_filter(list(context.documents), context)
+    context.documents = kept
+
+    lineages = build_document_lineage(
+        documents=kept,
+        text_units=[],
+        entities=[],
+        relationships=[],
+        communities=[],
+        claims=[],
+    )
+    indexer = IncrementalIndexer(
+        store, mocker.MagicMock(), scope=context.incremental_scope
+    )
+    indexer._record_processed(lineages, context.incremental_fingerprints)
+    return context
+
+
+def test_another_tenants_run_does_not_delete_this_tenants_documents(
+    tmp_path, mocker
+) -> None:
+    # Both tenants' corpora are staged in the same local directory (as a
+    # container does) and both contain contract.txt.
+    staging = tmp_path / "staging"
+    store = FakeDocStatusStore()
+
+    _write(staging, {"contract.txt": "Vendor A supplies parts to Buyer."})
+    first = _run(staging, store, _config("tenant-a"), mocker)
+    assert len(first.incremental_delta.new) == 1
+
+    for path in staging.iterdir():
+        path.unlink()
+    _write(staging, {"contract.txt": "Vendor B leases trucks to Buyer."})
+    second = _run(staging, store, _config("tenant-b"), mocker)
+
+    # Same relative path, different tenant -> a different document, and the
+    # other tenant's record is not a deletion candidate.
+    assert len(second.incremental_delta.new) == 1
+    assert second.incremental_delta.deleted == []
+    assert second.incremental_delta.changed == []
+    assert len(store.list_all()) == 2
+
+
+def test_a_file_that_fails_to_parse_is_not_deleted(tmp_path, mocker) -> None:
+    root = _write(
+        tmp_path / "corpus",
+        {"a.txt": "Vendor ships goods.", "b.txt": "Buyer pays invoices."},
+    )
+    store = FakeDocStatusStore()
+    _run(root, store, _config(), mocker)
+    assert len(store.list_all()) == 2
+
+    # b.txt now fails to parse (empty text is rejected by the parser).
+    (root / "b.txt").write_text("", encoding="utf-8")
+    context = _run(root, store, _config(), mocker)
+
+    delta = context.incremental_delta
+    assert delta.deleted == []
+    assert delta.failed == [compute_doc_id("b.txt")]
+    assert delta.unchanged == [compute_doc_id("a.txt")]
+    assert store.get(compute_doc_id("b.txt")) is not None
+
+
+def test_a_subfolder_run_does_not_delete_the_parent_corpus(tmp_path, mocker) -> None:
+    root = _write(
+        tmp_path / "corpus",
+        {"top.txt": "Vendor ships goods.", "sub/inner.txt": "Buyer pays."},
+    )
+    store = FakeDocStatusStore()
+    _run(root, store, _config(), mocker)
+
+    context = _run(root / "sub", store, _config(), mocker)
+    assert context.incremental_delta.deleted == []
+
+
+def test_a_removed_file_is_still_deleted_within_the_scope(tmp_path, mocker) -> None:
+    root = _write(
+        tmp_path / "corpus", {"a.txt": "Vendor ships goods.", "b.txt": "Buyer pays."}
+    )
+    store = FakeDocStatusStore()
+    _run(root, store, _config(), mocker)
+
+    (root / "b.txt").unlink()
+    context = _run(root, store, _config(), mocker)
+    assert context.incremental_delta.deleted == [compute_doc_id("b.txt")]
+
+
+def test_source_scope_setting_identifies_the_corpus_not_the_staging_dir(
+    tmp_path, mocker
+) -> None:
+    # Two runs from different staging dirs of the same named source share a
+    # scope; a different source does not.
+    store = FakeDocStatusStore()
+    config = _config()
+    config.processing.document_parsing.source_scope = "s3://bucket/corpus-1/"
+    first = _run(_write(tmp_path / "a", {"x.txt": "Vendor."}), store, config, mocker)
+    second = _run(_write(tmp_path / "b", {"y.txt": "Buyer."}), store, config, mocker)
+    assert first.incremental_scope == second.incremental_scope
+    assert second.incremental_delta.deleted == [compute_doc_id("x.txt")]
+
+    other = _config()
+    other.processing.document_parsing.source_scope = "s3://bucket/corpus-2/"
+    third = _run(_write(tmp_path / "c", {"z.txt": "Carrier."}), store, other, mocker)
+    assert third.incremental_delta.deleted == []
+
+
+def test_committed_records_carry_scope_and_relative_path(tmp_path, mocker) -> None:
+    root = _write(tmp_path / "corpus", {"docs/a.txt": "Vendor ships goods."})
+    store = FakeDocStatusStore()
+    context = _run(root, store, _config("tenant-a"), mocker)
+
+    (record,) = store.list_all()
+    assert record.scope == context.incremental_scope
+    assert record.scope.startswith("tenant-a|")
+    assert record.file_path == "docs/a.txt"
+    assert record.doc_id == compute_doc_id("docs/a.txt", "tenant-a")
+
+
+# --- registry diff contract (fake and DynamoDB stay identical) ---------------
+
+
+@pytest.fixture(params=["fake", "dynamodb"])
+def registry(request):
+    if request.param == "fake":
+        yield FakeDocStatusStore()
+        return
+    with mock_aws():
+        config = Config()
+        config.aws.dynamodb.table_name = "test-doc-status"
+        store = DynamoDBDocStatusStore(
+            config, boto_session=boto3.Session(region_name="us-east-1")
+        )
+        _ = store.client
+        yield store
+
+
+def test_scoped_diff_only_deletes_records_of_the_same_scope(registry) -> None:
+    for doc_id, scope in (("a", "s1"), ("b", "s1"), ("c", "s2"), ("legacy", None)):
+        registry.put(
+            DocStatusRecord(
+                doc_id=doc_id,
+                content_hash="h",
+                status=DocStatus.PROCESSED,
+                scope=scope,
+            )
+        )
+
+    scoped = registry.diff({"a": "h"}, scope="s1")
+    assert scoped.unchanged == ["a"]
+    assert scoped.deleted == ["b"]
+
+    # Without a scope the whole registry is the deletion candidate set.
+    assert sorted(registry.diff({"a": "h"}).deleted) == ["b", "c", "legacy"]
+    # The scope round-trips through the store.
+    assert registry.get("c").scope == "s2"
+    assert registry.get("legacy").scope is None

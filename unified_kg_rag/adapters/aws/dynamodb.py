@@ -29,6 +29,7 @@ logger = get_logger(__name__)
 # DynamoDB stores list attributes as lists; empty lists are allowed. The doc_id
 # is the partition key.
 _PARTITION_KEY = "doc_id"
+_SCOPE_ATTRIBUTE = "registry_scope"
 
 
 class DynamoDBDocStatusStore:
@@ -100,47 +101,58 @@ class DynamoDBDocStatusStore:
                 records.append(self._deserialize(item))
         return records
 
-    def _scan_fingerprints(self) -> dict[str, str]:
-        """Scan only ``{doc_id: content_hash}`` for delta classification.
+    def _scan_fingerprints(self) -> dict[str, tuple[str, str | None]]:
+        """Scan only ``{doc_id: (content_hash, scope)}`` for delta classification.
 
-        ``diff`` needs just the partition key and the content hash, so this uses
-        a ``ProjectionExpression`` to fetch those two attributes instead of
-        deserializing the full ``DocStatusRecord`` (content hash + six
-        artifact-id lists) for every row. On a table with many ``suffix``
-        partitions that is a large saving in payload and deserialization, with
-        no schema change. (A full ``scan`` is still required because deletion
-        detection needs the complete set of stored doc_ids.)
+        ``diff`` needs just the partition key, the content hash and the scope,
+        so this uses a ``ProjectionExpression`` to fetch those attributes instead
+        of deserializing the full ``DocStatusRecord`` (content hash + six
+        artifact-id lists) for every row. (A full ``scan`` is still required
+        because deletion detection needs every stored doc_id of the scope.)
         """
-        fingerprints: dict[str, str] = {}
+        fingerprints: dict[str, tuple[str, str | None]] = {}
         paginator = self.client.get_paginator("scan")
         for page in paginator.paginate(
             TableName=self.table_name,
-            ProjectionExpression=f"{_PARTITION_KEY}, content_hash",
+            # Attribute-name placeholders keep the projection clear of
+            # DynamoDB reserved words.
+            ProjectionExpression="#pk, #hash, #scope",
+            ExpressionAttributeNames={
+                "#pk": _PARTITION_KEY,
+                "#hash": "content_hash",
+                "#scope": _SCOPE_ATTRIBUTE,
+            },
         ):
             for item in page.get("Items", []):
                 doc_id = item.get(_PARTITION_KEY, {}).get("S")
                 content_hash = item.get("content_hash", {}).get("S", "")
+                scope = item.get(_SCOPE_ATTRIBUTE, {}).get("S")
                 if doc_id is not None:
-                    fingerprints[doc_id] = content_hash
+                    fingerprints[doc_id] = (content_hash, scope)
         return fingerprints
 
-    def diff(self, incoming: dict[str, str]) -> DocumentDelta:
+    def diff(self, incoming: dict[str, str], scope: str | None = None) -> DocumentDelta:
         """Classify ``{doc_id: content_hash}`` against persisted state.
 
         Mirrors ``FakeDocStatusStore.diff`` exactly so the production and test
-        implementations stay behaviourally identical.
+        implementations stay behaviourally identical: with ``scope``, only
+        stored records of that scope can be classified deleted.
         """
         stored = self._scan_fingerprints()
         delta = DocumentDelta()
         for doc_id, content_hash in incoming.items():
             if doc_id not in stored:
                 delta.new.append(doc_id)
-            elif stored[doc_id] != content_hash:
+            elif stored[doc_id][0] != content_hash:
                 delta.changed.append(doc_id)
             else:
                 delta.unchanged.append(doc_id)
         incoming_ids = set(incoming)
-        delta.deleted = [doc_id for doc_id in stored if doc_id not in incoming_ids]
+        delta.deleted = [
+            doc_id
+            for doc_id, (_, stored_scope) in stored.items()
+            if doc_id not in incoming_ids and (scope is None or stored_scope == scope)
+        ]
         return delta
 
     @staticmethod
@@ -151,6 +163,9 @@ class DynamoDBDocStatusStore:
             "content_hash": {"S": record.content_hash},
             "status": {"S": record.status.value},
             "suffix": {"S": record.suffix},
+            _SCOPE_ATTRIBUTE: (
+                {"S": record.scope} if record.scope is not None else {"NULL": True}
+            ),
             "entity_ids": (
                 {"SS": record.entity_ids} if record.entity_ids else {"NULL": True}
             ),
@@ -210,6 +225,7 @@ class DynamoDBDocStatusStore:
             content_hash=item["content_hash"]["S"],
             status=item["status"]["S"],
             suffix=_str("suffix") or "default",
+            scope=_str(_SCOPE_ATTRIBUTE),
             file_path=_str("file_path"),
             content_summary=_str("content_summary"),
             content_length=content_length,
