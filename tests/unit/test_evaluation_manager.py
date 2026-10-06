@@ -18,6 +18,7 @@ import pytest
 
 from unified_kg_rag.application.retrieval.rag_chain import (
     DEFAULT_ERROR_MESSAGE,
+    NO_CONTEXT_ANSWER,
     ProcessedQuery,
     RAGOutput,
 )
@@ -687,3 +688,77 @@ class TestComparability:
         assert manifest["enabled_evaluators"] == ["graph_aware"]
         assert manifest["package_version"] and manifest["created_at"]
         json.dumps(manifest)  # serializable as-is
+
+
+class TestAbstention:
+    async def _run(self, config: Config, items: list[tuple[str, str, dict, dict]]):
+        """items: (question, answer, chain metadata, query metadata)."""
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        chain = _FakeChain({q: _rag_output(a, md) for q, a, md, _ in items})
+        manager = EvaluationManager(config, rag_chain=chain)
+        queries = [
+            EvaluationQuery(query_id=f"q{i}", question=q, metadata=qmd)
+            for i, (q, _, _, qmd) in enumerate(items)
+        ]
+        gts = [
+            EvaluationGroundTruth(query_id=f"q{i}", ground_truth="Vendor")
+            for i, (_, _, _, qmd) in enumerate(items)
+            if qmd.get("answerable") is not False
+        ]
+        return await manager.evaluate_dataset(queries, gts, show_progress=False)
+
+    async def test_abstention_rate_overall_and_per_strategy(
+        self, config: Config
+    ) -> None:
+        local = {"search_strategy": "local"}
+        results, reports, summary = await self._run(
+            config,
+            [
+                ("A?", "Vendor ships.", local, {}),
+                ("B?", NO_CONTEXT_ANSWER, {**local, "abstained": True}, {}),
+                # Detected from the exact text when the flag is absent.
+                ("C?", NO_CONTEXT_ANSWER, {"search_strategy": "global"}, {}),
+            ],
+        )
+        assert [r.abstained for r in results] == [False, True, True]
+        stats = summary.abstention_statistics
+        assert stats["abstained"] == 2 and stats["answered"] == 3
+        assert stats["abstention_rate"] == pytest.approx(2 / 3)
+        assert stats["per_strategy"]["local"]["abstention_rate"] == 0.5
+        assert stats["per_strategy"]["global"]["abstention_rate"] == 1.0
+        assert "unanswerable" not in stats
+        # An abstention on an answerable item is still graded (a miss).
+        assert summary.metric_statistics["answer_contains"]["count"] == 3
+
+    async def test_unanswerable_items_scored_on_abstention_only(
+        self, config: Config
+    ) -> None:
+        no = {"answerable": False}
+        results, reports, summary = await self._run(
+            config,
+            [
+                ("A?", "Vendor ships.", {}, {}),
+                ("B?", NO_CONTEXT_ANSWER, {"abstained": True}, no),
+                ("C?", "A confident guess.", {}, no),
+            ],
+        )
+        assert [r.query_id for r in reports] == ["q0"]
+        assert summary.abstention_statistics["unanswerable"] == {
+            "total": 2,
+            "correct_abstentions": 1,
+            "accuracy": 0.5,
+        }
+        assert summary.metric_outcomes["answer_match"]["answer_contains"] == {
+            "scored": 1,
+            "failed": 0,
+            "skipped": 2,
+        }
+
+    def test_answerable_must_be_boolean(self, tmp_path) -> None:
+        path = tmp_path / "eval.json"
+        path.write_text(
+            json.dumps([{"question": "q", "metadata": {"answerable": "no"}}]),
+            encoding="utf-8",
+        )
+        with pytest.raises(EvaluationException, match="answerable"):
+            EvaluationManager.load_data(path)

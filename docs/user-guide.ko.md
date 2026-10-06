@@ -1046,7 +1046,9 @@ aws:
 ```
 
 항목별 `metadata`(예: `search_strategy`)는 해당 질문에 대해 CLI 기본값을
-오버라이드합니다. `id`는 `query_id`로 줄 수도 있습니다. 파일은 질문을 실행하기
+오버라이드합니다. 코퍼스로 답할 수 없는 질문은 `"metadata": {"answerable": false}`로
+표시합니다. 이런 질문은 어떤 평가자도 채점하지 않고, 체인이 답변을 거부했는지만
+봅니다(아래 `abstention_statistics` 참고). `id`는 `query_id`로 줄 수도 있습니다. 파일은 질문을 실행하기
 전에 검증합니다. 데이터셋이 비었거나, 배열이 아니거나, `question`이 없거나, ID가
 중복되거나, 필드 타입이 틀리거나, RAG 체인이 거부할 `metadata` 값(예: 알 수 없는
 `search_strategy`)이 있으면 항목 인덱스와 ID를 담은 오류로 실행을 멈춥니다.
@@ -1070,6 +1072,12 @@ run-eval --eval-data-path my_eval_data.json \
 
 - `grouped_statistics` — 같은 통계를 `search_strategy`(실제로 사용한 전략이며
   `auto`에서는 질문마다 다를 수 있음), `category`, `difficulty`별로 나눈 값.
+- `abstention_statistics` — 체인이 답변 대신 고정된 컨텍스트 없음 응답("I could
+  not find relevant information…")을 돌려준 빈도: `abstained`, `answered`,
+  `abstention_rate`, 같은 값의 `per_strategy`, 그리고 `answerable: false` 항목에
+  대한 `unanswerable` 블록(`total`, `correct_abstentions`, `accuracy`). 답할 수
+  있는 질문에서의 답변 거부는 일반 답변처럼 채점되며(대개 오답), 각 결과에는
+  `abstained`가 기록됩니다.
 - `run_manifest` — CLI 인자, 모델 ID(답변 생성, 평가 judge/임베딩), 패키지 버전,
   데이터셋 경로와 sha256, UTC 타임스탬프. 두 실행을 비교할 때 사용합니다.
 

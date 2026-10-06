@@ -156,6 +156,14 @@ class EvaluationResult(BaseModel):
     error_message: str | None = Field(
         default=None, description="Reason answer generation failed, if known."
     )
+    abstained: bool = Field(
+        default=False,
+        description=(
+            "True when the RAG chain returned its fixed no-context reply instead "
+            "of an answer (retrieval produced no usable context). Scored like any "
+            "answer on answerable items; correct on metadata.answerable=false ones."
+        ),
+    )
 
 
 class EvaluationMetric(BaseModel):
@@ -240,6 +248,16 @@ class EvaluationSummary(BaseModel):
             "{metric: stats}}} for 'search_strategy' (the strategy actually used, "
             "which varies per query under auto), 'category' and 'difficulty'. A "
             "dimension appears only when at least one scored query has a value."
+        ),
+    )
+    abstention_statistics: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Abstentions (the chain's fixed no-context reply) among answered "
+            "queries: 'abstained', 'answered', 'abstention_rate', the same per "
+            "actual search strategy ('per_strategy'), and for items marked "
+            "metadata.answerable=false an 'unanswerable' block with 'total', "
+            "'correct_abstentions' and 'accuracy'."
         ),
     )
     run_manifest: dict[str, Any] = Field(

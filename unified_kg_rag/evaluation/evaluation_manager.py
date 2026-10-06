@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.application.retrieval.rag_chain import (
+    NO_CONTEXT_ANSWER,
     GraphRAGChain,
     RAGInput,
     RAGOutput,
@@ -228,6 +229,10 @@ class EvaluationManager:
         item_metadata = item.get("metadata", {})
         if not isinstance(item_metadata, dict):
             raise EvaluationException(f"{where}: 'metadata' must be an object.")
+        if not isinstance(item_metadata.get("answerable", True), bool):
+            raise EvaluationException(
+                f"{where}: 'metadata.answerable' must be true or false."
+            )
 
         final_metadata = {**base_metadata, **item_metadata}
         rag_fields = {
@@ -317,13 +322,12 @@ class EvaluationManager:
             try:
                 rag_metadata = self._extract_from_result(raw_result, "metadata", {})
                 error_message = self._detect_generation_error(raw_result, rag_metadata)
+                answer = self._extract_from_result(raw_result, "answer", "")
                 results.append(
                     EvaluationResult(
                         query_id=query.query_id,
                         question=query.question,
-                        generated_answer=self._extract_from_result(
-                            raw_result, "answer", ""
-                        ),
+                        generated_answer=answer,
                         ground_truth="",
                         retrieved_contexts=self._extract_from_result(
                             raw_result, "sources", []
@@ -337,6 +341,8 @@ class EvaluationManager:
                         metadata=query.metadata,
                         error=error_message is not None,
                         error_message=error_message,
+                        abstained=error_message is None
+                        and self._is_abstention(answer, rag_metadata),
                     )
                 )
             except Exception as e:
@@ -398,6 +404,17 @@ class EvaluationManager:
                 files or sorted({mapping[u] for u in unit_ids if u in mapping})
                 for files, unit_ids in sources
             ]
+
+    @staticmethod
+    def _is_abstention(answer: Any, rag_metadata: Any) -> bool:
+        """True for the chain's fixed no-context reply (flag, or the exact text)."""
+        if isinstance(rag_metadata, dict) and rag_metadata.get("abstained"):
+            return True
+        return isinstance(answer, str) and answer.strip() == NO_CONTEXT_ANSWER
+
+    @staticmethod
+    def _is_unanswerable(query_or_result: EvaluationQuery | EvaluationResult) -> bool:
+        return query_or_result.metadata.get("answerable") is False
 
     @staticmethod
     def _detect_generation_error(raw_result: Any, rag_metadata: Any) -> str | None:
@@ -595,15 +612,18 @@ class EvaluationManager:
         # sentinel) is not an answer: scoring it would let LLM judges grade the
         # apology text. Exclude it from every evaluator; the summary counts it
         # as failed and its metrics as skipped.
+        # An item marked metadata.answerable=false has no answer to grade; it is
+        # scored only on whether the chain abstained (abstention_statistics).
         scorable = [
             (query, res)
             for query, res in zip(queries, results, strict=True)
-            if not res.error
+            if not res.error and not self._is_unanswerable(query)
         ]
-        if len(scorable) < len(results):
+        errored = sum(1 for res in results if res.error)
+        if errored:
             logger.warning(
                 "Excluding %s/%s queries from scoring: answer generation failed",
-                len(results) - len(scorable),
+                errored,
                 len(results),
             )
         scorable_queries = [query for query, _ in scorable]
@@ -675,6 +695,7 @@ class EvaluationManager:
             average_response_time=avg_response_time,
             metric_statistics=self._calculate_metric_statistics(reports),
             metric_outcomes=self._calculate_metric_outcomes(results, reports),
+            abstention_statistics=self._calculate_abstention_statistics(results),
             grouped_statistics=self._calculate_grouped_statistics(
                 queries, results, reports
             ),
@@ -764,8 +785,9 @@ class EvaluationManager:
 
         Only ``scored`` values enter ``metric_statistics``; this makes the
         excluded ones visible so a mean over 3 of 50 queries is not mistaken
-        for a mean over 50. Queries whose answer generation failed are counted
-        as ``skipped`` for every metric of every enabled evaluator.
+        for a mean over 50. Queries whose answer generation failed, and items
+        marked ``metadata.answerable=false``, are counted as ``skipped`` for
+        every metric of every enabled evaluator.
         """
         outcomes: dict[str, dict[str, dict[str, int]]] = {}
 
@@ -775,10 +797,10 @@ class EvaluationManager:
             )
             counts[kind] += n
 
-        errored = sum(1 for r in results if r.error)
+        unscored = sum(1 for r in results if r.error or self._is_unanswerable(r))
         for evaluator_type, evaluator in self.evaluators.items():
             for metric_type in evaluator.metric_types():
-                _bump(evaluator_type.value, metric_type.value, "skipped", errored)
+                _bump(evaluator_type.value, metric_type.value, "skipped", unscored)
 
         for report in reports:
             evaluator_name = report.evaluator_type.value
@@ -791,6 +813,40 @@ class EvaluationManager:
                 for metric_name in report.metadata.get(key) or {}:
                     _bump(evaluator_name, metric_name, kind)
         return outcomes
+
+    @classmethod
+    def _calculate_abstention_statistics(
+        cls, results: list[EvaluationResult]
+    ) -> dict[str, Any]:
+        answered = [r for r in results if not r.error]
+        if not answered:
+            return {}
+
+        def _rate(group: list[EvaluationResult]) -> dict[str, Any]:
+            abstained = sum(1 for r in group if r.abstained)
+            return {
+                "abstained": abstained,
+                "answered": len(group),
+                "abstention_rate": abstained / len(group),
+            }
+
+        by_strategy: dict[str, list[EvaluationResult]] = defaultdict(list)
+        for r in answered:
+            if r.search_strategy:
+                by_strategy[r.search_strategy].append(r)
+        stats: dict[str, Any] = {
+            **_rate(answered),
+            "per_strategy": {k: _rate(v) for k, v in sorted(by_strategy.items())},
+        }
+        unanswerable = [r for r in answered if cls._is_unanswerable(r)]
+        if unanswerable:
+            correct = sum(1 for r in unanswerable if r.abstained)
+            stats["unanswerable"] = {
+                "total": len(unanswerable),
+                "correct_abstentions": correct,
+                "accuracy": correct / len(unanswerable),
+            }
+        return stats
 
     @staticmethod
     def _calculate_metric_statistics(

@@ -20,6 +20,7 @@ from langchain_core.runnables import RunnableLambda
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from unified_kg_rag.application.retrieval.rag_chain import (
+    NO_CONTEXT_ANSWER,
     ChainMode,
     GraphRAGChain,
     RAGInput,
@@ -113,6 +114,7 @@ async def test_rag_mode_round_trip_produces_answer_and_sources(
     )
     assert isinstance(out, RAGOutput)
     assert out.answer == _CANNED_ANSWER
+    assert "abstained" not in out.metadata
     # The fake retriever hit flows through to sources.
     assert out.sources and out.sources[0]["source"] == "document-doc-1"
     assert out.search_results.total_results >= 1
@@ -152,6 +154,8 @@ async def test_rag_mode_empty_retrieval_short_circuits_answer_generation(
     # The canned LLM answer must NOT appear; the refusal sentinel must.
     assert out.answer != _CANNED_ANSWER
     assert "could not find relevant information" in out.answer.lower()
+    assert out.answer == NO_CONTEXT_ANSWER
+    assert out.metadata["abstained"] is True
     assert out.sources == []
 
 

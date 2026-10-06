@@ -1071,7 +1071,9 @@ the `graph_aware` evaluator.
 ```
 
 Per-item `metadata` (e.g. `search_strategy`) overrides the CLI defaults for that
-question. `id` may also be given as `query_id`. The file is validated before any
+question. Mark a question the corpus cannot answer with
+`"metadata": {"answerable": false}`: it is not graded by any evaluator, only on
+whether the chain abstained (see `abstention_statistics` below). `id` may also be given as `query_id`. The file is validated before any
 query runs: an empty dataset, a non-array file, a missing `question`, a
 duplicate id, a wrong field type, or a `metadata` value the RAG chain rejects
 (e.g. an unknown `search_strategy`) stops the run with the item index and id.
@@ -1096,6 +1098,12 @@ The summary holds, per metric, mean/median/stdev/min/max/count
 - `grouped_statistics` — the same statistics split by `search_strategy` (the
   strategy actually used, which varies per query under `auto`), `category` and
   `difficulty`.
+- `abstention_statistics` — how often the chain returned its fixed
+  no-context reply ("I could not find relevant information…") instead of an
+  answer: `abstained`, `answered`, `abstention_rate`, the same `per_strategy`,
+  and for `answerable: false` items an `unanswerable` block (`total`,
+  `correct_abstentions`, `accuracy`). On answerable items an abstention is
+  graded like any answer (normally a miss); each result carries `abstained`.
 - `run_manifest` — CLI arguments, model ids (answer generation, evaluation
   judge/embedding), package version, dataset path + sha256, and a UTC timestamp,
   so two runs can be compared.
