@@ -22,9 +22,10 @@ that has a URI scheme or a leading ``/``, ``./``, ``../``, ``~/``); otherwise it
 is part of the name, so titles such as ``"St. Louis Cardinals"``,
 ``"U.S. Route 66"`` and ``"AC/DC"`` are kept whole.
 
-A query is skipped when it has no ``reference_sources``, or when none of its
-sources carries provenance (no document id or file name) — scoring 0 there
-would report missing metadata as a retrieval miss.
+A query is skipped when it has no ``reference_sources``, or when it has
+sources but none carries provenance (no document id or file name) — scoring 0
+there would report missing metadata as a retrieval miss. A query that
+retrieved no sources at all is a miss and scores 0.
 """
 
 from __future__ import annotations
@@ -119,7 +120,9 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
             frozenset().union(*(source_keys(ident) for ident in idents))
             for idents in result.retrieved_source_ids
         ]
-        if not any(ranked):
+        # No sources at all is a retrieval miss (scored 0 below); sources that
+        # exist but carry no provenance cannot be judged, so they are skipped.
+        if ranked and not any(ranked):
             return self._skip(
                 query.query_id,
                 "no_source_provenance",

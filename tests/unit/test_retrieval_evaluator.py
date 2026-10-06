@@ -128,6 +128,11 @@ class TestMetrics:
             "no_reference_sources"
         }
 
+    def test_no_sources_is_a_miss(self, evaluator: RetrievalEvaluator) -> None:
+        out = _score(evaluator, [], ["a.pdf"])
+        assert out["metrics"] == {"hit_at_k": 0.0, "recall_at_k": 0.0, "mrr": 0.0}
+        assert out["metadata"]["num_sources"] == 0
+
     def test_no_provenance_skipped(self, evaluator: RetrievalEvaluator) -> None:
         out = _score(evaluator, [[], []], ["a.pdf"])
         assert out["metrics"] == {}

@@ -995,8 +995,9 @@ aws:
   영문자·숫자 1-5자, 영문자 1개 이상)로 끝나면 stem으로도 비교합니다:
   `docs/Terms.pdf` = `terms.pdf` = `terms`. `/`는 경로처럼 보이는 값(파일 확장자,
   URI 스킴, `/`·`./`·`~/`로 시작)에서만 디렉터리 구분자로 보므로 `St. Louis
-  Cardinals`, `AC/DC` 같은 제목은 통째로 비교합니다. `reference_sources`가 없거나 문서 ID/파일 이름을 가진 소스가 하나도
-  없으면 건너뜁니다.
+  Cardinals`, `AC/DC` 같은 제목은 통째로 비교합니다. `reference_sources`가
+  없거나, 소스는 있지만 문서 ID/파일 이름을 가진 소스가 하나도 없으면 건너뜁니다.
+  소스를 하나도 검색하지 못한 질의는 0점(miss)입니다.
 - **`answer_match`** — 결정적이고 LLM 불필요한 답변 지표를 `answer`와 선택 항목
   `metadata.answer_aliases`에 대해 계산하고 최댓값을 씁니다. 대표 결정적 지표는
   **`answer_contains`**(정답이나 별칭이 생성된 답변에 단어 단위 구문으로 나타나면

@@ -1016,8 +1016,9 @@ Selected via `evaluation.enabled_evaluators`:
   one letter), its stem: `docs/Terms.pdf` = `terms.pdf` = `terms`. A `/` is a
   directory separator only in a path-like value (a file extension, a URI scheme,
   or a leading `/`, `./`, `~/`), so titles such as `St. Louis Cardinals` or
-  `AC/DC` are compared whole. Skipped when a query has no `reference_sources` or no
-  source carries a document id / file name.
+  `AC/DC` are compared whole. Skipped when a query has no `reference_sources`,
+  or has sources but none carries a document id / file name; a query that
+  retrieved no sources at all scores 0 (a miss).
 - **`answer_match`** — deterministic, LLM-free answer scores against `answer`
   and optional `metadata.answer_aliases`, taking the max over them.
   **`answer_contains`** (1.0 when the gold answer or an alias appears in the
