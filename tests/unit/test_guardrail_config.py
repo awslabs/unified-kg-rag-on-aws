@@ -18,6 +18,7 @@ from unified_kg_rag.adapters.aws.bedrock import (
     GuardrailInterventionHandler,
 )
 from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, ModelPurpose
 
 pytestmark = pytest.mark.unit
@@ -369,9 +370,9 @@ def test_ingestion_components_request_ingestion_models(name: str, mocker) -> Non
     cfg = Config()
     cfg.fixing.enabled = True  # also cover the output-fixing LLMs
     factory = _RecordingFactory(cfg)
-    mocker.patch(f"{module}.BedrockLanguageModelFactory", return_value=factory)
+    providers = Providers(cfg, boto_session=mocker.MagicMock(), llm_factory=factory)
     component = getattr(importlib.import_module(module), cls)(
-        config=cfg, boto_session=mocker.MagicMock()
+        config=cfg, providers=providers
     )
     if isinstance(component, PromptTuner):  # builds its chain lazily
         asyncio.run(component.profile_corpus(["Vendor ships parts to Buyer."]))

@@ -48,6 +48,23 @@ class ModelFactoryPort(Protocol[ModelIdT, ModelT]):
     def get_model_info(self, model_id: ModelIdT) -> Any: ...
 
 
+@runtime_checkable
+class TokenCounterPort(Protocol):
+    """Counts (and truncates by) tokens for one model.
+
+    Implemented by ``BedrockTokenCounter``. A custom backend supplies one
+    through a token-counter factory called as
+    ``factory(model_id, cache_maxsize=..., api_supported=...)``; like the model
+    factories, it must accept and ignore keyword arguments it does not use.
+    """
+
+    def count_tokens(self, text: str) -> int: ...
+
+    def truncate_to_token_limit(
+        self, text: str, max_tokens: int
+    ) -> tuple[str, int]: ...
+
+
 # Semantic aliases — the bare (unsubscripted) Protocol so they remain usable in
 # runtime isinstance() checks (a subscripted generic raises TypeError there).
 # An unsubscripted generic Protocol defaults its params to Any, so existing

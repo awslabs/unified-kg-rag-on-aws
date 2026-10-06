@@ -19,9 +19,9 @@ from typing import Any
 import boto3
 from langchain_core.output_parsers import StrOutputParser
 
-from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Config,
     Entity,
@@ -63,17 +63,16 @@ class PromptTuner:
     MAX_SAMPLE_CHARS = 8000
 
     def __init__(
-        self, config: Config, boto_session: boto3.Session | None = None
+        self,
+        config: Config,
+        boto_session: boto3.Session | None = None,
+        *,
+        providers: Providers | None = None,
     ) -> None:
         self.config = config
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=config.aws.profile_name
-        )
-        self.factory = BedrockLanguageModelFactory(
-            config=config,
-            boto_session=self.boto_session,
-            region_name=config.aws.bedrock.region_name,
-        )
+        self.providers = Providers.resolve(config, providers, boto_session)
+        self.boto_session = self.providers.boto_session
+        self.factory = self.providers.llm_factory
 
     def sample_corpus(self, texts: list[str]) -> str:
         """Concatenate document texts up to the sampling budget."""

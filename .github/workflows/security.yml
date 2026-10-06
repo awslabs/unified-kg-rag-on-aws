@@ -10,6 +10,7 @@ on:
 jobs:
   ash-scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
@@ -20,8 +21,9 @@ jobs:
           python-version: "3.12"
 
       - name: Run ASH
+        # Pinned to the commit of tag v3.1.2: a tag can be moved, a SHA cannot.
         run: >-
-          uvx git+https://github.com/awslabs/automated-security-helper.git@v3.1.2
+          uvx git+https://github.com/awslabs/automated-security-helper.git@e73de85c1db7f443276370c4a6f7501815756780
           --source-dir . --no-fail-on-findings
 
       - name: Upload ASH reports

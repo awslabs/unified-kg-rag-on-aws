@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 
+from unified_kg_rag.adapters import providers as providers_module
 from unified_kg_rag.adapters.ingestion import translator as tr_module
 from unified_kg_rag.adapters.ingestion.translator import (
     TextUnitTranslator,
@@ -46,7 +47,7 @@ def _make_translator(
     mocker, *, target=LanguageCode.EN, additional=None, transform=None
 ) -> tuple[TextUnitTranslator, _FakeChain]:
     mocker.patch.object(tr_module.boto3, "Session")
-    mocker.patch.object(tr_module, "BedrockLanguageModelFactory")
+    mocker.patch.object(providers_module, "BedrockLanguageModelFactory")
     fake_chain = _FakeChain(transform=transform)
     mocker.patch.object(tr_module, "setup_chain", return_value=fake_chain)
 

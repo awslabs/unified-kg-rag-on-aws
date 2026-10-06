@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 import unified_kg_rag.evaluation  # noqa: F401  (resolves package import cycle)
+from unified_kg_rag.adapters import providers as providers_module
 from unified_kg_rag.adapters.evaluators import ragas_evaluator as rg_module
 from unified_kg_rag.adapters.evaluators.ragas_evaluator import RagasEvaluator
 from unified_kg_rag.domain.models import (
@@ -43,9 +44,9 @@ def _make_evaluator(
     Returns (evaluator, fake_token_counter).
     """
     mocker.patch.object(rg_module.boto3, "Session")
-    mocker.patch.object(rg_module, "get_assumed_role_boto_session")
-    mocker.patch.object(rg_module, "BedrockEmbeddingModelFactory")
-    mocker.patch.object(rg_module, "BedrockLanguageModelFactory")
+    mocker.patch.object(providers_module, "get_assumed_role_boto_session")
+    mocker.patch.object(providers_module, "BedrockEmbeddingModelFactory")
+    mocker.patch.object(providers_module, "BedrockLanguageModelFactory")
 
     fake_counter = mocker.Mock()
     # 1 token per whitespace-delimited word.
@@ -54,7 +55,9 @@ def _make_evaluator(
         " ".join(text.split()[:limit]),
         limit,
     )
-    mocker.patch.object(rg_module, "BedrockTokenCounter", return_value=fake_counter)
+    mocker.patch.object(
+        providers_module, "BedrockTokenCounter", return_value=fake_counter
+    )
 
     config = Config()
     config.evaluation.max_context_tokens = max_context_tokens
@@ -477,11 +480,11 @@ class TestInitFailure:
         from unified_kg_rag.shared import EvaluationException
 
         mocker.patch.object(rg_module.boto3, "Session")
-        mocker.patch.object(rg_module, "get_assumed_role_boto_session")
-        mocker.patch.object(rg_module, "BedrockTokenCounter")
-        mocker.patch.object(rg_module, "BedrockEmbeddingModelFactory")
+        mocker.patch.object(providers_module, "get_assumed_role_boto_session")
+        mocker.patch.object(providers_module, "BedrockTokenCounter")
+        mocker.patch.object(providers_module, "BedrockEmbeddingModelFactory")
         mocker.patch.object(
-            rg_module,
+            providers_module,
             "BedrockLanguageModelFactory",
             side_effect=RuntimeError("boom"),
         )
@@ -579,19 +582,19 @@ class TestRunConfigAndJudgeEffort:
 
     def test_judge_model_gets_low_effort_by_default(self, mocker) -> None:
         _make_evaluator(mocker)
-        factory = rg_module.BedrockLanguageModelFactory.return_value
+        factory = providers_module.BedrockLanguageModelFactory.return_value
         _, kwargs = factory.get_model.call_args
         assert kwargs["effort"] == "low"
 
     def test_null_judge_effort_inherits_bedrock_effort(self, mocker) -> None:
         mocker.patch.object(rg_module.boto3, "Session")
-        mocker.patch.object(rg_module, "get_assumed_role_boto_session")
-        mocker.patch.object(rg_module, "BedrockEmbeddingModelFactory")
-        mocker.patch.object(rg_module, "BedrockLanguageModelFactory")
-        mocker.patch.object(rg_module, "BedrockTokenCounter")
+        mocker.patch.object(providers_module, "get_assumed_role_boto_session")
+        mocker.patch.object(providers_module, "BedrockEmbeddingModelFactory")
+        mocker.patch.object(providers_module, "BedrockLanguageModelFactory")
+        mocker.patch.object(providers_module, "BedrockTokenCounter")
         config = Config()
         config.evaluation.judge_effort = None
         RagasEvaluator(config=config, show_progress=False)
-        factory = rg_module.BedrockLanguageModelFactory.return_value
+        factory = providers_module.BedrockLanguageModelFactory.return_value
         _, kwargs = factory.get_model.call_args
         assert "effort" not in kwargs

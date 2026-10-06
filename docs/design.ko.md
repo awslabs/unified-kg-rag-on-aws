@@ -32,7 +32,7 @@
 - **두 방법론, 하나의 인프라**: GraphRAG(커뮤니티 요약)와 LightRAG(이중 레벨 키워드)가 동일한 인제스천·인덱싱·캐싱·다국어·하이브리드 검색 인프라를 공유하고, **검색 알고리즘 레이어만 교체**됩니다.
 - **일반화 우선**: 하드코딩·정규표현식 휴리스틱·과적합을 지양합니다. 의미 판단은 LLM 또는 권위 데이터에 위임하고, 토큰 카운팅은 Bedrock `count_tokens` API를 사용하며, 임계값/가중치는 설정 기반입니다.
 - **헥사고날 경계**: 도메인/알고리즘 코드는 추상 포트에 의존하고, 구체 AWS 어댑터는 그 뒤에 둡니다.
-- **레지스트리 기반 확장**: 검색 전략·평가자·렌더러는 데코레이터 레지스트리로 등록되어, 디스패치 코드 수정 없이 확장됩니다.
+- **레지스트리 기반 확장**: 검색 전략·렌더러는 데코레이터 레지스트리로 등록되어, 디스패치 코드 수정 없이 확장됩니다. 평가자는 `EvaluationManager._resolve_evaluator_class` 한 곳에서 `EvaluatorType`별 클래스로 매핑하므로, 새 평가자는 그곳에 분기를 하나 추가합니다.
 
 ---
 
@@ -70,8 +70,8 @@ unified_kg_rag/
 │  ├─ ingestion/        #   LLM/IO 결합: chunker, *_extractor, loader, parser,
 │  │                    #   translator, gleaner, community_detector
 │  ├─ renderers/        #   그래프 시각화 렌더러
-│  └─ evaluators/       #   langchain/ragas 평가자 (순수 graph_aware_evaluator는
-│                       #   evaluation/ 파사드에 co-locate)
+│  └─ evaluators/       #   langchain/ragas 평가자 (LLM을 쓰지 않는 graph_aware·
+│                       #   retrieval·answer_match 평가자는 evaluation/에 위치)
 ├─ application/         # 오케스트레이션 + 엔트리포인트
 │  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning
 │  ├─ ingestion/        #   DataIngestionPipeline + pipeline_stages
@@ -80,12 +80,14 @@ unified_kg_rag/
 │  └─ prompts/          #   PromptTuner (LLM 기반 코퍼스 프로파일링)
 ├─ shared/              # cross-cutting 커널 (config, logging, exceptions, metrics,
 │                       #   cache/pipeline manager, utils)
-├─ evaluation/          # 실제 로직 패키지: evaluation_manager / base / graph_aware
+├─ evaluation/          # 실제 로직 패키지: evaluation_manager / base / graph_aware /
+│                       #   retrieval / answer_match
 └─ visualization/       # 실제 로직 패키지: 렌더 루프 + embeddings/exporters/renderers
 ```
 
 > 레이아웃 주석: `evaluation/`·`visualization/`은 **실제 로직 패키지**입니다 —
-> `evaluation/`은 `evaluation_manager`·`graph_aware_evaluator`·`base`를,
+> `evaluation/`은 `evaluation_manager`·`base`와 LLM을 쓰지 않는
+> `graph_aware_evaluator`·`retrieval_evaluator`·`answer_match_evaluator`를,
 > `visualization/`은 렌더 루프 + `embeddings/`·`exporters/`·`renderers/`
 > 하위패키지를 보유합니다. 그 외에는 모두 실제 위치
 > (`application.retrieval.rag_chain`, `application.storage.indexing_manager`,
@@ -100,7 +102,7 @@ unified_kg_rag/
 | `GraphIndexer` (쓰기측) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py` | full + delta(`upsert_*`/`delete_by_id`) 단일 계약 |
 | `VectorIndexer` (쓰기측) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` | 동일 |
 | `BaseGraphRAGRetriever` (읽기측) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch}_retriever.py` | 검색 어댑터 |
-| LLM/Embedding/Rerank 팩토리 | `adapters/aws/bedrock.py` | Bedrock 구현 | `ModelFactoryPort` conform; 임베딩/리랭크 생성 지점에 주입(기본 Bedrock) |
+| LLM/Embedding/Rerank 팩토리, 토큰 카운터 | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`) | `adapters/aws/bedrock.py`, `adapters/aws/token_counter.py` | 오케스트레이터마다 한 번 만드는 `Providers` 묶음(`adapters/providers.py`)에 담아 모든 구성 요소에 전달(기본 Bedrock) |
 
 > 설계 노트: 순수 포트(`DocStatusPort`, 쓰기측 indexer ABC)는 `ports/`에 모읍니다. 읽기측 추상 베이스(`BaseGraphRAGRetriever`/`BaseSearchStrategy`)는 `__init__`에서 인프라(HybridScorer/TokenManager)를 생성하는 "어댑터 베이스"라 `adapters/retrieval/base.py`에 두고 `ports/__init__`에서 발견용으로 re-export합니다(중복 Protocol 정의를 두지 않음).
 
@@ -122,7 +124,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 ### 2.3 레지스트리
 
 - **검색 전략**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)`로 `SearchStrategy` enum에 클래스, 필요한 역할, 질의 입력을 등록.
-- **평가자**: `EvaluationManager._resolve_evaluator_class` — `EvaluatorType` → 평가자 클래스(lazy, 사용 시 import).
+- **평가자**: `EvaluationManager._resolve_evaluator_class` — `EvaluatorType`마다 명시적 분기로 평가자 클래스를 반환(lazy, 사용 시 import). 데코레이터 레지스트리가 아니므로 새 평가자는 enum 멤버와 분기를 추가합니다.
 - **렌더러**: `adapters/renderers/base.py` — `@register_renderer("name")`.
 
 이 패턴은 기존의 `ParserFactory._loader_configs`(선언적 파서 등록)와 동일한 철학입니다.
@@ -133,7 +135,8 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 > 렉시컬 검색)는 프레임워크의 본질적 구성이라 런타임 교체 대상이 아니고, 백엔드별
 > fan-out(엔티티를 양쪽 스토어에, 엣지보다 엔티티 먼저, 스토어 간 orphan-edge
 > 캐스케이드)은 임의 디스패치가 아니라 의도된 도메인 지식이기 때문입니다.
-> 따라서 새 검색 전략·평가자·렌더러는 레지스트리 등록만으로 추가되지만, 쓰기측
+> 따라서 새 검색 전략·렌더러는 레지스트리 등록만으로(평가자는
+> `_resolve_evaluator_class`에 분기 하나를 더해) 추가되지만, 쓰기측
 > 스토어 백엔드 교체는 `GraphIndexer`/`VectorIndexer` 포트를 구현해 주입하는
 > 방식입니다(`IndexingManager(vector_indexer=…, graph_indexer=…)` — 매니저 코드
 > 수정은 불필요). (읽기 경로는 `RetrieverRole`→builder 맵으로 이미 일반화됨.)
@@ -300,9 +303,10 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 
 각 리트리버 빌드는 Neptune 웹소켓 + 스레드 풀, OpenSearch (a)sync HTTP 풀을 엽니다. 이 자원들은 명시적으로 닫지 않으면 GC까지 누수됩니다. 그래서 전 계층이 best-effort `close()`/`aclose()`를 노출합니다(절대 raise하지 않음):
 
-- **OpenSearchClient**: `close()`/`aclose()` + sync/async 컨텍스트 매니저(NeptuneClient 미러링). 이벤트 루프가 바뀌면 이전 `AsyncOpenSearch`를 즉시 폐기(best-effort connector close)해 루프당 aiohttp 풀이 누수되지 않게 합니다. `aclose()`는 transport close를 await해 "Unclosed client session" 경고를 방지.
+- **OpenSearchClient**: `close()`/`aclose()` + sync/async 컨텍스트 매니저(NeptuneClient 미러링). 이벤트 루프가 바뀌면 이전 `AsyncOpenSearch`를 닫습니다. 원래 루프가 돌고 있으면 그 루프에서 await하고, 아니면 aiohttp connector의 close 코루틴을 루프 없이 끝까지 실행해 루프당 aiohttp 풀이 누수되지 않게 합니다. `aclose()`는 transport close를 await해 "Unclosed client session" 경고를 방지.
 - **NeptuneClient**: Gremlin 커넥션 풀 종료.
 - **체인 배선**: 리트리버/인덱서 → `IndexingManager.close()` / `GraphRAGChain.close()`·`aclose()`(캐시된 리트리버 순회)로 위임. `run-rag` CLI는 `finally`에서 `await rag_chain.aclose()`, `run-ingestion` CLI는 `finally`에서 `pipeline.close()`를 호출해 프로세스 종료 시 소켓을 해제합니다.
+- **이벤트 루프**: `GraphRAGChain`은 리트리버와 검색 전략 인스턴스를 이벤트 루프별로 캐시하며, 루프는 `id()`가 아니라 객체 참조로 추적합니다. 동기 진입점(`invoke`, `batch`, `stream`)은 체인이 소유한 루프 스레드 하나에서 실행됩니다. 이 스레드는 처음 사용할 때 시작되고 `close()`/`aclose()`에서 멈추므로, 동기 호출을 반복해도 루프에 묶인 클라이언트 한 벌을 재사용하고 이미 루프가 도는 스레드에서도 호출할 수 있습니다. 루프가 바뀌면 밀려난 리트리버를 닫으며, 원래 루프가 아직 돌고 있으면 그 루프에서 await합니다. 블로킹 백엔드 호출은 루프 스레드 밖에서 실행합니다. Neptune 연결·종료와 융합·리랭크 단계는 `asyncio.to_thread`로 실행하고, 리랭크 `top_n`은 공유 모델이 아닌 호출별 복사본에 적용합니다.
 
 ### 8.7 다국어 처리
 
@@ -315,10 +319,12 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 
 ## 9. 평가 프레임워크
 
-`evaluation/` — `EvaluationManager`가 `_resolve_evaluator_class`(lazy 레지스트리)로 평가자를 디스패치합니다.
+`evaluation/` — `EvaluationManager`가 `_resolve_evaluator_class`(`EvaluatorType`별 lazy import 분기)로 평가자를 디스패치합니다.
 
 - **LangChain 평가자**: correctness / partial_correctness (LLM 기반 루브릭)
 - **RAGAS 평가자**: answer_correctness/relevancy, context_precision/recall, faithfulness
+- **검색 평가자** (`retrieval_evaluator.py`): 순위대로 보고된 출처를 데이터셋의 `reference_sources`와 비교해 `hit_at_k`, `recall_at_k`(k = `evaluation.retrieval_k`), `mrr`를 계산합니다. 파일 이름 stem(대소문자 무시) 또는 문서 id로 매칭합니다. 결정적·LLM 불필요이며, 참조나 출처 정보가 없는 질의는 건너뜁니다.
+- **답변 일치 평가자** (`answer_match_evaluator.py`): `answer`와 선택 항목 `metadata.answer_aliases`(참조 중 최댓값)에 대해 SQuAD 방식으로 정규화한 `exact_match`와 `token_f1`을 계산합니다. 결정적·LLM 불필요이며, 공백 기준 토큰이므로 띄어쓰기가 없는 문자에서는 token F1이 exact match와 같아집니다.
 - **그래프 인식 평가자** (`graph_aware_evaluator.py`): 정답의 `expected_entities`/`expected_relationships`가 생성 답변에 등장하는 비율(= coverage = recall)을 `ENTITY_COVERAGE`/`RELATIONSHIP_COVERAGE`로 계산. 결정적·LLM 불필요. precision/F1은 답변 내 엔티티를 열거해야 하므로(자유 텍스트에서 불가) 산출하지 않습니다 — recall의 복제로 신호를 과장하지 않기 위함. 라틴 문자는 단어 경계 기준 연속 토큰 매칭("AI"가 "airport" 안에서 매칭되지 않음), 공백이 없는 CJK는 부분 문자열 매칭으로 폴백. 매니저가 기대치를 `result.metadata`로 주입하므로 추상 시그니처 변경이 없습니다.
 
 CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
@@ -367,7 +373,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 ## 14. CI/CD와 보안
 
-- **CI** (`.github/workflows/`): `quality` 워크플로는 PR과 `main` 푸시에서 실행됩니다. ruff/black/isort/mypy와 커버리지 게이트를 포함한 pytest, 지원 최저 버전인 Python 3.10에서의 테스트, property·integration 스위트 단독 실행, 선택 파서 보안 검사, cdk-nag를 켠 `cdk synth`와 IaC 단언 테스트를 수행합니다. `security` 워크플로는 `main` 푸시 시 차단 없이 보고만 하는 ASH 스캔을 실행합니다.
+- **CI** (`.github/workflows/`): `quality` 워크플로는 PR과 `main` 푸시에서 실행됩니다. ruff/black/isort/mypy와 커버리지 게이트를 포함한 pytest(단위·property·integration 스위트를 함께 실행하는 `-m "not aws"` 한 번), 지원 최저 버전인 Python 3.10에서의 테스트, 선택 파서 보안 검사, cdk-nag를 켠 `cdk synth`와 IaC 단언 테스트를 수행합니다. `security` 워크플로는 `main` 푸시 시 차단 없이 보고만 하는 ASH 스캔을 실행합니다.
 - **Dependabot** (`.github/dependabot.yml`): `uv` 잠금 파일(`/`), IaC `pip` 요구사항(`/iac`), SHA로 고정한 GitHub Actions를 매주 갱신합니다. 호환성이 깨지는 것으로 확인된 버전은 `ignore` 항목에 이유와 함께 제외합니다.
 - **pre-commit** (`.pre-commit-config.yaml`): CI 게이트 미러링. `pre-commit install`.
 - **보안 하드닝**: 콘텐츠 해시는 SHA-256 전용(MD5 제거, CWE-327 해소). 의존성 스캔 CVE는 위 Dependabot PR로 대응합니다. 토큰은 환경/설정으로 주입(코드 하드코딩 없음).
@@ -393,7 +399,8 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 | 포트 | 계약 | 기본 어댑터 | 주입 방법 |
 |---|---|---|---|
-| `LLMFactoryPort` / `EmbeddingFactoryPort` (`ports/model_factory.py`, `Protocol`) | LangChain 호환 모델을 반환하는 `get_model()` / `get_model_info()` | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` | `GraphRAGChain(model_factory=...)`; `OpenSearchIndexer(embedding_factory=...)`; `OpenSearchRetriever(embedding_factory=...)` |
+| `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | LangChain 호환 모델을 반환하는 `get_model()` / `get_model_info()` | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory` | `Providers` 묶음(아래 참고): `GraphRAGChain(providers=...)`, `DataIngestionPipeline(..., providers=...)`, `EvaluationManager(..., providers=...)`. `GraphRAGChain(model_factory=...)`는 LLM만 담은 묶음의 축약형 |
+| `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` | `Providers(token_counter_factory=...)` |
 | `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` | `IndexingManager(vector_indexer=..., graph_indexer=...)` |
 | 리트리버(role-keyed builder) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
 | `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `list_all` / `diff` | `DynamoDBDocStatusStore` | 파이프라인이 스토어를 받음; 구조적으로 적합하면 됨 |
@@ -410,6 +417,39 @@ class OllamaModelFactory:                 # 구조적으로 LLMFactoryPort
 
 chain = GraphRAGChain(config=cfg, model_factory=OllamaModelFactory())
 ```
+
+**묶음 하나가 모든 구성 요소에 전달됩니다.** `Providers`(`adapters/providers.py`)는
+boto3 세션과 LLM·임베딩·리랭크·토큰 카운터 제공자를 담는 단순한 값 객체이며, 프레임워크의
+composition root입니다. 오케스트레이터마다 하나를 만들거나 주입받아 자신이 생성하는 구성
+요소에 명시적으로 넘기므로, 주입한 제공자가 다음 구성 요소 모두에 적용됩니다.
+
+- `GraphRAGChain`: 체인 자체 프롬프트, 모든 검색 전략(global map/reduce와 DRIFT 체인
+  포함), 하이브리드 스코어러의 리랭커, 두 토큰 매니저, 대화 메모리, 기본 OpenSearch
+  리트리버의 임베딩. 대화 메모리는 기본적으로 프로세스 전체에서 공유되므로 요청마다
+  체인을 새로 만들어도 대화 기록이 유지되며, 첫 체인의 설정과 제공자로 생성됩니다. 이후
+  메모리 설정이 다른 체인도 공유 매니저를 그대로 쓰고 경고를 한 번 남깁니다. 체인의 대화를
+  분리하려면 `GraphRAGChain(memory_manager=MemoryManager(cfg, providers=...))`를 넘깁니다.
+- `DataIngestionPipeline`: 청커, 번역기, 그래프·클레임 추출, gleaning, 설명 요약,
+  커뮤니티 리포트, 기본 OpenSearch 인덱서의 임베딩, 시각화 임베더
+- `EvaluationManager`: LangChain·RAGAS 평가기(LLM, 임베딩, 토큰 카운터). 기본값으로
+  체인의 묶음을 재사용
+
+```python
+providers = Providers(
+    cfg,
+    llm_factory=OllamaModelFactory(),
+    embedding_factory=MyEmbeddingFactory(),
+    token_counter_factory=lambda model_id, **_: MyTokenCounter(model_id),
+)
+chain = GraphRAGChain(config=cfg, providers=providers)
+pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
+```
+
+지정하지 않은 제공자는 처음 사용할 때 Bedrock 기본값으로 묶음당 한 번만 만들어집니다.
+그래서 체인은 Bedrock 클라이언트를 구성 요소나 쿼리마다가 아니라 한 번만 생성합니다(검색
+전략 인스턴스도 이벤트 루프별로 재사용). 묶음 없이 직접 생성한 구성 요소는 기본 묶음을
+스스로 만들므로 기존 생성자 호출은 그대로 동작합니다. DI 컨테이너는 의도적으로 두지 않으며,
+묶음은 프레임워크가 실제로 쓰는 제공자만 다룹니다.
 
 > **알 수 없는 kwargs는 받아서 무시합니다.** 호출 측은 `get_model(model_id, **kwargs)`로
 > 프레임워크 전용 키워드 인자를 넘깁니다. 예를 들어

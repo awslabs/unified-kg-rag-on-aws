@@ -15,6 +15,7 @@ from typing import Any
 from langchain_core.runnables import Runnable
 from pydantic import ValidationError
 
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.application.retrieval.rag_chain import (
     NO_CONTEXT_ANSWER,
@@ -90,11 +91,20 @@ class EvaluationManager:
         config: Config,
         rag_chain: Runnable | None = None,
         source_resolver: SourceFileResolver | None = None,
+        *,
+        providers: Providers | None = None,
     ) -> None:
         self.config = config
         if rag_chain is None:
             raise EvaluationException("RAG chain not provided for evaluation.")
         self.rag_chain = rag_chain
+        # One provider bundle for every evaluator: the injected one, else the
+        # chain's (so judges share its session and any injected factory), else
+        # a default Bedrock bundle.
+        chain_providers = getattr(rag_chain, "providers", None)
+        if not isinstance(chain_providers, Providers):
+            chain_providers = None
+        self.providers = Providers.resolve(config, providers or chain_providers)
         self.source_resolver = source_resolver or self._default_source_resolver(
             config, rag_chain
         )
@@ -144,7 +154,9 @@ class EvaluationManager:
                 continue
 
             try:
-                evaluator = evaluator_class(config=self.config)
+                evaluator = evaluator_class(
+                    config=self.config, providers=self.providers
+                )
                 reason = (
                     None if evaluator.validate_config() else "invalid configuration"
                 )
