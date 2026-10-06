@@ -408,12 +408,20 @@ class HybridScorer(MetricsMixin):
         # and an in-place sort here would reorder it as a side effect.
         results = sorted(results, key=lambda x: x.score or 0.0, reverse=True)
 
-        word_sets: dict[int, set[str]] = {}
-        for i, result in enumerate(results):
-            if result.content:
-                word_sets[i] = set(result.content.lower().split())
-            else:
-                word_sets[i] = set()
+        # A cut at least as wide as the candidate set removes nothing: MMR would
+        # only permute the list, and every caller re-sorts by score afterwards.
+        # Mix/hybrid hit this on every query (their per-type quotas are sized to
+        # the candidate counts), and the selection loop below is quadratic in
+        # the candidate count, so skip it outright.
+        if target_count >= len(results):
+            self._record_metric("diversity_filtered_count", 0)
+            return results
+
+        word_sets = [
+            frozenset(result.content.lower().split()) if result.content else frozenset()
+            for result in results
+        ]
+        word_counts = [len(words) for words in word_sets]
 
         # Min-max normalize relevance to [0, 1] over the candidate set so it is
         # on the same scale as the Jaccard penalty. Post-fusion scores are not
@@ -431,28 +439,39 @@ class HybridScorer(MetricsMixin):
         else:
             relevances = [1.0] * len(raw_scores)
 
+        # Incremental MMR. Each candidate's max similarity to the selected set
+        # only changes when an item joins that set, so keep it in an array and
+        # fold in the newcomer's similarity once per round: O(n * target)
+        # Jaccard evaluations instead of re-scanning the whole selected set for
+        # every candidate every round (cubic, and measured at ~19 s for ~350
+        # candidates on the event loop). Same arithmetic, same tie-breaking
+        # (lowest index wins), so the selection is identical.
         selected_indices: list[int] = [0]
-        remaining_indices = set(range(1, len(results)))
+        remaining: list[int] = list(range(1, len(results)))
+        max_similarity = [0.0] * len(results)
+        newest = 0
+        penalty_weight = 1 - lambda_val
 
-        def calculate_mmr(candidate_idx: int) -> float:
-            relevance = relevances[candidate_idx]
-
-            candidate_words = word_sets[candidate_idx]
-            max_similarity = max(
-                (
-                    self._jaccard(candidate_words, word_sets[selected_idx])
-                    for selected_idx in selected_indices
-                ),
-                default=0.0,
-            )
-
-            return lambda_val * relevance - (1 - lambda_val) * max_similarity
-
-        while remaining_indices and len(selected_indices) < target_count:
-            # Sorted so ties resolve to the more relevant (lower-index) item.
-            best_idx = max(sorted(remaining_indices), key=calculate_mmr)
+        while remaining and len(selected_indices) < target_count:
+            newest_words = word_sets[newest]
+            newest_count = word_counts[newest]
+            best_idx = -1
+            best_mmr = float("-inf")
+            for idx in remaining:  # ascending, so ties keep the lower index
+                shared = len(word_sets[idx] & newest_words)
+                union = word_counts[idx] + newest_count - shared
+                similarity = shared / union if union > 0 else 0.0
+                if similarity > max_similarity[idx]:
+                    max_similarity[idx] = similarity
+                mmr = (
+                    lambda_val * relevances[idx] - penalty_weight * max_similarity[idx]
+                )
+                if mmr > best_mmr:
+                    best_mmr = mmr
+                    best_idx = idx
             selected_indices.append(best_idx)
-            remaining_indices.remove(best_idx)
+            remaining.remove(best_idx)
+            newest = best_idx
 
         selected = [results[i] for i in selected_indices]
 

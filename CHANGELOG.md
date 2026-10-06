@@ -78,6 +78,12 @@ Each previous behaviour stays available through the setting in parentheses.
   `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).
 
 ### Fixed
+- Fusion's MMR diversity filter no longer stalls the event loop on large
+  candidate sets. It re-scanned the selected set for every candidate in every
+  round (cubic; ~2 s at 220 and ~19 s at 350 mix candidates) and now keeps a
+  running max-similarity per candidate (quadratic), and it is skipped when the
+  cut is at least as wide as the candidate set, which is every `mix`/`hybrid`
+  query. The kept results and their scores are unchanged.
 - Prompt caching now takes effect on the Converse API, which every Claude
   4.5+/5.x inference profile uses. The system prompt carried an Anthropic
   `cache_control` key that langchain-aws drops when it builds a Converse
