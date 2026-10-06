@@ -19,6 +19,28 @@ _RESOLVE_PROGRESS_EVERY = 2000
 
 logger = get_logger(__name__)
 
+# Placeholders the claim prompt (or the model) uses for an absent date.
+_UNKNOWN_DATE_VALUES = frozenset({"", "unknown", "none", "n/a", "na", "null"})
+
+
+def claim_date_key(value: str | None) -> str:
+    """Normalize a claim date for identity ("" when absent or a placeholder)."""
+    key = " ".join((value or "").split()).casefold()
+    return "" if key in _UNKNOWN_DATE_VALUES else key
+
+
+def claim_identity_suffix(start_date: str | None, end_date: str | None) -> str:
+    """Date component of a claim's identity ("" when neither date is known).
+
+    Two claims with the same subject, object and type but different dates
+    (e.g. two delivery obligations due on different days) are distinct facts;
+    keying on the dates keeps them apart instead of collapsing them and keeping
+    only one date. Date-less claims keep a date-free identity, so restatements
+    of the same undated claim still merge.
+    """
+    start, end = claim_date_key(start_date), claim_date_key(end_date)
+    return f":{start}:{end}" if start or end else ""
+
 
 def resolve_entity_reference_task(
     entity_reference: str,
@@ -241,9 +263,18 @@ class ClaimResolver(BaseResolver):
         if not claims:
             return []
 
-        groups_dict = defaultdict(list)
+        groups_dict: defaultdict[tuple[str, ...], list[Claim]] = defaultdict(list)
         for claim in claims:
-            key = (claim.subject_id, claim.object_id, claim.type)
+            # A literal object (object_id None: an amount, date, status) is
+            # keyed by its value, so "$100" and "$200" claims stay distinct;
+            # dates are part of the identity for the same reason.
+            object_key = claim.object_id or f"literal:{entity_key(claim.object_name)}"
+            key = (
+                claim.subject_id,
+                object_key,
+                claim.type,
+                claim_identity_suffix(claim.start_date, claim.end_date),
+            )
             groups_dict[key].append(claim)
 
         return list(groups_dict.values())

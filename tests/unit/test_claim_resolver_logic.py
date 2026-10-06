@@ -175,9 +175,9 @@ class TestGroupSimilarClaims:
         groups = ClaimResolver._group_similar_claims(claims)
         assert len(groups) == 3
 
-    def test_literal_objects_with_none_id_group_by_none(self) -> None:
-        # Two literal-object claims (object_id=None) of same subject+type collapse
-        # into one group keyed on None.
+    def test_literal_objects_group_by_value(self) -> None:
+        # Literal-object claims (object_id=None) are keyed by the literal value,
+        # so "$100" and "$200" stay distinct while a restatement merges.
         claims = [
             Claim(
                 id="c1",
@@ -195,10 +195,44 @@ class TestGroupSimilarClaims:
                 object_name="$200",
                 type="FINANCIAL",
             ),
+            Claim(
+                id="c3",
+                subject_id="e1",
+                subject_name="A",
+                object_id=None,
+                object_name="$100",
+                type="FINANCIAL",
+            ),
         ]
         groups = ClaimResolver._group_similar_claims(claims)
-        assert len(groups) == 1
-        assert len(groups[0]) == 2
+        assert sorted(len(g) for g in groups) == [1, 2]
+        assert {c.object_name for c in max(groups, key=len)} == {"$100"}
+
+    def test_distinct_dates_stay_separate(self) -> None:
+        def _dated(id_: str, start: str | None) -> Claim:
+            return Claim(
+                id=id_,
+                subject_id="e1",
+                subject_name="Vendor",
+                object_id="e2",
+                object_name="Buyer",
+                type="DELIVERY",
+                start_date=start,
+            )
+
+        claims = [
+            _dated("c1", "2024-01-01"),
+            _dated("c2", "2024-06-01"),
+            _dated("c3", "2024-01-01"),
+            _dated("c4", None),
+            _dated("c5", "UNKNOWN"),  # placeholder == no date
+        ]
+        groups = ClaimResolver._group_similar_claims(claims)
+        assert sorted(sorted(c.id for c in g) for g in groups) == [
+            ["c1", "c3"],
+            ["c2"],
+            ["c4", "c5"],
+        ]
 
 
 class TestMergeClaims:

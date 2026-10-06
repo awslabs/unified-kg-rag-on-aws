@@ -108,6 +108,60 @@ class TestParseClaimData:
         )
         assert a.id == b.id
 
+    def test_repeated_tags_coerced_not_stringified(self, extractor, text_unit) -> None:
+        # The XML parser returns a list for a repeated tag.
+        claim = extractor._parse_claim_data(
+            {
+                "subject": ["Vendor Co", "Vendor"],
+                "object": "Buyer Ltd",
+                "claim_type": ["DELIVERY", "OBLIGATION"],
+                "claim_status": ["TRUE", "TRUE"],
+                "description": [
+                    "Ships parts monthly",
+                    "Ships parts monthly",
+                    "On time",
+                ],
+                "source_text": ["Vendor ships parts.", "Delivery is monthly."],
+            },
+            text_unit,
+        )
+        assert claim is not None
+        assert claim.subject_name == "Vendor Co"
+        assert claim.type == "DELIVERY"
+        assert claim.status == "TRUE"
+        assert claim.description == "Ships parts monthly\nOn time"
+        assert claim.source_text == "Vendor ships parts.\nDelivery is monthly."
+        assert "[" not in claim.description
+
+    def test_id_uses_entity_key_normalization(self, extractor, text_unit) -> None:
+        a = extractor._parse_claim_data(
+            {"subject": "Vendor  Co.", "object": "Buyer", "claim_type": "X"}, text_unit
+        )
+        b = extractor._parse_claim_data(
+            {"subject": "vendor co", "object": "Buyer", "claim_type": "X"}, text_unit
+        )
+        assert a.id == b.id
+
+    def test_distinct_dates_get_distinct_ids(self, extractor, text_unit) -> None:
+        base = {"subject": "Vendor", "object": "Buyer", "claim_type": "DELIVERY"}
+        first = extractor._parse_claim_data(
+            {**base, "start_date": "2024-01-01", "end_date": "2024-01-31"}, text_unit
+        )
+        second = extractor._parse_claim_data(
+            {**base, "start_date": "2024-06-01", "end_date": "2024-06-30"}, text_unit
+        )
+        assert first.id != second.id
+        merged = extractor._merge_claims([first, second])
+        assert {c.start_date for c in merged} == {"2024-01-01", "2024-06-01"}
+
+    def test_unknown_dates_keep_date_free_id(self, extractor, text_unit) -> None:
+        base = {"subject": "Vendor", "object": "Buyer", "claim_type": "DELIVERY"}
+        undated = extractor._parse_claim_data(base, text_unit)
+        unknown = extractor._parse_claim_data(
+            {**base, "start_date": "UNKNOWN", "end_date": "unknown"}, text_unit
+        )
+        assert undated.id == unknown.id
+
 
 # --------------------------------------------------------------------------- #
 # _parse_extraction_result
