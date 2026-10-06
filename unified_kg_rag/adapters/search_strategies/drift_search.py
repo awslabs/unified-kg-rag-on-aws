@@ -10,7 +10,6 @@ from langchain_core.output_parsers import (
     StrOutputParser,
 )
 
-from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
@@ -62,11 +61,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         # language so they hit the language-analyzed index (not English-biased).
         self.target_language = config.processing.translation.target_language.value
 
-        factory = BedrockLanguageModelFactory(
-            config=config,
-            boto_session=boto_session,
-            region_name=self.config.aws.bedrock.region_name,
-        )
+        factory = self.providers.llm_factory
 
         str_output_parser = StrOutputParser()
         self.query_refiner = setup_chain(
@@ -143,7 +138,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         # from several iterations; reserve slots per section type (shared with
         # local search) so the final cut does not collapse them to one type, and
         # rerank only text chunks, as local search does.
-        final_results = self.hybrid_scorer.fuse_and_rerank_results(
+        final_results = await self._fuse_and_rerank(
             {"results": all_results},
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,

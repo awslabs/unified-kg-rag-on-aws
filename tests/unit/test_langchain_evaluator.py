@@ -15,6 +15,7 @@ import json
 import pytest
 
 import unified_kg_rag.evaluation  # noqa: F401  (resolves package import cycle)
+from unified_kg_rag.adapters import providers as providers_module
 from unified_kg_rag.adapters.evaluators import langchain_evaluator as lc_module
 from unified_kg_rag.adapters.evaluators.langchain_evaluator import LangChainEvaluator
 from unified_kg_rag.domain.models import (
@@ -46,7 +47,7 @@ class _FakeEvaluator:
 
 def _make_evaluator(mocker, *, langchain_metrics=None) -> LangChainEvaluator:
     """Build a LangChainEvaluator with Bedrock + load_evaluator stubbed."""
-    mocker.patch.object(lc_module, "BedrockLanguageModelFactory")
+    mocker.patch.object(providers_module, "BedrockLanguageModelFactory")
     mocker.patch.object(lc_module, "load_evaluator", return_value=object())
     mocker.patch.object(lc_module.boto3, "Session")
 
@@ -178,7 +179,7 @@ class TestInitialization:
 
         mocker.patch.object(lc_module.boto3, "Session")
         mocker.patch.object(
-            lc_module,
+            providers_module,
             "BedrockLanguageModelFactory",
             side_effect=RuntimeError("boom"),
         )
@@ -412,13 +413,13 @@ def test_judge_model_requested_without_sampling_params(mocker) -> None:
     # The judge must not force temperature/top_p/top_k: the factory decides
     # per model capability (Claude 5 rejects them outright).
     _make_evaluator(mocker)
-    factory = lc_module.BedrockLanguageModelFactory.return_value
+    factory = providers_module.BedrockLanguageModelFactory.return_value
     _, kwargs = factory.get_model.call_args
     assert not {"temperature", "top_p", "top_k"} & set(kwargs)
 
 
 def test_judge_model_uses_configured_judge_effort(mocker) -> None:
     _make_evaluator(mocker)
-    factory = lc_module.BedrockLanguageModelFactory.return_value
+    factory = providers_module.BedrockLanguageModelFactory.return_value
     _, kwargs = factory.get_model.call_args
     assert kwargs["effort"] == Config().evaluation.judge_effort == "low"

@@ -13,6 +13,7 @@ from typing import Any
 from langchain_core.runnables import Runnable
 from pydantic import ValidationError
 
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.retrieval.rag_chain import RAGInput, RAGOutput
 from unified_kg_rag.domain.models import (
     Config,
@@ -71,11 +72,24 @@ class EvaluationManager:
         # the ignore — the branch is real once a new member is added.
         return None  # type: ignore[unreachable]
 
-    def __init__(self, config: Config, rag_chain: Runnable | None = None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        rag_chain: Runnable | None = None,
+        *,
+        providers: Providers | None = None,
+    ) -> None:
         self.config = config
         if rag_chain is None:
             raise EvaluationException("RAG chain not provided for evaluation.")
         self.rag_chain = rag_chain
+        # One provider bundle for every evaluator: the injected one, else the
+        # chain's (so judges share its session and any injected factory), else
+        # a default Bedrock bundle.
+        chain_providers = getattr(rag_chain, "providers", None)
+        if not isinstance(chain_providers, Providers):
+            chain_providers = None
+        self.providers = Providers.resolve(config, providers or chain_providers)
         self.evaluators: dict[EvaluatorType, BaseEvaluator] = {}
         self._initialize_evaluators()
         self.batch_processor = BatchProcessor()
@@ -90,7 +104,9 @@ class EvaluationManager:
 
             try:
                 evaluator = evaluator_class(
-                    config=self.config, rag_chain=self.rag_chain
+                    config=self.config,
+                    rag_chain=self.rag_chain,
+                    providers=self.providers,
                 )
                 if evaluator.validate_config():
                     self.evaluators[evaluator_type] = evaluator

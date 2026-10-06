@@ -55,8 +55,8 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         self._neptune_client.close()
 
     async def aclose(self) -> None:
-        """Async-symmetric teardown; the Neptune client close is synchronous."""
-        self._neptune_client.close()
+        """Async teardown: the blocking Neptune close runs off the loop thread."""
+        await asyncio.to_thread(self._neptune_client.close)
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         start_time = time.time()
@@ -67,7 +67,11 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         )
 
         try:
-            g = self._neptune_client.g
+            # Opening the connection is blocking: gremlinpython drives its
+            # websocket handshake with run_until_complete on a private loop,
+            # which fails on a thread that already runs one (the old code
+            # only worked because the CLIs apply nest_asyncio).
+            g = await asyncio.to_thread(lambda: self._neptune_client.g)
             seed_entities, seed_communities = await self._get_seed_nodes(g, query)
 
             if not seed_entities and not seed_communities:

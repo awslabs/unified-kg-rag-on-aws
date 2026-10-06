@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import copy
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -7,7 +8,7 @@ from typing import Any
 
 from langchain_core.documents import Document
 
-from unified_kg_rag.adapters.aws import BedrockRerankModelFactory
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, FusionMethod, RetrievalResult
 from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
 from unified_kg_rag.ports.model_factory import RerankFactoryPort
@@ -17,21 +18,36 @@ from unified_kg_rag.shared.utils import compute_hash
 logger = get_logger(__name__)
 
 
+def _with_top_n(model: Any, top_n: int) -> Any:
+    """The rerank model limited to ``top_n`` results, without mutating it."""
+    if getattr(model, "top_n", None) == top_n:
+        return model
+    model_copy = getattr(model, "model_copy", None)
+    if callable(model_copy):  # pydantic models (LangChain compressors)
+        return model_copy(update={"top_n": top_n})
+    clone = copy.copy(model)
+    clone.top_n = top_n
+    return clone
+
+
 class HybridScorer(MetricsMixin):
     def __init__(
         self,
         config: Config,
         boto_session: Any | None = None,
         rerank_factory: RerankFactoryPort | None = None,
+        *,
+        providers: Providers | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.config = config
         self.boto_session = boto_session
         self.fusion_config = config.search.fusion
-        # Injected rerank provider (port); defaults to Bedrock when reranking is
-        # enabled and none is supplied.
+        # Injected rerank provider (port). Otherwise it comes from the shared
+        # provider bundle (Bedrock by default), and only when reranking is on.
         self.rerank_factory: RerankFactoryPort | None = rerank_factory
+        self._providers = providers
         self.rerank_model: Any = None
         self._initialize_reranking()
 
@@ -43,11 +59,9 @@ class HybridScorer(MetricsMixin):
                 return
 
             if self.rerank_factory is None:
-                self.rerank_factory = BedrockRerankModelFactory(
-                    config=self.config,
-                    boto_session=self.boto_session,
-                    region_name=self.config.aws.bedrock.region_name,
-                )
+                self.rerank_factory = Providers.resolve(
+                    self.config, self._providers, self.boto_session
+                ).rerank_factory
 
             self.rerank_model = self.rerank_factory.get_model(
                 model_id=rerank_config.rerank_model_id,
@@ -265,8 +279,8 @@ class HybridScorer(MetricsMixin):
         # Plain RRF overwrites each item's score with a flat
         # weight/(k+rank) (~0.0164 at rank1 vs 0.0143 at rank10) — so WITHIN a stream
         # the gold item is indistinguishable from noise, and downstream token_manager
-        # (priority = score*multiplier) fills quota slots with the wrong item (the
-        # "Medavoy retrieved but dropped from context" bug). Upstream LightRAG keeps
+        # (priority = score*multiplier) fills quota slots with the wrong item, so a
+        # relevant item can be retrieved yet dropped from context. Upstream LightRAG keeps
         # the native order (entities by cosine, relations by degree). We preserve that
         # by BLENDING a per-stream min-max-normalized native score into the RRF score:
         # cross-stream fusion still comes from RRF rank; within-stream discrimination
@@ -506,29 +520,27 @@ class HybridScorer(MetricsMixin):
                 )
                 documents.append(doc)
 
-            original_top_n = self.rerank_model.top_n
+            # top_n is set on a per-call copy, never on the shared model:
+            # strategies (and their scorer) are reused by concurrent queries and
+            # this runs in a worker thread, so a temporary mutation would leak
+            # one query's limit into another's rerank.
+            original_top_n = getattr(self.rerank_model, "top_n", None)
             adjusted_top_n = (
                 min(len(documents), original_top_n)
                 if original_top_n
                 else len(documents)
             )
-
             if adjusted_top_n != original_top_n:
                 logger.debug(
-                    "Adjusting rerank 'top_n' from %s to %s to match document count (%s)",
-                    original_top_n,
+                    "Using rerank 'top_n' %s instead of %s to match document count (%s)",
                     adjusted_top_n,
+                    original_top_n,
                     len(documents),
                 )
-                self.rerank_model.top_n = adjusted_top_n
-
-            try:
-                reranked_docs = self.rerank_model.compress_documents(
-                    documents=documents, query=query
-                )
-            finally:
-                if adjusted_top_n != original_top_n:
-                    self.rerank_model.top_n = original_top_n
+            rerank_model = _with_top_n(self.rerank_model, adjusted_top_n)
+            reranked_docs = rerank_model.compress_documents(
+                documents=documents, query=query
+            )
             reranked_results = []
             for i, doc in enumerate(reranked_docs):
                 key_value = doc.metadata.get("key")

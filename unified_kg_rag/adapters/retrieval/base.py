@@ -10,6 +10,7 @@ from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 from unified_kg_rag.adapters.retrieval.token_manager import (
     SectionType,
@@ -139,6 +140,16 @@ class BaseGraphRAGRetriever(BaseRetriever, MetricsMixin, ABC):
 
 
 class BaseSearchStrategy(MetricsMixin, ABC):
+    """A search algorithm over role-keyed retrievers.
+
+    ``GraphRAGChain`` builds one instance per strategy and event loop and
+    reuses it for every query, including concurrent ones. Subclasses must
+    therefore keep per-query state local to ``asearch`` (and what it calls)
+    and treat instance attributes as read-only after ``__init__``. The
+    ``MetricsMixin`` counters are the one exception: they are last-run
+    diagnostics, never part of a ``SearchResult``.
+    """
+
     def __init__(
         self,
         config: Config,
@@ -146,6 +157,8 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         boto_session: boto3.Session | None = None,
         optimization_threshold_factor: int = 2,
         default_max_tokens: int = 4096,
+        *,
+        providers: Providers | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -153,11 +166,16 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         # Retrievers are keyed by RetrieverRole value ("graph" / "document"),
         # not by concrete backend, so strategies stay backend-agnostic.
         self.retrievers = retrievers
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=self.config.aws.profile_name
+        # Session and model providers come from the orchestrator's shared
+        # bundle (GraphRAGChain passes its own), so an injected provider reaches
+        # the strategy's LLM chains, scorer and token counter alike. Without
+        # one, a default bundle is built over ``boto_session``.
+        self.providers = Providers.resolve(config, providers, boto_session)
+        self.boto_session = self.providers.boto_session
+        self.hybrid_scorer = HybridScorer(
+            self.config, boto_session=self.boto_session, providers=self.providers
         )
-        self.hybrid_scorer = HybridScorer(self.config, boto_session=self.boto_session)
-        self.token_manager = TokenManager(self.config, boto_session=self.boto_session)
+        self.token_manager = TokenManager(self.config, providers=self.providers)
         self.optimization_threshold_factor = optimization_threshold_factor
         self.default_max_tokens = default_max_tokens
 
@@ -207,6 +225,19 @@ class BaseSearchStrategy(MetricsMixin, ABC):
                 e,
             )
             return []
+
+    async def _fuse_and_rerank(
+        self, *args: Any, **kwargs: Any
+    ) -> list[RetrievalResult]:
+        """``HybridScorer.fuse_and_rerank_results`` off the event-loop thread.
+
+        Reranking is a blocking model call (a Bedrock round trip by default),
+        so running it inline would stall every other query on the loop.
+        """
+        results: list[RetrievalResult] = await asyncio.to_thread(
+            self.hybrid_scorer.fuse_and_rerank_results, *args, **kwargs
+        )
+        return results
 
     def _per_type_quota(self, top_k: int) -> dict[str, int]:
         """Reserved fusion slots per section type, from configured shares of top_k.

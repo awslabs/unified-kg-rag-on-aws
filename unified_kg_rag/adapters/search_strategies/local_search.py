@@ -87,7 +87,7 @@ class LocalSearchStrategy(BaseSearchStrategy):
         # items), and rerank ONLY text chunks so content-vs-query reranking doesn't bury
         # multi-hop bridge entities/relations. Mirrors MS local's proportional,
         # per-section context assembly.
-        final_results = self.hybrid_scorer.fuse_and_rerank_results(
+        final_results = await self._fuse_and_rerank(
             all_results,
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,
@@ -342,8 +342,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
         # chunk stream therefore reached fusion in arbitrary order with score 0,
         # and whatever the per-type quota sliced off was an arbitrary subset.
         # That is invisible while expansion is narrow and every chunk is
-        # on-topic, but it makes widening the expansion actively harmful: a
-        # measured 5x more chunks came with 4x LESS gold in the context.
+        # on-topic, but it makes widening the expansion actively harmful: more
+        # candidate chunks then means fewer relevant ones survive the quota.
         #
         # MS GraphRAG local ranks candidate text units by how many distinct
         # query-relevant entities reference them, with the entity's own rank as

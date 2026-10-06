@@ -6,8 +6,8 @@ The extraction LLM is asked to emit, for every entity, a verbatim ``source_text`
 span copied from the chunk it read. A *grounded* entity is one whose evidence
 span actually occurs in that chunk; an *ungrounded* one is a hallucination — the
 model invented an entity from its own domain priors rather than the document
-(observed in real E2E: a "Warranty Period / 24 months / Provisional Acceptance
-Date" entity materialized from a corpus that contained no such clause).
+(for example, a contract term with a duration that no clause in the corpus
+states).
 
 This module holds the pure, technology-agnostic grounding check (no boto3 /
 LangChain). It is deliberately conservative: it only *rejects* an entity when we

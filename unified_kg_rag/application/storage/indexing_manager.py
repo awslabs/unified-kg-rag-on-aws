@@ -8,6 +8,7 @@ from typing import Any, NamedTuple
 from unified_kg_rag.adapters.ingestion.description_summarizer import (
     DescriptionSummarizer,
 )
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.merge import merge_entities, merge_relationships
 from unified_kg_rag.domain.models import (
     Claim,
@@ -54,8 +55,13 @@ class IndexingManager:
         *,
         vector_indexer: VectorIndexer | None = None,
         graph_indexer: GraphIndexer | None = None,
+        providers: Providers | None = None,
     ) -> None:
         self.config = config
+        # Session + embedding/LLM providers shared with the pipeline (Bedrock
+        # by default), used by the default OpenSearch indexer and the merge
+        # summarizer.
+        self.providers = Providers.resolve(config, providers)
         if vector_indexer is None or graph_indexer is None:
             # Import the concrete adapters lazily so the default construction
             # path does not pull boto3-backed modules into callers that inject
@@ -65,7 +71,11 @@ class IndexingManager:
                 OpenSearchIndexer,
             )
 
-            vector_indexer = vector_indexer or OpenSearchIndexer(config=config)
+            vector_indexer = vector_indexer or OpenSearchIndexer(
+                config=config,
+                boto_session=self.providers.boto_session,
+                embedding_factory=self.providers.embedding_factory,
+            )
             graph_indexer = graph_indexer or NeptuneIndexer(config=config)
         self.opensearch_indexer: VectorIndexer = vector_indexer
         self.neptune_indexer: GraphIndexer = graph_indexer
@@ -76,7 +86,9 @@ class IndexingManager:
     @property
     def description_summarizer(self) -> DescriptionSummarizer:
         if self._description_summarizer is None:
-            self._description_summarizer = DescriptionSummarizer(self.config)
+            self._description_summarizer = DescriptionSummarizer(
+                self.config, providers=self.providers
+            )
         return self._description_summarizer
 
     def close(self) -> None:

@@ -32,7 +32,7 @@ This document is a **design reference for contributors and advanced users**, cov
 - **Two methodologies, one infrastructure**: GraphRAG (community-summary) and LightRAG (dual-level keyword) share the same ingestion, indexing, caching, multilingual, and hybrid-search infrastructure, and **only the retrieval algorithm layer is swapped**.
 - **Generalization first**: We avoid hardcoding, regex heuristics, and overfitting. Semantic judgments are delegated to the LLM or to authoritative data, token counting uses the Bedrock `count_tokens` API, and thresholds/weights are config-driven.
 - **Hexagonal boundaries**: Domain/algorithm code depends on abstract ports, with concrete AWS adapters placed behind them.
-- **Registry-based extension**: Search strategies, evaluators, and renderers are registered via decorator registries, so they can be extended without modifying dispatch code.
+- **Registry-based extension**: Search strategies and renderers are registered via decorator registries, so they can be extended without modifying dispatch code. Evaluators are mapped from `EvaluatorType` in one method (`EvaluationManager._resolve_evaluator_class`), so a new evaluator adds one branch there.
 
 ---
 
@@ -70,8 +70,8 @@ unified_kg_rag/
 │  ├─ ingestion/        #   LLM/IO coupled: chunker, *_extractor, loader, parser,
 │  │                    #   translator, gleaner, community_detector
 │  ├─ renderers/        #   graph visualization renderers
-│  └─ evaluators/       #   langchain/ragas evaluators (the pure graph_aware_evaluator is
-│                       #   co-located in the evaluation/ facade)
+│  └─ evaluators/       #   langchain/ragas evaluators (the LLM-free graph_aware,
+│                       #   retrieval and answer_match evaluators live in evaluation/)
 ├─ application/         # orchestration + entry points
 │  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning
 │  ├─ ingestion/        #   DataIngestionPipeline + pipeline_stages
@@ -80,12 +80,14 @@ unified_kg_rag/
 │  └─ prompts/          #   PromptTuner (LLM-based corpus profiling)
 ├─ shared/              # cross-cutting kernel (config, logging, exceptions, metrics,
 │                       #   cache/pipeline manager, utils)
-├─ evaluation/          # real logic package: evaluation_manager / base / graph_aware
+├─ evaluation/          # real logic package: evaluation_manager / base / graph_aware /
+│                       #   retrieval / answer_match
 └─ visualization/       # real logic package: render loop + embeddings/exporters/renderers
 ```
 
 > Layout note: `evaluation/` and `visualization/` are **real logic packages** —
-> `evaluation/` holds `evaluation_manager` / `graph_aware_evaluator` / `base`;
+> `evaluation/` holds `evaluation_manager` / `base` and the LLM-free
+> `graph_aware_evaluator` / `retrieval_evaluator` / `answer_match_evaluator`;
 > `visualization/` holds the render loop plus the `embeddings/`, `exporters/`,
 > and `renderers/` subpackages. Everything else is imported from its real
 > location (`application.retrieval.rag_chain`,
@@ -101,7 +103,7 @@ unified_kg_rag/
 | `GraphIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py` | Single contract for full + delta (`upsert_*`/`delete_by_id`) |
 | `VectorIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` | Same |
 | `BaseGraphRAGRetriever` (read-side) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch}_retriever.py` | Retrieval adapters |
-| LLM/Embedding/Rerank factories | `adapters/aws/bedrock.py` | Bedrock implementation | Conform to `ModelFactoryPort`; injected at the embedding/rerank construction points (default Bedrock) |
+| LLM/Embedding/Rerank factories, token counter | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`) | `adapters/aws/bedrock.py`, `adapters/aws/token_counter.py` | Carried by one `Providers` bundle (`adapters/providers.py`) that each orchestrator builds once and passes to every component (default Bedrock) |
 
 > Design note: Pure ports (`DocStatusPort`, the write-side indexer ABCs) are gathered in `ports/`. The read-side abstract bases (`BaseGraphRAGRetriever`/`BaseSearchStrategy`) are "adapter bases" that construct infrastructure (HybridScorer/TokenManager) in `__init__`, so they live in `adapters/retrieval/base.py` and are re-exported from `ports/__init__` for discovery (no duplicate Protocol definition is kept).
 
@@ -123,7 +125,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 ### 2.3 Registries
 
 - **Search strategies**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)` registers a class, its required roles, and its query inputs against the `SearchStrategy` enum.
-- **Evaluators**: `EvaluationManager._resolve_evaluator_class` — `EvaluatorType` → evaluator class (lazy, import-on-use).
+- **Evaluators**: `EvaluationManager._resolve_evaluator_class` — one explicit branch per `EvaluatorType` → evaluator class (lazy, import-on-use). Not a decorator registry: a new evaluator adds an enum member and a branch.
 - **Renderers**: `adapters/renderers/base.py` — `@register_renderer("name")`.
 
 This pattern follows the same philosophy as the existing `ParserFactory._loader_configs` (declarative parser registration).
@@ -134,8 +136,9 @@ This pattern follows the same philosophy as the existing `ParserFactory._loader_
 > stores (graph DB + vector/lexical search) are constitutive of the framework,
 > not runtime-swappable choices, and the per-backend fan-out (entities to both
 > stores, entities-before-edges phasing, the orphan-edge cascade) is deliberate
-> domain knowledge rather than arbitrary dispatch. So a new search strategy,
-> evaluator, or renderer is added by registration alone, while replacing a
+> domain knowledge rather than arbitrary dispatch. So a new search strategy or
+> renderer is added by registration alone (an evaluator by one branch in
+> `_resolve_evaluator_class`), while replacing a
 > write-side store means implementing the `GraphIndexer` / `VectorIndexer` port
 > and injecting it (`IndexingManager(vector_indexer=…, graph_indexer=…)`). The
 > read path is already generalized through the `RetrieverRole` → builder map.
@@ -302,9 +305,10 @@ The retrievers (`opensearch_retriever`/`neptune_retriever`) do not disguise auth
 
 Each retriever build opens a Neptune WebSocket + thread pool and OpenSearch (a)sync HTTP pools. These resources leak until GC unless explicitly closed. Therefore every layer exposes best-effort `close()`/`aclose()` (never raising):
 
-- **OpenSearchClient**: `close()`/`aclose()` + sync/async context managers (mirroring NeptuneClient). When the event loop changes, the previous `AsyncOpenSearch` is discarded immediately (best-effort connector close) so per-loop aiohttp pools do not leak. `aclose()` awaits the transport close to prevent the "Unclosed client session" warning.
+- **OpenSearchClient**: `close()`/`aclose()` + sync/async context managers (mirroring NeptuneClient). When the event loop changes, the previous `AsyncOpenSearch` is closed: awaited on its own loop while that loop runs, otherwise by running the aiohttp connector's close coroutine to completion without a loop, so per-loop aiohttp pools do not leak. `aclose()` awaits the transport close to prevent the "Unclosed client session" warning.
 - **NeptuneClient**: Closes the Gremlin connection pool.
 - **Chain wiring**: Retrievers/indexers delegate up to `IndexingManager.close()` / `GraphRAGChain.close()`·`aclose()` (iterating the cached retrievers). The `run-rag` CLI calls `await rag_chain.aclose()` in `finally`, and the `run-ingestion` CLI calls `pipeline.close()` in `finally`, releasing sockets at process exit.
+- **Event loops**: `GraphRAGChain` caches retrievers and strategy instances per event loop (tracked by reference, not `id()`). Its sync entry points (`invoke`, `batch`, `stream`) run on one chain-owned loop thread, started lazily and stopped by `close()`/`aclose()`, so repeated sync calls reuse one set of loop-bound clients and also work from a thread that already runs a loop. When the loop does change, the evicted retrievers are closed — awaited on their own loop while it still runs. Blocking backend calls stay off the loop thread: the Neptune connect/close and the fusion + rerank step run via `asyncio.to_thread`, and the rerank `top_n` is applied to a per-call copy of the shared model.
 
 ### 8.7 Multilingual Processing
 
@@ -317,10 +321,12 @@ Each retriever build opens a Neptune WebSocket + thread pool and OpenSearch (a)s
 
 ## 9. Evaluation Framework
 
-`evaluation/` — `EvaluationManager` dispatches evaluators via `_resolve_evaluator_class` (lazy registry).
+`evaluation/` — `EvaluationManager` dispatches evaluators via `_resolve_evaluator_class` (one lazy-import branch per `EvaluatorType`).
 
 - **LangChain evaluators**: correctness / partial_correctness (LLM-based rubric)
 - **RAGAS evaluators**: answer_correctness/relevancy, context_precision/recall, faithfulness
+- **Retrieval evaluator** (`retrieval_evaluator.py`): `hit_at_k`, `recall_at_k` (k = `evaluation.retrieval_k`) and `mrr` of the rank-ordered reported sources against the dataset's `reference_sources`, matched by case-insensitive file-name stem or document id. Deterministic, no LLM; skipped for queries without references or source provenance.
+- **Answer-match evaluator** (`answer_match_evaluator.py`): SQuAD-style normalized `exact_match` and `token_f1` against `answer` plus optional `metadata.answer_aliases` (max over references). Deterministic, no LLM; whitespace tokens, so for scripts without spaces token F1 degrades to exact match.
 - **Graph-aware evaluator** (`graph_aware_evaluator.py`): Computes the rate at which the ground truth's `expected_entities`/`expected_relationships` appear in the generated answer (= coverage = recall) as `ENTITY_COVERAGE`/`RELATIONSHIP_COVERAGE`. Deterministic, no LLM required. Precision/F1 are not produced because they would require enumerating the entities in the answer (impossible from free text) — to avoid exaggerating the signal as a duplicate of recall. Latin characters use word-boundary contiguous token matching ("AI" does not match inside "airport"); CJK without whitespace falls back to substring matching. The manager injects the expectations via `result.metadata`, so the abstract signature is unchanged.
 
 CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
@@ -369,7 +375,7 @@ Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 
 ## 14. CI/CD and Security
 
-- **CI** (`.github/workflows/`): the `quality` workflow runs on pull requests and pushes to `main` — ruff/black/isort/mypy + pytest with the coverage gate, the suite on the oldest supported Python (3.10), the property and integration suites in isolation, the optional-parser security checks, and `cdk synth` with cdk-nag plus the IaC assertion tests. The `security` workflow runs a non-blocking, report-only ASH scan on pushes to `main`.
+- **CI** (`.github/workflows/`): the `quality` workflow runs on pull requests and pushes to `main` — ruff/black/isort/mypy + pytest with the coverage gate (one `-m "not aws"` run covering the unit, property and integration suites), the suite on the oldest supported Python (3.10), the optional-parser security checks, and `cdk synth` with cdk-nag plus the IaC assertion tests. The `security` workflow runs a non-blocking, report-only ASH scan on pushes to `main`.
 - **Dependabot** (`.github/dependabot.yml`): weekly version updates for the `uv` lock (`/`), the IaC `pip` requirements (`/iac`), and the SHA-pinned GitHub Actions. Known-breaking bumps are held back with an `ignore` entry that records the reason.
 - **pre-commit** (`.pre-commit-config.yaml`): Mirrors the CI gates. `pre-commit install`.
 - **Security hardening**: Content hashes use SHA-256 exclusively (CWE-327-safe). Dependency-scan CVEs are addressed through the Dependabot pull requests above. Tokens are injected via environment/config (no hardcoding in code).
@@ -395,7 +401,8 @@ without subclassing or editing dispatch code. The ports and their default
 
 | Port | Contract | Default adapter | Inject via |
 |---|---|---|---|
-| `LLMFactoryPort` / `EmbeddingFactoryPort` (`ports/model_factory.py`, `Protocol`) | `get_model()` / `get_model_info()` returning a LangChain-compatible model | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` | `GraphRAGChain(model_factory=...)`; `OpenSearchIndexer(embedding_factory=...)`; `OpenSearchRetriever(embedding_factory=...)` |
+| `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | `get_model()` / `get_model_info()` returning a LangChain-compatible model | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory` | a `Providers` bundle (see below): `GraphRAGChain(providers=...)`, `DataIngestionPipeline(..., providers=...)`, `EvaluationManager(..., providers=...)`; `GraphRAGChain(model_factory=...)` is shorthand for an LLM-only bundle |
+| `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` | `Providers(token_counter_factory=...)` |
 | `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` | `IndexingManager(vector_indexer=..., graph_indexer=...)` |
 | retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
 | `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `list_all` / `diff` | `DynamoDBDocStatusStore` | pipeline accepts the store; conform structurally |
@@ -412,6 +419,45 @@ class OllamaModelFactory:                 # structurally an LLMFactoryPort
 
 chain = GraphRAGChain(config=cfg, model_factory=OllamaModelFactory())
 ```
+
+**One bundle, every component.** `Providers` (`adapters/providers.py`) is a
+plain value object holding the boto3 session and the LLM, embedding, rerank and
+token-counter providers. It is the framework's composition root: each
+orchestrator builds one (or receives one) and passes it explicitly to what it
+constructs, so an injected provider reaches all of them:
+
+- `GraphRAGChain`: its own prompts, every search strategy (including the
+  global map/reduce and DRIFT chains), the hybrid scorer's reranker, both token
+  managers, conversation memory, and the default OpenSearch retriever's
+  embeddings. Conversation memory is process-wide by default (so history
+  survives a chain built per request) and is created from the first chain's
+  config and providers; a later chain with a different memory config keeps the
+  shared manager and logs a warning once. Pass
+  `GraphRAGChain(memory_manager=MemoryManager(cfg, providers=...))` to isolate a
+  chain's conversations.
+- `DataIngestionPipeline`: the chunker, translator, graph/claim extraction,
+  gleaning, description summarization, community reports, the default
+  OpenSearch indexer's embeddings and the visualization embedder.
+- `EvaluationManager`: the LangChain and RAGAS judges (LLM, embeddings, token
+  counter). By default it reuses the chain's bundle.
+
+```python
+providers = Providers(
+    cfg,
+    llm_factory=OllamaModelFactory(),
+    embedding_factory=MyEmbeddingFactory(),
+    token_counter_factory=lambda model_id, **_: MyTokenCounter(model_id),
+)
+chain = GraphRAGChain(config=cfg, providers=providers)
+pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
+```
+
+Anything not supplied is built lazily with the Bedrock default, and at most once
+per bundle, so a chain constructs its Bedrock clients once rather than per
+component or per query (strategy instances are also reused per event loop). A
+component constructed directly, without a bundle, still builds a default one,
+so existing direct constructors keep working. There is deliberately no DI
+container: the bundle covers exactly the providers the framework consumes.
 
 > **Accept and ignore unknown kwargs.** Callers pass framework-specific keyword
 > arguments through `get_model(model_id, **kwargs)` — for example
