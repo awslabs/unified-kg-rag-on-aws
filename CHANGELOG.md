@@ -95,6 +95,11 @@ Each previous behaviour stays available through the setting in parentheses.
   multi-hop chain that the relationship vector query rarely matches
   (`search.local_search.include_bridge_relationships: false` for the vector
   query only).
+- Global search hands the ranked, packed map key points straight to the
+  answer model instead of first having a reduce LLM summarize them, which
+  saves one LLM call per query and a second rewrite that could drop facts or
+  claim the summaries lack them; with failed map calls the unrated reports
+  pass through unsummarized (`search.global_search.reduce_with_llm: true`).
 - AUTO routes among local/mix/global/drift with Haiku
   (`search.auto_routable_strategies: [simple, local, global, drift]`,
   `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).

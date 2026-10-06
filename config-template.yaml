@@ -581,6 +581,10 @@ search:
     map_relevance_threshold: 0
     # Token budget for the ranked key points fed to the reduce step.
     max_map_reduce_tokens: 8000
+    # false (default): the packed key points go straight to the answer model.
+    # true: a reduce LLM first summarizes them and the answer model rewrites
+    # that summary (the previous two-step behaviour, one extra LLM call).
+    reduce_with_llm: false
 
   local_search:
     # Drop graph-expanded entities appearing in more than this many text units

@@ -588,6 +588,7 @@ search:
     use_dynamic_selection: false
     enable_map_reduce: true
     max_map_reduce_tokens: 8000
+    reduce_with_llm: false          # true = a reduce LLM summarizes the key points first
 
   local_search:
     entity_frequency_threshold: 20  # drop overly-generic graph-expanded entities

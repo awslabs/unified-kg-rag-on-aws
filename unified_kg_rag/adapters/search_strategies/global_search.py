@@ -646,6 +646,27 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         synthesis_input = "\n\n".join(
             f"- (relevance {p.score}) {p.description}" for p in points
         )
+        if not self.global_search_config.reduce_with_llm:
+            # Hand the ranked points to the answer model directly: it already
+            # synthesizes from its context, so a separate reduce LLM only adds a
+            # call and a second rewrite that can drop or contradict facts.
+            points_result = RetrievalResult(
+                content=(
+                    "Key points from the community reports, ranked by relevance "
+                    "to the query (0-100):\n\n" + synthesis_input
+                ),
+                score=1.0,
+                source="synthesized_key_points",
+                retriever_type=SectionType.GENERAL.value,
+                metadata={
+                    # Map-LLM output, not retrieved evidence: in the answer
+                    # context, excluded from the reported sources.
+                    "synthesized": True,
+                    "source_results_count": len(results),
+                    "ranked_key_points": len(points),
+                },
+            )
+            return [points_result] + results
         try:
             summary = await self.map_reducer.ainvoke(
                 {
@@ -678,7 +699,13 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     async def _concat_reduce(
         self, results: list[RetrievalResult], query: SearchQuery
     ) -> list[RetrievalResult]:
-        """Legacy direct concat-and-reduce path (map-reduce degradation target)."""
+        """Legacy direct concat-and-reduce path (map-reduce degradation target).
+
+        Without ``reduce_with_llm`` the reports pass through unchanged: the
+        answer model reads them directly instead of a summary of them.
+        """
+        if not self.global_search_config.reduce_with_llm:
+            return results
         try:
             context = "\n\n---\n\n".join([r.content for r in results])
             summary = await self.map_reducer.ainvoke(

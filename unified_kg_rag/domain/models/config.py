@@ -1665,6 +1665,19 @@ class GlobalSearchConfig(BaseModel):
         "reduce step; the highest-scored points are taken until this budget is "
         "reached, so the reduce LLM synthesizes from focused, ranked evidence.",
     )
+    reduce_with_llm: bool = Field(
+        default=False,
+        description=(
+            "Run the REDUCE step as its own LLM call that writes a summary of the "
+            "packed key points, which the answer model then rewrites. Off by "
+            "default: the packed points go straight to the answer model as one "
+            "ranked context section, saving one LLM call per query and avoiding "
+            "a second synthesis that can drop facts or assert that the summaries "
+            "lack them. When off, the degraded path (map calls that failed) also "
+            "passes the unrated reports through instead of summarizing them. "
+            "true = the previous two-step behaviour."
+        ),
+    )
 
 
 class LocalSearchQuotaConfig(BaseModel):
