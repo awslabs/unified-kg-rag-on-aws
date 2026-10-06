@@ -9,7 +9,6 @@ import boto3
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
 
-from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
@@ -67,11 +66,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         self.ignore_errors = config.processing.ignore_errors
         self.target_language = config.processing.translation.target_language.value
 
-        factory = BedrockLanguageModelFactory(
-            config=config,
-            boto_session=boto_session,
-            region_name=config.aws.bedrock.region_name,
-        )
+        factory = self.providers.llm_factory
 
         str_output_parser = StrOutputParser()
         # Built only when the opt-in per-report LLM relevance scoring is on.
@@ -172,7 +167,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             # Only an all-below-threshold map phase empties a non-empty input.
             no_relevant_points = pre_map_count > 0 and not final_results
 
-        final_results = final_results[: query.top_k]
+        # With reserved report slots the fusion quota already bounds the evidence
+        # width, and the synthesized map-reduce item rides on top of it. The flat
+        # cut below runs after that item was prepended, so it cost one result.
+        if not self.global_search_config.reserve_report_slots:
+            final_results = final_results[: query.top_k]
         processing_time = time.time() - start_time
 
         self._record_search_metrics(
@@ -242,7 +241,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             "..." if len(expanded_community_ids) > 5 else "",
         )
 
-        return self.hybrid_scorer.fuse_and_rerank_results(
+        return await self._fuse_and_rerank(
             {
                 "opensearch_candidate_community_reports": candidate_community_reports,
                 "opensearch_expanded_community_reports": expanded_community_reports,
@@ -403,7 +402,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             return fallback
 
         context = await self._retrieve_community_context(selected, query)
-        return self.hybrid_scorer.fuse_and_rerank_results(
+        return await self._fuse_and_rerank(
             {
                 "opensearch_community_reports": selected,
                 "text_units": context,
@@ -411,7 +410,25 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,
             query=query.query,
+            per_type_quota=self._report_quota(query),
         )
+
+    def _report_quota(self, query: SearchQuery) -> dict[str, int] | None:
+        """Reserved fusion slots for the community reports vs their text units.
+
+        A flat top_k cut over reports and chunks reranked together kept mostly
+        chunks, so the community reports global search is built on rarely
+        reached the map step. ``None`` (``reserve_report_slots: false``) keeps
+        that flat cut.
+        """
+        if not self.global_search_config.reserve_report_slots:
+            return None
+        text_slots = self.global_search_config.text_unit_slots or query.top_k
+        return {
+            SectionType.COMMUNITY.value: self.global_search_config.max_communities
+            * query.retrieval_multiplier,
+            SectionType.TEXT.value: text_slots,
+        }
 
     async def _retrieve_community_context(
         self, communities: list[RetrievalResult], query: SearchQuery
@@ -646,6 +663,27 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         synthesis_input = "\n\n".join(
             f"- (relevance {p.score}) {p.description}" for p in points
         )
+        if not self.global_search_config.reduce_with_llm:
+            # Hand the ranked points to the answer model directly: it already
+            # synthesizes from its context, so a separate reduce LLM only adds a
+            # call and a second rewrite that can drop or contradict facts.
+            points_result = RetrievalResult(
+                content=(
+                    "Key points from the community reports, ranked by relevance "
+                    "to the query (0-100):\n\n" + synthesis_input
+                ),
+                score=1.0,
+                source="synthesized_key_points",
+                retriever_type=SectionType.GENERAL.value,
+                metadata={
+                    # Map-LLM output, not retrieved evidence: in the answer
+                    # context, excluded from the reported sources.
+                    "synthesized": True,
+                    "source_results_count": len(results),
+                    "ranked_key_points": len(points),
+                },
+            )
+            return [points_result] + results
         try:
             summary = await self.map_reducer.ainvoke(
                 {
@@ -678,7 +716,13 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     async def _concat_reduce(
         self, results: list[RetrievalResult], query: SearchQuery
     ) -> list[RetrievalResult]:
-        """Legacy direct concat-and-reduce path (map-reduce degradation target)."""
+        """Legacy direct concat-and-reduce path (map-reduce degradation target).
+
+        Without ``reduce_with_llm`` the reports pass through unchanged: the
+        answer model reads them directly instead of a summary of them.
+        """
+        if not self.global_search_config.reduce_with_llm:
+            return results
         try:
             context = "\n\n---\n\n".join([r.content for r in results])
             summary = await self.map_reducer.ainvoke(

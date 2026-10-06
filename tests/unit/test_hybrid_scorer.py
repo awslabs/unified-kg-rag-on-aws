@@ -602,6 +602,104 @@ class TestDiversityRelevanceScale:
         assert [r.source for r in out] == ["t0", "t1", "t2", "t3"]
 
 
+def _reference_mmr(
+    results: list[RetrievalResult], target_count: int, lambda_val: float
+) -> list[str]:
+    """The original MMR loop (rescans the selected set per candidate per round).
+
+    Kept as the oracle the incremental implementation must match exactly.
+    """
+    ranked = sorted(results, key=lambda x: x.score or 0.0, reverse=True)
+    words = [set((r.content or "").lower().split()) for r in ranked]
+    scores = [r.score or 0.0 for r in ranked]
+    span = scores[0] - scores[-1]
+    relevances = (
+        [(s - scores[-1]) / span for s in scores] if span > 0 else [1.0] * len(scores)
+    )
+    selected = [0]
+    remaining = set(range(1, len(ranked)))
+
+    def mmr(idx: int) -> float:
+        similarity = max(
+            (HybridScorer._jaccard(words[idx], words[j]) for j in selected),
+            default=0.0,
+        )
+        return lambda_val * relevances[idx] - (1 - lambda_val) * similarity
+
+    while remaining and len(selected) < target_count:
+        best = max(sorted(remaining), key=mmr)
+        selected.append(best)
+        remaining.remove(best)
+    return [str(ranked[i].source) for i in selected]
+
+
+class TestDiversityFilteringScaling:
+    """The MMR selection is incremental (O(n * target)) and skipped when it
+    cannot remove anything; neither may change which results are kept."""
+
+    @staticmethod
+    def _candidates(n: int, seed: int, words: int = 40) -> list[RetrievalResult]:
+        import random
+
+        rng = random.Random(seed)
+        vocab = [f"term{i}" for i in range(300)]
+        return [
+            _r(
+                " ".join(rng.sample(vocab, rng.randint(0, words))),
+                round(rng.random(), 2),  # coarse scores -> exercises ties
+                f"s{i}",
+            )
+            for i in range(n)
+        ]
+
+    @staticmethod
+    def _scorer_at(lambda_val: float) -> HybridScorer:
+        config = Config()
+        config.search.reranking.enabled = False
+        config.search.fusion.diversity_lambda = lambda_val
+        return HybridScorer(config)
+
+    @pytest.mark.parametrize("seed", range(12))
+    def test_matches_reference_selection(self, seed: int) -> None:
+        lambda_val = (0.0, 0.3, 0.5, 0.8)[seed % 4]
+        results = self._candidates(60, seed)
+        target = (1, 5, 17, 59)[seed % 4]
+
+        out = self._scorer_at(lambda_val)._apply_diversity_filtering(
+            list(results), top_k=target
+        )
+
+        assert [r.source for r in out] == _reference_mmr(results, target, lambda_val)
+
+    def test_cut_covering_every_candidate_keeps_all_in_score_order(self) -> None:
+        results = self._candidates(30, seed=3)
+        scorer = self._scorer_at(0.5)
+
+        out = scorer._apply_diversity_filtering(
+            list(results), top_k=10, retrieval_multiplier=3
+        )
+
+        assert sorted(r.source for r in out) == sorted(r.source for r in results)
+        assert [r.score for r in out] == sorted(
+            (r.score for r in results), reverse=True
+        )
+        assert scorer.get_metrics()["metrics"]["diversity_filtered_count"] == 0
+
+    def test_scales_to_hundreds_of_candidates(self) -> None:
+        # Mix-shaped candidate counts used to take 2-19 s with the cubic loop.
+        import time
+
+        results = self._candidates(400, seed=7, words=60)
+        scorer = self._scorer_at(0.5)
+
+        start = time.perf_counter()
+        out = scorer._apply_diversity_filtering(list(results), top_k=399)
+        elapsed = time.perf_counter() - start
+
+        assert len(out) == 399
+        assert elapsed < 0.5
+
+
 class TestRerankDegradation:
     def test_returns_original_when_rerank_model_raises(self) -> None:
         scorer = _scorer()

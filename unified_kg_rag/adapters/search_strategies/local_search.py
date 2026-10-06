@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
 import time
 from typing import Any
 
@@ -49,6 +50,83 @@ class LocalSearchStrategy(BaseSearchStrategy):
             ", ".join(query.entity_focus),
         )
 
+        # MS GraphRAG local search builds context from entities + the community
+        # reports those entities belong to + in-network relationships + text
+        # units (+ claims). The community-report, relationship and claim
+        # sections are queried from the entity focus alone, so they run
+        # concurrently with the entity -> graph -> text-unit chain below
+        # instead of waiting for it.
+        side_sections = asyncio.gather(
+            self._retrieve_community_reports(query),
+            self._retrieve_relationships(query),
+            self._retrieve_claims(query),
+        )
+        try:
+            all_results, chain_stats = await self._retrieve_entity_chain(query)
+        except BaseException:
+            side_sections.cancel()
+            raise
+        community_reports, relationships, claims = await side_sections
+
+        # The community-report and relationship sections give a local query the
+        # higher-level community synthesis and the relationship descriptions,
+        # not just raw entities and chunks.
+        if community_reports:
+            all_results["community_reports"] = community_reports
+        if relationships:
+            all_results["relationships"] = relationships
+        # MS GraphRAG injects covariates (claims) into local-search context.
+        # Gated strictly on claim extraction being enabled so the default path
+        # (claims off) is unchanged: no extra retrieval is issued.
+        if claims:
+            all_results["claims"] = claims
+
+        # The same divergences as mix apply to local (shared fuse path).
+        # Give each section type its own quota so the diversity filter + fusion don't
+        # collapse the candidate set to top_k before assembly (was dropping gold KG
+        # items), and rerank ONLY text chunks so content-vs-query reranking doesn't bury
+        # multi-hop bridge entities/relations. Mirrors MS local's proportional,
+        # per-section context assembly.
+        final_results = await self._fuse_and_rerank(
+            all_results,
+            top_k=query.top_k,
+            retrieval_multiplier=query.retrieval_multiplier,
+            query=query.query,
+            per_type_quota=self._per_type_quota(query.top_k),
+            rerank_only_types={SectionType.TEXT.value},
+        )
+
+        processing_time = time.time() - start_time
+        self._record_search_metrics(
+            processing_time,
+            len(final_results),
+            chain_stats["entity_count"],
+            chain_stats["text_unit_count"],
+        )
+
+        logger.info(
+            "Search completed - retrieved: %s results in %.3fs",
+            len(final_results),
+            processing_time,
+        )
+
+        return SearchResult(
+            query=query,
+            results=final_results,
+            total_results=len(final_results),
+            search_strategy="local_search",
+            processing_time=processing_time,
+            metadata={
+                "candidate_entity_count": chain_stats["candidate_entity_count"],
+                "expanded_entity_count": chain_stats["expanded_entity_count"],
+                "text_unit_count": chain_stats["text_unit_count"],
+            },
+        )
+
+    async def _retrieve_entity_chain(
+        self, query: SearchQuery
+    ) -> tuple[dict[str, list[RetrievalResult]], dict[str, int]]:
+        """Entities -> Neptune expansion -> ranked text units (the dependent chain)."""
         candidate_entity_ids = await self._find_candidate_entities(query)
         logger.debug(
             "Found %s candidate entities: '%s%s'",
@@ -81,73 +159,25 @@ class LocalSearchStrategy(BaseSearchStrategy):
             "..." if len(text_unit_ids) > 5 else "",
         )
 
-        text_units = await self._retrieve_documents(
-            text_unit_ids, query.suffix, filters=query.filters
+        # Both lookups depend only on the expansion, so they run together.
+        text_units, bridge_relationships = await asyncio.gather(
+            self._retrieve_documents(
+                text_unit_ids, query.suffix, filters=query.filters
+            ),
+            self._retrieve_bridge_relationships(
+                query, list(dict.fromkeys(candidate_entity_ids + expanded_entity_ids))
+            ),
         )
         all_results = {"graph_entities": expanded_entity_nodes, **text_units}
-
-        # MS GraphRAG local search builds context from entities + the community
-        # reports those entities belong to + in-network relationships + text
-        # units (+ claims). We mirror that: enrich the entity/text-unit core with
-        # a community-report section and a relationship section so a local query
-        # also sees the higher-level community synthesis and the relationship
-        # descriptions, not just raw entities and chunks.
-        community_reports = await self._retrieve_community_reports(query)
-        if community_reports:
-            all_results["community_reports"] = community_reports
-
-        relationships = await self._retrieve_relationships(query)
-        if relationships:
-            all_results["relationships"] = relationships
-
-        # MS GraphRAG injects covariates (claims) into local-search context.
-        # Gated strictly on claim extraction being enabled so the default path
-        # (claims off) is unchanged: no extra retrieval is issued.
-        claims = await self._retrieve_claims(query)
-        if claims:
-            all_results["claims"] = claims
-
-        # The same divergences as mix apply to local (shared fuse path).
-        # Give each section type its own quota so the diversity filter + fusion don't
-        # collapse the candidate set to top_k before assembly (was dropping gold KG
-        # items), and rerank ONLY text chunks so content-vs-query reranking doesn't bury
-        # multi-hop bridge entities/relations. Mirrors MS local's proportional,
-        # per-section context assembly.
-        final_results = self.hybrid_scorer.fuse_and_rerank_results(
-            all_results,
-            top_k=query.top_k,
-            retrieval_multiplier=query.retrieval_multiplier,
-            query=query.query,
-            per_type_quota=self._per_type_quota(query.top_k),
-            rerank_only_types={SectionType.TEXT.value},
-        )
-
-        processing_time = time.time() - start_time
-        self._record_search_metrics(
-            processing_time,
-            len(final_results),
-            len(set(candidate_entity_ids + expanded_entity_ids)),
-            len(text_unit_ids),
-        )
-
-        logger.info(
-            "Search completed - retrieved: %s results in %.3fs",
-            len(final_results),
-            processing_time,
-        )
-
-        return SearchResult(
-            query=query,
-            results=final_results,
-            total_results=len(final_results),
-            search_strategy="local_search",
-            processing_time=processing_time,
-            metadata={
-                "candidate_entity_count": len(candidate_entity_ids),
-                "expanded_entity_count": len(expanded_entity_ids),
-                "text_unit_count": len(text_unit_ids),
-            },
-        )
+        if bridge_relationships:
+            all_results["bridge_relationships"] = bridge_relationships
+        stats = {
+            "candidate_entity_count": len(candidate_entity_ids),
+            "expanded_entity_count": len(expanded_entity_ids),
+            "entity_count": len(set(candidate_entity_ids + expanded_entity_ids)),
+            "text_unit_count": len(text_unit_ids),
+        }
+        return all_results, stats
 
     async def _find_candidate_entities(self, query: SearchQuery) -> list[str]:
         if not self.document_retriever:
@@ -271,6 +301,38 @@ class LocalSearchStrategy(BaseSearchStrategy):
             self.document_retriever, search_query, "Relationships retrieval"
         )
 
+    async def _retrieve_bridge_relationships(
+        self, query: SearchQuery, entity_ids: list[str]
+    ) -> list[RetrievalResult]:
+        # MS GraphRAG local search adds the relationships BETWEEN the selected
+        # entities ("in-network" first, then out-of-network). The vector query
+        # above only finds relationships whose description resembles the query
+        # text, which a multi-hop bridge edge usually does not. Fetch the edges
+        # incident to the expanded entities, the in-network (both endpoints
+        # retrieved) ones first.
+        if (
+            not self.config.search.local_search.include_bridge_relationships
+            or not self.config.indexing.opensearch.build_relationship_vector_index
+        ):
+            return []
+        relationships = await self._fetch_incident_relationships(
+            query, [eid for eid in entity_ids if eid], bridge_first=True
+        )
+        # Fusion keeps at most the relationship quota anyway, and every extra
+        # candidate competes in the pre-quota diversity cut (sized to the sum of
+        # the quotas) with the text units the answer usually lives in. Offer
+        # only as many edges as the quota can seat, best (in-network) first.
+        relationships = relationships[
+            : self._per_type_quota(query.top_k)[SectionType.RELATIONSHIP.value]
+        ]
+        if relationships:
+            logger.debug(
+                "Bridge expansion: %s entities -> %s incident relationships",
+                len(entity_ids),
+                len(relationships),
+            )
+        return relationships
+
     @classmethod
     def _rank_text_unit_ids(cls, entity_nodes: list[RetrievalResult]) -> list[str]:
         # Chunk candidates used to come from
@@ -280,8 +342,8 @@ class LocalSearchStrategy(BaseSearchStrategy):
         # chunk stream therefore reached fusion in arbitrary order with score 0,
         # and whatever the per-type quota sliced off was an arbitrary subset.
         # That is invisible while expansion is narrow and every chunk is
-        # on-topic, but it makes widening the expansion actively harmful: a
-        # measured 5x more chunks came with 4x LESS gold in the context.
+        # on-topic, but it makes widening the expansion actively harmful: more
+        # candidate chunks then means fewer relevant ones survive the quota.
         #
         # MS GraphRAG local ranks candidate text units by how many distinct
         # query-relevant entities reference them, with the entity's own rank as

@@ -362,7 +362,7 @@ async def test_entity_traversal_honors_configured_max_hops(
         return []
 
     object.__setattr__(retriever, "_apply_filters", lambda t, f, *_: t)
-    object.__setattr__(retriever, "_with_projection", lambda t: t)
+    object.__setattr__(retriever, "_with_projection", lambda t, **_: t)
     object.__setattr__(retriever, "_execute_traversal", _fake_execute)
 
     await retriever._traverse_from_entities(g, [{"id": "e1"}], SearchQuery(query="x"))
@@ -443,3 +443,121 @@ async def test_find_seeds_by_type_empty_query_terms_returns_empty(
 
     assert out == []
     assert executed["called"] is False
+
+
+# --------------------------------------------------------------------------- #
+# Entity importance source + over-fetch-then-rank
+# --------------------------------------------------------------------------- #
+
+
+def _entity_item(node_id: str, hops: int, **props) -> dict:
+    node = {"id": [node_id], "name": [node_id.upper()]}
+    node.update({k: [v] for k, v in props.items() if k != "degree"})
+    item = {
+        "node": node,
+        "path": [{"name": [f"p{i}"]} for i in range(hops + 1)],
+        "node_type": "Entity-default",
+    }
+    if "degree" in props:
+        item["degree"] = props["degree"]
+    return item
+
+
+def test_projection_reads_the_rank_the_indexer_writes(retriever, mocker) -> None:
+    calls: list[tuple] = []
+    anonymous: list[tuple] = []
+    mocker.patch(
+        "unified_kg_rag.adapters.retrievers.neptune_retriever.__",
+        RecordingTraversal(anonymous),
+    )
+    retriever._with_projection(RecordingTraversal(calls))
+    value_map_args = [c[1] for c in anonymous if c[0] == "value_map"]
+    assert "rank" in value_map_args[0]
+    assert "importance" not in value_map_args[0]
+
+
+def test_projection_with_degree_counts_edges(retriever) -> None:
+    calls: list[tuple] = []
+    retriever._with_projection(RecordingTraversal(calls), with_degree=True)
+    assert [c for c in calls if c[0] == "project"][0][1] == (
+        "node",
+        "path",
+        "node_type",
+        "degree",
+    )
+    assert sum(1 for c in calls if c[0] == "by") == 4
+
+
+def test_rank_is_normalized_within_the_result(retriever) -> None:
+    items = [_entity_item("low", 1, rank=1), _entity_item("high", 1, rank=4)]
+    results = retriever._process_traversal_results(items, SearchQuery(query="x"))
+    by_id = {r.source: r.score for r in results}
+    assert [r.source for r in results] == ["high", "low"]
+    assert by_id["high"] == pytest.approx((1.0 + 0.5) / 2)
+    assert by_id["low"] == pytest.approx((0.25 + 0.5) / 2)
+
+
+def test_degree_source_uses_the_projected_edge_count(retriever, config) -> None:
+    config.indexing.neptune.entity_importance_source = "degree"
+    items = [_entity_item("leaf", 1, degree=2), _entity_item("hub", 1, degree=10)]
+    results = retriever._process_traversal_results(items, SearchQuery(query="x"))
+    assert [r.source for r in results] == ["hub", "leaf"]
+    assert results[0].metadata["degree"] == 10
+
+
+def test_none_source_keeps_the_neutral_importance(retriever, config) -> None:
+    config.indexing.neptune.entity_importance_source = "none"
+    items = [_entity_item("a", 1, rank=1), _entity_item("b", 1, rank=9)]
+    results = retriever._process_traversal_results(items, SearchQuery(query="x"))
+    assert [r.score for r in results] == pytest.approx([0.5, 0.5])
+
+
+def test_overfetched_entities_are_cut_after_ranking(retriever, config) -> None:
+    config.indexing.neptune.traversal_fetch_multiplier = 3
+    query = SearchQuery(query="x", top_k=2)
+    # Emit order puts the far nodes first; ranking must keep the near ones.
+    items = [_entity_item(f"far{i}", 3, rank=1) for i in range(4)] + [
+        _entity_item("near0", 1, rank=1),
+        _entity_item("near1", 1, rank=1),
+    ]
+    results = retriever._process_traversal_results(items, query)
+    assert [r.source for r in results] == ["near0", "near1"]
+
+
+def test_fetch_multiplier_one_keeps_every_traversed_entity(retriever, config) -> None:
+    config.indexing.neptune.traversal_fetch_multiplier = 1
+    query = SearchQuery(query="x", top_k=2)
+    items = [_entity_item(f"e{i}", 1, rank=1) for i in range(3)]
+    assert len(retriever._process_traversal_results(items, query)) == 3
+
+
+@pytest.mark.parametrize("multiplier", [1, 3])
+async def test_entity_traversal_limit_scales_with_fetch_multiplier(
+    retriever, config, mocker, multiplier
+) -> None:
+    config.indexing.neptune.traversal_fetch_multiplier = multiplier
+    limits: list[int] = []
+
+    class FluentTraversal:
+        def limit(self, n, *a, **k):
+            limits.append(n)
+            return self
+
+        def __getattr__(self, name):
+            return lambda *a, **k: self
+
+    g = mocker.MagicMock()
+    g.V.return_value = FluentTraversal()
+
+    async def _fake_execute(_traversal):
+        return []
+
+    object.__setattr__(retriever, "_apply_filters", lambda t, f, *_: t)
+    object.__setattr__(retriever, "_with_projection", lambda t, **_: t)
+    object.__setattr__(retriever, "_execute_traversal", _fake_execute)
+
+    query = SearchQuery(query="x", top_k=4, retrieval_multiplier=2)
+    await retriever._traverse_from_entities(g, [{"id": "e1"}], query)
+
+    # The final width is the last limit() (the per-hop limit is anonymous).
+    assert limits[-1] == 4 * 2 * multiplier

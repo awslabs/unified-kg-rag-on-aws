@@ -1,13 +1,11 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, ClassVar, cast
 
 import boto3
 import pandas as pd
-from botocore.config import Config as BotoConfig
 from datasets import Dataset
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseLanguageModel
@@ -23,15 +21,8 @@ from ragas.metrics import (
 )
 from ragas.run_config import RunConfig
 
-from unified_kg_rag.adapters.aws import (
-    BedrockEmbeddingModelFactory,
-    BedrockLanguageModelFactory,
-)
-from unified_kg_rag.adapters.aws.bedrock import (
-    get_assumed_role_boto_session,
-    get_language_model_info,
-)
-from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
+from unified_kg_rag.adapters.aws.bedrock import get_language_model_info
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetric,
@@ -84,42 +75,40 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         }
     )
 
+    # Metrics scored on at most ``evaluation.ragas_max_contexts`` contexts.
+    COUNT_CAPPED_METRICS: ClassVar[frozenset[EvaluationMetricType]] = frozenset(
+        {EvaluationMetricType.CONTEXT_PRECISION}
+    )
+    _SCORE_COLUMNS: ClassVar[frozenset[str]] = frozenset(METRIC_MAPPING.values())
+
     def __init__(
         self,
         config: Config,
-        rag_chain: Any | None = None,
         boto_session: boto3.Session | None = None,
         embedding_factory: EmbeddingFactoryPort | None = None,
+        *,
+        providers: Providers | None = None,
         **kwargs: Any,
     ) -> None:
         self.embeddings: Embeddings | None = None
         self.llm: BaseLanguageModel | None = None
         self.ragas_llm: LangchainLLMWrapper | None = None
         self._embedding_factory = embedding_factory
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=config.aws.profile_name
-        )
-        assumed_session = get_assumed_role_boto_session(
-            self.boto_session, assumed_role_arn=config.aws.bedrock.assumed_role_arn
-        )
-        bedrock_client = assumed_session.client(
-            "bedrock-runtime",
-            region_name=config.aws.bedrock.region_name,
-            config=BotoConfig(retries={"max_attempts": 3}),
-        )
+        # Judge LLM, embeddings and token counter come from the shared
+        # provider bundle (EvaluationManager passes the chain's).
+        self.providers = Providers.resolve(config, providers, boto_session)
+        self.boto_session = self.providers.boto_session
         eval_model_info = get_language_model_info(
             config.evaluation.evaluation_model_id, config.aws.bedrock.model_overrides
         )
-        self._token_counter = BedrockTokenCounter(
-            model_id=config.evaluation.evaluation_model_id,
-            client=bedrock_client,
+        self._token_counter = self.providers.token_counter(
+            config.evaluation.evaluation_model_id,
             api_supported=eval_model_info.supports_count_tokens,
         )
         self.ignore_errors = config.processing.ignore_errors
         super().__init__(
             config=config,
             evaluator_type=EvaluatorType.RAGAS,
-            rag_chain=rag_chain,
             **kwargs,
         )
 
@@ -136,20 +125,12 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             ) from e
 
     def _initialize_models(self) -> None:
-        embedding_factory = self._embedding_factory or BedrockEmbeddingModelFactory(
-            config=self.config,
-            boto_session=self.boto_session,
-            region_name=self.config.aws.bedrock.region_name,
-        )
+        embedding_factory = self._embedding_factory or self.providers.embedding_factory
         self.embeddings = embedding_factory.get_model(
             model_id=self.config.evaluation.embedding_model_id
         )
 
-        llm_factory = BedrockLanguageModelFactory(
-            config=self.config,
-            boto_session=self.boto_session,
-            region_name=self.config.aws.bedrock.region_name,
-        )
+        llm_factory = self.providers.llm_factory
         model_id = self.config.evaluation.evaluation_model_id
         self.llm = llm_factory.get_model(
             model_id=model_id,
@@ -174,14 +155,17 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             max_retries=evaluation.ragas_max_retries,
         )
 
-    def _truncate_contexts(self, results: list[EvaluationResult]) -> list[list[str]]:
-        max_tokens = self.config.evaluation.max_context_tokens
-        # Reported sources are in retrieval-rank order, so slicing keeps the
-        # top-ranked ones. Context precision makes one judge call per context,
-        # so the count — not just the token total — must be bounded.
-        max_contexts = self.config.evaluation.ragas_max_contexts
+    def _truncate_contexts(
+        self, results: list[EvaluationResult], max_contexts: int | None = None
+    ) -> list[tuple[list[str], int]]:
+        """Per result: (top-ranked contexts within the token budget, their tokens).
 
-        processed_contexts = []
+        Reported sources are in retrieval-rank order, so slicing keeps the
+        top-ranked ones. ``max_contexts`` caps the count before the
+        ``max_context_tokens`` budget is applied.
+        """
+        max_tokens = self.config.evaluation.max_context_tokens
+        processed: list[tuple[list[str], int]] = []
         for result in results:
             safe_contexts = []
             current_tokens = 0
@@ -194,18 +178,19 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 ):
                     remaining_tokens = max_tokens - current_tokens
                     if remaining_tokens > self.BUFFER_TOKENS:
-                        truncated_context, _ = (
+                        truncated_context, used = (
                             self._token_counter.truncate_to_token_limit(
                                 context, remaining_tokens
                             )
                         )
                         safe_contexts.append(truncated_context + "...")
+                        current_tokens += used
                     break
 
                 safe_contexts.append(context)
                 current_tokens += context_token_count
-            processed_contexts.append(safe_contexts)
-        return processed_contexts
+            processed.append((safe_contexts, current_tokens))
+        return processed
 
     def metric_types(self) -> list[EvaluationMetricType]:
         return [
@@ -218,6 +203,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         queries: list[EvaluationQuery],
         results: list[EvaluationResult],
         ground_truths: list[str] | None = None,
+        judge_inputs: list[dict[str, int]] | None = None,
     ) -> list[EvaluationReport]:
         reports = []
         for i, query in enumerate(queries):
@@ -247,10 +233,9 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                     EvaluationMetric(metric_type=metric_type, value=float(raw_value))
                 )
 
-            overall_score = (
-                sum(m.value for m in metrics) / len(metrics) if metrics else 0.0
-            )
             metadata = self._extract_search_metadata(results[i])
+            if judge_inputs:
+                metadata.update(judge_inputs[i])
             if failed:
                 metadata[FAILED_METRICS_KEY] = failed
             if skipped:
@@ -260,7 +245,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                     query_id=query.query_id,
                     evaluator_type=self.evaluator_type,
                     metrics=metrics,
-                    overall_score=overall_score,
                     evaluation_time=datetime.now(),
                     metadata=metadata,
                 )
@@ -282,8 +266,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         # for every row anyway — don't pay for the judge calls.
         if not any(gt.strip() for gt in ground_truths):
             metric_types = [m for m in metric_types if m not in self.REFERENCE_METRICS]
-        metrics_to_use = [self.RAGAS_METRICS[m] for m in metric_types]
-        if not metrics_to_use:
+        if not metric_types:
             logger.warning(
                 "Only reference-based Ragas metrics are configured and no row has "
                 "a ground-truth answer; all Ragas metrics are skipped"
@@ -293,33 +276,58 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 for q, r in zip(queries, results, strict=True)
             ]
 
-        processed_contexts = self._truncate_contexts(results)
-        dataset_dict = {
-            "question": [q.question for q in queries],
-            "answer": [r.generated_answer for r in results],
-            "contexts": processed_contexts,
-            "ground_truth": ground_truths,
-        }
+        # Context precision makes one judge call per context, so only it gets
+        # the count cap (``context_precision@N``). Faithfulness and context
+        # recall judge whether the answer / reference is supported by the
+        # context, so they see the full token-budgeted set: capping them would
+        # mark claims supported by a lower-ranked source as unsupported.
+        full = self._truncate_contexts(results)
+        precision = [m for m in metric_types if m in self.COUNT_CAPPED_METRICS]
+        capped = (
+            self._truncate_contexts(results, self.config.evaluation.ragas_max_contexts)
+            if precision
+            else full
+        )
+        judge_inputs = [
+            {"judge_contexts": len(ctx), "judge_context_tokens": tokens}
+            for ctx, tokens in full
+        ]
+        if precision:
+            for inputs, (ctx, tokens) in zip(judge_inputs, capped, strict=True):
+                inputs["context_precision_contexts"] = len(ctx)
+                inputs["context_precision_context_tokens"] = tokens
+        # One RAGAS run when the cap changes nothing; otherwise split the
+        # capped metric into its own run (same judge-call count overall).
+        groups = (
+            [(metric_types, full)]
+            if capped == full
+            else [
+                (m_types, contexts)
+                for m_types, contexts in (
+                    ([m for m in metric_types if m not in precision], full),
+                    (precision, capped),
+                )
+                if m_types
+            ]
+        )
 
         try:
-            eval_dataset = Dataset.from_dict(dataset_dict)
-            ragas_result = await asyncio.to_thread(
-                evaluate,
-                dataset=eval_dataset,
-                metrics=metrics_to_use,
-                llm=self.ragas_llm or self.llm,
-                embeddings=self.embeddings,
-                raise_exceptions=False,
-                run_config=self._build_run_config(),
-                show_progress=self.show_progress,
-                batch_size=self.config.processing.batch_size,
-            )
-            # ragas types `evaluate` as returning `RagasEvaluationResult |
-            # Executor`; the Executor branch is only taken when the caller passes
-            # return_executor=True, which this call never does.
-            ragas_result = cast(RagasEvaluationResult, ragas_result)
+            frames = [
+                await self._run_ragas(
+                    queries,
+                    results,
+                    [ctx for ctx, _ in contexts],
+                    ground_truths,
+                    [self.RAGAS_METRICS[m] for m in m_types],
+                )
+                for m_types, contexts in groups
+            ]
             return self._parse_ragas_reports(
-                ragas_result.to_pandas(), queries, results, ground_truths
+                pd.concat(frames, axis=1),
+                queries,
+                results,
+                ground_truths,
+                judge_inputs,
             )
         except Exception as e:
             if not self.ignore_errors:
@@ -333,6 +341,40 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 for q in queries
             ]
 
+    async def _run_ragas(
+        self,
+        queries: list[EvaluationQuery],
+        results: list[EvaluationResult],
+        contexts: list[list[str]],
+        ground_truths: list[str],
+        metrics: list[Any],
+    ) -> pd.DataFrame:
+        eval_dataset = Dataset.from_dict(
+            {
+                "question": [q.question for q in queries],
+                "answer": [r.generated_answer for r in results],
+                "contexts": contexts,
+                "ground_truth": ground_truths,
+            }
+        )
+        ragas_result = await asyncio.to_thread(
+            evaluate,
+            dataset=eval_dataset,
+            metrics=metrics,
+            llm=self.ragas_llm or self.llm,
+            embeddings=self.embeddings,
+            raise_exceptions=False,
+            run_config=self._build_run_config(),
+            show_progress=self.show_progress,
+            batch_size=self.config.processing.batch_size,
+        )
+        # ragas types `evaluate` as returning `RagasEvaluationResult |
+        # Executor`; the Executor branch is only taken when the caller passes
+        # return_executor=True, which this call never does.
+        frame = cast(RagasEvaluationResult, ragas_result).to_pandas()
+        # Keep only score columns so two runs concatenate without duplicates.
+        return frame[[c for c in frame.columns if c in self._SCORE_COLUMNS]]
+
     def _create_skipped_report(
         self, query_id: str, result: EvaluationResult
     ) -> EvaluationReport:
@@ -344,7 +386,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             query_id=query_id,
             evaluator_type=self.evaluator_type,
             metrics=[],
-            overall_score=0.0,
             evaluation_time=datetime.now(),
             metadata=metadata,
         )
@@ -360,25 +401,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             [query], [result], [ground_truth], **kwargs
         )
         return reports[0] if reports else self._create_empty_report(query.query_id)
-
-    def evaluate_single(
-        self,
-        query: EvaluationQuery,
-        result: EvaluationResult,
-        ground_truth: str,
-        **kwargs: Any,
-    ) -> EvaluationReport:
-        coro = self.aevaluate_single(query, result, ground_truth, **kwargs)
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            # No running loop — safe to drive one ourselves.
-            return asyncio.run(coro)
-        # A loop is ALREADY running on this thread; run_until_complete would
-        # raise "This event loop is already running". Run the coroutine on a
-        # separate thread with its own loop and block for the result.
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, coro).result()
 
     def validate_config(self) -> bool:
         unsupported_metrics = set(self.config.evaluation.ragas_metrics) - set(

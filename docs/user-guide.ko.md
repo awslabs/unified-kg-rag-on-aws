@@ -404,6 +404,9 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `indexing.neptune.batch_size` | `100` | Neptune 쓰기 배치당 항목 수입니다. |
 | `indexing.neptune.index_concurrency` | `1` | 동시에 보내는 쓰기 배치 수입니다. 올리면 `aws.neptune.pool_size`도 맞춰 올립니다. |
 | `indexing.neptune.max_hops` | `3` | 검색 시점의 이웃 확장 깊이입니다. |
+| `indexing.neptune.property_max_length` | `4000` | Neptune 속성 값의 최대 문자 수입니다. 재요약되지 않는 가장 긴 설명보다 커야 합니다(요약은 600토큰, 영어 약 2,400자를 넘을 때만 실행). 재인제스트해야 반영됩니다. |
+| `indexing.neptune.entity_importance_source` | `"rank"` | 그래프 확장 관련도에 쓰는 엔터티 중요도입니다. `rank`(인덱싱된 엔터티 rank), `degree`(질의 시 계산한 엣지 수), `none`(모두 0.5, 이전 동작). |
+| `indexing.neptune.traversal_fetch_multiplier` | `3` | 그래프 확장이 결과 폭의 이 배수만큼 가져와 순위를 매긴 뒤 자릅니다. `1`이면 순회 순서대로 자릅니다(이전 동작). |
 
 ### 2.6 `search` — 검색, 융합, 리랭킹, 전략별 항목
 
@@ -423,7 +426,11 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `search.global_search.max_communities` | `10` | `global` 검색이 살펴보는 커뮤니티 리포트 수입니다. |
 | `search.global_search.map_batch_size` | `5` | map 단계 LLM 호출 하나에 넣는 리포트 수입니다. 리포트가 길면 낮춥니다. |
 | `search.global_search.max_map_reduce_tokens` | `8000` | reduce 단계에 넣는, 순위를 매긴 핵심 내용의 토큰 예산입니다. |
+| `search.global_search.reduce_with_llm` | `false` | `true`이면 reduce LLM이 팩된 핵심 내용을 먼저 요약하고 답변 모델이 이를 다시 씁니다(LLM 호출 1회 추가). `false`이면 핵심 내용을 답변 모델에 바로 넘깁니다. |
+| `search.global_search.reserve_report_slots` | `true` | 커뮤니티 리포트에 `max_communities`개 융합 슬롯을 예약하고 텍스트 단위는 `text_unit_slots`개로 제한합니다. `false`이면 리포트와 청크를 한 번의 `top_k` 컷으로 자릅니다(이전 동작). |
+| `search.global_search.text_unit_slots` | `null` | 예약된 리포트 슬롯과 함께 둘 텍스트 단위 슬롯 수입니다. `null`이면 질의의 `top_k`입니다. |
 | `search.local_search.entity_frequency_threshold` | `20` | 그래프 확장으로 얻은 엔터티 중 이보다 많은 텍스트 단위에 나오는 것(너무 일반적인 것)을 버립니다. |
+| `search.local_search.include_bridge_relationships` | `true` | 확장된 엔터티에 연결된 관계도 가져오며, 조회된 두 엔터티를 잇는 엣지(다중 홉 연결 고리)를 먼저 둡니다. 관계 인덱스가 필요합니다. `false`이면 관계 벡터 질의만 씁니다. |
 | `search.drift_search.max_iterations` | `3` | DRIFT 반복 횟수 상한입니다. |
 | `search.drift_search.enable_primer` | `false` | MS GraphRAG의 primer → follow-up 흐름을 씁니다(처음에 LLM 호출 1회 추가). |
 | `search.drift_search.enable_llm_convergence` | `false` | 반복마다 LLM으로 수렴 여부를 판단합니다(반복당 호출 1회 추가). |
@@ -459,10 +466,10 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 
 | 키 | 기본값 | 역할 / 바꿀 때 |
 |---|---|---|
-| `evaluation.enabled_evaluators` | `[langchain, ragas]` | 데이터셋에 정답 정보가 있으면 `graph_aware`, `retrieval`, `answer_match`를 추가합니다(§6). |
+| `evaluation.enabled_evaluators` | `[langchain, ragas, answer_match, retrieval, graph_aware]` | 결정적 평가기(`answer_match`, `retrieval`, `graph_aware`)는 필요한 정답 필드가 없는 질의를 건너뜁니다(§6). 평가 모델 비용 없이 평가하려면 LLM 평가기를 빼면 됩니다. |
 | `evaluation.judge_effort` | `"low"` | LLM 평가 모델의 추론 깊이입니다. `null`이면 평가 모델이 속한 등급의 effort(기본은 `aws.bedrock.default_effort`)를 따릅니다. |
 | `evaluation.ragas_timeout` | `300` | 샘플 하나의 지표 하나를 계산하는 제한 시간(초)입니다. 넘으면 NaN이 됩니다. |
-| `evaluation.ragas_max_contexts` | `20` | 샘플마다 RAGAS 평가 모델에 넘기는 상위 컨텍스트 수입니다. 그래서 `context_precision`/`context_recall`은 "@20" 값이 됩니다. `null`이면 제한하지 않습니다. |
+| `evaluation.ragas_max_contexts` | `20` | RAGAS `context_precision`이 채점하는 샘플별 상위 컨텍스트 수입니다("@20"). faithfulness와 context_recall은 토큰 예산 안의 전체 컨텍스트를 봅니다. `null`이면 제한하지 않습니다. |
 | `evaluation.ragas_max_workers` | `8` | 동시에 실행하는 RAGAS 작업 수입니다. 평가 모델 호출이 스로틀링되면 낮춥니다. |
 | `evaluation.ragas_max_retries` | `3` | 평가 모델 호출당 총 시도 횟수입니다. |
 | `evaluation.max_context_tokens` | `8192` | 평가 모델에 넘기는 컨텍스트의 토큰 상한입니다. |
@@ -836,40 +843,66 @@ aws:
 
 ### 평가자
 
-`evaluation.enabled_evaluators`로 선택합니다.
+`evaluation.enabled_evaluators`로 선택합니다. 활성화한 평가자를 만들 수 없거나
+(예: judge용 Bedrock 접근 불가) 설정이 잘못되면 실행을 멈춥니다.
+`processing.ignore_errors: true`이면 해당 평가자를 빼고 계속하며
+`run_manifest.dropped_evaluators`에 기록합니다. 기본값은 다섯 개 모두
+활성화입니다. 결정적이고 LLM이 필요 없는 평가자(`answer_match`, `retrieval`,
+`graph_aware`)는 비용이 없고 필요한 데이터셋 필드가 없는 질의는 건너뜁니다. LLM
+judge 없이 실행하려면 `enabled_evaluators: [answer_match, retrieval, graph_aware]`로
+설정합니다.
 
 - **`langchain`** — LangChain 기반 텍스트 유사도(`langchain_metrics`:
   `correctness`, `partial_correctness`). `answer` 정답이 필요합니다.
 - **`ragas`** — RAGAS 지표(`answer_correctness`, `answer_relevancy`,
-  `context_precision`, `context_recall`, `faithfulness`). 판정 모델은 질의마다
-  순위 상위 소스를 최대 `evaluation.ragas_max_contexts`개(기본값 20, `null`이면
-  제한 없음)까지만 채점하며, 이 제한은 `max_context_tokens` 예산보다 먼저
-  적용됩니다. `context_precision`은 컨텍스트마다 판정 호출을 한 번씩 하므로 비용이
-  컨텍스트 수에 비례합니다. 소스를 100개 이상 보고하는 전략(예: LightRAG `mix`)은
-  제한이 없으면 `ragas_timeout`에 걸립니다. 답변 모델이 본 컨텍스트는 그대로이고
-  판정 모델이 채점하는 범위만 줄어들므로, 컨텍스트 지표는 사실상
-  `context_precision@N` / `context_recall@N`입니다.
+  `context_precision`, `context_recall`, `faithfulness`). `context_precision`은
+  컨텍스트마다 판정 호출을 한 번씩 하므로 질의마다 순위 상위 소스를 최대
+  `evaluation.ragas_max_contexts`개(기본값 20, `null`이면 제한 없음)까지만
+  채점하며, 이 제한은 `max_context_tokens` 예산보다 먼저 적용됩니다. 즉 이 지표는
+  `context_precision@N`입니다. 제한이 없으면 소스를 100개 이상 보고하는 전략(예:
+  LightRAG `mix`)은 `ragas_timeout`에 걸립니다. `faithfulness`와
+  `context_recall`은 `max_context_tokens` 안의 모든 소스를 보므로, 순위가 낮은
+  소스가 뒷받침하는 주장도 근거 없음으로 처리되지 않습니다. 각 리포트에는 판정
+  모델이 본 범위(`judge_contexts` / `judge_context_tokens`,
+  `context_precision_contexts` / `context_precision_context_tokens`)가 기록됩니다.
+  답변 모델이 본 컨텍스트는 바뀌지 않습니다.
 - **`graph_aware`** — 결정적이고 **LLM 불필요**한 엔티티/관계 **커버리지 =
-  recall**: 기대되는 그래프 아티팩트 중 몇 개가 생성된 답변에 나타나는지(대소문자
-  무관 단어 단위 매칭, 띄어쓰기 없는 CJK 텍스트는 부분 문자열 매칭).
+  recall**: 기대되는 그래프 아티팩트 중 몇 개가 생성된 답변에 나타나는지
+  (`answer_contains`와 같은 정규화·구문 매칭 사용: 단어 단위 매칭, 한국어 조사
+  허용, 한 단어짜리 CJK 텍스트는 부분 문자열 매칭).
   `{"source": "A", "target": "B"}` 또는 `"A -> B"` 형식의 관계는 답변이 양 끝
   엔티티를 모두 언급하면 매칭으로 보고, 그 밖의 문자열은 구문 그대로 나타나야
   합니다. 데이터셋에 `expected_entities` / `expected_relationships`가 필요합니다. **precision과 F1은 의도적으로
   미산출**됩니다 — 자유 텍스트 답변에서 모든 엔티티를 열거하는 것은 신뢰성 있게
   불가능하므로, precision/F1을 보고하는 것은 recall 신호에 다른 이름표만
-  붙이는 셈이기 때문입니다. (`enabled_evaluators`에서 `graph_aware`의 주석을
-  해제하여 opt-in.)
+  붙이는 셈이기 때문입니다.
 - **`retrieval`** — 결정적이고 LLM 불필요: 답변 모델이 본 소스에 정답 문서가
   포함됐는지를 `reference_sources`와 비교해 `hit_at_k`, `recall_at_k`(k =
-  `evaluation.retrieval_k`, 기본값 5), `mrr`(보고된 전체 소스 기준)로 산출합니다.
-  참조와 소스는 파일 이름의 stem이 대소문자 무관하게 같거나(디렉터리와 확장자
-  무시: `docs/Terms.pdf` = `terms.pdf` = `terms`), 참조가 소스의 문서 ID와 같으면
-  매칭됩니다. `reference_sources`가 없거나 문서 ID/파일 이름을 가진 소스가 하나도
-  없으면 건너뜁니다.
-- **`answer_match`** — 결정적이고 LLM 불필요한 SQuAD 방식 `exact_match`와
-  `token_f1`(소문자화, 문장 부호와 영어 관사 제거)을 `answer`와 선택 항목
-  `metadata.answer_aliases`에 대해 계산하고 최댓값을 씁니다. 토큰 F1은 공백으로
-  나누므로 중국어/일본어 텍스트에서는 exact match와 같아집니다.
+  `evaluation.retrieval_k`, 기본값 5), `mrr`로 산출합니다. 텍스트 유닛 소스는 파일
+  이름을 직접 갖고, 엔티티·관계·커뮤니티 리포트 소스는 계보(`text_unit_ids`)에
+  있는 텍스트 유닛의 파일로 귀속합니다(체인의 문서 저장소에서 접미사별로 한 번에
+  조회). 커뮤니티 리포트의 계보는 커뮤니티 전체이므로 `global`/`drift` 점수는
+  답변 모델이 실제로 읽은 범위의 상한입니다. 순위는 귀속 가능한 소스만으로 매기며,
+  `attributable_fraction`(귀속 가능한 소스 / 보고된 소스, `grouped_statistics`에서
+  전략별로도 제공)으로 순위 지표가 컨텍스트를 얼마나 보는지 알 수 있습니다.
+  매칭은 대소문자를 구분하지 않고 전체 이름으로 하며, 이름이 파일 확장자(`.` +
+  영문자·숫자 1-5자, 영문자 1개 이상)로 끝나면 stem으로도 비교합니다:
+  `docs/Terms.pdf` = `terms.pdf` = `terms`. `/`는 경로처럼 보이는 값(파일 확장자,
+  URI 스킴, `/`·`./`·`~/`로 시작)에서만 디렉터리 구분자로 보므로 `St. Louis
+  Cardinals`, `AC/DC` 같은 제목은 통째로 비교합니다. `reference_sources`가
+  없거나, 소스는 있지만 귀속 가능한 소스가 하나도 없으면 순위 지표를 건너뜁니다.
+  소스를 하나도 검색하지 못한 질의는 0점(miss)입니다.
+- **`answer_match`** — 결정적이고 LLM 불필요한 답변 지표를 `answer`와 선택 항목
+  `metadata.answer_aliases`에 대해 계산하고 최댓값을 씁니다. 대표 결정적 지표는
+  **`answer_contains`**(정답이나 별칭이 생성된 답변에 단어 단위 구문으로 나타나면
+  1.0)입니다. RAG 답변은 길어서 짧은 정답과 정확히 일치하는 경우가 드물기 때문에
+  exact match보다 정답 여부를 훨씬 잘 반영합니다. 한국어 조사는 허용하고(정답
+  `서울 특별시`가 `서울 특별시는`과 매칭), 한 단어짜리 CJK 정답은 부분 문자열로
+  비교합니다. 공개 벤치마크와 비교할 수 있도록 SQuAD 방식 `exact_match`와
+  `token_f1`도 함께 산출합니다. 텍스트는 NFKC로 정규화한 뒤 공식 SQuAD v1.1 스크립트와 같이
+  소문자화, 문장 부호 삭제(`1,000` = `1000`), 영어 관사 제거, 공백 정리를
+  거칩니다. 토큰 F1은 공백으로 나누므로 중국어/일본어 텍스트에서는 exact match와
+  같아지고, 한국어는 조사(`서울은`) 때문에 두 지표 모두 낮게 나옵니다.
 
 ### 평가 데이터 포맷
 
@@ -901,7 +934,9 @@ aws:
 ```
 
 항목별 `metadata`(예: `search_strategy`)는 해당 질문에 대해 CLI 기본값을
-오버라이드합니다. `id`는 `query_id`로 줄 수도 있습니다. 파일은 질문을 실행하기
+오버라이드합니다. 코퍼스로 답할 수 없는 질문은 `"metadata": {"answerable": false}`로
+표시합니다. 이런 질문은 어떤 평가자도 채점하지 않고, 체인이 답변을 거부했는지만
+봅니다(아래 `abstention_statistics` 참고). `id`는 `query_id`로 줄 수도 있습니다. 파일은 질문을 실행하기
 전에 검증합니다. 데이터셋이 비었거나, 배열이 아니거나, `question`이 없거나, ID가
 중복되거나, 필드 타입이 틀리거나, RAG 체인이 거부할 `metadata` 값(예: 알 수 없는
 `search_strategy`)이 있으면 항목 인덱스와 ID를 담은 오류로 실행을 멈춥니다.
@@ -925,11 +960,24 @@ run-eval --eval-data-path my_eval_data.json \
 
 - `grouped_statistics` — 같은 통계를 `search_strategy`(실제로 사용한 전략이며
   `auto`에서는 질문마다 다를 수 있음), `category`, `difficulty`별로 나눈 값.
+- `abstention_statistics` — 체인이 답변 대신 고정된 컨텍스트 없음 응답("I could
+  not find relevant information…")을 돌려준 빈도: `abstained`, `answered`,
+  `abstention_rate`, 같은 값의 `per_strategy`, 그리고 `answerable: false` 항목에
+  대한 `unanswerable` 블록(`total`, `correct_abstentions`, `accuracy`). 답할 수
+  있는 질문에서의 답변 거부는 일반 답변처럼 채점되며(대개 오답), 각 결과에는
+  `abstained`가 기록됩니다.
 - `run_manifest` — CLI 인자, 모델 ID(답변 생성, 평가 judge/임베딩), 패키지 버전,
-  데이터셋 경로와 sha256, UTC 타임스탬프. 두 실행을 비교할 때 사용합니다.
+  git 커밋(`git_sha`, 체크아웃에서 실행한 경우), 전체 확정 설정의
+  `config_sha256`, `library_versions`(ragas, langchain*), 데이터셋(경로와 파일
+  sha256, 질문 수, 파싱된 내용의 해시), UTC 타임스탬프. 두 실행을 비교할 때
+  사용합니다. 제외된 평가자(`dropped_evaluators`)도 담깁니다.
+  `EvaluationManager.evaluate_dataset`이 만들기 때문에 라이브러리로 호출해도
+  포함됩니다(`dataset_path=` / `cli_args=`를 넘기면 함께 기록).
 
-각 결과에는 `retrieved_source_ids`(보고된 소스별 문서 ID와 파일 이름, 순위 순)도
-기록됩니다.
+질의별 리포트에는 평가자별 `metrics`가 담깁니다. `overall_score`는 JSON 호환을
+위해 남겨 두었지만 항상 `null`입니다(서로 다른 지표의 평균은 의미가 없음). 각
+결과에는 `retrieved_source_ids`(보고된 소스별로 귀속된 파일 이름, 순위 순,
+귀속할 수 없으면 `[]`)도 기록됩니다.
 
 ---
 

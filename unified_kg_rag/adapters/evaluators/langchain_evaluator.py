@@ -13,7 +13,7 @@ from langchain_classic.evaluation.schema import EvaluatorType as LCEvaluatorType
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.prompts import PromptTemplate
 
-from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetric,
@@ -88,31 +88,27 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
     def __init__(
         self,
         config: Config,
-        rag_chain: Any | None = None,
         boto_session: boto3.Session | None = None,
+        *,
+        providers: Providers | None = None,
         **kwargs: Any,
     ) -> None:
         self.llm: BaseLanguageModel | None = None
         self.evaluators: dict[EvaluationMetricType, Any] = {}
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=config.aws.profile_name
-        )
+        # The judge LLM comes from the shared provider bundle
+        # (EvaluationManager passes the chain's).
+        self.providers = Providers.resolve(config, providers, boto_session)
+        self.boto_session = self.providers.boto_session
         super().__init__(
             config=config,
             evaluator_type=EvaluatorType.LANGCHAIN,
-            rag_chain=rag_chain,
             **kwargs,
         )
         self.ignore_errors = config.processing.ignore_errors
 
     def _initialize_evaluator(self, **kwargs: Any) -> None:
         try:
-            llm_factory = BedrockLanguageModelFactory(
-                config=self.config,
-                boto_session=self.boto_session,
-                region_name=self.config.aws.bedrock.region_name,
-            )
-            self.llm = llm_factory.get_model(
+            self.llm = self.providers.llm_factory.get_model(
                 model_id=self.config.evaluation.evaluation_model_id,
                 model_purpose=ModelPurpose.EVALUATION,
                 **judge_model_kwargs(self.config),
@@ -271,7 +267,6 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         failed: dict[str, str] | None = None,
         skipped: dict[str, str] | None = None,
     ) -> EvaluationReport:
-        overall_score = sum(m.value for m in metrics) / len(metrics) if metrics else 0.0
         metadata = self._extract_search_metadata(result)
         if failed:
             metadata[FAILED_METRICS_KEY] = failed
@@ -281,7 +276,6 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             query_id=query_id,
             evaluator_type=self.evaluator_type,
             metrics=metrics,
-            overall_score=overall_score,
             evaluation_time=datetime.now(),
             metadata=metadata,
         )

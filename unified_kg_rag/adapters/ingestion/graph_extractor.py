@@ -7,12 +7,12 @@ from typing import Any
 import boto3
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.aws.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.entity_grounding import is_grounded
 from unified_kg_rag.domain.models import (
@@ -106,18 +106,17 @@ class ExtractionStats(BaseModel):
 
 class GraphExtractor(BaseProcessor):
     def __init__(
-        self, config: Config, boto_session: boto3.Session | None = None
+        self,
+        config: Config,
+        boto_session: boto3.Session | None = None,
+        *,
+        providers: Providers | None = None,
     ) -> None:
         super().__init__(config)
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=self.config.aws.profile_name
-        )
+        self.providers = Providers.resolve(config, providers, boto_session)
+        self.boto_session = self.providers.boto_session
         self.ignore_errors = self.config.processing.ignore_errors
-        self.factory = BedrockLanguageModelFactory(
-            config=self.config,
-            boto_session=self.boto_session,
-            region_name=self.config.aws.bedrock.region_name,
-        )
+        self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor(
             is_transient_error=is_transient_bedrock_error
         )

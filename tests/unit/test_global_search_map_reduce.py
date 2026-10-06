@@ -95,6 +95,7 @@ def _strategy(
     map_outputs: list[str] | None = None,
     reducer: Any = None,
     token_cost: int = 10,
+    reduce_with_llm: bool = False,
 ) -> GlobalSearchStrategy:
     strat = GlobalSearchStrategy.__new__(GlobalSearchStrategy)
     strat.global_search_config = SimpleNamespace(
@@ -103,6 +104,10 @@ def _strategy(
         max_map_reduce_tokens=max_map_reduce_tokens,
         map_reduce_min_results=map_reduce_min_results,
         enable_map_reduce=True,
+        reduce_with_llm=reduce_with_llm,
+        reserve_report_slots=True,
+        text_unit_slots=None,
+        max_communities=10,
     )
     strat.ignore_errors = ignore_errors
     strat.target_language = "English"
@@ -231,7 +236,7 @@ def test_pack_always_keeps_at_least_one_point() -> None:
 
 async def test_reduce_receives_ranked_points() -> None:
     reducer = _reducer("FINAL")
-    strat = _strategy(reducer=reducer)
+    strat = _strategy(reducer=reducer, reduce_with_llm=True)
     points = [_MapPoint("alpha", 90), _MapPoint("beta", 40)]
     results = _communities(3)
     out = await strat._reduce_from_points(points, results, SearchQuery(query="q"))
@@ -270,6 +275,7 @@ async def test_apply_map_reduce_full_pipeline_prepends_synthesis() -> None:
             _map_payload(("weak point", 0)),  # dropped by filter
         ],
         reducer=_reducer("THE ANSWER"),
+        reduce_with_llm=True,
     )
     results = _communities(2)
     out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
@@ -309,6 +315,7 @@ async def test_apply_map_reduce_parse_failure_degrades_to_concat() -> None:
         map_reduce_min_results=2,
         map_outputs=["garbage", "still garbage"],  # all map calls unparseable
         reducer=reducer,
+        reduce_with_llm=True,
     )
     results = _communities(2)
     out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
@@ -334,6 +341,7 @@ async def test_apply_map_reduce_all_filtered_returns_no_context() -> None:
         map_relevance_threshold=50,
         map_outputs=[_map_payload(("low1", 10)), _map_payload(("low2", 50))],
         reducer=reducer,
+        reduce_with_llm=True,
     )
     out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
     assert out == []
@@ -351,6 +359,7 @@ async def test_apply_map_reduce_unrated_batch_degrades_to_concat_over_unrated() 
         map_relevance_threshold=50,
         map_outputs=[_map_payload(("low", 0)), {}],  # type: ignore[list-item]
         reducer=reducer,
+        reduce_with_llm=True,
     )
     out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
     assert out[0].content == "CONCAT SUMMARY"
@@ -363,7 +372,7 @@ async def test_apply_map_reduce_unrated_batch_degrades_to_concat_over_unrated() 
 
 async def test_apply_map_reduce_map_exception_concats_all_reports() -> None:
     reducer = _reducer("CONCAT SUMMARY")
-    strat = _strategy(map_reduce_min_results=2, reducer=reducer)
+    strat = _strategy(map_reduce_min_results=2, reducer=reducer, reduce_with_llm=True)
     strat._run_map_phase = AsyncMock(  # type: ignore[method-assign]
         side_effect=RuntimeError("map down")
     )
@@ -400,3 +409,51 @@ async def test_asearch_all_filtered_yields_empty_result_with_flag() -> None:
     assert result.total_results == 0
     assert result.metadata["map_reduce_no_relevant_points"] is True
     assert result.metadata["map_reduce_applied"] is False
+
+
+# --------------------------------------------------------------------------- #
+# Default (reduce_with_llm=False): packed points go to the answer model as-is
+# --------------------------------------------------------------------------- #
+
+
+async def test_default_passes_ranked_points_without_a_reduce_call() -> None:
+    reducer = _reducer("SHOULD NOT RUN")
+    strat = _strategy(
+        map_batch_size=1,
+        map_reduce_min_results=2,
+        map_outputs=[
+            _map_payload(("weaker point", 40)),
+            _map_payload(("strong point", 95), ("noise", 0)),
+        ],
+        reducer=reducer,
+    )
+    results = _communities(2)
+
+    out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
+
+    reducer.ainvoke.assert_not_awaited()
+    points = out[0]
+    assert points.source == "synthesized_key_points"
+    assert points.metadata["synthesized"] is True  # never reported as a source
+    assert points.metadata["ranked_key_points"] == 2
+    assert points.content.index("strong point") < points.content.index("weaker")
+    assert "relevance 95" in points.content
+    assert "noise" not in points.content
+    assert [r.source for r in out[1:]] == ["c0", "c1"]
+    assert strat._was_map_reduce_applied(out) is True
+
+
+async def test_default_degraded_path_passes_unrated_reports_through() -> None:
+    reducer = _reducer("SHOULD NOT RUN")
+    strat = _strategy(
+        map_batch_size=1,
+        map_reduce_min_results=2,
+        map_outputs=["garbage", "still garbage"],
+        reducer=reducer,
+    )
+    results = _communities(2)
+
+    out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
+
+    reducer.ainvoke.assert_not_awaited()
+    assert [r.source for r in out] == ["c0", "c1"]

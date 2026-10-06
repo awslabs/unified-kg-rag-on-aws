@@ -6,8 +6,9 @@ This retry-with-exponential-backoff loop is the documented mitigation for the
 Neptune ``ConcurrentModificationException`` seen under concurrent index writes.
 It was previously untested. These tests pin the behaviors that matter: it
 returns on a later-attempt success, it re-raises after exhausting retries, and
-it sleeps once per failed attempt (backoff is bounded by max_retries). ``time``
-and ``random`` are patched so the test is fast and deterministic.
+it sleeps once per failed attempt (backoff is bounded by max_retries). The module's ``_sleep``/``_jitter``
+seams are patched (never the process-global ``time.sleep``/``random.uniform``,
+which other threads share) so the tests are fast and deterministic.
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 from unified_kg_rag.domain.models import Config
 
 pytestmark = pytest.mark.unit
+
+_MOD = "unified_kg_rag.adapters.storage.neptune_indexer"
 
 
 class _FlakyTraversal:
@@ -43,11 +46,9 @@ def indexer(mocker):
 @pytest.fixture(autouse=True)
 def _no_sleep(mocker):
     # Keep retries instant and deterministic.
+    mocker.patch(_MOD + "._sleep", return_value=None)
     mocker.patch(
-        "unified_kg_rag.adapters.storage.neptune_indexer.time.sleep", return_value=None
-    )
-    mocker.patch(
-        "unified_kg_rag.adapters.storage.neptune_indexer.random.uniform",
+        _MOD + "._jitter",
         return_value=0.0,
     )
 
@@ -55,9 +56,7 @@ def _no_sleep(mocker):
 def test_returns_after_transient_failures_then_success(indexer, mocker) -> None:
     indexer.neptune_config.max_retries = 3
     indexer.neptune_config.retry_delay_seconds = 1
-    sleep = mocker.patch(
-        "unified_kg_rag.adapters.storage.neptune_indexer.time.sleep", return_value=None
-    )
+    sleep = mocker.patch(_MOD + "._sleep", return_value=None)
     # Fails twice (ConcurrentModificationException), succeeds on the 3rd attempt.
     traversal = _FlakyTraversal(
         fail_times=2, exc=Exception("ConcurrentModificationException")
@@ -80,9 +79,7 @@ def test_reraises_after_exhausting_retries(indexer) -> None:
 def test_succeeds_on_first_attempt_does_not_sleep(indexer, mocker) -> None:
     indexer.neptune_config.max_retries = 3
     indexer.neptune_config.retry_delay_seconds = 1
-    sleep = mocker.patch(
-        "unified_kg_rag.adapters.storage.neptune_indexer.time.sleep", return_value=None
-    )
+    sleep = mocker.patch(_MOD + "._sleep", return_value=None)
     traversal = _FlakyTraversal(fail_times=0, exc=Exception("never raised"))
     indexer._execute_with_retries(traversal, "upsert entities")
     assert traversal.calls == 1
@@ -96,3 +93,15 @@ def test_zero_retries_raises_immediately(indexer) -> None:
     with pytest.raises(ValueError, match="boom"):
         indexer._execute_with_retries(traversal, "upsert entities")
     assert traversal.calls == 1
+
+
+def test_backoff_is_full_jitter_over_exponential_window(indexer, mocker) -> None:
+    indexer.neptune_config.max_retries = 3
+    indexer.neptune_config.retry_delay_seconds = 2
+    jitter = mocker.patch(_MOD + "._jitter", side_effect=lambda lo, hi: hi / 2)
+    sleep = mocker.patch(_MOD + "._sleep", return_value=None)
+    traversal = _FlakyTraversal(fail_times=3, exc=Exception("throttled"))
+    indexer._execute_with_retries(traversal, "upsert entities")
+    # Window doubles per attempt: [0, 2], [0, 4], [0, 8]; sleep uses the draw.
+    assert [c.args for c in jitter.call_args_list] == [(0, 2), (0, 4), (0, 8)]
+    assert [c.args[0] for c in sleep.call_args_list] == [1, 2, 4]

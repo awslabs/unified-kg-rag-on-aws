@@ -15,6 +15,7 @@ import json
 import pytest
 
 import unified_kg_rag.evaluation  # noqa: F401  (resolves package import cycle)
+from unified_kg_rag.adapters import providers as providers_module
 from unified_kg_rag.adapters.evaluators import langchain_evaluator as lc_module
 from unified_kg_rag.adapters.evaluators.langchain_evaluator import LangChainEvaluator
 from unified_kg_rag.domain.models import (
@@ -46,14 +47,14 @@ class _FakeEvaluator:
 
 def _make_evaluator(mocker, *, langchain_metrics=None) -> LangChainEvaluator:
     """Build a LangChainEvaluator with Bedrock + load_evaluator stubbed."""
-    mocker.patch.object(lc_module, "BedrockLanguageModelFactory")
+    mocker.patch.object(providers_module, "BedrockLanguageModelFactory")
     mocker.patch.object(lc_module, "load_evaluator", return_value=object())
     mocker.patch.object(lc_module.boto3, "Session")
 
     config = Config()
     if langchain_metrics is not None:
         config.evaluation.langchain_metrics = langchain_metrics
-    return LangChainEvaluator(config=config, rag_chain=None)
+    return LangChainEvaluator(config=config)
 
 
 def _query() -> EvaluationQuery:
@@ -178,12 +179,12 @@ class TestInitialization:
 
         mocker.patch.object(lc_module.boto3, "Session")
         mocker.patch.object(
-            lc_module,
+            providers_module,
             "BedrockLanguageModelFactory",
             side_effect=RuntimeError("boom"),
         )
         with pytest.raises(EvaluationException):
-            LangChainEvaluator(config=Config(), rag_chain=None)
+            LangChainEvaluator(config=Config())
 
 
 class TestEvaluateWithMetric:
@@ -260,7 +261,7 @@ class TestHandleEvaluationError:
 
 
 class TestEvaluateSingle:
-    def test_aggregates_metrics_and_overall_score(self, mocker) -> None:
+    def test_scores_metric(self, mocker) -> None:
         ev = _make_evaluator(
             mocker, langchain_metrics=[EvaluationMetricType.CORRECTNESS]
         )
@@ -271,8 +272,8 @@ class TestEvaluateSingle:
         }
         report = ev.evaluate_single(_query(), _result(), ground_truth="gt")
         assert report.evaluator_type == EvaluatorType.LANGCHAIN
-        assert len(report.metrics) == 1
-        assert report.overall_score == pytest.approx(0.8)
+        assert [m.value for m in report.metrics] == [pytest.approx(0.8)]
+        assert report.overall_score is None
 
     def test_skips_metric_without_evaluator(self, mocker) -> None:
         ev = _make_evaluator(
@@ -281,7 +282,6 @@ class TestEvaluateSingle:
         ev.evaluators = {}  # nothing registered
         report = ev.evaluate_single(_query(), _result(), ground_truth="gt")
         assert report.metrics == []
-        assert report.overall_score == 0.0
 
     def test_error_swallowed_when_ignore_errors(self, mocker) -> None:
         ev = _make_evaluator(
@@ -296,7 +296,7 @@ class TestEvaluateSingle:
         assert report.metrics == []
         assert "correctness" in report.metadata["failed_metrics"]
 
-    def test_failed_metric_excluded_from_overall_score(self, mocker) -> None:
+    def test_failed_metric_not_scored(self, mocker) -> None:
         ev = _make_evaluator(
             mocker,
             langchain_metrics=[
@@ -315,7 +315,7 @@ class TestEvaluateSingle:
         assert [m.metric_type for m in report.metrics] == [
             EvaluationMetricType.PARTIAL_CORRECTNESS
         ]
-        assert report.overall_score == pytest.approx(0.8)
+        assert report.metrics[0].value == pytest.approx(0.8)
 
     def test_empty_reference_skips_reference_metrics(self, mocker) -> None:
         ev = _make_evaluator(
@@ -363,7 +363,7 @@ class TestAevaluateSingle:
             )
         }
         report = await ev.aevaluate_single(_query(), _result(), ground_truth="gt")
-        assert report.overall_score == pytest.approx(0.6)
+        assert [m.value for m in report.metrics] == [pytest.approx(0.6)]
 
     async def test_async_error_handled_when_ignore_errors(self, mocker) -> None:
         ev = _make_evaluator(
@@ -412,13 +412,13 @@ def test_judge_model_requested_without_sampling_params(mocker) -> None:
     # The judge must not force temperature/top_p/top_k: the factory decides
     # per model capability (Claude 5 rejects them outright).
     _make_evaluator(mocker)
-    factory = lc_module.BedrockLanguageModelFactory.return_value
+    factory = providers_module.BedrockLanguageModelFactory.return_value
     _, kwargs = factory.get_model.call_args
     assert not {"temperature", "top_p", "top_k"} & set(kwargs)
 
 
 def test_judge_model_uses_configured_judge_effort(mocker) -> None:
     _make_evaluator(mocker)
-    factory = lc_module.BedrockLanguageModelFactory.return_value
+    factory = providers_module.BedrockLanguageModelFactory.return_value
     _, kwargs = factory.get_model.call_args
     assert kwargs["effort"] == Config().evaluation.judge_effort == "low"

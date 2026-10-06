@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import hashlib
 import json
+import shutil
 import statistics
+import subprocess
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -13,7 +15,14 @@ from typing import Any
 from langchain_core.runnables import Runnable
 from pydantic import ValidationError
 
-from unified_kg_rag.application.retrieval.rag_chain import RAGInput, RAGOutput
+from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.application.retrieval.rag_chain import (
+    NO_CONTEXT_ANSWER,
+    GraphRAGChain,
+    RAGInput,
+    RAGOutput,
+)
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationGroundTruth,
@@ -22,6 +31,7 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluationSummary,
     EvaluatorType,
+    RetrieverRole,
 )
 from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.utils import BatchProcessor
@@ -30,8 +40,13 @@ from .answer_match_evaluator import AnswerMatchEvaluator
 from .base import FAILED_METRICS_KEY, SKIPPED_METRICS_KEY, BaseEvaluator
 from .graph_aware_evaluator import GraphAwareEvaluator
 from .retrieval_evaluator import RetrievalEvaluator
+from .source_resolver import SourceFileResolver, TextUnitFileResolver, file_name_of
 
 logger = get_logger(__name__)
+
+# Per reported source, in rank order: (file names it names directly,
+# text-unit ids whose files it derives from).
+SourceProvenance = list[tuple[list[str], list[str]]]
 
 
 class EvaluationManager:
@@ -71,43 +86,98 @@ class EvaluationManager:
         # the ignore — the branch is real once a new member is added.
         return None  # type: ignore[unreachable]
 
-    def __init__(self, config: Config, rag_chain: Runnable | None = None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        rag_chain: Runnable | None = None,
+        source_resolver: SourceFileResolver | None = None,
+        *,
+        providers: Providers | None = None,
+    ) -> None:
         self.config = config
         if rag_chain is None:
             raise EvaluationException("RAG chain not provided for evaluation.")
         self.rag_chain = rag_chain
+        # One provider bundle for every evaluator: the injected one, else the
+        # chain's (so judges share its session and any injected factory), else
+        # a default Bedrock bundle.
+        chain_providers = getattr(rag_chain, "providers", None)
+        if not isinstance(chain_providers, Providers):
+            chain_providers = None
+        self.providers = Providers.resolve(config, providers or chain_providers)
+        self.source_resolver = source_resolver or self._default_source_resolver(
+            config, rag_chain
+        )
         self.evaluators: dict[EvaluatorType, BaseEvaluator] = {}
         self._initialize_evaluators()
-        self.batch_processor = BatchProcessor()
+        # One attempt per batch: the RAG chain already retries transient
+        # Bedrock/store errors itself (and botocore under it), so retrying here
+        # only re-runs deterministic failures (invalid filter, validation) with
+        # minutes of backoff. A failed item still gets its sequential fallback.
+        self.batch_processor = BatchProcessor(
+            max_retries=1, max_concurrency=config.processing.max_concurrency
+        )
+
+    @staticmethod
+    def _default_source_resolver(
+        config: Config, rag_chain: Runnable
+    ) -> SourceFileResolver | None:
+        """Resolve graph-source lineage through the chain's own document store.
+
+        Reuses the retriever the chain binds to the DOCUMENT role (including an
+        injected ``retriever_builders`` backend), so attribution reads the same
+        indices the answers were retrieved from. Other runnables get no
+        resolver: only sources that name a file directly are attributable.
+        """
+        if not isinstance(rag_chain, GraphRAGChain):
+            return None
+        return TextUnitFileResolver(
+            config, lambda: rag_chain._get_retriever(RetrieverRole.DOCUMENT)
+        )
 
     def _initialize_evaluators(self) -> None:
-        enabled_count = 0
+        """Build every enabled evaluator; fail fast unless ignore_errors.
+
+        An evaluator that cannot be built (e.g. no Bedrock access for the
+        judge) or rejects its configuration aborts the run with an
+        ``EvaluationException`` — silently dropping it would publish a summary
+        without metrics the user asked for. With ``processing.ignore_errors``
+        it is dropped instead and recorded in ``dropped_evaluators`` (and the
+        run manifest).
+        """
+        self.dropped_evaluators: dict[str, str] = {}
         for evaluator_type in self.config.evaluation.enabled_evaluators:
             evaluator_class = self._resolve_evaluator_class(evaluator_type)
             if not evaluator_class:
                 logger.warning("Unknown evaluator type: '%s'", evaluator_type)
+                self.dropped_evaluators[str(evaluator_type)] = "unknown evaluator type"
                 continue
 
             try:
                 evaluator = evaluator_class(
-                    config=self.config, rag_chain=self.rag_chain
+                    config=self.config, providers=self.providers
                 )
-                if evaluator.validate_config():
-                    self.evaluators[evaluator_type] = evaluator
-                    enabled_count += 1
-                else:
-                    logger.error(
-                        "Invalid configuration for '%s' evaluator", evaluator_type.value
-                    )
+                reason = (
+                    None if evaluator.validate_config() else "invalid configuration"
+                )
             except Exception as e:
-                logger.error(
-                    "Failed to initialize '%s' evaluator: %s", evaluator_type.value, e
+                evaluator, reason = None, f"initialization failed: {e}"
+            if evaluator is not None and reason is None:
+                self.evaluators[evaluator_type] = evaluator
+                continue
+            message = f"'{evaluator_type.value}' evaluator {reason}"
+            if not self.config.processing.ignore_errors:
+                raise EvaluationException(
+                    f"{message} (set processing.ignore_errors to drop it and "
+                    "continue)"
                 )
+            logger.error("Dropping %s", message)
+            self.dropped_evaluators[evaluator_type.value] = str(reason)
 
-        if enabled_count == 0:
+        if not self.evaluators:
             logger.warning("No evaluators were successfully initialized")
         else:
-            logger.info("Initialized %s evaluators", enabled_count)
+            logger.info("Initialized %s evaluators", len(self.evaluators))
 
     @staticmethod
     def load_data(
@@ -192,6 +262,10 @@ class EvaluationManager:
         item_metadata = item.get("metadata", {})
         if not isinstance(item_metadata, dict):
             raise EvaluationException(f"{where}: 'metadata' must be an object.")
+        if not isinstance(item_metadata.get("answerable", True), bool):
+            raise EvaluationException(
+                f"{where}: 'metadata.answerable' must be true or false."
+            )
 
         final_metadata = {**base_metadata, **item_metadata}
         rag_fields = {
@@ -237,7 +311,15 @@ class EvaluationManager:
         queries: list[EvaluationQuery],
         ground_truths: list[EvaluationGroundTruth],
         show_progress: bool = True,
+        *,
+        dataset_path: str | Path | None = None,
+        cli_args: dict[str, Any] | None = None,
     ) -> tuple[list[EvaluationResult], list[EvaluationReport], EvaluationSummary]:
+        """Answer, score and summarize a dataset; the summary carries the manifest.
+
+        ``dataset_path`` (the file the queries were loaded from) and
+        ``cli_args`` are recorded in ``summary.run_manifest`` when given.
+        """
         start_time = datetime.now()
         logger.info("Starting evaluation for %s queries", len(queries))
 
@@ -247,6 +329,12 @@ class EvaluationManager:
             end_time = datetime.now()
             summary = self._generate_summary(
                 queries, results, reports, start_time, end_time
+            )
+            summary.run_manifest = self.build_run_manifest(
+                dataset_path,
+                cli_args,
+                queries=queries,
+                ground_truths=ground_truths,
             )
 
             logger.info(
@@ -275,22 +363,22 @@ class EvaluationManager:
         )
 
         results = []
+        provenance: list[SourceProvenance] = []
         for query, raw_result in zip(queries, raw_results, strict=True):
+            provenance.append(self._extract_source_provenance(raw_result))
             try:
                 rag_metadata = self._extract_from_result(raw_result, "metadata", {})
                 error_message = self._detect_generation_error(raw_result, rag_metadata)
+                answer = self._extract_from_result(raw_result, "answer", "")
                 results.append(
                     EvaluationResult(
                         query_id=query.query_id,
                         question=query.question,
-                        generated_answer=self._extract_from_result(
-                            raw_result, "answer", ""
-                        ),
+                        generated_answer=answer,
                         ground_truth="",
                         retrieved_contexts=self._extract_from_result(
                             raw_result, "sources", []
                         ),
-                        retrieved_source_ids=self._extract_source_ids(raw_result),
                         enable_thinking=rag_metadata.get("enable_thinking", False),
                         search_strategy=rag_metadata.get("search_strategy"),
                         response_time=rag_metadata.get("processing_time"),
@@ -300,6 +388,8 @@ class EvaluationManager:
                         metadata=query.metadata,
                         error=error_message is not None,
                         error_message=error_message,
+                        abstained=error_message is None
+                        and self._is_abstention(answer, rag_metadata),
                     )
                 )
             except Exception as e:
@@ -317,7 +407,61 @@ class EvaluationManager:
                         error_message=str(e),
                     )
                 )
+        await self._attribute_sources(queries, results, provenance)
         return results
+
+    async def _attribute_sources(
+        self,
+        queries: list[EvaluationQuery],
+        results: list[EvaluationResult],
+        provenance: list[SourceProvenance],
+    ) -> None:
+        """Set ``retrieved_source_ids``: per source, the file names it maps to.
+
+        A source that names no file directly (entity, relationship, community
+        report) is attributed to the files of the text units in its lineage,
+        resolved in one batched lookup per index suffix. A source that still
+        maps to no file stays ``[]`` (unattributable).
+        """
+        resolved: dict[str | None, dict[str, str]] = {}
+        if self.source_resolver is not None:
+            pending: dict[str | None, set[str]] = defaultdict(set)
+            for query, sources in zip(queries, provenance, strict=True):
+                for files, unit_ids in sources:
+                    if not files:
+                        pending[query.metadata.get("suffix")].update(unit_ids)
+            for suffix, wanted in pending.items():
+                if not wanted:
+                    continue
+                try:
+                    resolved[suffix] = await self.source_resolver.aresolve(
+                        sorted(wanted), suffix
+                    )
+                except Exception as e:  # noqa: BLE001 - attribution is best-effort
+                    logger.warning(
+                        "Could not resolve %s text-unit ids to files (suffix "
+                        "'%s'); those sources stay unattributable: %s",
+                        len(wanted),
+                        suffix,
+                        e,
+                    )
+        for query, result, sources in zip(queries, results, provenance, strict=True):
+            mapping = resolved.get(query.metadata.get("suffix"), {})
+            result.retrieved_source_ids = [
+                files or sorted({mapping[u] for u in unit_ids if u in mapping})
+                for files, unit_ids in sources
+            ]
+
+    @staticmethod
+    def _is_abstention(answer: Any, rag_metadata: Any) -> bool:
+        """True for the chain's fixed no-context reply (flag, or the exact text)."""
+        if isinstance(rag_metadata, dict) and rag_metadata.get("abstained"):
+            return True
+        return isinstance(answer, str) and answer.strip() == NO_CONTEXT_ANSWER
+
+    @staticmethod
+    def _is_unanswerable(query_or_result: EvaluationQuery | EvaluationResult) -> bool:
+        return query_or_result.metadata.get("answerable") is False
 
     @staticmethod
     def _detect_generation_error(raw_result: Any, rag_metadata: Any) -> str | None:
@@ -339,12 +483,14 @@ class EvaluationManager:
         return str(detail) if detail else "RAG chain returned an error response"
 
     @staticmethod
-    def _extract_source_ids(raw_result: Any) -> list[list[str]]:
-        """Per reported source, in rank order: its document ids and file names.
+    def _extract_source_provenance(raw_result: Any) -> SourceProvenance:
+        """Per reported source, in rank order: file names and text-unit lineage.
 
-        Read from the provenance the RAG chain attaches to each source
-        (``metadata.document_ids``) and the chunk attributes the indexer stores
+        File names come from the chunk attributes the indexer stores
         (``file_name`` / ``file_path``, top-level or under ``attributes``).
+        Lineage is the source's ``text_unit_ids`` (entities, relationships,
+        community reports) or, for a text unit without a file name, its own id.
+        Document ids are not used: they are content hashes no dataset names.
         """
         if isinstance(raw_result, RAGOutput):
             sources: Any = raw_result.sources
@@ -355,28 +501,34 @@ class EvaluationManager:
         if not isinstance(sources, list):
             return []
 
-        ranked: list[list[str]] = []
+        provenance: SourceProvenance = []
         for source in sources:
-            ids: list[str] = []
+            files: list[str] = []
+            unit_ids: list[str] = []
             if isinstance(source, dict):
                 metadata = source.get("metadata")
                 payloads = [source]
                 if isinstance(metadata, dict):
                     payloads.append(metadata)
-                    if isinstance(metadata.get("attributes"), dict):
-                        payloads.append(metadata["attributes"])
                 for payload in payloads:
-                    doc_ids = payload.get("document_ids") or payload.get("document_id")
-                    if isinstance(doc_ids, str):
-                        doc_ids = [doc_ids]
-                    if isinstance(doc_ids, list | tuple):
-                        ids.extend(str(d) for d in doc_ids if d)
-                    for key in ("file_name", "file_path"):
-                        value = payload.get(key)
-                        if isinstance(value, str) and value.strip():
-                            ids.append(Path(value).name)
-            ranked.append(list(dict.fromkeys(ids)))
-        return ranked
+                    if name := file_name_of(payload):
+                        files.append(name)
+                    lineage = payload.get("text_unit_ids") or []
+                    if isinstance(lineage, str):
+                        lineage = [lineage]
+                    if isinstance(lineage, list | tuple):
+                        unit_ids.extend(str(u) for u in lineage if u)
+                if (
+                    isinstance(metadata, dict)
+                    and metadata.get("section_type") == SectionType.TEXT.value
+                ):
+                    own_id = metadata.get("chunk_id") or metadata.get("source_id")
+                    if own_id:
+                        unit_ids.append(str(own_id))
+            provenance.append(
+                (list(dict.fromkeys(files)), list(dict.fromkeys(unit_ids)))
+            )
+        return provenance
 
     def create_lean_context_strings(
         self, sources_list: list[dict[str, Any]]
@@ -507,30 +659,31 @@ class EvaluationManager:
         # sentinel) is not an answer: scoring it would let LLM judges grade the
         # apology text. Exclude it from every evaluator; the summary counts it
         # as failed and its metrics as skipped.
+        # An item marked metadata.answerable=false has no answer to grade; it is
+        # scored only on whether the chain abstained (abstention_statistics).
         scorable = [
             (query, res)
             for query, res in zip(queries, results, strict=True)
-            if not res.error
+            if not res.error and not self._is_unanswerable(query)
         ]
-        if len(scorable) < len(results):
+        errored = sum(1 for res in results if res.error)
+        if errored:
             logger.warning(
                 "Excluding %s/%s queries from scoring: answer generation failed",
-                len(results) - len(scorable),
+                errored,
                 len(results),
             )
         scorable_queries = [query for query, _ in scorable]
         scorable_results = [res for _, res in scorable]
         gt_list = [res.ground_truth for res in scorable_results]
 
-        # Graph-aware coverage is the project's headline differentiator over
-        # text-similarity eval, but it silently emits nothing when the dataset
-        # carries no expected_entities/relationships. Warn ONCE so a user does
-        # not believe coverage was measured when it was not (the per-query path
-        # just skips, producing zero metrics with no signal).
+        # Graph-aware coverage emits nothing when the dataset carries no
+        # expected_entities/relationships. Say so once (metric_outcomes also
+        # counts the skips); info, not warning, since it is enabled by default.
         if EvaluatorType.GRAPH_AWARE in self.evaluators and not any(
             gt.expected_entities or gt.expected_relationships for gt in ground_truths
         ):
-            logger.warning(
+            logger.info(
                 "graph_aware evaluator is enabled but no dataset row supplies "
                 "expected_entities/expected_relationships — no coverage metric "
                 "will be reported. Add them to the evaluation dataset to measure "
@@ -587,6 +740,7 @@ class EvaluationManager:
             average_response_time=avg_response_time,
             metric_statistics=self._calculate_metric_statistics(reports),
             metric_outcomes=self._calculate_metric_outcomes(results, reports),
+            abstention_statistics=self._calculate_abstention_statistics(results),
             grouped_statistics=self._calculate_grouped_statistics(
                 queries, results, reports
             ),
@@ -630,25 +784,52 @@ class EvaluationManager:
                 grouped[dimension] = stats
         return grouped
 
+    _LIBRARIES = (
+        "ragas",
+        "langchain",
+        "langchain-core",
+        "langchain-aws",
+        "langchain-community",
+    )
+
     def build_run_manifest(
-        self, eval_data_path: str | Path, cli_args: dict[str, Any] | None = None
+        self,
+        eval_data_path: str | Path | None = None,
+        cli_args: dict[str, Any] | None = None,
+        *,
+        queries: list[EvaluationQuery] | None = None,
+        ground_truths: list[EvaluationGroundTruth] | None = None,
     ) -> dict[str, Any]:
         """Record what produced a run so two summaries can be compared."""
-        path = Path(eval_data_path)
-        try:
-            package_version = version("unified-kg-rag-on-aws")
-        except PackageNotFoundError:
-            package_version = "unknown"
         enabled = set(self.evaluators) or set(self.config.evaluation.enabled_evaluators)
         uses_judge = bool(enabled & {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS})
         evaluation = self.config.evaluation
+        dataset: dict[str, Any] = {}
+        if eval_data_path is not None:
+            path = Path(eval_data_path)
+            dataset["path"] = str(path)
+            dataset["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        if queries is not None:
+            # Hash of the parsed dataset, so library callers that never read a
+            # file (and files differing only in formatting) are comparable.
+            dataset["num_queries"] = len(queries)
+            dataset["content_sha256"] = self._sha256_json(
+                {
+                    "queries": [q.model_dump(mode="json") for q in queries],
+                    "ground_truths": [
+                        gt.model_dump(mode="json") for gt in ground_truths or []
+                    ],
+                }
+            )
         return {
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "package_version": package_version,
-            "dataset": {
-                "path": str(path),
-                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "package_version": self._package_version("unified-kg-rag-on-aws"),
+            "git_sha": self._git_sha(),
+            "config_sha256": self._sha256_json(self.config.model_dump(mode="json")),
+            "library_versions": {
+                name: self._package_version(name) for name in self._LIBRARIES
             },
+            "dataset": dataset,
             "cli_args": {
                 k: str(v) if isinstance(v, Path) else v
                 for k, v in (cli_args or {}).items()
@@ -665,7 +846,39 @@ class EvaluationManager:
                 ),
             },
             "enabled_evaluators": sorted(e.value for e in enabled),
+            "dropped_evaluators": dict(self.dropped_evaluators),
         }
+
+    @staticmethod
+    def _sha256_json(data: Any) -> str:
+        encoded = json.dumps(data, sort_keys=True, ensure_ascii=False, default=str)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _package_version(name: str) -> str | None:
+        try:
+            return version(name)
+        except PackageNotFoundError:
+            return None
+
+    @staticmethod
+    def _git_sha() -> str | None:
+        """Commit of the source checkout this package runs from, if any."""
+        git = shutil.which("git")
+        if git is None:
+            return None
+        try:
+            completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+                [git, "rev-parse", "HEAD"],
+                cwd=Path(__file__).resolve().parent,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=True,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return completed.stdout.strip() or None
 
     def _calculate_metric_outcomes(
         self,
@@ -676,8 +889,9 @@ class EvaluationManager:
 
         Only ``scored`` values enter ``metric_statistics``; this makes the
         excluded ones visible so a mean over 3 of 50 queries is not mistaken
-        for a mean over 50. Queries whose answer generation failed are counted
-        as ``skipped`` for every metric of every enabled evaluator.
+        for a mean over 50. Queries whose answer generation failed, and items
+        marked ``metadata.answerable=false``, are counted as ``skipped`` for
+        every metric of every enabled evaluator.
         """
         outcomes: dict[str, dict[str, dict[str, int]]] = {}
 
@@ -687,10 +901,10 @@ class EvaluationManager:
             )
             counts[kind] += n
 
-        errored = sum(1 for r in results if r.error)
+        unscored = sum(1 for r in results if r.error or self._is_unanswerable(r))
         for evaluator_type, evaluator in self.evaluators.items():
             for metric_type in evaluator.metric_types():
-                _bump(evaluator_type.value, metric_type.value, "skipped", errored)
+                _bump(evaluator_type.value, metric_type.value, "skipped", unscored)
 
         for report in reports:
             evaluator_name = report.evaluator_type.value
@@ -703,6 +917,40 @@ class EvaluationManager:
                 for metric_name in report.metadata.get(key) or {}:
                     _bump(evaluator_name, metric_name, kind)
         return outcomes
+
+    @classmethod
+    def _calculate_abstention_statistics(
+        cls, results: list[EvaluationResult]
+    ) -> dict[str, Any]:
+        answered = [r for r in results if not r.error]
+        if not answered:
+            return {}
+
+        def _rate(group: list[EvaluationResult]) -> dict[str, Any]:
+            abstained = sum(1 for r in group if r.abstained)
+            return {
+                "abstained": abstained,
+                "answered": len(group),
+                "abstention_rate": abstained / len(group),
+            }
+
+        by_strategy: dict[str, list[EvaluationResult]] = defaultdict(list)
+        for r in answered:
+            if r.search_strategy:
+                by_strategy[r.search_strategy].append(r)
+        stats: dict[str, Any] = {
+            **_rate(answered),
+            "per_strategy": {k: _rate(v) for k, v in sorted(by_strategy.items())},
+        }
+        unanswerable = [r for r in answered if cls._is_unanswerable(r)]
+        if unanswerable:
+            correct = sum(1 for r in unanswerable if r.abstained)
+            stats["unanswerable"] = {
+                "total": len(unanswerable),
+                "correct_abstentions": correct,
+                "accuracy": correct / len(unanswerable),
+            }
+        return stats
 
     @staticmethod
     def _calculate_metric_statistics(

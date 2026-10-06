@@ -18,6 +18,7 @@ import pytest
 
 from unified_kg_rag.application.retrieval.rag_chain import (
     DEFAULT_ERROR_MESSAGE,
+    NO_CONTEXT_ANSWER,
     ProcessedQuery,
     RAGOutput,
 )
@@ -227,6 +228,26 @@ class TestInitialization:
             is GraphAwareEvaluator
         )
 
+    def test_deterministic_evaluators_enabled_by_default(self) -> None:
+        assert Config().evaluation.enabled_evaluators == [
+            EvaluatorType.LANGCHAIN,
+            EvaluatorType.RAGAS,
+            EvaluatorType.ANSWER_MATCH,
+            EvaluatorType.RETRIEVAL,
+            EvaluatorType.GRAPH_AWARE,
+        ]
+
+    def test_config_template_matches_default_evaluators(self) -> None:
+        from pathlib import Path
+
+        import yaml
+
+        template_path = Path(__file__).resolve().parents[2] / "config-template.yaml"
+        template = yaml.safe_load(template_path.read_text(encoding="utf-8"))
+        assert template["evaluation"]["enabled_evaluators"] == [
+            e.value for e in Config().evaluation.enabled_evaluators
+        ]
+
     def test_only_enabled_evaluators_initialized(self, config: Config) -> None:
         manager = _graph_aware_manager(config)
         assert set(manager.evaluators) == {EvaluatorType.GRAPH_AWARE}
@@ -240,9 +261,7 @@ class TestInitialization:
         manager = EvaluationManager(config, rag_chain=object())
         assert manager.evaluators == {}
 
-    def test_init_failure_of_one_evaluator_does_not_crash(
-        self, config: Config, mocker
-    ) -> None:
+    def test_init_failure_aborts_by_default(self, config: Config, mocker) -> None:
         config.evaluation.enabled_evaluators = [EvaluatorType.GRAPH_AWARE]
 
         class _Boom:
@@ -252,8 +271,34 @@ class TestInitialization:
         mocker.patch.object(
             EvaluationManager, "_resolve_evaluator_class", return_value=_Boom
         )
+        with pytest.raises(EvaluationException, match="graph_aware.*init failed"):
+            EvaluationManager(config, rag_chain=object())
+
+    def test_invalid_config_aborts_by_default(self, config: Config, mocker) -> None:
+        config.evaluation.enabled_evaluators = [EvaluatorType.GRAPH_AWARE]
+        mocker.patch.object(GraphAwareEvaluator, "validate_config", return_value=False)
+        with pytest.raises(EvaluationException, match="invalid configuration"):
+            EvaluationManager(config, rag_chain=object())
+
+    def test_init_failure_dropped_and_recorded_with_ignore_errors(
+        self, config: Config, mocker
+    ) -> None:
+        config.processing.ignore_errors = True
+        config.evaluation.enabled_evaluators = [
+            EvaluatorType.GRAPH_AWARE,
+            EvaluatorType.ANSWER_MATCH,
+        ]
+        mocker.patch.object(
+            GraphAwareEvaluator, "__init__", side_effect=RuntimeError("init failed")
+        )
         manager = EvaluationManager(config, rag_chain=object())
-        assert manager.evaluators == {}
+        assert set(manager.evaluators) == {EvaluatorType.ANSWER_MATCH}
+        assert manager.dropped_evaluators == {
+            "graph_aware": "initialization failed: init failed"
+        }
+        manifest = manager.build_run_manifest()
+        assert manifest["dropped_evaluators"] == manager.dropped_evaluators
+        assert manifest["enabled_evaluators"] == ["answer_match"]
 
 
 class TestEvaluateResults:
@@ -427,6 +472,34 @@ class _FakeChain:
 
 
 class TestErroredQueries:
+    async def test_batch_failure_is_not_retried_with_backoff(
+        self, config: Config
+    ) -> None:
+        config.processing.max_concurrency = 3
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+
+        class _FailingBatchChain:
+            batch_calls = 0
+
+            async def abatch(self, inputs, config=None, return_exceptions=False):
+                type(self).batch_calls += 1
+                raise ValueError("invalid filter")  # deterministic, not transient
+
+            async def ainvoke(self, inputs, config=None):
+                return _rag_output("Vendor ships.", {"processing_time": 0.1})
+
+        manager = EvaluationManager(config, rag_chain=_FailingBatchChain())
+        assert manager.batch_processor.max_retries == 1
+        assert manager.batch_processor.max_concurrency == 3
+        results, _, _ = await manager.evaluate_dataset(
+            [EvaluationQuery(query_id="q1", question="Who ships?")],
+            [EvaluationGroundTruth(query_id="q1", ground_truth="Vendor")],
+            show_progress=False,
+        )
+        # One batch attempt, then the per-item sequential fallback answers it.
+        assert _FailingBatchChain.batch_calls == 1
+        assert results[0].generated_answer == "Vendor ships."
+
     async def test_rag_error_fallback_flagged_counted_failed_and_not_scored(
         self, config: Config
     ) -> None:
@@ -686,4 +759,105 @@ class TestComparability:
         assert manifest["models"]["evaluation_judge"] is None  # no LLM judge
         assert manifest["enabled_evaluators"] == ["graph_aware"]
         assert manifest["package_version"] and manifest["created_at"]
+        assert len(manifest["config_sha256"]) == 64
+        assert manifest["library_versions"]["ragas"]
+        assert manifest["library_versions"]["langchain-core"]
+        assert "git_sha" in manifest
         json.dumps(manifest)  # serializable as-is
+
+    def test_config_hash_tracks_resolved_config(self, config: Config) -> None:
+        config.evaluation.enabled_evaluators = []
+        manager = EvaluationManager(config, rag_chain=object())
+        before = manager.build_run_manifest()["config_sha256"]
+        config.search.answer_generation_model_id = "another-model"
+        assert manager.build_run_manifest()["config_sha256"] != before
+
+    def test_git_sha_none_without_git(self, mocker) -> None:
+        mocker.patch(
+            "unified_kg_rag.evaluation.evaluation_manager.shutil.which",
+            return_value=None,
+        )
+        assert EvaluationManager._git_sha() is None
+
+    async def test_evaluate_dataset_attaches_manifest(self, config: Config) -> None:
+        manager, results, reports, summary = await self._run(
+            config, {"A?": "local", "B?": "local"}
+        )
+        manifest = summary.run_manifest
+        assert manifest["dataset"]["num_queries"] == 2
+        assert len(manifest["dataset"]["content_sha256"]) == 64
+        assert "path" not in manifest["dataset"]  # library call: no file
+
+
+class TestAbstention:
+    async def _run(self, config: Config, items: list[tuple[str, str, dict, dict]]):
+        """items: (question, answer, chain metadata, query metadata)."""
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        chain = _FakeChain({q: _rag_output(a, md) for q, a, md, _ in items})
+        manager = EvaluationManager(config, rag_chain=chain)
+        queries = [
+            EvaluationQuery(query_id=f"q{i}", question=q, metadata=qmd)
+            for i, (q, _, _, qmd) in enumerate(items)
+        ]
+        gts = [
+            EvaluationGroundTruth(query_id=f"q{i}", ground_truth="Vendor")
+            for i, (_, _, _, qmd) in enumerate(items)
+            if qmd.get("answerable") is not False
+        ]
+        return await manager.evaluate_dataset(queries, gts, show_progress=False)
+
+    async def test_abstention_rate_overall_and_per_strategy(
+        self, config: Config
+    ) -> None:
+        local = {"search_strategy": "local"}
+        results, reports, summary = await self._run(
+            config,
+            [
+                ("A?", "Vendor ships.", local, {}),
+                ("B?", NO_CONTEXT_ANSWER, {**local, "abstained": True}, {}),
+                # Detected from the exact text when the flag is absent.
+                ("C?", NO_CONTEXT_ANSWER, {"search_strategy": "global"}, {}),
+            ],
+        )
+        assert [r.abstained for r in results] == [False, True, True]
+        stats = summary.abstention_statistics
+        assert stats["abstained"] == 2 and stats["answered"] == 3
+        assert stats["abstention_rate"] == pytest.approx(2 / 3)
+        assert stats["per_strategy"]["local"]["abstention_rate"] == 0.5
+        assert stats["per_strategy"]["global"]["abstention_rate"] == 1.0
+        assert "unanswerable" not in stats
+        # An abstention on an answerable item is still graded (a miss).
+        assert summary.metric_statistics["answer_contains"]["count"] == 3
+
+    async def test_unanswerable_items_scored_on_abstention_only(
+        self, config: Config
+    ) -> None:
+        no = {"answerable": False}
+        results, reports, summary = await self._run(
+            config,
+            [
+                ("A?", "Vendor ships.", {}, {}),
+                ("B?", NO_CONTEXT_ANSWER, {"abstained": True}, no),
+                ("C?", "A confident guess.", {}, no),
+            ],
+        )
+        assert [r.query_id for r in reports] == ["q0"]
+        assert summary.abstention_statistics["unanswerable"] == {
+            "total": 2,
+            "correct_abstentions": 1,
+            "accuracy": 0.5,
+        }
+        assert summary.metric_outcomes["answer_match"]["answer_contains"] == {
+            "scored": 1,
+            "failed": 0,
+            "skipped": 2,
+        }
+
+    def test_answerable_must_be_boolean(self, tmp_path) -> None:
+        path = tmp_path / "eval.json"
+        path.write_text(
+            json.dumps([{"question": "q", "metadata": {"answerable": "no"}}]),
+            encoding="utf-8",
+        )
+        with pytest.raises(EvaluationException, match="answerable"):
+            EvaluationManager.load_data(path)

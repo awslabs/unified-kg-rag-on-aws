@@ -20,6 +20,7 @@ from langchain_core.runnables import RunnableLambda
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from unified_kg_rag.application.retrieval.rag_chain import (
+    NO_CONTEXT_ANSWER,
     ChainMode,
     GraphRAGChain,
     RAGInput,
@@ -27,11 +28,15 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 )
 from unified_kg_rag.domain.models import (
     Config,
+    EvaluationGroundTruth,
+    EvaluationQuery,
+    EvaluatorType,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
     SearchStrategy,
 )
+from unified_kg_rag.evaluation import EvaluationManager
 
 pytestmark = pytest.mark.integration
 
@@ -109,6 +114,7 @@ async def test_rag_mode_round_trip_produces_answer_and_sources(
     )
     assert isinstance(out, RAGOutput)
     assert out.answer == _CANNED_ANSWER
+    assert "abstained" not in out.metadata
     # The fake retriever hit flows through to sources.
     assert out.sources and out.sources[0]["source"] == "document-doc-1"
     assert out.search_results.total_results >= 1
@@ -148,6 +154,8 @@ async def test_rag_mode_empty_retrieval_short_circuits_answer_generation(
     # The canned LLM answer must NOT appear; the refusal sentinel must.
     assert out.answer != _CANNED_ANSWER
     assert "could not find relevant information" in out.answer.lower()
+    assert out.answer == NO_CONTEXT_ANSWER
+    assert out.metadata["abstained"] is True
     assert out.sources == []
 
 
@@ -166,3 +174,63 @@ async def test_rag_mode_local_strategy_uses_graph_and_document_roles(
     )
     assert isinstance(out, RAGOutput)
     assert out.answer == _CANNED_ANSWER
+
+
+class _LineageStore:
+    """Document store whose search hit is an entity with chunk lineage only."""
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        ids = (query.filters or {}).get("id")
+        if ids:  # the evaluator's text-unit id fetch
+            return [
+                RetrievalResult(
+                    content="",
+                    score=0.0,
+                    source=i,
+                    retriever_type="text",
+                    metadata={"id": i, "attributes": {"file_name": "supply.txt"}},
+                )
+                for i in ids
+            ]
+        return [
+            RetrievalResult(
+                content="Vendor: supplies parts to Buyer.",
+                score=0.9,
+                source="entity-1",
+                retriever_type="entity",
+                metadata={"id": "entity-1", "text_unit_ids": ["tu-1"]},
+            )
+        ]
+
+
+async def test_evaluation_attributes_graph_sources_via_chain_store(
+    config: Config,
+) -> None:
+    # The evaluation manager's default resolver reuses the chain's DOCUMENT
+    # binding to map an entity's text-unit lineage to its file.
+    store = _LineageStore()
+    chain = GraphRAGChain(
+        config=config,
+        model_factory=_FakeModelFactory(),
+        retriever_builders={RetrieverRole.DOCUMENT: lambda: store},
+    )
+    chain.token_manager.count_tokens = lambda text: len((text or "").split())
+    config.evaluation.enabled_evaluators = [EvaluatorType.RETRIEVAL]
+    manager = EvaluationManager(config, rag_chain=chain)
+    queries = [
+        EvaluationQuery(
+            query_id="q1",
+            question="What does Vendor supply?",
+            metadata={"search_strategy": "simple", "enable_query_processing": False},
+        )
+    ]
+    gts = [
+        EvaluationGroundTruth(
+            query_id="q1", ground_truth="", reference_sources=["supply.txt"]
+        )
+    ]
+    results, _, summary = await manager.evaluate_dataset(
+        queries, gts, show_progress=False
+    )
+    assert results[0].retrieved_source_ids == [["supply.txt"]]
+    assert summary.metric_statistics["hit_at_k"]["mean"] == 1.0

@@ -69,9 +69,7 @@ class TestBuildCustomPrompts:
 class TestSampleAndParse:
     @pytest.fixture
     def tuner(self, config: Config, mocker) -> PromptTuner:
-        mocker.patch(
-            "unified_kg_rag.application.prompts.tuner.BedrockLanguageModelFactory"
-        )
+        mocker.patch("unified_kg_rag.adapters.providers.BedrockLanguageModelFactory")
         return PromptTuner(config)
 
     def test_sample_respects_budget(self, tuner: PromptTuner) -> None:
