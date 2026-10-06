@@ -100,6 +100,15 @@ Each previous behaviour stays available through the setting in parentheses.
   saves one LLM call per query and a second rewrite that could drop facts or
   claim the summaries lack them; with failed map calls the unrated reports
   pass through unsummarized (`search.global_search.reduce_with_llm: true`).
+- Global search reserves `max_communities` fusion slots for the selected
+  community reports and caps their text units at
+  `search.global_search.text_unit_slots` (default: the query's `top_k`).
+  Reranking reports and chunks together under one `top_k` cut often kept
+  mostly chunks, and the final cut ran after the synthesized map-reduce item
+  was prepended, dropping one more result
+  (`search.global_search.reserve_report_slots: false`). The map step now
+  rates up to `max_communities + top_k` items (4 instead of 2 map calls at
+  the defaults, run concurrently).
 - AUTO routes among local/mix/global/drift with Haiku
   (`search.auto_routable_strategies: [simple, local, global, drift]`,
   `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).

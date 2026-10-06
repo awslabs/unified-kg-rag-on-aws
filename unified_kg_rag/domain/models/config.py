@@ -1678,6 +1678,26 @@ class GlobalSearchConfig(BaseModel):
             "true = the previous two-step behaviour."
         ),
     )
+    reserve_report_slots: bool = Field(
+        default=True,
+        description=(
+            "When fusing the selected community reports with their text units, "
+            "reserve max_communities * retrieval_multiplier slots for the reports "
+            "and cap the text units at text_unit_slots, and keep the synthesized "
+            "map-reduce item in addition to (not inside) that width. false = the "
+            "previous flat top_k cut, which reranked reports and chunks together "
+            "and often kept mostly chunks, then cut to top_k after prepending the "
+            "synthesized item (dropping one more result)."
+        ),
+    )
+    text_unit_slots: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Text-unit slots next to the reserved report slots "
+            "(reserve_report_slots). null = the query's top_k."
+        ),
+    )
 
 
 class LocalSearchQuotaConfig(BaseModel):

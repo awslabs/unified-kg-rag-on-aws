@@ -105,6 +105,9 @@ def _strategy(
         map_reduce_min_results=map_reduce_min_results,
         enable_map_reduce=True,
         reduce_with_llm=reduce_with_llm,
+        reserve_report_slots=True,
+        text_unit_slots=None,
+        max_communities=10,
     )
     strat.ignore_errors = ignore_errors
     strat.target_language = "English"

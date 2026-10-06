@@ -172,7 +172,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             # Only an all-below-threshold map phase empties a non-empty input.
             no_relevant_points = pre_map_count > 0 and not final_results
 
-        final_results = final_results[: query.top_k]
+        # With reserved report slots the fusion quota already bounds the evidence
+        # width, and the synthesized map-reduce item rides on top of it. The flat
+        # cut below runs after that item was prepended, so it cost one result.
+        if not self.global_search_config.reserve_report_slots:
+            final_results = final_results[: query.top_k]
         processing_time = time.time() - start_time
 
         self._record_search_metrics(
@@ -411,7 +415,25 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,
             query=query.query,
+            per_type_quota=self._report_quota(query),
         )
+
+    def _report_quota(self, query: SearchQuery) -> dict[str, int] | None:
+        """Reserved fusion slots for the community reports vs their text units.
+
+        A flat top_k cut over reports and chunks reranked together kept mostly
+        chunks, so the community reports global search is built on rarely
+        reached the map step. ``None`` (``reserve_report_slots: false``) keeps
+        that flat cut.
+        """
+        if not self.global_search_config.reserve_report_slots:
+            return None
+        text_slots = self.global_search_config.text_unit_slots or query.top_k
+        return {
+            SectionType.COMMUNITY.value: self.global_search_config.max_communities
+            * query.retrieval_multiplier,
+            SectionType.TEXT.value: text_slots,
+        }
 
     async def _retrieve_community_context(
         self, communities: list[RetrievalResult], query: SearchQuery
