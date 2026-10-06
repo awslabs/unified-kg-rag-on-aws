@@ -1435,11 +1435,13 @@ class IndexingConfig(BaseModel):
         description="Optional additional suffix to append to index names for isolation",
     )
     cross_run_merge: bool = Field(
-        default=False,
+        default=True,
         description="On incremental (delta) runs, read existing graph entities/"
         "relationships and union them with the delta (description/text_unit_ids/"
         "frequency/weight) before upsert, instead of overwriting. Requires a graph "
-        "adapter that supports read-back; off by default.",
+        "adapter that supports read-back (an adapter without it degrades to "
+        "overwrite). On by default: overwriting replaces an entity shared with "
+        "unchanged documents by its delta-only description and text_unit_ids.",
     )
     cross_run_fuzzy_merge: bool = Field(
         default=False,

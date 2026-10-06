@@ -76,6 +76,13 @@ Each previous behaviour stays available through the setting in parentheses.
 - AUTO routes among local/mix/global/drift with Haiku
   (`search.auto_routable_strategies: [simple, local, global, drift]`,
   `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).
+- Incremental runs union a touched entity or relationship with its existing
+  graph state by default (`indexing.cross_run_merge: true`, previously
+  `false`). The overwrite default replaced an entity shared with unchanged
+  documents by its delta-only description and `text_unit_ids`, cutting the
+  lineage to those documents' chunks that `mix` follows. Each delta run now
+  reads the touched entities and relationships back from Neptune before the
+  upsert (`cross_run_merge: false` restores overwriting).
 
 ### Fixed
 - A changed corpus is now a stage-cache miss. Stage cache keys fingerprinted

@@ -102,3 +102,58 @@ def test_prune_changed_reports_success_and_failure() -> None:
     assert IncrementalIndexer(store, _Manager(1)).prune_changed(delta) is False  # type: ignore[arg-type]
     # Nothing changed -> nothing to prune -> success.
     assert IncrementalIndexer(store, _Manager(1)).prune_changed(DocumentDelta()) is True  # type: ignore[arg-type]
+
+
+# --- shared entity keeps unchanged documents' lineage ------------------------
+
+
+def test_delta_run_unions_an_entity_shared_with_unchanged_docs_by_default() -> None:
+    from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+    from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
+    from unified_kg_rag.application.storage.indexing_manager import IndexingManager
+    from unified_kg_rag.domain.models import DocumentLineage, Entity
+
+    config = Config()
+    assert config.indexing.cross_run_merge is True
+    graph = FakeGraphStore()
+    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    manager = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)
+    store = FakeDocStatusStore()
+    incremental = IncrementalIndexer(store, manager)
+
+    # Run 1: "Vendor" appears in doc-a (chunk ta) and doc-b (chunk tb).
+    incremental.commit(
+        lineages=[
+            DocumentLineage(doc_id="doc-a", entity_ids=["e-vendor"]),
+            DocumentLineage(doc_id="doc-b", entity_ids=["e-vendor"]),
+        ],
+        fingerprints={"doc-a": "ha", "doc-b": "hb"},
+        entities=[
+            Entity(
+                id="e-vendor",
+                name="vendor",
+                description="Vendor supplies parts.",
+                text_unit_ids=["ta", "tb"],
+            )
+        ],
+    )
+
+    # Run 2: only doc-c is new; its extraction sees "Vendor" in chunk tc.
+    incremental.commit(
+        lineages=[DocumentLineage(doc_id="doc-c", entity_ids=["e-vendor"])],
+        fingerprints={"doc-c": "hc"},
+        entities=[
+            Entity(
+                id="e-vendor",
+                name="vendor",
+                description="Vendor invoices Buyer.",
+                text_unit_ids=["tc"],
+            )
+        ],
+    )
+
+    stored = graph.data["entities"]["e-vendor"]
+    # The unchanged docs' chunk lineage (followed by mix) and description survive.
+    assert set(stored.text_unit_ids or []) == {"ta", "tb", "tc"}
+    assert "Vendor supplies parts." in (stored.description or "")
+    assert "Vendor invoices Buyer." in (stored.description or "")

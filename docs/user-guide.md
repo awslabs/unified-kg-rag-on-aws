@@ -525,7 +525,7 @@ graph:
 indexing:
   reset: false
   additional_suffix: null           # appended to default index/label suffix
-  cross_run_merge: false            # on delta runs, union with existing graph state
+  cross_run_merge: true             # on delta runs, union with existing graph state
 
   opensearch:
     embedding_model_id: "amazon.titan-embed-text-v2:0"
@@ -956,11 +956,17 @@ document-status registry by **content hash**.
 
 ### Cross-run merge
 
-By default a delta run overwrites the affected graph fields. Set
-`indexing.cross_run_merge: true` to instead *union* the delta with existing
-graph state (description / `text_unit_ids` / frequency / weight) before upsert —
-useful when an entity's description should accumulate across documents. Requires
-a graph adapter that supports read-back. Off by default.
+By default (`indexing.cross_run_merge: true`) a delta run *unions* the delta
+with existing graph state (description / `text_unit_ids` / frequency / weight)
+before upsert, so an entity shared with unchanged documents keeps their
+descriptions and chunk lineage (which `mix` follows). Each delta run reads the
+touched entities and relationships back from the graph first, and merged
+descriptions over the summarization budget are re-summarized. Setting it to
+`false` overwrites the affected fields with the delta's values instead; the
+entity then loses its lineage to the unchanged documents' chunks. Requires a
+graph adapter that supports read-back (one without it degrades to overwrite).
+A shared entity keeps the description a changed document contributed before
+its edit until a full rebuild.
 
 ---
 

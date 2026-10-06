@@ -518,7 +518,7 @@ graph:
 indexing:
   reset: false
   additional_suffix: null           # appended to default index/label suffix
-  cross_run_merge: false            # on delta runs, union with existing graph state
+  cross_run_merge: true             # on delta runs, union with existing graph state
 
   opensearch:
     embedding_model_id: "amazon.titan-embed-text-v2:0"
@@ -936,11 +936,15 @@ aws:
 
 ### 실행 간 병합 (cross-run merge)
 
-기본적으로 델타 실행은 영향받은 그래프 필드를 덮어씁니다. 대신
-`indexing.cross_run_merge: true`로 설정하면 upsert 전에 델타를 기존 그래프
-상태(description / `text_unit_ids` / frequency / weight)와 *합집합*합니다 —
-엔티티의 description이 여러 문서에 걸쳐 누적되어야 할 때 유용합니다. read-back을
-지원하는 그래프 어댑터가 필요합니다. 기본값은 OFF.
+기본값(`indexing.cross_run_merge: true`)에서 델타 실행은 upsert 전에 델타를 기존
+그래프 상태(description / `text_unit_ids` / frequency / weight)와 *합집합*합니다.
+따라서 변경되지 않은 문서와 공유되는 엔티티도 그 문서들의 description과 청크
+계보(`mix`가 따라가는 경로)를 유지합니다. 델타 실행마다 영향받은 엔티티와 관계를
+그래프에서 먼저 읽어 오고, 병합된 description이 요약 예산을 넘으면 다시
+요약합니다. `false`로 설정하면 영향받은 필드를 델타 값으로 덮어쓰며, 이때
+엔티티는 변경되지 않은 문서 청크로의 계보를 잃습니다. read-back을 지원하는
+그래프 어댑터가 필요합니다(지원하지 않으면 덮어쓰기로 동작). 변경된 문서가 수정
+전에 기여한 description은 전체 재구축 전까지 공유 엔티티에 남습니다.
 
 ---
 

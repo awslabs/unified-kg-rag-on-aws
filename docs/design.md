@@ -215,7 +215,7 @@ When documents are added/changed/deleted, only the delta is processed instead of
 
 1. **Delta detection** (`domain/ingestion/delta_detector.py`): Builds `{doc_id: content_hash}` from a stable `doc_id` (based on path normalization) + content SHA-256 hash, and `DocStatusPort.diff()` classifies them as new/changed/unchanged/deleted.
 2. **Stale cleanup** (`IncrementalIndexer.prune_changed`): For changed documents, first removes existing artifacts that are *not shared* (so entities that disappear after re-extraction do not linger in the graph).
-3. **Delta upsert** (`IndexingManager.index_delta`): Neptune uses a Gremlin `coalesce(unfold, addV)` idempotent upsert; OpenSearch upserts by id into the live alias index. The relationship vector index is updated the same way.
+3. **Delta upsert** (`IndexingManager.index_delta`): With `indexing.cross_run_merge` (default on), the existing entities/relationships the delta touches are read back from the graph and merged with it first (merge semantics below), so an entity shared with unchanged documents keeps their descriptions and `text_unit_ids`. Neptune then uses a Gremlin `coalesce(unfold, addV)` idempotent upsert; OpenSearch upserts by id into the live alias index. The relationship vector index is updated the same way.
 4. **Deletion propagation** (`remove_deleted`): Removes only the *exclusive* artifacts of deleted documents via `delete_by_id` (preserving shared entities). Targets the text-unit, entity, and relationship indices alike.
 5. **Registry update**: Records processed documents into `DocStatusRecord` as `DocumentLineage` (per-document artifact ids + suffix).
 
