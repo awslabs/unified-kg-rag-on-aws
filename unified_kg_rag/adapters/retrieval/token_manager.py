@@ -341,10 +341,10 @@ class TokenManager(MetricsMixin):
         # (e.g. only 8 chunk candidates survive local search's entity ceiling)
         # leaves the remainder UNUSED — exactly as MS GraphRAG leaves an unfilled
         # text_unit_prop share unused rather than handing it to community reports.
-        # Re-offering the remainder to whichever type still has candidates was
-        # measured to reproduce the original defect verbatim: community reports
-        # kept 0.66 of the window because they were the only type with candidates
-        # left. Renormalization over PRESENT types (in _type_budgets) is the only
+        # Re-offering the remainder to whichever type still has candidates would
+        # let that one type (typically community reports) absorb most of the
+        # window, the imbalance the per-type shares exist to prevent.
+        # Renormalization over PRESENT types (in _type_budgets) is the only
         # redistribution, and it is static — it cannot depend on how many
         # candidates a type happens to have.
         budgets = self._type_budgets(list(by_type), token_budget)
@@ -363,8 +363,8 @@ class TokenManager(MetricsMixin):
                 # The section overflows the remaining share. Upstream's rows are
                 # table rows, so it simply stops; ours are whole retrieved items,
                 # and a single community report routinely exceeds a 10% share —
-                # dropping the type outright cost 5 gold contexts and shrank the
-                # window from 29k to 8.8k chars. Truncate the FIRST overflowing
+                # dropping the type outright would leave it unrepresented and most
+                # of the window unused. Truncate the FIRST overflowing
                 # section to fit instead, so every type with candidates is
                 # represented, then stop this type (the budget is now spent).
                 head = self._truncate_to_tokens(section, room)

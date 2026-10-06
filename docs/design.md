@@ -32,7 +32,7 @@ This document is a **design reference for contributors and advanced users**, cov
 - **Two methodologies, one infrastructure**: GraphRAG (community-summary) and LightRAG (dual-level keyword) share the same ingestion, indexing, caching, multilingual, and hybrid-search infrastructure, and **only the retrieval algorithm layer is swapped**.
 - **Generalization first**: We avoid hardcoding, regex heuristics, and overfitting. Semantic judgments are delegated to the LLM or to authoritative data, token counting uses the Bedrock `count_tokens` API, and thresholds/weights are config-driven.
 - **Hexagonal boundaries**: Domain/algorithm code depends on abstract ports, with concrete AWS adapters placed behind them.
-- **Registry-based extension**: Search strategies, evaluators, and renderers are registered via decorator registries, so they can be extended without modifying dispatch code.
+- **Registry-based extension**: Search strategies and renderers are registered via decorator registries, so they can be extended without modifying dispatch code. Evaluators are mapped from `EvaluatorType` in one method (`EvaluationManager._resolve_evaluator_class`), so a new evaluator adds one branch there.
 
 ---
 
@@ -70,8 +70,8 @@ unified_kg_rag/
 │  ├─ ingestion/        #   LLM/IO coupled: chunker, *_extractor, loader, parser,
 │  │                    #   translator, gleaner, community_detector
 │  ├─ renderers/        #   graph visualization renderers
-│  └─ evaluators/       #   langchain/ragas evaluators (the pure graph_aware_evaluator is
-│                       #   co-located in the evaluation/ facade)
+│  └─ evaluators/       #   langchain/ragas evaluators (the LLM-free graph_aware,
+│                       #   retrieval and answer_match evaluators live in evaluation/)
 ├─ application/         # orchestration + entry points
 │  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning
 │  ├─ ingestion/        #   DataIngestionPipeline + pipeline_stages
@@ -80,12 +80,14 @@ unified_kg_rag/
 │  └─ prompts/          #   PromptTuner (LLM-based corpus profiling)
 ├─ shared/              # cross-cutting kernel (config, logging, exceptions, metrics,
 │                       #   cache/pipeline manager, utils)
-├─ evaluation/          # real logic package: evaluation_manager / base / graph_aware
+├─ evaluation/          # real logic package: evaluation_manager / base / graph_aware /
+│                       #   retrieval / answer_match
 └─ visualization/       # real logic package: render loop + embeddings/exporters/renderers
 ```
 
 > Layout note: `evaluation/` and `visualization/` are **real logic packages** —
-> `evaluation/` holds `evaluation_manager` / `graph_aware_evaluator` / `base`;
+> `evaluation/` holds `evaluation_manager` / `base` and the LLM-free
+> `graph_aware_evaluator` / `retrieval_evaluator` / `answer_match_evaluator`;
 > `visualization/` holds the render loop plus the `embeddings/`, `exporters/`,
 > and `renderers/` subpackages. Everything else is imported from its real
 > location (`application.retrieval.rag_chain`,
@@ -123,7 +125,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 ### 2.3 Registries
 
 - **Search strategies**: `domain/retrieval/strategy_registry.py` — `@register_strategy(...)` registers a class, its required roles, and its query inputs against the `SearchStrategy` enum.
-- **Evaluators**: `EvaluationManager._resolve_evaluator_class` — `EvaluatorType` → evaluator class (lazy, import-on-use).
+- **Evaluators**: `EvaluationManager._resolve_evaluator_class` — one explicit branch per `EvaluatorType` → evaluator class (lazy, import-on-use). Not a decorator registry: a new evaluator adds an enum member and a branch.
 - **Renderers**: `adapters/renderers/base.py` — `@register_renderer("name")`.
 
 This pattern follows the same philosophy as the existing `ParserFactory._loader_configs` (declarative parser registration).
@@ -134,8 +136,9 @@ This pattern follows the same philosophy as the existing `ParserFactory._loader_
 > stores (graph DB + vector/lexical search) are constitutive of the framework,
 > not runtime-swappable choices, and the per-backend fan-out (entities to both
 > stores, entities-before-edges phasing, the orphan-edge cascade) is deliberate
-> domain knowledge rather than arbitrary dispatch. So a new search strategy,
-> evaluator, or renderer is added by registration alone, while replacing a
+> domain knowledge rather than arbitrary dispatch. So a new search strategy or
+> renderer is added by registration alone (an evaluator by one branch in
+> `_resolve_evaluator_class`), while replacing a
 > write-side store means implementing the `GraphIndexer` / `VectorIndexer` port
 > and injecting it (`IndexingManager(vector_indexer=…, graph_indexer=…)`). The
 > read path is already generalized through the `RetrieverRole` → builder map.
@@ -317,10 +320,12 @@ Each retriever build opens a Neptune WebSocket + thread pool and OpenSearch (a)s
 
 ## 9. Evaluation Framework
 
-`evaluation/` — `EvaluationManager` dispatches evaluators via `_resolve_evaluator_class` (lazy registry).
+`evaluation/` — `EvaluationManager` dispatches evaluators via `_resolve_evaluator_class` (one lazy-import branch per `EvaluatorType`).
 
 - **LangChain evaluators**: correctness / partial_correctness (LLM-based rubric)
 - **RAGAS evaluators**: answer_correctness/relevancy, context_precision/recall, faithfulness
+- **Retrieval evaluator** (`retrieval_evaluator.py`): `hit_at_k`, `recall_at_k` (k = `evaluation.retrieval_k`) and `mrr` of the rank-ordered reported sources against the dataset's `reference_sources`, matched by case-insensitive file-name stem or document id. Deterministic, no LLM; skipped for queries without references or source provenance.
+- **Answer-match evaluator** (`answer_match_evaluator.py`): SQuAD-style normalized `exact_match` and `token_f1` against `answer` plus optional `metadata.answer_aliases` (max over references). Deterministic, no LLM; whitespace tokens, so for scripts without spaces token F1 degrades to exact match.
 - **Graph-aware evaluator** (`graph_aware_evaluator.py`): Computes the rate at which the ground truth's `expected_entities`/`expected_relationships` appear in the generated answer (= coverage = recall) as `ENTITY_COVERAGE`/`RELATIONSHIP_COVERAGE`. Deterministic, no LLM required. Precision/F1 are not produced because they would require enumerating the entities in the answer (impossible from free text) — to avoid exaggerating the signal as a duplicate of recall. Latin characters use word-boundary contiguous token matching ("AI" does not match inside "airport"); CJK without whitespace falls back to substring matching. The manager injects the expectations via `result.metadata`, so the abstract signature is unchanged.
 
 CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
@@ -369,7 +374,7 @@ Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 
 ## 14. CI/CD and Security
 
-- **CI** (`.github/workflows/`): the `quality` workflow runs on pull requests and pushes to `main` — ruff/black/isort/mypy + pytest with the coverage gate, the suite on the oldest supported Python (3.10), the property and integration suites in isolation, the optional-parser security checks, and `cdk synth` with cdk-nag plus the IaC assertion tests. The `security` workflow runs a non-blocking, report-only ASH scan on pushes to `main`.
+- **CI** (`.github/workflows/`): the `quality` workflow runs on pull requests and pushes to `main` — ruff/black/isort/mypy + pytest with the coverage gate (one `-m "not aws"` run covering the unit, property and integration suites), the suite on the oldest supported Python (3.10), the optional-parser security checks, and `cdk synth` with cdk-nag plus the IaC assertion tests. The `security` workflow runs a non-blocking, report-only ASH scan on pushes to `main`.
 - **Dependabot** (`.github/dependabot.yml`): weekly version updates for the `uv` lock (`/`), the IaC `pip` requirements (`/iac`), and the SHA-pinned GitHub Actions. Known-breaking bumps are held back with an `ignore` entry that records the reason.
 - **pre-commit** (`.pre-commit-config.yaml`): Mirrors the CI gates. `pre-commit install`.
 - **Security hardening**: Content hashes use SHA-256 exclusively (CWE-327-safe). Dependency-scan CVEs are addressed through the Dependabot pull requests above. Tokens are injected via environment/config (no hardcoding in code).

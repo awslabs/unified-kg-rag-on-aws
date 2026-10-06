@@ -38,8 +38,9 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   `adapters.*`, `domain.*`).
 - **Registries over hardcoded dispatch**: search strategies register via
   `@register_strategy` (`domain/retrieval/strategy_registry.py`). Follow this
-  pattern — and `ParserFactory.register_loader` /
-  `EvaluationManager._resolve_evaluator_class` — instead of `if/elif` dispatch.
+  pattern — and `ParserFactory.register_loader` / `@register_renderer` —
+  instead of `if/elif` dispatch. `EvaluationManager._resolve_evaluator_class`
+  is the one explicit type → class map (a new evaluator adds a branch there).
 
 See `docs/design.md` §2 for the full layer map and dependency rule.
 
@@ -78,11 +79,14 @@ See `docs/design.md` §2 for the full layer map and dependency rule.
 - **CLIs** (`pyproject` scripts): `run-ingestion`, `run-rag`, `run-eval`,
   `run-visualization` (render from exported graph data, no ingestion),
   `run-prompt-tuning` (profile a corpus → domain-adapted `custom_prompts` YAML).
-- **Evaluation**: `langchain` + `ragas` (text similarity) plus `graph_aware`
-  (entity/relationship coverage = recall, from ground-truth
-  `expected_entities`/`expected_relationships`; precision/F1 intentionally not
-  emitted — see the evaluator docstring). Add an evaluator by subclassing
-  `BaseGraphRAGEvaluator` + a branch in `EvaluationManager._resolve_evaluator_class`.
+- **Evaluation**: `langchain` + `ragas` (LLM judges) plus three LLM-free
+  evaluators: `graph_aware` (entity/relationship coverage = recall, from
+  ground-truth `expected_entities`/`expected_relationships`; precision/F1
+  intentionally not emitted — see the evaluator docstring), `retrieval`
+  (hit@k/recall@k/MRR against `reference_sources`) and `answer_match` (exact
+  match/token F1 against `answer` + `metadata.answer_aliases`). Add an
+  evaluator by subclassing `BaseGraphRAGEvaluator` + a branch in
+  `EvaluationManager._resolve_evaluator_class`.
 - **Visualization**: renderers register via `@register_renderer`
   (`visualization/renderers/`); the manager and the standalone CLI drive them
   through one registry + `RenderContext`.

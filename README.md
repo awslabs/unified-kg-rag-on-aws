@@ -20,8 +20,8 @@ Read the [AWS Open Source Blog introduction](https://aws.amazon.com/ko/blogs/ope
 - **Incremental indexing.** With `aws.dynamodb` enabled, a content-hash registry re-indexes only new or changed documents and merges them into the live graph. Deleting a document removes only the artifacts no other document shares.
 - **Multilingual.** Optional translation at indexing and query time, per-language OpenSearch analyzers (for example `nori` for Korean), and multilingual keyword extraction, for both methodologies.
 - **Prompt tuning.** `run-prompt-tuning` profiles a sample of your corpus (domain, language, persona, entity types) and writes domain-adapted `custom_prompts`.
-- **Graph-aware evaluation and standalone visualization.** `run-eval` adds deterministic entity and relationship coverage to LangChain and RAGAS metrics, and `run-visualization` renders an exported graph without re-ingesting.
-- **Pluggable hexagonal design.** Storage and model backends sit behind ports; search strategies, evaluators, and renderers register through registries, so you extend the framework without editing dispatch code.
+- **Graph-aware evaluation and standalone visualization.** `run-eval` adds deterministic entity/relationship coverage, retrieval hit@k/recall@k/MRR, and answer exact match/token F1 to LangChain and RAGAS metrics, and `run-visualization` renders an exported graph without re-ingesting.
+- **Pluggable hexagonal design.** Storage and model backends sit behind ports; search strategies and renderers register through decorator registries, so you add them without editing dispatch code; a new evaluator is a subclass plus one branch in `EvaluationManager._resolve_evaluator_class`.
 
 ## Architecture
 
@@ -75,7 +75,7 @@ run-rag --query "What are the main themes?" --search-strategy global --config-pa
 run-rag --query "How are Alice and Acme related?" --search-strategy mix --config-path config.yaml
 run-rag --interactive --use-memory --conversation-id my-session --config-path config.yaml
 
-# Evaluate (LangChain + RAGAS + graph-aware coverage)
+# Evaluate (LangChain + RAGAS + graph-aware coverage, retrieval and answer-match metrics)
 run-eval --eval-data-path eval_data.json --config-path config.yaml
 
 # Optional: render an exported graph, or tune prompts to your domain
@@ -83,7 +83,7 @@ run-visualization --data-path visualization_data.json --output-dir ./viz --confi
 run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
 ```
 
-The graph-aware evaluator reports entity and relationship coverage (recall) against `expected_entities` / `expected_relationships`, without an LLM. It matches on word boundaries for space-delimited scripts and falls back to substring matching for CJK text. The [User Guide](./docs/user-guide.md) covers every configuration section, CLI flag, and the evaluation data format.
+The graph-aware evaluator reports entity and relationship coverage (recall) against `expected_entities` / `expected_relationships`, without an LLM. It matches on word boundaries for space-delimited scripts and falls back to substring matching for CJK text. Two more LLM-free evaluators make runs comparable: `retrieval` scores hit@k, recall@k and MRR of the reported sources against `reference_sources`, and `answer_match` scores exact match and token F1 against `answer` (plus optional `metadata.answer_aliases`). The [User Guide](./docs/user-guide.md) covers every configuration section, CLI flag, and the evaluation data format.
 
 ## Deploy on AWS (optional)
 

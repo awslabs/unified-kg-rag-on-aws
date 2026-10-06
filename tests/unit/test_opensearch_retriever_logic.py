@@ -472,7 +472,7 @@ def test_extract_content_uses_raw_text_when_no_translation(retriever) -> None:
 # upstream LightRAG's `{"entity1", "entity2", "description"}` relations_context.
 # Without the names a relationship line is unresolvable text, and widening the
 # relationship stream to upstream's top_k=40 then multiplies noise instead of
-# signal (measured: it made mix token-F1 fall, not rise).
+# signal.
 
 
 def test_extract_content_names_relationship_endpoints(retriever) -> None:
