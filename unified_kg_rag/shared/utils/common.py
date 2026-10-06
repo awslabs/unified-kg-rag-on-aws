@@ -199,18 +199,17 @@ def safe_float_parse(value: Any, default_value: float | None = None) -> float | 
         return default_value
 
 
-def parse_llm_json(raw: str) -> dict[str, Any]:
-    """Best-effort parse of a JSON object from a noisy LLM response.
+def parse_llm_json(raw: str, *, strict: bool = False) -> dict[str, Any]:
+    """Parse a JSON object from a noisy LLM response.
 
-    LLMs wrap JSON in markdown fences or surround it with prose; several call
-    sites (DRIFT primer, global-search map, keyword extraction, prompt tuning)
-    need the same forgiving extraction. Strips a leading ```/```json fence,
-    isolates the outermost ``{...}``, and parses it. Returns ``{}`` on any
-    failure (or non-object JSON) so callers degrade gracefully rather than crash.
+    LLMs wrap JSON in markdown fences or surround it with prose; every call
+    site that reads LLM JSON uses this one forgiving extraction. Strips a
+    leading ```/```json fence, isolates the outermost ``{...}``, and parses it.
+    Non-object JSON yields ``{}``. Unparseable text yields ``{}`` so callers
+    degrade gracefully, or raises ``json.JSONDecodeError`` when ``strict`` is
+    set, for callers that must surface a broken response.
     """
-    if not raw:
-        return {}
-    text = raw.strip()
+    text = (raw or "").strip()
     # Strip a leading/trailing markdown code fence if present.
     if text.startswith("```"):
         text = text.split("```", 2)[1] if "```" in text[3:] else text[3:]
@@ -222,7 +221,9 @@ def parse_llm_json(raw: str) -> dict[str, Any]:
         text = text[start : end + 1]
     try:
         parsed = json.loads(text)
-    except (json.JSONDecodeError, ValueError):
+    except ValueError:
+        if strict:
+            raise
         return {}
     return parsed if isinstance(parsed, dict) else {}
 

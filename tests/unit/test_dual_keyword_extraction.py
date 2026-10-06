@@ -32,37 +32,6 @@ class _StubChain:
         return self._output
 
 
-class TestParseKeywordJson:
-    def test_plain_json(self) -> None:
-        out = GraphRAGChain._parse_keyword_json(
-            '{"high_level_keywords": ["a"], "low_level_keywords": ["b"]}'
-        )
-        assert out["high_level_keywords"] == ["a"]
-        assert out["low_level_keywords"] == ["b"]
-
-    def test_json_in_code_fence(self) -> None:
-        raw = '```json\n{"high_level_keywords": [], "low_level_keywords": ["x"]}\n```'
-        out = GraphRAGChain._parse_keyword_json(raw)
-        assert out["low_level_keywords"] == ["x"]
-
-    def test_json_wrapped_in_prose(self) -> None:
-        raw = 'Here are the keywords: {"high_level_keywords": ["t"], "low_level_keywords": []} done.'
-        out = GraphRAGChain._parse_keyword_json(raw)
-        assert out["high_level_keywords"] == ["t"]
-
-    def test_empty_object(self) -> None:
-        out = GraphRAGChain._parse_keyword_json(
-            '{"high_level_keywords": [], "low_level_keywords": []}'
-        )
-        assert out == {"high_level_keywords": [], "low_level_keywords": []}
-
-    def test_invalid_json_raises(self) -> None:
-        import json
-
-        with pytest.raises(json.JSONDecodeError):
-            GraphRAGChain._parse_keyword_json("not json at all")
-
-
 class TestRegisteredQueryInputs:
     """Query-side extractions are declared on the strategy registration."""
 

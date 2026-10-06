@@ -171,6 +171,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   library callers: `BatchProcessor(max_retries=...)` is now
   `BatchProcessor(max_attempts=...)`, and the unread
   `PipelineConfig.max_retries` is removed (#151).
+- LLM JSON responses are parsed by one helper, `parse_llm_json`; its
+  `strict=True` mode raises on unparseable text for LightRAG keyword
+  extraction. LangChain judge scores and `partial_correctness` reasoning now
+  also accept JSON wrapped in prose (#153).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
