@@ -251,6 +251,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   unit, so concurrent turns on one conversation no longer interleave (#143).
 - `astream`/`stream` bind a `query_id` (and `conversation_id`) to the
   retrieval logs like `ainvoke` (#144).
+- `run-rag` no longer translates every query for a same-language corpus: it
+  passed the configured target language explicitly, which disabled the
+  chain's no-op translation skip (#145).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on

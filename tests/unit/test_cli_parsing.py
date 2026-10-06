@@ -130,6 +130,27 @@ def test_rag_runner_accepts_interactive(config, mocker) -> None:
     assert runner.args.interactive is True
 
 
+async def test_rag_runner_leaves_the_target_language_to_the_chain(
+    config, mocker
+) -> None:
+    # An explicit target_language disables the chain's same-language skip, so
+    # every CLI query paid a translation call even for a single-language corpus.
+    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    mocker.patch.object(run_rag_chain, "display_ascii_art")
+    chain = mocker.AsyncMock()
+    mocker.patch.object(run_rag_chain, "create_rag_chain", return_value=chain)
+    runner = run_rag_chain.RAGChainRunner(_rag_parser().parse_args(["-q", "hi"]))
+    run_query = mocker.patch.object(
+        runner, "_run_query", return_value={"success": True}
+    )
+    mocker.patch.object(runner, "_print_result")
+
+    await runner.run()
+
+    (rag_input,) = run_query.call_args.args
+    assert rag_input.target_language is None
+
+
 # --- run_rag_chain: _parse_filters --------------------------------------
 
 
