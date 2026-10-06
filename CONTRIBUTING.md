@@ -6,7 +6,9 @@ We welcome contributions to the Unified Knowledge Graph RAG on AWS framework! Th
 
 ### Prerequisites
 - Python 3.10+
-- AWS CLI configured with appropriate permissions
+- [uv](https://docs.astral.sh/uv/) (the project's package manager)
+- AWS CLI configured with appropriate permissions (only for real-AWS runs; the
+  test suite is AWS-free)
 - Git for version control
 - Familiarity with AWS services (Bedrock, Neptune, OpenSearch, S3)
 
@@ -17,20 +19,16 @@ We welcome contributions to the Unified Knowledge Graph RAG on AWS framework! Th
    cd unified-kg-rag-on-aws
    ```
 
-2. **Create Virtual Environment**
+2. **Install Dependencies**
    ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   uv sync  # creates .venv with the package and the dev dependency group
    ```
+   Without uv: `python -m venv .venv`, activate it, then
+   `pip install -e . --group dev` (pip >= 25.1).
 
-3. **Install Dependencies**
+3. **Set Up Pre-commit Hooks**
    ```bash
-   pip install -e . --group dev  # pip >= 25.1; or simply: uv sync
-   ```
-
-4. **Set Up Pre-commit Hooks** (if available)
-   ```bash
-   pre-commit install
+   uv run pre-commit install
    ```
 
 ## 📋 Development Guidelines
@@ -74,16 +72,19 @@ Tests run **AWS-free by default** — use the port-based fakes in
 Run quality checks:
 ```bash
 # Format code
-black unified_kg_rag tests
+uv run black unified_kg_rag tests
 
 # Sort imports
-isort unified_kg_rag tests
+uv run isort unified_kg_rag tests
 
 # Lint code
-ruff check unified_kg_rag tests
+uv run ruff check unified_kg_rag tests
 
 # Type checking
-mypy unified_kg_rag
+uv run mypy unified_kg_rag
+
+# Or run every pre-commit hook at once
+uv run pre-commit run --all-files
 ```
 
 ### Testing
@@ -119,7 +120,7 @@ non-blocking ASH security scan on pushes to `main`.
 
 ### 1. Issue Creation
 - **Search existing issues** before creating new ones
-- Use **issue templates** when available
+- Use the **issue templates** (bug report, feature request)
 - Provide **clear descriptions** and **reproduction steps** for bugs
 - Include **use cases** and **expected behavior** for feature requests
 
@@ -130,7 +131,7 @@ non-blocking ASH security scan on pushes to `main`.
 
 ### 3. Pull Request Process
 1. **Create Pull Request**
-   - Use the PR template
+   - Fill in the PR template (`.github/PULL_REQUEST_TEMPLATE.md`)
    - Link related issues
    - Provide clear description of changes
 
@@ -210,32 +211,8 @@ def extract_entities(text: str, model_id: str) -> list[Entity]:
 - **Error messages** and stack traces
 - **Log files** (with sensitive data removed)
 
-### Bug Report Template
-```markdown
-**Environment:**
-- Python version: 3.10.x
-- OS: macOS/Linux/Windows
-- AWS Region: us-east-1
-
-**Configuration:**
-```yaml
-# Relevant config sections (remove sensitive data)
-```
-
-**Steps to Reproduce:**
-1. Run command: `run-ingestion --source-directory ./docs`
-2. Observe error in logs
-
-**Expected Behavior:**
-Documents should be processed successfully
-
-**Actual Behavior:**
-Pipeline fails with error: [error message]
-
-**Additional Context:**
-- Log files attached
-- Occurs with specific document types
-```
+Open a bug with the **Bug report** template
+(`.github/ISSUE_TEMPLATE/bug_report.md`), which asks for these fields.
 
 ## 💡 Feature Requests
 
@@ -245,25 +222,8 @@ Pipeline fails with error: [error message]
 - **Provide implementation suggestions** if possible
 - **Consider AWS-native alternatives**
 
-### Feature Request Template
-```markdown
-**Use Case:**
-As a [user type], I want to [functionality] so that [benefit].
-
-**Current Limitation:**
-Currently, the framework cannot [limitation].
-
-**Proposed Solution:**
-Implement [solution] using [AWS services/approach].
-
-**Alternative Solutions:**
-- Option 1: [alternative]
-- Option 2: [alternative]
-
-**Additional Context:**
-- Related to issue #123
-- Similar to feature in [other project]
-```
+Open a proposal with the **Feature request** template
+(`.github/ISSUE_TEMPLATE/feature_request.md`).
 
 ## 🔒 Security
 
@@ -288,7 +248,8 @@ disposition before acting; pin or upgrade dependencies via `uv lock --upgrade`.
 
 ### Version Management
 - Follow **Semantic Versioning** (SemVer)
-- Update version in `pyproject.toml`
+- Update `__version__` in `unified_kg_rag/__init__.py` (`pyproject.toml`
+  reads the version from it dynamically)
 - Create **release notes** with changes
 - Tag releases in Git
 
