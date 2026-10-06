@@ -249,6 +249,8 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   output is recomputed once (#141).
 - A conversation turn (question and answer) is appended to memory as one
   unit, so concurrent turns on one conversation no longer interleave (#143).
+- `astream`/`stream` bind a `query_id` (and `conversation_id`) to the
+  retrieval logs like `ainvoke` (#PR).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on

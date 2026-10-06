@@ -1262,9 +1262,20 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         rag_input, input_dict = self._prepare_invoke(input)
         chunks: list[str] = []
         try:
-            state: dict[str, Any] = await self._stream_context_chain.ainvoke(
-                input_dict, config
+            # Bound for retrieval and context building only: they run before
+            # the first yield, in one context. Each later step of the generator
+            # may run in another (stream() resumes it in a new task), where the
+            # binding would not hold and its reset would fail.
+            tokens = bind_contextvars(
+                query_id=uuid.uuid4().hex[:12],
+                conversation_id=rag_input.conversation_id,
             )
+            try:
+                state: dict[str, Any] = await self._stream_context_chain.ainvoke(
+                    input_dict, config
+                )
+            finally:
+                reset_contextvars(**tokens)
             answer_runnable = self._answer_generation_step(state)
             async for chunk in answer_runnable.astream(state, config):
                 text = str(chunk)
