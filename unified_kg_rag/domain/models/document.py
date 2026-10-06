@@ -5,14 +5,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, TypeVar
 
-# NOTE (domain dependency rule): Document subclasses LangChain's BaseDocument so
-# it interoperates directly with LangChain document loaders (it exposes
-# page_content / metadata, consumed by document_converter and delta_detector).
-# This is the one deliberate exception to the "domain has no LangChain import"
-# rule — decoupling it would require a backend-agnostic page_content shim
-# threaded through delta detection and the loaders. Tracked as a known carve-out
-# rather than removed. BasePrompt (the other former offender) is now LangChain-free.
-from langchain_core.documents import Document as BaseDocument
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 T = TypeVar("T", bound=BaseModel)
@@ -345,7 +337,17 @@ class DocumentDelta(BaseModel):
         return self.new + self.changed
 
 
-class Document(BaseDocument):
+class Document(BaseModel):
+    """A parsed source document — a pure domain model (no LangChain base).
+
+    LangChain loader output is converted into this model at the adapter/shared
+    boundary (``shared.utils.document_converter``). ``page_content`` keeps the
+    field name LangChain's Document used, so JSON written by earlier versions
+    (which also carried LangChain's ``id``/``type`` keys, now ignored) still
+    loads.
+    """
+
+    page_content: str = Field(description="Full plain-text content of the document")
     document_id: str = Field(description="Unique identifier for the document")
     file_name: str = Field(description="Name of the source file")
     file_path: str = Field(description="Path to the source file")

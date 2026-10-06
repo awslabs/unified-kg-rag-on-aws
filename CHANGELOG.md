@@ -142,6 +142,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   calls there, and Python's default of `min(32, CPUs + 4)` threads let only
   six run at once on a 2-vCPU task. Async hosts call
   `unified_kg_rag.shared.utils.configure_event_loop` (#142).
+- The domain `Document` is a plain Pydantic model instead of a LangChain
+  `Document` subclass, so `domain/` imports no LangChain (now enforced by a
+  test). LangChain loader output is converted in
+  `shared.utils.document_converter`; `DirectoryLoader` is no longer a LangChain
+  `BaseLoader`. Field names are unchanged, and JSON written by earlier versions
+  still loads (its `id`/`type` keys are ignored) (#PR).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).

@@ -303,8 +303,7 @@ class DocumentLoadingStage(PipelineStage):
         else:
             discovered_files = self.loader.discover_files()
             input_count = len(discovered_files)
-            result = self.loader.load()
-            documents = [Document(**doc.model_dump()) for doc in result]
+            documents = self.loader.load()
             for document in documents:
                 assign_document_identity(
                     document,

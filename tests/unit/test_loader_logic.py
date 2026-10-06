@@ -22,7 +22,7 @@ from unified_kg_rag.adapters.ingestion.loader import (
     compute_jaccard_similarity,
     compute_minhash,
 )
-from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models import Config, Document
 
 pytestmark = pytest.mark.unit
 
@@ -384,3 +384,39 @@ def test_compute_jaccard_similarity_missing_minhash_returns_none() -> None:
     m0 = compute_minhash((0, text), num_permutations=64, n_grams=3)
     assert m0 is not None
     assert compute_jaccard_similarity((0, 99), {0: m0[1]}) is None
+
+
+# --------------------------------------------------------------------------- #
+# Document JSON compatibility
+# --------------------------------------------------------------------------- #
+def test_document_json_from_langchain_based_versions_still_loads(
+    tmp_path: Path,
+) -> None:
+    # Earlier versions subclassed LangChain's Document, so their JSON also
+    # carries its "id" and "type" keys; the pure model must ignore them.
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text(
+        json.dumps(
+            {
+                "id": None,
+                "type": "Document",
+                "page_content": "stale",
+                "metadata": {"source": "legacy.txt"},
+                "document_id": "doc-legacy",
+                "file_name": "legacy.txt",
+                "file_path": "legacy.txt",
+                "file_type": "txt",
+                "total_pages": 1,
+                "content": {"text": "Vendor ships goods to Buyer."},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    doc = Document.from_json_file(legacy)
+
+    assert doc.page_content == "Vendor ships goods to Buyer."
+    assert doc.metadata == {"source": "legacy.txt"}
+    out = tmp_path / "out.json"
+    doc.to_json_file(out)
+    assert Document.from_json_file(out) == doc
