@@ -204,6 +204,17 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   discarded `AsyncOpenSearch` client is closed.
 - Conversation memory reuses the query step's entity extraction instead of a
   second LLM call per user turn.
+- Extraction drops relationships whose endpoint entity was dropped instead of
+  recreating it, reads an integer confidence of 1 as the scale minimum, and
+  treats single letters of any script as designators in entity resolution
+  (#130).
+- Items without a description get a surrogate embedding text instead of being
+  skipped from the vector indexes (#130).
+- Communities are detected on the entity-only subgraph, so claim nodes no
+  longer join communities or become singleton reports (#130).
+- `.json` sources parse without the optional `jq` package, exclude patterns
+  match relative to the source root, and repeated claim tags no longer drop
+  the claim (#130).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on
