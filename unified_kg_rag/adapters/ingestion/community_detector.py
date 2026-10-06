@@ -108,7 +108,8 @@ class CommunityDetector(BaseProcessor):
             )
 
     def __call__(self, graph: nx.Graph) -> "CommunityDetector":
-        self.graph = graph
+        self.graph = self._entity_subgraph(graph)
+        graph = self.graph
         logger.info(
             "Starting community detection on graph with %s nodes and %s edges",
             graph.number_of_nodes(),
@@ -116,6 +117,32 @@ class CommunityDetector(BaseProcessor):
         )
         self.detect_communities()
         return self
+
+    @staticmethod
+    def _entity_subgraph(graph: nx.Graph) -> nx.Graph:
+        """Return the entity-only graph that communities are detected on.
+
+        The knowledge graph also carries claim nodes (``node_type="claim"``,
+        see ``GraphBuilder``). Communities group entities, as in GraphRAG:
+        claim nodes would otherwise join entity communities, and every claim
+        whose subject/object did not resolve became an isolated singleton
+        community costing its own report LLM call. Nodes without a
+        ``node_type`` are treated as entities.
+        """
+        non_entity_nodes = [
+            node
+            for node, data in graph.nodes(data=True)
+            if data.get("node_type", "entity") != "entity"
+        ]
+        if not non_entity_nodes:
+            return graph
+        logger.info(
+            "Excluding %s non-entity (claim) nodes from community detection",
+            len(non_entity_nodes),
+        )
+        entity_graph = graph.copy()
+        entity_graph.remove_nodes_from(non_entity_nodes)
+        return entity_graph
 
     def detect_communities(self) -> None:
         if not self.graph or self.graph.number_of_nodes() == 0:
