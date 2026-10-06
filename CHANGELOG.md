@@ -81,6 +81,14 @@ Each previous behaviour stays available through the setting in parentheses.
   comprehensive, assumption-free coverage and produced long, overly cautious
   answers on multi-hop questions; it can still be supplied through
   `custom_prompts.answer_generation_system`/`_human`.
+- Neptune graph expansion ranks entities before cutting them. It fetches
+  three times the result width, scores each entity by proximity to the seeds
+  and its importance, and keeps the best `top_k * retrieval_multiplier`
+  (`indexing.neptune.traversal_fetch_multiplier: 1` cuts in traversal order
+  as before). Importance now comes from the indexed entity `rank`, or the
+  edge count with `entity_importance_source: degree`; the retriever used to
+  read an `importance` property that entity vertices never store, so every
+  entity scored a neutral 0.5 (`entity_importance_source: none`).
 - AUTO routes among local/mix/global/drift with Haiku
   (`search.auto_routable_strategies: [simple, local, global, drift]`,
   `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).

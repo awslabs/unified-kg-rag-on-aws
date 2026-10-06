@@ -1283,6 +1283,29 @@ class NeptuneIndexingConfig(BaseModel):
         le=1.0,
         description="Minimum importance score for entities to be included in query results",
     )
+    entity_importance_source: Literal["rank", "degree", "none"] = Field(
+        default="rank",
+        description=(
+            "Graph-expansion relevance is the mean of an entity's importance and "
+            "its proximity to the seeds. 'rank' uses the indexed entity `rank`, "
+            "'degree' counts the entity's edges at query time (MS GraphRAG ranks "
+            "entities by degree), and each is normalized by the largest value in "
+            "the same result. 'none' gives every entity a neutral 0.5, the "
+            "previous behaviour (it read an `importance` property that entity "
+            "vertices never store), so expansion ranks by proximity alone."
+        ),
+    )
+    traversal_fetch_multiplier: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Graph expansion fetches top_k * retrieval_multiplier * this many "
+            "entities, ranks them by relevance, then keeps the top "
+            "top_k * retrieval_multiplier. 1 = the previous behaviour: the "
+            "traversal's limit cut entities in Neptune's arbitrary emit order, "
+            "before any ranking."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_retry_configuration(self) -> "NeptuneIndexingConfig":
