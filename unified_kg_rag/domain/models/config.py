@@ -149,6 +149,7 @@ class LanguageModelId(str, Enum):
 
 
 ModelTier = Literal["default", "fast"]
+EffortLevel = Literal["low", "medium", "high", "xhigh", "max"]
 
 # The two shipped model tiers. Every per-role model field declares one of them
 # and inherits aws.bedrock.default_model_id / aws.bedrock.fast_model_id unless
@@ -335,9 +336,9 @@ class BedrockConfig(BaseModel):
         default=DEFAULT_MODEL_ID,
         description=(
             "Model for every role on the 'default' tier (extraction, gleaning, "
-            "claims, community reports, output fixing, query entity extraction, "
-            "context building, answer generation, evaluation). Any Bedrock "
-            "model id; a role's own *_model_id overrides it."
+            "claims, community reports, output fixing, query entity/keyword "
+            "extraction, context building, answer generation, evaluation). Any "
+            "Bedrock model id; a role's own *_model_id overrides it."
         ),
     )
     fast_model_id: BedrockModelId = Field(
@@ -345,8 +346,8 @@ class BedrockConfig(BaseModel):
         description=(
             "Model for every role on the 'fast' tier (chunking, translation, "
             "description summarization, global/DRIFT search steps, query "
-            "translation, AUTO strategy routing). Any Bedrock model id; a "
-            "role's own *_model_id overrides it."
+            "translation, strategy routing). Any Bedrock model id; a role's own "
+            "*_model_id overrides it."
         ),
     )
     default_max_output_tokens: int | None = Field(
@@ -384,14 +385,30 @@ class BedrockConfig(BaseModel):
             "also widens the derived retrieval context budget."
         ),
     )
-    effort: Literal["low", "medium", "high", "xhigh", "max"] = Field(
+    default_effort: EffortLevel = Field(
         default="high",
         description=(
-            "Reasoning effort. Sent as output_config.effort to Anthropic "
-            "adaptive-thinking models (Claude 4.6+), where it replaces the fixed "
-            "thinking token budget, and as reasoning.effort to OpenAI GPT models. "
-            "'xhigh'/'max' are only accepted by some models; lower levels trade "
-            "depth for cost/latency."
+            "Reasoning effort for calls on the default_model_id. Sent as "
+            "output_config.effort to Anthropic adaptive-thinking models (Claude "
+            "4.6+), where it replaces the fixed thinking token budget, and as "
+            "reasoning.effort to OpenAI GPT models. 'xhigh'/'max' are only "
+            "accepted by some models; lower levels trade depth for cost/latency."
+        ),
+    )
+    fast_effort: EffortLevel = Field(
+        default="low",
+        description=(
+            "Reasoning effort for calls on the fast_model_id (when it differs "
+            "from default_model_id). The shipped fast model (Claude Haiku 4.5) "
+            "does not reason on these calls, so this only takes effect when "
+            "fast_model_id is an adaptive-thinking or GPT model."
+        ),
+    )
+    effort: EffortLevel | None = Field(
+        default=None,
+        description=(
+            "Deprecated alias for default_effort, kept for existing configs. "
+            "Used only when default_effort is not set."
         ),
     )
     guardrail: GuardrailConfig = Field(
@@ -403,6 +420,39 @@ class BedrockConfig(BaseModel):
         description="Retry for embedding and query-time LLM calls on transient "
         "Bedrock errors",
     )
+
+    @model_validator(mode="after")
+    def _apply_legacy_effort(self) -> "BedrockConfig":
+        # Mirror the legacy key into default_effort so a dumped config reloads
+        # with the same effort. Written through __dict__ to stay out of
+        # model_fields_set, as tier_effort reads that to pick the winner.
+        if self.effort is not None and "default_effort" not in self.model_fields_set:
+            self.__dict__["default_effort"] = self.effort
+        return self
+
+    def model_tier(self, model_id: str) -> ModelTier:
+        """Tier a call on ``model_id`` belongs to, for picking its effort.
+
+        Only a model that is the fast tier's model (and not also the default
+        tier's) counts as fast; anything else, including a role pinned to its
+        own model, gets the default tier's effort.
+        """
+        model_id = str(model_id).strip()
+        if model_id == self.fast_model_id and model_id != self.default_model_id:
+            return "fast"
+        return "default"
+
+    def tier_effort(self, tier: ModelTier) -> EffortLevel:
+        """Configured effort for ``tier``, honouring the legacy ``effort`` key.
+
+        Resolved on read as well as at validation, so assigning ``effort`` or
+        ``default_effort`` after construction behaves the same way.
+        """
+        if tier == "fast":
+            return self.fast_effort
+        if self.effort is not None and "default_effort" not in self.model_fields_set:
+            return self.effort
+        return self.default_effort
 
 
 class NeptuneConfig(BaseModel):
@@ -2274,7 +2324,8 @@ class EvaluationConfig(BaseModel):
             "Reasoning effort for the LLM judge (RAGAS and LangChain evaluators) "
             "on adaptive-thinking models (Claude 4.7+). Judge prompts are short "
             "extraction/classification calls, so a low effort keeps each metric "
-            "well inside the RAGAS timeout. null inherits aws.bedrock.effort. "
+            "well inside the RAGAS timeout. null inherits the effort of the "
+            "judge model's tier (aws.bedrock.default_effort by default). "
             "Ignored by models without adaptive thinking."
         ),
     )

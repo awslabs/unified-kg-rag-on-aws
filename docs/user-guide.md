@@ -177,7 +177,9 @@ the same values with one exception: it sets `aws.bedrock.region_name` to
 | `aws.bedrock.default_model_id` | `"anthropic.claude-sonnet-5-5"` | Model for every default-tier role (see Model selection notes). |
 | `aws.bedrock.fast_model_id` | `"anthropic.claude-haiku-4-5-20251001-v1:0"` | Model for every fast-tier role. |
 | `aws.bedrock.default_max_output_tokens` | `16384` | `max_tokens` per request, clamped to the model maximum. Raise it if answers are cut off (`stopReason: max_tokens`); `null` sends the model maximum. |
-| `aws.bedrock.effort` | `"high"` | Reasoning depth for adaptive-thinking models: `low`, `medium`, `high`, `xhigh`, `max`. Lower it to cut cost and latency. |
+| `aws.bedrock.default_effort` | `"high"` | Reasoning depth for calls on `default_model_id` (adaptive-thinking Claude and GPT models): `low`, `medium`, `high`, `xhigh`, `max`. Lower it to cut cost and latency. |
+| `aws.bedrock.fast_effort` | `"low"` | Reasoning depth for calls on `fast_model_id` when it differs from `default_model_id`. No effect with the shipped Claude Haiku 4.5; matters once the fast tier runs a thinking model. |
+| `aws.bedrock.effort` | `null` | Deprecated alias for `default_effort`, kept for existing configs. `default_effort` wins if both are set. |
 | `aws.bedrock.enable_1m_context` | `false` | Opt into the 1M window on models where it is a beta (premium billing). Claude 5 has a native 1M window. |
 | `aws.bedrock.model_overrides` | `{}` | Capability records for a model the package does not know (see Model selection notes). |
 | `aws.bedrock.guardrail.identifier` | `null` | Bedrock guardrail ID or ARN; setting it enables the guardrail. |
@@ -305,9 +307,15 @@ Three things differ for Claude 4.7-and-later models:
   for Claude 5 (no `apac.`), so disabling the global profile leaves no path.
 - **`effort` replaces the thinking token budget.** `thinking_budget_tokens` is
   ignored for these models (the old `budget_tokens` request shape is rejected
-  with a 400); set `bedrock.effort` instead. Claude Sonnet 5.5 always thinks, so
-  `--enable-thinking` is a no-op for it — depth is `effort` only. A level the
-  model does not accept (e.g. `xhigh` on Opus or Sonnet 4.6) fails fast.
+  with a 400); set `bedrock.default_effort` / `bedrock.fast_effort` instead.
+  A call uses `fast_effort` when its model is `fast_model_id` (and that differs
+  from `default_model_id`), otherwise `default_effort`; the shipped fast model,
+  Claude Haiku 4.5, does not reason on these calls, so `fast_effort` only
+  matters once the fast tier runs a thinking model. The older single
+  `bedrock.effort` key is still accepted as an alias for `default_effort`
+  (deprecated). Claude Sonnet 5.5 always thinks, so `--enable-thinking` is a
+  no-op for it — depth is `effort` only. A level the model does not accept
+  (e.g. `xhigh` on Opus or Sonnet 4.6) fails fast.
 - **Sampling parameters are dropped.** `temperature`/`top_k` are not accepted
   and are omitted from requests automatically; steer behaviour by prompting.
 
@@ -315,7 +323,8 @@ OpenAI GPT models differ from Claude in these ways:
 
 - They always go through the Converse API on a `us.`/`global.` inference
   profile (no `apac.`/`eu.` geo profiles; keep `enable_global_profile: true`
-  outside the US). `bedrock.effort` is sent as
+  outside the US). The tier's effort (`bedrock.default_effort` /
+  `fast_effort`) is sent as
   `reasoning: {effort: ...}` (the flat `reasoning_effort` field is rejected).
   GPT-5.6 and GPT-6.x answered a trivial prompt in roughly 10-25 s even at
   `effort: low`, so size timeouts and concurrency accordingly.
@@ -460,7 +469,7 @@ quotas (`search.local_search.type_quota`) are in the template.
 | Key | Default | What it does / when to change |
 |---|---|---|
 | `evaluation.enabled_evaluators` | `[langchain, ragas]` | Add `graph_aware`, `retrieval`, or `answer_match` when the dataset has their ground truth (§6). |
-| `evaluation.judge_effort` | `"low"` | Reasoning effort for LLM judges; `null` inherits `aws.bedrock.effort`. |
+| `evaluation.judge_effort` | `"low"` | Reasoning effort for LLM judges; `null` inherits the judge model's tier effort (`aws.bedrock.default_effort` by default). |
 | `evaluation.ragas_timeout` | `300` | Seconds to score one metric on one sample; a timeout yields NaN. |
 | `evaluation.ragas_max_contexts` | `20` | Top-ranked contexts per sample given to the RAGAS judge, so `context_precision`/`context_recall` become "@20". `null` = no cap. |
 | `evaluation.ragas_max_workers` | `8` | Concurrent RAGAS jobs. Lower it if Bedrock throttles the judge. |
