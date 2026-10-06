@@ -1580,12 +1580,13 @@ class FusionConfig(BaseModel):
             "results": 1.0,
         },
         description=(
-            "Per-source-bucket weights applied during weighted fusion "
-            "(FusionMethod.WEIGHTED). Keys are the retrieval source buckets "
+            "Per-source-bucket weights, applied by both fusion methods: RRF "
+            "scales each bucket's 1/(rrf_k + rank) term and weighted fusion "
+            "scales its scores. Keys are the retrieval source buckets "
             "emitted by the search strategies (graph_entities, text_units, "
             "lightrag_entities/relationships/chunks, opensearch_all, the "
             "global-search community-report buckets, and drift's 'results'). A "
-            "bucket without a key defaults to 1.0. Unused by the default RRF fusion."
+            "bucket without a key defaults to 1.0."
         ),
     )
 
