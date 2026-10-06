@@ -170,7 +170,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `max_attempts: N+1` and the default stays 4 attempts. **Breaking** for
   library callers: `BatchProcessor(max_retries=...)` is now
   `BatchProcessor(max_attempts=...)`, and the unread
-  `PipelineConfig.max_retries` is removed (#PR).
+  `PipelineConfig.max_retries` is removed (#151).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
@@ -179,7 +179,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - `processing.max_retries`, `indexing.neptune.max_retries` and
   `evaluation.ragas_max_retries`; use the `max_attempts` keys. A renamed key
   (including `search.llm_retry`) now logs a deprecation WARNING instead of
-  being reported as an unknown key that is ignored (#PR).
+  being reported as an unknown key that is ignored (#151).
 
 ### Removed
 - The unused `RetrieverType` enum and the latency-optimized inference path
@@ -293,10 +293,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - Neptune writes fail fast on errors a retry cannot fix (malformed query,
   access denied, bad parameter); they used to be retried with backoff before
   they surfaced. Throttling, concurrent modification and connection loss are
-  still retried (#PR).
+  still retried (#151).
 - The Gremlin connection pool is sized to at least
   `indexing.neptune.index_concurrency`. It used `aws.neptune.pool_size` alone,
-  so a higher write concurrency queued batches on too few connections (#PR).
+  so a higher write concurrency queued batches on too few connections (#151).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on
