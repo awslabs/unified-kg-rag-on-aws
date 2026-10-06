@@ -293,16 +293,25 @@ class IncrementalIndexer:
         for doc_id in delta.deleted:
             self.doc_status.delete(doc_id)
 
-    def prune_changed(self, delta: DocumentDelta) -> None:
+    def prune_changed(self, delta: DocumentDelta) -> bool:
         """Remove the now-stale artifacts of changed docs before re-extraction.
 
         A changed document's old entities/edges are dropped first (unless shared
         with surviving docs) so a re-extraction that no longer produces some
         artifact does not leave it orphaned in the graph. Call this before
         re-running extraction + :meth:`commit` on the changed documents.
+
+        Returns True when every stale artifact was removed (or there was nothing
+        to remove). The caller MUST NOT :meth:`commit` on False: commit replaces
+        the changed docs' registry lineage with the new artifacts, so the old
+        ids that failed to delete would no longer be referenced anywhere and
+        could never be cleaned up (permanent orphans). Not committing keeps the
+        old lineage and content hash, so the next run re-detects the docs as
+        changed and retries the prune.
         """
-        if delta.changed:
-            self.remove_obsolete_artifacts(delta.changed)
+        if not delta.changed:
+            return True
+        return self.remove_obsolete_artifacts(delta.changed)
 
     def _collect_exclusive_artifact_ids(
         self, doc_ids: list[str]

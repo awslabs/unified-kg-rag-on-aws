@@ -1299,8 +1299,15 @@ class IndexingStage(PipelineStage):
         )
         incremental = IncrementalIndexer(store, self.indexing_manager, suffix=suffix)
 
-        # Drop stale artifacts of changed docs (before re-upsert) and of deleted docs.
-        incremental.prune_changed(delta)
+        # Drop stale artifacts of changed docs (before re-upsert) and of deleted
+        # docs. A failed prune must stop the run before commit: committing would
+        # overwrite the changed docs' lineage and orphan the stale artifacts.
+        if not incremental.prune_changed(delta):
+            raise PipelineStageError(
+                "Removing stale artifacts of changed documents failed; not "
+                "committing the delta so the registry keeps their old lineage "
+                "and the next run retries the removal"
+            )
         incremental.remove_deleted(delta)
 
         lineages = build_document_lineage(

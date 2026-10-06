@@ -78,6 +78,11 @@ Each previous behaviour stays available through the setting in parentheses.
   `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).
 
 ### Fixed
+- An incremental run now fails before committing when removing the stale
+  artifacts of changed documents fails. The commit replaced those documents'
+  registry lineage, so the artifacts that failed to delete were no longer
+  referenced anywhere and stayed in the stores permanently; the registry now
+  keeps the old lineage and the next run retries the removal.
 - Indexing relationships for one index suffix no longer deletes another
   suffix's edges. The Neptune idempotency pre-drop matched edges by id alone,
   and relationship ids do not depend on the suffix; it is now scoped to edges
