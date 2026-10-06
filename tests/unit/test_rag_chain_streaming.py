@@ -97,8 +97,9 @@ class _RecordingMemoryManager:
     async def get_langchain_memory(self, conv_id: str, **_: Any) -> _FakeMemory:
         return _FakeMemory()
 
-    async def add_message(self, conv_id: str, role: MessageRole, content: str) -> None:
-        self.messages.append((conv_id, role, content))
+    async def add_turn(self, conv_id: str, user: str, assistant: str, **_: Any) -> None:
+        self.messages.append((conv_id, MessageRole.USER, user))
+        self.messages.append((conv_id, MessageRole.ASSISTANT, assistant))
 
 
 def _make_chain(

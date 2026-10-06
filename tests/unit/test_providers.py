@@ -316,10 +316,10 @@ async def test_memory_save_reuses_query_step_entities(
     calls: list[dict[str, Any]] = []
 
     class _Recorder:
-        async def add_message(
-            self, conv_id: str, role: Any, content: str, **kw: Any
+        async def add_turn(
+            self, conv_id: str, user: str, assistant: str, **kw: Any
         ) -> None:
-            calls.append({"role": role, **kw})
+            calls.append({"user": user, "assistant": assistant, **kw})
 
     chain.memory_manager = _Recorder()  # type: ignore[assignment]
     output = RAGOutput(
@@ -341,5 +341,6 @@ async def test_memory_save_reuses_query_step_entities(
     await chain._save_memory(output, query_processing=True)
     await chain._save_memory(output)  # query processing off: never reused
 
-    assert calls[0].get("entities") == expected
-    assert "entities" not in calls[2]
+    assert [(c["user"], c["assistant"]) for c in calls] == [("q", "a")] * 2
+    assert calls[0]["entities"] == expected
+    assert calls[1]["entities"] is None

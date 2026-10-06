@@ -324,3 +324,39 @@ def test_add_message_with_known_entities_skips_the_llm(patched_history) -> None:
     history = asyncio.run(scenario())
     patched_history.extractor.invoke.assert_not_called()
     assert history.get_relevant_entities() == ["Vendor"]
+
+
+def test_concurrent_turns_keep_each_answer_after_its_question(patched_history) -> None:
+    import asyncio
+
+    manager = mm.MemoryManager(config=Config())
+
+    async def scenario():
+        # No pre-extracted entities: each turn's entity update runs in a thread,
+        # the await that let another turn interleave between two add_message
+        # calls.
+        await asyncio.gather(
+            *(manager.add_turn("c1", f"q{i}", f"a{i}") for i in range(5))
+        )
+        history = await manager.get_or_create_memory("c1")
+        return [m.content for m in history.messages]
+
+    contents = asyncio.run(scenario())
+    assert len(contents) == 10
+    for question, answer in zip(contents[::2], contents[1::2], strict=True):
+        assert question.startswith("q") and answer == "a" + question[1:]
+
+
+def test_add_turn_records_given_entities_without_extraction(patched_history) -> None:
+    import asyncio
+
+    manager = mm.MemoryManager(config=Config())
+
+    async def scenario():
+        await manager.add_turn("c1", "q", "a", entities=["Vendor"])
+        return await manager.get_or_create_memory("c1")
+
+    history = asyncio.run(scenario())
+    assert [type(m).__name__ for m in history.messages] == ["HumanMessage", "AIMessage"]
+    assert "Vendor" in history.get_relevant_entities()
+    patched_history.extractor.invoke.assert_not_called()
