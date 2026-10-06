@@ -290,10 +290,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - `run-rag` no longer translates every query for a same-language corpus: it
   passed the configured target language explicitly, which disabled the
   chain's no-op translation skip (#145).
-- Neptune writes retry only transient errors (throttling,
-  `ConcurrentModificationException` and the other errors Neptune documents as
-  retryable, connection loss, timeouts). A malformed traversal or an access
-  error used to be retried with backoff before it surfaced (#PR).
+- Neptune writes fail fast on errors a retry cannot fix (malformed query,
+  access denied, bad parameter); they used to be retried with backoff before
+  they surfaced. Throttling, concurrent modification and connection loss are
+  still retried (#PR).
 - The Gremlin connection pool is sized to at least
   `indexing.neptune.index_concurrency`. It used `aws.neptune.pool_size` alone,
   so a higher write concurrency queued batches on too few connections (#PR).

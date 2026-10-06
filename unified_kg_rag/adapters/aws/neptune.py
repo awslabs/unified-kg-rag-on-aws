@@ -1,13 +1,11 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-import asyncio
 import functools
 import threading
 import time
 from collections.abc import Callable
 from typing import Any
 
-import aiohttp
 import boto3
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
@@ -21,41 +19,38 @@ from unified_kg_rag.shared import AWSServiceError, get_logger
 
 logger = get_logger(__name__)
 
-# Neptune engine error codes documented as OK to retry (Neptune user guide,
-# "Graph Engine Error Messages and Codes"). ConstraintViolationException is
-# listed because it arises from concurrent modifications to the graph.
-TRANSIENT_NEPTUNE_ERROR_CODES: frozenset[str] = frozenset(
+# Neptune engine error codes for requests that fail the same way on every try
+# (Neptune user guide, "Graph Engine Error Messages and Codes"). Retrying
+# them only multiplies the failure, so they fail fast; any other error,
+# including a connection the server closed, keeps being retried.
+PERMANENT_NEPTUNE_ERROR_CODES: frozenset[str] = frozenset(
     {
-        "CancelledByUserException",
-        "ConcurrentModificationException",
-        "ConstraintViolationException",
-        "MemoryLimitExceededException",
-        "QueryLimitExceededException",
-        "ThrottlingException",
-        "TooManyRequestsException",
+        "AccessDeniedException",
+        "BadRequestException",
+        "InvalidNumericDataException",
+        "InvalidParameterException",
+        "MalformedQueryException",
+        "MethodNotAllowedException",
+        "MissingParameterException",
+        "ReadOnlyViolationException",
+        "UnsupportedOperationException",
     }
 )
 
 
-def is_transient_neptune_error(exc: BaseException) -> bool:
-    """Return True if a Gremlin request failed for a reason worth retrying.
+def is_permanent_neptune_error(exc: BaseException) -> bool:
+    """Return True if a Gremlin request failed in a way a retry cannot fix.
 
     Neptune reports engine errors as a ``GremlinServerError`` whose status
     message carries the JSON error body, ``"code"`` included; the code names
     are distinct identifiers, so matching them in the message is matching the
-    code. Connection loss and timeouts are transient too. Anything else
-    (malformed traversal, access denied, bad request) fails fast.
+    code. Client-side argument errors (``ValueError``/``TypeError``) are
+    permanent too.
     """
     if isinstance(exc, GremlinServerError):
         message = str(exc.status_message)
-        return any(code in message for code in TRANSIENT_NEPTUNE_ERROR_CODES)
-    return isinstance(
-        exc,
-        ConnectionError
-        | TimeoutError
-        | asyncio.TimeoutError
-        | aiohttp.ClientConnectionError,
-    )
+        return any(code in message for code in PERMANENT_NEPTUNE_ERROR_CODES)
+    return isinstance(exc, ValueError | TypeError)
 
 
 def _handle_neptune_errors(func: Callable) -> Callable:

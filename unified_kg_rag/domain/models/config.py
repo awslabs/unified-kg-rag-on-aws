@@ -1362,9 +1362,9 @@ class NeptuneIndexingConfig(BaseModel):
     max_attempts: int = Field(
         default=4,
         ge=1,
-        description="Total attempts per Neptune write on transient errors "
-        "(throttling, concurrent modification, connection loss), including the "
-        "first (1 disables the retry). Other errors fail on the first attempt.",
+        description="Total attempts per Neptune write, including the first "
+        "(1 disables the retry). Errors a retry cannot fix (malformed query, "
+        "access denied, bad parameter) fail on the first attempt.",
     )
     retry_delay_seconds: int = Field(
         default=2, ge=0, description="Delay in seconds between retry attempts"

@@ -20,7 +20,7 @@ import aiohttp
 import pytest
 from gremlin_python.driver.protocol import GremlinServerError
 
-from unified_kg_rag.adapters.aws.neptune import is_transient_neptune_error
+from unified_kg_rag.adapters.aws.neptune import is_permanent_neptune_error
 from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 from unified_kg_rag.domain.models import Config
 
@@ -88,7 +88,7 @@ def test_reraises_after_max_attempts(indexer) -> None:
     assert traversal.calls == 3  # max_attempts counts the first try
 
 
-def test_non_transient_error_fails_on_first_attempt(indexer, mocker) -> None:
+def test_permanent_error_fails_on_first_attempt(indexer, mocker) -> None:
     indexer.neptune_config.max_attempts = 4
     sleep = mocker.patch(_MOD + "._sleep", return_value=None)
     traversal = _FlakyTraversal(
@@ -136,15 +136,15 @@ def test_backoff_is_full_jitter_over_exponential_window(indexer, mocker) -> None
     [
         _CME,
         _neptune_error("ThrottlingException"),
-        _neptune_error("TooManyRequestsException"),
-        _neptune_error("MemoryLimitExceededException"),
+        _neptune_error("TimeLimitExceededException"),
         ConnectionResetError("reset by peer"),
         TimeoutError("read timed out"),
         aiohttp.ServerDisconnectedError(),
+        RuntimeError("Connection was already closed."),
     ],
 )
-def test_transient_errors_are_retryable(exc: BaseException) -> None:
-    assert is_transient_neptune_error(exc)
+def test_other_errors_are_retried(exc: BaseException) -> None:
+    assert not is_permanent_neptune_error(exc)
 
 
 @pytest.mark.parametrize(
@@ -154,8 +154,7 @@ def test_transient_errors_are_retryable(exc: BaseException) -> None:
         _neptune_error("BadRequestException"),
         _neptune_error("MalformedQueryException"),
         ValueError("bad traversal argument"),
-        RuntimeError("unexpected"),
     ],
 )
-def test_other_errors_are_not_retryable(exc: BaseException) -> None:
-    assert not is_transient_neptune_error(exc)
+def test_permanent_errors_fail_fast(exc: BaseException) -> None:
+    assert is_permanent_neptune_error(exc)

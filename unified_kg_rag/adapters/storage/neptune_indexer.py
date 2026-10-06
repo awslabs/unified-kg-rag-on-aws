@@ -15,7 +15,7 @@ from gremlin_python.process.graph_traversal import (
 from gremlin_python.process.traversal import Cardinality, P
 
 from unified_kg_rag.adapters.aws import NeptuneClient
-from unified_kg_rag.adapters.aws.neptune import is_transient_neptune_error
+from unified_kg_rag.adapters.aws.neptune import is_permanent_neptune_error
 from unified_kg_rag.domain.models import (
     Community,
     Config,
@@ -893,7 +893,7 @@ class NeptuneIndexer(GraphIndexer):
                 traversal.iterate()
                 return
             except Exception as e:
-                if not is_transient_neptune_error(e) or attempt + 1 == max_attempts:
+                if is_permanent_neptune_error(e) or attempt + 1 == max_attempts:
                     logger.error(
                         "Failed %s after %s attempt(s): %s",
                         operation_name,

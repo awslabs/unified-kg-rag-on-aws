@@ -441,7 +441,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.opensearch.index_settings.refresh_interval` | `"1s"` | Raise it (or `"-1"`) for faster bulk loads, then reset for live querying. |
 | `indexing.neptune.batch_size` | `100` | Items per Neptune write batch. |
 | `indexing.neptune.index_concurrency` | `1` | Concurrent write batches. The Gremlin connection pool grows to match if `aws.neptune.pool_size` is smaller. |
-| `indexing.neptune.max_attempts` | `4` | Attempts per Neptune write, including the first. Only throttling, `ConcurrentModificationException` and other retryable Neptune errors, connection loss and timeouts are retried, with jittered exponential backoff from `retry_delay_seconds` (`2`); other errors fail on the first attempt. `1` disables the retry. |
+| `indexing.neptune.max_attempts` | `4` | Attempts per Neptune write, including the first. Failures are retried with jittered exponential backoff from `retry_delay_seconds` (`2`), except errors a retry cannot fix (malformed query, access denied, bad parameter), which fail on the first attempt. `1` disables the retry. |
 | `indexing.neptune.max_hops` | `3` | Neighbour-expansion depth at retrieval time. |
 | `indexing.neptune.property_max_length` | `4000` | Character cap per Neptune property value. Keep it above the longest description that is not re-summarized (summarization triggers above 600 tokens, ~2,400 characters). Takes effect on re-ingestion. |
 | `indexing.neptune.entity_importance_source` | `"rank"` | Entity importance in graph-expansion relevance: `rank` (indexed entity rank), `degree` (edge count at query time) or `none` (neutral 0.5, the old behaviour). |

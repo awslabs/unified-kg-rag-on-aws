@@ -431,7 +431,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `indexing.opensearch.index_settings.refresh_interval` | `"1s"` | 대량 적재 속도를 높이려면 늘리거나 `"-1"`로 두고, 실제 질의 전에 되돌립니다. |
 | `indexing.neptune.batch_size` | `100` | Neptune 쓰기 배치당 항목 수입니다. |
 | `indexing.neptune.index_concurrency` | `1` | 동시에 보내는 쓰기 배치 수입니다. `aws.neptune.pool_size`가 이보다 작으면 Gremlin 연결 풀을 이 값까지 늘립니다. |
-| `indexing.neptune.max_attempts` | `4` | 첫 시도를 포함한 Neptune 쓰기당 시도 횟수입니다. 스로틀링, `ConcurrentModificationException` 등 재시도 가능한 Neptune 오류와 연결 끊김, 시간 초과만 `retry_delay_seconds`(`2`)에서 시작하는 지수 백오프(지터 포함)로 재시도하고, 나머지 오류는 첫 시도에서 바로 실패합니다. `1`이면 재시도하지 않습니다. |
+| `indexing.neptune.max_attempts` | `4` | 첫 시도를 포함한 Neptune 쓰기당 시도 횟수입니다. 실패하면 `retry_delay_seconds`(`2`)에서 시작하는 지수 백오프(지터 포함)로 재시도합니다. 다만 잘못된 쿼리, 권한 거부, 잘못된 파라미터처럼 재시도해도 고쳐지지 않는 오류는 첫 시도에서 바로 실패합니다. `1`이면 재시도하지 않습니다. |
 | `indexing.neptune.max_hops` | `3` | 검색 시점의 이웃 확장 깊이입니다. |
 | `indexing.neptune.property_max_length` | `4000` | Neptune 속성 값의 최대 문자 수입니다. 재요약되지 않는 가장 긴 설명보다 커야 합니다(요약은 600토큰, 영어 약 2,400자를 넘을 때만 실행). 재인제스트해야 반영됩니다. |
 | `indexing.neptune.entity_importance_source` | `"rank"` | 그래프 확장 관련도에 쓰는 엔터티 중요도입니다. `rank`(인덱싱된 엔터티 rank), `degree`(질의 시 계산한 엣지 수), `none`(모두 0.5, 이전 동작). |
