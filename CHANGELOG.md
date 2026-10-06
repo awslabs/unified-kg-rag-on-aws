@@ -109,6 +109,12 @@ Each previous behaviour stays available through the setting in parentheses.
   (`search.global_search.reserve_report_slots: false`). The map step now
   rates up to `max_communities + top_k` items (4 instead of 2 map calls at
   the defaults, run concurrently).
+- Neptune property values are capped at 4,000 characters instead of 1,000
+  (`indexing.neptune.property_max_length`). Descriptions are only
+  re-summarized above 600 tokens (~2,400 characters), so the old cap cut
+  merged entity and relationship descriptions mid-sentence in the local and
+  DRIFT context. Takes effect for vertices and edges written after the
+  change (re-run ingestion to rewrite existing ones).
 - AUTO routes among local/mix/global/drift with Haiku
   (`search.auto_routable_strategies: [simple, local, global, drift]`,
   `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).

@@ -83,3 +83,20 @@ def test_evaluation_judge_knobs_match_model_defaults(field: str) -> None:
     assert field in raw["evaluation"]
     parsed = EvaluationConfig(**raw["evaluation"])
     assert getattr(parsed, field) == getattr(EvaluationConfig(), field)
+
+
+def test_neptune_property_cap_exceeds_the_unsummarized_description_length() -> None:
+    # Descriptions below the summarization threshold are stored as merged; a
+    # Neptune property cap shorter than that (~4 characters per token) cut them
+    # mid-sentence in the local/DRIFT context.
+    from unified_kg_rag.domain.models.config import (
+        DescriptionSummarizationConfig,
+        NeptuneIndexingConfig,
+    )
+
+    threshold_tokens = DescriptionSummarizationConfig().force_summary_threshold_tokens
+    assert NeptuneIndexingConfig().property_max_length >= 4 * threshold_tokens
+
+    raw: dict[str, Any] = yaml.safe_load(TEMPLATE.read_text())
+    neptune = NeptuneIndexingConfig(**raw["indexing"]["neptune"])
+    assert neptune.property_max_length == NeptuneIndexingConfig().property_max_length

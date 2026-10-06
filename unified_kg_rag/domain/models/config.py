@@ -1263,9 +1263,17 @@ class NeptuneIndexingConfig(BaseModel):
         default=2, ge=0, description="Delay in seconds between retry attempts"
     )
     property_max_length: int = Field(
-        default=1000,
+        default=4000,
         ge=1,
-        description="Maximum character length for Neptune property values",
+        description=(
+            "Maximum character length for Neptune property values (entity and "
+            "relationship descriptions are read back from Neptune into the "
+            "local/DRIFT context). Keep it well above the longest description "
+            "that is not re-summarized: processing.description_summarization "
+            "only triggers above force_summary_threshold_tokens (600 tokens, "
+            "~2,400 English characters), so the former 1,000-character default "
+            "cut such descriptions mid-sentence."
+        ),
     )
     max_hops: int = Field(
         default=3,

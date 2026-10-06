@@ -478,7 +478,10 @@ indexing:
     index_concurrency: 1
     max_retries: 3
     retry_delay_seconds: 2
-    property_max_length: 1000
+    # Max characters per Neptune property value. Keep it above the longest
+    # description that is not re-summarized (description_summarization only
+    # triggers above 600 tokens, ~2,400 characters).
+    property_max_length: 4000
     # Graph-traversal tuning for retrieval (neighbor expansion). max_hops is
     # honored directly by the retriever (NeptuneIndexingConfig default 3).
     max_hops: 3
