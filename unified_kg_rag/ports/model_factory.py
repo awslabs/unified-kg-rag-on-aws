@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import Any, Protocol, TypeVar, runtime_checkable
 
 # Generic over the model-id enum and the returned model type so each concrete
-# factory keeps its narrow id type (LanguageModelId etc.) WITHOUT breaking
+# factory keeps its narrow id type (EmbeddingModelId etc.) WITHOUT breaking
 # structural conformance. A non-generic union here would be contravariantly
 # incompatible with the narrower concrete factories (they each accept only one
 # enum). `Any` defaults preserve the prior permissive behaviour for untyped
@@ -39,7 +39,7 @@ class ModelFactoryPort(Protocol[ModelIdT, ModelT]):
     ``get_model_info`` returns the capability record for the id (or ``None``).
 
     Parameterized over the id enum and the model type, so a custom backend
-    adapter can annotate ``ModelFactoryPort[LanguageModelId, ChatModel]`` and get
+    adapter can annotate ``ModelFactoryPort[str, ChatModel]`` and get
     static checking, while the concrete narrow factories still conform.
     """
 
@@ -52,7 +52,7 @@ class ModelFactoryPort(Protocol[ModelIdT, ModelT]):
 # runtime isinstance() checks (a subscripted generic raises TypeError there).
 # An unsubscripted generic Protocol defaults its params to Any, so existing
 # annotations keep working; a call site wanting static narrowing can write
-# `ModelFactoryPort[LanguageModelId, ChatModel]` explicitly. The distinct names
+# `ModelFactoryPort[str, ChatModel]` explicitly. The distinct names
 # document intent and leave room to diverge.
 LLMFactoryPort = ModelFactoryPort
 EmbeddingFactoryPort = ModelFactoryPort

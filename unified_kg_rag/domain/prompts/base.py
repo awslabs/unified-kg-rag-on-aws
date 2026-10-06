@@ -41,6 +41,11 @@ class BasePrompt(ABC):
     # The base resolve() looks the overrides up by convention, so a new prompt
     # only declares its key — no per-class _get_custom_prompts boilerplate.
     prompt_key: ClassVar[str | None] = None
+    # Output-token floor this prompt needs. The request's max_tokens is the
+    # larger of this and the configured default cap (clamped to the model
+    # maximum), so a prompt with a long output is never truncated by a cap
+    # sized for short answers. Thinking tokens count toward it.
+    min_output_tokens: ClassVar[int] = 0
 
     def __post_init__(self) -> None:
         self._validate_prompt_variables()

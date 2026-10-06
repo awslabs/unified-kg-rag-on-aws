@@ -135,6 +135,7 @@ class ClaimExtractor(BaseProcessor):
             factory=self.factory,
             enable_output_fixing=self.config.fixing.enabled,
             output_fixing_model_id=self.config.fixing.fixing_model_id,
+            min_output_tokens=ClaimExtractionPrompt.min_output_tokens,
         )
         self.claim_extractor = setup_chain(
             model_purpose=ModelPurpose.INGESTION,

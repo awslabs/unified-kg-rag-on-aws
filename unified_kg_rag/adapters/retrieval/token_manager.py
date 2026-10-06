@@ -8,11 +8,14 @@ from botocore.config import Config as BotoConfig
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.aws.bedrock import (
+    LanguageModelInfo,
+    effective_max_output_tokens,
     get_assumed_role_boto_session,
     get_language_model_info,
 )
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
-from unified_kg_rag.domain.models import Config, LanguageModelId, RetrievalResult
+from unified_kg_rag.domain.models import Config, RetrievalResult
+from unified_kg_rag.domain.prompts import AnswerGenerationPrompt
 from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
 from unified_kg_rag.shared import get_logger
 
@@ -73,10 +76,6 @@ class OptimizedContext(BaseModel):
 
 
 class TokenManager(MetricsMixin):
-    # Used only when the answer model has no capability record (custom backend)
-    # and no explicit budget is configured. Sized for the smallest window this
-    # package targets (200K) so it can never overflow a known model.
-    FALLBACK_MAX_CONTEXT_TOKENS: ClassVar[int] = 120000
     MIN_DERIVED_CONTEXT_TOKENS: ClassVar[int] = 1024
     PRIORITY_MULTIPLIERS: ClassVar[dict[SectionType, float]] = {
         SectionType.TEXT: 1.3,
@@ -111,20 +110,29 @@ class TokenManager(MetricsMixin):
 
         answer_model_id = config.search.answer_generation_model_id
         self._enable_1m_context = config.aws.bedrock.enable_1m_context
-        answer_model_info = get_language_model_info(answer_model_id)
+        answer_model_info = get_language_model_info(
+            answer_model_id, config.aws.bedrock.model_overrides
+        )
         self._token_counter = BedrockTokenCounter(
-            model_id=answer_model_id.value,
+            model_id=answer_model_id,
             client=bedrock_client,
             cache_maxsize=self.config.token_count_cache_size,
-            api_supported=(
-                answer_model_info.supports_count_tokens
-                if answer_model_info is not None
-                else True
-            ),
+            api_supported=answer_model_info.supports_count_tokens,
         )
-        self._max_context_tokens = self._resolve_max_context_tokens(answer_model_id)
+        # Reserve what the answer request actually asks for (its max_tokens),
+        # not the model maximum, so a capped output leaves room for context.
+        answer_output_tokens = effective_max_output_tokens(
+            answer_model_info,
+            config.aws.bedrock,
+            AnswerGenerationPrompt.min_output_tokens,
+        )
+        self._max_context_tokens = self._resolve_max_context_tokens(
+            answer_model_id, answer_model_info, answer_output_tokens
+        )
 
-    def _resolve_max_context_tokens(self, answer_model_id: LanguageModelId) -> int:
+    def _resolve_max_context_tokens(
+        self, answer_model_id: str, model_info: LanguageModelInfo, output_tokens: int
+    ) -> int:
         """Size the prompt-side budget against the answer model's real window.
 
         The context budget and the model's context window are separate settings
@@ -133,25 +141,10 @@ class TokenManager(MetricsMixin):
         from the model's own capabilities keeps the two in sync when the answer
         model changes (a 200K model and a 1M model want very different budgets).
         """
-        model_info = get_language_model_info(answer_model_id)
         configured = self.config.max_context_tokens
-        if model_info is None:
-            # Unknown model (custom backend): honour the explicit value, or fall
-            # back to a conservative budget rather than guessing a window.
-            if configured is not None:
-                return configured
-            logger.warning(
-                "No capability record for answer model '%s'; using the fallback "
-                "context budget of %d tokens. Set "
-                "search.token_manager.max_context_tokens explicitly.",
-                answer_model_id.value,
-                self.FALLBACK_MAX_CONTEXT_TOKENS,
-            )
-            return self.FALLBACK_MAX_CONTEXT_TOKENS
-
         headroom = self.config.context_window_headroom_ratio
         window = model_info.effective_context_window(self._enable_1m_context)
-        budget_ceiling = int((window - model_info.max_output_tokens) * (1.0 - headroom))
+        budget_ceiling = int((window - output_tokens) * (1.0 - headroom))
         # A model whose output reservation swallows its window would yield a
         # non-positive ceiling; keep a usable floor instead of returning <= 0,
         # which optimize_context treats as "exclude everything".
@@ -162,9 +155,9 @@ class TokenManager(MetricsMixin):
                 "Derived context budget of %d tokens for '%s' (window=%d, "
                 "output=%d, headroom=%.0f%%)",
                 budget_ceiling,
-                answer_model_id.value,
+                answer_model_id,
                 window,
-                model_info.max_output_tokens,
+                output_tokens,
                 headroom * 100,
             )
             return budget_ceiling
@@ -173,8 +166,8 @@ class TokenManager(MetricsMixin):
                 "Configured max_context_tokens (%d) exceeds what '%s' can accept "
                 "alongside its %d-token output reservation; clamping to %d.",
                 configured,
-                answer_model_id.value,
-                model_info.max_output_tokens,
+                answer_model_id,
+                output_tokens,
                 budget_ceiling,
             )
             return budget_ceiling

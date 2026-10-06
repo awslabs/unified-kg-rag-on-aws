@@ -222,6 +222,7 @@ class GraphGleaner(BaseProcessor):
             factory=self.factory,
             enable_output_fixing=self.config.fixing.enabled,
             output_fixing_model_id=self.config.fixing.fixing_model_id,
+            min_output_tokens=GraphRefinementPrompt.min_output_tokens,
         )
         self.graph_refiner = setup_chain(
             model_purpose=ModelPurpose.INGESTION,

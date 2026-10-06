@@ -151,6 +151,10 @@ aws:
     region_name: "ap-northeast-2" # Bedrock can live in a different region
     assumed_role_arn: null
     enable_global_profile: true   # 크로스 리전(글로벌) Bedrock 추론 프로파일 사용 — 처리량/가용성 향상
+    default_model_id: "anthropic.claude-sonnet-5-5"            # 'default' 등급 역할 전체(모델 선택 주의사항 참고)
+    fast_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"  # 'fast' 등급 역할 전체
+    default_max_output_tokens: 16384  # 요청당 max_tokens(모델 선택 주의사항 참고). null이면 모델 최대값
+    model_overrides: {}           # 검증된 기능 정보가 없는 모델의 기능 재정의
     enable_1m_context: false      # 1M 창이 베타인 모델에서 옵트인(장문 요금 프리미엄); Claude 5는 네이티브 1M
     effort: "high"                # 적응형 사고 모델의 추론 깊이: low | medium | high | xhigh | max
     guardrail:                    # optional Bedrock Guardrails (query path by default)
@@ -233,9 +237,63 @@ aws:
 
 #### 모델 선택 주의사항
 
-기본값은 추론 비중이 큰 단계에 `anthropic.claude-sonnet-5-5`(Claude Sonnet 5.5),
-경량 단계(요약·번역·키워드 추출)에 `anthropic.claude-haiku-4-5-...`입니다. 모든
-`*_model_id`에는 기존 Claude 3.x/4.x ID와 함께 다음 모델을 지정할 수 있습니다.
+모든 LLM 역할은 두 등급 중 하나에 속합니다. 추론 비중이 큰 역할은
+`aws.bedrock.default_model_id`(Claude Sonnet 5.5), 경량 역할은
+`aws.bedrock.fast_model_id`(Claude Haiku 4.5)를 쓰므로 파이프라인 전체의 모델을
+한 줄로 바꿀 수 있습니다. 역할별 `*_model_id` 키를 지정하면 등급보다 우선합니다.
+
+| 등급 | 역할(`*_model_id` 키) |
+| --- | --- |
+| `default` | `fixing.fixing_model_id`, `processing.graph_extraction.extraction_model_id`, `processing.gleaning.graph_refinement_model_id`, `processing.claim_extraction.extraction_model_id`, `graph.community_detection.report_generation.report_generation_model_id`, `search.{entity_extraction,context_building,answer_generation}_model_id`, `evaluation.evaluation_model_id` |
+| `fast` | `processing.chunking.chunking_model_id`, `processing.translation.translation_model_id`, `processing.graph_extraction.description_summarization.summary_model_id`, `search.{translation,strategy_selection}_model_id`, `search.global_search.{community_relevance,map_reduce,map}_model_id`, `search.drift_search.{query_refinement,keyword_expansion,convergence_assessment,primer}_model_id` |
+
+```yaml
+aws:
+  bedrock:
+    default_model_id: "openai.gpt-6-sol"    # default 등급 역할 전체
+search:
+  answer_generation_model_id: "anthropic.claude-opus-5-5"  # 역할 하나만 고정
+```
+
+모델 ID 키에는 어떤 Bedrock 모델 ID든, `us.anthropic.claude-sonnet-5-5` 같은
+추론 프로파일 ID(그대로 사용)든 지정할 수 있습니다. 아래 모델(과 기존 Claude
+3.x/4.x ID)은 검증된 기능 정보가 있습니다. 그 밖의 ID도 동작합니다.
+`anthropic.claude-*`는 세대별 요청 형식, `openai.gpt-*`는 GPT 형식, 다른
+공급자는 보수적인 Converse 요청(추론·샘플링 파라미터 없음, 32K 컨텍스트, 4K
+출력)을 쓰고 WARNING을 한 번 남깁니다. 모델 정보를 지정하거나 고치려면
+`aws.bedrock.model_overrides`를 씁니다.
+
+```yaml
+aws:
+  bedrock:
+    model_overrides:
+      "amazon.nova-pro-v1:0":
+        context_window_size: 300000
+        max_output_tokens: 10000
+```
+
+재정의 키는 기능 정보 필드(`context_window_size`, `max_output_tokens`,
+`supports_thinking`, `supports_sampling_params`, `supports_prompt_caching`,
+`supports_count_tokens`, `adaptive_thinking_only`,
+`requires_inference_profile` 등)이며 알 수 없는 키는 즉시 오류가 납니다.
+
+**출력 상한.** 요청마다 `max_tokens`로 `aws.bedrock.default_max_output_tokens`
+(16384)를 보내며 모델 최대값을 넘지 않게 맞춥니다. Bedrock은 요청 시작 시 입력 +
+`max_tokens`를 분당 토큰 할당량에서 미리 차감하므로, 이전처럼 모델 최대값(Claude
+5.x는 128K)을 요청하면 실제 사용량보다 훨씬 먼저 동시 수집 호출이 스로틀링됩니다.
+thinking 토큰도 `max_tokens`에 포함됩니다. 출력이 긴 프롬프트는 더 높은 하한을
+선언하며 이 값이 우선합니다. 그래프·클레임 추출, gleaning, 커뮤니티 보고서와 그
+출력 수정기는 32768, 문서 번역은 65536입니다. 답변이 잘리면(`stopReason:
+max_tokens`) 값을 올리고, 이전처럼 모델 최대값을 보내려면 `null`로 설정합니다.
+
+**프롬프트 캐싱.** 명시적 프롬프트 캐싱을 지원하는 Claude 모델에서는 각 시스템
+프롬프트 끝을 캐시 지점으로 표시합니다. Converse API(모든 추론 프로파일)에서는
+`cachePoint` 블록, InvokeModel에서는 `cache_control`을 씁니다. 시스템 프롬프트가
+모델의 최소 캐시 지점 크기(Claude Sonnet/Opus 5.5와 Opus 5는 512토큰, 대부분은
+1024토큰, Claude Haiku 4.5와 Opus 4.5-4.7은 4096토큰)보다 짧으면 표시하지
+않습니다. Bedrock이 요청은 받지만 아무것도 캐시하지 않기 때문입니다. 캐시 적중은
+응답의 `usage_metadata.input_token_details`에 `cache_read`로 나타나며, 캐시에서
+읽은 입력 토큰은 분당 토큰 할당량에 포함되지 않습니다.
 
 | 모델 ID | 공급자 | 컨텍스트 / 최대 출력 | 추론 제어 |
 | --- | --- | --- | --- |
@@ -292,7 +350,6 @@ Claude Fable 5 / 5.1은 제공하지 않습니다. 기본값이 아닌 계정 �
 ```yaml
 fixing:
   enabled: true
-  fixing_model_id: "anthropic.claude-sonnet-5-5"
 ```
 
 구조화된 스테이지에서 LLM이 잘못된 형식의 JSON을 반환하면, 실행을 실패시키는 대신
@@ -335,7 +392,6 @@ processing:
 ```yaml
   chunking:
     chunker_type: "intelligent"     # intelligent | simple
-    chunking_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     content_type: "markdown"
     min_chunk_size: 1000
     max_chunk_size: 8000            # must fit the embedding/rerank input
@@ -353,7 +409,6 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 ```yaml
   translation:
     enabled: true
-    translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     source_language: "en"           # predominant source language (no-op skip only)
     target_language: "en"
     additional_target_languages: null
@@ -365,7 +420,6 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 
 ```yaml
   graph_extraction:
-    extraction_model_id: "anthropic.claude-sonnet-5-5"
     max_entities_per_chunk: 50
     max_relationships_per_chunk: 50
     entity_confidence_threshold: 0.0
@@ -379,7 +433,6 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
       - "TEMPORAL: Dates, time periods, schedules, deadlines"
     description_summarization:      # collapse over-long merged descriptions
       enabled: true
-      summary_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
       force_summary_threshold_tokens: 600
       max_summary_tokens: 256
     entity_grounding:              # 환각 방지 가드 (옵트인, 기본 off)
@@ -402,8 +455,7 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 ```yaml
   gleaning:
     enabled: true
-    graph_refinement_model_id: "anthropic.claude-sonnet-5-5"
-    max_rounds: 3                   # later rounds re-glean only units that gained items
+    max_rounds: 3                   # 이후 라운드는 항목이 늘어난 단위만 다시 gleaning
     convergence_threshold: 0.8
     quality_threshold: 0.9
     min_improvement_threshold: 0.05
@@ -417,7 +469,6 @@ target_language`이고 `additional_target_languages`가 비어 있으면 **no-op
 ```yaml
   claim_extraction:
     enabled: false
-    extraction_model_id: "anthropic.claude-sonnet-5-5"
     max_entities_per_prompt: 100
 ```
 
@@ -449,7 +500,6 @@ graph:
     auto_resolution: true
     report_generation:              # LLM-generated community summaries (used by global search)
       enabled: true
-      report_generation_model_id: "anthropic.claude-sonnet-5-5"
       max_entities_per_report: 50
       max_report_context_tokens: 4000
 
@@ -507,13 +557,7 @@ indexing:
 
 ```yaml
 search:
-  translation_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
-  entity_extraction_model_id: "anthropic.claude-sonnet-5-5"
-  strategy_selection_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"   # the `auto` router
   auto_routable_strategies: ["local", "mix", "global", "drift"]  # `auto`가 고를 수 있는 전략
-  context_building_model_id: "anthropic.claude-sonnet-5-5"
-  answer_generation_model_id: "anthropic.claude-sonnet-5-5"    # the answer LLM
-
   hybrid:
     lexical_weight: 0.5
     vector_weight: 0.5
@@ -536,7 +580,6 @@ search:
     max_communities: 10
     use_dynamic_selection: false
     enable_map_reduce: true
-    map_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
     max_map_reduce_tokens: 8000
 
   local_search:
@@ -557,9 +600,10 @@ search:
 > 컨텍스트 예산과 같습니다(MS GraphRAG는 12000). 1M 토큰 답변 모델의 창에서 도출하면
 > 예산이 약 785K 토큰이 되어 실제로 제한이 걸리지 않으므로, 유형별 예산과 우선순위가
 > 아무것도 잘라 내지 않습니다. 이 값은 항상 `search.answer_generation_model_id`가 출력
-> 예약분과 함께 수용할 수 있는 한도로 클램프되며, 그때 경고 로그가 남습니다.
-> `max_context_tokens: null`이면 해당 모델의 컨텍스트 창에서 출력 예약분과 헤드룸 비율을
-> 뺀 값으로 예산을 도출하며, `aws.bedrock.enable_1m_context`를 켜면 1M 창이 베타
+> 예약분(답변 요청의 `max_tokens`, `aws.bedrock.default_max_output_tokens` 참고)과 함께
+> 수용할 수 있는 한도로 클램프되며, 그때 경고 로그가 남습니다.
+> `max_context_tokens: null`이면 해당 모델의 컨텍스트 창에서 같은 출력 예약분과 헤드룸
+> 비율을 뺀 값으로 예산을 도출하며, `aws.bedrock.enable_1m_context`를 켜면 1M 창이 베타
 > 옵트인인 모델에서 도출 예산이 함께 넓어집니다.
 
 ### 2.7 `memory`, `cache`, `logging`
@@ -588,7 +632,6 @@ logging:
 ```yaml
 evaluation:
   outputs_directory: "outputs/evaluation"
-  evaluation_model_id: "anthropic.claude-sonnet-5-5"
   enabled_evaluators:
     - langchain
     - ragas

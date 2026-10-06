@@ -41,6 +41,19 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB.
   indexing are re-run (for example `run-ingestion --force-rebuild`).
 
 ### Changed
+- Language-model ids are plain strings: every `*_model_id` key accepts any
+  Bedrock model id or inference-profile id, so a new model can be used without
+  a release. `aws.bedrock.default_model_id` and `aws.bedrock.fast_model_id`
+  set the model for all roles of their tier at once; a role's own
+  `*_model_id` still wins, so existing configs load unchanged. Ids without a
+  curated capability record get provider-family defaults (`anthropic.claude-*`
+  by generation, `openai.gpt-*`) or conservative Converse defaults, with one
+  warning, and `aws.bedrock.model_overrides` describes or corrects a model.
+  Python callers that read `config.<section>.<role>_model_id.value` should
+  drop `.value`; `LanguageModelId` members remain valid inputs. Claude Haiku,
+  Sonnet and Opus 4.5 now fail fast when no inference profile resolves, like
+  the other profile-only models.
+
 Retrieval and indexing defaults changed for latency, cost, and upstream parity.
 Each previous behaviour stays available through the setting in parentheses.
 - `mix`/`hybrid` run independent retrievals concurrently; the multi-hop Neptune
@@ -65,6 +78,21 @@ Each previous behaviour stays available through the setting in parentheses.
   `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).
 
 ### Fixed
+- Prompt caching now takes effect on the Converse API, which every Claude
+  4.5+/5.x inference profile uses. The system prompt carried an Anthropic
+  `cache_control` key that langchain-aws drops when it builds a Converse
+  request, so nothing was ever cached there; Converse requests now end the
+  system prompt with a native `cachePoint` block, and InvokeModel keeps
+  `cache_control`. A marker is only added when the system prompt reaches the
+  model's minimum checkpoint size (`min_cache_tokens` in the capability record).
+- LLM requests no longer ask for the model's maximum output by default.
+  Bedrock reserves input + `max_tokens` against the tokens-per-minute quota at
+  request start, so sending 128K on Claude 5.x throttled concurrent calls far
+  below real usage. `aws.bedrock.default_max_output_tokens` (16384) now caps
+  each request; long-output prompts (extraction, gleaning, claims, community
+  reports, document translation) keep a higher floor, and the derived
+  retrieval context budget reserves the capped output instead of the model
+  maximum. Set the key to `null` to restore the previous behaviour.
 - `custom_prompts` overrides for community reports
   (`community_report_system`/`_human`), conversation-memory entity extraction
   (`entity_extraction_*`) and the DRIFT query refinement, keyword expansion and

@@ -13,8 +13,9 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator, Iterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
+from langchain_aws import ChatBedrockConverse
 from langchain_classic.output_parsers import OutputFixingParser
 from langchain_core.output_parsers import BaseOutputParser
 from langchain_core.prompts import (
@@ -30,7 +31,8 @@ from unified_kg_rag.adapters.aws.bedrock_retry import (
     call_with_transient_retry,
     next_transient_retry_delay,
 )
-from unified_kg_rag.domain.models import LanguageModelId, ModelPurpose
+from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
+from unified_kg_rag.domain.models import ModelPurpose
 from unified_kg_rag.domain.prompts import BasePrompt, ResolvedPrompt
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import GraphRAGException, get_logger
@@ -45,27 +47,59 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+PromptCacheMarker = Literal["cache_control", "cache_point"]
+
+# Converse-native cache checkpoint. langchain-aws passes it through to the
+# request's system blocks; it drops an Anthropic cache_control key instead.
+_CACHE_POINT_BLOCK: dict[str, Any] = {"cachePoint": {"type": "default"}}
+
+
+def _prompt_cache_marker(
+    llm: Any, model_info: Any, resolved: ResolvedPrompt
+) -> PromptCacheMarker | None:
+    """Which cache marker the system prompt gets, or None for no caching.
+
+    Converse (``ChatBedrockConverse``, every inference profile) takes a native
+    ``cachePoint`` block; the InvokeModel body (``ChatBedrock``) takes an
+    Anthropic ``cache_control`` key. A system prompt shorter than the model's
+    minimum checkpoint size would be accepted but not cached, so it gets none.
+    """
+    if not (model_info and model_info.supports_prompt_caching):
+        return None
+    minimum = getattr(model_info, "min_cache_tokens", 0)
+    if estimate_token_count(resolved.system_prompt_template) < minimum:
+        return None
+    if isinstance(llm, ChatBedrockConverse):
+        return "cache_point"
+    return "cache_control"
+
+
 def _build_chat_prompt(
-    resolved: ResolvedPrompt, enable_prompt_cache: bool
+    resolved: ResolvedPrompt, cache_marker: PromptCacheMarker | None
 ) -> ChatPromptTemplate:
     """Assemble a LangChain ChatPromptTemplate from a backend-agnostic prompt.
 
     Lives in the adapter layer: turning the domain's ResolvedPrompt into
-    LangChain message templates is a backend concern. When prompt caching is
-    enabled, the system message carries an ephemeral cache_control marker.
+    LangChain message templates is a backend concern. ``cache_marker`` marks
+    the end of the system prompt as a prompt-cache checkpoint.
     """
     system_template: str | list[str | dict[str, Any]]
-    if enable_prompt_cache:
-        # A templated content block (not a literal SystemMessage) so system-side
-        # placeholders such as {entity_types} are substituted and escaped braces
-        # render exactly as in the non-cache path; LangChain keeps extra block
-        # keys, so the cache_control marker survives formatting.
+    # Templated content blocks (not a literal SystemMessage) so system-side
+    # placeholders such as {entity_types} are substituted and escaped braces
+    # render exactly as in the non-cache path; LangChain keeps extra block keys
+    # and non-text blocks, so the cache markers survive formatting.
+    if cache_marker == "cache_control":
         system_template = [
             {
                 "type": "text",
                 "text": resolved.system_prompt_template,
                 "cache_control": {"type": "ephemeral"},
             }
+        ]
+    elif cache_marker == "cache_point":
+        system_template = [
+            {"type": "text", "text": resolved.system_prompt_template},
+            dict(_CACHE_POINT_BLOCK),
         ]
     else:
         system_template = resolved.system_prompt_template
@@ -196,13 +230,16 @@ def with_transient_retry(
 def create_robust_xml_output_parser(
     factory: LLMFactoryPort,
     enable_output_fixing: bool,
-    output_fixing_model_id: LanguageModelId,
+    output_fixing_model_id: str,
     model_purpose: ModelPurpose = ModelPurpose.QUERY,
+    min_output_tokens: int = 0,
 ) -> BaseOutputParser:
     """Build the XML parser, optionally wrapped in an LLM output fixer.
 
     ``model_purpose`` is forwarded to the fixing LLM so it gets the same
-    per-path policy (e.g. guardrail scope) as the chain it repairs.
+    per-path policy (e.g. guardrail scope) as the chain it repairs, and
+    ``min_output_tokens`` (the repaired prompt's output floor) so a long
+    output can be re-emitted in full.
     """
     base_parser = RobustXMLOutputParser()
     if not enable_output_fixing:
@@ -210,16 +247,18 @@ def create_robust_xml_output_parser(
 
     try:
         fixing_llm = factory.get_model(
-            model_id=output_fixing_model_id, model_purpose=model_purpose
+            model_id=output_fixing_model_id,
+            model_purpose=model_purpose,
+            min_output_tokens=min_output_tokens,
         )
         logger.info(
-            "Created OutputFixingParser with model: '%s'", output_fixing_model_id.value
+            "Created OutputFixingParser with model: '%s'", output_fixing_model_id
         )
         return OutputFixingParser.from_llm(parser=base_parser, llm=fixing_llm)
     except Exception as e:
         logger.error(
             "Failed to create OutputFixingParser with model %s: %s",
-            output_fixing_model_id.value,
+            output_fixing_model_id,
             e,
         )
         raise GraphRAGException(f"Failed to create OutputFixingParser: {e}") from e
@@ -227,7 +266,7 @@ def create_robust_xml_output_parser(
 
 def setup_chain(
     factory: LLMFactoryPort,
-    model_id: LanguageModelId,
+    model_id: str,
     prompt_class: type[BasePrompt],
     parser: BaseOutputParser,
     custom_prompts: CustomPromptConfig | None = None,
@@ -247,16 +286,18 @@ def setup_chain(
     """
     try:
         llm = factory.get_model(
-            model_id=model_id, model_purpose=model_purpose, **kwargs
+            model_id=model_id,
+            model_purpose=model_purpose,
+            min_output_tokens=prompt_class.min_output_tokens,
+            **kwargs,
         )
         model_info = factory.get_model_info(model_id)
-        enable_prompt_cache = (
-            model_info.supports_prompt_caching if model_info else False
-        )
         resolved = prompt_class.resolve(custom_prompts=custom_prompts)
-        prompt = _build_chat_prompt(resolved, enable_prompt_cache)
+        prompt = _build_chat_prompt(
+            resolved, _prompt_cache_marker(llm, model_info, resolved)
+        )
         chain: Runnable = prompt | llm | parser
-        logger.debug("Successfully created LLM chain with model: '%s'", model_id.value)
+        logger.debug("Successfully created LLM chain with model: '%s'", model_id)
         retry = (
             factory.config.aws.bedrock.transient_retry
             if model_purpose is ModelPurpose.QUERY
@@ -265,7 +306,7 @@ def setup_chain(
         )
         return with_transient_retry(chain, operation=prompt_class.__name__, retry=retry)
     except Exception as e:
-        logger.error("Failed to setup LLM chain with model '%s': %s", model_id.value, e)
+        logger.error("Failed to setup LLM chain with model '%s': %s", model_id, e)
         raise GraphRAGException(
-            f"Failed to setup LLM chain with model '{model_id.value}': {e}"
+            f"Failed to setup LLM chain with model '{model_id}': {e}"
         ) from e

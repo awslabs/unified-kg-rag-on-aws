@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import re
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
@@ -14,7 +15,7 @@ from langchain_aws.document_compressors.rerank import BedrockRerank
 from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
 from langchain_core.documents import Document
 from langchain_core.outputs import ChatGeneration, LLMResult
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
 
 from unified_kg_rag.adapters.aws.bedrock_retry import call_with_transient_retry
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
@@ -25,7 +26,7 @@ from unified_kg_rag.domain.models import (
     ModelPurpose,
     RerankModelId,
 )
-from unified_kg_rag.domain.models.config import TransientRetryConfig
+from unified_kg_rag.domain.models.config import BedrockConfig, TransientRetryConfig
 from unified_kg_rag.shared import (
     AWSServiceError,
     EmbeddingModelError,
@@ -55,7 +56,9 @@ class EmbeddingModelInfo(BaseModel):
     )
 
 
-ModelProvider = Literal["anthropic", "openai"]
+# "other" is any provider without provider-specific request shaping: it goes
+# through Converse with no reasoning block, sampling params or cache markers.
+ModelProvider = Literal["anthropic", "openai", "other"]
 
 # Effort levels each model family accepts on bedrock-runtime, as reported by
 # the service's own validation errors. Anthropic levels are sent as
@@ -73,12 +76,16 @@ _OPENAI_EFFORTS: frozenset[str] = frozenset({"low", "medium", "high", "xhigh", "
 
 
 class LanguageModelInfo(BaseModel):
+    # Forbid unknown keys so a typo in aws.bedrock.model_overrides fails fast.
+    model_config = ConfigDict(extra="forbid")
+
     provider: ModelProvider = Field(
         default="anthropic",
         description=(
             "Model provider. Selects the provider-specific request shape: "
             "Anthropic thinking/output_config, anthropic_beta headers and the "
-            "legacy stop sequence for 'anthropic'; reasoning.effort for 'openai'."
+            "legacy stop sequence for 'anthropic'; reasoning.effort for 'openai'; "
+            "a plain Converse request for 'other'."
         ),
     )
     context_window_size: int = Field(
@@ -94,6 +101,15 @@ class LanguageModelInfo(BaseModel):
     supports_prompt_caching: bool = Field(
         default=False,
         description="Whether the model supports prompt caching to improve performance.",
+    )
+    min_cache_tokens: int = Field(
+        default=1024,
+        ge=0,
+        description=(
+            "Minimum prompt-prefix tokens for a cache checkpoint. A shorter "
+            "system prompt gets no cache marker: Bedrock would accept it but "
+            "cache nothing."
+        ),
     )
     supports_thinking: bool = Field(
         default=False,
@@ -250,12 +266,13 @@ _EMBEDDING_MODEL_INFO: dict[EmbeddingModelId, EmbeddingModelInfo] = {
 }
 
 # Capability sources: the Amazon Bedrock model cards
-# (docs.aws.amazon.com/bedrock/latest/userguide/model-card-<provider>-<model>.html)
-# and the adaptive-thinking guide (claude-messages-adaptive-thinking.html).
+# (docs.aws.amazon.com/bedrock/latest/userguide/model-card-<provider>-<model>.html),
+# the adaptive-thinking guide (claude-messages-adaptive-thinking.html) and, for
+# min_cache_tokens, the prompt-caching guide (prompt-caching.html).
 # Request-shape fields (effort levels, thinking/temperature acceptance,
 # CountTokens) for the Claude 4.6+ and GPT entries were checked against live
 # bedrock-runtime responses.
-_LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
+_LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
     # --- Claude 5.5 -----------------------------------------------------
     # 1M context / 128K output; adaptive thinking with effort low..max. Both
     # reject temperature ("deprecated for this model") and thinking types other
@@ -264,6 +281,7 @@ _LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
         context_window_size=1000000,
         max_output_tokens=128000,
         supports_prompt_caching=True,
+        min_cache_tokens=512,
         supports_thinking=True,
         supports_1m_context_window=True,
         native_1m_context_window=True,
@@ -277,6 +295,7 @@ _LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
         context_window_size=1000000,
         max_output_tokens=128000,
         supports_prompt_caching=True,
+        min_cache_tokens=512,
         supports_thinking=True,
         supports_1m_context_window=True,
         native_1m_context_window=True,
@@ -305,6 +324,7 @@ _LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
         context_window_size=1000000,
         max_output_tokens=128000,
         supports_prompt_caching=True,
+        min_cache_tokens=512,
         supports_thinking=True,
         supports_1m_context_window=True,
         native_1m_context_window=True,
@@ -337,6 +357,7 @@ _LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
         context_window_size=1000000,
         max_output_tokens=128000,
         supports_prompt_caching=True,
+        min_cache_tokens=4096,
         supports_thinking=True,
         supports_1m_context_window=True,
         native_1m_context_window=True,
@@ -354,6 +375,7 @@ _LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
         context_window_size=1000000,
         max_output_tokens=128000,
         supports_prompt_caching=True,
+        min_cache_tokens=4096,
         supports_thinking=True,
         supports_1m_context_window=True,
         native_1m_context_window=True,
@@ -396,11 +418,14 @@ _LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
         max_output_tokens=8192,
         supports_performance_optimization=True,
         supports_prompt_caching=True,
+        min_cache_tokens=2048,
     ),
     LanguageModelId.CLAUDE_V4_5_HAIKU: LanguageModelInfo(
         context_window_size=200000,
         max_output_tokens=64000,
         supports_prompt_caching=True,
+        min_cache_tokens=4096,
+        requires_inference_profile=True,
     ),
     LanguageModelId.CLAUDE_V3_5_SONNET: LanguageModelInfo(
         context_window_size=200000, max_output_tokens=8192
@@ -427,6 +452,7 @@ _LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
         supports_prompt_caching=True,
         supports_thinking=True,
         supports_1m_context_window=True,
+        requires_inference_profile=True,
     ),
     LanguageModelId.CLAUDE_V4_OPUS: LanguageModelInfo(
         context_window_size=200000,
@@ -446,8 +472,10 @@ _LANGUAGE_MODEL_INFO: dict[LanguageModelId, LanguageModelInfo] = {
         context_window_size=200000,
         max_output_tokens=64000,
         supports_prompt_caching=True,
+        min_cache_tokens=4096,
         supports_thinking=True,
         supports_1m_context_window=True,
+        requires_inference_profile=True,
     ),
     # --- OpenAI GPT (proprietary) ---------------------------------------
     # Served on bedrock-runtime through Converse with us./global. inference
@@ -582,14 +610,187 @@ _RERANK_MODEL_INFO: dict[str, RerankModelInfo] = {
 }
 
 
-def get_language_model_info(model_id: LanguageModelId) -> LanguageModelInfo | None:
-    """Capability record for a language model, or None if unregistered.
+# Geography prefixes of system-defined cross-region inference profiles. An id
+# that already carries one is a profile id: it is invoked as-is and its
+# capabilities are those of the base model id behind the prefix.
+_PROFILE_PREFIXES: tuple[str, ...] = (
+    "global.",
+    "us-gov.",
+    "us.",
+    "eu.",
+    "apac.",
+    "jp.",
+    "au.",
+    "ca.",
+)
 
-    Public read accessor for the capability table so callers that need a
-    model's limits without constructing a factory (which opens a boto client)
-    don't reach into the private dict.
+# Claude generation from either id style: 'claude-3-5-haiku-…' / 'claude-3-haiku-…'
+# (version first) or 'claude-sonnet-4-5-…' / 'claude-opus-4-6-v1' (family first).
+# The minor part is 1-2 digits so a date suffix ('-20250514') is not read as one.
+_CLAUDE_VERSION = re.compile(
+    r"^anthropic\.claude-(?:"
+    r"(?P<lead_major>\d+)(?:-(?P<lead_minor>\d{1,2}))?-[a-z]"
+    r"|[a-z]+-(?P<major>\d+)(?:-(?P<minor>\d{1,2})(?!\d))?"
+    r")"
+)
+
+# Records for ids without a curated table row. Deliberately conservative: a
+# window or output limit that is too small only shrinks budgets, while one that
+# is too large fails requests. Raise them via aws.bedrock.model_overrides.
+_CLAUDE_ADAPTIVE_ONLY_DEFAULT = LanguageModelInfo(
+    # Claude 4.7+ request shape: adaptive thinking only, no sampling params.
+    context_window_size=200000,
+    max_output_tokens=64000,
+    supports_prompt_caching=True,
+    supports_thinking=True,
+    adaptive_thinking_only=True,
+    supports_sampling_params=False,
+    supports_count_tokens=False,
+)
+_CLAUDE_ADAPTIVE_DEFAULT = LanguageModelInfo(
+    # Claude 4.6 request shape: opt-in adaptive thinking, sampling allowed.
+    context_window_size=200000,
+    max_output_tokens=64000,
+    supports_prompt_caching=True,
+    supports_thinking=True,
+    supports_adaptive_thinking=True,
+    supports_count_tokens=False,
+)
+_CLAUDE_BUDGET_THINKING_DEFAULT = LanguageModelInfo(
+    # Claude 3.7 - 4.5 request shape: opt-in budget_tokens thinking.
+    context_window_size=200000,
+    max_output_tokens=64000,
+    supports_prompt_caching=True,
+    supports_thinking=True,
+    supports_count_tokens=False,
+)
+_CLAUDE_LEGACY_DEFAULT = LanguageModelInfo(
+    context_window_size=200000,
+    max_output_tokens=4096,
+    supports_count_tokens=False,
+)
+_OPENAI_DEFAULT = LanguageModelInfo(
+    # GPT on Bedrock: Converse + reasoning.effort, no sampling params, implicit
+    # caching only (explicit cache markers are rejected on Converse).
+    provider="openai",
+    context_window_size=128000,
+    max_output_tokens=32000,
+    supports_thinking=True,
+    supports_sampling_params=False,
+    supports_count_tokens=False,
+)
+_UNKNOWN_DEFAULT = LanguageModelInfo(
+    provider="other",
+    context_window_size=32000,
+    max_output_tokens=4096,
+    supports_sampling_params=False,
+    supports_count_tokens=False,
+)
+
+_warned_uncurated: set[str] = set()
+_warned_lock = threading.Lock()
+
+
+def base_model_id(model_id: str) -> str:
+    """``model_id`` without a cross-region inference-profile prefix."""
+    for prefix in _PROFILE_PREFIXES:
+        if model_id.startswith(prefix):
+            return model_id[len(prefix) :]
+    return model_id
+
+
+def _family_default(model_id: str) -> LanguageModelInfo:
+    """Provider-family record for an id with no curated table row."""
+    if model_id.startswith("openai.gpt-"):
+        return _OPENAI_DEFAULT
+    if not model_id.startswith("anthropic.claude-"):
+        return _UNKNOWN_DEFAULT
+    match = _CLAUDE_VERSION.match(model_id)
+    if match is None:
+        return _CLAUDE_LEGACY_DEFAULT
+    major = int(match["lead_major"] or match["major"])
+    minor = int(match["lead_minor"] or match["minor"] or 0)
+    if (major, minor) >= (4, 7):
+        return _CLAUDE_ADAPTIVE_ONLY_DEFAULT
+    if (major, minor) >= (4, 6):
+        return _CLAUDE_ADAPTIVE_DEFAULT
+    if (major, minor) >= (3, 7):
+        return _CLAUDE_BUDGET_THINKING_DEFAULT
+    return _CLAUDE_LEGACY_DEFAULT
+
+
+def _warn_uncurated(model_id: str, info: LanguageModelInfo) -> None:
+    with _warned_lock:
+        if model_id in _warned_uncurated:
+            return
+        _warned_uncurated.add(model_id)
+    if info is _UNKNOWN_DEFAULT:
+        logger.warning(
+            "Model '%s' has no capability record and no known provider family; "
+            "using conservative defaults (Converse, no reasoning or sampling "
+            "params, %d-token window, %d-token output). Set "
+            "aws.bedrock.model_overrides['%s'] to describe it.",
+            model_id,
+            info.context_window_size,
+            info.max_output_tokens,
+            model_id,
+        )
+    else:
+        logger.warning(
+            "Model '%s' has no capability record; using %s family defaults "
+            "(%d-token window, %d-token output). Set "
+            "aws.bedrock.model_overrides['%s'] if they do not fit.",
+            model_id,
+            info.provider,
+            info.context_window_size,
+            info.max_output_tokens,
+            model_id,
+        )
+
+
+def get_language_model_info(
+    model_id: str, overrides: dict[str, dict[str, Any]] | None = None
+) -> LanguageModelInfo:
+    """Capability record for any Bedrock language-model id.
+
+    Resolution order: the curated table row for the base id (profile prefix
+    stripped), else the provider-family default by id prefix (warned once per
+    id), then any ``aws.bedrock.model_overrides`` entry for the id on top.
+    Public so callers that need a model's limits without constructing a factory
+    (which opens a boto client) don't reach into the private table.
     """
-    return _LANGUAGE_MODEL_INFO.get(model_id)
+    model_id = str(model_id)
+    base_id = base_model_id(model_id)
+    override = (overrides or {}).get(model_id) or (overrides or {}).get(base_id)
+    info = _LANGUAGE_MODEL_INFO.get(base_id)
+    if info is None:
+        info = _family_default(base_id)
+        if not override:
+            _warn_uncurated(base_id, info)
+    if not override:
+        return info
+    try:
+        return LanguageModelInfo.model_validate({**info.model_dump(), **override})
+    except ValidationError as e:
+        raise LanguageModelError(
+            f"Invalid aws.bedrock.model_overrides entry for '{model_id}': {e}"
+        ) from e
+
+
+def effective_max_output_tokens(
+    model_info: LanguageModelInfo,
+    bedrock_config: BedrockConfig,
+    min_output_tokens: int = 0,
+) -> int:
+    """max_tokens for a request that does not set one explicitly.
+
+    The configured default cap, raised to the prompt's output floor, never
+    above the model maximum; an unset cap means the model maximum.
+    """
+    cap = bedrock_config.default_max_output_tokens
+    if cap is None:
+        return model_info.max_output_tokens
+    return min(max(cap, min_output_tokens), model_info.max_output_tokens)
 
 
 ModelIdT = TypeVar("ModelIdT")
@@ -733,15 +934,12 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _get_model_info_dict(self) -> dict[ModelIdT, ModelInfoT]:
-        raise NotImplementedError
-
-    @abstractmethod
     def get_model(self, model_id: ModelIdT, **kwargs: Any) -> WrapperT:
         raise NotImplementedError
 
+    @abstractmethod
     def get_model_info(self, model_id: ModelIdT) -> ModelInfoT | None:
-        return self._get_model_info_dict().get(model_id)
+        raise NotImplementedError
 
 
 class BedrockCrossRegionModelHelper:
@@ -754,11 +952,15 @@ class BedrockCrossRegionModelHelper:
     @staticmethod
     def get_cross_region_model_id(
         boto_session: boto3.Session,
-        model_id: LanguageModelId,
+        model_id: str,
         region_name: str,
         assumed_role_arn: str | None = None,
         enable_global_profile: bool = False,
     ) -> str:
+        model_id = str(model_id)
+        if base_model_id(model_id) != model_id:
+            # Already an inference-profile id (e.g. 'us.anthropic.…').
+            return model_id
         try:
             boto_session = get_assumed_role_boto_session(
                 boto_session, assumed_role_arn=assumed_role_arn
@@ -792,25 +994,25 @@ class BedrockCrossRegionModelHelper:
                 return regional_model_id
             logger.debug(
                 "Cross-region models not available, using standard model: '%s'",
-                model_id.value,
+                model_id,
             )
-            return model_id.value
+            return model_id
         except Exception as e:
             logger.warning(
                 "Failed to resolve cross-region model for '%s': %s. Falling back to standard model.",
-                model_id.value,
+                model_id,
                 e,
             )
-            return model_id.value
+            return model_id
 
     @staticmethod
     def _build_cross_region_model_id(
-        model_id: LanguageModelId, region_name: str, is_global: bool = False
+        model_id: str, region_name: str, is_global: bool = False
     ) -> str:
         if is_global:
-            return f"global.{model_id.value}"
+            return f"global.{model_id}"
         prefix = "apac" if region_name.startswith("ap-") else region_name[:2]
-        return f"{prefix}.{model_id.value}"
+        return f"{prefix}.{model_id}"
 
     @classmethod
     def _get_available_profiles(cls, bedrock_client: Any, region_name: str) -> set[str]:
@@ -897,8 +1099,8 @@ class BedrockEmbeddingModelFactory(
     def _get_boto_service_name(self) -> str:
         return "bedrock-runtime"
 
-    def _get_model_info_dict(self) -> dict[EmbeddingModelId, EmbeddingModelInfo]:
-        return _EMBEDDING_MODEL_INFO
+    def get_model_info(self, model_id: EmbeddingModelId) -> EmbeddingModelInfo | None:
+        return _EMBEDDING_MODEL_INFO.get(model_id)
 
     def get_model(
         self, model_id: EmbeddingModelId, **kwargs: Any
@@ -1025,9 +1227,7 @@ class GuardrailInterventionHandler(BaseCallbackHandler):
 
 
 class BedrockLanguageModelFactory(
-    BaseBedrockModelFactory[
-        LanguageModelId, LanguageModelInfo, ChatBedrock | ChatBedrockConverse
-    ]
+    BaseBedrockModelFactory[str, LanguageModelInfo, ChatBedrock | ChatBedrockConverse]
 ):
     DEFAULT_TEMPERATURE: ClassVar[float] = 0.0
     DEFAULT_TOP_K: ClassVar[int] = 50
@@ -1043,19 +1243,19 @@ class BedrockLanguageModelFactory(
     def _get_boto_service_name(self) -> str:
         return "bedrock-runtime"
 
-    def _get_model_info_dict(self) -> dict[LanguageModelId, LanguageModelInfo]:
-        return _LANGUAGE_MODEL_INFO
+    def get_model_info(self, model_id: str) -> LanguageModelInfo:
+        """Capability record for any model id (see get_language_model_info)."""
+        return get_language_model_info(
+            model_id, self.config.aws.bedrock.model_overrides
+        )
 
     def get_model(
         self,
-        model_id: LanguageModelId,
+        model_id: str,
         **kwargs: Any,
     ) -> ChatBedrock | ChatBedrockConverse:
+        model_id = str(model_id)
         model_info = self.get_model_info(model_id)
-        if not model_info:
-            raise LanguageModelError(
-                f"Unsupported language model ID: '{model_id.value}'"
-            )
         resolved_model_id = BedrockCrossRegionModelHelper.get_cross_region_model_id(
             self.boto_session,
             model_id,
@@ -1063,23 +1263,23 @@ class BedrockLanguageModelFactory(
             assumed_role_arn=self.config.aws.bedrock.assumed_role_arn,
             enable_global_profile=self.config.aws.bedrock.enable_global_profile,
         )
-        is_cross_region = resolved_model_id != model_id.value
+        is_cross_region = base_model_id(resolved_model_id) != resolved_model_id
         if model_info.requires_inference_profile and not is_cross_region:
             # Claude 4.6+ ships INFERENCE_PROFILE-only (no ON_DEMAND throughput),
             # so the bare model id is not invocable. Resolution silently falls
             # back to it, which would surface later as an opaque Bedrock error —
             # fail here with the actual remedy instead.
             raise LanguageModelError(
-                f"Model '{model_id.value}' is only available through a "
+                f"Model '{model_id}' is only available through a "
                 f"cross-region inference profile, but none resolved in region "
                 f"'{self.region_name}'. Enable aws.bedrock.enable_global_profile, "
                 f"grant bedrock:ListInferenceProfiles, or choose a region where "
                 f"a profile for this model exists."
             )
         # ChatBedrock speaks the Anthropic InvokeModel body; every other provider
-        # goes through the provider-neutral Converse API. Non-Anthropic models are
-        # profile-only today (enforced above), so this also guards a future
-        # on-demand entry from being sent an Anthropic-shaped body.
+        # (and every inference profile) goes through the provider-neutral
+        # Converse API, so an on-demand non-Anthropic model is never sent an
+        # Anthropic-shaped body.
         use_converse = is_cross_region or model_info.provider != "anthropic"
         model_config = self._build_model_config(
             model_info, resolved_model_id, use_converse, **kwargs
@@ -1101,8 +1301,16 @@ class BedrockLanguageModelFactory(
         **kwargs: Any,
     ) -> dict[str, Any]:
         enable_thinking = kwargs.get("enable_thinking", False)
+        # An explicit max_tokens is clamped as requested; otherwise the default
+        # cap applies, raised to the prompt's own output floor.
         final_max_tokens = self._validate_max_tokens(
-            kwargs.get("max_tokens"), model_info
+            kwargs.get("max_tokens")
+            or effective_max_output_tokens(
+                model_info,
+                self.config.aws.bedrock,
+                kwargs.get("min_output_tokens", 0),
+            ),
+            model_info,
         )
         config = self._build_base_config(
             resolved_model_id, is_cross_region, model_info, **kwargs
@@ -1334,18 +1542,15 @@ class BedrockLanguageModelFactory(
         )
 
     @staticmethod
-    def _validate_max_tokens(
-        max_tokens: int | None, model_info: LanguageModelInfo
-    ) -> int:
-        final_max_tokens = max_tokens or model_info.max_output_tokens
-        if final_max_tokens > model_info.max_output_tokens:
+    def _validate_max_tokens(max_tokens: int, model_info: LanguageModelInfo) -> int:
+        if max_tokens > model_info.max_output_tokens:
             logger.warning(
                 "Requested max_tokens (%d) exceeds model's maximum (%d). Adjusting.",
-                final_max_tokens,
+                max_tokens,
                 model_info.max_output_tokens,
             )
             return model_info.max_output_tokens
-        return final_max_tokens
+        return max_tokens
 
     @staticmethod
     def _should_enable_performance_optimization(
@@ -1432,8 +1637,8 @@ class BedrockRerankModelFactory(
     def _get_boto_service_name(self) -> str:
         return "bedrock-agent-runtime"
 
-    def _get_model_info_dict(self) -> dict[str, RerankModelInfo]:
-        return _RERANK_MODEL_INFO
+    def get_model_info(self, model_id: str) -> RerankModelInfo | None:
+        return _RERANK_MODEL_INFO.get(model_id)
 
     def get_model(
         self, model_id: RerankModelId | str, **kwargs: Any

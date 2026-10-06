@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class GraphExtractionPrompt(BasePrompt):
     prompt_key = "graph_extraction"
+    min_output_tokens = 32768
     input_variables = [
         "input_text",
         "max_entities_per_chunk",
@@ -156,6 +157,7 @@ Begin extraction now:"""
 @dataclass(frozen=True)
 class ClaimExtractionPrompt(BasePrompt):
     prompt_key = "claim_extraction"
+    min_output_tokens = 32768
     input_variables = ["input_text", "entity_specs"]
 
     system_prompt_template = """You are an expert claim extraction specialist focused on identifying and structuring all
@@ -270,6 +272,7 @@ Begin claim extraction:"""
 @dataclass(frozen=True)
 class GraphRefinementPrompt(BasePrompt):
     prompt_key = "graph_refinement"
+    min_output_tokens = 32768
     input_variables = [
         "text",
         "entities",
@@ -430,6 +433,7 @@ Begin analysis:"""
 @dataclass(frozen=True)
 class CommunityReportPrompt(BasePrompt):
     prompt_key = "community_report"
+    min_output_tokens = 32768
     input_variables = [
         "community_id",
         "entities",

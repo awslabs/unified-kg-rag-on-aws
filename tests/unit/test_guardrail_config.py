@@ -339,7 +339,7 @@ def test_output_fixing_llm_inherits_purpose() -> None:
         output_fixing_model_id=LanguageModelId.CLAUDE_V4_5_HAIKU,
         model_purpose=ModelPurpose.INGESTION,
     )
-    assert factory.calls == [{"model_purpose": ModelPurpose.INGESTION}]
+    assert [c["model_purpose"] for c in factory.calls] == [ModelPurpose.INGESTION]
 
 
 _INGESTION = "unified_kg_rag.adapters.ingestion"

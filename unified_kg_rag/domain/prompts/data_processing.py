@@ -186,6 +186,8 @@ CONSOLIDATED DESCRIPTION:"""
 
 @dataclass(frozen=True)
 class TextTranslationPrompt(BasePrompt):
+    # The output is the whole translated chunk (up to max_chunk_size chars).
+    min_output_tokens = 65536
     input_variables = ["text", "target_language"]
 
     system_prompt_template = """You are a professional translator with expertise in technical documents and specialized

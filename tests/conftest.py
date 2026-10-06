@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from unified_kg_rag.adapters.aws.bedrock import BedrockCrossRegionModelHelper
 from unified_kg_rag.domain.models import (
     Community,
     CommunityReport,
@@ -21,6 +22,33 @@ from unified_kg_rag.domain.models import (
     Relationship,
     TextUnit,
 )
+
+_PROFILE_PREFIXES = ("global", "us", "eu", "apac")
+_OFFLINE_REGIONS = ("us-east-1", "us-west-2", "eu-west-1", "ap-northeast-2")
+
+
+@pytest.fixture(autouse=True)
+def _offline_inference_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve Bedrock inference profiles from a static set, never from AWS.
+
+    Profile resolution otherwise calls ``bedrock:ListInferenceProfiles``. That
+    call succeeds on a developer machine with credentials and fails in CI, so
+    profile-only models (e.g. Claude Haiku 4.5) behaved differently between the
+    two. Tests that exercise the lookup itself clear this cache and stub the
+    client explicitly.
+    """
+    from unified_kg_rag.domain.models import LanguageModelId
+
+    profiles = {
+        f"{prefix}.{model.value}"
+        for model in LanguageModelId
+        for prefix in _PROFILE_PREFIXES
+    }
+    monkeypatch.setattr(
+        BedrockCrossRegionModelHelper,
+        "_profiles_by_region",
+        {region: set(profiles) for region in _OFFLINE_REGIONS},
+    )
 
 
 @pytest.fixture
