@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from structlog.contextvars import bound_contextvars
 
 from unified_kg_rag.adapters.aws import S3CacheManager
+from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.application.ingestion.pipeline_stages import (
     ClaimExtractionStage,
     ClaimResolutionStage,
@@ -48,7 +49,11 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.cache_manager import CacheStrategy
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
 from unified_kg_rag.shared.pipeline_manager import STAGE_OUTPUTS
-from unified_kg_rag.shared.utils import compute_hash, stage_cache_key
+from unified_kg_rag.shared.utils import (
+    compute_hash,
+    corpus_manifest_fingerprint,
+    stage_cache_key,
+)
 
 logger = get_logger(__name__)
 T = TypeVar("T", bound=BaseModel)
@@ -104,6 +109,10 @@ class DataIngestionPipeline:
         stage: {attr: (model, attr) for attr, model in outputs.items()}
         for stage, outputs in STAGE_OUTPUTS.items()
     }
+
+    # Fingerprint of the run's corpus contents, computed in run(); part of every
+    # stage cache key so a changed corpus is a cache miss, not a stale resume.
+    corpus_fingerprint: str | None = None
 
     def __init__(
         self,
@@ -304,6 +313,11 @@ class DataIngestionPipeline:
             if self.pipeline_config.s3_sync_enabled:
                 self._sync_cache_with_s3(resolved_pipeline_id, "download")
 
+            # Part of every stage cache key, so it must be set before the
+            # resume decision reads the cache.
+            self.corpus_fingerprint = self._compute_corpus_fingerprint(source_path)
+            self.resume_manager.corpus_fingerprint = self.corpus_fingerprint
+
             # force_rebuild must ignore ALL existing cache: skip the resume path
             # entirely so the run re-executes from the beginning even when a
             # prior metadata file exists (FORCE_REFRESH alone only bypasses
@@ -345,6 +359,16 @@ class DataIngestionPipeline:
         except Exception as e:
             logger.exception("Pipeline execution failed: %s", e)
             raise PipelineExecutionError(f"Failed to run pipeline: {e}") from e
+
+    def _compute_corpus_fingerprint(self, source_directory: Path) -> str:
+        """Fingerprint the files this run can ingest (see cache_keys)."""
+        extensions = {*ParserFactory.get_supported_extensions(), ".json"}
+        owned = [Path(self.pipeline_config.local_directory)]
+        if self.target_directory is not None:
+            owned.append(self.target_directory)
+        fingerprint = corpus_manifest_fingerprint(source_directory, extensions, owned)
+        logger.info("Corpus manifest fingerprint: '%s'", fingerprint)
+        return fingerprint
 
     @staticmethod
     def _validate_source_directory(source_directory: Path) -> None:
@@ -643,7 +667,12 @@ class DataIngestionPipeline:
                 # next run instead of silently resuming from stale output.
                 cache_entry = self.cache_manager.save_stage_result(
                     data=data_to_save,
-                    cache_key=stage_cache_key(self.config, stage_type, context_attr),
+                    cache_key=stage_cache_key(
+                        self.config,
+                        stage_type,
+                        context_attr,
+                        self.corpus_fingerprint,
+                    ),
                     stage_name=stage_name,
                     pipeline_id=context.pipeline_id,
                     metadata={

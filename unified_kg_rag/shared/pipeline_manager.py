@@ -389,6 +389,9 @@ class PipelineResumeManager:
         # key for any customised run — a cache miss (recompute), never a stale
         # hit.
         self.config = config or Config()
+        # Set by the pipeline once the run's corpus is known; folded into the
+        # cache keys exactly as the save path folds it.
+        self.corpus_fingerprint: str | None = None
 
     def determine_resume_strategy(
         self, pipeline_id: str, explicit_stage: str | None = None
@@ -559,7 +562,9 @@ class PipelineResumeManager:
 
         missing = []
         for context_attr in self.STAGE_CACHE_MAPPING.get(stage_type, {}):
-            cache_key = stage_cache_key(self.config, stage_type, context_attr)
+            cache_key = stage_cache_key(
+                self.config, stage_type, context_attr, self.corpus_fingerprint
+            )
             if not self.cache_manager.cache_exists(cache_key, pipeline_id):
                 missing.append((context_attr, cache_key))
         return missing
@@ -649,7 +654,9 @@ class PipelineResumeManager:
             try:
                 model_class = self.CONTEXT_ATTR_TO_MODEL.get(context_attr)
                 data: Any = self.cache_manager.load_stage_result(
-                    cache_key=stage_cache_key(self.config, stage_type, context_attr),
+                    cache_key=stage_cache_key(
+                        self.config, stage_type, context_attr, self.corpus_fingerprint
+                    ),
                     pipeline_id=pipeline_id,
                     data_type=model_class if model_class else None,
                 )

@@ -27,6 +27,14 @@ are deliberately excluded: they change how long a stage takes, not what it
 produces, and including them would discard an expensive cache on a tuning
 change.
 
+The corpus itself is an input too: the source path alone says nothing about
+what the files contain, so with a fixed ``pipeline_id`` an edited, added, or
+removed file would otherwise resume from the previous corpus's documents (and,
+in incremental mode, its delta). The caller passes a corpus manifest
+fingerprint (:func:`corpus_manifest_fingerprint`: relative path + size +
+content hash per file), folded into every stage's key since parsing is the
+first stage.
+
 Known limitation: the built-in prompt templates in ``domain/prompts`` are code,
 so editing one is not visible here — only ``custom_prompts`` overrides are.
 Bump the ``pipeline_id`` or use ``--force-rebuild`` after editing a template.
@@ -34,8 +42,11 @@ Bump the ``pipeline_id`` or use ``--force-rebuild`` after editing a template.
 
 from __future__ import annotations
 
+import hashlib
 import json
+from collections.abc import Iterable
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
@@ -80,6 +91,10 @@ _STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
         "aws.bedrock.effort",
         "aws.bedrock.enable_1m_context",
         "aws.bedrock.guardrail",
+        # The per-request output cap truncates long generations, and per-model
+        # overrides change a model's capabilities (output cap, effort support).
+        "aws.bedrock.default_max_output_tokens",
+        "aws.bedrock.model_overrides",
     ),
     PipelineStageType.DOCUMENT_LOADING: ("processing.deduplicate",),
     PipelineStageType.TEXT_CHUNKING: ("processing.chunking",),
@@ -152,12 +167,74 @@ def _input_paths_through(stage_type: PipelineStageType) -> list[str]:
     return paths
 
 
-def stage_input_fingerprint(config: Config, stage_type: PipelineStageType) -> str:
+_HASH_READ_BYTES = 1 << 20
+
+
+def _file_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(_HASH_READ_BYTES):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def corpus_manifest_fingerprint(
+    source_directory: str | Path,
+    extensions: Iterable[str],
+    exclude_directories: Iterable[str | Path] = (),
+) -> str:
+    """Fingerprint the corpus contents under ``source_directory``.
+
+    Every file the pipeline could ingest contributes its path relative to the
+    source root, its size, and a SHA-256 of its bytes. Modification times are
+    deliberately not used: an ``aws s3 sync`` into a fresh container or a new
+    checkout changes them without changing the content, which would turn every
+    phase handoff into a cache miss.
+
+    Args:
+        source_directory: Corpus root.
+        extensions: File suffixes the pipeline ingests (case-insensitive).
+        exclude_directories: Directories the pipeline writes into (cache,
+            parsed-JSON export), skipped so its own output never changes the
+            fingerprint mid-run.
+
+    Returns:
+        A short hex digest; an empty or missing corpus has a fixed digest.
+    """
+    root = Path(source_directory).resolve()
+    suffixes = {ext.lower() for ext in extensions}
+    excluded = [Path(d).resolve() for d in exclude_directories]
+    entries: list[str] = []
+    if root.is_dir():
+        for path in sorted(root.rglob("*")):
+            relative = path.relative_to(root)
+            if (
+                not path.is_file()
+                or path.suffix.lower() not in suffixes
+                or any(part.startswith(".") for part in relative.parts)
+                or any(path.resolve().is_relative_to(d) for d in excluded)
+            ):
+                continue
+            entries.append(
+                f"{relative.as_posix()}\t{path.stat().st_size}\t{_file_digest(path)}"
+            )
+    return compute_hash("\n".join(entries), length=FINGERPRINT_LENGTH)
+
+
+def stage_input_fingerprint(
+    config: Config,
+    stage_type: PipelineStageType,
+    corpus_fingerprint: str | None = None,
+) -> str:
     """Fingerprint the configuration that determines ``stage_type``'s output.
 
     Args:
         config: The active framework configuration.
         stage_type: Ingestion stage whose inputs are being fingerprinted.
+        corpus_fingerprint: :func:`corpus_manifest_fingerprint` of the run's
+            source corpus. Every stage consumes the corpus (directly or through
+            its predecessors), so it is folded into every key. ``None`` leaves
+            the key a function of the configuration only.
 
     Returns:
         A short hex digest, identical for two equal configurations and
@@ -172,12 +249,17 @@ def stage_input_fingerprint(config: Config, stage_type: PipelineStageType) -> st
         (path, _canonicalize(_resolve_path(config, path)))
         for path in _input_paths_through(stage_type)
     ]
+    if corpus_fingerprint is not None:
+        projection.append(("corpus_manifest", corpus_fingerprint))
     payload = json.dumps(projection, sort_keys=True, default=str)
     return compute_hash(payload, length=FINGERPRINT_LENGTH)
 
 
 def stage_cache_key(
-    config: Config, stage_type: PipelineStageType, context_attr: str
+    config: Config,
+    stage_type: PipelineStageType,
+    context_attr: str,
+    corpus_fingerprint: str | None = None,
 ) -> str:
     """Build the cache key for one stage output.
 
@@ -186,6 +268,8 @@ def stage_cache_key(
         stage_type: Ingestion stage that produces (or produced) the output.
         context_attr: ``PipelineContext`` attribute holding the output, e.g.
             "documents" or "resolved_entities".
+        corpus_fingerprint: The run's corpus manifest fingerprint (see
+            :func:`stage_input_fingerprint`).
 
     Returns:
         The context attribute suffixed with the stage's input fingerprint, so a
@@ -198,4 +282,5 @@ def stage_cache_key(
         >>> key.startswith("documents-")
         True
     """
-    return f"{context_attr}-{stage_input_fingerprint(config, stage_type)}"
+    fingerprint = stage_input_fingerprint(config, stage_type, corpus_fingerprint)
+    return f"{context_attr}-{fingerprint}"

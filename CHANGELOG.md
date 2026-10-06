@@ -78,6 +78,14 @@ Each previous behaviour stays available through the setting in parentheses.
   `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).
 
 ### Fixed
+- A changed corpus is now a stage-cache miss. Stage cache keys fingerprinted
+  only the source path, so with a fixed `pipeline_id` an edited, added or
+  removed file resumed from the previous corpus's documents and incremental
+  delta. Every key now also carries a corpus manifest fingerprint (relative
+  path, size and SHA-256 of each ingestible file; modification times are
+  ignored so an `aws s3 sync` handoff between phases still resumes), plus
+  `aws.bedrock.default_max_output_tokens` and `aws.bedrock.model_overrides`.
+  Existing stage caches are recomputed once after upgrading.
 - Resuming a pipeline after the gleaning stage keeps the gleaned
   relationships. The save and restore paths used two separately maintained
   stage-output mappings, and the restore one loaded only gleaning's entities.

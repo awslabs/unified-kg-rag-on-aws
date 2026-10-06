@@ -1,6 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-from .cache_keys import stage_cache_key, stage_input_fingerprint
+from .cache_keys import (
+    corpus_manifest_fingerprint,
+    stage_cache_key,
+    stage_input_fingerprint,
+)
 from .common import (
     EMBEDDING_FIELD_SUFFIX,
     clean_display_name,
@@ -55,6 +59,7 @@ __all__ = [
     "normalize_name",
     "parse_llm_json",
     "safe_float_parse",
+    "corpus_manifest_fingerprint",
     "stage_cache_key",
     "stage_input_fingerprint",
     "strip_embedding_fields",
