@@ -990,9 +990,11 @@ aws:
 - **`retrieval`** — 결정적이고 LLM 불필요: 답변 모델이 본 소스에 정답 문서가
   포함됐는지를 `reference_sources`와 비교해 `hit_at_k`, `recall_at_k`(k =
   `evaluation.retrieval_k`, 기본값 5), `mrr`(보고된 전체 소스 기준)로 산출합니다.
-  참조와 소스는 파일 이름의 stem이 대소문자 무관하게 같거나(디렉터리와 확장자
-  무시: `docs/Terms.pdf` = `terms.pdf` = `terms`), 참조가 소스의 문서 ID와 같으면
-  매칭됩니다. `reference_sources`가 없거나 문서 ID/파일 이름을 가진 소스가 하나도
+  매칭은 대소문자를 구분하지 않고 전체 이름으로 하며, 이름이 파일 확장자(`.` +
+  영문자·숫자 1-5자, 영문자 1개 이상)로 끝나면 stem으로도 비교합니다:
+  `docs/Terms.pdf` = `terms.pdf` = `terms`. `/`는 경로처럼 보이는 값(파일 확장자,
+  URI 스킴, `/`·`./`·`~/`로 시작)에서만 디렉터리 구분자로 보므로 `St. Louis
+  Cardinals`, `AC/DC` 같은 제목은 통째로 비교합니다. `reference_sources`가 없거나 문서 ID/파일 이름을 가진 소스가 하나도
   없으면 건너뜁니다.
 - **`answer_match`** — 결정적이고 LLM 불필요한 SQuAD 방식 `exact_match`와
   `token_f1`(소문자화, 문장 부호와 영어 관사 제거)을 `answer`와 선택 항목

@@ -17,7 +17,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
 )
 from unified_kg_rag.evaluation import EvaluationManager, RetrievalEvaluator
-from unified_kg_rag.evaluation.retrieval_evaluator import source_key
+from unified_kg_rag.evaluation.retrieval_evaluator import source_keys
 
 pytestmark = pytest.mark.unit
 
@@ -48,7 +48,7 @@ def _score(
     }
 
 
-class TestSourceKey:
+class TestSourceKeys:
     @pytest.mark.parametrize(
         "identifier",
         [
@@ -56,13 +56,32 @@ class TestSourceKey:
             "docs/vendor-terms.pdf",
             "VENDOR-TERMS",
             "a\\vendor-terms.txt",
+            "s3://bucket/in/Vendor-Terms.md",
         ],
     )
     def test_matches_by_case_insensitive_file_stem(self, identifier: str) -> None:
-        assert source_key(identifier) == "vendor-terms"
+        assert "vendor-terms" in source_keys(identifier)
 
-    def test_document_id_is_its_own_key(self) -> None:
-        assert source_key("3f2a9c") == "3f2a9c"
+    def test_full_name_and_stem(self) -> None:
+        assert source_keys("Vendor.PDF") == {"vendor.pdf", "vendor"}
+
+    @pytest.mark.parametrize(
+        ("title", "key"),
+        [
+            ("St. Louis Cardinals", "st. louis cardinals"),
+            ("U.S. Route 66", "u.s. route 66"),
+            ("AC/DC", "ac/dc"),
+            ("Version 2.0", "version 2.0"),
+        ],
+    )
+    def test_titles_kept_whole(self, title: str, key: str) -> None:
+        assert source_keys(title) == {key}
+
+    def test_leading_slash_is_a_path(self) -> None:
+        assert source_keys("/data/in/Buyer Notes") == {"buyer notes"}
+
+    def test_blank_has_no_keys(self) -> None:
+        assert source_keys("  ") == frozenset()
 
 
 class TestMetrics:
@@ -81,6 +100,22 @@ class TestMetrics:
     def test_match_by_document_id(self, evaluator: RetrievalEvaluator) -> None:
         out = _score(evaluator, [["DOC-7"]], ["doc-7"])
         assert out["metrics"]["mrr"] == 1.0
+
+    def test_title_with_dots_matches_only_itself(
+        self, evaluator: RetrievalEvaluator
+    ) -> None:
+        # The old stem rule reduced both to "st" and matched them.
+        out = _score(evaluator, [["St. Paul Saints"]], ["St. Louis Cardinals"])
+        assert out["metrics"]["hit_at_k"] == 0.0
+        out = _score(evaluator, [["St. Louis Cardinals.txt"]], ["St. Louis Cardinals"])
+        assert out["metrics"]["hit_at_k"] == 1.0
+
+    def test_duplicate_references_counted_once(
+        self, evaluator: RetrievalEvaluator
+    ) -> None:
+        out = _score(evaluator, [["vendor.pdf"]], ["vendor.pdf", "docs/Vendor.pdf"])
+        assert out["metrics"]["recall_at_k"] == 1.0
+        assert out["metadata"]["num_references"] == 1
 
     def test_mrr_counts_beyond_k(self, evaluator: RetrievalEvaluator) -> None:
         out = _score(evaluator, [["a"], ["b"], ["c"], ["gold"]], ["gold"])

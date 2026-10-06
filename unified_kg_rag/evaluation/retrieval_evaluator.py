@@ -11,11 +11,16 @@ and file names it carries) against the dataset's ``reference_sources``:
 - ``mrr``: reciprocal rank of the first source matching any reference, over all
   reported sources (0.0 if none matches).
 
-``k`` is ``evaluation.retrieval_k``. Matching rule: a reference matches a
-source identifier when their file-name stems are equal, case-insensitively —
-directories and extensions are ignored, so ``"docs/Report-A.pdf"``,
-``"report-a.pdf"`` and ``"report-a"`` all match a source parsed from
-``Report-A.pdf``. A document id (no extension) therefore matches only itself.
+``k`` is ``evaluation.retrieval_k``. Matching rule (``source_keys``): each
+identifier is reduced, case-insensitively, to its full name and — when it ends
+in a file extension (``.`` + 1-5 ASCII letters/digits, at least one a letter) —
+its stem; a reference matches a source when the two key sets intersect. So
+``"docs/Report-A.pdf"``, ``"report-a.pdf"`` and ``"report-a"`` all match a
+source parsed from ``Report-A.pdf``. A ``/`` or ``\\`` is a directory separator
+only in a path-like identifier (one whose last segment has a file extension, or
+that has a URI scheme or a leading ``/``, ``./``, ``../``, ``~/``); otherwise it
+is part of the name, so titles such as ``"St. Louis Cardinals"``,
+``"U.S. Route 66"`` and ``"AC/DC"`` are kept whole.
 
 A query is skipped when it has no ``reference_sources``, or when none of its
 sources carries provenance (no document id or file name) — scoring 0 there
@@ -24,8 +29,8 @@ would report missing metadata as a retrieval miss.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
-from pathlib import PurePosixPath
 from typing import Any
 
 from unified_kg_rag.domain.models import (
@@ -40,11 +45,31 @@ from unified_kg_rag.domain.models import (
 
 from .base import SKIPPED_METRICS_KEY, BaseGraphRAGEvaluator
 
+# A file extension: "." + 1-5 ASCII alphanumerics with at least one letter, so
+# "Version 2.0" or "Route 66" keep their numeric tail.
+_EXTENSION = re.compile(r"\.(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{1,5}$")
+_PATH_PREFIXES = ("/", "./", "../", "~/")
 
-def source_key(identifier: str) -> str:
-    """Normalize a document id / file name / path for matching (see module doc)."""
-    name = PurePosixPath(identifier.strip().replace("\\", "/")).name
-    return PurePosixPath(name).stem.lower() if name else ""
+
+def _is_path_like(identifier: str) -> bool:
+    last_segment = re.split(r"[/\\]", identifier)[-1]
+    return (
+        "://" in identifier
+        or identifier.startswith(_PATH_PREFIXES)
+        or bool(_EXTENSION.search(last_segment))
+    )
+
+
+def source_keys(identifier: str) -> frozenset[str]:
+    """Match keys of a file name / path / title: full name and stem (module doc)."""
+    name = identifier.strip()
+    if _is_path_like(name):
+        name = re.split(r"[/\\]", name)[-1]
+    name = name.strip().lower()
+    if not name:
+        return frozenset()
+    stem = _EXTENSION.sub("", name).strip()
+    return frozenset(k for k in (name, stem) if k)
 
 
 class RetrievalEvaluator(BaseGraphRAGEvaluator):
@@ -83,15 +108,15 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
         ground_truth: str,
         **kwargs: Any,
     ) -> EvaluationReport:
-        references = {
-            key
-            for ref in result.metadata.get("reference_sources") or []
-            if isinstance(ref, str) and (key := source_key(ref))
-        }
+        # reference display name -> its match keys (deduplicated by keys).
+        references: dict[frozenset[str], str] = {}
+        for ref in result.metadata.get("reference_sources") or []:
+            if isinstance(ref, str) and (keys := source_keys(ref)):
+                references.setdefault(keys, ref.strip())
         if not references:
             return self._skip(query.query_id, "no_reference_sources")
-        ranked = [
-            {key for ident in idents if (key := source_key(ident))}
+        ranked: list[frozenset[str]] = [
+            frozenset().union(*(source_keys(ident) for ident in idents))
             for idents in result.retrieved_source_ids
         ]
         if not any(ranked):
@@ -101,10 +126,16 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
                 num_sources=len(ranked),
             )
 
-        top = set().union(*ranked[: self.k])
-        matched_at_k = references & top
+        def _matched(sources: list[frozenset[str]]) -> set[str]:
+            return {
+                name
+                for ref_keys, name in references.items()
+                if any(ref_keys & keys for keys in sources)
+            }
+
+        matched_at_k = _matched(ranked[: self.k])
         first_rank = next(
-            (rank for rank, keys in enumerate(ranked, 1) if keys & references), None
+            (rank for rank, keys in enumerate(ranked, 1) if _matched([keys])), None
         )
         values = {
             EvaluationMetricType.HIT_AT_K: 1.0 if matched_at_k else 0.0,

@@ -1010,10 +1010,12 @@ Selected via `evaluation.enabled_evaluators`:
 - **`retrieval`** — deterministic, LLM-free: did the sources the answer model saw
   include the gold documents? `hit_at_k`, `recall_at_k` (k =
   `evaluation.retrieval_k`, default 5) and `mrr` (over all reported sources)
-  against `reference_sources`. A reference matches a source when their
-  file-name stems are equal, case-insensitively (directories and extensions are
-  ignored: `docs/Terms.pdf` = `terms.pdf` = `terms`), or when it equals a
-  source's document id. Skipped when a query has no `reference_sources` or no
+  against `reference_sources`. Matching is case-insensitive on the full name
+  or, when the name ends in a file extension (`.` + 1-5 letters/digits, at least
+  one letter), its stem: `docs/Terms.pdf` = `terms.pdf` = `terms`. A `/` is a
+  directory separator only in a path-like value (a file extension, a URI scheme,
+  or a leading `/`, `./`, `~/`), so titles such as `St. Louis Cardinals` or
+  `AC/DC` are compared whole. Skipped when a query has no `reference_sources` or no
   source carries a document id / file name.
 - **`answer_match`** — deterministic, LLM-free SQuAD-style `exact_match` and
   `token_f1` (lowercase, punctuation and English articles removed) against
