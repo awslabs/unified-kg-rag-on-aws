@@ -148,6 +148,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `shared.utils.document_converter`; `DirectoryLoader` is no longer a LangChain
   `BaseLoader`. Field names are unchanged, and JSON written by earlier versions
   still loads (its `id`/`type` keys are ignored) (#PR).
+- The Bedrock model capability catalog (`LanguageModelInfo`,
+  `EmbeddingModelInfo`, `RerankModelInfo`, `get_language_model_info`,
+  `effective_max_output_tokens`) moved from `adapters.aws.bedrock` to
+  `adapters.aws.bedrock_models`; `bedrock.py` keeps the factories, the
+  guardrail handler and the cross-region helper (#PR).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).

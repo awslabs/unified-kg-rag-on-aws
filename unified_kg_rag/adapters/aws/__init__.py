@@ -4,8 +4,8 @@ from .bedrock import (
     BedrockEmbeddingModelFactory,
     BedrockLanguageModelFactory,
     BedrockRerankModelFactory,
-    EmbeddingModelInfo,
 )
+from .bedrock_models import EmbeddingModelInfo
 from .dynamodb import DynamoDBDocStatusStore
 from .neptune import NeptuneClient
 from .opensearch import OpenSearchClient

@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from unified_kg_rag.adapters.aws.bedrock import (
+from unified_kg_rag.adapters.aws.bedrock_models import (
     effective_max_output_tokens,
     get_language_model_info,
 )

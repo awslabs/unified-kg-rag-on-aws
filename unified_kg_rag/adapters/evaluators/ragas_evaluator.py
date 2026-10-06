@@ -21,7 +21,7 @@ from ragas.metrics import (
 )
 from ragas.run_config import RunConfig
 
-from unified_kg_rag.adapters.aws.bedrock import get_language_model_info
+from unified_kg_rag.adapters.aws.bedrock_models import get_language_model_info
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Config,

@@ -25,8 +25,8 @@ from unified_kg_rag.adapters.aws import bedrock as bedrock_mod
 from unified_kg_rag.adapters.aws.bedrock import (
     BedrockCrossRegionModelHelper,
     BedrockLanguageModelFactory,
-    get_language_model_info,
 )
+from unified_kg_rag.adapters.aws.bedrock_models import get_language_model_info
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.domain.models import Config, LanguageModelId
