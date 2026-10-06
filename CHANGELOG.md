@@ -253,7 +253,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   retrieval logs like `ainvoke` (#144).
 - `run-rag` no longer translates every query for a same-language corpus: it
   passed the configured target language explicitly, which disabled the
-  chain's no-op translation skip (#PR).
+  chain's no-op translation skip (#145).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on
