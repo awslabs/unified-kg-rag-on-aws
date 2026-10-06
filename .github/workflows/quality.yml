@@ -24,6 +24,7 @@ concurrency:
 jobs:
   optional-parsers:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
@@ -39,6 +40,7 @@ jobs:
 
   quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
@@ -91,6 +93,7 @@ jobs:
     # is 3.11+, so every install on the declared minimum failed at import. Run the
     # suite on the floor to keep that bound honest.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
@@ -115,12 +118,15 @@ jobs:
     # the `cdk` CLI (`cdk synth`); a plain `python app.py` does NOT fail on them,
     # so this job must use the CLI for the gate to have teeth.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: iac/requirements-lock.txt
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v4
         with:
@@ -130,7 +136,14 @@ jobs:
         run: npm install -g aws-cdk@2.1143.0
 
       - name: Install IaC dependencies
-        run: pip install -r iac/requirements.txt pytest==9.1.1
+        # requirements.txt declares the ranges; requirements-lock.txt pins the
+        # resolution so a new upstream release cannot change CI between runs.
+        # Regenerate after editing the ranges:
+        #   uv pip compile iac/requirements.txt --python-version 3.12 \
+        #     --python-platform x86_64-unknown-linux-gnu -o iac/requirements-lock.txt
+        run: >-
+          pip install -r iac/requirements.txt -c iac/requirements-lock.txt
+          pytest==9.1.1
 
       - name: cdk synth with cdk-nag (fails on any unsuppressed finding)
         working-directory: iac

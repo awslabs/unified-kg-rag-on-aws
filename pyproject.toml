@@ -240,9 +240,16 @@ markers = [
     "aws: Tests requiring real AWS services (skipped by default)",
     "slow: Slow tests",
 ]
+# Silence only known third-party deprecations so new ones (including our own)
+# stay visible. gremlin_python: camelCase step aliases kept for Neptune's
+# TinkerPop line; numba/hyppo: transitive via umap/graspologic; ragas: the
+# metric imports and LangchainLLMWrapper are deprecated in the pinned 0.x line.
 filterwarnings = [
-    "ignore::DeprecationWarning",
-    "ignore::PendingDeprecationWarning",
+    "ignore::DeprecationWarning:gremlin_python",
+    "ignore::DeprecationWarning:numba",
+    "ignore::DeprecationWarning:hyppo",
+    "ignore:Importing .* from 'ragas.metrics' is deprecated:DeprecationWarning",
+    "ignore:LangchainLLMWrapper is deprecated:DeprecationWarning",
 ]
 
 [tool.coverage.run]
