@@ -84,7 +84,9 @@ class SearchQuery(BaseModel):
         description="Attribute filters with attr_ prefix for result filtering",
     )
     max_tokens: int | None = Field(
-        default=None, description="Maximum number of context tokens"
+        default=None,
+        description="Retrieval context budget in tokens, capped at "
+        "search.token_manager.max_context_tokens",
     )
     entity_focus: list[str] = Field(
         default_factory=list, description="Entities to focus search on"
