@@ -157,3 +157,60 @@ def test_delta_run_unions_an_entity_shared_with_unchanged_docs_by_default() -> N
     assert set(stored.text_unit_ids or []) == {"ta", "tb", "tc"}
     assert "Vendor supplies parts." in (stored.description or "")
     assert "Vendor invoices Buyer." in (stored.description or "")
+
+
+# --- document ids: path + full content ---------------------------------------
+
+
+_HEADER = "Master Services Agreement between Vendor and Buyer. " * 4
+
+
+def _parse(path):
+    from unified_kg_rag.adapters.ingestion.parser import ParserFactory
+
+    return ParserFactory.create_parser(path, Config()).parse_file(path)
+
+
+def test_same_filename_and_header_in_different_folders_get_distinct_ids(
+    tmp_path,
+) -> None:
+    from unified_kg_rag.domain.ingestion.delta_detector import (
+        assign_document_identity,
+    )
+
+    for folder, tail in (("region-a", "Fee: 100."), ("region-b", "Fee: 200.")):
+        (tmp_path / folder).mkdir()
+        (tmp_path / folder / "contract.txt").write_text(_HEADER + tail)
+    # Identical bytes in a third folder must still be a different document.
+    (tmp_path / "region-c").mkdir()
+    (tmp_path / "region-c" / "contract.txt").write_text(_HEADER + "Fee: 100.")
+
+    docs = [
+        _parse(tmp_path / folder / "contract.txt")
+        for folder in ("region-a", "region-b", "region-c")
+    ]
+    assert len({d.document_id for d in docs}) == 3
+
+    for doc in docs:
+        assign_document_identity(doc, tmp_path)
+    assert [d.metadata["relative_path"] for d in docs] == [
+        "region-a/contract.txt",
+        "region-b/contract.txt",
+        "region-c/contract.txt",
+    ]
+    assert len({d.document_id for d in docs}) == 3
+
+
+def test_document_id_does_not_depend_on_where_the_corpus_lives(tmp_path) -> None:
+    from unified_kg_rag.domain.ingestion.delta_detector import (
+        assign_document_identity,
+    )
+
+    ids = []
+    for root in (tmp_path / "checkout", tmp_path / "synced"):
+        (root / "sub").mkdir(parents=True)
+        (root / "sub" / "a.txt").write_text("Vendor ships goods to Buyer.")
+        doc = _parse(root / "sub" / "a.txt")
+        assign_document_identity(doc, root)
+        ids.append(doc.document_id)
+    assert ids[0] == ids[1]

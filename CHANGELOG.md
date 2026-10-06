@@ -85,6 +85,14 @@ Each previous behaviour stays available through the setting in parentheses.
   upsert (`cross_run_merge: false` restores overwriting).
 
 ### Fixed
+- Two files with the same name in different folders and the same first 100
+  characters no longer share a `document_id` (and therefore text-unit ids).
+  The id is now derived from the path relative to the corpus root plus a hash
+  of the full text (`shared/utils/document_identity.py`), so it also no longer
+  depends on where the corpus is checked out or synced. **Re-index required:**
+  document and text-unit ids change, so an existing index keeps its old text
+  units next to the new ones until it is rebuilt (`indexing.reset: true` or a
+  fresh index suffix).
 - A changed corpus is now a stage-cache miss. Stage cache keys fingerprinted
   only the source path, so with a fixed `pipeline_id` an edited, added or
   removed file resumed from the previous corpus's documents and incremental

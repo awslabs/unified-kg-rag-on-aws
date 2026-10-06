@@ -24,6 +24,7 @@ from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
+from unified_kg_rag.domain.ingestion.delta_detector import assign_document_identity
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
@@ -301,6 +302,8 @@ class DocumentLoadingStage(PipelineStage):
             input_count = len(discovered_files)
             result = self.loader.load()
             documents = [Document(**doc.model_dump()) for doc in result]
+            for document in documents:
+                assign_document_identity(document, self.loader.source_directory)
             failed_files = self.loader.failed_files
 
         # Incremental indexing: when the DynamoDB doc-status registry is enabled,
@@ -452,6 +455,7 @@ class DocumentParsingStage(PipelineStage):
                 document = parser.parse_file(
                     file_path, self.config.processing.document_parsing.index_value
                 )
+                assign_document_identity(document, self.source_directory)
                 parsed_documents.append(document)
 
                 if self.target_directory is not None:

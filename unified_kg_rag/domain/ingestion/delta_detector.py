@@ -15,12 +15,19 @@ unchanged.
 
 from __future__ import annotations
 
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from unified_kg_rag.domain.models import Document, DocumentDelta
 from unified_kg_rag.ports import DocStatusPort
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils.common import compute_hash
+from unified_kg_rag.shared.utils.document_identity import (
+    RELATIVE_PATH_KEY,
+    compute_document_id,
+    compute_text_hash,
+    normalize_source_path,
+    relative_source_path,
+)
 
 logger = get_logger(__name__)
 
@@ -42,7 +49,29 @@ def compute_content_hash(document: Document) -> str:
         text = document.content.text
     elif document.page_content:
         text = document.page_content
-    return compute_hash(text, algorithm="sha256", length=32)
+    return compute_text_hash(text)
+
+
+def assign_document_identity(document: Document, source_root: str | Path) -> None:
+    """Re-derive ``document``'s id against the corpus root, in place.
+
+    Records the path relative to ``source_root`` in the metadata and sets
+    ``document_id`` from that path plus the full-content hash, so the id does
+    not depend on where the corpus was synced or checked out and two files
+    with the same name in different folders never share an id (or text-unit
+    ids, which derive from it).
+
+    A document whose ``file_path`` lies outside the root (a pre-parsed JSON
+    document records its original path) keeps the relative path the loader
+    recorded for the file it was read from.
+    """
+    relative = (
+        relative_source_path(document.file_path, source_root)
+        or document.metadata.get(RELATIVE_PATH_KEY)
+        or normalize_source_path(document.file_path)
+    )
+    document.metadata[RELATIVE_PATH_KEY] = relative
+    document.document_id = compute_document_id(relative, compute_content_hash(document))
 
 
 def fingerprint_documents(documents: list[Document]) -> dict[str, str]:

@@ -219,6 +219,8 @@ When documents are added/changed/deleted, only the delta is processed instead of
 4. **Deletion propagation** (`remove_deleted`): Removes only the *exclusive* artifacts of deleted documents via `delete_by_id` (preserving shared entities). Targets the text-unit, entity, and relationship indices alike.
 5. **Registry update**: Records processed documents into `DocStatusRecord` as `DocumentLineage` (per-document artifact ids + suffix).
 
+**Document identity** (`shared/utils/document_identity.py`): a document version's `document_id` (from which text-unit ids derive) hashes the path relative to the corpus root plus the full text. The parsing and loading stages re-derive it against the root (`delta_detector.assign_document_identity`), so the same corpus yields the same ids wherever it is checked out or synced, and same-named files in different folders never collide. Changing this rule changes every document and text-unit id and requires a re-index.
+
 **Merge semantics** (`domain/ingestion/merge/merger.py`, ported from MS GraphRAG `update/*`): Entities merge by identity key (`entity_key`; concatenating descriptions, union of `text_unit_ids`, recomputing `frequency`, preserving existing ids + remap); relationships merge by (source, target) (averaging weight); communities append by id-offset.
 
 Enable with: `config.aws.dynamodb.enabled = true`.
