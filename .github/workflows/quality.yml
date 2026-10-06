@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Deterministic Hypothesis runs without per-example deadlines (tests/conftest.py).
+  HYPOTHESIS_PROFILE: ci
+
 concurrency:
   group: quality-${{ github.ref }}
   # Supersede stale PR runs only; every push to main runs to completion so each

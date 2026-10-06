@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 
 import pytest
+from hypothesis import settings
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.adapters.aws.bedrock import BedrockCrossRegionModelHelper
@@ -24,6 +25,13 @@ from unified_kg_rag.domain.models import (
     Relationship,
     TextUnit,
 )
+
+# Hypothesis profiles, selected with HYPOTHESIS_PROFILE (default: "default").
+# "ci" removes the per-example deadline, whose wall-clock limit flakes on
+# shared runners, and derandomizes generation so a failure reproduces on
+# re-run; print_blob makes any failure replayable locally via @reproduce_failure.
+settings.register_profile("ci", deadline=None, derandomize=True, print_blob=True)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
 
 _PROFILE_PREFIXES = ("global", "us", "eu", "apac")
 
