@@ -336,8 +336,8 @@ class BedrockConfig(BaseModel):
         description=(
             "Model for every role on the 'default' tier (extraction, gleaning, "
             "claims, community reports, output fixing, query entity extraction, "
-            "routing, context building, answer generation, evaluation). Any "
-            "Bedrock model id; a role's own *_model_id overrides it."
+            "context building, answer generation, evaluation). Any Bedrock "
+            "model id; a role's own *_model_id overrides it."
         ),
     )
     fast_model_id: BedrockModelId = Field(
@@ -345,8 +345,8 @@ class BedrockConfig(BaseModel):
         description=(
             "Model for every role on the 'fast' tier (chunking, translation, "
             "description summarization, global/DRIFT search steps, query "
-            "translation). Any Bedrock model id; a role's own *_model_id "
-            "overrides it."
+            "translation, AUTO strategy routing). Any Bedrock model id; a "
+            "role's own *_model_id overrides it."
         ),
     )
     default_max_output_tokens: int | None = Field(
@@ -1530,12 +1530,13 @@ class FusionConfig(BaseModel):
             "results": 1.0,
         },
         description=(
-            "Per-source-bucket weights applied during weighted fusion "
-            "(FusionMethod.WEIGHTED). Keys are the retrieval source buckets "
+            "Per-source-bucket weights, applied by both fusion methods: RRF "
+            "scales each bucket's 1/(rrf_k + rank) term and weighted fusion "
+            "scales its scores. Keys are the retrieval source buckets "
             "emitted by the search strategies (graph_entities, text_units, "
             "lightrag_entities/relationships/chunks, opensearch_all, the "
             "global-search community-report buckets, and drift's 'results'). A "
-            "bucket without a key defaults to 1.0. Unused by the default RRF fusion."
+            "bucket without a key defaults to 1.0."
         ),
     )
 
