@@ -149,6 +149,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - `SearchQuery.metadata["lightrag_mode"]`; use `search_strategy` (#123).
 
 ### Removed
+- The unused `RetrieverType` enum and the latency-optimized inference path
+  (`supports_performance_optimization` in model capability records), which no
+  caller enabled (#147).
 - `OpenSearchClient.aget_mapping` and the live-mapping/Neptune-probe filter
   scoping (#123).
 - The `dev` and `docs` extras and the unused `asyncio-throttle` and `rapidfuzz`

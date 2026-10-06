@@ -18,7 +18,6 @@ from .config import (
     PipelineStageType,
     RerankModelId,
     ResolutionMethod,
-    RetrieverType,
     S3EncryptionType,
 )
 from .conversation import ConversationContext, MessageRole
@@ -117,7 +116,6 @@ __all__ = [
     "ResolutionMethod",
     "RetrievalResult",
     "RetrieverRole",
-    "RetrieverType",
     "S3EncryptionType",
     "SearchQuery",
     "SearchResult",

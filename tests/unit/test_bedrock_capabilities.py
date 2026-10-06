@@ -349,21 +349,6 @@ def test_get_model_allows_on_demand_model_without_profile(mocker) -> None:
     assert factory.get_model(LanguageModelId.CLAUDE_V3_HAIKU) is sentinel
 
 
-def test_should_enable_performance_optimization() -> None:
-    perf = LanguageModelInfo(
-        context_window_size=1,
-        max_output_tokens=1,
-        supports_performance_optimization=True,
-    )
-    f = BedrockLanguageModelFactory._should_enable_performance_optimization
-    assert f(True, perf, is_cross_region=False) is True
-    # Cross-region disables perf optimization.
-    assert f(True, perf, is_cross_region=True) is False
-    # Model without support.
-    no_perf = LanguageModelInfo(context_window_size=1, max_output_tokens=1)
-    assert f(True, no_perf, is_cross_region=False) is False
-
-
 # --- _apply_guardrail -----------------------------------------------------
 
 

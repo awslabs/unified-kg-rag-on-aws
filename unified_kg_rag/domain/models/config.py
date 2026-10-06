@@ -63,11 +63,6 @@ class ResolutionMethod(str, Enum):
     SEQUENCE_MATCHER = "sequence_matcher"
 
 
-class RetrieverType(str, Enum):
-    NEPTUNE = "neptune"
-    OPENSEARCH = "opensearch"
-
-
 class S3EncryptionType(str, Enum):
     """Server-side encryption header sent on cache uploads.
 
