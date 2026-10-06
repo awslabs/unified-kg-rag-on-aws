@@ -302,7 +302,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   with an empty LLM result. Graph extraction output without a well-formed
   `entities` section counts toward `total_extraction_failures` instead of
   reading as an empty success, and an output whose empty `relationships`
-  section was dropped by the XML parser keeps its entities (#PR).
+  section was dropped by the XML parser keeps its entities (#152).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on
