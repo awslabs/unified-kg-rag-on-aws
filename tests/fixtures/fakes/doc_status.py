@@ -30,7 +30,7 @@ class FakeDocStatusStore:
     def list_all(self) -> list[DocStatusRecord]:
         return list(self._records.values())
 
-    def diff(self, incoming: dict[str, str]) -> DocumentDelta:
+    def diff(self, incoming: dict[str, str], scope: str | None = None) -> DocumentDelta:
         delta = DocumentDelta()
         for doc_id, content_hash in incoming.items():
             existing = self._records.get(doc_id)
@@ -42,6 +42,8 @@ class FakeDocStatusStore:
                 delta.unchanged.append(doc_id)
         incoming_ids = set(incoming)
         delta.deleted = [
-            doc_id for doc_id in self._records if doc_id not in incoming_ids
+            doc_id
+            for doc_id, record in self._records.items()
+            if doc_id not in incoming_ids and (scope is None or record.scope == scope)
         ]
         return delta

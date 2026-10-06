@@ -141,8 +141,8 @@ def test_diff_matches_fake(ddb_store: DynamoDBDocStatusStore) -> None:
 def test_scan_fingerprints_returns_doc_id_and_hash_only(
     ddb_store: DynamoDBDocStatusStore,
 ) -> None:
-    # The projection-scan helper backing diff() returns just {doc_id: hash},
-    # even for records carrying full artifact-id lineage.
+    # The projection-scan helper backing diff() returns just {doc_id: (hash,
+    # scope)}, even for records carrying full artifact-id lineage.
     ddb_store.put(
         DocStatusRecord(
             doc_id="d1",
@@ -153,7 +153,7 @@ def test_scan_fingerprints_returns_doc_id_and_hash_only(
         )
     )
     ddb_store.put(DocStatusRecord(doc_id="d2", content_hash="h2"))
-    assert ddb_store._scan_fingerprints() == {"d1": "h1", "d2": "h2"}
+    assert ddb_store._scan_fingerprints() == {"d1": ("h1", None), "d2": ("h2", None)}
 
 
 def test_diff_after_projection_optimization_on_empty_table(

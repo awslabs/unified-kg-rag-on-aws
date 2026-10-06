@@ -40,10 +40,13 @@ class DocStatusPort(Protocol):
         """Return every stored record (used to diff against the new corpus)."""
         ...
 
-    def diff(self, incoming: dict[str, str]) -> DocumentDelta:
+    def diff(self, incoming: dict[str, str], scope: str | None = None) -> DocumentDelta:
         """Classify ``{doc_id: content_hash}`` against stored state.
 
         Returns the new / changed / unchanged / deleted partition driving an
-        incremental run.
+        incremental run. With ``scope``, only stored records of that scope are
+        candidates for ``deleted`` (a record without a scope never is), so one
+        tenant's or one corpus's run cannot delete another's documents.
+        ``scope=None`` considers every stored record.
         """
         ...

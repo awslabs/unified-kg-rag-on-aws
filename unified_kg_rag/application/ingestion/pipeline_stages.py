@@ -25,6 +25,7 @@ from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
+from unified_kg_rag.domain.ingestion.delta_detector import assign_document_identity
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
@@ -304,7 +305,14 @@ class DocumentLoadingStage(PipelineStage):
             input_count = len(discovered_files)
             result = self.loader.load()
             documents = [Document(**doc.model_dump()) for doc in result]
+            for document in documents:
+                assign_document_identity(
+                    document,
+                    self.loader.source_directory,
+                    self.config.indexing.additional_suffix,
+                )
             failed_files = self.loader.failed_files
+            context.failed_source_files = list(failed_files)
 
         # Incremental indexing: when the DynamoDB doc-status registry is enabled,
         # diff against it, stash the delta/fingerprints for the IndexingStage, and
@@ -364,9 +372,13 @@ class DocumentLoadingStage(PipelineStage):
             )
 
             store = self._build_doc_status_store()
-            delta, fingerprints = detect_delta(documents, store)
+            scope, failed_doc_ids = self._registry_scope(context)
+            delta, fingerprints = detect_delta(
+                documents, store, scope=scope, failed_doc_ids=failed_doc_ids
+            )
             context.incremental_delta = delta
             context.incremental_fingerprints = fingerprints
+            context.incremental_scope = scope
             if delta.is_empty:
                 logger.info("Incremental: no new/changed documents detected")
             to_process = filter_documents_to_process(documents, delta)
@@ -384,6 +396,39 @@ class DocumentLoadingStage(PipelineStage):
                 "Incremental filter unavailable (%s); processing all documents", e
             )
             return documents, 0
+
+    def _registry_scope(self, context: PipelineContext) -> tuple[str, list[str]]:
+        """The run's registry scope and the registry ids of its failed files.
+
+        The scope is the index namespace the run writes (``index_value`` +
+        ``indexing.additional_suffix``) and the corpus source
+        (``document_parsing.source_scope``, else the resolved source
+        directory), so a run never deletes another tenant's or another
+        corpus's documents. Failed files are keyed the same way their
+        documents would have been.
+        """
+        from unified_kg_rag.domain.ingestion.delta_detector import registry_scope
+        from unified_kg_rag.shared.utils.document_identity import (
+            compute_doc_id,
+            normalize_source_path,
+            registry_namespace,
+            relative_source_path,
+        )
+
+        parsing = self.config.processing.document_parsing
+        namespace = registry_namespace(
+            parsing.index_value, self.config.indexing.additional_suffix
+        )
+        root = self.loader.source_directory
+        source_scope = parsing.source_scope or root.as_posix()
+        failed_doc_ids = [
+            compute_doc_id(
+                relative_source_path(path, root) or normalize_source_path(path),
+                namespace,
+            )
+            for path in context.failed_source_files
+        ]
+        return registry_scope(namespace, source_scope), failed_doc_ids
 
     def _build_doc_status_store(self) -> "DocStatusPort":
         if self._doc_status is not None:
@@ -455,6 +500,11 @@ class DocumentParsingStage(PipelineStage):
                 document = parser.parse_file(
                     file_path, self.config.processing.document_parsing.index_value
                 )
+                assign_document_identity(
+                    document,
+                    self.source_directory,
+                    self.config.indexing.additional_suffix,
+                )
                 parsed_documents.append(document)
 
                 if self.target_directory is not None:
@@ -467,6 +517,9 @@ class DocumentParsingStage(PipelineStage):
                 failed_files.append(str(file_path))
 
         context.documents = parsed_documents
+        # Incremental delta detection must not mistake a file that failed to
+        # parse for a deleted one (that would remove its indexed content).
+        context.failed_source_files = failed_files
         output_count = len(parsed_documents)
 
         metrics = {
@@ -1335,10 +1388,22 @@ class IndexingStage(PipelineStage):
             if text_units
             else Constants.DEFAULT_SUFFIX.value
         )
-        incremental = IncrementalIndexer(store, self.indexing_manager, suffix=suffix)
+        incremental = IncrementalIndexer(
+            store,
+            self.indexing_manager,
+            suffix=suffix,
+            scope=context.incremental_scope,
+        )
 
-        # Drop stale artifacts of changed docs (before re-upsert) and of deleted docs.
-        incremental.prune_changed(delta)
+        # Drop stale artifacts of changed docs (before re-upsert) and of deleted
+        # docs. A failed prune must stop the run before commit: committing would
+        # overwrite the changed docs' lineage and orphan the stale artifacts.
+        if not incremental.prune_changed(delta):
+            raise PipelineStageError(
+                "Removing stale artifacts of changed documents failed; not "
+                "committing the delta so the registry keeps their old lineage "
+                "and the next run retries the removal"
+            )
         incremental.remove_deleted(delta)
 
         lineages = build_document_lineage(

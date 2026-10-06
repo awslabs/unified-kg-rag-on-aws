@@ -216,6 +216,16 @@ class PipelineContext(BaseModel):
         description="doc_id -> content hash for the current corpus, recorded to the "
         "doc-status registry after a successful incremental commit.",
     )
+    incremental_scope: str | None = Field(
+        default=None,
+        description="Registry scope (index namespace + corpus source) the delta "
+        "was computed in; recorded on every committed document.",
+    )
+    failed_source_files: list[str] = Field(
+        default_factory=list,
+        description="Corpus files that failed to parse or load this run. "
+        "Incremental delta detection keeps them out of the deleted set.",
+    )
 
     class Config:
         arbitrary_types_allowed = True
