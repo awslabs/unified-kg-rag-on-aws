@@ -10,6 +10,7 @@ import boto3
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
+from gremlin_python.driver.protocol import GremlinServerError
 from gremlin_python.process.anonymous_traversal import traversal
 from gremlin_python.process.graph_traversal import GraphTraversal, GraphTraversalSource
 
@@ -17,6 +18,39 @@ from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import AWSServiceError, get_logger
 
 logger = get_logger(__name__)
+
+# Neptune engine error codes for requests that fail the same way on every try
+# (Neptune user guide, "Graph Engine Error Messages and Codes"). Retrying
+# them only multiplies the failure, so they fail fast; any other error,
+# including a connection the server closed, keeps being retried.
+PERMANENT_NEPTUNE_ERROR_CODES: frozenset[str] = frozenset(
+    {
+        "AccessDeniedException",
+        "BadRequestException",
+        "InvalidNumericDataException",
+        "InvalidParameterException",
+        "MalformedQueryException",
+        "MethodNotAllowedException",
+        "MissingParameterException",
+        "ReadOnlyViolationException",
+        "UnsupportedOperationException",
+    }
+)
+
+
+def is_permanent_neptune_error(exc: BaseException) -> bool:
+    """Return True if a Gremlin request failed in a way a retry cannot fix.
+
+    Neptune reports engine errors as a ``GremlinServerError`` whose status
+    message carries the JSON error body, ``"code"`` included; the code names
+    are distinct identifiers, so matching them in the message is matching the
+    code. Client-side argument errors (``ValueError``/``TypeError``) are
+    permanent too.
+    """
+    if isinstance(exc, GremlinServerError):
+        message = str(exc.status_message)
+        return any(code in message for code in PERMANENT_NEPTUNE_ERROR_CODES)
+    return isinstance(exc, ValueError | TypeError)
 
 
 def _handle_neptune_errors(func: Callable) -> Callable:
@@ -75,10 +109,13 @@ class NeptuneClient:
 
         try:
             # pool_size bounds concurrent in-flight requests over the websocket.
-            # Sized to cover indexing.neptune.index_concurrency so concurrent
+            # Never below indexing.neptune.index_concurrency, so concurrent
             # write batches are multiplexed rather than serialized; max_workers
             # tracks it so result-handling threads are not the bottleneck.
-            pool_size = self.neptune_config.pool_size
+            pool_size = max(
+                self.neptune_config.pool_size,
+                self.config.indexing.neptune.index_concurrency,
+            )
             remote_connection = DriverRemoteConnection(
                 url=connection_url,
                 traversal_source="g",

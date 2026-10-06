@@ -546,13 +546,13 @@ class TestRunConfigAndJudgeEffort:
         assert rc.timeout >= 300
         assert rc.timeout == ev.config.evaluation.ragas_timeout
         assert rc.max_workers == ev.config.evaluation.ragas_max_workers
-        assert rc.max_retries == ev.config.evaluation.ragas_max_retries
+        assert rc.max_retries == ev.config.evaluation.ragas_max_attempts
 
     def test_run_config_follows_evaluation_config(self, mocker) -> None:
         ev, _ = _make_evaluator(mocker)
         ev.config.evaluation.ragas_timeout = 900
         ev.config.evaluation.ragas_max_workers = 2
-        ev.config.evaluation.ragas_max_retries = 5
+        ev.config.evaluation.ragas_max_attempts = 5
         rc = ev._build_run_config()
         assert (rc.timeout, rc.max_workers, rc.max_retries) == (900, 2, 5)
 

@@ -115,7 +115,7 @@ class EvaluationManager:
         # only re-runs deterministic failures (invalid filter, validation) with
         # minutes of backoff. A failed item still gets its sequential fallback.
         self.batch_processor = BatchProcessor(
-            max_retries=1, max_concurrency=config.processing.max_concurrency
+            max_attempts=1, max_concurrency=config.processing.max_concurrency
         )
 
     @staticmethod

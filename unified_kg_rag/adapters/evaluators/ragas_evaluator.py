@@ -152,7 +152,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         return RunConfig(
             timeout=evaluation.ragas_timeout,
             max_workers=evaluation.ragas_max_workers,
-            max_retries=evaluation.ragas_max_retries,
+            max_retries=evaluation.ragas_max_attempts,
         )
 
     def _truncate_contexts(

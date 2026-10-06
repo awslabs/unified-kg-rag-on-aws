@@ -157,17 +157,29 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   model ids, unlike language-model ids, are a closed list that
   `aws.bedrock.model_overrides` does not cover: the embedding dimension is
   fixed into the OpenSearch vector mappings (#150).
-
 - **Breaking** default: `aws.bedrock.region_name` defaults to `null` and then
   follows `aws.region_name` (an `AWS_REGION` override moves it too), and the
   `aws.region_name` default is `us-west-2` instead of `ap-northeast-2`, which
   offers no Bedrock rerank model. Set `aws.bedrock.region_name` to keep Bedrock
   in another region (#148).
+- Every retry knob is named `max_attempts` and counts total attempts,
+  including the first: `processing.max_attempts`,
+  `indexing.neptune.max_attempts` and `evaluation.ragas_max_attempts` join
+  `aws.bedrock.transient_retry.max_attempts`. The former Neptune key counted
+  retries after the first try, so `max_retries: N` is read as
+  `max_attempts: N+1` and the default stays 4 attempts. **Breaking** for
+  library callers: `BatchProcessor(max_retries=...)` is now
+  `BatchProcessor(max_attempts=...)`, and the unread
+  `PipelineConfig.max_retries` is removed (#151).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
 - `aws.bedrock.effort`; use `aws.bedrock.default_effort` (#128).
 - `SearchQuery.metadata["lightrag_mode"]`; use `search_strategy` (#123).
+- `processing.max_retries`, `indexing.neptune.max_retries` and
+  `evaluation.ragas_max_retries`; use the `max_attempts` keys. A renamed key
+  (including `search.llm_retry`) now logs a deprecation WARNING instead of
+  being reported as an unknown key that is ignored (#151).
 
 ### Removed
 - The unused `RetrieverType` enum and the latency-optimized inference path
@@ -278,6 +290,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - `run-rag` no longer translates every query for a same-language corpus: it
   passed the configured target language explicitly, which disabled the
   chain's no-op translation skip (#145).
+- Neptune writes fail fast on errors a retry cannot fix (malformed query,
+  access denied, bad parameter); they used to be retried with backoff before
+  they surfaced. Throttling, concurrent modification and connection loss are
+  still retried (#151).
+- The Gremlin connection pool is sized to at least
+  `indexing.neptune.index_concurrency`. It used `aws.neptune.pool_size` alone,
+  so a higher write concurrency queued batches on too few connections (#151).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on

@@ -155,6 +155,24 @@ def test_create_connection_no_iam_empty_headers(mocker) -> None:
     assert captured["headers"] == {}
 
 
+@pytest.mark.parametrize(
+    ("pool_size", "index_concurrency", "expected"),
+    [(4, 1, 4), (4, 8, 8), (8, 8, 8)],
+)
+def test_create_connection_pool_covers_index_concurrency(
+    mocker, pool_size: int, index_concurrency: int, expected: int
+) -> None:
+    # Concurrent write batches must not queue on a smaller connection pool.
+    config = _config_with_neptune(use_iam=False)
+    config.aws.neptune.pool_size = pool_size
+    config.indexing.neptune.index_concurrency = index_concurrency
+    connection = mocker.patch.object(neptune_mod, "DriverRemoteConnection")
+    mocker.patch.object(neptune_mod, "traversal")
+    _client(config)._create_connection()
+    kwargs = connection.call_args.kwargs
+    assert (kwargs["pool_size"], kwargs["max_workers"]) == (expected, expected)
+
+
 def test_create_connection_wraps_failure(mocker) -> None:
     config = _config_with_neptune()
     client = _client(config)

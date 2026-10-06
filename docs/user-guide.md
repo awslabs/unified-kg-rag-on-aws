@@ -159,8 +159,21 @@ YAML values are validated when the file loads: a wrong type or an unsupported
 value stops the CLI with `Configuration validation error: ...`. An unknown key
 (a typo, or a key removed in a newer release) does not stop the run. It is
 logged at WARNING as `Unknown config key '<path>' is ignored` and dropped, so
-check the log after editing the file or upgrading. The renamed `search.llm_retry`
-key is still accepted and maps to `aws.bedrock.transient_retry`.
+check the log after editing the file or upgrading.
+
+Renamed keys are still accepted: each is applied to its replacement with a
+WARNING `Config key '<old>' is deprecated; applied as '<new>: <value>'`, and is
+ignored if the replacement is also set.
+
+| Former key | Replacement |
+|---|---|
+| `search.llm_retry` | `aws.bedrock.transient_retry` |
+| `processing.max_retries` | `processing.max_attempts` (same value) |
+| `indexing.neptune.max_retries` | `indexing.neptune.max_attempts`, plus one: the former key counted retries after the first try |
+| `evaluation.ragas_max_retries` | `evaluation.ragas_max_attempts` (same value) |
+
+Every `max_attempts` key counts total attempts, including the first; `1`
+disables the retry.
 
 The tables below give each key's built-in default. `config-template.yaml` uses
 the same values.
@@ -187,7 +200,7 @@ the same values.
 | `aws.bedrock.transient_retry.max_attempts` | `5` | Attempts per call for transient Bedrock errors that botocore does not retry (such as HTTP 424), on embeddings and query-time calls. `1` disables the retry. |
 | `aws.neptune.endpoint` | `null` | **Required.** Neptune cluster endpoint. |
 | `aws.neptune.use_iam` | `true` | SigV4-sign Neptune requests. |
-| `aws.neptune.pool_size` | `4` | Gremlin connection pool size. Keep it at least `indexing.neptune.index_concurrency`. |
+| `aws.neptune.pool_size` | `4` | Gremlin connection pool size. The client raises it to `indexing.neptune.index_concurrency` when that is larger. |
 | `aws.opensearch.endpoint` | `null` | **Required.** OpenSearch domain endpoint. |
 | `aws.opensearch.use_iam` | `false` | `false` reads `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD` from the environment (§1 Authentication). |
 | `aws.opensearch.sigv4_service_name` | `"es"` | `es` for a managed domain, `aoss` for OpenSearch Serverless. A wrong value often shows up as zero search hits. |
@@ -367,6 +380,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 |---|---|---|
 | `processing.max_concurrency` | `20` | Concurrent LLM calls within a batch. Lower it if Bedrock throttles; raise it if quota allows. |
 | `processing.chunk_concurrency` | `4` | Mini-batch chunks run at once. The Bedrock connection pool is sized to `max_concurrency` × `chunk_concurrency`. |
+| `processing.max_attempts` | `5` | Attempts for an ingestion LLM item called on its own after its batch call fails. Transient Bedrock errors, call timeouts and unparseable output are retried; other errors fail fast. `1` disables the retry. |
 | `processing.io_workers` | `64` | Threads for blocking query-path I/O (Bedrock calls, Neptune traversals, reranking) in the CLIs and the chain's sync methods. Python's default caps it at `min(32, CPUs + 4)`, six on a 2-vCPU task. An async host calls `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)` (from `unified_kg_rag.shared.utils`) at startup. |
 | `processing.ignore_errors` | `false` | Skip items whose LLM step fails instead of failing the run. |
 | `processing.deduplicate` | `false` | Drop duplicate documents before extraction. |
@@ -426,7 +440,8 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.opensearch.vector_search.engine` | `"lucene"` | HNSW engine. `lucene` supports `cosinesimil` up to 1024 dimensions; see the template for `faiss`. |
 | `indexing.opensearch.index_settings.refresh_interval` | `"1s"` | Raise it (or `"-1"`) for faster bulk loads, then reset for live querying. |
 | `indexing.neptune.batch_size` | `100` | Items per Neptune write batch. |
-| `indexing.neptune.index_concurrency` | `1` | Concurrent write batches; raise `aws.neptune.pool_size` to match. |
+| `indexing.neptune.index_concurrency` | `1` | Concurrent write batches. The Gremlin connection pool grows to match if `aws.neptune.pool_size` is smaller. |
+| `indexing.neptune.max_attempts` | `4` | Attempts per Neptune write, including the first. Failures are retried with jittered exponential backoff from `retry_delay_seconds` (`2`), except errors a retry cannot fix (malformed query, access denied, bad parameter), which fail on the first attempt. `1` disables the retry. |
 | `indexing.neptune.max_hops` | `3` | Neighbour-expansion depth at retrieval time. |
 | `indexing.neptune.property_max_length` | `4000` | Character cap per Neptune property value. Keep it above the longest description that is not re-summarized (summarization triggers above 600 tokens, ~2,400 characters). Takes effect on re-ingestion. |
 | `indexing.neptune.entity_importance_source` | `"rank"` | Entity importance in graph-expansion relevance: `rank` (indexed entity rank), `degree` (edge count at query time) or `none` (neutral 0.5, the old behaviour). |
@@ -495,7 +510,7 @@ quotas (`search.local_search.type_quota`) are in the template.
 | `evaluation.ragas_timeout` | `300` | Seconds to score one metric on one sample; a timeout yields NaN. |
 | `evaluation.ragas_max_contexts` | `20` | Top-ranked contexts per sample scored by RAGAS `context_precision` (so it is "@20"); faithfulness and context_recall see the full token-budgeted context. `null` = no cap. |
 | `evaluation.ragas_max_workers` | `8` | Concurrent RAGAS jobs. Lower it if Bedrock throttles the judge. |
-| `evaluation.ragas_max_retries` | `3` | Total attempts per judge call. |
+| `evaluation.ragas_max_attempts` | `3` | Total attempts per judge call. |
 | `evaluation.max_context_tokens` | `8192` | Token cap on the context passed to judges. |
 | `evaluation.retrieval_k` | `5` | Cutoff for the `retrieval` evaluator's hit@k / recall@k. |
 | `evaluation.outputs_directory` | `"outputs/evaluation"` | Where results are written. |
@@ -1241,8 +1256,8 @@ on).
 
 - **Large corpora:** raise `processing.max_concurrency` /
   `processing.chunk_concurrency` (LLM stages are I/O-bound). For graph writes,
-  raise `indexing.neptune.index_concurrency` *and* `aws.neptune.pool_size`
-  together. Enable `indexing.opensearch.persist_embedding_cache` + `--s3-sync`
+  raise `indexing.neptune.index_concurrency`; the Gremlin connection pool grows
+  with it. Enable `indexing.opensearch.persist_embedding_cache` + `--s3-sync`
   so re-runs and multi-phase jobs don't recompute.
 - **Multilingual:** set `processing.translation.source_language` /
   `target_language` (+ `additional_target_languages`) and add language analyzers

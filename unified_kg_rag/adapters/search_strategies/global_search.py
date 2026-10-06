@@ -100,11 +100,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         # ``map_batch_size`` reports), so BatchProcessor's own batch_size is 1;
         # max_concurrency fans the map calls out over the report batches. The
         # map chain already retries transient Bedrock errors as a query chain,
-        # so BatchProcessor adds no retry of its own (max_retries=1).
+        # so BatchProcessor adds no retry of its own (max_attempts=1).
         self.batch_processor = BatchProcessor(
             batch_size=1,
             max_concurrency=config.processing.max_concurrency,
-            max_retries=1,
+            max_attempts=1,
         )
 
     async def asearch(self, query: SearchQuery) -> SearchResult:
