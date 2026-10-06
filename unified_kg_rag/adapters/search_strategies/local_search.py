@@ -159,10 +159,18 @@ class LocalSearchStrategy(BaseSearchStrategy):
             "..." if len(text_unit_ids) > 5 else "",
         )
 
-        text_units = await self._retrieve_documents(
-            text_unit_ids, query.suffix, filters=query.filters
+        # Both lookups depend only on the expansion, so they run together.
+        text_units, bridge_relationships = await asyncio.gather(
+            self._retrieve_documents(
+                text_unit_ids, query.suffix, filters=query.filters
+            ),
+            self._retrieve_bridge_relationships(
+                query, list(dict.fromkeys(candidate_entity_ids + expanded_entity_ids))
+            ),
         )
         all_results = {"graph_entities": expanded_entity_nodes, **text_units}
+        if bridge_relationships:
+            all_results["bridge_relationships"] = bridge_relationships
         stats = {
             "candidate_entity_count": len(candidate_entity_ids),
             "expanded_entity_count": len(expanded_entity_ids),
@@ -292,6 +300,31 @@ class LocalSearchStrategy(BaseSearchStrategy):
         return await self._safe_aretrieve(
             self.document_retriever, search_query, "Relationships retrieval"
         )
+
+    async def _retrieve_bridge_relationships(
+        self, query: SearchQuery, entity_ids: list[str]
+    ) -> list[RetrievalResult]:
+        # MS GraphRAG local search adds the relationships BETWEEN the selected
+        # entities ("in-network" first, then out-of-network). The vector query
+        # above only finds relationships whose description resembles the query
+        # text, which a multi-hop bridge edge usually does not. Fetch the edges
+        # incident to the expanded entities, the in-network (both endpoints
+        # retrieved) ones first.
+        if (
+            not self.config.search.local_search.include_bridge_relationships
+            or not self.config.indexing.opensearch.build_relationship_vector_index
+        ):
+            return []
+        relationships = await self._fetch_incident_relationships(
+            query, [eid for eid in entity_ids if eid], bridge_first=True
+        )
+        if relationships:
+            logger.debug(
+                "Bridge expansion: %s entities -> %s incident relationships",
+                len(entity_ids),
+                len(relationships),
+            )
+        return relationships
 
     @classmethod
     def _rank_text_unit_ids(cls, entity_nodes: list[RetrievalResult]) -> list[str]:

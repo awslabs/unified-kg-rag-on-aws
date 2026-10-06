@@ -89,6 +89,12 @@ Each previous behaviour stays available through the setting in parentheses.
   edge count with `entity_importance_source: degree`; the retriever used to
   read an `importance` property that entity vertices never store, so every
   entity scored a neutral 0.5 (`entity_importance_source: none`).
+- Local search also fetches the relationships incident to its graph-expanded
+  entities, edges between two retrieved entities first, as MS GraphRAG local
+  adds in-network relationships. These bridge edges carry the hops of a
+  multi-hop chain that the relationship vector query rarely matches
+  (`search.local_search.include_bridge_relationships: false` for the vector
+  query only).
 - AUTO routes among local/mix/global/drift with Haiku
   (`search.auto_routable_strategies: [simple, local, global, drift]`,
   `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).

@@ -1721,6 +1721,18 @@ class LocalSearchConfig(BaseModel):
         default_factory=LocalSearchQuotaConfig,
         description="Reserved fusion slots per section type",
     )
+    include_bridge_relationships: bool = Field(
+        default=True,
+        description=(
+            "Also fetch the relationships incident to the graph-expanded "
+            "entities, edges between two of those entities first (MS GraphRAG "
+            "local's in-network relationships). These bridge edges carry the hops "
+            "of a multi-hop chain, which the relationship vector query alone "
+            "often misses. Needs the relationship index "
+            "(indexing.opensearch.build_relationship_vector_index). false = the "
+            "previous behaviour: only the vector query on the relationship index."
+        ),
+    )
 
 
 class DriftSearchConfig(BaseModel):

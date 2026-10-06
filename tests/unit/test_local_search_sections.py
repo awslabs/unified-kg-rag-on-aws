@@ -223,6 +223,9 @@ async def test_unfiltered_query_sends_no_filters(config: Config) -> None:
     for call in os_r.calls:
         if call.index_prefixes == [os_cfg.text_units_index_prefix]:
             assert call.filters == {"id": ["chunk-1"]}
+        elif call.filters and {"source_id", "target_id"} & set(call.filters):
+            # Bridge-edge fetch: scoped to the expanded entities only.
+            assert len(call.filters) == 1
         else:
             assert call.filters is None
 

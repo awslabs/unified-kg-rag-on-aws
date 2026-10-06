@@ -22,6 +22,7 @@ from unified_kg_rag.domain.models import (
     RetrievalResult,
     SearchQuery,
     SearchResult,
+    SearchType,
 )
 from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
 from unified_kg_rag.shared import get_logger
@@ -264,6 +265,119 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         return await self._safe_aretrieve(
             self.graph_retriever, search_query, "Neptune graph expansion"
         )
+
+    def _incident_fetch_limit(self) -> int:
+        """How many incident edges to request per endpoint side.
+
+        Upstream's entity->incident-edge expansion has NO count limit — it fetches
+        every edge touching the entity hits and lets the per-type TOKEN budget
+        (DEFAULT_MAX_RELATION_TOKENS = 8000) do the trimming. An OpenSearch query
+        cannot be unbounded, so ask for the largest page the retriever will
+        actually grant (`opensearch.max_query_size`) rather than a larger constant
+        the retriever would silently clamp. Applied per endpoint side, so up to
+        ~2x that many edges reach the dedup, which keeps the token budget rather
+        than a count the binding constraint, as upstream.
+        """
+        return self.config.indexing.opensearch.max_query_size
+
+    @staticmethod
+    def _endpoint_pair(result: RetrievalResult) -> tuple[str, str]:
+        """The undirected endpoint key upstream dedups edges by (`tuple(sorted(e))`)."""
+        metadata = result.metadata or {}
+        return tuple(  # type: ignore[return-value]
+            sorted((str(metadata.get("source_id")), str(metadata.get("target_id"))))
+        )
+
+    async def _fetch_incident_relationships(
+        self,
+        query: SearchQuery,
+        entity_ids: list[str],
+        known_relationships: list[RetrievalResult] | None = None,
+        bridge_first: bool = False,
+    ) -> list[RetrievalResult]:
+        """Every relationship incident to ``entity_ids``, deduped and ordered.
+
+        The relationships index stores its endpoints as `source_id`/`target_id`
+        keywords, but `_build_filter_clauses` ANDs every filter, so
+        `source_id OR target_id` needs two queries. Edges are deduped by
+        undirected endpoint pair (also against ``known_relationships``) and
+        ordered by `(rank, weight)` descending, as upstream LightRAG's
+        `_find_most_related_edges_from_entities` does. With ``bridge_first``
+        the edges whose BOTH endpoints are in ``entity_ids`` — the bridges
+        that connect two retrieved entities, i.e. the hops of a multi-hop
+        chain — come before edges that leave the set.
+        """
+        retriever = self.document_retriever
+        if not retriever or not entity_ids:
+            return []
+
+        page = self._incident_fetch_limit()
+        relationships_prefix = (
+            self.config.indexing.opensearch.relationships_index_prefix
+        )
+
+        async def _by_endpoint(field: str) -> list[RetrievalResult]:
+            search_query = SearchQuery(
+                query="",
+                search_type=SearchType.LEXICAL,
+                top_k=page,
+                index_prefixes=[relationships_prefix],
+                suffix=query.suffix,
+                filters=self._scoped_filters(query, **{field: entity_ids}),
+            )
+            side = await self._safe_aretrieve(
+                retriever, search_query, f"Incident relationship retrieval ({field})"
+            )
+            # A full page means the count cap bound and edges were dropped —
+            # upstream drops none. Say so rather than let a silent truncation read
+            # as "all edges".
+            if len(side) >= page:
+                logger.warning(
+                    "Incident-edge fetch on %s hit the %s-hit page cap; "
+                    "the expansion is truncated (upstream truncates by tokens only)",
+                    field,
+                    page,
+                )
+            return side
+
+        sides = await asyncio.gather(
+            _by_endpoint("source_id"), _by_endpoint("target_id")
+        )
+
+        # Dedup by the undirected endpoint pair, as upstream does (`tuple(sorted(e))`),
+        # so an edge reachable from both of its endpoints is carried once — and so an
+        # edge the caller already holds is not paid for twice.
+        seen: set[tuple[str, str]] = {
+            self._endpoint_pair(r) for r in (known_relationships or [])
+        }
+        deduped: list[RetrievalResult] = []
+        for result in [r for side in sides for r in side]:
+            pair = self._endpoint_pair(result)
+            if pair in seen:
+                continue
+            seen.add(pair)
+            deduped.append(result)
+
+        in_set = set(entity_ids)
+
+        def _order(r: RetrievalResult) -> tuple[float, ...]:
+            metadata = r.metadata or {}
+            key = (
+                float(metadata.get("rank") or 0.0),
+                float(metadata.get("weight") or 0.0),
+            )
+            if not bridge_first:
+                return key
+            bridge = (
+                str(metadata.get("source_id")) in in_set
+                and str(metadata.get("target_id")) in in_set
+            )
+            return (float(bridge), *key)
+
+        # Upstream orders these by (rank, weight) descending — degree first, so the
+        # hub edges that carry a multi-hop chain outrank incidental leaf edges.
+        deduped.sort(key=_order, reverse=True)
+        return deduped
 
     def search(self, query: SearchQuery) -> SearchResult:
         return asyncio.run(self.asearch(query))

@@ -586,6 +586,10 @@ search:
     # Drop graph-expanded entities appearing in more than this many text units
     # (too generic to be discriminative for local search).
     entity_frequency_threshold: 20
+    # Also fetch the relationships incident to the graph-expanded entities,
+    # edges between two retrieved entities first (needs the relationship
+    # index). false = only the relationship vector query, as before.
+    include_bridge_relationships: true
     # Reserved fusion slots per section type, as max(multiplier * top_k, floor).
     # Without reserved slots one type takes the whole flat top_k cut and crowds
     # out the document chunks that carry the answer.
