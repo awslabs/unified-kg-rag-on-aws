@@ -207,7 +207,6 @@ class RAGChainRunner:
                     conversation_id=self.args.conversation_id,
                     use_memory=self.args.use_memory,
                     enable_query_processing=not self.args.disable_query_processing,
-                    target_language=self.config.processing.translation.target_language,
                     top_k=self.args.top_k,
                     retrieval_multiplier=self.args.retrieval_multiplier,
                     filters=self._parse_filters(self.args.filters),
