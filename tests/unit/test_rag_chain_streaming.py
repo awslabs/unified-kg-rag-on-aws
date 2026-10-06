@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
+from structlog.contextvars import get_contextvars
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from unified_kg_rag.application.retrieval.rag_chain import (
@@ -70,8 +71,10 @@ class _StreamingModelFactory:
 class _FakeRetriever:
     def __init__(self, *, empty: bool = False) -> None:
         self.empty = empty
+        self.log_contexts: list[dict[str, Any]] = []
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        self.log_contexts.append(get_contextvars())
         if self.empty:
             return []
         return [
@@ -287,3 +290,24 @@ async def test_stream_sync_works_inside_running_event_loop(config: Config) -> No
     chain, _, _ = _make_chain(config)
     chunks = list(chain.stream(_input()))
     assert "".join(chunks) == _ANSWER
+
+
+async def test_astream_binds_a_query_id_for_retrieval_logs(config: Config) -> None:
+    chain, _, _ = _make_chain(config)
+    retriever = chain._retriever_builders_override[RetrieverRole.DOCUMENT]()
+    _ = [c async for c in chain.astream(_input(conversation_id="conv-1"))]
+
+    assert retriever.log_contexts
+    context = retriever.log_contexts[0]
+    assert context["conversation_id"] == "conv-1"
+    assert len(context["query_id"]) == 12
+    assert "query_id" not in get_contextvars()  # released after retrieval
+
+
+def test_sync_stream_binds_and_releases_the_query_id(config: Config) -> None:
+    # stream() resumes the generator in a new task per step; the binding must
+    # be released in the step that made it.
+    chain, _, _ = _make_chain(config)
+    retriever = chain._retriever_builders_override[RetrieverRole.DOCUMENT]()
+    assert "".join(chain.stream(_input())) == _ANSWER
+    assert "query_id" in retriever.log_contexts[0]
