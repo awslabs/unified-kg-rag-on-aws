@@ -4,8 +4,10 @@
 
 Consumes the previously-unused ``EvaluationGroundTruth.expected_entities`` and
 ``expected_relationships`` fields. For each query it measures how many of the
-expected graph artifacts the generated answer actually surfaces (case-insensitive,
-word-boundary match; substring match for space-less CJK text), reporting
+expected graph artifacts the generated answer actually surfaces (whole-word
+match after SQuAD normalization, shared with the answer-match evaluator via
+``text_matching.phrase_in_text``; Korean particles tolerated; substring match
+for single-word CJK phrases), reporting
 coverage (= recall) — a deterministic, LLM-free
 signal complementing the LangChain/RAGAS text-similarity scores. Precision/F1 are
 deliberately NOT reported: they would require enumerating every entity in a
@@ -39,6 +41,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.shared import get_logger
 
 from .base import SKIPPED_METRICS_KEY, BaseGraphRAGEvaluator
+from .text_matching import phrase_in_text
 
 logger = get_logger(__name__)
 
@@ -46,10 +49,8 @@ logger = get_logger(__name__)
 class GraphAwareEvaluator(BaseGraphRAGEvaluator):
     """Scores entity/relationship coverage of the generated answer."""
 
-    def __init__(self, config: Config, rag_chain: Any | None = None, **kwargs: Any):
-        super().__init__(
-            config, EvaluatorType.GRAPH_AWARE, rag_chain=rag_chain, **kwargs
-        )
+    def __init__(self, config: Config, **kwargs: Any):
+        super().__init__(config, EvaluatorType.GRAPH_AWARE, **kwargs)
 
     def _initialize_evaluator(self, **kwargs: Any) -> None:
         # Pure, deterministic evaluator — no model to initialize.
@@ -60,70 +61,6 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
             EvaluationMetricType.ENTITY_COVERAGE,
             EvaluationMetricType.RELATIONSHIP_COVERAGE,
         ]
-
-    @staticmethod
-    def _tokenize(text: str) -> list[str]:
-        """Lowercase word tokens, stripping surrounding punctuation.
-
-        Deterministic and regex-free: split on whitespace, then strip
-        non-alphanumeric characters from each token's edges. This gives
-        word-boundary matching so ``"AI"`` does not match inside ``"airport"``.
-        """
-        tokens = []
-        for raw in text.lower().split():
-            token = raw.strip("\"'.,;:!?()[]{}<>/\\|`")
-            if token:
-                tokens.append(token)
-        return tokens
-
-    @staticmethod
-    def _is_spaceless_script(text: str) -> bool:
-        """True if the text has CJK characters and no internal whitespace.
-
-        Such scripts are not whitespace-tokenizable, so contiguous word-token
-        matching would always miss; coverage must use a substring check instead.
-        """
-        if any(ch.isspace() for ch in text.strip()):
-            return False
-        return any(
-            "぀" <= ch <= "鿿"  # Hiragana, Katakana, CJK ideographs
-            or "가" <= ch <= "힣"  # Hangul syllables
-            for ch in text
-        )
-
-    @classmethod
-    def _phrase_in_tokens(
-        cls, phrase: str, answer_tokens: list[str], answer_text: str
-    ) -> bool:
-        """True if the expected phrase appears in the answer.
-
-        Latin/space-delimited scripts use contiguous word-token matching (so
-        "AI" does not match inside "airport"). Space-less scripts (CJK) are not
-        whitespace-tokenizable, so word matching would make coverage always 0 —
-        for those, fall back to a normalized substring check on the raw text.
-
-        LIMITATION (CJK): the substring fallback has no morpheme boundary, so a
-        short expected entity can match inside a larger word (e.g. expected
-        "가나" matches within "가나상사"), which can *over-count* recall in the
-        multilingual case. We accept this rather than apply ASCII-style boundary
-        checks, because CJK attaches particles/suffixes directly to a word
-        (Korean "가나가", Japanese "かなは"), so a boundary check would instead
-        *under-count* legitimate mentions. Faithful matching here needs a
-        morphological segmenter (e.g. nori); recall is the only emitted metric,
-        so the bias is conservative-to-optimistic, not a correctness gate.
-        """
-        if cls._is_spaceless_script(phrase):
-            cleaned = phrase.strip().lower()
-            return bool(cleaned) and cleaned in answer_text.lower()
-
-        phrase_tokens = cls._tokenize(phrase)
-        if not phrase_tokens:
-            return False
-        window = len(phrase_tokens)
-        for start in range(len(answer_tokens) - window + 1):
-            if answer_tokens[start : start + window] == phrase_tokens:
-                return True
-        return False
 
     @staticmethod
     def _relationship_endpoints(item: Any) -> tuple[str, str] | None:
@@ -137,19 +74,13 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         return None
 
     @classmethod
-    def _is_covered(
-        cls, item: Any, answer_tokens: list[str], answer: str, relationships: bool
-    ) -> bool:
+    def _is_covered(cls, item: Any, answer: str, relationships: bool) -> bool:
         if not item:
             return False
         endpoints = cls._relationship_endpoints(item) if relationships else None
         if endpoints is not None:
-            return all(
-                cls._phrase_in_tokens(end, answer_tokens, answer) for end in endpoints
-            )
-        return isinstance(item, str) and cls._phrase_in_tokens(
-            item, answer_tokens, answer
-        )
+            return all(phrase_in_text(end, answer) for end in endpoints)
+        return isinstance(item, str) and phrase_in_text(item, answer)
 
     @classmethod
     def _coverage(
@@ -166,17 +97,14 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         behaviour) overstated the signal.
 
         Returns ``None`` when nothing is expected for the dimension, so a query
-        with (say) only expected entities is not penalized for having no expected
-        relationships when the overall score is averaged. With
+        with (say) only expected entities is not scored 0 for having no expected
+        relationships (the metric is skipped instead). With
         ``relationships=True``, pair/arrow items count when both endpoints match.
         """
         if not expected:
             return None, 0
-        answer_tokens = cls._tokenize(answer)
         matched = sum(
-            1
-            for item in expected
-            if cls._is_covered(item, answer_tokens, answer, relationships)
+            1 for item in expected if cls._is_covered(item, answer, relationships)
         )
         return matched / len(expected), matched
 
@@ -192,8 +120,8 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
             expected_relationships, answer, relationships=True
         )
 
-        # Only emit metrics for dimensions that actually have expectations, so a
-        # missing dimension does not dilute the averaged overall score.
+        # Only emit metrics for dimensions that actually have expectations; a
+        # missing dimension is recorded as skipped, not scored 0.
         metrics: list[EvaluationMetric] = []
         if expected_entities and e_cov is not None:
             metrics.append(
@@ -233,13 +161,10 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         **kwargs: Any,
     ) -> EvaluationReport:
         metrics, metadata = self._build_metrics(result)
-        scored = [m.value for m in metrics if m.value is not None]
-        overall = sum(scored) / len(scored) if scored else 0.0
         return EvaluationReport(
             query_id=query.query_id,
             evaluator_type=self.evaluator_type,
             metrics=metrics,
-            overall_score=overall,
             evaluation_time=datetime.now(),
             metadata=metadata,
         )

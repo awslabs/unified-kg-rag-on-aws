@@ -2293,8 +2293,19 @@ class EvaluationConfig(BaseModel):
         description="Language model identifier used for evaluation",
     )
     enabled_evaluators: list[EvaluatorType] = Field(
-        default=[EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS],
-        description="List of evaluator types to enable for this evaluation run.",
+        default=[
+            EvaluatorType.LANGCHAIN,
+            EvaluatorType.RAGAS,
+            EvaluatorType.ANSWER_MATCH,
+            EvaluatorType.RETRIEVAL,
+            EvaluatorType.GRAPH_AWARE,
+        ],
+        description=(
+            "List of evaluator types to enable for this evaluation run. The "
+            "deterministic ones (answer_match, retrieval, graph_aware) are free "
+            "and skip a query that lacks their dataset fields, so they are on "
+            "by default alongside the LLM judges (langchain, ragas)."
+        ),
     )
     langchain_metrics: list[EvaluationMetricType] = Field(
         default=[
@@ -2343,13 +2354,14 @@ class EvaluationConfig(BaseModel):
         default=20,
         ge=1,
         description=(
-            "Maximum number of top-ranked retrieved contexts per sample passed "
-            "to the RAGAS judge, applied before max_context_tokens. Context "
-            "precision makes one judge call per context, so its cost scales "
-            "with the context count; strategies that report 100+ sources time "
-            "out otherwise. Only what the judge scores is capped (context "
-            "metrics become '@N'); the answer model's context is unaffected. "
-            "null disables the cap."
+            "Maximum number of top-ranked retrieved contexts per sample scored "
+            "by RAGAS context_precision, applied before max_context_tokens. "
+            "Context precision makes one judge call per context, so its cost "
+            "scales with the context count; strategies that report 100+ "
+            "sources time out otherwise. Only that metric is capped (it becomes "
+            "context_precision@N); faithfulness and context_recall see every "
+            "context within max_context_tokens, and the answer model's context "
+            "is unaffected. null disables the cap."
         ),
     )
     ragas_max_workers: int = Field(

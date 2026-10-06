@@ -28,9 +28,14 @@ class EvaluationMetricType(str, Enum):
     HIT_AT_K = "hit_at_k"
     RECALL_AT_K = "recall_at_k"
     MRR = "mrr"
+    # Share of reported sources attributable to a file (the rank metrics above
+    # see only those).
+    ATTRIBUTABLE_FRACTION = "attributable_fraction"
     # Deterministic SQuAD-style answer metrics (max over answer + aliases).
     EXACT_MATCH = "exact_match"
     TOKEN_F1 = "token_f1"
+    # 1.0 if the normalized answer contains the gold answer or an alias.
+    ANSWER_CONTAINS = "answer_contains"
 
 
 class EvaluatorType(str, Enum):
@@ -110,7 +115,9 @@ class EvaluationResult(BaseModel):
         default_factory=list,
         description=(
             "Provenance of the reported sources, in rank order: for each source, "
-            "the document ids and file names it carries (empty when it has none)."
+            "the file names it is attributed to — named directly (text units) or "
+            "via its text_unit_ids lineage (entities, relationships, community "
+            "reports); empty when unattributable."
         ),
     )
     response_time: float | None = Field(
@@ -149,6 +156,14 @@ class EvaluationResult(BaseModel):
     error_message: str | None = Field(
         default=None, description="Reason answer generation failed, if known."
     )
+    abstained: bool = Field(
+        default=False,
+        description=(
+            "True when the RAG chain returned its fixed no-context reply instead "
+            "of an answer (retrieval produced no usable context). Scored like any "
+            "answer on answerable items; correct on metadata.answerable=false ones."
+        ),
+    )
 
 
 class EvaluationMetric(BaseModel):
@@ -175,7 +190,12 @@ class EvaluationReport(BaseModel):
         description="List of calculated evaluation metrics for this query."
     )
     overall_score: float | None = Field(
-        default=None, description="Aggregated overall score across all metrics."
+        default=None,
+        description=(
+            "Deprecated, always null: averaging unrelated metrics (e.g. exact "
+            "match with MRR) has no meaning. Kept so existing report JSON keeps "
+            "its shape; read the per-metric values in `metrics`."
+        ),
     )
     evaluation_time: datetime = Field(
         default_factory=datetime.now,
@@ -235,11 +255,23 @@ class EvaluationSummary(BaseModel):
             "dimension appears only when at least one scored query has a value."
         ),
     )
+    abstention_statistics: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Abstentions (the chain's fixed no-context reply) among answered "
+            "queries: 'abstained', 'answered', 'abstention_rate', the same per "
+            "actual search strategy ('per_strategy'), and for items marked "
+            "metadata.answerable=false an 'unanswerable' block with 'total', "
+            "'correct_abstentions' and 'accuracy'."
+        ),
+    )
     run_manifest: dict[str, Any] = Field(
         default_factory=dict,
         description=(
             "What produced this run, for comparing runs: CLI arguments, model ids "
             "(answer generation, evaluation judge/embedding), package version, "
-            "dataset path + sha256, and creation timestamp (UTC)."
+            "git commit (when run from a checkout), sha256 of the full resolved "
+            "config, ragas/langchain versions, dataset path + file sha256 and a "
+            "hash of the parsed dataset, and creation timestamp (UTC)."
         ),
     )

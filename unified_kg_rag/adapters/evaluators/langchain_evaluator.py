@@ -88,7 +88,6 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
     def __init__(
         self,
         config: Config,
-        rag_chain: Any | None = None,
         boto_session: boto3.Session | None = None,
         *,
         providers: Providers | None = None,
@@ -103,7 +102,6 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         super().__init__(
             config=config,
             evaluator_type=EvaluatorType.LANGCHAIN,
-            rag_chain=rag_chain,
             **kwargs,
         )
         self.ignore_errors = config.processing.ignore_errors
@@ -269,7 +267,6 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         failed: dict[str, str] | None = None,
         skipped: dict[str, str] | None = None,
     ) -> EvaluationReport:
-        overall_score = sum(m.value for m in metrics) / len(metrics) if metrics else 0.0
         metadata = self._extract_search_metadata(result)
         if failed:
             metadata[FAILED_METRICS_KEY] = failed
@@ -279,7 +276,6 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             query_id=query_id,
             evaluator_type=self.evaluator_type,
             metrics=metrics,
-            overall_score=overall_score,
             evaluation_time=datetime.now(),
             metadata=metadata,
         )

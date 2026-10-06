@@ -468,10 +468,10 @@ quotas (`search.local_search.type_quota`) are in the template.
 
 | Key | Default | What it does / when to change |
 |---|---|---|
-| `evaluation.enabled_evaluators` | `[langchain, ragas]` | Add `graph_aware`, `retrieval`, or `answer_match` when the dataset has their ground truth (§6). |
+| `evaluation.enabled_evaluators` | `[langchain, ragas, answer_match, retrieval, graph_aware]` | The deterministic evaluators (`answer_match`, `retrieval`, `graph_aware`) skip queries that lack their ground-truth fields (§6). Remove the LLM judges to evaluate without judge cost. |
 | `evaluation.judge_effort` | `"low"` | Reasoning effort for LLM judges; `null` inherits the judge model's tier effort (`aws.bedrock.default_effort` by default). |
 | `evaluation.ragas_timeout` | `300` | Seconds to score one metric on one sample; a timeout yields NaN. |
-| `evaluation.ragas_max_contexts` | `20` | Top-ranked contexts per sample given to the RAGAS judge, so `context_precision`/`context_recall` become "@20". `null` = no cap. |
+| `evaluation.ragas_max_contexts` | `20` | Top-ranked contexts per sample scored by RAGAS `context_precision` (so it is "@20"); faithfulness and context_recall see the full token-budgeted context. `null` = no cap. |
 | `evaluation.ragas_max_workers` | `8` | Concurrent RAGAS jobs. Lower it if Bedrock throttles the judge. |
 | `evaluation.ragas_max_retries` | `3` | Total attempts per judge call. |
 | `evaluation.max_context_tokens` | `8192` | Token cap on the context passed to judges. |
@@ -857,41 +857,70 @@ a graph adapter that supports read-back. Off by default.
 
 ### Evaluators
 
-Selected via `evaluation.enabled_evaluators`:
+Selected via `evaluation.enabled_evaluators`. An enabled evaluator that cannot
+be built (e.g. no Bedrock access for the judge) or rejects its configuration
+stops the run; with `processing.ignore_errors: true` it is dropped instead and
+listed in `run_manifest.dropped_evaluators`. By default all five are enabled:
+the deterministic, LLM-free ones (`answer_match`, `retrieval`, `graph_aware`)
+are free and skip a query that lacks their dataset fields; for a judge-free run
+set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
 
 - **`langchain`** — LangChain-based text similarity (`langchain_metrics`:
   `correctness`, `partial_correctness`). Needs `answer` ground truth.
 - **`ragas`** — RAGAS metrics (`answer_correctness`, `answer_relevancy`,
-  `context_precision`, `context_recall`, `faithfulness`). The judge scores at
-  most `evaluation.ragas_max_contexts` (default 20; `null` = no cap) top-ranked
-  sources per query, applied before the `max_context_tokens` budget.
-  `context_precision` makes one judge call per context, so its cost scales with
-  the context count — strategies that report 100+ sources (e.g. LightRAG `mix`)
-  otherwise hit `ragas_timeout`. This caps only what the judge scores, not what
-  the answer model saw, so the context metrics are effectively
-  `context_precision@N` / `context_recall@N`.
+  `context_precision`, `context_recall`, `faithfulness`). `context_precision`
+  makes one judge call per context, so it scores at most
+  `evaluation.ragas_max_contexts` (default 20; `null` = no cap) top-ranked
+  sources per query, applied before the `max_context_tokens` budget — it is
+  `context_precision@N`. Without the cap, strategies that report 100+ sources
+  (e.g. LightRAG `mix`) hit `ragas_timeout`. `faithfulness` and
+  `context_recall` see every source within `max_context_tokens`, so a claim
+  backed by a lower-ranked source is not marked unsupported. Each report
+  records what the judge saw: `judge_contexts` / `judge_context_tokens` and
+  `context_precision_contexts` / `context_precision_context_tokens`. None of
+  this changes what the answer model saw.
 - **`graph_aware`** — deterministic, **LLM-free** entity/relationship
   **coverage = recall**: of the expected graph artifacts, how many appear in the
-  generated answer (case-insensitive whole-word match; substring match for
-  space-less CJK text). A relationship given as `{"source": "A", "target": "B"}`
+  generated answer, using the same normalization and phrase matcher as
+  `answer_contains` (whole-word match; Korean particles tolerated; substring
+  match for single-word CJK text). A relationship given as `{"source": "A", "target": "B"}`
   or `"A -> B"` counts when the answer mentions both endpoints; any other string
   must appear as a phrase. Needs `expected_entities` / `expected_relationships`
   in the dataset. **Precision and F1 are deliberately
   NOT emitted** — enumerating every entity in a free-text answer isn't reliably
   possible, so reporting precision/F1 would only re-label the recall signal.
-  (Opt in by uncommenting `graph_aware` in `enabled_evaluators`.)
 - **`retrieval`** — deterministic, LLM-free: did the sources the answer model saw
   include the gold documents? `hit_at_k`, `recall_at_k` (k =
-  `evaluation.retrieval_k`, default 5) and `mrr` (over all reported sources)
-  against `reference_sources`. A reference matches a source when their
-  file-name stems are equal, case-insensitively (directories and extensions are
-  ignored: `docs/Terms.pdf` = `terms.pdf` = `terms`), or when it equals a
-  source's document id. Skipped when a query has no `reference_sources` or no
-  source carries a document id / file name.
-- **`answer_match`** — deterministic, LLM-free SQuAD-style `exact_match` and
-  `token_f1` (lowercase, punctuation and English articles removed) against
-  `answer` and optional `metadata.answer_aliases`, taking the max. Token F1
-  splits on whitespace, so for Chinese/Japanese text it degrades to exact match.
+  `evaluation.retrieval_k`, default 5) and `mrr` against `reference_sources`.
+  Text-unit sources name their file directly; entity, relationship and
+  community-report sources are attributed to the files of the text units in
+  their lineage (`text_unit_ids`, looked up in the chain's document store in
+  one batch per suffix). A community report's lineage is its whole community,
+  so `global`/`drift` scores are an upper bound on what the answer model read.
+  Only attributable sources are ranked, and `attributable_fraction`
+  (attributable / reported sources, also in `grouped_statistics` per strategy)
+  shows how much of the context the rank metrics cover. Matching is
+  case-insensitive on the full name or, when the name ends in a file extension
+  (`.` + 1-5 letters/digits, at least one letter), its stem: `docs/Terms.pdf` =
+  `terms.pdf` = `terms`. A `/` is a directory separator only in a path-like
+  value (a file extension, a URI scheme, or a leading `/`, `./`, `~/`), so
+  titles such as `St. Louis Cardinals` or `AC/DC` are compared whole. The rank
+  metrics are skipped when a query has no `reference_sources`, or has sources
+  but none is attributable; a query that retrieved no sources at all scores 0
+  (a miss).
+- **`answer_match`** — deterministic, LLM-free answer scores against `answer`
+  and optional `metadata.answer_aliases`, taking the max over them.
+  **`answer_contains`** (1.0 when the gold answer or an alias appears in the
+  generated answer as a whole-word phrase) is the headline deterministic
+  metric: long-form RAG answers rarely equal a short gold span, so it tracks
+  correctness far better than exact match. Korean particles are tolerated
+  (gold `서울 특별시` matches `서울 특별시는`), and a single-word CJK gold is
+  matched as a substring. SQuAD-style `exact_match` and `token_f1` are also
+  emitted for comparison with published benchmarks. Text is NFKC-normalized, then normalized as in the official SQuAD
+  v1.1 script: lowercase, punctuation deleted (`1,000` = `1000`), English
+  articles dropped, whitespace collapsed. Token F1 splits on whitespace, so for
+  Chinese/Japanese text it degrades to exact match; Korean particles
+  (`서울은`) make both metrics under-count.
 
 ### Eval data format
 
@@ -923,7 +952,9 @@ the `graph_aware` evaluator.
 ```
 
 Per-item `metadata` (e.g. `search_strategy`) overrides the CLI defaults for that
-question. `id` may also be given as `query_id`. The file is validated before any
+question. Mark a question the corpus cannot answer with
+`"metadata": {"answerable": false}`: it is not graded by any evaluator, only on
+whether the chain abstained (see `abstention_statistics` below). `id` may also be given as `query_id`. The file is validated before any
 query runs: an empty dataset, a non-array file, a missing `question`, a
 duplicate id, a wrong field type, or a `metadata` value the RAG chain rejects
 (e.g. an unknown `search_strategy`) stops the run with the item index and id.
@@ -948,12 +979,25 @@ The summary holds, per metric, mean/median/stdev/min/max/count
 - `grouped_statistics` — the same statistics split by `search_strategy` (the
   strategy actually used, which varies per query under `auto`), `category` and
   `difficulty`.
+- `abstention_statistics` — how often the chain returned its fixed
+  no-context reply ("I could not find relevant information…") instead of an
+  answer: `abstained`, `answered`, `abstention_rate`, the same `per_strategy`,
+  and for `answerable: false` items an `unanswerable` block (`total`,
+  `correct_abstentions`, `accuracy`). On answerable items an abstention is
+  graded like any answer (normally a miss); each result carries `abstained`.
 - `run_manifest` — CLI arguments, model ids (answer generation, evaluation
-  judge/embedding), package version, dataset path + sha256, and a UTC timestamp,
-  so two runs can be compared.
+  judge/embedding), package version, git commit (`git_sha`, when run from a
+  checkout), `config_sha256` of the full resolved config, `library_versions`
+  (ragas, langchain*), the dataset (path + file sha256, query count and a hash
+  of the parsed content) and a UTC timestamp, so two runs can be compared.
+  It also lists `dropped_evaluators`. `EvaluationManager.evaluate_dataset`
+  builds it, so library callers get it too (pass `dataset_path=` / `cli_args=`
+  to record those).
 
-Each result also records `retrieved_source_ids`: per reported source, in rank
-order, the document ids and file names it carries.
+Per-query reports list each evaluator's `metrics`; their `overall_score` is
+kept for JSON compatibility but is always `null` (an average of unrelated
+metrics has no meaning). Each result also records `retrieved_source_ids`: per reported source, in rank
+order, the file names it is attributed to (`[]` when unattributable).
 
 ---
 

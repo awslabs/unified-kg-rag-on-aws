@@ -87,6 +87,13 @@ from unified_kg_rag.shared.utils import strip_embedding_fields
 
 logger = get_logger(__name__)
 
+# Fixed reply when retrieval produced no context; the output metadata then
+# carries ``abstained=True`` so evaluation can tell it from a real answer.
+NO_CONTEXT_ANSWER = (
+    "I could not find relevant information in the available data to answer "
+    "this question."
+)
+
 DEFAULT_ERROR_MESSAGE: str = (
     "I apologize, but an error occurred while processing your request. Please try again in a moment."
 )
@@ -917,10 +924,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # with no supporting sources. Short-circuit to an explicit "cannot answer".
         context = str(state.get("context") or "").strip()
         if not context or context == EMPTY_CONTEXT_PLACEHOLDER:
-            return RunnableLambda(
-                lambda _: "I could not find relevant information in the "
-                "available data to answer this question."
-            )
+            return RunnableLambda(lambda _: NO_CONTEXT_ANSWER)
 
         enable_thinking = state.get("enable_thinking", False)
         return self._get_chain_for_prompt(
@@ -969,6 +973,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             "total_results": len(sr.results),
             **sr.metadata,
         }
+        if not context or context == EMPTY_CONTEXT_PLACEHOLDER:
+            # The answer step returned the fixed NO_CONTEXT_ANSWER.
+            metadata["abstained"] = True
         if optimized is not None:
             metadata["context_sections_included"] = optimized.sections_included
             metadata["context_sections_excluded"] = optimized.sections_excluded
