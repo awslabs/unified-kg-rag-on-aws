@@ -170,6 +170,17 @@ class TestOptimalResolution:
         chosen = cd._find_optimal_resolution(g)
         assert chosen in {0.1, 1.0, 3.0}
 
+    def test_isolated_node_does_not_void_the_sweep(self) -> None:
+        # Leiden omits isolated nodes and modularity rejects a partition that
+        # misses any, so every candidate used to fail and the configured value
+        # came back regardless of the graph.
+        cd = _detector(auto_resolution=True)
+        cd.community_detection_config.resolution = 5.0
+        cd.community_detection_config.auto_resolution_candidates = [0.01, 1.0]
+        g = _two_triangle_graph()
+        g.add_node("lonely", name="Lonely")
+        assert cd._find_optimal_resolution(g) == 1.0
+
     def test_falls_back_to_configured_resolution_when_no_split(self) -> None:
         # A single clique cannot be split into >=2 communities at any
         # resolution candidate; selection keeps the configured default.

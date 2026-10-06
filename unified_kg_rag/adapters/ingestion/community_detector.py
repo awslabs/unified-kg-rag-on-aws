@@ -229,8 +229,6 @@ class CommunityDetector(BaseProcessor):
             else:
                 resolution = config.resolution
 
-            all_nodes = set(target_graph.nodes())
-
             partition_dict = leiden(
                 target_graph,
                 resolution=resolution,
@@ -239,13 +237,9 @@ class CommunityDetector(BaseProcessor):
                 extra_forced_iterations=config.extra_forced_iterations,
             )
 
-            communities = self._partition_dict_to_communities(partition_dict)
-            partitioned_nodes = set(partition_dict.keys())
-            missing_nodes = all_nodes - partitioned_nodes
-            next_label = max(communities.keys()) + 1 if communities else 0
-            for node in missing_nodes:
-                communities[next_label] = {node}
-                next_label += 1
+            communities = self._partition_dict_to_communities(
+                partition_dict, target_graph
+            )
 
             if config.min_community_size > 1:
                 communities = self._merge_small_communities(
@@ -277,10 +271,20 @@ class CommunityDetector(BaseProcessor):
     @staticmethod
     def _partition_dict_to_communities(
         partition_dict: dict[str, int],
+        graph: nx.Graph | None = None,
     ) -> dict[int, set[str]]:
         communities: dict[int, set[str]] = defaultdict(set)
         for node, label in partition_dict.items():
             communities[label].add(node)
+        if graph is not None:
+            # Leiden leaves isolated nodes out of its result; each becomes its
+            # own community so the partition covers the graph (modularity
+            # rejects anything less).
+            next_label = max(communities.keys()) + 1 if communities else 0
+            for node in graph.nodes():
+                if node not in partition_dict:
+                    communities[next_label] = {node}
+                    next_label += 1
         return dict(communities)
 
     def _find_optimal_resolution(self, graph: nx.Graph) -> float:
@@ -315,7 +319,7 @@ class CommunityDetector(BaseProcessor):
                     trials=1,
                 )
 
-                communities = self._partition_dict_to_communities(partition_dict)
+                communities = self._partition_dict_to_communities(partition_dict, graph)
                 partition = list(communities.values())
 
                 if len(partition) < 2:
@@ -328,7 +332,7 @@ class CommunityDetector(BaseProcessor):
                     best_resolution = resolution
 
             except Exception as e:
-                logger.debug("Resolution %s failed: %s", resolution, e)
+                logger.warning("Resolution %s failed: %s", resolution, e)
                 continue
 
         logger.info(
