@@ -147,16 +147,22 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   test). LangChain loader output is converted in
   `shared.utils.document_converter`; `DirectoryLoader` is no longer a LangChain
   `BaseLoader`. Field names are unchanged, and JSON written by earlier versions
-  still loads (its `id`/`type` keys are ignored) (#PR).
+  still loads (its `id`/`type` keys are ignored) (#149).
 - The Bedrock model capability catalog (`LanguageModelInfo`,
   `EmbeddingModelInfo`, `RerankModelInfo`, `get_language_model_info`,
   `effective_max_output_tokens`) moved from `adapters.aws.bedrock` to
   `adapters.aws.bedrock_models`; `bedrock.py` keeps the factories, the
-  guardrail handler and the cross-region helper (#PR).
+  guardrail handler and the cross-region helper (#150).
 - The user guide and config field descriptions state that embedding and rerank
   model ids, unlike language-model ids, are a closed list that
   `aws.bedrock.model_overrides` does not cover: the embedding dimension is
-  fixed into the OpenSearch vector mappings (#PR).
+  fixed into the OpenSearch vector mappings (#150).
+
+- **Breaking** default: `aws.bedrock.region_name` defaults to `null` and then
+  follows `aws.region_name` (an `AWS_REGION` override moves it too), and the
+  `aws.region_name` default is `us-west-2` instead of `ap-northeast-2`, which
+  offers no Bedrock rerank model. Set `aws.bedrock.region_name` to keep Bedrock
+  in another region (#148).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
