@@ -7,8 +7,6 @@ from functools import partial
 from pathlib import Path
 
 from datasketch import MinHash, MinHashLSH
-from langchain_core.document_loaders.base import BaseLoader
-from langchain_core.documents import Document as BaseDocument
 
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.domain.models import Config, Document
@@ -48,7 +46,7 @@ def compute_jaccard_similarity(
     return None
 
 
-class DirectoryLoader(BaseLoader):
+class DirectoryLoader:
     # Only extensions the ParserFactory ALWAYS handles. .md/.html are added at
     # runtime by the parser-extension union below WHEN the optional 'unstructured'
     # package is installed; .tsv was advertised here but the parser has no .tsv
@@ -102,7 +100,7 @@ class DirectoryLoader(BaseLoader):
         self.failed_files: list[str] = []
         self.directory_hash: str | None = None
 
-    def load(self) -> list[BaseDocument]:
+    def load(self) -> list[Document]:
         start_time = time.time()
         logger.info("Starting document loading from: '%s'", self.source_directory)
 
@@ -140,9 +138,7 @@ class DirectoryLoader(BaseLoader):
         if self.failed_files:
             logger.warning("Failed to load %s files", len(self.failed_files))
 
-        # Document is a BaseDocument subclass; widen the invariant list type to
-        # match the BaseLoader.load() supertype signature.
-        return list(docs)
+        return docs
 
     def _validate_directory(self) -> None:
         if not self.source_directory.exists():
