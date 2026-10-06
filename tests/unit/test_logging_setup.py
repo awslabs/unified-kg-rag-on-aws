@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from langsmith.utils import get_env_var
 from structlog.contextvars import bound_contextvars
 
 from unified_kg_rag.domain.models import Config
@@ -112,3 +113,41 @@ def test_worker_thread_lines_carry_the_bound_context(stream: io.StringIO) -> Non
     (record,) = _records(stream)
     assert record["event"] == "from worker"
     assert record["pipeline_id"] == "p-1"
+
+
+_TRACING_VARS = (
+    "LANGSMITH_TRACING",
+    "LANGSMITH_TRACING_V2",
+    "LANGCHAIN_TRACING",
+    "LANGCHAIN_TRACING_V2",
+)
+
+
+# Autouse: a developer's own LANGSMITH_TRACING must not add a record to the
+# exact-record assertions above.
+@pytest.fixture(autouse=True)
+def tracing_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[pytest.MonkeyPatch]:
+    for name in _TRACING_VARS:
+        monkeypatch.delenv(name, raising=False)
+    get_env_var.cache_clear()  # langsmith caches its environment lookups
+    yield monkeypatch
+    monkeypatch.undo()
+    get_env_var.cache_clear()
+
+
+@pytest.mark.parametrize("name", ["LANGSMITH_TRACING", "LANGCHAIN_TRACING_V2"])
+def test_langsmith_tracing_env_warns_once(
+    stream: io.StringIO, tracing_env: pytest.MonkeyPatch, name: str
+) -> None:
+    tracing_env.setenv(name, "true")
+    setup_logging(_config(), stream=stream)
+    (record,) = _records(stream)
+    assert record["level"] == "warning"
+    assert "sent to LangSmith" in record["event"]
+
+
+def test_no_langsmith_warning_without_tracing(
+    stream: io.StringIO, tracing_env: pytest.MonkeyPatch
+) -> None:
+    setup_logging(_config(), stream=stream)
+    assert _records(stream) == []
