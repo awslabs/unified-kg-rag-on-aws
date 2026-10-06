@@ -141,7 +141,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   executor to `processing.io_workers` (64). LangChain runs Bedrock `ainvoke`
   calls there, and Python's default of `min(32, CPUs + 4)` threads let only
   six run at once on a 2-vCPU task. Async hosts call
-  `unified_kg_rag.shared.utils.configure_event_loop` (#PR).
+  `unified_kg_rag.shared.utils.configure_event_loop` (#142).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
