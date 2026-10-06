@@ -255,12 +255,13 @@ class EvaluationRunner:
 
         start_time = time.time()
         results, reports, summary = await self.evaluation_manager.evaluate_dataset(
-            queries=queries, ground_truths=ground_truths, show_progress=True
+            queries=queries,
+            ground_truths=ground_truths,
+            show_progress=True,
+            dataset_path=self.args.eval_data_path,
+            cli_args=vars(self.args),
         )
         total_time = time.time() - start_time
-        summary.run_manifest = self.evaluation_manager.build_run_manifest(
-            self.args.eval_data_path, vars(self.args)
-        )
 
         outputs_directory = (
             self.args.outputs_directory or self.config.evaluation.outputs_directory

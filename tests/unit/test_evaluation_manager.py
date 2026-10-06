@@ -715,7 +715,34 @@ class TestComparability:
         assert manifest["models"]["evaluation_judge"] is None  # no LLM judge
         assert manifest["enabled_evaluators"] == ["graph_aware"]
         assert manifest["package_version"] and manifest["created_at"]
+        assert len(manifest["config_sha256"]) == 64
+        assert manifest["library_versions"]["ragas"]
+        assert manifest["library_versions"]["langchain-core"]
+        assert "git_sha" in manifest
         json.dumps(manifest)  # serializable as-is
+
+    def test_config_hash_tracks_resolved_config(self, config: Config) -> None:
+        config.evaluation.enabled_evaluators = []
+        manager = EvaluationManager(config, rag_chain=object())
+        before = manager.build_run_manifest()["config_sha256"]
+        config.search.answer_generation_model_id = "another-model"
+        assert manager.build_run_manifest()["config_sha256"] != before
+
+    def test_git_sha_none_without_git(self, mocker) -> None:
+        mocker.patch(
+            "unified_kg_rag.evaluation.evaluation_manager.shutil.which",
+            return_value=None,
+        )
+        assert EvaluationManager._git_sha() is None
+
+    async def test_evaluate_dataset_attaches_manifest(self, config: Config) -> None:
+        manager, results, reports, summary = await self._run(
+            config, {"A?": "local", "B?": "local"}
+        )
+        manifest = summary.run_manifest
+        assert manifest["dataset"]["num_queries"] == 2
+        assert len(manifest["dataset"]["content_sha256"]) == 64
+        assert "path" not in manifest["dataset"]  # library call: no file
 
 
 class TestAbstention:

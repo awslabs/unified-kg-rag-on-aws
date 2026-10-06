@@ -1082,7 +1082,11 @@ run-eval --eval-data-path my_eval_data.json \
   있는 질문에서의 답변 거부는 일반 답변처럼 채점되며(대개 오답), 각 결과에는
   `abstained`가 기록됩니다.
 - `run_manifest` — CLI 인자, 모델 ID(답변 생성, 평가 judge/임베딩), 패키지 버전,
-  데이터셋 경로와 sha256, UTC 타임스탬프. 두 실행을 비교할 때 사용합니다.
+  git 커밋(`git_sha`, 체크아웃에서 실행한 경우), 전체 확정 설정의
+  `config_sha256`, `library_versions`(ragas, langchain*), 데이터셋(경로와 파일
+  sha256, 질문 수, 파싱된 내용의 해시), UTC 타임스탬프. 두 실행을 비교할 때
+  사용합니다. `EvaluationManager.evaluate_dataset`이 만들기 때문에 라이브러리로
+  호출해도 포함됩니다(`dataset_path=` / `cli_args=`를 넘기면 함께 기록).
 
 각 결과에는 `retrieved_source_ids`(보고된 소스별로 귀속된 파일 이름, 순위 순,
 귀속할 수 없으면 `[]`)도 기록됩니다.

@@ -265,6 +265,8 @@ class EvaluationSummary(BaseModel):
         description=(
             "What produced this run, for comparing runs: CLI arguments, model ids "
             "(answer generation, evaluation judge/embedding), package version, "
-            "dataset path + sha256, and creation timestamp (UTC)."
+            "git commit (when run from a checkout), sha256 of the full resolved "
+            "config, ragas/langchain versions, dataset path + file sha256 and a "
+            "hash of the parsed dataset, and creation timestamp (UTC)."
         ),
     )

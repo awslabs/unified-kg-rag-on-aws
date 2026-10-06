@@ -1108,8 +1108,12 @@ The summary holds, per metric, mean/median/stdev/min/max/count
   `correct_abstentions`, `accuracy`). On answerable items an abstention is
   graded like any answer (normally a miss); each result carries `abstained`.
 - `run_manifest` — CLI arguments, model ids (answer generation, evaluation
-  judge/embedding), package version, dataset path + sha256, and a UTC timestamp,
-  so two runs can be compared.
+  judge/embedding), package version, git commit (`git_sha`, when run from a
+  checkout), `config_sha256` of the full resolved config, `library_versions`
+  (ragas, langchain*), the dataset (path + file sha256, query count and a hash
+  of the parsed content) and a UTC timestamp, so two runs can be compared.
+  `EvaluationManager.evaluate_dataset` builds it, so library callers get it
+  too (pass `dataset_path=` / `cli_args=` to record those).
 
 Each result also records `retrieved_source_ids`: per reported source, in rank
 order, the file names it is attributed to (`[]` when unattributable).

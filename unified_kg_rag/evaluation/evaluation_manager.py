@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import hashlib
 import json
+import shutil
 import statistics
+import subprocess
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -284,7 +286,15 @@ class EvaluationManager:
         queries: list[EvaluationQuery],
         ground_truths: list[EvaluationGroundTruth],
         show_progress: bool = True,
+        *,
+        dataset_path: str | Path | None = None,
+        cli_args: dict[str, Any] | None = None,
     ) -> tuple[list[EvaluationResult], list[EvaluationReport], EvaluationSummary]:
+        """Answer, score and summarize a dataset; the summary carries the manifest.
+
+        ``dataset_path`` (the file the queries were loaded from) and
+        ``cli_args`` are recorded in ``summary.run_manifest`` when given.
+        """
         start_time = datetime.now()
         logger.info("Starting evaluation for %s queries", len(queries))
 
@@ -294,6 +304,12 @@ class EvaluationManager:
             end_time = datetime.now()
             summary = self._generate_summary(
                 queries, results, reports, start_time, end_time
+            )
+            summary.run_manifest = self.build_run_manifest(
+                dataset_path,
+                cli_args,
+                queries=queries,
+                ground_truths=ground_truths,
             )
 
             logger.info(
@@ -745,25 +761,52 @@ class EvaluationManager:
                 grouped[dimension] = stats
         return grouped
 
+    _LIBRARIES = (
+        "ragas",
+        "langchain",
+        "langchain-core",
+        "langchain-aws",
+        "langchain-community",
+    )
+
     def build_run_manifest(
-        self, eval_data_path: str | Path, cli_args: dict[str, Any] | None = None
+        self,
+        eval_data_path: str | Path | None = None,
+        cli_args: dict[str, Any] | None = None,
+        *,
+        queries: list[EvaluationQuery] | None = None,
+        ground_truths: list[EvaluationGroundTruth] | None = None,
     ) -> dict[str, Any]:
         """Record what produced a run so two summaries can be compared."""
-        path = Path(eval_data_path)
-        try:
-            package_version = version("unified-kg-rag-on-aws")
-        except PackageNotFoundError:
-            package_version = "unknown"
         enabled = set(self.evaluators) or set(self.config.evaluation.enabled_evaluators)
         uses_judge = bool(enabled & {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS})
         evaluation = self.config.evaluation
+        dataset: dict[str, Any] = {}
+        if eval_data_path is not None:
+            path = Path(eval_data_path)
+            dataset["path"] = str(path)
+            dataset["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        if queries is not None:
+            # Hash of the parsed dataset, so library callers that never read a
+            # file (and files differing only in formatting) are comparable.
+            dataset["num_queries"] = len(queries)
+            dataset["content_sha256"] = self._sha256_json(
+                {
+                    "queries": [q.model_dump(mode="json") for q in queries],
+                    "ground_truths": [
+                        gt.model_dump(mode="json") for gt in ground_truths or []
+                    ],
+                }
+            )
         return {
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "package_version": package_version,
-            "dataset": {
-                "path": str(path),
-                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "package_version": self._package_version("unified-kg-rag-on-aws"),
+            "git_sha": self._git_sha(),
+            "config_sha256": self._sha256_json(self.config.model_dump(mode="json")),
+            "library_versions": {
+                name: self._package_version(name) for name in self._LIBRARIES
             },
+            "dataset": dataset,
             "cli_args": {
                 k: str(v) if isinstance(v, Path) else v
                 for k, v in (cli_args or {}).items()
@@ -781,6 +824,37 @@ class EvaluationManager:
             },
             "enabled_evaluators": sorted(e.value for e in enabled),
         }
+
+    @staticmethod
+    def _sha256_json(data: Any) -> str:
+        encoded = json.dumps(data, sort_keys=True, ensure_ascii=False, default=str)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _package_version(name: str) -> str | None:
+        try:
+            return version(name)
+        except PackageNotFoundError:
+            return None
+
+    @staticmethod
+    def _git_sha() -> str | None:
+        """Commit of the source checkout this package runs from, if any."""
+        git = shutil.which("git")
+        if git is None:
+            return None
+        try:
+            completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+                [git, "rev-parse", "HEAD"],
+                cwd=Path(__file__).resolve().parent,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=True,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return completed.stdout.strip() or None
 
     def _calculate_metric_outcomes(
         self,
