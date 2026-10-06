@@ -81,22 +81,21 @@ class TestSampleAndParse:
     def test_sample_skips_empty(self, tuner: PromptTuner) -> None:
         assert tuner.sample_corpus(["", ""]) == ""
 
-    def test_parse_json_strips_prose(self, tuner: PromptTuner) -> None:
-        assert PromptTuner._parse_json('result: {"domain": "x"} ok') == {"domain": "x"}
-
-    def test_parse_json_no_braces_returns_empty(self, tuner: PromptTuner) -> None:
-        assert PromptTuner._parse_json("I cannot help with that") == {}
-
-    def test_parse_json_malformed_returns_empty(self, tuner: PromptTuner) -> None:
-        assert PromptTuner._parse_json("{not: valid json}") == {}
-
-    def test_parse_json_non_dict_returns_empty(self, tuner: PromptTuner) -> None:
-        assert PromptTuner._parse_json("[1, 2, 3]") == {}
-
     async def test_profile_corpus_empty_returns_default(
         self, tuner: PromptTuner
     ) -> None:
         profile = await tuner.profile_corpus([])
+        assert profile.domain == "general knowledge"
+
+    async def test_profile_corpus_malformed_response_returns_default(
+        self, tuner: PromptTuner, mocker
+    ) -> None:
+        chain = mocker.Mock()
+        chain.ainvoke = mocker.AsyncMock(return_value="I cannot help with that")
+        mocker.patch(
+            "unified_kg_rag.application.prompts.tuner.setup_chain", return_value=chain
+        )
+        profile = await tuner.profile_corpus(["some text"])
         assert profile.domain == "general knowledge"
 
     async def test_tune_returns_profile_and_custom_prompts(

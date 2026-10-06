@@ -70,19 +70,6 @@ def _result(answer: str = "Alice founded Acme.") -> EvaluationResult:
     )
 
 
-class TestStripMarkdownCodeFence:
-    def test_fenced_json_block_is_unwrapped(self) -> None:
-        text = '```json\n{"score": 0.5}\n```'
-        assert LangChainEvaluator._strip_markdown_code_fence(text) == '{"score": 0.5}'
-
-    def test_bare_fence_is_unwrapped(self) -> None:
-        text = "```\nhello\n```"
-        assert LangChainEvaluator._strip_markdown_code_fence(text) == "hello"
-
-    def test_no_fence_passes_through_stripped(self) -> None:
-        assert LangChainEvaluator._strip_markdown_code_fence("  plain  ") == "plain"
-
-
 class TestClampScore:
     def test_clamps_above_one(self) -> None:
         # A regex fallback grabbing a year / a "5 out of 10" mis-scale must not

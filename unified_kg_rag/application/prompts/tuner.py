@@ -104,14 +104,8 @@ class PromptTuner:
             custom_prompts=self.config.custom_prompts,
         )
         raw = await chain.ainvoke({"corpus_sample": corpus_sample})
-        return CorpusProfile.from_payload(self._parse_json(raw))
-
-    @staticmethod
-    def _parse_json(raw: str) -> dict[str, Any]:
-        # Shared degrade-to-{} LLM-JSON parser: a non-JSON/malformed response
-        # yields {} so tuning falls back to the default profile rather than
-        # crashing the whole run.
-        return parse_llm_json(raw)
+        # A malformed response yields {} -> the default profile, not a crash.
+        return CorpusProfile.from_payload(parse_llm_json(raw))
 
     MAX_EXAMPLES = 3
     EXAMPLE_CHUNK_CHARS = 1200

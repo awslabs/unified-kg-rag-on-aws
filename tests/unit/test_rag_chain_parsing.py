@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for GraphRAGChain parsing + state-graph node helpers (AWS-free).
 
-Covers the LightRAG keyword-JSON parser (``_parse_keyword_json``), the
-``RAGInput``/``RAGOutput``/``ProcessedQuery`` model boundaries,
+Covers the ``RAGInput``/``RAGOutput``/``ProcessedQuery`` model boundaries,
 ``_prepare_invoke`` conversation-id handling, the LightRAG mode predicate, and
 the synchronous output-formatting nodes. Does NOT duplicate the strategy/
 retriever dispatch in ``test_rag_chain_dispatch`` or the router parsing already
@@ -11,8 +10,6 @@ asserted elsewhere.
 """
 
 from __future__ import annotations
-
-import json
 
 import pytest
 
@@ -33,54 +30,6 @@ from unified_kg_rag.domain.models import (
 )
 
 pytestmark = pytest.mark.unit
-
-
-# --- _parse_keyword_json -------------------------------------------------
-
-
-def test_parse_keyword_json_plain_object() -> None:
-    raw = '{"high_level_keywords": ["ai"], "low_level_keywords": ["llm", "rag"]}'
-    parsed = GraphRAGChain._parse_keyword_json(raw)
-    assert parsed["high_level_keywords"] == ["ai"]
-    assert parsed["low_level_keywords"] == ["llm", "rag"]
-
-
-def test_parse_keyword_json_strips_json_code_fence() -> None:
-    raw = '```json\n{"high_level_keywords": ["x"], "low_level_keywords": []}\n```'
-    parsed = GraphRAGChain._parse_keyword_json(raw)
-    assert parsed["high_level_keywords"] == ["x"]
-
-
-def test_parse_keyword_json_strips_bare_code_fence() -> None:
-    raw = '```\n{"high_level_keywords": ["y"]}\n```'
-    parsed = GraphRAGChain._parse_keyword_json(raw)
-    assert parsed["high_level_keywords"] == ["y"]
-
-
-def test_parse_keyword_json_isolates_object_from_prose() -> None:
-    raw = 'Here are the keywords: {"high_level_keywords": ["topic"]} hope that helps!'
-    parsed = GraphRAGChain._parse_keyword_json(raw)
-    assert parsed["high_level_keywords"] == ["topic"]
-
-
-def test_parse_keyword_json_array_payload_returns_empty_dict() -> None:
-    # A top-level JSON array is not a dict -> normalized to {} so callers get
-    # empty keyword lists rather than a crash.
-    raw = '["not", "a", "dict"]'
-    assert GraphRAGChain._parse_keyword_json(raw) == {}
-
-
-def test_parse_keyword_json_invalid_raises() -> None:
-    with pytest.raises(json.JSONDecodeError):
-        GraphRAGChain._parse_keyword_json("not json at all")
-
-
-def test_parse_keyword_json_extracts_innermost_braces_span() -> None:
-    # find('{')..rfind('}') spans the whole object even with nested braces.
-    raw = '{"high_level_keywords": ["a"], "meta": {"nested": 1}}'
-    parsed = GraphRAGChain._parse_keyword_json(raw)
-    assert parsed["high_level_keywords"] == ["a"]
-    assert parsed["meta"] == {"nested": 1}
 
 
 # --- query-translation refusal guard (Issue F side observation) ----------

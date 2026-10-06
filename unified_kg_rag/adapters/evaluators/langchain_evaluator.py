@@ -1,7 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import json
 import re
 from collections.abc import Coroutine
 from datetime import datetime
@@ -32,6 +31,7 @@ from unified_kg_rag.evaluation.base import (
     judge_model_kwargs,
 )
 from unified_kg_rag.shared import EvaluationException, get_logger
+from unified_kg_rag.shared.utils import parse_llm_json
 
 logger = get_logger(__name__)
 PARTIAL_CORRECTNESS_PROMPT_TEMPLATE = """You are an expert evaluator tasked with assessing the correctness of a
@@ -148,18 +148,6 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             )
 
     @staticmethod
-    def _strip_markdown_code_fence(text: str) -> str:
-        text = text.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            if lines[0].strip() in ("```json", "```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            text = "\n".join(lines).strip()
-        return text
-
-    @staticmethod
     def _parse_score(eval_result: dict[str, Any]) -> float:
         score = eval_result.get("score") or eval_result.get("value")
         if isinstance(score, (int | float)):
@@ -167,25 +155,9 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
 
         reasoning = eval_result.get("reasoning", "")
         if isinstance(reasoning, str) and reasoning.strip():
-            try:
-                data = json.loads(reasoning)
-                # json.loads may yield a non-dict (a bare number/list/str); only
-                # a dict has a "score" key.
-                if isinstance(data, dict) and isinstance(
-                    data.get("score"), (int | float)
-                ):
-                    return float(data["score"])
-            except json.JSONDecodeError:
-                json_match = re.search(r"{.*}", reasoning, re.DOTALL)
-                if json_match:
-                    try:
-                        data = json.loads(json_match.group())
-                        if isinstance(data, dict) and isinstance(
-                            data.get("score"), (int | float)
-                        ):
-                            return float(data["score"])
-                    except json.JSONDecodeError:
-                        pass
+            json_score = parse_llm_json(reasoning).get("score")
+            if isinstance(json_score, int | float):
+                return float(json_score)
 
             # Prefer a score-LABELED number ("score: 0.8", "score is 0.8") so a
             # bare first number in free-text reasoning (a citation, a year, a
@@ -346,12 +318,10 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         explanation = raw_explanation
 
         if metric_type == EvaluationMetricType.PARTIAL_CORRECTNESS:
-            try:
-                cleaned_explanation = self._strip_markdown_code_fence(raw_explanation)
-                data = json.loads(cleaned_explanation)
-                if isinstance(data, dict) and "reasoning" in data:
-                    explanation = data["reasoning"]
-            except (json.JSONDecodeError, TypeError):
+            data = parse_llm_json(raw_explanation)
+            if "reasoning" in data:
+                explanation = data["reasoning"]
+            elif not data:
                 logger.warning(
                     "Could not parse reasoning as JSON: '%s'", raw_explanation
                 )
@@ -428,12 +398,10 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         explanation = raw_explanation
 
         if metric_type == EvaluationMetricType.PARTIAL_CORRECTNESS:
-            try:
-                cleaned_explanation = self._strip_markdown_code_fence(raw_explanation)
-                data = json.loads(cleaned_explanation)
-                if isinstance(data, dict) and "reasoning" in data:
-                    explanation = data["reasoning"]
-            except (json.JSONDecodeError, TypeError):
+            data = parse_llm_json(raw_explanation)
+            if "reasoning" in data:
+                explanation = data["reasoning"]
+            elif not data:
                 logger.warning(
                     "Could not parse reasoning as JSON: '%s'", raw_explanation
                 )

@@ -1,7 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import json
 import re
 import threading
 import time
@@ -82,7 +81,11 @@ from unified_kg_rag.domain.retrieval.strategy_registry import (
 )
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import InvalidFilterError, get_logger
-from unified_kg_rag.shared.utils import configure_event_loop, strip_embedding_fields
+from unified_kg_rag.shared.utils import (
+    configure_event_loop,
+    parse_llm_json,
+    strip_embedding_fields,
+)
 
 logger = get_logger(__name__)
 
@@ -571,7 +574,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             raw = await extractor.ainvoke(
                 {"query": query, "target_language": target_language}
             )
-            payload = self._parse_keyword_json(raw)
+            # Strict: with ignore_errors=False a broken keyword extraction
+            # surfaces instead of silently yielding empty keyword lists.
+            payload = parse_llm_json(raw, strict=True)
             hl = [str(k) for k in payload.get("high_level_keywords", []) if k]
             ll = [str(k) for k in payload.get("low_level_keywords", []) if k]
             return hl, ll
@@ -580,22 +585,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 raise
             logger.warning("Dual-keyword extraction failed: %s", e)
             return [], []
-
-    @staticmethod
-    def _parse_keyword_json(raw: str) -> dict[str, Any]:
-        # Strict variant: unlike the shared degrade-to-{} parser, this RAISES on
-        # malformed JSON so that with ignore_errors=False a broken keyword
-        # extraction surfaces instead of silently yielding empty keyword lists.
-        text = raw.strip()
-        if text.startswith("```"):
-            text = text.split("```", 2)[1] if "```" in text[3:] else text[3:]
-            if text.lstrip().lower().startswith("json"):
-                text = text.lstrip()[4:]
-        start, end = text.find("{"), text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            text = text[start : end + 1]
-        parsed = json.loads(text)
-        return parsed if isinstance(parsed, dict) else {}
 
     async def _load_memory_step(self, state: dict[str, Any]) -> dict[str, Any]:
         if not state.get("use_memory") or not (cid := state.get("conversation_id")):

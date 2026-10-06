@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from unified_kg_rag.shared.utils import common as common_mod
@@ -159,6 +161,17 @@ class TestParseLlmJson:
 
     def test_empty_string_returns_empty(self) -> None:
         assert parse_llm_json("") == {}
+
+    @pytest.mark.parametrize("raw", ["not json at all", "{not: valid}", ""])
+    def test_strict_raises_on_unparseable(self, raw: str) -> None:
+        with pytest.raises(json.JSONDecodeError):
+            parse_llm_json(raw, strict=True)
+
+    def test_strict_parses_fenced_object(self) -> None:
+        assert parse_llm_json('```json\n{"a": 1}\n```', strict=True) == {"a": 1}
+
+    def test_strict_non_dict_returns_empty(self) -> None:
+        assert parse_llm_json("[1, 2, 3]", strict=True) == {}
 
 
 class TestGenerateStableId:
