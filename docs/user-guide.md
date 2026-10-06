@@ -155,7 +155,8 @@ aws:
     default_max_output_tokens: 16384  # max_tokens per request (see Model selection notes); null = model maximum
     model_overrides: {}           # capability overrides for a model without a curated record
     enable_1m_context: false      # opt into the 1M window on models where it's a beta (premium billing); Claude 5 is native 1M
-    effort: "high"                # reasoning depth for adaptive-thinking models: low | medium | high | xhigh | max
+    default_effort: "high"        # reasoning depth on default_model_id: low | medium | high | xhigh | max
+    fast_effort: "low"            # reasoning depth on fast_model_id (no-op for the shipped Haiku 4.5)
     guardrail:                    # optional Bedrock Guardrails (query path by default)
       identifier: null            # set a guardrail ID/ARN to enable
       version: "DRAFT"
@@ -325,9 +326,15 @@ Three things differ for Claude 4.7-and-later models:
   for Claude 5 (no `apac.`), so disabling the global profile leaves no path.
 - **`effort` replaces the thinking token budget.** `thinking_budget_tokens` is
   ignored for these models (the old `budget_tokens` request shape is rejected
-  with a 400); set `bedrock.effort` instead. Claude Sonnet 5.5 always thinks, so
-  `--enable-thinking` is a no-op for it — depth is `effort` only. A level the
-  model does not accept (e.g. `xhigh` on Opus or Sonnet 4.6) fails fast.
+  with a 400); set `bedrock.default_effort` / `bedrock.fast_effort` instead.
+  A call uses `fast_effort` when its model is `fast_model_id` (and that differs
+  from `default_model_id`), otherwise `default_effort`; the shipped fast model,
+  Claude Haiku 4.5, does not reason on these calls, so `fast_effort` only
+  matters once the fast tier runs a thinking model. The older single
+  `bedrock.effort` key is still accepted as an alias for `default_effort`
+  (deprecated). Claude Sonnet 5.5 always thinks, so `--enable-thinking` is a
+  no-op for it — depth is `effort` only. A level the model does not accept
+  (e.g. `xhigh` on Opus or Sonnet 4.6) fails fast.
 - **Sampling parameters are dropped.** `temperature`/`top_k` are not accepted
   and are omitted from requests automatically; steer behaviour by prompting.
 
@@ -335,7 +342,8 @@ OpenAI GPT models differ from Claude in these ways:
 
 - They always go through the Converse API on a `us.`/`global.` inference
   profile (no `apac.`/`eu.` geo profiles; keep `enable_global_profile: true`
-  outside the US). `bedrock.effort` is sent as
+  outside the US). The tier's effort (`bedrock.default_effort` /
+  `fast_effort`) is sent as
   `reasoning: {effort: ...}` (the flat `reasoning_effort` field is rejected).
   GPT-5.6 and GPT-6.x answered a trivial prompt in roughly 10-25 s even at
   `effort: low`, so size timeouts and concurrency accordingly.

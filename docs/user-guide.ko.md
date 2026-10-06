@@ -156,7 +156,8 @@ aws:
     default_max_output_tokens: 16384  # 요청당 max_tokens(모델 선택 주의사항 참고). null이면 모델 최대값
     model_overrides: {}           # 검증된 기능 정보가 없는 모델의 기능 재정의
     enable_1m_context: false      # 1M 창이 베타인 모델에서 옵트인(장문 요금 프리미엄); Claude 5는 네이티브 1M
-    effort: "high"                # 적응형 사고 모델의 추론 깊이: low | medium | high | xhigh | max
+    default_effort: "high"        # default_model_id의 추론 깊이: low | medium | high | xhigh | max
+    fast_effort: "low"            # fast_model_id의 추론 깊이(기본 Haiku 4.5에서는 효과 없음)
     guardrail:                    # optional Bedrock Guardrails (query path by default)
       identifier: null            # set a guardrail ID/ARN to enable
       version: "DRAFT"
@@ -321,7 +322,12 @@ Claude 4.7 이후 모델은 세 가지가 다릅니다.
   없으므로, 글로벌 프로파일을 끄면 사용 경로가 없습니다.
 - **`effort`가 사고 토큰 예산을 대체합니다.** 이 모델들에서는
   `thinking_budget_tokens`가 무시됩니다(기존 `budget_tokens` 형식은 400으로
-  거부됨). 대신 `bedrock.effort`를 설정하세요. Claude Sonnet 5.5는 사고를 끌 수
+  거부됨). 대신 `bedrock.default_effort` / `bedrock.fast_effort`를 설정하세요.
+  호출 모델이 `fast_model_id`이고 `default_model_id`와 다르면 `fast_effort`를,
+  그 밖에는 `default_effort`를 씁니다. 기본 fast 모델인 Claude Haiku 4.5는 이
+  호출에서 추론하지 않으므로, `fast_effort`는 fast 계층에 사고 모델을 지정했을
+  때만 의미가 있습니다. 기존 단일 키 `bedrock.effort`는 `default_effort`의
+  별칭으로 계속 동작합니다(사용 중단 예정). Claude Sonnet 5.5는 사고를 끌 수
   없어 `--enable-thinking`이 무의미하며, 깊이는 `effort`로만 조절합니다.
   모델이 받지 않는 수준(예: Opus·Sonnet 4.6의 `xhigh`)은 즉시 실패합니다.
 - **샘플링 파라미터가 제거됩니다.** `temperature`/`top_k`는 수용되지 않으므로
@@ -331,7 +337,7 @@ OpenAI GPT 모델은 Claude와 다음이 다릅니다.
 
 - 항상 `us.`/`global.` 추론 프로파일에서 Converse API로 호출합니다. `apac.`/`eu.`
   지역 프로파일이 없으므로 미국 외 리전에서는 `enable_global_profile: true`를
-  유지하세요. `bedrock.effort`는
+  유지하세요. 계층별 effort(`bedrock.default_effort` / `fast_effort`)는
   `reasoning: {effort: ...}`로 전달됩니다(평면 필드 `reasoning_effort`는 거부됨).
   GPT-5.6과 GPT-6.x는 `effort: low`에서도 짧은 프롬프트 응답에 약 10~25초가
   걸렸으므로 타임아웃과 동시성을 이에 맞춰 설정하세요.
