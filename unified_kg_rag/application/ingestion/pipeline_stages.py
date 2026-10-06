@@ -22,6 +22,7 @@ from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
 from unified_kg_rag.adapters.ingestion.loader import DirectoryLoader
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
 from unified_kg_rag.domain.ingestion.delta_detector import assign_document_identity
@@ -86,12 +87,14 @@ class PipelineStage(ABC):
         stage_type: PipelineStageType,
         config: Config,
         boto_session: boto3.Session | None = None,
+        providers: Providers | None = None,
     ) -> None:
         self.config = config
         self.stage_type = stage_type
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=self.config.aws.profile_name
-        )
+        # The pipeline passes its one provider bundle, so every stage's LLM /
+        # embedding adapters share the session and any injected factory.
+        self.providers = Providers.resolve(config, providers, boto_session)
+        self.boto_session = self.providers.boto_session
 
     @property
     def name(self) -> str:
@@ -591,14 +594,18 @@ class TextChunkingStage(PipelineStage):
         self,
         config: Config,
         boto_session: boto3.Session | None = None,
+        providers: Providers | None = None,
     ):
-        super().__init__(PipelineStageType.TEXT_CHUNKING, config, boto_session)
+        super().__init__(
+            PipelineStageType.TEXT_CHUNKING, config, boto_session, providers
+        )
 
         chunker_type = self.config.processing.chunking.chunker_type
         self.chunker = ChunkerFactory.create_chunker(
             config=self.config,
             boto_session=self.boto_session,
             chunker_type=chunker_type,
+            providers=self.providers,
         )
         self.chunker_type = chunker_type
 
@@ -639,8 +646,9 @@ class TranslationStage(PipelineStage):
         self,
         config: Config,
         boto_session: boto3.Session | None = None,
+        providers: Providers | None = None,
     ):
-        super().__init__(PipelineStageType.TRANSLATION, config, boto_session)
+        super().__init__(PipelineStageType.TRANSLATION, config, boto_session, providers)
         self.translation_config = self.config.processing.translation
         self.target_language = self.translation_config.target_language.value
         # Build the Bedrock-backed translator lazily so a disabled / no-op stage
@@ -651,7 +659,7 @@ class TranslationStage(PipelineStage):
     def translator(self) -> TextUnitTranslator:
         if self._translator is None:
             self._translator = TextUnitTranslator(
-                self.config, boto_session=self.boto_session
+                self.config, boto_session=self.boto_session, providers=self.providers
             )
         return self._translator
 
@@ -731,9 +739,12 @@ class GraphExtractionStage(PipelineStage):
         self,
         config: Config,
         boto_session: boto3.Session | None = None,
+        providers: Providers | None = None,
     ):
-        super().__init__(PipelineStageType.GRAPH_EXTRACTION, config, boto_session)
-        self.extractor = GraphExtractor(self.config, boto_session=self.boto_session)
+        super().__init__(
+            PipelineStageType.GRAPH_EXTRACTION, config, boto_session, providers
+        )
+        self.extractor = GraphExtractor(self.config, providers=self.providers)
 
     def _execute_core(
         self, context: PipelineContext
@@ -777,9 +788,10 @@ class GleaningStage(PipelineStage):
         self,
         config: Config,
         boto_session: boto3.Session | None = None,
+        providers: Providers | None = None,
     ):
-        super().__init__(PipelineStageType.GLEANING, config, boto_session)
-        self.gleaner = GraphGleaner(self.config, boto_session=self.boto_session)
+        super().__init__(PipelineStageType.GLEANING, config, boto_session, providers)
+        self.gleaner = GraphGleaner(self.config, providers=self.providers)
 
     def _execute_core(
         self, context: PipelineContext
@@ -843,13 +855,22 @@ class GleaningStage(PipelineStage):
 
 
 class GraphResolutionStage(PipelineStage):
-    def __init__(self, config: Config, boto_session: boto3.Session | None = None):
-        super().__init__(PipelineStageType.GRAPH_RESOLUTION, config, boto_session)
+    def __init__(
+        self,
+        config: Config,
+        boto_session: boto3.Session | None = None,
+        providers: Providers | None = None,
+    ):
+        super().__init__(
+            PipelineStageType.GRAPH_RESOLUTION, config, boto_session, providers
+        )
         self.resolver = GraphResolver(config)
         # Resolution merges descriptions (concatenation); re-summarize the
         # over-long ones with an LLM here (parity with MS/LightRAG). Needs Bedrock,
         # hence GRAPH_RESOLUTION is in BOTO_REQUIRED_STAGES.
-        self.description_summarizer = DescriptionSummarizer(config, boto_session)
+        self.description_summarizer = DescriptionSummarizer(
+            config, providers=self.providers
+        )
 
     def _execute_core(
         self, context: PipelineContext
@@ -915,9 +936,12 @@ class ClaimExtractionStage(PipelineStage):
         self,
         config: Config,
         boto_session: boto3.Session | None = None,
+        providers: Providers | None = None,
     ):
-        super().__init__(PipelineStageType.CLAIM_EXTRACTION, config, boto_session)
-        self.extractor = ClaimExtractor(self.config, boto_session=self.boto_session)
+        super().__init__(
+            PipelineStageType.CLAIM_EXTRACTION, config, boto_session, providers
+        )
+        self.extractor = ClaimExtractor(self.config, providers=self.providers)
 
     def _execute_core(
         self, context: PipelineContext
@@ -1002,8 +1026,15 @@ class ClaimResolutionStage(PipelineStage):
 
 
 class GraphAnalysisStage(PipelineStage):
-    def __init__(self, config: Config, boto_session: boto3.Session | None = None):
-        super().__init__(PipelineStageType.GRAPH_ANALYSIS, config, boto_session)
+    def __init__(
+        self,
+        config: Config,
+        boto_session: boto3.Session | None = None,
+        providers: Providers | None = None,
+    ):
+        super().__init__(
+            PipelineStageType.GRAPH_ANALYSIS, config, boto_session, providers
+        )
         self.analyzer = GraphAnalyzer(config)
 
     def _execute_core(
@@ -1065,9 +1096,12 @@ class CommunityDetectionStage(PipelineStage):
         config: Config,
         boto_session: boto3.Session | None = None,
         cache_directory: Path | None = None,
+        providers: Providers | None = None,
     ):
-        super().__init__(PipelineStageType.COMMUNITY_DETECTION, config, boto_session)
-        self.detector = CommunityDetector(config, boto_session=self.boto_session)
+        super().__init__(
+            PipelineStageType.COMMUNITY_DETECTION, config, boto_session, providers
+        )
+        self.detector = CommunityDetector(config, providers=self.providers)
         self.cache_directory = Path(cache_directory) if cache_directory else None
 
     def _visualization_outputs_dir(self, context: PipelineContext) -> Path | None:
@@ -1139,6 +1173,7 @@ class CommunityDetectionStage(PipelineStage):
                     community_detector=self.detector,
                     outputs_dir=self._visualization_outputs_dir(context),
                     boto_session=self.boto_session,
+                    providers=self.providers,
                 )
 
                 visualization_manager.run()
@@ -1178,9 +1213,12 @@ class IndexingStage(PipelineStage):
         config: Config,
         boto_session: boto3.Session | None = None,
         doc_status: "DocStatusPort | None" = None,
+        providers: Providers | None = None,
     ):
-        super().__init__(PipelineStageType.INDEXING, config, boto_session)
-        self.indexing_manager = IndexingManager(config=self.config)
+        super().__init__(PipelineStageType.INDEXING, config, boto_session, providers)
+        self.indexing_manager = IndexingManager(
+            config=self.config, providers=self.providers
+        )
         # Injected by the pipeline for the incremental commit/registry write-back.
         self._doc_status = doc_status
 

@@ -26,10 +26,10 @@ from typing import TYPE_CHECKING
 import boto3
 from langchain_core.output_parsers import StrOutputParser
 
-from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, Entity, ModelPurpose, Relationship
 from unified_kg_rag.domain.prompts import DescriptionSummarizationPrompt
 from unified_kg_rag.shared import get_logger
@@ -51,21 +51,20 @@ class DescriptionSummarizer:
     """
 
     def __init__(
-        self, config: Config, boto_session: boto3.Session | None = None
+        self,
+        config: Config,
+        boto_session: boto3.Session | None = None,
+        *,
+        providers: Providers | None = None,
     ) -> None:
         self.config = config
         self.summarization_config: DescriptionSummarizationConfig = (
             self.config.processing.graph_extraction.description_summarization
         )
         self.target_language = self.config.processing.translation.target_language.value
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=self.config.aws.profile_name
-        )
-        self.factory = BedrockLanguageModelFactory(
-            config=self.config,
-            boto_session=self.boto_session,
-            region_name=self.config.aws.bedrock.region_name,
-        )
+        self.providers = Providers.resolve(config, providers, boto_session)
+        self.boto_session = self.providers.boto_session
+        self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor(
             is_transient_error=is_transient_bedrock_error
         )

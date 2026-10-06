@@ -18,6 +18,7 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from unified_kg_rag.adapters.aws import chain_factory
 from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config
 
 pytestmark = pytest.mark.unit
@@ -85,13 +86,12 @@ def test_every_chain_receives_custom_prompts(name: str, mocker) -> None:
     module_name, cls_name, extra = _COMPONENTS[name]
     module = importlib.import_module(module_name)
     cfg = _config()
-    mocker.patch.object(
-        module, "BedrockLanguageModelFactory", return_value=_OfflineFactory(cfg)
-    )
     spy = mocker.patch.object(module, "setup_chain", wraps=chain_factory.setup_chain)
-    component = getattr(module, cls_name)(
-        config=cfg, boto_session=mocker.MagicMock(), **extra
+    # The offline factory arrives through the shared provider bundle.
+    providers = Providers(
+        cfg, boto_session=mocker.MagicMock(), llm_factory=_OfflineFactory(cfg)
     )
+    component = getattr(module, cls_name)(config=cfg, providers=providers, **extra)
     if isinstance(component, PromptTuner):  # builds its chain lazily
         asyncio.run(component.profile_corpus(["Vendor ships parts to Buyer."]))
 
@@ -106,13 +106,11 @@ def test_community_report_override_reaches_the_chain(mocker) -> None:
 
     cfg = _config()
     cfg.custom_prompts.community_report_system = "Synthetic report instructions."
-    mocker.patch.object(
-        community_detector,
-        "BedrockLanguageModelFactory",
-        return_value=_OfflineFactory(cfg),
-    )
     detector = community_detector.CommunityDetector(
-        config=cfg, boto_session=mocker.MagicMock()
+        config=cfg,
+        providers=Providers(
+            cfg, boto_session=mocker.MagicMock(), llm_factory=_OfflineFactory(cfg)
+        ),
     )
     prompt = detector.report_generator.first
     rendered = prompt.format_messages(**dict.fromkeys(prompt.input_variables, "x"))

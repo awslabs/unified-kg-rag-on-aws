@@ -27,9 +27,11 @@ from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
 
-# Retry back-off sleep, a module-level hook so tests can stub it without
-# patching the process-wide time.sleep (which other threads also call).
+# Retry-backoff seams: tests patch these module attributes rather than the
+# process-global ``time.sleep``/``random.uniform``, which other threads share.
 _sleep = time.sleep
+# Retry-backoff jitter only; not a security/crypto context.
+_jitter = random.uniform  # nosec B311
 
 
 class NeptuneIndexer(GraphIndexer):
@@ -901,8 +903,7 @@ class NeptuneIndexer(GraphIndexer):
                 # Exponential backoff with full jitter so concurrent workers do
                 # not retry a throttled endpoint in lock-step.
                 backoff = delay * (2**attempt)
-                # Retry-backoff jitter only; not a security/crypto context.
-                sleep_for = random.uniform(0, backoff)  # nosec B311
+                sleep_for = _jitter(0, backoff)
                 logger.warning(
                     "%s attempt %s failed, retrying in %.2fs: %s",
                     operation_name,

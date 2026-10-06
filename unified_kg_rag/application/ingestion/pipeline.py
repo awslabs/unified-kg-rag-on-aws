@@ -11,6 +11,7 @@ from structlog.contextvars import bound_contextvars
 
 from unified_kg_rag.adapters.aws import S3CacheManager
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.pipeline_stages import (
     ClaimExtractionStage,
     ClaimResolutionStage,
@@ -93,6 +94,10 @@ class DataIngestionPipeline:
         PipelineStageType.TRANSLATION,
     }
 
+    # Stages that build LLM/embedding adapters; they receive the pipeline's
+    # provider bundle.
+    PROVIDER_STAGES = BOTO_REQUIRED_STAGES | {PipelineStageType.INDEXING}
+
     # Stages that consume the document-status registry (incremental indexing).
     # The DocStatusPort adapter is built ONCE at this orchestration layer and
     # injected, rather than each stage constructing its own.
@@ -122,6 +127,8 @@ class DataIngestionPipeline:
         target_directory: Path | None = None,
         boto_session: boto3.Session | None = None,
         metrics_sink: MetricsSink | None = None,
+        *,
+        providers: Providers | None = None,
     ) -> None:
         self.config = config
         self.pipeline_config = pipeline_config
@@ -139,9 +146,12 @@ class DataIngestionPipeline:
         self.target_directory: Path | None = (
             Path(explicit_target) if explicit_target else None
         )
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=self.config.aws.profile_name
-        )
+        # Composition root for ingestion: one provider bundle (session plus
+        # LLM/embedding factories) built here or injected, and passed to every
+        # stage, so an injected factory reaches every LLM/embedding adapter
+        # and the default Bedrock clients are created once per pipeline.
+        self.providers = Providers.resolve(config, providers, boto_session)
+        self.boto_session = self.providers.boto_session
 
         self._initialize_managers()
         self.stages, self.name_to_type_map = self._initialize_stages()
@@ -247,6 +257,8 @@ class DataIngestionPipeline:
                     kwargs["source_directory"] = self.source_directory
                 if stage_type in self.BOTO_REQUIRED_STAGES:
                     kwargs["boto_session"] = self.boto_session
+                if stage_type in self.PROVIDER_STAGES:
+                    kwargs["providers"] = self.providers
                 if stage_type == PipelineStageType.DOCUMENT_PARSING:
                     kwargs["target_directory"] = self.target_directory
                 if stage_type in (

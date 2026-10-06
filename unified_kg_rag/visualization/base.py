@@ -8,6 +8,7 @@ import boto3
 import networkx as nx
 
 from unified_kg_rag.adapters.ingestion.community_detector import CommunityDetector
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.renderers import (
     RenderContext,
     get_renderer_class,
@@ -50,6 +51,8 @@ class GraphVisualizationManager:
         outputs_dir: Path | None = None,
         boto_session: boto3.Session | None = None,
         embedder: BedrockNodeEmbedder | None = None,
+        *,
+        providers: Providers | None = None,
     ) -> None:
         self.config = config
         self.viz_config = self.config.graph.visualization
@@ -58,9 +61,8 @@ class GraphVisualizationManager:
         self.outputs_dir = outputs_dir or Path(
             self.viz_config.outputs_directory or DEFAULT_OUTPUTS_DIRECTORY
         )
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=self.config.aws.profile_name
-        )
+        self.providers = Providers.resolve(config, providers, boto_session)
+        self.boto_session = self.providers.boto_session
 
         # Built lazily: with embedding_method == "none" no Bedrock embedding
         # client is ever constructed.
@@ -75,7 +77,11 @@ class GraphVisualizationManager:
     @property
     def embedder(self) -> BedrockNodeEmbedder:
         if self._embedder is None:
-            self._embedder = BedrockNodeEmbedder(self.config, self.boto_session)
+            self._embedder = BedrockNodeEmbedder(
+                self.config,
+                self.boto_session,
+                embedding_factory=self.providers.embedding_factory,
+            )
         return self._embedder
 
     def run(self) -> None:

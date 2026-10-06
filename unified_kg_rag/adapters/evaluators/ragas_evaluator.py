@@ -7,7 +7,6 @@ from typing import Any, ClassVar, cast
 
 import boto3
 import pandas as pd
-from botocore.config import Config as BotoConfig
 from datasets import Dataset
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseLanguageModel
@@ -23,15 +22,8 @@ from ragas.metrics import (
 )
 from ragas.run_config import RunConfig
 
-from unified_kg_rag.adapters.aws import (
-    BedrockEmbeddingModelFactory,
-    BedrockLanguageModelFactory,
-)
-from unified_kg_rag.adapters.aws.bedrock import (
-    get_assumed_role_boto_session,
-    get_language_model_info,
-)
-from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
+from unified_kg_rag.adapters.aws.bedrock import get_language_model_info
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetric,
@@ -90,29 +82,23 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         rag_chain: Any | None = None,
         boto_session: boto3.Session | None = None,
         embedding_factory: EmbeddingFactoryPort | None = None,
+        *,
+        providers: Providers | None = None,
         **kwargs: Any,
     ) -> None:
         self.embeddings: Embeddings | None = None
         self.llm: BaseLanguageModel | None = None
         self.ragas_llm: LangchainLLMWrapper | None = None
         self._embedding_factory = embedding_factory
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=config.aws.profile_name
-        )
-        assumed_session = get_assumed_role_boto_session(
-            self.boto_session, assumed_role_arn=config.aws.bedrock.assumed_role_arn
-        )
-        bedrock_client = assumed_session.client(
-            "bedrock-runtime",
-            region_name=config.aws.bedrock.region_name,
-            config=BotoConfig(retries={"max_attempts": 3}),
-        )
+        # Judge LLM, embeddings and token counter come from the shared
+        # provider bundle (EvaluationManager passes the chain's).
+        self.providers = Providers.resolve(config, providers, boto_session)
+        self.boto_session = self.providers.boto_session
         eval_model_info = get_language_model_info(
             config.evaluation.evaluation_model_id, config.aws.bedrock.model_overrides
         )
-        self._token_counter = BedrockTokenCounter(
-            model_id=config.evaluation.evaluation_model_id,
-            client=bedrock_client,
+        self._token_counter = self.providers.token_counter(
+            config.evaluation.evaluation_model_id,
             api_supported=eval_model_info.supports_count_tokens,
         )
         self.ignore_errors = config.processing.ignore_errors
@@ -136,20 +122,12 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             ) from e
 
     def _initialize_models(self) -> None:
-        embedding_factory = self._embedding_factory or BedrockEmbeddingModelFactory(
-            config=self.config,
-            boto_session=self.boto_session,
-            region_name=self.config.aws.bedrock.region_name,
-        )
+        embedding_factory = self._embedding_factory or self.providers.embedding_factory
         self.embeddings = embedding_factory.get_model(
             model_id=self.config.evaluation.embedding_model_id
         )
 
-        llm_factory = BedrockLanguageModelFactory(
-            config=self.config,
-            boto_session=self.boto_session,
-            region_name=self.config.aws.bedrock.region_name,
-        )
+        llm_factory = self.providers.llm_factory
         model_id = self.config.evaluation.evaluation_model_id
         self.llm = llm_factory.get_model(
             model_id=model_id,

@@ -11,12 +11,12 @@ import boto3
 from pydantic import BaseModel
 from tqdm import tqdm
 
-from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.aws.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
     check_entity_relevance_task,
@@ -110,11 +110,12 @@ class ClaimExtractor(BaseProcessor):
         max_workers: int | None = None,
         use_process_pool: bool = True,
         show_progress: bool = True,
+        *,
+        providers: Providers | None = None,
     ):
         super().__init__(config)
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=self.config.aws.profile_name
-        )
+        self.providers = Providers.resolve(config, providers, boto_session)
+        self.boto_session = self.providers.boto_session
         self.claim_extraction_config = self.config.processing.claim_extraction
         self.ignore_errors = self.config.processing.ignore_errors
         self.max_workers = max_workers or default_max_workers()
@@ -124,11 +125,7 @@ class ClaimExtractor(BaseProcessor):
             is_transient_error=is_transient_bedrock_error
         )
 
-        self.factory = BedrockLanguageModelFactory(
-            config=config,
-            boto_session=self.boto_session,
-            region_name=self.config.aws.bedrock.region_name,
-        )
+        self.factory = self.providers.llm_factory
 
         robust_xml_output_parser = create_robust_xml_output_parser(
             model_purpose=ModelPurpose.INGESTION,

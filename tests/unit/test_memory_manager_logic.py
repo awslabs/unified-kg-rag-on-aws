@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """AWS-free unit tests for the conversation-memory adapter.
 
-``GraphRAGChatMessageHistory.__init__`` constructs a boto3 Session, a
-``BedrockLanguageModelFactory`` and an entity-extraction chain. All three are
+``GraphRAGChatMessageHistory.__init__`` obtains a boto3 Session and a
+``BedrockLanguageModelFactory`` (through its ``Providers`` bundle) and builds an
+entity-extraction chain. All three are
 patched out so the message buffering, entity-context tracking, trimming, the
 LangChain ``GraphRAGConversationBufferMemory`` glue, and the async
 ``MemoryManager`` capacity/eviction logic can be exercised without AWS or a
@@ -17,6 +18,7 @@ from datetime import datetime, timedelta
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
+from unified_kg_rag.adapters import providers as providers_module
 from unified_kg_rag.adapters.retrieval import memory_manager as mm
 from unified_kg_rag.domain.models import Config, MessageRole
 
@@ -31,7 +33,9 @@ def patched_history(mocker):
     invokable (default: returns a comma-separated entity list shape).
     """
     mocker.patch.object(mm.boto3, "Session", return_value=object())
-    mocker.patch.object(mm, "BedrockLanguageModelFactory", return_value=object())
+    mocker.patch.object(
+        providers_module, "BedrockLanguageModelFactory", return_value=object()
+    )
 
     extractor = mocker.MagicMock()
     extractor.invoke.return_value = ["Alice", "Bob"]
@@ -285,3 +289,38 @@ def test_get_memory_manager_is_singleton(patched_history, mocker) -> None:
     m1 = mm.get_memory_manager()
     m2 = mm.get_memory_manager()
     assert m1 is m2
+
+
+# --- shared extractor / reuse of query-step entities ---------------------
+
+
+def test_conversations_share_one_entity_extractor(patched_history, mocker) -> None:
+    import asyncio
+
+    setup = mm.setup_chain
+    manager = mm.MemoryManager(config=Config())
+
+    async def scenario():
+        a = await manager.get_or_create_memory("a")
+        b = await manager.get_or_create_memory("b")
+        return a, b
+
+    a, b = asyncio.run(scenario())
+    assert a.entity_extractor is b.entity_extractor
+    assert setup.call_count == 1  # type: ignore[attr-defined]
+
+
+def test_add_message_with_known_entities_skips_the_llm(patched_history) -> None:
+    import asyncio
+
+    manager = mm.MemoryManager(config=Config())
+
+    async def scenario():
+        await manager.add_message(
+            "c1", MessageRole.USER, "about Vendor", entities=["Vendor", " "]
+        )
+        return await manager.get_or_create_memory("c1")
+
+    history = asyncio.run(scenario())
+    patched_history.extractor.invoke.assert_not_called()
+    assert history.get_relevant_entities() == ["Vendor"]

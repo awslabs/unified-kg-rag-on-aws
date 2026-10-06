@@ -12,15 +12,27 @@ from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.messages.utils import get_buffer_string
 from langchain_core.output_parsers import CommaSeparatedListOutputParser
+from langchain_core.runnables import Runnable
 from pydantic import Field
 
-from unified_kg_rag.adapters.aws import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, ConversationContext, MessageRole
 from unified_kg_rag.domain.prompts import EntityExtractionPrompt
 from unified_kg_rag.shared import get_config, get_logger
 
 logger = get_logger(__name__)
+
+
+def build_entity_extractor(config: Config, providers: Providers) -> Runnable:
+    """The conversation entity-extraction chain (shared by conversations)."""
+    return setup_chain(
+        model_id=config.search.entity_extraction_model_id,
+        factory=providers.llm_factory,
+        prompt_class=EntityExtractionPrompt,
+        parser=CommaSeparatedListOutputParser(),
+        custom_prompts=config.custom_prompts,
+    )
 
 
 class GraphRAGChatMessageHistory(BaseChatMessageHistory):
@@ -32,11 +44,13 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
         ttl_hours: int = 24,
         boto_session: boto3.Session | None = None,
         n_entities: int = 5,
+        *,
+        providers: Providers | None = None,
+        entity_extractor: Runnable | None = None,
     ):
         self.config = config
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=self.config.aws.profile_name
-        )
+        providers = Providers.resolve(config, providers, boto_session)
+        self.boto_session = providers.boto_session
         self.conversation_id = conversation_id
         self.max_messages = max_messages
         self.ttl = timedelta(hours=ttl_hours)
@@ -45,15 +59,9 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
         self._context = ConversationContext()
         self.updated_at = datetime.now()
 
-        factory = BedrockLanguageModelFactory(
-            config=self.config, boto_session=self.boto_session
-        )
-        self.entity_extractor = setup_chain(
-            model_id=self.config.search.entity_extraction_model_id,
-            factory=factory,
-            prompt_class=EntityExtractionPrompt,
-            parser=CommaSeparatedListOutputParser(),
-            custom_prompts=self.config.custom_prompts,
+        # MemoryManager passes one shared extractor to every conversation.
+        self.entity_extractor = entity_extractor or build_entity_extractor(
+            self.config, providers
         )
 
     def add_message(self, message: BaseMessage) -> None:
@@ -111,16 +119,7 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
                 raw_entities = result.get("entities", [])
             else:
                 raw_entities = result or []
-
-            entity_names = [
-                str(entity).strip() for entity in raw_entities if str(entity).strip()
-            ]
-
-            if entity_names:
-                current_entities = set(self._context.mentioned_entities)
-                current_entities.update(entity_names)
-                self._context.mentioned_entities = sorted(current_entities)
-                self._context.focused_entities = entity_names[: self.n_entities]
+            self.record_entities(raw_entities)
 
         except Exception as e:
             logger.warning(
@@ -128,6 +127,17 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
                 self.conversation_id,
                 e,
             )
+
+    def record_entities(self, entities: Sequence[Any]) -> None:
+        """Merge entity names already extracted for a user message."""
+        entity_names = [
+            str(entity).strip() for entity in entities if str(entity).strip()
+        ]
+        if entity_names:
+            current_entities = set(self._context.mentioned_entities)
+            current_entities.update(entity_names)
+            self._context.mentioned_entities = sorted(current_entities)
+            self._context.focused_entities = entity_names[: self.n_entities]
 
     def get_context_summary(self) -> str:
         parts = []
@@ -229,12 +239,26 @@ class GraphRAGConversationBufferMemory(BaseChatMemory):
 
 
 class MemoryManager:
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, *, providers: Providers | None = None) -> None:
         self.config = config
+        # One provider bundle for every conversation: each history reuses the
+        # same LLM factory instead of building a Bedrock client per conversation.
+        self.providers = Providers.resolve(config, providers)
+        self._entity_extractor: Runnable | None = None
         self._memories: dict[str, GraphRAGChatMessageHistory] = {}
         self._lock = asyncio.Lock()
 
+    def _shared_entity_extractor(self) -> Runnable:
+        if self._entity_extractor is None:
+            self._entity_extractor = build_entity_extractor(self.config, self.providers)
+        return self._entity_extractor
+
     async def get_or_create_memory(self, conv_id: str) -> GraphRAGChatMessageHistory:
+        if (memory := self._memories.get(conv_id)) is not None:
+            return memory
+        # Built once, outside the lock: a new conversation then costs no
+        # model construction while other queries wait on the lock.
+        extractor = self._shared_entity_extractor()
         async with self._lock:
             if memory := self._memories.get(conv_id):
                 return memory
@@ -247,6 +271,8 @@ class MemoryManager:
                 conversation_id=conv_id,
                 max_messages=self.config.memory.max_messages_per_conversation,
                 ttl_hours=self.config.memory.max_conversation_age_hours,
+                providers=self.providers,
+                entity_extractor=extractor,
             )
             self._memories[conv_id] = memory
             return memory
@@ -257,7 +283,20 @@ class MemoryManager:
         history = await self.get_or_create_memory(conv_id)
         return GraphRAGConversationBufferMemory(chat_memory=history, **kwargs)
 
-    async def add_message(self, conv_id: str, role: MessageRole, content: str) -> None:
+    async def add_message(
+        self,
+        conv_id: str,
+        role: MessageRole,
+        content: str,
+        *,
+        entities: Sequence[str] | None = None,
+    ) -> None:
+        """Append a message; for a user message, update the entity context.
+
+        ``entities`` are the names already extracted from this user message
+        (the chain's query step extracts them with the same prompt); when given,
+        they are recorded directly instead of paying a second LLM call.
+        """
         memory = await self.get_or_create_memory(conv_id)
         message_map = {
             MessageRole.USER: HumanMessage,
@@ -275,7 +314,11 @@ class MemoryManager:
         async with self._lock:
             memory.append_message(message)
 
-        if isinstance(message, HumanMessage):
+        if not isinstance(message, HumanMessage):
+            return
+        if entities is not None:
+            memory.record_entities(entities)
+        else:
             await asyncio.to_thread(memory.update_context, message)
 
     async def _cleanup_oldest_unsafe(self, count: int) -> None:
@@ -298,13 +341,49 @@ class MemoryManager:
 
 _memory_manager: MemoryManager | None = None
 _manager_lock = threading.Lock()
+_mismatch_logged = False
 
 
-def get_memory_manager() -> MemoryManager:
-    global _memory_manager
+def _memory_fingerprint(config: Config) -> tuple[str, str, str]:
+    """The config parts conversation memory is built from."""
+    return (
+        config.memory.model_dump_json(),
+        str(config.search.entity_extraction_model_id),
+        config.custom_prompts.model_dump_json(),
+    )
+
+
+def get_memory_manager(
+    config: Config | None = None, providers: Providers | None = None
+) -> MemoryManager:
+    """The process-wide conversation memory, shared by every default chain.
+
+    Created on first use from the first caller's ``config`` and ``providers``
+    (``get_config()`` and a default bundle when omitted), so conversations
+    survive across chain instances, e.g. a chain built per request. A later
+    caller whose memory-relevant config (``memory`` limits, entity-extraction
+    model, ``custom_prompts``) differs keeps using the shared manager; the
+    mismatch is logged once. Pass a chain its own ``MemoryManager`` to isolate
+    it instead.
+    """
+    global _memory_manager, _mismatch_logged
 
     if _memory_manager is None:
         with _manager_lock:
             if _memory_manager is None:
-                _memory_manager = MemoryManager(config=get_config())
+                _memory_manager = MemoryManager(
+                    config=config or get_config(), providers=providers
+                )
+                return _memory_manager
+    if (
+        config is not None
+        and not _mismatch_logged
+        and _memory_fingerprint(config) != _memory_fingerprint(_memory_manager.config)
+    ):
+        _mismatch_logged = True
+        logger.warning(
+            "The shared conversation memory was created from a different memory "
+            "config than this chain's; it keeps the first config. Pass "
+            "GraphRAGChain(memory_manager=MemoryManager(config)) to isolate a chain."
+        )
     return _memory_manager

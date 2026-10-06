@@ -20,8 +20,8 @@
 - **증분 인덱싱.** `aws.dynamodb`를 켜면 콘텐츠 해시 레지스트리가 새 문서와 변경된 문서만 다시 인덱싱해 운영 중인 그래프에 병합합니다. 문서를 삭제하면 다른 문서와 공유하지 않는 산출물만 제거합니다.
 - **다국어 지원.** 인덱싱과 질의 시점의 선택적 번역, 언어별 OpenSearch 분석기(예: 한국어 `nori`), 다국어 키워드 추출을 두 방법론 모두에 적용합니다.
 - **프롬프트 튜닝.** `run-prompt-tuning`이 코퍼스 표본을 분석(도메인, 언어, 페르소나, 엔티티 유형)해 도메인에 맞춘 `custom_prompts`를 생성합니다.
-- **그래프 인식 평가와 독립 시각화.** `run-eval`은 LangChain·RAGAS 지표에 결정적인 엔티티·관계 커버리지 지표를 더하고, `run-visualization`은 다시 인제스천하지 않고 내보낸 그래프를 렌더링합니다.
-- **교체 가능한 헥사고날 설계.** 스토리지와 모델 백엔드는 포트 뒤에 두고, 검색 전략·평가기·렌더러는 레지스트리로 등록합니다. 따라서 디스패치 코드를 고치지 않고 기능을 확장할 수 있습니다.
+- **그래프 인식 평가와 독립 시각화.** `run-eval`은 LangChain·RAGAS 지표에 결정적인 엔티티·관계 커버리지, 검색 hit@k/recall@k/MRR, 답변 exact match/token F1 지표를 더하고, `run-visualization`은 다시 인제스천하지 않고 내보낸 그래프를 렌더링합니다.
+- **교체 가능한 헥사고날 설계.** 스토리지와 모델 백엔드는 포트 뒤에 두고, 검색 전략·렌더러는 데코레이터 레지스트리로 등록하므로 디스패치 코드를 고치지 않고 추가할 수 있습니다. 새 평가기는 하위 클래스를 만들고 `EvaluationManager._resolve_evaluator_class`에 분기 하나를 추가합니다.
 
 ## 아키텍처
 
@@ -75,7 +75,7 @@ run-rag --query "문서의 주요 주제는?" --search-strategy global --config-
 run-rag --query "Alice와 Acme는 어떤 관계인가?" --search-strategy mix --config-path config.yaml
 run-rag --interactive --use-memory --conversation-id my-session --config-path config.yaml
 
-# 평가 (LangChain + RAGAS + 그래프 인식 커버리지)
+# 평가 (LangChain + RAGAS + 그래프 인식 커버리지, 검색·답변 일치 지표)
 run-eval --eval-data-path eval_data.json --config-path config.yaml
 
 # 선택: 내보낸 그래프 시각화, 도메인 맞춤 프롬프트 튜닝
@@ -83,7 +83,7 @@ run-visualization --data-path visualization_data.json --output-dir ./viz --confi
 run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
 ```
 
-그래프 인식 평가기는 LLM 없이 `expected_entities` / `expected_relationships` 대비 엔티티·관계 커버리지(재현율)를 계산합니다. 띄어쓰기로 단어를 구분하는 문자는 단어 경계로 매칭하고, CJK 텍스트는 부분 문자열 매칭으로 대신합니다. 모든 설정 항목, CLI 플래그, 평가 데이터 형식은 [사용자 가이드](./docs/user-guide.ko.md)에 정리되어 있습니다.
+그래프 인식 평가기는 LLM 없이 `expected_entities` / `expected_relationships` 대비 엔티티·관계 커버리지(재현율)를 계산합니다. 띄어쓰기로 단어를 구분하는 문자는 단어 경계로 매칭하고, CJK 텍스트는 부분 문자열 매칭으로 대신합니다. LLM을 쓰지 않는 평가기가 두 가지 더 있어 실행 간 비교가 쉽습니다. `retrieval`은 보고된 출처를 `reference_sources`와 비교해 hit@k, recall@k, MRR을 계산하고, `answer_match`는 `answer`(선택 항목 `metadata.answer_aliases` 포함)와 비교해 exact match와 token F1을 계산합니다. 모든 설정 항목, CLI 플래그, 평가 데이터 형식은 [사용자 가이드](./docs/user-guide.ko.md)에 정리되어 있습니다.
 
 ## AWS에 배포(선택)
 

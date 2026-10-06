@@ -382,15 +382,16 @@ def test_token_counter_skips_api_when_unsupported() -> None:
 
 
 def test_token_manager_disables_count_tokens_for_gpt(mocker) -> None:
+    from unified_kg_rag.adapters import providers as providers_module
     from unified_kg_rag.adapters.retrieval import token_manager as tm_module
 
-    mocker.patch.object(tm_module, "boto3")
-    mocker.patch.object(tm_module, "get_assumed_role_boto_session")
-    counter_cls = mocker.patch.object(tm_module, "BedrockTokenCounter")
+    counter_cls = mocker.patch.object(providers_module, "BedrockTokenCounter")
     config = Config()
     config.search.answer_generation_model_id = LanguageModelId.GPT_V6_1_SOL
-    tm_module.TokenManager(config)
+    tm_module.TokenManager(config, boto_session=mocker.MagicMock())
     assert counter_cls.call_args.kwargs["api_supported"] is False
+    # No CountTokens client is built for a model that cannot use it.
+    assert counter_cls.call_args.kwargs["client"] is None
 
 
 # --- defaults ---------------------------------------------------------------
