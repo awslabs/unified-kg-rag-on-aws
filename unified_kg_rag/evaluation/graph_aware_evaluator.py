@@ -49,10 +49,8 @@ logger = get_logger(__name__)
 class GraphAwareEvaluator(BaseGraphRAGEvaluator):
     """Scores entity/relationship coverage of the generated answer."""
 
-    def __init__(self, config: Config, rag_chain: Any | None = None, **kwargs: Any):
-        super().__init__(
-            config, EvaluatorType.GRAPH_AWARE, rag_chain=rag_chain, **kwargs
-        )
+    def __init__(self, config: Config, **kwargs: Any):
+        super().__init__(config, EvaluatorType.GRAPH_AWARE, **kwargs)
 
     def _initialize_evaluator(self, **kwargs: Any) -> None:
         # Pure, deterministic evaluator — no model to initialize.
@@ -99,8 +97,8 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         behaviour) overstated the signal.
 
         Returns ``None`` when nothing is expected for the dimension, so a query
-        with (say) only expected entities is not penalized for having no expected
-        relationships when the overall score is averaged. With
+        with (say) only expected entities is not scored 0 for having no expected
+        relationships (the metric is skipped instead). With
         ``relationships=True``, pair/arrow items count when both endpoints match.
         """
         if not expected:
@@ -122,8 +120,8 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
             expected_relationships, answer, relationships=True
         )
 
-        # Only emit metrics for dimensions that actually have expectations, so a
-        # missing dimension does not dilute the averaged overall score.
+        # Only emit metrics for dimensions that actually have expectations; a
+        # missing dimension is recorded as skipped, not scored 0.
         metrics: list[EvaluationMetric] = []
         if expected_entities and e_cov is not None:
             metrics.append(
@@ -163,13 +161,10 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         **kwargs: Any,
     ) -> EvaluationReport:
         metrics, metadata = self._build_metrics(result)
-        scored = [m.value for m in metrics if m.value is not None]
-        overall = sum(scored) / len(scored) if scored else 0.0
         return EvaluationReport(
             query_id=query.query_id,
             evaluator_type=self.evaluator_type,
             metrics=metrics,
-            overall_score=overall,
             evaluation_time=datetime.now(),
             metadata=metadata,
         )

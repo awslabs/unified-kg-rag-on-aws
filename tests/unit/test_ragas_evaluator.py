@@ -63,7 +63,7 @@ def _make_evaluator(
         config.evaluation.ragas_metrics = ragas_metrics
     if evaluation_model_id is not None:
         config.evaluation.evaluation_model_id = evaluation_model_id
-    ev = RagasEvaluator(config=config, rag_chain=None, show_progress=False)
+    ev = RagasEvaluator(config=config, show_progress=False)
     return ev, fake_counter
 
 
@@ -184,7 +184,7 @@ class TestParseRagasReports:
             EvaluationMetricType.ANSWER_CORRECTNESS: 0.8,
             EvaluationMetricType.FAITHFULNESS: 0.6,
         }
-        assert report.overall_score == pytest.approx(0.7)
+        assert report.overall_score is None
 
     def test_nan_value_is_skipped_not_zeroed(self, mocker) -> None:
         # NaN means "uncomputable" — it must be skipped, not coerced to 0.0
@@ -229,8 +229,7 @@ class TestParseRagasReports:
         assert len(reports[1].metrics) == 3
         assert "skipped_metrics" not in reports[1].metadata
 
-    def test_nan_excluded_from_overall_score(self, mocker) -> None:
-        # A NaN metric must not drag the overall score: only the real metric counts.
+    def test_nan_metric_not_scored_alongside_real_one(self, mocker) -> None:
         ev, _ = _make_evaluator(
             mocker,
             ragas_metrics=[
@@ -242,7 +241,6 @@ class TestParseRagasReports:
         reports = ev._parse_ragas_reports(df, [_query()], [_result()])
         assert len(reports[0].metrics) == 1
         assert reports[0].metrics[0].value == 0.8
-        assert reports[0].overall_score == 0.8
 
     def test_metric_not_in_config_excluded(self, mocker) -> None:
         ev, _ = _make_evaluator(
@@ -267,14 +265,14 @@ class TestParseRagasReports:
         reports = ev._parse_ragas_reports(df, [_query()], [_result()])
         assert len(reports[0].metrics) == 1
 
-    def test_no_matching_metrics_overall_zero(self, mocker) -> None:
+    def test_no_matching_metrics_fail(self, mocker) -> None:
         ev, _ = _make_evaluator(
             mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
         )
         df = pd.DataFrame({"unrelated": [0.5]})
         reports = ev._parse_ragas_reports(df, [_query()], [_result()])
         assert reports[0].metrics == []
-        assert reports[0].overall_score == 0.0
+        assert "faithfulness" in reports[0].metadata["failed_metrics"]
 
 
 class TestAevaluateBatch:
@@ -488,7 +486,7 @@ class TestInitFailure:
             side_effect=RuntimeError("boom"),
         )
         with pytest.raises(EvaluationException):
-            RagasEvaluator(config=Config(), rag_chain=None)
+            RagasEvaluator(config=Config())
 
 
 class _TemperatureTrackingLLM:
@@ -593,7 +591,7 @@ class TestRunConfigAndJudgeEffort:
         mocker.patch.object(rg_module, "BedrockTokenCounter")
         config = Config()
         config.evaluation.judge_effort = None
-        RagasEvaluator(config=config, rag_chain=None, show_progress=False)
+        RagasEvaluator(config=config, show_progress=False)
         factory = rg_module.BedrockLanguageModelFactory.return_value
         _, kwargs = factory.get_model.call_args
         assert "effort" not in kwargs

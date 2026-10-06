@@ -144,9 +144,7 @@ class EvaluationManager:
                 continue
 
             try:
-                evaluator = evaluator_class(
-                    config=self.config, rag_chain=self.rag_chain
-                )
+                evaluator = evaluator_class(config=self.config)
                 reason = (
                     None if evaluator.validate_config() else "invalid configuration"
                 )

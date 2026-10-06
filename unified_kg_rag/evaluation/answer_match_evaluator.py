@@ -82,10 +82,8 @@ def token_f1(prediction: str, reference: str) -> float:
 class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
     """Scores containment, exact match and token F1 against reference answers."""
 
-    def __init__(self, config: Config, rag_chain: Any | None = None, **kwargs: Any):
-        super().__init__(
-            config, EvaluatorType.ANSWER_MATCH, rag_chain=rag_chain, **kwargs
-        )
+    def __init__(self, config: Config, **kwargs: Any):
+        super().__init__(config, EvaluatorType.ANSWER_MATCH, **kwargs)
 
     def _initialize_evaluator(self, **kwargs: Any) -> None:
         # Pure, deterministic evaluator — no model to initialize.
@@ -119,7 +117,6 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
                 query_id=query.query_id,
                 evaluator_type=self.evaluator_type,
                 metrics=[],
-                overall_score=None,
                 metadata={
                     SKIPPED_METRICS_KEY: {
                         m.value: SKIP_REASON_EMPTY_REFERENCE
@@ -143,7 +140,6 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
                 ),
                 EvaluationMetric(metric_type=EvaluationMetricType.TOKEN_F1, value=f1),
             ],
-            overall_score=(contains + em + f1) / 3,
             evaluation_time=datetime.now(),
             metadata={
                 **self._extract_search_metadata(result),

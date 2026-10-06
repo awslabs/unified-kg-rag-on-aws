@@ -1,7 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, ClassVar, cast
 
@@ -93,7 +92,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
     def __init__(
         self,
         config: Config,
-        rag_chain: Any | None = None,
         boto_session: boto3.Session | None = None,
         embedding_factory: EmbeddingFactoryPort | None = None,
         **kwargs: Any,
@@ -125,7 +123,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         super().__init__(
             config=config,
             evaluator_type=EvaluatorType.RAGAS,
-            rag_chain=rag_chain,
             **kwargs,
         )
 
@@ -258,9 +255,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                     EvaluationMetric(metric_type=metric_type, value=float(raw_value))
                 )
 
-            overall_score = (
-                sum(m.value for m in metrics) / len(metrics) if metrics else 0.0
-            )
             metadata = self._extract_search_metadata(results[i])
             if judge_inputs:
                 metadata.update(judge_inputs[i])
@@ -273,7 +267,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                     query_id=query.query_id,
                     evaluator_type=self.evaluator_type,
                     metrics=metrics,
-                    overall_score=overall_score,
                     evaluation_time=datetime.now(),
                     metadata=metadata,
                 )
@@ -415,7 +408,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             query_id=query_id,
             evaluator_type=self.evaluator_type,
             metrics=[],
-            overall_score=0.0,
             evaluation_time=datetime.now(),
             metadata=metadata,
         )
@@ -431,25 +423,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             [query], [result], [ground_truth], **kwargs
         )
         return reports[0] if reports else self._create_empty_report(query.query_id)
-
-    def evaluate_single(
-        self,
-        query: EvaluationQuery,
-        result: EvaluationResult,
-        ground_truth: str,
-        **kwargs: Any,
-    ) -> EvaluationReport:
-        coro = self.aevaluate_single(query, result, ground_truth, **kwargs)
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            # No running loop — safe to drive one ourselves.
-            return asyncio.run(coro)
-        # A loop is ALREADY running on this thread; run_until_complete would
-        # raise "This event loop is already running". Run the coroutine on a
-        # separate thread with its own loop and block for the result.
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, coro).result()
 
     def validate_config(self) -> bool:
         unsupported_metrics = set(self.config.evaluation.ragas_metrics) - set(

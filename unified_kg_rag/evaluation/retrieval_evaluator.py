@@ -86,8 +86,8 @@ def source_keys(identifier: str) -> frozenset[str]:
 class RetrievalEvaluator(BaseGraphRAGEvaluator):
     """Scores hit@k / recall@k / MRR of reported sources vs reference_sources."""
 
-    def __init__(self, config: Config, rag_chain: Any | None = None, **kwargs: Any):
-        super().__init__(config, EvaluatorType.RETRIEVAL, rag_chain=rag_chain, **kwargs)
+    def __init__(self, config: Config, **kwargs: Any):
+        super().__init__(config, EvaluatorType.RETRIEVAL, **kwargs)
 
     def _initialize_evaluator(self, **kwargs: Any) -> None:
         # Pure, deterministic evaluator — no model to initialize.

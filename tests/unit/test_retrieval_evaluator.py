@@ -25,7 +25,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def evaluator(config: Config) -> RetrievalEvaluator:
     config.evaluation.retrieval_k = 2
-    return RetrievalEvaluator(config, rag_chain=None)
+    return RetrievalEvaluator(config)
 
 
 def _score(

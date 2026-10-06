@@ -59,16 +59,6 @@ class BaseEvaluator(ABC):
         pass
 
     @abstractmethod
-    def evaluate_single(
-        self,
-        query: EvaluationQuery,
-        result: EvaluationResult,
-        ground_truth: str,
-        **kwargs: Any,
-    ) -> EvaluationReport:
-        pass
-
-    @abstractmethod
     async def aevaluate_single(
         self,
         query: EvaluationQuery,
@@ -134,7 +124,6 @@ class BaseEvaluator(ABC):
             query_id=query_id,
             evaluator_type=self.evaluator_type,
             metrics=[],
-            overall_score=0.0,
             evaluation_time=datetime.now(),
             metadata={
                 "evaluation_failed": True,
@@ -156,29 +145,7 @@ class BaseEvaluator(ABC):
 
 
 class BaseGraphRAGEvaluator(BaseEvaluator):
-    def __init__(
-        self,
-        config: Config,
-        evaluator_type: EvaluatorType,
-        rag_chain: Any | None = None,
-        **kwargs: Any,
-    ) -> None:
-        self.rag_chain = rag_chain
-        super().__init__(config, evaluator_type, **kwargs)
-
-    @abstractmethod
-    def _initialize_evaluator(self, **kwargs: Any) -> None:
-        pass
-
-    @abstractmethod
-    def evaluate_single(
-        self,
-        query: EvaluationQuery,
-        result: EvaluationResult,
-        ground_truth: str,
-        **kwargs: Any,
-    ) -> EvaluationReport:
-        pass
+    """Evaluator base with the shared search-metadata extraction."""
 
     @staticmethod
     def _extract_search_metadata(result: EvaluationResult) -> dict[str, Any]:

@@ -1121,7 +1121,9 @@ The summary holds, per metric, mean/median/stdev/min/max/count
   builds it, so library callers get it too (pass `dataset_path=` / `cli_args=`
   to record those).
 
-Each result also records `retrieved_source_ids`: per reported source, in rank
+Per-query reports list each evaluator's `metrics`; their `overall_score` is
+kept for JSON compatibility but is always `null` (an average of unrelated
+metrics has no meaning). Each result also records `retrieved_source_ids`: per reported source, in rank
 order, the file names it is attributed to (`[]` when unattributable).
 
 ---

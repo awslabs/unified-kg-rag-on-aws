@@ -71,7 +71,7 @@ class TestNormalization:
 
 
 def _report(config: Config, answer: str, ground_truth: str, metadata: dict):
-    evaluator = AnswerMatchEvaluator(config, rag_chain=None)
+    evaluator = AnswerMatchEvaluator(config)
     result = EvaluationResult(
         query_id="q",
         question="?",

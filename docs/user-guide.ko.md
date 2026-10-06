@@ -1095,7 +1095,9 @@ run-eval --eval-data-path my_eval_data.json \
   `EvaluationManager.evaluate_dataset`이 만들기 때문에 라이브러리로 호출해도
   포함됩니다(`dataset_path=` / `cli_args=`를 넘기면 함께 기록).
 
-각 결과에는 `retrieved_source_ids`(보고된 소스별로 귀속된 파일 이름, 순위 순,
+질의별 리포트에는 평가자별 `metrics`가 담깁니다. `overall_score`는 JSON 호환을
+위해 남겨 두었지만 항상 `null`입니다(서로 다른 지표의 평균은 의미가 없음). 각
+결과에는 `retrieved_source_ids`(보고된 소스별로 귀속된 파일 이름, 순위 순,
 귀속할 수 없으면 `[]`)도 기록됩니다.
 
 ---
