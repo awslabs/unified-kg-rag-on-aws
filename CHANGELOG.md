@@ -204,6 +204,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   discarded `AsyncOpenSearch` client is closed.
 - Conversation memory reuses the query step's entity extraction instead of a
   second LLM call per user turn.
+- The community auto-resolution sweep scores complete partitions. Leiden
+  leaves isolated nodes out and modularity rejects a partial partition, so
+  every candidate failed silently and `resolution` was always used.
+  `graph.community_detection.auto_resolution` now defaults to `false`, the
+  behaviour actually in effect until now: with the sweep working, global
+  search lost 3 of 20 answers on the E2E corpus (#PR).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on

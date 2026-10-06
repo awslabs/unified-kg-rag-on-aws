@@ -383,7 +383,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | Key | Default | What it does / when to change |
 |---|---|---|
 | `graph.community_detection.enabled` | `true` | Leiden clustering plus community-report generation. Required by GraphRAG `global`/`drift`. Set `false` for a lighter LightRAG-only ingestion. |
-| `graph.community_detection.auto_resolution` | `true` | Sweep `auto_resolution_candidates` and keep the most modular resolution; `false` uses `resolution` (`1.0`). |
+| `graph.community_detection.auto_resolution` | `false` | `true` sweeps `auto_resolution_candidates` at every level and keeps the most modular resolution; otherwise `resolution` (`1.0`) is used. |
 | `graph.community_detection.auto_resolution_max_nodes` | `10000` | Above this node count the sweep is skipped and `resolution` is used. |
 | `graph.community_detection.max_levels` | `5` | Maximum community hierarchy depth. |
 | `graph.community_detection.min_community_size` | `3` | Smaller communities merge into neighbours. |
