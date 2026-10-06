@@ -73,6 +73,14 @@ Each previous behaviour stays available through the setting in parentheses.
   50,000 / 5,000).
 - Gleaning rounds after the first re-send only the text units that gained
   items in the previous round (the default stays 3 rounds).
+- The answer prompt tells the model to chain facts across sources (X links
+  to Y in one, Y to Z in another), to treat name variants of one entity as
+  the same, and to declare the context insufficient only after trying to
+  chain it; answers open with a one-sentence direct answer followed by brief
+  support. The grounding rules are kept. The previous wording asked for
+  comprehensive, assumption-free coverage and produced long, overly cautious
+  answers on multi-hop questions; it can still be supplied through
+  `custom_prompts.answer_generation_system`/`_human`.
 - AUTO routes among local/mix/global/drift with Haiku
   (`search.auto_routable_strategies: [simple, local, global, drift]`,
   `search.strategy_selection_model_id: anthropic.claude-sonnet-5-5`).
