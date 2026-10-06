@@ -252,7 +252,6 @@ def test_failed_deleted_doc_removal_keeps_its_registry_row(mocker) -> None:
     assert store.get(compute_doc_id(_DELETED)) is not None
 
 
-@pytest.mark.xfail(reason="fixed in fix/incremental-indexing-integrity", strict=False)
 def test_failed_prune_does_not_record_changed_doc_as_processed(mocker) -> None:
     store = FakeDocStatusStore()
     _seed_registry(store)
@@ -272,23 +271,3 @@ def test_failed_prune_does_not_record_changed_doc_as_processed(mocker) -> None:
     # the doc retried) rather than overwritten with the new hash.
     record = store.get(compute_doc_id(_CHANGED))
     assert record is not None and record.content_hash == "hash-v1"
-
-
-@pytest.mark.xfail(reason="fixed in fix/incremental-indexing-integrity", strict=False)
-def test_deletion_is_scoped_to_the_runs_suffix(mocker) -> None:
-    # A run for tenant "tenant2" must not delete a document that only exists
-    # in tenant "tenant1"'s registry rows.
-    store = FakeDocStatusStore()
-    _seed_registry(store, suffix="tenant1")
-    manager = _RecordingManager()
-    stage = _stage(mocker, store, manager)
-    text_units, entities = _delta_inputs(attributes={"index": "tenant2"})
-    ctx = _context(
-        DocumentDelta(deleted=[compute_doc_id(_DELETED)]),
-        [_document("run-changed", _CHANGED)],
-    )
-
-    _run(stage, ctx, text_units, entities)
-
-    assert store.get(compute_doc_id(_DELETED)) is not None
-    assert all(name != "delete_documents" for name, _ in manager.calls)

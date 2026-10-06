@@ -608,6 +608,16 @@ class DocumentParsingConfig(BaseModel):
     index_value: str | None = Field(
         default=None, description="Value to index the parsed documents with"
     )
+    source_scope: str | None = Field(
+        default=None,
+        description=(
+            "Identity of the corpus source for incremental indexing: a run only "
+            "treats registry documents of its own index suffix AND source scope "
+            "as deleted. None = the resolved source directory. Set it when the "
+            "local directory is a staging copy, e.g. the S3 URI a container "
+            "syncs from (env GRAPHRAG_SOURCE_SCOPE)."
+        ),
+    )
 
 
 class ChunkingConfig(BaseModel):
@@ -827,7 +837,9 @@ class GraphExtractionConfig(BaseModel):
         ge=0.0,
         le=1.0,
         description="Minimum confidence score for filtering entities. "
-        "Entities below this threshold are excluded. Set to 0.0 to disable filtering.",
+        "Entities below this threshold are excluded. Set to 0.0 to disable filtering. "
+        "Compared against the normalized confidence: the prompt's 1-10 score / 10 "
+        "(an integer 1 -> 0.1; decimal values <= 1 are taken as fractions).",
     )
     entity_types: list[str] = Field(
         default_factory=lambda: [
@@ -1519,11 +1531,13 @@ class IndexingConfig(BaseModel):
         description="Optional additional suffix to append to index names for isolation",
     )
     cross_run_merge: bool = Field(
-        default=False,
+        default=True,
         description="On incremental (delta) runs, read existing graph entities/"
         "relationships and union them with the delta (description/text_unit_ids/"
         "frequency/weight) before upsert, instead of overwriting. Requires a graph "
-        "adapter that supports read-back; off by default.",
+        "adapter that supports read-back (an adapter without it degrades to "
+        "overwrite). On by default: overwriting replaces an entity shared with "
+        "unchanged documents by its delta-only description and text_unit_ids.",
     )
     cross_run_fuzzy_merge: bool = Field(
         default=False,

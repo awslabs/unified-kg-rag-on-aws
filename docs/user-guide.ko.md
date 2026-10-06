@@ -351,6 +351,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `processing.similarity_threshold` | `0.6` | 엔터티 해소의 유사도 임계값입니다. 서로 다른 엔터티가 합쳐지면 올립니다. |
 | `processing.document_parsing.source_directory` | `"source"` | 라이브러리 호출용 기본값입니다. `run-ingestion`은 `--source-directory`(또는 `GRAPHRAG_SOURCE_DIRECTORY`)가 반드시 필요합니다. |
 | `processing.document_parsing.target_directory` | `null` | 파싱한 문서를 `<stem>.json`으로 내보내 확인할 디렉터리입니다(`--target-directory`와 같음). 소스 디렉터리로는 지정할 수 없습니다. |
+| `processing.document_parsing.source_scope` | `null` | 증분 삭제에 쓰는 코퍼스 식별자입니다. 실행은 자기 인덱스 접미사와 소스 범위에 속한 레지스트리 문서만 삭제합니다. `null`이면 소스 디렉터리의 절대 경로이며, 컨테이너 엔트리포인트는 S3 URI로 설정합니다(`GRAPHRAG_SOURCE_SCOPE`). §5 참고. |
 | `processing.chunking.chunker_type` | `"intelligent"` | `intelligent`는 LLM이 의미 경계를 고르고, `simple`은 크기로 나눕니다. |
 | `processing.chunking.min_chunk_size` | `1000` | 최소 청크 크기(문자)입니다. 이보다 짧은 조각은 이웃 청크에 합칩니다. |
 | `processing.chunking.max_chunk_size` | `8000` | 최대 청크 크기(문자)입니다. 임베딩과 리랭크 입력 한도 안에 들어야 합니다. |
@@ -392,7 +393,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 |---|---|---|
 | `indexing.reset` | `false` | 인덱싱 전에 기존 데이터를 지웁니다. |
 | `indexing.additional_suffix` | `null` | 모든 OpenSearch 인덱스 이름과 Neptune 레이블에서 실행 접미사 뒤에 붙습니다(`<prefix>-<suffix>-<additional_suffix>`, `<suffix>`는 `--suffix` 값 또는 `default`). 버전별·테넌트별로 분리할 때 씁니다. |
-| `indexing.cross_run_merge` | `false` | 증분 실행에서 기존 그래프를 덮어쓰지 않고 새 데이터와 합칩니다(§5). |
+| `indexing.cross_run_merge` | `true` | 증분 실행에서 기존 그래프를 덮어쓰지 않고 새 데이터와 합쳐, 변경되지 않은 문서와 공유되는 엔터티의 계보를 유지합니다(§5). `false`면 덮어씁니다. |
 | `indexing.cross_run_fuzzy_merge` | `false` | `cross_run_merge`에 엔터티 이름 유사도 매칭을 더합니다. |
 | `indexing.max_failure_rate` | `0.2` | 인덱스 유형별 쓰기 실패율이 이 값을 넘으면 인덱싱 스테이지를 실패로 처리합니다. `1.0`이면 부분 실패 검사를 끕니다. |
 | `indexing.opensearch.embedding_model_id` | `"amazon.titan-embed-text-v2:0"` | 임베딩 모델입니다. 바꾸면 다시 인덱싱해야 합니다. |
@@ -813,13 +814,36 @@ aws:
   **독점적** 아티팩트(엔티티/관계, 레지스트리의 문서별 계보로 추적)는
   삭제됩니다. 살아남은 문서와 공유되는 아티팩트는 유지됩니다.
 
+### 삭제 범위 (scope)
+
+레지스트리에서 문서의 키는 인덱스 접미사(`document_parsing.index_value`와
+`indexing.additional_suffix`)와 소스 디렉터리 기준 상대 경로입니다. 실행은 자기
+**범위**, 즉 같은 인덱스 접미사와 같은 코퍼스 소스(`document_parsing.source_scope`,
+기본값은 소스 디렉터리의 절대 경로이며 컨테이너 엔트리포인트는 동기화 원본 S3
+URI로 설정)에 기록된 문서만 삭제된 것으로 판단합니다. 따라서
+
+- 다른 테넌트(다른 `index_value`)의 실행은 두 코퍼스를 같은 로컬 디렉터리에
+  내려받아 처리하더라도 이 테넌트의 문서를 삭제하지 않습니다.
+- 하위 폴더를 소스 디렉터리로 지정해 실행해도 나머지 코퍼스는 삭제되지 않습니다.
+  다만 그 파일들은 별도 문서로 등록되므로 같은 파일을 두 루트에서 같은 접미사로
+  인덱싱하지 않습니다.
+- 파싱이나 로드에 실패한 파일은 `failed`로 보고되고, 다음 실행에서 다시 읽힐
+  때까지 인덱싱된 내용이 유지됩니다.
+
+로컬 코퍼스를 다른 디렉터리로 옮기면 기본 범위가 바뀝니다. 먼저 `source_scope`를
+고정된 이름으로 설정하거나 재구축합니다.
+
 ### 실행 간 병합 (cross-run merge)
 
-기본적으로 델타 실행은 영향받은 그래프 필드를 덮어씁니다. 대신
-`indexing.cross_run_merge: true`로 설정하면 upsert 전에 델타를 기존 그래프
-상태(description / `text_unit_ids` / frequency / weight)와 *합집합*합니다 —
-엔티티의 description이 여러 문서에 걸쳐 누적되어야 할 때 유용합니다. read-back을
-지원하는 그래프 어댑터가 필요합니다. 기본값은 OFF.
+기본값(`indexing.cross_run_merge: true`)에서 델타 실행은 upsert 전에 델타를 기존
+그래프 상태(description / `text_unit_ids` / frequency / weight)와 *합집합*합니다.
+따라서 변경되지 않은 문서와 공유되는 엔티티도 그 문서들의 description과 청크
+계보(`mix`가 따라가는 경로)를 유지합니다. 델타 실행마다 영향받은 엔티티와 관계를
+그래프에서 먼저 읽어 오고, 병합된 description이 요약 예산을 넘으면 다시
+요약합니다. `false`로 설정하면 영향받은 필드를 델타 값으로 덮어쓰며, 이때
+엔티티는 변경되지 않은 문서 청크로의 계보를 잃습니다. read-back을 지원하는
+그래프 어댑터가 필요합니다(지원하지 않으면 덮어쓰기로 동작). 변경된 문서가 수정
+전에 기여한 description은 전체 재구축 전까지 공유 엔티티에 남습니다.
 
 ---
 

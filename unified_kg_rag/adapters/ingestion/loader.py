@@ -165,7 +165,27 @@ class DirectoryLoader(BaseLoader):
         return (
             path.is_file()
             and path.suffix.lower() in self.supported_extensions
-            and not any(fnmatch.fnmatch(str(path), p) for p in self.exclude_patterns)
+            and not self._is_excluded(path)
+        )
+
+    def _is_excluded(self, path: Path) -> bool:
+        """Match exclude patterns against the path relative to the source root.
+
+        Matching the absolute path let a pattern such as ``**/.*`` fire on a
+        hidden *ancestor* of the source directory (a corpus under
+        ``/tmp/.cache/corpus`` discovered zero files). The relative path is
+        tested both bare (``drafts/*``) and with a leading ``/`` so ``**/``
+        patterns also cover top-level entries (``**/.*`` matches ``.env``).
+        """
+        try:
+            relative = path.relative_to(self.source_directory).as_posix()
+        except ValueError:
+            relative = path.as_posix()
+        candidates = (relative, f"/{relative}")
+        return any(
+            fnmatch.fnmatch(candidate, pattern)
+            for pattern in self.exclude_patterns
+            for candidate in candidates
         )
 
     def _load_files_concurrently(

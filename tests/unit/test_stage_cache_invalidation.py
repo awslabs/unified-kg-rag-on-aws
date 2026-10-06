@@ -235,6 +235,48 @@ class TestFingerprintScope:
             "not_a_pipeline_stage"  # type: ignore[arg-type]
         ) == cache_keys._input_paths_through(PipelineStageType.INDEXING)
 
+    # Default-config fingerprints of every cached stage as released before the
+    # per-tier effort split (#128) and before the fields added since. They must
+    # not move, or every existing stage cache turns into a miss on upgrade.
+    _RELEASED_DEFAULT_FINGERPRINTS = {
+        PipelineStageType.DOCUMENT_PARSING: "1035b7a62512",
+        PipelineStageType.DOCUMENT_LOADING: "ac616352a4e7",
+        PipelineStageType.TEXT_CHUNKING: "4f4d6918f24f",
+        PipelineStageType.TRANSLATION: "f7885a7f8b8f",
+        PipelineStageType.GRAPH_EXTRACTION: "f5679b85b1b0",
+        PipelineStageType.GLEANING: "3154dc9fb4f4",
+        PipelineStageType.GRAPH_RESOLUTION: "09067b47d9fb",
+        PipelineStageType.CLAIM_EXTRACTION: "96015659a99b",
+        PipelineStageType.CLAIM_RESOLUTION: "96015659a99b",
+        PipelineStageType.GRAPH_ANALYSIS: "6b559362dde3",
+        PipelineStageType.COMMUNITY_DETECTION: "c89105d3a95c",
+    }
+
+    def test_default_config_fingerprints_are_unchanged(self) -> None:
+        # Derived effort (#128) and the omit-when-default fields
+        # (fast_effort, default_max_output_tokens, model_overrides) and the
+        # non-output source_scope keep the released keys for a default config.
+        config = Config()
+        assert {
+            stage: stage_input_fingerprint(config, stage)
+            for stage in self._RELEASED_DEFAULT_FINGERPRINTS
+        } == self._RELEASED_DEFAULT_FINGERPRINTS
+
+    def test_corpus_manifest_changes_every_cached_stage_key(self) -> None:
+        config = Config()
+        for stage in self._RELEASED_DEFAULT_FINGERPRINTS:
+            unchanged = stage_input_fingerprint(config, stage, "corpus-v1")
+            assert unchanged == stage_input_fingerprint(config, stage, "corpus-v1")
+            assert unchanged != stage_input_fingerprint(config, stage, "corpus-v2")
+            assert unchanged != stage_input_fingerprint(config, stage)
+
+    def test_source_scope_does_not_change_the_fingerprint(self) -> None:
+        changed = Config()
+        changed.processing.document_parsing.source_scope = "s3://example/corpus/"
+        assert stage_input_fingerprint(
+            changed, PipelineStageType.DOCUMENT_PARSING
+        ) == stage_input_fingerprint(Config(), PipelineStageType.DOCUMENT_PARSING)
+
     def test_tier_efforts_fold_into_the_fingerprint(self) -> None:
         stage = PipelineStageType.DOCUMENT_PARSING
 
@@ -256,3 +298,103 @@ class TestFingerprintScope:
         expected = stage_input_fingerprint(config, PipelineStageType.DOCUMENT_LOADING)
         key = stage_cache_key(config, PipelineStageType.DOCUMENT_LOADING, "documents")
         assert key == f"documents-{expected}"
+
+    @pytest.mark.parametrize(
+        "path, value",
+        [
+            ("default_max_output_tokens", 1024),
+            ("model_overrides", {"vendor.synthetic-model": {"max_output_tokens": 1}}),
+        ],
+    )
+    def test_bedrock_output_shaping_fields_are_inputs(self, path, value) -> None:
+        changed = Config()
+        setattr(changed.aws.bedrock, path, value)
+        assert stage_input_fingerprint(
+            Config(), PipelineStageType.DOCUMENT_LOADING
+        ) != stage_input_fingerprint(changed, PipelineStageType.DOCUMENT_LOADING)
+
+
+def _write_corpus(root: Path, files: dict[str, str]) -> Path:
+    for relative, text in files.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    return root
+
+
+_EXTENSIONS = {".txt", ".json"}
+
+
+class TestCorpusManifest:
+    """A changed corpus must be a cache miss even under a fixed pipeline_id."""
+
+    def _fingerprint(self, root: Path, exclude: tuple[Path, ...] = ()) -> str:
+        return cache_keys.corpus_manifest_fingerprint(root, _EXTENSIONS, exclude)
+
+    def test_content_edit_add_and_remove_change_the_fingerprint(self, tmp_path) -> None:
+        root = _write_corpus(tmp_path, {"a.txt": "Vendor pays Buyer 100."})
+        baseline = self._fingerprint(root)
+
+        (root / "a.txt").write_text("Vendor pays Buyer 900.", encoding="utf-8")
+        edited = self._fingerprint(root)  # same size, different bytes
+        assert edited != baseline
+
+        _write_corpus(root, {"sub/b.txt": "Buyer ships goods."})
+        added = self._fingerprint(root)
+        assert added != edited
+
+        (root / "sub/b.txt").unlink()
+        assert self._fingerprint(root) == edited
+
+    def test_mtime_hidden_files_and_owned_dirs_do_not_count(self, tmp_path) -> None:
+        import os
+
+        root = _write_corpus(tmp_path / "src", {"a.txt": "Vendor pays Buyer."})
+        baseline = self._fingerprint(root, (root / "cache",))
+
+        os.utime(root / "a.txt", (1_000_000, 1_000_000))
+        _write_corpus(
+            root,
+            {
+                ".hidden/notes.txt": "scratch",
+                "cache/pid/documents.json": "[]",
+                "image.png": "binary",
+            },
+        )
+        assert self._fingerprint(root, (root / "cache",)) == baseline
+
+    def test_changed_corpus_does_not_resume_stale_output(self, tmp_path) -> None:
+        cache_manager = _cache_manager(tmp_path / "cache")
+        pipeline = _pipeline(Config(), cache_manager)
+        pipeline.corpus_fingerprint = "corpus-v1"
+        pipeline._save_stage_outputs_to_cache(_context(), STAGE)
+
+        state = PipelineStateManager(cache_manager)
+        state.save_pipeline_metadata(_context())
+
+        same = PipelineResumeManager(state, Config())
+        same.corpus_fingerprint = "corpus-v1"
+        restored = same.restore_pipeline_context(PIPELINE_ID, [STAGE])
+        assert [entity.id for entity in restored.entities] == ["e1"]
+
+        changed = PipelineResumeManager(state, Config())
+        changed.corpus_fingerprint = "corpus-v2"
+        assert changed.restore_pipeline_context(PIPELINE_ID, [STAGE]).entities == []
+        ok, errors = changed.validate_pipeline_integrity(PIPELINE_ID)
+        assert ok is False and errors
+
+    def test_pipeline_fingerprint_skips_its_cache_and_export_dirs(
+        self, tmp_path
+    ) -> None:
+        root = _write_corpus(tmp_path, {"a.txt": "Vendor pays Buyer."})
+        pipeline = object.__new__(DataIngestionPipeline)
+        pipeline.pipeline_config = SimpleNamespace(local_directory=root / "cache")
+        pipeline.target_directory = root / "parsed"
+        baseline = pipeline._compute_corpus_fingerprint(root)
+
+        # The pipeline's own JSON output (cache entries, parsed export) lives
+        # under the source root here; it must not move the fingerprint mid-run.
+        _write_corpus(root, {"cache/pid/entities.json": "[]", "parsed/a.json": "{}"})
+        assert pipeline._compute_corpus_fingerprint(root) == baseline
+        _write_corpus(root, {"b.json": "{}"})
+        assert pipeline._compute_corpus_fingerprint(root) != baseline

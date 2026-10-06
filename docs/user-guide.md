@@ -360,6 +360,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `processing.similarity_threshold` | `0.6` | Fuzzy-match threshold for entity resolution. Raise it if distinct entities merge. |
 | `processing.document_parsing.source_directory` | `"source"` | Fallback for library callers. `run-ingestion` requires `--source-directory` (or `GRAPHRAG_SOURCE_DIRECTORY`). |
 | `processing.document_parsing.target_directory` | `null` | Export each parsed document as `<stem>.json` for inspection (same as `--target-directory`). Must not be the source directory. |
+| `processing.document_parsing.source_scope` | `null` | Corpus identity for incremental deletion: a run only deletes registry documents of its own index suffix and source scope. `null` = the resolved source directory; the container entrypoint sets it to the S3 URI (`GRAPHRAG_SOURCE_SCOPE`). See §5. |
 | `processing.chunking.chunker_type` | `"intelligent"` | `intelligent` lets an LLM pick semantic boundaries; `simple` splits by size. |
 | `processing.chunking.min_chunk_size` | `1000` | Minimum chunk size in characters; shorter pieces merge into a neighbour. |
 | `processing.chunking.max_chunk_size` | `8000` | Maximum chunk size in characters. Must fit the embedding and rerank input limits. |
@@ -401,7 +402,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 |---|---|---|
 | `indexing.reset` | `false` | Clear existing indexed data before indexing. |
 | `indexing.additional_suffix` | `null` | Appended after the run suffix in every OpenSearch index name and Neptune label (`<prefix>-<suffix>-<additional_suffix>`, where `<suffix>` is `--suffix` or `default`). Use it for versioned or multi-tenant separation. |
-| `indexing.cross_run_merge` | `false` | On delta runs, union the delta with existing graph state instead of overwriting (§5). |
+| `indexing.cross_run_merge` | `true` | On delta runs, union the delta with existing graph state instead of overwriting, so entities shared with unchanged documents keep their lineage (§5). `false` overwrites. |
 | `indexing.cross_run_fuzzy_merge` | `false` | Extend `cross_run_merge` with fuzzy entity-name matching. |
 | `indexing.max_failure_rate` | `0.2` | Per-index-type write failure rate above which the indexing stage fails. `1.0` disables the partial-failure gate. |
 | `indexing.opensearch.embedding_model_id` | `"amazon.titan-embed-text-v2:0"` | Embedding model. Changing it requires a reindex. |
@@ -834,13 +835,39 @@ document-status registry by **content hash**.
   tracked via per-document lineage in the registry) are deleted; artifacts
   shared with surviving documents are kept.
 
+### Deletion scope
+
+A document's registry key is its index suffix (`document_parsing.index_value`,
+plus `indexing.additional_suffix`) and its path relative to the source
+directory. A run only treats as deleted the documents recorded under its own
+**scope**: the same index suffix and the same corpus source
+(`document_parsing.source_scope`, by default the resolved source directory;
+the container entrypoint sets it to the S3 URI it syncs from). So:
+
+- a run for another tenant (another `index_value`) never deletes this tenant's
+  documents, even when both corpora are staged in the same local directory;
+- running a subfolder as its own source directory never deletes the rest of
+  the corpus (its files register as separate documents, so do not index the
+  same files from two roots into one suffix);
+- a file that fails to parse or load is reported as `failed` and keeps its
+  indexed content until a run reads it again.
+
+Moving a local corpus to another directory changes its default scope: set
+`source_scope` to a stable name first, or rebuild.
+
 ### Cross-run merge
 
-By default a delta run overwrites the affected graph fields. Set
-`indexing.cross_run_merge: true` to instead *union* the delta with existing
-graph state (description / `text_unit_ids` / frequency / weight) before upsert —
-useful when an entity's description should accumulate across documents. Requires
-a graph adapter that supports read-back. Off by default.
+By default (`indexing.cross_run_merge: true`) a delta run *unions* the delta
+with existing graph state (description / `text_unit_ids` / frequency / weight)
+before upsert, so an entity shared with unchanged documents keeps their
+descriptions and chunk lineage (which `mix` follows). Each delta run reads the
+touched entities and relationships back from the graph first, and merged
+descriptions over the summarization budget are re-summarized. Setting it to
+`false` overwrites the affected fields with the delta's values instead; the
+entity then loses its lineage to the unchanged documents' chunks. Requires a
+graph adapter that supports read-back (one without it degrades to overwrite).
+A shared entity keeps the description a changed document contributed before
+its edit until a full rebuild.
 
 ---
 

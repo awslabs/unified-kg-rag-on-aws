@@ -115,6 +115,37 @@ def test_discover_excludes_hidden_files(tmp_path: Path) -> None:
     assert discovered == {"visible.json"}
 
 
+def test_discover_under_hidden_ancestor_finds_files(tmp_path: Path) -> None:
+    # Regression: exclude patterns were matched against the absolute path, so
+    # "**/.*" fired on a hidden ancestor and the whole corpus was skipped.
+    root = tmp_path / ".hidden_parent" / "corpus"
+    root.mkdir(parents=True)
+    _write_json_doc(root / "doc.json", "id-doc", "corpus content")
+    _write_json_doc(root / ".secret.json", "id-sec", "hidden content")
+    discovered = {p.name for p in DirectoryLoader(root).discover_files()}
+    assert discovered == {"doc.json"}
+
+
+def test_discover_excludes_hidden_and_pattern_dirs(tmp_path: Path) -> None:
+    _write_json_doc(tmp_path / "keep.json", "id-keep", "kept content")
+    for sub in (".git", "__pycache__", "drafts"):
+        (tmp_path / sub).mkdir()
+        _write_json_doc(tmp_path / sub / "x.json", f"id-{sub}", "excluded content")
+    loader = DirectoryLoader(
+        tmp_path,
+        exclude_patterns=DirectoryLoader.DEFAULT_EXCLUDE_PATTERNS | {"drafts/*"},
+    )
+    assert {p.relative_to(tmp_path).as_posix() for p in loader.discover_files()} == {
+        "keep.json"
+    }
+
+
+def test_is_excluded_path_outside_root_uses_full_path(tmp_path: Path) -> None:
+    loader = DirectoryLoader(tmp_path / "corpus")
+    assert loader._is_excluded(Path("/elsewhere/.hidden.json"))
+    assert not loader._is_excluded(Path("/elsewhere/visible.json"))
+
+
 def test_discover_recursive_includes_nested(tmp_path: Path) -> None:
     _write_json_doc(tmp_path / "top.json", "id-top", "top level content")
     nested = tmp_path / "a" / "b"
