@@ -578,6 +578,14 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 > `aws.bedrock.region_name`을 지정하지 않았다면 Bedrock)를 엉뚱한 리전에서 찾게 됩니다. 실행 전에 `env | grep -E '^(AWS_REGION|BEDROCK_REGION)='`로
 > 확인하고, 의도하지 않은 값은 해제하거나 고치세요.
 
+> **LangSmith 추적을 켜면 내용이 외부로 전송됩니다.** `LANGSMITH_TRACING=true`(또는
+> 이전 이름인 `LANGCHAIN_TRACING_V2=true`)가 설정되어 있으면 LangChain이 추적하는
+> 모든 실행을 LangSmith로 보냅니다. 여기에는 프롬프트, 검색된 문서 본문, 모델 출력이
+> 포함됩니다. CLI는 추적이 켜져 있으면 시작할 때 WARNING을 남기지만, 의도한 설정일
+> 수 있으므로 끄지는 않습니다. 기밀 코퍼스로 실행하기 전에는 이 변수를 해제하세요.
+> 경고는 `setup_logging`에서 남기므로, 이를 호출하지 않는 라이브러리 코드에서는
+> 나오지 않습니다.
+
 CLI는 python-dotenv로 `.env` 파일도 읽습니다. 이미 환경에 설정된 변수가 `.env`보다
 우선합니다. `.env`는 현재 디렉터리가 아니라 패키지 위치에서 상위 디렉터리로
 올라가며 찾으므로, 소스 체크아웃에서는 저장소 루트에 두세요.

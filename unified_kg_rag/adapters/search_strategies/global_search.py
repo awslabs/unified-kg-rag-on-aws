@@ -8,6 +8,7 @@ from typing import Any
 import boto3
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
+from langchain_core.runnables.config import merge_configs
 
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
@@ -107,7 +108,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             max_attempts=1,
         )
 
-    async def asearch(self, query: SearchQuery) -> SearchResult:
+    async def asearch(
+        self, query: SearchQuery, config: RunnableConfig | None = None
+    ) -> SearchResult:
         start_time = time.time()
         logger.info(
             "Global search started - query: '%s...' ('%s')",
@@ -136,7 +139,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         )
 
         selected_communities = await self._select_relevant_communities(
-            retrieved_communities, query
+            retrieved_communities, query, config=config
         )
         community_ids = self._get_ids(selected_communities, "id")
         logger.debug(
@@ -163,7 +166,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         no_relevant_points = False
         if self.global_search_config.enable_map_reduce:
             pre_map_count = len(final_results)
-            final_results = await self._apply_map_reduce(final_results, query)
+            final_results = await self._apply_map_reduce(
+                final_results, query, config=config
+            )
             # Only an all-below-threshold map phase empties a non-empty input.
             no_relevant_points = pre_map_count > 0 and not final_results
 
@@ -310,7 +315,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         )
 
     async def _select_relevant_communities(
-        self, all_communities: list[RetrievalResult], query: SearchQuery
+        self,
+        all_communities: list[RetrievalResult],
+        query: SearchQuery,
+        *,
+        config: RunnableConfig | None = None,
     ) -> list[RetrievalResult]:
         max_communities = (
             self.global_search_config.max_communities * query.retrieval_multiplier
@@ -338,7 +347,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             # the blended item.score, leaving the threshold filter (line below)
             # comparing a 0-1 threshold against a 0-10 score -> a near no-op.
             llm_output = await self.community_relevance_scorer.ainvoke(
-                {"community_summary": item.content, "query": query.query}
+                {"community_summary": item.content, "query": query.query}, config
             )
             parsed_score = safe_float_parse(llm_output, default_value=5.0)
             relevance_score = (parsed_score / 10.0) if parsed_score is not None else 0.0
@@ -448,7 +457,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         return await self._retrieve_documents(search_query, index_prefixes)
 
     async def _apply_map_reduce(
-        self, results: list[RetrievalResult], query: SearchQuery
+        self,
+        results: list[RetrievalResult],
+        query: SearchQuery,
+        *,
+        config: RunnableConfig | None = None,
     ) -> list[RetrievalResult]:
         """MS GraphRAG global-search map-reduce.
 
@@ -476,7 +489,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             return results
 
         try:
-            map_points, unrated = await self._run_map_phase(results, query)
+            map_points, unrated = await self._run_map_phase(
+                results, query, config=config
+            )
         except Exception as e:
             if not self.ignore_errors:
                 raise
@@ -493,7 +508,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     len(unrated),
                     len(results),
                 )
-                return await self._concat_reduce(unrated, query)
+                return await self._concat_reduce(unrated, query, config=config)
             logger.warning(
                 "All %s map key points scored at or below threshold %s; "
                 "no relevant community data for the query, returning no context.",
@@ -503,10 +518,16 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             return []
 
         packed_points = self._pack_points_within_budget(ranked_points)
-        return await self._reduce_from_points(packed_points, results, query)
+        return await self._reduce_from_points(
+            packed_points, results, query, config=config
+        )
 
     async def _run_map_phase(
-        self, results: list[RetrievalResult], query: SearchQuery
+        self,
+        results: list[RetrievalResult],
+        query: SearchQuery,
+        *,
+        config: RunnableConfig | None = None,
     ) -> tuple[list[_MapPoint], list[RetrievalResult]]:
         """Fan map calls over batches of reports and parse the scored points.
 
@@ -516,6 +537,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         rated (the call failed, or its output was not parseable map JSON), so
         the caller can tell "rated irrelevant" apart from "never rated".
         """
+        # BatchProcessor passes its own config (max_concurrency) to batch_func.
+        caller_config = config
         batch_size = self.global_search_config.map_batch_size
         report_batches = [
             results[i : i + batch_size] for i in range(0, len(results), batch_size)
@@ -542,12 +565,14 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             # instead of re-running every map call in its chunk.
             return list(
                 self.map_rater.batch(
-                    inputs, config=config, return_exceptions=return_exceptions
+                    inputs,
+                    config=merge_configs(caller_config, config),
+                    return_exceptions=return_exceptions,
                 )
             )
 
         def sequential_func(single_input: dict[str, Any]) -> str:
-            return str(self.map_rater.invoke(single_input))
+            return str(self.map_rater.invoke(single_input, caller_config))
 
         raw_outputs = await asyncio.to_thread(
             self.batch_processor.execute_with_fallback,
@@ -659,6 +684,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         points: list[_MapPoint],
         results: list[RetrievalResult],
         query: SearchQuery,
+        *,
+        config: RunnableConfig | None = None,
     ) -> list[RetrievalResult]:
         synthesis_input = "\n\n".join(
             f"- (relevance {p.score}) {p.description}" for p in points
@@ -690,7 +717,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     "summaries": synthesis_input,
                     "query": query.query,
                     "target_language": self.target_language,
-                }
+                },
+                config,
             )
         except Exception as e:
             if not self.ignore_errors:
@@ -714,7 +742,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         return [summary_result] + results
 
     async def _concat_reduce(
-        self, results: list[RetrievalResult], query: SearchQuery
+        self,
+        results: list[RetrievalResult],
+        query: SearchQuery,
+        *,
+        config: RunnableConfig | None = None,
     ) -> list[RetrievalResult]:
         """Legacy direct concat-and-reduce path (map-reduce degradation target).
 
@@ -730,7 +762,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     "summaries": context,
                     "query": query.query,
                     "target_language": self.target_language,
-                }
+                },
+                config,
             )
             summary_result = RetrievalResult(
                 content=summary,

@@ -590,6 +590,14 @@ wins.
 > with `aws.bedrock.region_name` unset, Bedrock) in the wrong region. Run `env | grep -E '^(AWS_REGION|BEDROCK_REGION)='` before a run,
 > and unset or correct what you find.
 
+> **LangSmith tracing uploads content.** When `LANGSMITH_TRACING=true` (or the
+> older `LANGCHAIN_TRACING_V2=true`) is set, LangChain sends every traced run to
+> LangSmith, including prompts, retrieved document text and model outputs. The
+> CLIs log a WARNING at startup when tracing is on but do not turn it off, since
+> you may want it. Unset the variable before running on a confidential corpus.
+> The warning comes from `setup_logging`, so library code that does not call it
+> gets none.
+
 The CLIs also load a `.env` file with python-dotenv. A variable already set in
 the environment wins over `.env`. The file is searched for from the package's
 location upward, not from the current directory, so in a source checkout put it

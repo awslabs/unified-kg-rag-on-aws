@@ -51,6 +51,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `aws.opensearch.allow_anonymous: true`; models still use Bedrock. A smoke
   test runs the graph and vector adapters against them when `LOCAL_STORES=1`
   (#154).
+- Callbacks, tags and metadata in the `config` passed to `GraphRAGChain`
+  reach every nested LLM call (strategy routing, query processing, context
+  building, and the DRIFT and global search calls). **Breaking** for custom
+  strategies: `GraphRAGChain` calls `asearch(query, config=...)`, so an
+  override must accept `config=None` (and should pass it to its own LLM
+  calls). Every `setup_chain` chain is named
+  after its prompt (e.g. `AnswerGenerationPrompt`) in traces (#156).
 
 ### Changed
 - Model ids are free-form strings; `aws.bedrock.default_model_id` and
@@ -321,8 +328,18 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `entities` section counts toward `total_extraction_failures` instead of
   reading as an empty success, and an output whose empty `relationships`
   section was dropped by the XML parser keeps its entities (#152).
+- Log lines from worker threads (batch processor chunks and call timeouts,
+  indexing, embedding, Neptune batches, file loading, resolution) keep the
+  bound `pipeline_id`/`stage`/`query_id`: the thread pools are
+  `ContextThreadPoolExecutor`s, which run each task in a copy of the
+  submitter's `contextvars`. `pipeline_id` is now bound for the whole
+  `run-ingestion` run, including the S3 cache sync and the failure report
+  (#156).
 
 ### Security
+- The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or
+  `LANGCHAIN_TRACING_V2` enables LangSmith tracing, which uploads prompts,
+  retrieved context and model outputs. Tracing is not turned off (#156).
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on
   Python 3.11+ (GHSA-4mvj-m6j5-pmf7), which also drops NLTK and its model
   artifact path traversal (GHSA-8mgp-746c-j5xp); Python 3.10 keeps the core

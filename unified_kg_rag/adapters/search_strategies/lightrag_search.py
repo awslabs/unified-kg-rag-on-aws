@@ -30,6 +30,7 @@ import time
 from typing import Any
 
 import boto3
+from langchain_core.runnables import RunnableConfig
 
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
@@ -200,7 +201,9 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
             return fallback
         return query
 
-    async def asearch(self, query: SearchQuery) -> SearchResult:
+    async def asearch(
+        self, query: SearchQuery, config: RunnableConfig | None = None
+    ) -> SearchResult:
         start_time = time.time()
         mode = self._mode(query)
         logger.info(

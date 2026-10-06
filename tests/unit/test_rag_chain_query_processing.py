@@ -29,7 +29,7 @@ class _FakeChain:
     def __init__(self, result):
         self._result = result
 
-    async def ainvoke(self, _inputs):
+    async def ainvoke(self, _inputs, config=None):
         if isinstance(self._result, Exception):
             raise self._result
         return self._result

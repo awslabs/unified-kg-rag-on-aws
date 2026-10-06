@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 import boto3
+from langchain_core.runnables import RunnableConfig
 
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
@@ -41,7 +42,9 @@ class LocalSearchStrategy(BaseSearchStrategy):
         super().__init__(config, retrievers, boto_session, **kwargs)
         self.entity_focus_multiplier = entity_focus_multiplier
 
-    async def asearch(self, query: SearchQuery) -> SearchResult:
+    async def asearch(
+        self, query: SearchQuery, config: RunnableConfig | None = None
+    ) -> SearchResult:
         start_time = time.time()
         logger.info(
             "Local search started - query: '%s...' ('%s') with entities: '%s'",

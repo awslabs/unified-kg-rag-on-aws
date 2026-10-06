@@ -1,13 +1,14 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TypeVar
 
 import boto3
 from pydantic import BaseModel
-from structlog.contextvars import bound_contextvars
+from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from unified_kg_rag.adapters.aws import S3CacheManager
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
@@ -304,6 +305,7 @@ class DataIngestionPipeline:
         pipeline_id: str | None = None,
         resume_from_stage: str | None = None,
     ) -> PipelineContext:
+        log_context: Mapping[str, Any] = {}
         try:
             source_path = Path(source_directory).resolve()
             logger.info(
@@ -316,6 +318,10 @@ class DataIngestionPipeline:
             self._validate_source_directory(source_path)
 
             resolved_pipeline_id = self._resolve_pipeline_id(source_path, pipeline_id)
+            # Every log line of the run, the S3 sync and the failure report
+            # included, carries the id (also in worker threads, see
+            # ContextThreadPoolExecutor).
+            log_context = bind_contextvars(pipeline_id=resolved_pipeline_id)
             resolved_resume_stage = (
                 resume_from_stage or self.pipeline_config.resume_from_stage
             )
@@ -371,6 +377,8 @@ class DataIngestionPipeline:
         except Exception as e:
             logger.exception("Pipeline execution failed: %s", e)
             raise PipelineExecutionError(f"Failed to run pipeline: {e}") from e
+        finally:
+            reset_contextvars(**log_context)
 
     def _compute_corpus_fingerprint(self, source_directory: Path) -> str:
         """Fingerprint the files this run can ingest (see cache_keys)."""
@@ -536,9 +544,8 @@ class DataIngestionPipeline:
         self, context: PipelineContext, start_stage_name: str | None
     ) -> None:
         total_start_time = time.time()
-        with bound_contextvars(pipeline_id=context.pipeline_id):
-            self._execute_pipeline_stages(context, start_stage_name)
-            self._finalize_pipeline_execution(context, total_start_time)
+        self._execute_pipeline_stages(context, start_stage_name)
+        self._finalize_pipeline_execution(context, total_start_time)
 
     def _execute_pipeline_stages(
         self, context: PipelineContext, start_stage_name: str | None

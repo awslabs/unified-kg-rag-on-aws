@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from typing import Any, NamedTuple
 
 from unified_kg_rag.adapters.ingestion.description_summarizer import (
@@ -26,6 +26,7 @@ from unified_kg_rag.ports.indexer import (
     VectorIndexer,
 )
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
 
@@ -107,7 +108,7 @@ class IndexingManager:
 
         logger.info("Clearing data for suffixes: '%s'", suffixes)
         try:
-            with ThreadPoolExecutor(max_workers=2) as executor:
+            with ContextThreadPoolExecutor(max_workers=2) as executor:
                 os_future = executor.submit(self.opensearch_indexer.clear, suffixes)
                 neptune_future = executor.submit(self.neptune_indexer.clear, suffixes)
                 opensearch_success = os_future.result()
@@ -448,7 +449,7 @@ class IndexingManager:
         # cpu*0.8 cap (~1-2 on a 2-vCPU Fargate task) would needlessly serialize
         # the independent per-backend writes. Cap at 8 as a safety bound.
         pool_size = min(len(valid_tasks), 8)
-        with ThreadPoolExecutor(max_workers=pool_size) as executor:
+        with ContextThreadPoolExecutor(max_workers=pool_size) as executor:
             futures_map = {
                 executor.submit(task.fn, *task.args): task.key for task in valid_tasks
             }

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import fnmatch
 import time
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
 
@@ -12,6 +12,7 @@ from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.domain.models import Config, Document
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import compute_hash, default_max_workers
+from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
 
@@ -189,7 +190,7 @@ class DirectoryLoader:
     ) -> tuple[list[Document], list[Path]]:
         documents, failed_paths = [], []
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+        with ContextThreadPoolExecutor(max_workers=self.max_workers) as executor:
             future_to_path = {
                 executor.submit(self._load_and_enrich_single, path): path
                 for path in file_paths

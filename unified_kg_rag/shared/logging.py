@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 import structlog
+from langsmith.utils import tracing_is_enabled
 from structlog.stdlib import LoggerFactory, ProcessorFormatter
 
 from .config import Config, get_config
@@ -143,3 +144,21 @@ def setup_logging(
 ) -> None:
     """(Re-)initialise logging from ``config`` — call after loading a CLI config."""
     LoggingSetup.setup_logging(config, config_override, force=True, stream=stream)
+    warn_if_langsmith_tracing()
+
+
+def warn_if_langsmith_tracing() -> None:
+    """Warn that LangSmith tracing, when enabled, uploads prompt content.
+
+    ``LANGSMITH_TRACING=true`` (or ``LANGCHAIN_TRACING_V2=true``) makes
+    langchain-core send every traced run to LangSmith, including prompts,
+    retrieved context and model outputs. That may be intended, so it is
+    reported, not disabled.
+    """
+    if tracing_is_enabled():
+        get_logger(__name__).warning(
+            "LangSmith tracing is enabled by the environment "
+            "(LANGSMITH_TRACING / LANGCHAIN_TRACING_V2): prompts, retrieved "
+            "context and model outputs will be sent to LangSmith. Unset the "
+            "variable to keep this content local."
+        )

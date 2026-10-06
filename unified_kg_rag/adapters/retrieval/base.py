@@ -9,6 +9,7 @@ import boto3
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
+from langchain_core.runnables import RunnableConfig
 
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
@@ -410,12 +411,23 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         deduped.sort(key=_order, reverse=True)
         return deduped
 
-    def search(self, query: SearchQuery) -> SearchResult:
-        return asyncio.run(self.asearch(query))
+    def search(
+        self, query: SearchQuery, config: RunnableConfig | None = None
+    ) -> SearchResult:
+        return asyncio.run(self.asearch(query, config=config))
 
     @abstractmethod
-    async def asearch(self, query: SearchQuery) -> SearchResult:
-        pass
+    async def asearch(
+        self, query: SearchQuery, config: RunnableConfig | None = None
+    ) -> SearchResult:
+        """Run the strategy for ``query``.
+
+        ``config`` is the caller's LangChain ``RunnableConfig`` (callbacks,
+        tags, metadata). Pass it to every LLM call the strategy makes, so the
+        caller's callbacks see those calls nested under its run, rather than
+        relying on implicit contextvar propagation, which LangChain documents
+        only for async code on Python 3.11+.
+        """
 
     @staticmethod
     def _get_ids(results: list[RetrievalResult], key: str) -> list[str]:

@@ -18,6 +18,7 @@ from .common import (
     safe_float_parse,
     strip_embedding_fields,
 )
+from .concurrency import ContextThreadPoolExecutor
 from .display import (
     console,
     display_ascii_art,
@@ -41,6 +42,7 @@ __all__ = [
     "BATCH_ITEM_FAILED",
     "EMBEDDING_FIELD_SUFFIX",
     "BatchProcessor",
+    "ContextThreadPoolExecutor",
     "RobustXMLOutputParser",
     "clean_display_name",
     "compute_hash",

@@ -80,7 +80,7 @@ def test_matcher_passed_to_pool_via_initializer_not_per_task(mocker) -> None:
 
             return _F()
 
-    mocker.patch.object(gr, "ThreadPoolExecutor", FakeExecutor)
+    mocker.patch.object(gr, "ContextThreadPoolExecutor", FakeExecutor)
     mocker.patch.object(gr, "as_completed", lambda futs: list(futs))
 
     resolver._group_similar_entities(

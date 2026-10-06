@@ -27,7 +27,7 @@ class _ScorerStub:
     def __init__(self, score_text: str) -> None:
         self._score_text = score_text
 
-    async def ainvoke(self, _inputs: dict) -> str:
+    async def ainvoke(self, _inputs: dict, config=None) -> str:
         return self._score_text
 
 

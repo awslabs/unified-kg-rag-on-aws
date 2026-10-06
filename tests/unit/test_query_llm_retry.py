@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 from botocore.exceptions import ClientError
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
 
@@ -352,3 +353,22 @@ def test_batch_processor_chain_is_not_double_retried() -> None:
     )
     assert model.calls == 2
     assert results == [BATCH_ITEM_FAILED]
+
+
+class _RootRunNames(BaseCallbackHandler):
+    def __init__(self) -> None:
+        self.names: list[str | None] = []
+
+    def on_chain_start(
+        self, serialized: Any, inputs: Any, *, parent_run_id: Any = None, **kw: Any
+    ) -> None:
+        if parent_run_id is None:
+            self.names.append(kw.get("name"))
+
+
+@pytest.mark.parametrize("purpose", [ModelPurpose.QUERY, ModelPurpose.INGESTION])
+async def test_chain_run_is_named_after_its_prompt(purpose: ModelPurpose) -> None:
+    names = _RootRunNames()
+    chain = _query_chain(_ScriptedModel(), purpose=purpose)
+    await chain.ainvoke(_QUERY, {"callbacks": [names]})
+    assert names.names == ["StrategySelectionPrompt"]

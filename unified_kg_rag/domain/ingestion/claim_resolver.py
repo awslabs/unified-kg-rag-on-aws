@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any
 
@@ -12,6 +12,7 @@ from unified_kg_rag.domain.ingestion.base_resolver import BaseResolver, FuzzyMat
 from unified_kg_rag.domain.models import Claim, Config, Entity
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import entity_key
+from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 # See graph_resolver: log progress every N items instead of pulling tqdm
 # (a terminal-UI dependency) into the technology-agnostic domain layer.
@@ -218,7 +219,7 @@ class ClaimResolver(BaseResolver):
 
         resolved_claims = []
         executor_class = (
-            ProcessPoolExecutor if self.use_process_pool else ThreadPoolExecutor
+            ProcessPoolExecutor if self.use_process_pool else ContextThreadPoolExecutor
         )
 
         with executor_class(max_workers=self.max_workers) as executor:

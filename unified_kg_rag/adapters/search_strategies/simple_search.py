@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 
+from langchain_core.runnables import RunnableConfig
+
 from unified_kg_rag.adapters.retrieval.base import (
     BaseSearchStrategy,
 )
@@ -24,7 +26,9 @@ logger = get_logger(__name__)
 
 @register_strategy(SearchStrategy.SIMPLE, required_roles=(RetrieverRole.DOCUMENT,))
 class SimpleSearchStrategy(BaseSearchStrategy):
-    async def asearch(self, query: SearchQuery) -> SearchResult:
+    async def asearch(
+        self, query: SearchQuery, config: RunnableConfig | None = None
+    ) -> SearchResult:
         start_time = time.time()
         logger.info(
             "Simple search started - query: '%s...' ('%s')",
