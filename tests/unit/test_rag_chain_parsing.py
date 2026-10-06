@@ -257,7 +257,7 @@ async def test_context_building_with_history_invokes_llm_async(
     class _FakeBuilder:
         # Only the async entry point exists: a blocking .invoke inside the
         # async chain would stall the event loop.
-        async def ainvoke(self, _inputs):
+        async def ainvoke(self, _inputs, config=None):
             return "FOLDED-WITH-HISTORY"
 
     chain._get_chain_for_prompt = lambda *a, **k: _FakeBuilder()  # type: ignore[assignment]

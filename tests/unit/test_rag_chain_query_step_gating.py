@@ -15,17 +15,25 @@ from collections import Counter
 from typing import Any
 
 import pytest
+from langchain_core.callbacks import BaseCallbackHandler
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401 (registers strategies)
 from unified_kg_rag.application.retrieval.rag_chain import (
+    ChainMode,
     EntityExtractionPrompt,
     GraphRAGChain,
     KeywordsExtractionPrompt,
     ProcessedQuery,
+    RAGInput,
     StrategySelectionPrompt,
     TranslationPrompt,
 )
-from unified_kg_rag.domain.models import Config, SearchStrategy
+from unified_kg_rag.domain.models import (
+    Config,
+    SearchQuery,
+    SearchResult,
+    SearchStrategy,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -39,9 +47,11 @@ class _CountingChain:
         self._prompt_class = prompt_class
         self._result = result
         self._log = log
+        self.configs: list = []
 
-    async def ainvoke(self, inputs: dict[str, Any]) -> Any:
+    async def ainvoke(self, inputs: dict[str, Any], config=None) -> Any:
         self._log.append((self._prompt_class, inputs))
+        self.configs.append(config)
         return self._result
 
 
@@ -50,6 +60,7 @@ class _FakeFactory:
 
     def __init__(self, *, route: str = "local", translation: str = "") -> None:
         self.calls: list[tuple[type, dict[str, Any]]] = []
+        self.chains: list[_CountingChain] = []
         self.outputs: dict[type, Any] = {
             EntityExtractionPrompt: ["Vendor", "Buyer"],
             KeywordsExtractionPrompt: _KEYWORDS_JSON,
@@ -58,9 +69,11 @@ class _FakeFactory:
         }
 
     def get_chain(self, prompt_class: type, parser: Any, **kwargs: Any) -> Any:
-        return _CountingChain(
+        chain = _CountingChain(
             prompt_class, self.outputs.get(prompt_class, ""), self.calls
         )
+        self.chains.append(chain)
+        return chain
 
     @property
     def counts(self) -> Counter:
@@ -221,7 +234,7 @@ async def test_entity_focus_order_is_deterministic(config: Config) -> None:
     captured: dict[str, Any] = {}
 
     class _Strategy:
-        async def asearch(self, query: Any) -> str:
+        async def asearch(self, query: Any, config=None) -> str:
             captured["query"] = query
             return "result"
 
@@ -243,3 +256,50 @@ async def test_entity_focus_order_is_deterministic(config: Config) -> None:
         "Warehouse",
         "Carrier",
     ]
+
+
+async def test_callers_callbacks_reach_the_query_llms_and_the_strategy(
+    config: Config,
+) -> None:
+    # Passed explicitly, not left to implicit contextvar propagation, so the
+    # nested calls are traced under the caller's run on every Python version.
+    handler = BaseCallbackHandler()
+    factory = _FakeFactory(route="mix", translation="translated")
+    chain = GraphRAGChain(config=config, mode=ChainMode.SEARCH)
+    chain._get_chain_for_prompt = factory.get_chain  # type: ignore[assignment]
+    strategy_configs: list[Any] = []
+
+    class _Strategy:
+        retrievers: dict[str, Any] = {}
+
+        async def asearch(self, query: SearchQuery, config=None) -> SearchResult:
+            strategy_configs.append(config)
+            return SearchResult(
+                query=query,
+                results=[],
+                total_results=0,
+                search_strategy="mix",
+                processing_time=0.0,
+            )
+
+    chain._get_strategy_instance = lambda _s: _Strategy()  # type: ignore[assignment]
+
+    await chain.ainvoke(
+        RAGInput(
+            query="What does the Vendor owe?",
+            search_strategy="auto",
+            target_language="English",  # explicit: the translation step runs
+        ),
+        {"callbacks": [handler]},
+    )
+
+    llm_configs = [c for ch in factory.chains for c in ch.configs]
+    assert {cls for cls, _ in factory.calls} == {
+        StrategySelectionPrompt,
+        TranslationPrompt,
+        KeywordsExtractionPrompt,
+    }
+    for received in [*llm_configs, *strategy_configs]:
+        manager = received["callbacks"]
+        assert handler in manager.handlers
+        assert manager.parent_run_id is not None  # nested under the chain run

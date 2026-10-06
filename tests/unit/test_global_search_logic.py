@@ -18,6 +18,7 @@ import pytest
 
 from unified_kg_rag.adapters.search_strategies.global_search import GlobalSearchStrategy
 from unified_kg_rag.domain.models import RetrievalResult, SearchQuery
+from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 pytestmark = pytest.mark.unit
 
@@ -44,14 +45,16 @@ class _AScorer:
     def __init__(self, value: str) -> None:
         self._value = value
         self.calls: list[dict] = []
+        self.configs: list = []
 
-    async def ainvoke(self, inputs: dict) -> str:
+    async def ainvoke(self, inputs: dict, config=None) -> str:
         self.calls.append(inputs)
+        self.configs.append(config)
         return self._value
 
 
 class _RaisingScorer:
-    async def ainvoke(self, _inputs: dict) -> str:
+    async def ainvoke(self, _inputs: dict, config=None) -> str:
         raise RuntimeError("bedrock down")
 
 
@@ -166,7 +169,7 @@ async def test_select_dynamic_ranks_by_llm_relevance() -> None:
     strat = _bare_strategy(threshold=0.0, use_dynamic_selection=True)
 
     class _ByContent:
-        async def ainvoke(self, inputs):
+        async def ainvoke(self, inputs, config=None):
             return "9" if "1" in inputs["community_summary"] else "3"
 
     strat.community_relevance_scorer = _ByContent()
@@ -529,3 +532,55 @@ async def test_synthesized_item_does_not_take_an_evidence_slot(
 
     assert len(result.results) == expected
     assert result.results[0].source == "synthesized_key_points"
+
+
+# --------------------------------------------------------------------------- #
+# The caller's RunnableConfig reaches every global-search LLM call
+# --------------------------------------------------------------------------- #
+
+
+class _MapRater:
+    def __init__(self) -> None:
+        self.configs: list = []
+
+    def batch(self, inputs, config=None, return_exceptions=False):  # noqa: ANN001
+        self.configs.append(config)
+        return ['{"points": [{"description": "Vendor ships", "score": 80}]}'] * len(
+            inputs
+        )
+
+    def invoke(self, single_input, config=None):  # noqa: ANN001
+        self.configs.append(config)
+        return '{"points": []}'
+
+
+async def test_select_dynamic_passes_the_callers_config() -> None:
+    strat = _bare_strategy(use_dynamic_selection=True, threshold=0.0)
+    strat.community_relevance_scorer = _AScorer("8")
+    caller_config = {"tags": ["caller"]}
+    await strat._select_relevant_communities(
+        _communities(2), SearchQuery(query="q"), config=caller_config
+    )
+    assert strat.community_relevance_scorer.configs == [caller_config] * 2
+
+
+async def test_map_reduce_passes_the_callers_config_to_map_and_reduce() -> None:
+    strat = _bare_strategy(map_reduce_min_results=1)
+    strat.global_search_config.reduce_with_llm = True
+    strat.map_rater = _MapRater()
+    strat.map_reducer = _AScorer("summary")
+    strat.batch_processor = BatchProcessor(
+        batch_size=1, max_concurrency=4, max_attempts=1
+    )
+    strat.token_manager = SimpleNamespace(count_tokens=len)
+    caller_config = {"tags": ["caller"]}
+
+    await strat._apply_map_reduce(
+        _communities(2), SearchQuery(query="q"), config=caller_config
+    )
+
+    # The map batch merges the caller's config with BatchProcessor's own.
+    (map_config,) = strat.map_rater.configs
+    assert map_config["tags"] == ["caller"]
+    assert map_config["max_concurrency"] == 4
+    assert strat.map_reducer.configs == [caller_config]

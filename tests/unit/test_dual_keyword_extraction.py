@@ -28,7 +28,7 @@ class _StubChain:
     def __init__(self, output: str) -> None:
         self._output = output
 
-    async def ainvoke(self, _inputs: dict) -> str:
+    async def ainvoke(self, _inputs: dict, config=None) -> str:
         return self._output
 
 
@@ -117,7 +117,7 @@ class TestSearchStepThreading:
         captured: dict = {}
 
         class _Strategy:
-            async def asearch(self, query: SearchQuery):
+            async def asearch(self, query: SearchQuery, config=None):
                 captured["query"] = query
                 return "result"
 
@@ -143,7 +143,7 @@ class TestSearchStepThreading:
         captured: dict = {}
 
         class _Strategy:
-            async def asearch(self, query: SearchQuery):
+            async def asearch(self, query: SearchQuery, config=None):
                 captured["query"] = query
                 return "result"
 

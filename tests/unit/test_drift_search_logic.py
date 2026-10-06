@@ -47,9 +47,11 @@ class _AChain:
         self._value = value
         self._raises = raises
         self.calls: list[dict] = []
+        self.configs: list = []
 
-    async def ainvoke(self, inputs: dict):
+    async def ainvoke(self, inputs: dict, config=None):
         self.calls.append(inputs)
+        self.configs.append(config)
         if self._raises is not None:
             raise self._raises
         return self._value
@@ -608,7 +610,7 @@ async def test_asearch_skips_primer_without_candidate_communities() -> None:
     )
     called = {"iterative": 0}
 
-    async def _fake_iterative(query, all_results, seen, metrics):
+    async def _fake_iterative(query, all_results, seen, metrics, config=None):
         called["iterative"] += 1
 
     strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
@@ -628,7 +630,7 @@ async def test_primer_search_falls_back_to_iterative_without_follow_ups() -> Non
     strat = _primer_strategy(primer_value='{"follow_up_queries": [], "score": 0.9}')
     called = {"iterative": False}
 
-    async def _fake_iterative(query, all_results, seen, metrics):
+    async def _fake_iterative(query, all_results, seen, metrics, config=None):
         called["iterative"] = True
 
     strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
@@ -648,7 +650,7 @@ async def test_iterative_search_uses_original_query_on_first_iteration() -> None
         searched.append(q.query)
         return [_result(f"new-{len(searched)}-{i}") for i in range(5)]
 
-    async def _fake_evolve(q, original, results, iteration):
+    async def _fake_evolve(q, original, results, iteration, config=None):
         evolved_at.append(iteration)
         out = q.model_copy(deep=True)
         out.query = f"refined-{iteration}"
@@ -674,7 +676,7 @@ async def test_asearch_fuses_with_per_type_quota() -> None:
     )
     captured: dict = {}
 
-    async def _fake_iterative(query, all_results, seen, metrics):
+    async def _fake_iterative(query, all_results, seen, metrics, config=None):
         return None
 
     def _fuse(groups, **kw):
@@ -691,3 +693,52 @@ async def test_asearch_fuses_with_per_type_quota() -> None:
     quota = captured["per_type_quota"]
     assert quota["text"] >= 10 and quota["entity"] >= 1 and quota["community"] >= 1
     assert captured["rerank_only_types"] == {"text"}
+
+
+# --------------------------------------------------------------------------- #
+# The caller's RunnableConfig reaches every DRIFT LLM call
+# --------------------------------------------------------------------------- #
+
+
+async def test_iterative_search_passes_the_callers_config_to_its_llm_calls() -> None:
+    strat = _bare_strategy(convergence_threshold=0.99)
+    strat.drift_config.max_iterations = 2
+    strat.convergence_assessor = _AChain("0.0")  # below threshold: keep going
+    strat.query_refiner = _AChain("refined")
+    strat.keyword_expander = _AChain(["kw"])
+
+    async def _fake_search(q):
+        return [_result(f"{q.query}-{i}") for i in range(5)]
+
+    strat._execute_search_iteration = _fake_search  # type: ignore[method-assign]
+    caller_config = {"tags": ["caller"]}
+    await strat._iterative_search(
+        SearchQuery(query="q"), [], set(), [], config=caller_config
+    )
+
+    for chain in (strat.convergence_assessor, strat.query_refiner):
+        assert chain.configs and all(c is caller_config for c in chain.configs)
+    assert strat.keyword_expander.configs == [caller_config]
+
+
+async def test_asearch_passes_the_callers_config_to_the_primer() -> None:
+    strat = _primer_strategy(
+        primer_value='{"follow_up_queries": [], "score": 0.9}',
+        retrievers={"document": _StubRetriever(results=[_result("report")])},
+    )
+    received: list = []
+
+    async def _fake_iterative(query, all_results, seen, metrics, config=None):
+        received.append(config)
+
+    strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
+    strat.hybrid_scorer = SimpleNamespace(
+        fuse_and_rerank_results=lambda groups, **kw: groups["results"]
+    )
+    strat._record_search_metrics = lambda *a, **k: None  # type: ignore[method-assign]
+    caller_config = {"tags": ["caller"]}
+
+    await strat.asearch(SearchQuery(query="q"), config=caller_config)
+
+    assert strat.primer.configs == [caller_config]
+    assert received == [caller_config]  # no follow-ups: the loop gets it too

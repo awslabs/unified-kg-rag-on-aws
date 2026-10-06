@@ -296,7 +296,11 @@ def setup_chain(
         prompt = _build_chat_prompt(
             resolved, _prompt_cache_marker(llm, model_info, resolved)
         )
-        chain: Runnable = prompt | llm | parser
+        # Named after the prompt, so a trace shows "AnswerGenerationPrompt"
+        # instead of an anonymous "RunnableSequence".
+        chain: Runnable = (prompt | llm | parser).with_config(
+            run_name=prompt_class.__name__
+        )
         logger.debug("Successfully created LLM chain with model: '%s'", model_id)
         retry = (
             factory.config.aws.bedrock.transient_retry

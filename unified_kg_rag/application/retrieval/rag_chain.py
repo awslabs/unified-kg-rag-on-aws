@@ -296,7 +296,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             search_branch,
         )
 
-    async def _resolve_strategy(self, state: dict[str, Any]) -> dict[str, Any]:
+    async def _resolve_strategy(
+        self, state: dict[str, Any], config: RunnableConfig | None = None
+    ) -> dict[str, Any]:
         strategy = state.get("search_strategy", SearchStrategy.AUTO)
 
         if strategy != SearchStrategy.AUTO:
@@ -313,7 +315,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 {
                     "query": query,
                     "strategies": ", ".join(s.value for s in routable),
-                }
+                },
+                config,
             )
             strategy = self._parse_routed_strategy(selected_strategy_str, routable)
         except Exception as e:
@@ -397,7 +400,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             RunnableLambda(_simple_query),
         )
 
-    async def _process_query_step(self, inputs: dict[str, Any]) -> ProcessedQuery:
+    async def _process_query_step(
+        self, inputs: dict[str, Any], config: RunnableConfig | None = None
+    ) -> ProcessedQuery:
         original_query = inputs.get("query", "")
 
         try:
@@ -430,21 +435,23 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                     EntityExtractionPrompt, CommaSeparatedListOutputParser()
                 )
                 tasks["entities"] = entity_extractor.ainvoke(
-                    {"query": original_query, "target_language": target_language}
+                    {"query": original_query, "target_language": target_language},
+                    config,
                 )
             # Keyword extraction runs on the final (possibly translated) query.
             # When translation is skipped that is the original query, so it can
             # run concurrently with entity extraction instead of after it.
             if needs_keywords and skip_translation:
                 tasks["keywords"] = self._extract_dual_keywords(
-                    original_query, target_language
+                    original_query, target_language, config
                 )
             if not skip_translation:
                 translator = self._get_chain_for_prompt(
                     TranslationPrompt, StrOutputParser()
                 )
                 tasks["translation"] = translator.ainvoke(
-                    {"query": original_query, "target_language": target_language}
+                    {"query": original_query, "target_language": target_language},
+                    config,
                 )
 
             results = (
@@ -493,7 +500,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 hl_keywords, ll_keywords = keyword_data
             elif needs_keywords:
                 hl_keywords, ll_keywords = await self._extract_dual_keywords(
-                    final_query, target_language
+                    final_query, target_language, config
                 )
 
             return ProcessedQuery(
@@ -560,7 +567,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         return text.startswith(cls._TRANSLATION_REFUSAL_MARKERS)
 
     async def _extract_dual_keywords(
-        self, query: str, target_language: Any
+        self,
+        query: str,
+        target_language: Any,
+        config: RunnableConfig | None = None,
     ) -> tuple[list[str], list[str]]:
         """Extract LightRAG high/low-level keywords as two lists.
 
@@ -572,7 +582,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 KeywordsExtractionPrompt, StrOutputParser()
             )
             raw = await extractor.ainvoke(
-                {"query": query, "target_language": target_language}
+                {"query": query, "target_language": target_language}, config
             )
             # Strict: with ignore_errors=False a broken keyword extraction
             # surfaces instead of silently yielding empty keyword lists.
@@ -597,7 +607,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         state.update(memory_variables)
         return state
 
-    async def _search_step(self, state: dict[str, Any]) -> SearchResult:
+    async def _search_step(
+        self, state: dict[str, Any], config: RunnableConfig | None = None
+    ) -> SearchResult:
         # A single GraphRAGChain is reused for concurrent invocations (the
         # evaluation path runs queries through `abatch`). Keep the resolved
         # strategy in a LOCAL — storing it on `self` lets a concurrent
@@ -632,7 +644,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             # naive), so it reads the resolved mode from here.
             metadata={"search_strategy": resolved_strategy.value},
         )
-        return await strategy_instance.asearch(search_query)
+        return await strategy_instance.asearch(search_query, config=config)
 
     @staticmethod
     def _validate_filter_keys(
@@ -876,7 +888,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 quality_score=0.0,
             )
 
-    async def _context_building_step(self, state: dict[str, Any]) -> str:
+    async def _context_building_step(
+        self, state: dict[str, Any], config: RunnableConfig | None = None
+    ) -> str:
         try:
             query: ProcessedQuery = state["processed_query"]
             optimized: OptimizedContext | None = state.get("optimized_context")
@@ -900,7 +914,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                     "query": query.original_query,
                     "search_results": search_context,
                     "conversation_history": history,
-                }
+                },
+                config,
             )
             return str(result)
         except Exception as e:

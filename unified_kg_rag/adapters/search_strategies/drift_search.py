@@ -9,6 +9,7 @@ from langchain_core.output_parsers import (
     CommaSeparatedListOutputParser,
     StrOutputParser,
 )
+from langchain_core.runnables import RunnableConfig
 
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
@@ -98,7 +99,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 custom_prompts=self.config.custom_prompts,
             )
 
-    async def asearch(self, query: SearchQuery) -> SearchResult:
+    async def asearch(
+        self, query: SearchQuery, config: RunnableConfig | None = None
+    ) -> SearchResult:
         start_time = time.time()
         logger.info(
             "Drift search started - query: '%s...' ('%s')",
@@ -127,12 +130,19 @@ class DriftSearchStrategy(BaseSearchStrategy):
         # on it could only guess, so fall back to the iterative loop instead.
         if self.drift_config.enable_primer and candidate_communities:
             await self._primer_search(
-                query, candidate_communities, all_results, seen_hashes, metrics
+                query,
+                candidate_communities,
+                all_results,
+                seen_hashes,
+                metrics,
+                config=config,
             )
         else:
             if self.drift_config.enable_primer:
                 logger.info("No candidate communities; skipping DRIFT primer")
-            await self._iterative_search(query, all_results, seen_hashes, metrics)
+            await self._iterative_search(
+                query, all_results, seen_hashes, metrics, config=config
+            )
 
         # DRIFT accumulates communities, entities, relationships and chunks
         # from several iterations; reserve slots per section type (shared with
@@ -174,11 +184,13 @@ class DriftSearchStrategy(BaseSearchStrategy):
         all_results: list[RetrievalResult],
         seen_hashes: set[str],
         metrics: list[dict[str, Any]],
+        *,
+        config: RunnableConfig | None = None,
     ) -> None:
         """Original DRIFT loop: carry one mutating query forward each iteration."""
         current_query = query.model_copy(deep=True)
         for iteration in range(self.drift_config.max_iterations):
-            if await self._should_stop(iteration, metrics, query.query):
+            if await self._should_stop(iteration, metrics, query.query, config=config):
                 logger.info("Convergence achieved at iteration %s", iteration)
                 break
 
@@ -187,7 +199,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
             # user's wording. Later iterations refine it from what was found.
             if iteration > 0:
                 current_query = await self._evolve_query(
-                    current_query, query.query, all_results, iteration
+                    current_query, query.query, all_results, iteration, config=config
                 )
             logger.info(
                 "Iteration %s: evolved query='%s', optional keywords='%s'",
@@ -231,6 +243,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
         all_results: list[RetrievalResult],
         seen_hashes: set[str],
         metrics: list[dict[str, Any]],
+        *,
+        config: RunnableConfig | None = None,
     ) -> None:
         """MS GraphRAG primer flow: HyDE primer -> per-follow-up local searches.
 
@@ -246,7 +260,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         follow-up queries the primer derives alongside it.
         """
         follow_ups, intermediate_answer = await self._run_primer(
-            query, candidate_communities
+            query, candidate_communities, config=config
         )
         if intermediate_answer:
             logger.debug(
@@ -257,7 +271,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
 
         if not follow_ups:
             logger.info("Primer produced no follow-ups; using iterative loop")
-            await self._iterative_search(query, all_results, seen_hashes, metrics)
+            await self._iterative_search(
+                query, all_results, seen_hashes, metrics, config=config
+            )
             return
 
         for iteration, follow_up in enumerate(
@@ -283,7 +299,11 @@ class DriftSearchStrategy(BaseSearchStrategy):
             )
 
     async def _run_primer(
-        self, query: SearchQuery, candidate_communities: list[RetrievalResult]
+        self,
+        query: SearchQuery,
+        candidate_communities: list[RetrievalResult],
+        *,
+        config: RunnableConfig | None = None,
     ) -> tuple[list[str], str]:
         """Run the HyDE primer; return (follow-up sub-queries, intermediate answer).
 
@@ -305,7 +325,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
                     "query": query.query,
                     "community_reports": reports,
                     "num_follow_ups": self.drift_config.primer_follow_ups,
-                }
+                },
+                config,
             )
             payload = parse_llm_json(raw)
         except Exception as e:
@@ -347,7 +368,12 @@ class DriftSearchStrategy(BaseSearchStrategy):
             seen_hashes.add(compute_hash(result.content, length=16))
 
     async def _should_stop(
-        self, iteration: int, metrics: list[dict[str, Any]], original_query: str
+        self,
+        iteration: int,
+        metrics: list[dict[str, Any]],
+        original_query: str,
+        *,
+        config: RunnableConfig | None = None,
     ) -> bool:
         # The caller loops over range(max_iterations), so the hard cap is already
         # enforced there; this method only decides EARLY convergence.
@@ -360,7 +386,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
             self.drift_config.enable_llm_convergence
             and metrics
             and await self._assess_convergence_with_llm(
-                original_query, iteration, metrics
+                original_query, iteration, metrics, config=config
             )
         ):
             return True
@@ -368,7 +394,12 @@ class DriftSearchStrategy(BaseSearchStrategy):
         return False
 
     async def _assess_convergence_with_llm(
-        self, original_query: str, iteration: int, metrics: list[dict[str, Any]]
+        self,
+        original_query: str,
+        iteration: int,
+        metrics: list[dict[str, Any]],
+        *,
+        config: RunnableConfig | None = None,
     ) -> bool:
         if not metrics:
             return False
@@ -380,7 +411,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
                     "iterations": iteration,
                     "total_results": sum(m["unique_new"] for m in metrics),
                     "new_results": metrics[-1]["unique_new"],
-                }
+                },
+                config,
             )
             parsed_score = safe_float_parse(llm_output, default_value=0.5) or 0.0
             return parsed_score >= self.drift_config.convergence_threshold
@@ -399,6 +431,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
         results: list[RetrievalResult],
         iteration: int,
         max_keywords: int = 20,
+        *,
+        config: RunnableConfig | None = None,
     ) -> SearchQuery:
         evolved_query = query.model_copy(deep=True)
         tasks = {}
@@ -411,7 +445,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
                     "results_summary": summary,
                     "iteration": iteration,
                     "target_language": self.target_language,
-                }
+                },
+                config,
             )
 
         if self.drift_config.enable_keyword_extraction:
@@ -427,7 +462,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
                     "topics": [],
                     "max_keywords": max_keywords,
                     "target_language": self.target_language,
-                }
+                },
+                config,
             )
 
         if not tasks:

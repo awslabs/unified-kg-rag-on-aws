@@ -51,6 +51,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `aws.opensearch.allow_anonymous: true`; models still use Bedrock. A smoke
   test runs the graph and vector adapters against them when `LOCAL_STORES=1`
   (#154).
+- Callbacks, tags and metadata in the `config` passed to `GraphRAGChain`
+  reach every nested LLM call (strategy routing, query processing, context
+  building, and the DRIFT and global search calls). Search strategies take
+  an optional `config` in `asearch(query, config=None)`; a custom strategy
+  should pass it to its own LLM calls. Every `setup_chain` chain is named
+  after its prompt (e.g. `AnswerGenerationPrompt`) in traces (#PR).
 
 ### Changed
 - Model ids are free-form strings; `aws.bedrock.default_model_id` and
