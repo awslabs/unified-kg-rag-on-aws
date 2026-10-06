@@ -206,7 +206,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   second LLM call per user turn.
 - `processing.max_retries` now sets the ingestion LLM retry count; the
   stages passed it but the batch processor kept its own default. The default
-  is 5, the value previously in effect (#PR).
+  is 5, the value previously in effect (#140).
 
 ### Security
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on
