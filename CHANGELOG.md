@@ -151,7 +151,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 ### Removed
 - The unused `RetrieverType` enum and the latency-optimized inference path
   (`supports_performance_optimization` in model capability records), which no
-  caller enabled (#PR).
+  caller enabled (#147).
 - `OpenSearchClient.aget_mapping` and the live-mapping/Neptune-probe filter
   scoping (#123).
 - The `dev` and `docs` extras and the unused `asyncio-throttle` and `rapidfuzz`
