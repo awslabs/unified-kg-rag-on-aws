@@ -53,9 +53,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#154).
 - Callbacks, tags and metadata in the `config` passed to `GraphRAGChain`
   reach every nested LLM call (strategy routing, query processing, context
-  building, and the DRIFT and global search calls). Search strategies take
-  an optional `config` in `asearch(query, config=None)`; a custom strategy
-  should pass it to its own LLM calls. Every `setup_chain` chain is named
+  building, and the DRIFT and global search calls). **Breaking** for custom
+  strategies: `GraphRAGChain` calls `asearch(query, config=...)`, so an
+  override must accept `config=None` (and should pass it to its own LLM
+  calls). Every `setup_chain` chain is named
   after its prompt (e.g. `AnswerGenerationPrompt`) in traces (#PR).
 
 ### Changed
