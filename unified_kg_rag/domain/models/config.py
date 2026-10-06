@@ -777,7 +777,9 @@ class GraphExtractionConfig(BaseModel):
         ge=0.0,
         le=1.0,
         description="Minimum confidence score for filtering entities. "
-        "Entities below this threshold are excluded. Set to 0.0 to disable filtering.",
+        "Entities below this threshold are excluded. Set to 0.0 to disable filtering. "
+        "Compared against the normalized confidence: the prompt's 1-10 score / 10 "
+        "(an integer 1 -> 0.1; decimal values <= 1 are taken as fractions).",
     )
     entity_types: list[str] = Field(
         default_factory=lambda: [

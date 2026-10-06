@@ -96,6 +96,25 @@ class TestParseConfidence:
         # > 1.0 is treated as a 0-10 scale and divided by 10.
         assert BaseProcessor._parse_confidence({"confidence": 8}) == 0.8
 
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            (1, 0.1),  # lowest point of the prompt's 1-10 scale, not top
+            ("1", 0.1),
+            (" 1 ", 0.1),
+            ("10", 1.0),
+            ("8.5", 0.85),
+            (1.0, 1.0),  # written as a fraction -> already normalized
+            ("1.0", 1.0),
+            ("0.4", 0.4),
+            (0, 0.0),
+        ],
+    )
+    def test_scale_rule(self, raw, expected) -> None:
+        assert BaseProcessor._parse_confidence({"confidence": raw}) == pytest.approx(
+            expected
+        )
+
     def test_above_scale_clamped_to_one(self) -> None:
         assert BaseProcessor._parse_confidence({"confidence": 15}) == 1.0
 
