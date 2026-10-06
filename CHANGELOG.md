@@ -85,6 +85,21 @@ Each previous behaviour stays available through the setting in parentheses.
   upsert (`cross_run_merge: false` restores overwriting).
 
 ### Fixed
+- Incremental deletion is scoped to the run's tenant and corpus. `deleted`
+  was every registry document missing from the run's input across the whole
+  table, and the registry key hashed only the local path, so a per-file parse
+  failure, a run over a subfolder, or another tenant's run (all corpora are
+  staged in `/tmp/graphrag-source` on the container) deleted indexed content.
+  The registry key now hashes the index namespace (`index_value` +
+  `indexing.additional_suffix`) and the path relative to the source directory;
+  a run only deletes records of its own scope (namespace + corpus source,
+  new `processing.document_parsing.source_scope`, which the container
+  entrypoint sets to the S3 URI via `GRAPHRAG_SOURCE_SCOPE`); and files that
+  fail to parse or load are reported as `failed` instead of deleted.
+  `DocStatusPort.diff` takes an optional `scope`. **Re-index required:**
+  registry keys change and records written before this release carry no
+  scope, so they are never deleted automatically; rebuild with
+  `indexing.reset: true` (which also clears the registry).
 - Two files with the same name in different folders and the same first 100
   characters no longer share a `document_id` (and therefore text-unit ids).
   The id is now derived from the path relative to the corpus root plus a hash

@@ -21,8 +21,8 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from unified_kg_rag.domain.ingestion.delta_detector import (
-    compute_doc_id,
     detect_delta,
+    document_doc_id,
     filter_documents_to_process,
 )
 from unified_kg_rag.domain.models import (
@@ -40,6 +40,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports import DocStatusPort
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils.document_identity import RELATIVE_PATH_KEY
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
@@ -67,9 +68,7 @@ def build_document_lineage(
     exclusive-id computation later subtracts ids still referenced by survivors.
     """
     # Map per-run document_id -> stable doc_id.
-    docid_to_stable = {
-        doc.document_id: compute_doc_id(doc.file_path) for doc in documents
-    }
+    docid_to_stable = {doc.document_id: document_doc_id(doc) for doc in documents}
     # Map text_unit id -> set of stable doc_ids it belongs to.
     tu_to_docs: dict[str, set[str]] = {}
     docs_by_stable: dict[str, set[str]] = defaultdict(set)
@@ -121,6 +120,7 @@ def build_document_lineage(
             DocumentLineage(
                 doc_id=stable,
                 suffix=suffix,
+                file_path=doc.metadata.get(RELATIVE_PATH_KEY) or doc.file_path,
                 text_unit_ids=sorted(docs_by_stable.get(stable, set())),
                 entity_ids=sorted(entity_ids.get(stable, set())),
                 relationship_ids=sorted(relationship_ids.get(stable, set())),
@@ -140,14 +140,22 @@ class IncrementalIndexer:
         doc_status: DocStatusPort,
         indexing_manager: IndexingManager,
         suffix: str = "default",
+        scope: str | None = None,
     ) -> None:
         self.doc_status = doc_status
         self.indexing_manager = indexing_manager
         self.suffix = suffix
+        # Registry scope (delta_detector.registry_scope) the delta is computed
+        # in and recorded under; None diffs against the whole registry.
+        self.scope = scope
 
-    def plan(self, documents: list[Document]) -> tuple[DocumentDelta, dict[str, str]]:
+    def plan(
+        self, documents: list[Document], failed_doc_ids: list[str] | None = None
+    ) -> tuple[DocumentDelta, dict[str, str]]:
         """Compute the delta for ``documents`` without mutating any store."""
-        return detect_delta(documents, self.doc_status)
+        return detect_delta(
+            documents, self.doc_status, self.scope, failed_doc_ids or ()
+        )
 
     def documents_to_process(
         self, documents: list[Document], delta: DocumentDelta
@@ -357,6 +365,12 @@ class IncrementalIndexer:
                 ),
                 status=DocStatus.PROCESSED,
                 suffix=lineage.suffix,
+                scope=(
+                    self.scope
+                    if self.scope is not None
+                    else (existing.scope if existing else None)
+                ),
+                file_path=lineage.file_path,
                 entity_ids=lineage.entity_ids,
                 relationship_ids=lineage.relationship_ids,
                 text_unit_ids=lineage.text_unit_ids,

@@ -380,6 +380,7 @@ processing:
     source_directory:               # overridden by --source-directory CLI flag
     target_directory: null          # parsed-JSON export dir; see note below
     index_value: null
+    source_scope: null              # incremental deletion scope; default = source dir
 ```
 
 > **Parsed output export:** to inspect what the `document_parsing` stage
@@ -953,6 +954,26 @@ document-status registry by **content hash**.
   **exclusive** artifacts (entities/relationships seen only in that document,
   tracked via per-document lineage in the registry) are deleted; artifacts
   shared with surviving documents are kept.
+
+### Deletion scope
+
+A document's registry key is its index suffix (`document_parsing.index_value`,
+plus `indexing.additional_suffix`) and its path relative to the source
+directory. A run only treats as deleted the documents recorded under its own
+**scope**: the same index suffix and the same corpus source
+(`document_parsing.source_scope`, by default the resolved source directory;
+the container entrypoint sets it to the S3 URI it syncs from). So:
+
+- a run for another tenant (another `index_value`) never deletes this tenant's
+  documents, even when both corpora are staged in the same local directory;
+- running a subfolder as its own source directory never deletes the rest of
+  the corpus (its files register as separate documents, so do not index the
+  same files from two roots into one suffix);
+- a file that fails to parse or load is reported as `failed` and keeps its
+  indexed content until a run reads it again.
+
+Moving a local corpus to another directory changes its default scope: set
+`source_scope` to a stable name first, or rebuild.
 
 ### Cross-run merge
 

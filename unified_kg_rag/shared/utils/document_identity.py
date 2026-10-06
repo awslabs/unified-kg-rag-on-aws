@@ -7,6 +7,10 @@ corpus synced to ``/tmp/graphrag-source`` on one machine and checked out under
 ``~/corpus`` on another yields the same ids), and a document *version* by that
 path plus a hash of its full text:
 
+* ``compute_doc_id(relative_path, namespace)`` -- the registry key of a
+  document across runs: the index namespace (suffix, plus any additional
+  suffix) and the relative path. The namespace keeps two tenants' identically
+  named files apart even when both corpora are staged in the same directory.
 * ``compute_text_hash(text)`` -- content fingerprint (change detection).
 * ``compute_document_id(source_key, content_hash)`` -- the per-version
   ``Document.document_id`` that text-unit ids derive from. Hashing the full
@@ -26,6 +30,10 @@ from .common import compute_hash, generate_stable_id
 # Document.metadata key holding the path relative to the corpus root (the
 # directory loader already records it under this name).
 RELATIVE_PATH_KEY = "relative_path"
+# Document.metadata key holding the registry namespace the document belongs to.
+REGISTRY_NAMESPACE_KEY = "registry_namespace"
+
+DEFAULT_NAMESPACE = "default"
 
 _ID_HASH_LENGTH = 32
 
@@ -56,3 +64,21 @@ def compute_text_hash(text: str) -> str:
 def compute_document_id(source_key: str, content_hash: str) -> str:
     """Per-version document id: the document's source key plus its content."""
     return generate_stable_id(f"doc:{source_key}:{content_hash}")
+
+
+def registry_namespace(suffix: str | None, additional_suffix: str | None = None) -> str:
+    """The index namespace a document's artifacts are written to.
+
+    Mirrors how the indexers name indices/labels: the item suffix (``index``
+    attribute, ``default`` when unset) plus ``indexing.additional_suffix``.
+    """
+    namespace = suffix or DEFAULT_NAMESPACE
+    return f"{namespace}-{additional_suffix}" if additional_suffix else namespace
+
+
+def compute_doc_id(
+    relative_path: str | Path, namespace: str = DEFAULT_NAMESPACE
+) -> str:
+    """Registry key of a document: its index namespace and relative path."""
+    key = f"{namespace}\x00{normalize_source_path(relative_path)}"
+    return compute_hash(key, algorithm="sha256", length=_ID_HASH_LENGTH)

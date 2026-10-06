@@ -558,6 +558,16 @@ class DocumentParsingConfig(BaseModel):
     index_value: str | None = Field(
         default=None, description="Value to index the parsed documents with"
     )
+    source_scope: str | None = Field(
+        default=None,
+        description=(
+            "Identity of the corpus source for incremental indexing: a run only "
+            "treats registry documents of its own index suffix AND source scope "
+            "as deleted. None = the resolved source directory. Set it when the "
+            "local directory is a staging copy, e.g. the S3 URI a container "
+            "syncs from (env GRAPHRAG_SOURCE_SCOPE)."
+        ),
+    )
 
 
 class ChunkingConfig(BaseModel):

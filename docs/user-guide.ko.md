@@ -375,6 +375,7 @@ processing:
     source_directory:               # overridden by --source-directory CLI flag
     target_directory: null          # parsed-JSON export dir; see note below
     index_value: null
+    source_scope: null              # incremental deletion scope; default = source dir
 ```
 
 > **파싱 결과 내보내기:** `document_parsing` 스테이지의 결과를 확인하려면
@@ -933,6 +934,25 @@ aws:
 - **문서 삭제:** 소스 디렉터리에서 제거하고 재실행합니다. 그 문서에서만 보이는
   **독점적** 아티팩트(엔티티/관계, 레지스트리의 문서별 계보로 추적)는
   삭제됩니다. 살아남은 문서와 공유되는 아티팩트는 유지됩니다.
+
+### 삭제 범위 (scope)
+
+레지스트리에서 문서의 키는 인덱스 접미사(`document_parsing.index_value`와
+`indexing.additional_suffix`)와 소스 디렉터리 기준 상대 경로입니다. 실행은 자기
+**범위**, 즉 같은 인덱스 접미사와 같은 코퍼스 소스(`document_parsing.source_scope`,
+기본값은 소스 디렉터리의 절대 경로이며 컨테이너 엔트리포인트는 동기화 원본 S3
+URI로 설정)에 기록된 문서만 삭제된 것으로 판단합니다. 따라서
+
+- 다른 테넌트(다른 `index_value`)의 실행은 두 코퍼스를 같은 로컬 디렉터리에
+  내려받아 처리하더라도 이 테넌트의 문서를 삭제하지 않습니다.
+- 하위 폴더를 소스 디렉터리로 지정해 실행해도 나머지 코퍼스는 삭제되지 않습니다.
+  다만 그 파일들은 별도 문서로 등록되므로 같은 파일을 두 루트에서 같은 접미사로
+  인덱싱하지 않습니다.
+- 파싱이나 로드에 실패한 파일은 `failed`로 보고되고, 다음 실행에서 다시 읽힐
+  때까지 인덱싱된 내용이 유지됩니다.
+
+로컬 코퍼스를 다른 디렉터리로 옮기면 기본 범위가 바뀝니다. 먼저 `source_scope`를
+고정된 이름으로 설정하거나 재구축합니다.
 
 ### 실행 간 병합 (cross-run merge)
 

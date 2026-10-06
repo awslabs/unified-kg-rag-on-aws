@@ -176,6 +176,11 @@ processing:
     # output there would be re-ingested as new documents on the next run.
     target_directory: null
     index_value: null
+    # Identity of the corpus source for incremental indexing: a run only
+    # treats registry documents of its own index suffix AND source scope as
+    # deleted. null = the resolved source directory. The container entrypoint
+    # sets it (GRAPHRAG_SOURCE_SCOPE) to the S3 URI the corpus is synced from.
+    source_scope: null
 
   # Text Chunking
   chunking:
