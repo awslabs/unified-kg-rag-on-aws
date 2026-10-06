@@ -20,7 +20,9 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
     check_entity_relevance_task,
+    coerce_llm_text,
 )
+from unified_kg_rag.domain.ingestion.claim_resolver import claim_identity_suffix
 from unified_kg_rag.domain.models import Claim, Config, Entity, ModelPurpose, TextUnit
 from unified_kg_rag.domain.prompts import ClaimExtractionPrompt
 from unified_kg_rag.shared import get_logger
@@ -28,6 +30,7 @@ from unified_kg_rag.shared.utils import (
     BatchProcessor,
     default_max_workers,
     ensure_list,
+    entity_key,
     generate_stable_id,
 )
 
@@ -304,18 +307,27 @@ class ClaimExtractor(BaseProcessor):
         return claims
 
     @staticmethod
-    def _get_string_value(data: Any) -> str:
-        if isinstance(data, str):
-            return data.strip()
+    def _get_string_value(data: Any, *, join: bool = False) -> str:
+        """Coerce an XML-parsed claim field to one stripped string.
+
+        A repeated tag arrives as a list; like ``coerce_llm_text`` (#124),
+        identity fields take the first non-empty element and ``join=True``
+        (description-like fields) keeps every distinct element, newline-joined,
+        instead of stringifying the list (``"['A', 'B']"``).
+        """
         if isinstance(data, dict):
             if "#text" in data:
                 return str(data["#text"]).strip()
             if len(data.values()) == 1:
-                return ClaimExtractor._get_string_value(list(data.values())[0])
+                return ClaimExtractor._get_string_value(
+                    list(data.values())[0], join=join
+                )
             return str(data)
-        if data is None:
-            return ""
-        return str(data).strip()
+        if isinstance(data, list):
+            return coerce_llm_text(
+                [ClaimExtractor._get_string_value(item) for item in data], join=join
+            )
+        return coerce_llm_text(data)
 
     def _parse_claim_data(
         self, claim_data: dict[str, Any], text_unit: TextUnit
@@ -328,7 +340,11 @@ class ClaimExtractor(BaseProcessor):
             if not all([subject_name, object_name, claim_type]):
                 return None
 
-            claim_id = self._generate_claim_id(subject_name, object_name, claim_type)
+            start_date = self._get_string_value(claim_data.get("start_date"))
+            end_date = self._get_string_value(claim_data.get("end_date"))
+            claim_id = self._generate_claim_id(
+                subject_name, object_name, claim_type, start_date, end_date
+            )
             attributes = self._parse_attributes(claim_data.get("attributes"), text_unit)
 
             return Claim(
@@ -340,12 +356,16 @@ class ClaimExtractor(BaseProcessor):
                 object_name=object_name,
                 type=claim_type,
                 status=self._get_string_value(claim_data.get("claim_status")),
-                start_date=self._get_string_value(claim_data.get("start_date")),
-                end_date=self._get_string_value(claim_data.get("end_date")),
-                description=self._get_string_value(claim_data.get("description")),
+                start_date=start_date,
+                end_date=end_date,
+                description=self._get_string_value(
+                    claim_data.get("description"), join=True
+                ),
                 description_embedding=None,
                 text_unit_ids=[text_unit.id],
-                source_text=self._get_string_value(claim_data.get("source_text")),
+                source_text=self._get_string_value(
+                    claim_data.get("source_text"), join=True
+                ),
                 attributes=attributes,
                 created_at=datetime.now(),
                 updated_at=datetime.now(),
@@ -357,8 +377,24 @@ class ClaimExtractor(BaseProcessor):
             return None
 
     @staticmethod
-    def _generate_claim_id(subject_name: str, object_name: str, claim_type: str) -> str:
-        claim_id_content = f"claim:{subject_name}:{object_name}:{claim_type}".lower()
+    def _generate_claim_id(
+        subject_name: str,
+        object_name: str,
+        claim_type: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> str:
+        """Stable claim id from ``entity_key``-normalized endpoints and the type.
+
+        Endpoints use the same identity key as entity ids, so case/whitespace/
+        quote variants of one name share an id. Known dates are part of the
+        identity (see ``claim_identity_suffix``) so same-triple claims with
+        different dates are not collapsed into one keeping a single date.
+        """
+        claim_id_content = (
+            f"claim:{entity_key(subject_name)}:{entity_key(object_name)}:"
+            f"{claim_type}{claim_identity_suffix(start_date, end_date)}".lower()
+        )
         return generate_stable_id(claim_id_content)
 
     def _merge_claims(self, claims: list[Claim]) -> list[Claim]:

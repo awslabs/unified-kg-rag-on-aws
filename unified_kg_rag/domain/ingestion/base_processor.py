@@ -251,12 +251,29 @@ class BaseProcessor:
 
     @staticmethod
     def _parse_confidence(data: dict[str, Any], default: float = 1.0) -> float:
+        """Normalize an extracted confidence to ``[0, 1]``.
+
+        The extraction prompt asks for an integer on a 1-10 scale, but models
+        (or custom prompts) sometimes answer with a 0-1 fraction. Rule:
+
+        * ``> 1``: 1-10 scale, divided by 10 (``8`` -> 0.8, ``8.5`` -> 0.85).
+        * exactly ``1`` written as an integer (``1`` / ``"1"``): the lowest
+          point of the 1-10 scale -> 0.1. Reading it as the fraction 1.0 would
+          turn the least confident answer into the most confident one.
+        * any other value in ``[0, 1]``, including ``1.0`` written with a
+          decimal point: already a fraction, kept as-is.
+
+        The result is clamped to ``[0, 1]``; unparseable values use ``default``.
+        """
         value = data.get("confidence")
         if value is None:
             return default
         try:
             raw_confidence = float(value)
-            if raw_confidence > 1.0:
+            written_as_integer = isinstance(value, int) or (
+                isinstance(value, str) and value.strip().lstrip("+").isdigit()
+            )
+            if raw_confidence > 1.0 or (raw_confidence == 1.0 and written_as_integer):
                 normalized = raw_confidence / 10.0
             else:
                 normalized = raw_confidence

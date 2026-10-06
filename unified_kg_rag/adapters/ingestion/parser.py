@@ -7,7 +7,6 @@ from typing import Any
 
 from langchain_community.document_loaders import (
     CSVLoader,
-    JSONLoader,
     PyPDFLoader,
     TextLoader,
     UnstructuredHTMLLoader,
@@ -16,6 +15,7 @@ from langchain_community.document_loaders import (
 from langchain_community.document_loaders.base import BaseLoader
 from pydantic import BaseModel, Field
 
+from unified_kg_rag.adapters.ingestion.json_loader import JsonTextLoader
 from unified_kg_rag.domain.models import Config, Document
 from unified_kg_rag.shared import DataProcessingError, get_logger
 from unified_kg_rag.shared.utils import convert_langchain_to_document
@@ -168,14 +168,15 @@ class FileParser(BaseParser):
 # imports ``chardet`` (an extra dependency); charset-normalizer is a declared
 # dependency and is reused here and in
 # ``Document._read_text_autodetect`` for one consistent detection path.
-_ENCODING_AWARE_LOADERS = (CSVLoader, TextLoader)
+_ENCODING_AWARE_LOADERS = (CSVLoader, JsonTextLoader, TextLoader)
 
 
 class ParserFactory:
     # Loaders with no heavy optional deps — always available.
     _loader_configs: dict[str, tuple[type[BaseLoader], dict, str]] = {
         ".csv": (CSVLoader, {}, "CSV"),
-        ".json": (JSONLoader, {"jq_schema": "."}, "JSON"),
+        # Stdlib-only: LangChain's JSONLoader needs the optional `jq` package.
+        ".json": (JsonTextLoader, {}, "JSON"),
         ".pdf": (PyPDFLoader, {}, "PDF"),
         ".txt": (TextLoader, {}, "Text"),
     }
@@ -216,7 +217,7 @@ class ParserFactory:
             extension: file extension including the leading dot (case-insensitive).
             loader_class: a LangChain ``BaseLoader`` subclass.
             loader_kwargs: kwargs passed to the loader constructor (besides the
-                file path), e.g. ``{"jq_schema": "."}`` for ``JSONLoader``.
+                file path), e.g. ``{"text_mode": "strings"}`` for ``JsonTextLoader``.
             file_type_name: human-readable name for logs (defaults to the
                 extension without its dot, upper-cased).
         """

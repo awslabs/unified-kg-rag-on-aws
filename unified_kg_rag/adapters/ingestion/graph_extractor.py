@@ -27,6 +27,7 @@ from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
     BatchProcessor,
     ensure_list,
+    entity_key,
 )
 
 logger = get_logger(__name__)
@@ -78,6 +79,12 @@ class ExtractionStats(BaseModel):
         default=0,
         description="Number of relationships whose source_text span was not found "
         "in their source chunk (dropped or weight-penalized by the grounding guard)",
+    )
+    relationships_dropped_ungrounded_endpoint: int = Field(
+        default=0,
+        description="Number of relationships dropped because an endpoint entity "
+        "was dropped by the grounding guard in the same chunk (otherwise the "
+        "relationship would recreate the hallucinated entity as a stub)",
     )
 
     @property
@@ -341,7 +348,7 @@ class GraphExtractor(BaseProcessor):
             if entity := self.parse_entity_data(entity_data, text_unit):
                 entities.append(entity)
 
-        entities = self._apply_entity_grounding(entities, text_unit)
+        entities, dropped_keys = self._apply_entity_grounding(entities, text_unit)
 
         entity_name_to_id = self.build_entity_key_index(entities)
         relationships_data = ensure_list(
@@ -353,6 +360,9 @@ class GraphExtractor(BaseProcessor):
             ):
                 relationships.append(relationship)
 
+        relationships = self._drop_relationships_to_dropped_entities(
+            relationships, dropped_keys, text_unit
+        )
         relationships = self._apply_relationship_grounding(relationships, text_unit)
 
         return entities, relationships
@@ -451,18 +461,24 @@ class GraphExtractor(BaseProcessor):
 
     def _apply_entity_grounding(
         self, entities: list[Entity], text_unit: TextUnit
-    ) -> list[Entity]:
+    ) -> tuple[list[Entity], set[str]]:
         """Drop or penalize entities not grounded in their source chunk.
 
         Per-chunk (before merge), so each entity is checked against the exact
         text it was extracted from. The verbatim evidence span lives in the
         reserved ``_source_text`` attribute (stripped here so it is not
         persisted). No-op when grounding is disabled.
+
+        Returns the kept entities and the ``entity_key`` of every entity dropped
+        in this chunk (excluding keys that also have a kept, grounded copy), so
+        relationships naming a dropped entity can be removed before stub
+        materialization would recreate it.
         """
         grounding = self.extraction_config.entity_grounding
         chunk_text = self.get_text_for_processing(text_unit)
 
         kept: list[Entity] = []
+        dropped_keys: set[str] = set()
         for entity in entities:
             source_text = (entity.attributes or {}).pop("_source_text", None)
             grounded = (not grounding.enabled) or is_grounded(
@@ -489,12 +505,46 @@ class GraphExtractor(BaseProcessor):
                     text_unit.short_id,
                 )
             else:  # drop
+                dropped_keys.add(entity_key(entity.name))
                 logger.info(
                     "Dropping ungrounded entity '%s' — source_text not found in "
                     "chunk '%s' (likely hallucinated)",
                     entity.name,
                     text_unit.short_id,
                 )
+        dropped_keys -= {entity_key(e.name) for e in kept}
+        return kept, dropped_keys
+
+    def _drop_relationships_to_dropped_entities(
+        self,
+        relationships: list[Relationship],
+        dropped_keys: set[str],
+        text_unit: TextUnit,
+    ) -> list[Relationship]:
+        """Remove relationships whose endpoint was dropped as ungrounded.
+
+        Without this, ``_materialize_relationship_endpoints`` would recreate the
+        dropped (likely hallucinated) entity as a description-less stub and the
+        grounding guard would be undone.
+        """
+        if not dropped_keys:
+            return relationships
+        kept: list[Relationship] = []
+        for rel in relationships:
+            if (
+                entity_key(rel.source_name or "") in dropped_keys
+                or entity_key(rel.target_name or "") in dropped_keys
+            ):
+                self.stats.relationships_dropped_ungrounded_endpoint += 1
+                logger.info(
+                    "Dropping relationship '%s -> %s' — endpoint entity was dropped "
+                    "as ungrounded in chunk '%s'",
+                    rel.source_name,
+                    rel.target_name,
+                    text_unit.short_id,
+                )
+                continue
+            kept.append(rel)
         return kept
 
     def _apply_relationship_grounding(
@@ -640,6 +690,16 @@ class GraphExtractor(BaseProcessor):
                 stats.entities_filtered_by_confidence,
                 stats.relationships_filtered_by_confidence,
                 stats.average_entity_confidence,
+            )
+
+        if stats.entities_ungrounded or stats.relationships_ungrounded:
+            logger.info(
+                "Grounding guard - Entities ungrounded: %s, Relationships "
+                "ungrounded: %s, Relationships dropped with an ungrounded "
+                "endpoint: %s",
+                stats.entities_ungrounded,
+                stats.relationships_ungrounded,
+                stats.relationships_dropped_ungrounded_endpoint,
             )
 
         if stats.num_failed_extractions > 0:

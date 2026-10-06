@@ -263,7 +263,10 @@ class OpenSearchIndexer(VectorIndexer):
             item_type_name="entities",
             alias_prefix=self.opensearch_config.entities_index_prefix,
             mapping_func=self._get_entities_mapping,
-            embedding_field_extractors=[lambda e: e.name, lambda e: e.description],
+            embedding_field_extractors=[
+                lambda e: e.name,
+                self._entity_description_text,
+            ],
             prepare_doc_func=self._prepare_entity_doc,
         )
 
@@ -324,6 +327,36 @@ class OpenSearchIndexer(VectorIndexer):
             ],
             prepare_doc_func=self._prepare_community_report_doc,
         )
+
+    # Fallback embedding texts. An item with an empty description would get no
+    # embedding, be skipped from the index and counted as a failure (which can
+    # trip ``max_failure_rate``). Every stub entity created from a relationship
+    # endpoint has no description, so embed a short synthesized surrogate
+    # (name/type, endpoints) instead; the stored ``description`` stays as-is.
+    @staticmethod
+    def _entity_description_text(entity: Entity) -> str:
+        if entity.description and entity.description.strip():
+            return entity.description
+        name = entity.name or ""
+        return f"{name} ({entity.type})" if entity.type else name
+
+    @staticmethod
+    def _relationship_description_text(rel: Relationship) -> str:
+        if rel.description and rel.description.strip():
+            return rel.description
+        source = rel.source_name or rel.source_id
+        target = rel.target_name or rel.target_id
+        relation = rel.type or "related to"
+        return f"{source} {relation} {target}"
+
+    @staticmethod
+    def _claim_description_text(claim: Claim) -> str:
+        if claim.description and claim.description.strip():
+            return claim.description
+        parts = [claim.subject_name or claim.subject_id, claim.type or ""]
+        if claim.object_name:
+            parts.append(claim.object_name)
+        return " ".join(p for p in parts if p)
 
     def _text_unit_embedding_text(self, unit: TextUnit) -> str:
         if hasattr(unit, "translated_texts") and unit.translated_texts:
@@ -397,7 +430,7 @@ class OpenSearchIndexer(VectorIndexer):
             item_type_name="relationships",
             alias_prefix=self.opensearch_config.relationships_index_prefix,
             mapping_func=self._get_relationships_mapping,
-            embedding_field_extractors=[lambda r: r.description or ""],
+            embedding_field_extractors=[self._relationship_description_text],
             prepare_doc_func=self._prepare_relationship_doc,
         )
 
@@ -408,7 +441,7 @@ class OpenSearchIndexer(VectorIndexer):
             item_type_name="relationships",
             alias_prefix=self.opensearch_config.relationships_index_prefix,
             mapping_func=self._get_relationships_mapping,
-            embedding_field_extractors=[lambda r: r.description or ""],
+            embedding_field_extractors=[self._relationship_description_text],
             prepare_doc_func=self._prepare_relationship_doc,
         )
 
@@ -440,7 +473,7 @@ class OpenSearchIndexer(VectorIndexer):
             item_type_name="claims",
             alias_prefix=self.opensearch_config.claims_index_prefix,
             mapping_func=self._get_claims_mapping,
-            embedding_field_extractors=[lambda c: c.description or ""],
+            embedding_field_extractors=[self._claim_description_text],
             prepare_doc_func=self._prepare_claim_doc,
         )
 
@@ -451,7 +484,7 @@ class OpenSearchIndexer(VectorIndexer):
             item_type_name="claims",
             alias_prefix=self.opensearch_config.claims_index_prefix,
             mapping_func=self._get_claims_mapping,
-            embedding_field_extractors=[lambda c: c.description or ""],
+            embedding_field_extractors=[self._claim_description_text],
             prepare_doc_func=self._prepare_claim_doc,
         )
 
@@ -473,7 +506,10 @@ class OpenSearchIndexer(VectorIndexer):
             item_type_name="entities",
             alias_prefix=self.opensearch_config.entities_index_prefix,
             mapping_func=self._get_entities_mapping,
-            embedding_field_extractors=[lambda e: e.name, lambda e: e.description],
+            embedding_field_extractors=[
+                lambda e: e.name,
+                self._entity_description_text,
+            ],
             prepare_doc_func=self._prepare_entity_doc,
         )
 

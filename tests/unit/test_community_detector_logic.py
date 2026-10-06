@@ -942,6 +942,63 @@ class TestSubCommunityRollup:
         assert called["flat"] and not called["rollup"]
 
 
+class TestClaimNodesExcluded:
+    """Claim nodes from GraphBuilder must not take part in community detection."""
+
+    @staticmethod
+    def _graph() -> nx.Graph:
+        from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
+        from unified_kg_rag.domain.models import Claim, Entity, Relationship
+
+        entities = [
+            Entity(id=f"e{i}", name=f"Vendor {i}", type="ORGANIZATION")
+            for i in range(6)
+        ]
+        pairs = [(0, 1), (1, 2), (0, 2), (3, 4), (4, 5), (3, 5), (2, 3)]
+        relationships = [
+            Relationship(id=f"r{a}{b}", source_id=f"e{a}", target_id=f"e{b}")
+            for a, b in pairs
+        ]
+        claims = [
+            # Connected to an entity.
+            Claim(
+                id="c_linked",
+                subject_id="e0",
+                subject_name="Vendor 0",
+                object_name="NONE",
+                type="DELIVERY",
+            ),
+            # Subject did not resolve: an isolated claim node.
+            Claim(
+                id="c_orphan",
+                subject_id="missing",
+                subject_name="Unknown Party",
+                object_name="NONE",
+                type="PAYMENT",
+            ),
+        ]
+        return GraphBuilder(entities, relationships, claims).build()
+
+    def test_communities_contain_only_entities(self) -> None:
+        cd = _detector(min_community_size=1)
+        cd(self._graph())
+        members = {node for comm in cd.all_communities.values() for node in comm.nodes}
+        assert members == {f"e{i}" for i in range(6)}
+        objects = cd.generate_community_objects()
+        assert all(
+            not eid.startswith("c_") for c in objects for eid in c.entity_ids or []
+        )
+
+    def test_input_graph_keeps_claim_nodes(self) -> None:
+        graph = self._graph()
+        _detector(min_community_size=1)(graph)
+        assert graph.has_node("c_orphan") and graph.has_node("c_linked")
+
+    def test_graph_without_node_type_is_used_as_is(self) -> None:
+        graph = _two_triangle_graph()
+        assert CommunityDetector._entity_subgraph(graph) is graph
+
+
 def _triangles(prefix: str, count: int) -> nx.Graph:
     """``count`` triangles of ``prefix``-named nodes chained by bridge edges."""
     g = nx.Graph()
