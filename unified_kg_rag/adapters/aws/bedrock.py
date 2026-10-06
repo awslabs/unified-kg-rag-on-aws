@@ -26,7 +26,11 @@ from unified_kg_rag.domain.models import (
     ModelPurpose,
     RerankModelId,
 )
-from unified_kg_rag.domain.models.config import BedrockConfig, TransientRetryConfig
+from unified_kg_rag.domain.models.config import (
+    BedrockConfig,
+    ModelTier,
+    TransientRetryConfig,
+)
 from unified_kg_rag.shared import (
     AWSServiceError,
     EmbeddingModelError,
@@ -71,7 +75,7 @@ _ANTHROPIC_EFFORTS_NO_XHIGH: frozenset[str] = frozenset(
     {"low", "medium", "high", "max"}
 )
 # GPT also accepts 'none' (reasoning off); it is not exposed because
-# BedrockConfig.effort and VALID_EFFORTS only carry the shared levels.
+# the BedrockConfig effort fields and VALID_EFFORTS only carry the shared levels.
 _OPENAI_EFFORTS: frozenset[str] = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 
@@ -1281,6 +1285,9 @@ class BedrockLanguageModelFactory(
         # Converse API, so an on-demand non-Anthropic model is never sent an
         # Anthropic-shaped body.
         use_converse = is_cross_region or model_info.provider != "anthropic"
+        # The tier picks the configured reasoning effort (fast vs default); a
+        # caller may pass model_tier explicitly.
+        kwargs.setdefault("model_tier", self.config.aws.bedrock.model_tier(model_id))
         model_config = self._build_model_config(
             model_info, resolved_model_id, use_converse, **kwargs
         )
@@ -1463,22 +1470,31 @@ class BedrockLanguageModelFactory(
         }
 
     def _resolve_effort(self, model_info: LanguageModelInfo, **kwargs: Any) -> str:
-        """Pick the effort level (per-call override, else config) and validate it.
+        """Pick the effort level and validate it.
 
-        Fails fast with the documented levels rather than letting Bedrock answer
-        with a 400 on the first request.
+        A per-call ``effort`` wins; otherwise the configured effort of the
+        call's ``model_tier`` (set by ``get_model`` from the model id, default
+        tier when absent). Fails fast with the documented levels rather than
+        letting Bedrock answer with a 400 on the first request.
         """
-        effort = kwargs.get("effort") or self.config.aws.bedrock.effort
+        effort = kwargs.get("effort")
+        source = "the per-call effort"
+        if not effort:
+            tier: ModelTier = (
+                "fast" if kwargs.get("model_tier") == "fast" else "default"
+            )
+            effort = self.config.aws.bedrock.tier_effort(tier)
+            source = f"aws.bedrock.{tier}_effort"
         if effort not in self.VALID_EFFORTS:
             raise LanguageModelError(
-                f"Invalid effort level '{effort}'. "
+                f"Invalid effort level '{effort}' ({source}). "
                 f"Valid levels: {sorted(self.VALID_EFFORTS)}"
             )
         allowed = model_info.supported_efforts
         if allowed is not None and effort not in allowed:
             raise LanguageModelError(
-                f"Effort level '{effort}' is not supported by this model. "
-                f"Supported levels: {sorted(allowed)}"
+                f"Effort level '{effort}' ({source}) is not supported by this "
+                f"model. Supported levels: {sorted(allowed)}"
             )
         return str(effort)
 
