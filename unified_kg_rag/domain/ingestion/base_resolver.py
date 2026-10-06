@@ -22,7 +22,11 @@ logger = get_logger(__name__)
 MatchResult: TypeAlias = tuple[str, float] | None
 
 # Multi-letter Roman numerals ("ii", "iv", "xii"); single letters ("i", "v",
-# "x") are already covered by the single-character rule below.
+# "x") are already covered by the single-character rule below. This also matches
+# a few real words ("vi", "xi", "iv"), which is accepted: a spurious
+# discriminator only *blocks* a fuzzy merge (both names stay separate entities;
+# exact-key merges are unaffected), whereas dropping the rule would merge
+# "Annex II" into "Annex III" or "Phase II" into "Phase III".
 _RE_ROMAN_NUMERAL = re.compile(r"x{0,3}(?:ix|iv|v?i{0,3})")
 
 # Entity types that carry no information and so never block a merge.
@@ -39,9 +43,13 @@ def discriminator_tokens(name: str | None) -> frozenset[str]:
     identical. After :func:`normalize_name` tokenization, a token counts as a
     discriminator when it
 
-    * contains a digit (``1001``, ``4``, ``2b``, ``v2``), or
-    * is a single ASCII letter or digit (``a``, ``b``), or
-    * is a multi-letter Roman numeral (``ii``, ``iv``, ``xii``).
+    * contains a digit of any script (``1001``, ``4``, ``2b``, ``v2``), or
+    * is a single letter or digit of any script (``a``, ``b``, ``甲``/``乙``,
+      ``갑``/``을``, ``α``/``β``, ``ä``/``ö``), or
+    * is a multi-letter ASCII Roman numeral (``ii``, ``iv``, ``xii``).
+
+    Tokens are already NFKC-normalized and casefolded by ``normalize_name``, so
+    a precomposed or full-width designator is one character here.
 
     Requiring *equality* (not overlap) keeps the relation transitive, so a
     cluster built from guarded links can never contain two members whose
@@ -54,7 +62,7 @@ def discriminator_tokens(name: str | None) -> frozenset[str]:
         token
         for token in tokens
         if any(c.isdigit() for c in token)
-        or (len(token) == 1 and token.isascii() and token.isalnum())
+        or (len(token) == 1 and token.isalnum())
         or (len(token) > 1 and token.isascii() and _RE_ROMAN_NUMERAL.fullmatch(token))
     )
 
