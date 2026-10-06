@@ -43,7 +43,7 @@ class BedrockNodeEmbedder:
         embedding_factory = embedding_factory or BedrockEmbeddingModelFactory(
             config=self.config,
             boto_session=self.boto_session,
-            region_name=self.config.aws.bedrock.region_name,
+            region_name=self.config.aws.bedrock_region,
         )
 
         embedding_model_id = self.viz_config.embeddings.get(

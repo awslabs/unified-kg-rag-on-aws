@@ -318,8 +318,12 @@ class TransientRetryConfig(BaseModel):
 
 
 class BedrockConfig(BaseModel):
-    region_name: str = Field(
-        default="us-west-2", min_length=1, description="AWS Bedrock service region"
+    region_name: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Region for Bedrock model, embedding and rerank calls. "
+        "None = aws.region_name, so a private-VPC deployment reaches Bedrock "
+        "through its own region's VPC endpoint without extra config.",
     )
     assumed_role_arn: str | None = Field(
         default=None, description="AWS assumed role ARN for Bedrock service"
@@ -554,8 +558,10 @@ class DynamoDBConfig(BaseModel):
 
 
 class AWSConfig(BaseModel):
+    # us-west-2 offers every default model, including both rerank models,
+    # which several regions (e.g. ap-northeast-2) do not.
     region_name: str = Field(
-        default="ap-northeast-2", min_length=1, description="AWS region name"
+        default="us-west-2", min_length=1, description="AWS region name"
     )
     profile_name: str | None = Field(
         default=None, description="AWS profile name for authentication"
@@ -577,6 +583,11 @@ class AWSConfig(BaseModel):
         default_factory=DynamoDBConfig,
         description="AWS DynamoDB document-status registry configuration",
     )
+
+    @property
+    def bedrock_region(self) -> str:
+        """Region Bedrock calls go to: aws.bedrock_region, else aws.region_name."""
+        return self.bedrock.region_name or self.region_name
 
 
 class FixingConfig(BaseModel):

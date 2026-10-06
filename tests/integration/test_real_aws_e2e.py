@@ -50,7 +50,7 @@ def test_bedrock_embedding_roundtrip(live_config) -> None:
 
     factory = BedrockEmbeddingModelFactory(
         config=live_config,
-        region_name=live_config.aws.bedrock.region_name,
+        region_name=live_config.aws.bedrock_region,
     )
     model = factory.get_model(
         model_id=live_config.indexing.opensearch.embedding_model_id

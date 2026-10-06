@@ -161,16 +161,15 @@ ignored` WARNING 로그를 남긴 뒤 버려집니다. 파일을 고치거나 �
 로그를 확인하세요. 이름이 바뀐 `search.llm_retry` 키는 여전히 받아들이며
 `aws.bedrock.transient_retry`로 옮겨 적용합니다.
 
-아래 표의 기본값은 내장 기본값입니다. `config-template.yaml`도 같은 값을 쓰며,
-`aws.bedrock.region_name`만 `ap-northeast-2`로 지정되어 있습니다.
+아래 표의 기본값은 내장 기본값입니다. `config-template.yaml`도 같은 값을 씁니다.
 
 ### 2.1 `aws` — 서비스 엔드포인트 & 자격증명
 
 | 키 | 기본값 | 역할 / 바꿀 때 |
 |---|---|---|
-| `aws.region_name` | `"ap-northeast-2"` | Neptune, OpenSearch, S3, DynamoDB가 있는 리전입니다. `AWS_REGION`이 이 값을 덮어씁니다(§2.10 참고). |
+| `aws.region_name` | `"us-west-2"` | Neptune, OpenSearch, S3, DynamoDB가 있는 리전이며, `aws.bedrock.region_name`을 지정하지 않으면 Bedrock 호출도 이 리전으로 보냅니다. `AWS_REGION`이 이 값을 덮어씁니다(§2.10 참고). 기본값 리전에는 리랭크 모델 두 개를 포함한 기본 모델이 모두 있습니다. `ap-northeast-2` 같은 일부 리전에는 리랭크 모델이 없습니다. |
 | `aws.profile_name` | `null` | 사용할 AWS 프로파일 이름입니다. `null`이면 기본 자격 증명 체인을 씁니다. |
-| `aws.bedrock.region_name` | `"us-west-2"` | Bedrock 모델·임베딩·리랭크 호출을 보내는 리전이며, Guardrail도 이 리전에 있어야 합니다. 템플릿은 `"ap-northeast-2"`로 지정하므로, 모델 액세스를 활성화한 리전으로 명시하세요. Bedrock으로 가는 경로가 VPC 엔드포인트뿐인 프라이빗 VPC에서는 VPC와 같은 리전이어야 합니다. |
+| `aws.bedrock.region_name` | `null` | Bedrock 모델·임베딩·리랭크 호출을 보내는 리전이며, Guardrail도 이 리전에 있어야 합니다. `null`이면 `aws.region_name`을 씁니다. 모델 액세스를 다른 리전에서 활성화한 경우에만 지정하세요. Bedrock으로 가는 경로가 VPC 엔드포인트뿐인 프라이빗 VPC에서는 `null`로 두거나 VPC와 같은 리전을 지정하세요. |
 | `aws.bedrock.enable_global_profile` | `true` | 크로스 리전(global) 추론 프로파일을 사용합니다. Claude 4.7 이후 모델과 GPT 모델은 프로파일로만 호출할 수 있으므로 켜 두세요. |
 | `aws.bedrock.default_model_id` | `"anthropic.claude-sonnet-5-5"` | default 등급 역할 전체가 쓰는 모델입니다(모델 선택 주의사항 참고). |
 | `aws.bedrock.fast_model_id` | `"anthropic.claude-haiku-4-5-20251001-v1:0"` | fast 등급 역할 전체가 쓰는 모델입니다. |
@@ -495,7 +494,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | 환경 변수 | 덮어쓰는 키 | 참고 |
 |---|---|---|
 | `AWS_PROFILE` | `aws.profile_name` | |
-| `AWS_REGION` | `aws.region_name` | `aws.bedrock.region_name`은 바꾸지 않습니다. `AWS_DEFAULT_REGION`은 읽지 않습니다. |
+| `AWS_REGION` | `aws.region_name` | `aws.bedrock.region_name`이 `null`이면 Bedrock 호출 리전도 바뀝니다. `AWS_DEFAULT_REGION`은 읽지 않습니다. |
 | `BEDROCK_REGION` | `aws.bedrock.region_name` | |
 | `BEDROCK_GUARDRAIL_IDENTIFIER` | `aws.bedrock.guardrail.identifier` | |
 | `NEPTUNE_ENDPOINT` | `aws.neptune.endpoint` | |
@@ -516,8 +515,8 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 
 > **남아 있는 `AWS_REGION`이 설정 파일보다 우선합니다.** SSO 자격 증명 도우미,
 > CloudShell, 셸 프로필은 `AWS_REGION`을 내보내는 경우가 많습니다. 이 값이
-> `aws.region_name`을 조용히 대체하면 Neptune과 OpenSearch를 엉뚱한 리전에서
-> 찾게 됩니다. 실행 전에 `env | grep -E '^(AWS_REGION|BEDROCK_REGION)='`로
+> `aws.region_name`을 조용히 대체하면 Neptune과 OpenSearch(그리고
+> `aws.bedrock.region_name`을 지정하지 않았다면 Bedrock)를 엉뚱한 리전에서 찾게 됩니다. 실행 전에 `env | grep -E '^(AWS_REGION|BEDROCK_REGION)='`로
 > 확인하고, 의도하지 않은 값은 해제하거나 고치세요.
 
 CLI는 python-dotenv로 `.env` 파일도 읽습니다. 이미 환경에 설정된 변수가 `.env`보다

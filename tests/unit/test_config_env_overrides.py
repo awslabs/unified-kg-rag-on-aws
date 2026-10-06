@@ -97,3 +97,28 @@ def test_docker_image_config_takes_endpoints_from_env(
     assert cfg.aws.dynamodb.table_name == "example-doc-status"
     assert cfg.aws.dynamodb.create_table_if_missing is False
     assert cfg.graph.visualization.enabled is False
+
+
+def test_bedrock_region_inherits_aws_region(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("BEDROCK_REGION", raising=False)
+    monkeypatch.setenv("AWS_REGION", "eu-central-1")
+    path = tmp_path / "config.yaml"
+    path.write_text("aws:\n  region_name: us-east-1\n", encoding="utf-8")
+    cfg = ConfigLoader(path).load_config()
+    assert cfg.aws.bedrock.region_name is None
+    assert cfg.aws.bedrock_region == "eu-central-1"
+
+
+def test_explicit_bedrock_region_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("BEDROCK_REGION", raising=False)
+    monkeypatch.setenv("AWS_REGION", "eu-central-1")
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "aws:\n  region_name: us-east-1\n  bedrock:\n    region_name: us-west-2\n",
+        encoding="utf-8",
+    )
+    assert ConfigLoader(path).load_config().aws.bedrock_region == "us-west-2"

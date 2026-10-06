@@ -103,7 +103,7 @@ class Providers:
                 self._llm_factory = BedrockLanguageModelFactory(
                     config=self.config,
                     boto_session=self.boto_session,
-                    region_name=self.config.aws.bedrock.region_name,
+                    region_name=self.config.aws.bedrock_region,
                 )
             return self._llm_factory
 
@@ -114,7 +114,7 @@ class Providers:
                 self._embedding_factory = BedrockEmbeddingModelFactory(
                     config=self.config,
                     boto_session=self.boto_session,
-                    region_name=self.config.aws.bedrock.region_name,
+                    region_name=self.config.aws.bedrock_region,
                 )
             return self._embedding_factory
 
@@ -125,7 +125,7 @@ class Providers:
                 self._rerank_factory = BedrockRerankModelFactory(
                     config=self.config,
                     boto_session=self.boto_session,
-                    region_name=self.config.aws.bedrock.region_name,
+                    region_name=self.config.aws.bedrock_region,
                 )
             return self._rerank_factory
 
@@ -157,7 +157,7 @@ class Providers:
                 )
                 self._bedrock_runtime_client = session.client(
                     "bedrock-runtime",
-                    region_name=self.config.aws.bedrock.region_name,
+                    region_name=self.config.aws.bedrock_region,
                     config=BotoConfig(retries={"max_attempts": 3}),
                 )
             return self._bedrock_runtime_client

@@ -77,7 +77,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         self._embedding_factory = embedding_factory or BedrockEmbeddingModelFactory(
             config=config,
             boto_session=boto_session,
-            region_name=config.aws.bedrock.region_name,
+            region_name=config.aws.bedrock_region,
         )
         self._embedding_model = self._embedding_factory.get_model(
             self._opensearch_config.embedding_model_id
