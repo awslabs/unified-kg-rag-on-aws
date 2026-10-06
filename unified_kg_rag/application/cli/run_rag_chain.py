@@ -82,8 +82,8 @@ class CommandLineInterface:
             help=(
                 "Enable thinking mode for language model reasoning and step-by-step "
                 "problem solving. No-op for models that always reason (Claude 4.7+ / "
-                "5.x, OpenAI GPT); tune their depth with aws.bedrock.effort in the "
-                "config"
+                "5.x, OpenAI GPT); tune their depth with aws.bedrock.default_effort "
+                "/ fast_effort in the config"
             ),
         )
         parser.add_argument(
