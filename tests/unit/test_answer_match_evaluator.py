@@ -54,7 +54,7 @@ class TestNormalization:
         assert answer_contains("본사는 부산에 있습니다.", "서울") == 0.0
 
     def test_articles_only_as_whole_words(self) -> None:
-        assert normalize_answer("Theater an Anchor") == "theater anchor"
+        assert normalize_answer("Theater an Arena") == "theater arena"
 
     def test_exact_match_ignores_case_articles_punctuation(self) -> None:
         assert exact_match("the Buyer.", "Buyer") == 1.0
