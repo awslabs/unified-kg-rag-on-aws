@@ -915,7 +915,7 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
         self.boto_session = get_assumed_role_boto_session(
             self.boto_session, assumed_role_arn=config.aws.bedrock.assumed_role_arn
         )
-        self.region_name = region_name or config.aws.bedrock.region_name
+        self.region_name = region_name or config.aws.bedrock_region
         boto_config = self._boto_config(read_timeout=self.BOTO_READ_TIMEOUT)
         # Service name is resolved dynamically per subclass, so it is a plain
         # str and does not match types-boto3's literal-overloaded client().

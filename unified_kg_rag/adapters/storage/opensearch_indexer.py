@@ -49,7 +49,7 @@ class OpenSearchIndexer(VectorIndexer):
             or BedrockEmbeddingModelFactory(
                 config,
                 self.boto_session,
-                self.config.aws.bedrock.region_name,
+                self.config.aws.bedrock_region,
             )
         )
         self._embedding_dimension = self._resolve_embedding_dimension()

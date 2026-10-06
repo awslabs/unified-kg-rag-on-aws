@@ -163,16 +163,15 @@ check the log after editing the file or upgrading. The renamed `search.llm_retry
 key is still accepted and maps to `aws.bedrock.transient_retry`.
 
 The tables below give each key's built-in default. `config-template.yaml` uses
-the same values with one exception: it sets `aws.bedrock.region_name` to
-`ap-northeast-2`.
+the same values.
 
 ### 2.1 `aws` — service endpoints & credentials
 
 | Key | Default | What it does / when to change |
 |---|---|---|
-| `aws.region_name` | `"ap-northeast-2"` | Region of Neptune, OpenSearch, S3, and DynamoDB. `AWS_REGION` overrides it (see §2.10). |
+| `aws.region_name` | `"us-west-2"` | Region of Neptune, OpenSearch, S3, and DynamoDB, and of Bedrock unless `aws.bedrock.region_name` is set. `AWS_REGION` overrides it (see §2.10). The default offers every default model, including both rerank models, which some regions (e.g. `ap-northeast-2`) do not. |
 | `aws.profile_name` | `null` | Named AWS profile; `null` uses the default credential chain. |
-| `aws.bedrock.region_name` | `"us-west-2"` | Region for Bedrock model, embedding, and rerank calls, and where the guardrail must exist. The template sets `"ap-northeast-2"`; set it explicitly to a region where your models are enabled. In a private VPC whose only Bedrock route is a VPC endpoint, it must be the VPC's region. |
+| `aws.bedrock.region_name` | `null` | Region for Bedrock model, embedding, and rerank calls, and where the guardrail must exist. `null` uses `aws.region_name`. Set it only when your models are enabled in another region; in a private VPC whose only Bedrock route is a VPC endpoint, leave it `null` or set the VPC's region. |
 | `aws.bedrock.enable_global_profile` | `true` | Resolve cross-region (global) inference profiles. Keep it on: Claude 4.7+ and GPT models are invocable only through a profile. |
 | `aws.bedrock.default_model_id` | `"anthropic.claude-sonnet-5-5"` | Model for every default-tier role (see Model selection notes). |
 | `aws.bedrock.fast_model_id` | `"anthropic.claude-haiku-4-5-20251001-v1:0"` | Model for every fast-tier role. |
@@ -504,7 +503,7 @@ for booleans) but are not re-validated.
 | Variable | Overrides | Notes |
 |---|---|---|
 | `AWS_PROFILE` | `aws.profile_name` | |
-| `AWS_REGION` | `aws.region_name` | Does not change `aws.bedrock.region_name`. `AWS_DEFAULT_REGION` is not read. |
+| `AWS_REGION` | `aws.region_name` | Also moves Bedrock calls when `aws.bedrock.region_name` is `null`. `AWS_DEFAULT_REGION` is not read. |
 | `BEDROCK_REGION` | `aws.bedrock.region_name` | |
 | `BEDROCK_GUARDRAIL_IDENTIFIER` | `aws.bedrock.guardrail.identifier` | |
 | `NEPTUNE_ENDPOINT` | `aws.neptune.endpoint` | |
@@ -525,8 +524,8 @@ wins.
 
 > **A stray `AWS_REGION` wins over your file.** SSO credential helpers, CloudShell, and
 > shell profiles often export `AWS_REGION`, which silently replaces
-> `aws.region_name`, and the run then looks for Neptune and OpenSearch in the
-> wrong region. Run `env | grep -E '^(AWS_REGION|BEDROCK_REGION)='` before a run,
+> `aws.region_name`, and the run then looks for Neptune and OpenSearch (and,
+> with `aws.bedrock.region_name` unset, Bedrock) in the wrong region. Run `env | grep -E '^(AWS_REGION|BEDROCK_REGION)='` before a run,
 > and unset or correct what you find.
 
 The CLIs also load a `.env` file with python-dotenv. A variable already set in

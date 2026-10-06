@@ -2,12 +2,16 @@
 
 # AWS Configuration
 aws:
-  region_name: "ap-northeast-2"
+  region_name: "us-west-2"
   profile_name: null
 
   # Bedrock Configuration
   bedrock:
-    region_name: "ap-northeast-2"
+    # null = aws.region_name. Set it only when your models are enabled in
+    # another region; a private VPC whose only Bedrock route is its VPC
+    # endpoint must keep its own region. Rerank models are not offered in
+    # every region (e.g. not in ap-northeast-2).
+    region_name: null
     assumed_role_arn: null
     enable_global_profile: true
     # Language models, by tier. Every LLM role uses one of these two ids unless

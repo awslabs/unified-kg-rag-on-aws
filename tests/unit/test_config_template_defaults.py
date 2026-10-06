@@ -30,11 +30,6 @@ _TEMPLATE = Path(__file__).resolve().parents[2] / "config-template.yaml"
 
 # Dotted template path -> why the template value may differ from Config().
 _INTENTIONAL: dict[str, str] = {
-    "aws.bedrock.region_name": (
-        "the template keeps Bedrock in the example deployment region: in a "
-        "private-VPC deployment Bedrock is reached through the VPC endpoint, "
-        "so a different Bedrock region would hang"
-    ),
     "graph.visualization.interactive.max_nodes": (
         "free-form renderer dict; the default lives in "
         "InteractiveRenderer.DEFAULT_MAX_NODES (checked separately below)"
