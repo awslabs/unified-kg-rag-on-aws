@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""An injected provider bundle reaches every ingestion component (AWS-free).
+"""An injected provider bundle reaches ingestion and evaluation (AWS-free).
 
 The ingestion adapters (chunker, translator, graph/claim extraction, gleaning,
 description summarization, community reports) and the indexer each built
@@ -147,3 +147,36 @@ def test_pipeline_without_providers_builds_one_default_bundle(
         for stage in pipeline.stages
         if pipeline.name_to_type_map[stage.name] in pipeline.PROVIDER_STAGES
     )
+
+
+def test_evaluation_manager_hands_the_chain_bundle_to_evaluators(
+    no_bedrock, mocker
+) -> None:
+    import unified_kg_rag.evaluation  # noqa: F401  (resolves package import cycle)
+    from unified_kg_rag.adapters.evaluators import langchain_evaluator as lc_module
+    from unified_kg_rag.domain.models import EvaluatorType
+    from unified_kg_rag.evaluation.evaluation_manager import EvaluationManager
+
+    mocker.patch.object(lc_module, "load_evaluator", return_value=object())
+    config = Config()
+    config.evaluation.enabled_evaluators = [
+        EvaluatorType.LANGCHAIN,
+        EvaluatorType.RAGAS,
+        EvaluatorType.GRAPH_AWARE,
+    ]
+    llm, embedding = _FakeLLMFactory(), _FakeEmbeddingFactory()
+    providers = Providers(
+        config,
+        boto_session=MagicMock(),
+        llm_factory=llm,
+        embedding_factory=embedding,
+        token_counter_factory=lambda *_, **__: MagicMock(),
+    )
+    chain = MagicMock(providers=providers)
+
+    manager = EvaluationManager(config, rag_chain=chain)
+
+    assert manager.providers is providers
+    assert set(manager.evaluators) == set(config.evaluation.enabled_evaluators)
+    for evaluator_type in (EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS):
+        assert manager.evaluators[evaluator_type].providers is providers
