@@ -110,9 +110,9 @@ uv run pytest tests/unit/test_chunker_logic.py
 ```
 
 CI (`.github/workflows/quality.yml`) runs ruff, black, isort, mypy, and pytest
-with the coverage gate, plus the oldest supported Python (3.10), the property
-and integration suites in isolation, the optional-parser checks, and
-`cdk synth` with cdk-nag for `iac/`. `.github/workflows/security.yml` runs a
+with the coverage gate (one `-m "not aws"` run that includes the unit,
+property and integration suites), plus the oldest supported Python (3.10),
+the optional-parser checks, and `cdk synth` with cdk-nag for `iac/`. `.github/workflows/security.yml` runs a
 non-blocking ASH security scan on pushes to `main`.
 
 ## 🔄 Contribution Process
