@@ -54,13 +54,13 @@ jobs:
         run: uv sync --locked
 
       - name: Ruff (lint)
-        run: uv run ruff check unified_kg_rag tests
+        run: uv run ruff check unified_kg_rag tests iac
 
       - name: Black (format check)
-        run: uv run black --check unified_kg_rag tests
+        run: uv run black --check unified_kg_rag tests iac
 
       - name: isort (import order)
-        run: uv run isort --check-only unified_kg_rag tests
+        run: uv run isort --check-only unified_kg_rag tests iac
 
       - name: mypy (type check)
         run: uv run mypy unified_kg_rag
@@ -173,3 +173,15 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: python -m pytest tests -q
+
+  docker:
+    # Build the data-plane image (no push) so a Dockerfile that no longer builds,
+    # e.g. an apt pin dropped from the Debian repo or a lock the image cannot
+    # install, fails here instead of at deploy time.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - name: Build the image
+        run: docker build -f docker/Dockerfile -t unified-kg-rag:ci .
