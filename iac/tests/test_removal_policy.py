@@ -1,10 +1,12 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Removal-policy assertions for fixed-name, non-storage resources.
+"""Removal-policy assertions for resources outside the stateful stores.
 
 The ECR repository and the two log groups have fixed physical names. With
 removal_destroy (dev default) `cdk destroy --all` must delete them, or the next
-deploy fails on the retained copies; outside dev they are retained.
+deploy fails on the retained copies; outside dev they are retained. The
+OpenSearch domain's log groups follow the same policy, so a dev destroy does
+not leave them behind.
 """
 
 from __future__ import annotations
@@ -68,3 +70,23 @@ def test_fixed_name_resources_follow_removal_destroy(
             assert resource["Properties"].get("EmptyOnDelete", False) is (
                 policy == "Delete"
             )
+
+
+@pytest.mark.parametrize(
+    ("context", "policy"),
+    [({}, "Delete"), ({"env_name": "prod"}, "Retain")],
+    ids=["dev", "prod"],
+)
+def test_opensearch_log_groups_follow_removal_destroy(
+    context: dict[str, Any], policy: str
+) -> None:
+    app = cdk.App(context=context)
+    config = DeploymentConfig.from_context(app)
+    networking = NetworkingStack(app, "Net", config=config, env=_ENV)
+    storage = StorageStack(app, "Store", config=config, networking=networking, env=_ENV)
+    log_groups = Template.from_stack(storage).find_resources("AWS::Logs::LogGroup")
+    # App, slow-index and slow-search logs of the OpenSearch domain.
+    assert len(log_groups) == 3, sorted(log_groups)
+    for logical_id, resource in log_groups.items():
+        assert resource["DeletionPolicy"] == policy, logical_id
+        assert resource["UpdateReplacePolicy"] == policy, logical_id
