@@ -341,6 +341,7 @@ aws:
 | --- | --- | --- | --- |
 | `anthropic.claude-sonnet-5-5`(기본값) | Anthropic | 1M / 128K | adaptive, 항상 켜짐. `effort` low–max |
 | `anthropic.claude-opus-5-5` | Anthropic | 1M / 128K | adaptive, 항상 켜짐. `effort` low–max |
+| `anthropic.claude-haiku-5-5` | Anthropic | 1M / 128K | adaptive, 기본 켜짐. `effort` low–max |
 | `anthropic.claude-sonnet-5`, `anthropic.claude-opus-5` | Anthropic | 1M / 128K | adaptive, 항상 켜짐. `effort` |
 | `anthropic.claude-opus-4-8`, `anthropic.claude-opus-4-7` | Anthropic | 1M / 128K | adaptive, 항상 켜짐. `effort` low–max |
 | `anthropic.claude-opus-4-6-v1` | Anthropic | 1M / 128K | 선택(`--enable-thinking`), adaptive. `effort` low/medium/high/max |

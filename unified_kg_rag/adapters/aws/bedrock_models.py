@@ -254,9 +254,9 @@ _EMBEDDING_MODEL_INFO: dict[EmbeddingModelId, EmbeddingModelInfo] = {
 # bedrock-runtime responses.
 _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
     # --- Claude 5.5 -----------------------------------------------------
-    # 1M context / 128K output; adaptive thinking with effort low..max. Both
-    # reject temperature ("deprecated for this model") and thinking types other
-    # than adaptive; CountTokens rejects them on bedrock-runtime.
+    # 1M context / 128K output; adaptive thinking with effort low..max. All
+    # reject temperature ("deprecated for this model") and budget_tokens
+    # thinking; CountTokens rejects them on bedrock-runtime.
     LanguageModelId.CLAUDE_V5_5_SONNET: LanguageModelInfo(
         context_window_size=1000000,
         max_output_tokens=128000,
@@ -272,6 +272,23 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         supports_count_tokens=False,
     ),
     LanguageModelId.CLAUDE_V5_5_OPUS: LanguageModelInfo(
+        context_window_size=1000000,
+        max_output_tokens=128000,
+        supports_prompt_caching=True,
+        min_cache_tokens=512,
+        supports_thinking=True,
+        supports_1m_context_window=True,
+        native_1m_context_window=True,
+        adaptive_thinking_only=True,
+        supported_efforts=_ANTHROPIC_EFFORTS_ALL,
+        supports_sampling_params=False,
+        requires_inference_profile=True,
+        supports_count_tokens=False,
+    ),
+    # Haiku 5.5 also thinks by default but, unlike Sonnet/Opus 5.5, accepts
+    # thinking disabled; it takes no budget_tokens and its tokenizer counts
+    # ~30% more tokens than Haiku 4.5 for the same text.
+    LanguageModelId.CLAUDE_V5_5_HAIKU: LanguageModelInfo(
         context_window_size=1000000,
         max_output_tokens=128000,
         supports_prompt_caching=True,
