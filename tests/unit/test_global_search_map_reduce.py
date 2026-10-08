@@ -81,6 +81,9 @@ class _TokenCounter:
     def count_tokens(self, text: str) -> int:
         return self._cost
 
+    def count_tokens_many(self, texts: list[str]) -> list[int]:
+        return [self.count_tokens(t) for t in texts]
+
 
 def _map_payload(*scored: tuple[str, int]) -> str:
     return json.dumps({"points": [{"description": d, "score": s} for d, s in scored]})
@@ -458,3 +461,70 @@ async def test_default_degraded_path_passes_unrated_reports_through() -> None:
 
     reducer.ainvoke.assert_not_awaited()
     assert [r.source for r in out] == ["c0", "c1"]
+
+
+async def test_pack_does_not_count_tokens_on_the_event_loop() -> None:
+    import threading
+
+    strat = _strategy(
+        map_batch_size=1,
+        map_reduce_min_results=2,
+        map_outputs=[_map_payload(("a", 90)), _map_payload(("b", 80))],
+    )
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    counter = strat.token_manager
+
+    def count_tokens_many(texts: list[str]) -> list[int]:
+        seen.append(threading.get_ident())
+        return [counter.count_tokens(t) for t in texts]
+
+    counter.count_tokens_many = count_tokens_many  # type: ignore[attr-defined]
+    out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
+    assert out[0].metadata["ranked_key_points"] == 2
+    assert seen and loop_thread not in seen
+
+
+class _DeniedMapChain:
+    """Map chain whose every call fails like a model without access."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def batch(
+        self, inputs: list[dict], config: Any = None, return_exceptions: bool = False
+    ) -> list[Any]:
+        if return_exceptions:
+            return [self.error for _ in inputs]
+        raise self.error
+
+    def invoke(self, single_input: dict, config: Any = None) -> str:
+        raise self.error
+
+
+async def test_map_phase_fatal_error_propagates_when_not_ignored() -> None:
+    strat = _strategy(ignore_errors=False, map_batch_size=1)
+    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
+    strat.map_rater = _DeniedMapChain(
+        RuntimeError("AccessDeniedException: no access to the model")
+    )
+    with pytest.raises(RuntimeError, match="AccessDenied"):
+        await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
+
+
+async def test_map_phase_fatal_error_degrades_when_ignored() -> None:
+    strat = _strategy(ignore_errors=True, map_batch_size=1, reduce_with_llm=True)
+    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
+    strat.map_rater = _DeniedMapChain(
+        RuntimeError("AccessDeniedException: no access to the model")
+    )
+    out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
+    assert out  # degraded to concat-and-reduce over the unrated reports
+
+
+async def test_map_phase_transient_failures_still_degrade_when_not_ignored() -> None:
+    strat = _strategy(ignore_errors=False, map_batch_size=1, reduce_with_llm=True)
+    strat.batch_processor.max_attempts = 1  # as GlobalSearchStrategy configures
+    strat.map_rater = _DeniedMapChain(TimeoutError("read timed out"))
+    out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
+    assert out

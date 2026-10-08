@@ -14,6 +14,7 @@ from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    is_fatal_retrieval_error,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
@@ -517,7 +518,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             )
             return []
 
-        packed_points = self._pack_points_within_budget(ranked_points)
+        # Counting can be one CountTokens request per point: off the loop.
+        packed_points = await asyncio.to_thread(
+            self._pack_points_within_budget, ranked_points
+        )
         return await self._reduce_from_points(
             packed_points, results, query, config=config
         )
@@ -571,8 +575,20 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 )
             )
 
+        # BatchProcessor turns an item that failed every attempt into
+        # BATCH_ITEM_FAILED, and every final attempt runs through
+        # sequential_func, so fatal errors are recorded there: a model the
+        # caller cannot access must fail the query, not degrade it to
+        # "unrated" and an answer from the raw reports.
+        fatal_errors: list[Exception] = []
+
         def sequential_func(single_input: dict[str, Any]) -> str:
-            return str(self.map_rater.invoke(single_input, caller_config))
+            try:
+                return str(self.map_rater.invoke(single_input, caller_config))
+            except Exception as e:
+                if is_fatal_retrieval_error(e):
+                    fatal_errors.append(e)
+                raise
 
         raw_outputs = await asyncio.to_thread(
             self.batch_processor.execute_with_fallback,
@@ -583,6 +599,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             task_name="global_search_map",
             show_progress=False,
         )
+        if fatal_errors:
+            raise fatal_errors[0]
 
         points: list[_MapPoint] = []
         unrated: list[RetrievalResult] = []
@@ -665,8 +683,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         budget = self.global_search_config.max_map_reduce_tokens
         packed: list[_MapPoint] = []
         used = 0
-        for point in points:
-            cost = self.token_manager.count_tokens(point.description)
+        # Exact counts, taken concurrently rather than one request per point.
+        costs = self.token_manager.count_tokens_many([p.description for p in points])
+        for point, cost in zip(points, costs, strict=True):
             if packed and used + cost > budget:
                 break
             packed.append(point)

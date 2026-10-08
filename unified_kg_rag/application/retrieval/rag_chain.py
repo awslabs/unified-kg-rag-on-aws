@@ -6,7 +6,7 @@ import threading
 import time
 import uuid
 import weakref
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
 from enum import Enum
 from typing import Any, ClassVar, TypeVar
 
@@ -80,7 +80,7 @@ from unified_kg_rag.domain.retrieval.strategy_registry import (
     get_strategy_spec,
 )
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
-from unified_kg_rag.shared import InvalidFilterError, get_logger
+from unified_kg_rag.shared import InvalidFilterError, LanguageModelError, get_logger
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
     parse_llm_json,
@@ -245,19 +245,23 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         self._retriever_builders_override = retriever_builders or {}
         # Retrievers and strategy instances are built once per event loop and
         # reused across queries: retrievers hold loop-bound async clients, and a
-        # strategy holds its retrievers, so both caches are dropped together
-        # when the loop changes. Strategies keep no per-query state on the
-        # instance (see BaseSearchStrategy), so concurrent queries on one loop
-        # share an instance.
+        # strategy holds its retrievers. Entries are keyed by the loop object
+        # (not its id, which a new loop can reuse), so queries on different
+        # loops at the same time each keep their own clients; a loop's entries
+        # are released once that loop is closed, and the rest on chain close.
+        # Strategies keep no per-query state on the instance (see
+        # BaseSearchStrategy), so concurrent queries on one loop share one.
+        # The lock guards both dicts: the sync API's loop thread and the
+        # caller's threads mutate them concurrently.
         self._retriever_cache: dict[
-            tuple[RetrieverRole, int | None], BaseGraphRAGRetriever
+            tuple[RetrieverRole, asyncio.AbstractEventLoop | None],
+            BaseGraphRAGRetriever,
         ] = {}
         self._strategy_cache: dict[
-            tuple[SearchStrategy, int | None], BaseSearchStrategy
+            tuple[SearchStrategy, asyncio.AbstractEventLoop | None],
+            BaseSearchStrategy,
         ] = {}
-        # The loop the cached retrievers are bound to. Held by reference, not
-        # id: a dead loop's id can be reused by a new loop.
-        self._cached_loop: asyncio.AbstractEventLoop | None = None
+        self._cache_lock = threading.RLock()
         # The sync entry points (invoke/batch/stream) run on this one
         # long-lived loop instead of a fresh loop per call, so their
         # loop-bound retrievers are built once and reused.
@@ -587,14 +591,44 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             # Strict: with ignore_errors=False a broken keyword extraction
             # surfaces instead of silently yielding empty keyword lists.
             payload = parse_llm_json(raw, strict=True)
-            hl = [str(k) for k in payload.get("high_level_keywords", []) if k]
-            ll = [str(k) for k in payload.get("low_level_keywords", []) if k]
-            return hl, ll
+            return self._keyword_lists(payload)
         except Exception as e:
             if not self.ignore_errors:
                 raise
             logger.warning("Dual-keyword extraction failed: %s", e)
             return [], []
+
+    _KEYWORD_LEVELS: ClassVar[tuple[str, str]] = (
+        "high_level_keywords",
+        "low_level_keywords",
+    )
+
+    @classmethod
+    def _keyword_lists(cls, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
+        """Validate the keyword payload: an object whose keyword fields are
+        lists of strings (a missing level is empty).
+
+        Anything else raises: iterating a bare string would yield one-character
+        keywords, and a non-object payload parses to ``{}``, which must not pass
+        for "no keywords".
+        """
+        if not any(level in payload for level in cls._KEYWORD_LEVELS):
+            raise LanguageModelError(
+                "Keyword extraction returned no high_level_keywords or "
+                "low_level_keywords object"
+            )
+        lists: list[list[str]] = []
+        for level in cls._KEYWORD_LEVELS:
+            value = payload.get(level, [])
+            if not isinstance(value, list) or not all(
+                isinstance(k, str) for k in value
+            ):
+                raise LanguageModelError(
+                    f"Keyword extraction returned {level} that is not a list of "
+                    f"strings: {value!r}"
+                )
+            lists.append([k.strip() for k in value if k.strip()])
+        return lists[0], lists[1]
 
     async def _load_memory_step(self, state: dict[str, Any]) -> dict[str, Any]:
         if not state.get("use_memory") or not (cid := state.get("conversation_id")):
@@ -674,24 +708,24 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     def _get_strategy_instance(
         self, strategy_type: SearchStrategy
     ) -> BaseSearchStrategy:
-        current_loop_id = self._sync_loop_caches()
-        cache_key = (strategy_type, current_loop_id)
-        if (cached := self._strategy_cache.get(cache_key)) is not None:
-            return cached
+        cache_key = (strategy_type, self._cache_loop())
+        with self._cache_lock:
+            if (cached := self._strategy_cache.get(cache_key)) is not None:
+                return cached
 
-        spec = get_strategy_spec(strategy_type)
+            spec = get_strategy_spec(strategy_type)
 
-        # Inject retrievers keyed by abstract role ("graph"/"document"), so the
-        # strategy never names a concrete backend.
-        retrievers = {
-            role.value: self._get_retriever(role) for role in spec.required_roles
-        }
+            # Inject retrievers keyed by abstract role ("graph"/"document"), so
+            # the strategy never names a concrete backend.
+            retrievers = {
+                role.value: self._get_retriever(role) for role in spec.required_roles
+            }
 
-        strategy = spec.strategy_class(
-            config=self.config, retrievers=retrievers, providers=self.providers
-        )
-        self._strategy_cache[cache_key] = strategy
-        return strategy
+            strategy = spec.strategy_class(
+                config=self.config, retrievers=retrievers, providers=self.providers
+            )
+            self._strategy_cache[cache_key] = strategy
+            return strategy
 
     def _build_graph_retriever(self) -> BaseGraphRAGRetriever:
         neptune_client = NeptuneClient(
@@ -715,12 +749,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         )
 
     def _get_retriever(self, role: RetrieverRole) -> BaseGraphRAGRetriever:
-        current_loop_id = self._sync_loop_caches()
+        cache_key = (role, self._cache_loop())
+        with self._cache_lock:
+            if (cached := self._retriever_cache.get(cache_key)) is not None:
+                return cached
+            retriever = self._build_retriever(role)
+            self._retriever_cache[cache_key] = retriever
+            return retriever
 
-        cache_key = (role, current_loop_id)
-        if cache_key in self._retriever_cache:
-            return self._retriever_cache[cache_key]
-
+    def _build_retriever(self, role: RetrieverRole) -> BaseGraphRAGRetriever:
         # Role -> adapter builder. Swapping a backend means changing the builder
         # bound to a role here, not editing any strategy. Injected
         # retriever_builders take precedence over the AWS defaults (the backend
@@ -734,45 +771,49 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         if builder is None:
             raise ValueError(f"No retriever bound to role: '{role}'")
 
-        retriever = builder()
-        self._retriever_cache[cache_key] = retriever
-        return retriever
+        return builder()
 
-    def _sync_loop_caches(self) -> int | None:
-        """Release loop-bound caches when the running event loop changed.
+    def _cache_loop(self) -> asyncio.AbstractEventLoop | None:
+        """Return the cache key for the running loop (``None`` outside one).
 
-        Retrievers hold clients bound to the loop they were built on, so a
-        query on another loop needs new ones. The evicted retrievers are closed
-        (on their own loop when it is still running) instead of being left to
-        leak their connection pools. Returns the current loop id (``None``
-        outside a running loop).
+        Entries bound to loops that have since closed are released first (they
+        can no longer serve a query, and their clients would otherwise leak
+        until chain close). Entries of loops that are still open are left
+        alone: another thread may have a query in flight on them.
         """
         try:
-            current = asyncio.get_running_loop()
+            current: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
         except RuntimeError:
-            return None
-        if current is not self._cached_loop:
-            logger.debug(
-                "Event loop changed (old=%s, new=%s), releasing cached retrievers "
-                "and strategies",
-                id(self._cached_loop) if self._cached_loop else None,
-                id(current),
-            )
-            evicted, evicted_loop = self._take_cached_retrievers()
-            self._release_retrievers(evicted, evicted_loop, wait=False)
-            self._cached_loop = current
-        return id(current)
+            current = None
+        with self._cache_lock:
+            dead = {
+                loop
+                for _, loop in (*self._retriever_cache, *self._strategy_cache)
+                if loop is not None and loop.is_closed()
+            }
+            evicted = self._take_cached_retrievers(dead) if dead else {}
+        for retrievers in evicted.values():
+            # The loop is closed, so this is their synchronous close.
+            self._release_retrievers(retrievers, None, wait=False)
+        return current
 
     def _take_cached_retrievers(
-        self,
-    ) -> tuple[list[BaseGraphRAGRetriever], asyncio.AbstractEventLoop | None]:
-        retrievers = list(self._retriever_cache.values())
-        loop = getattr(self, "_cached_loop", None)
-        self._retriever_cache.clear()
-        # Strategies hold the retrievers, so they go with them.
-        getattr(self, "_strategy_cache", {}).clear()
-        self._cached_loop = None
-        return retrievers, loop
+        self, loops: Collection[asyncio.AbstractEventLoop | None] | None = None
+    ) -> dict[asyncio.AbstractEventLoop | None, list[BaseGraphRAGRetriever]]:
+        """Remove cached entries (of ``loops``, or all) grouped by their loop."""
+        lock = getattr(self, "_cache_lock", None) or threading.RLock()
+        retriever_cache = getattr(self, "_retriever_cache", {})
+        strategy_cache = getattr(self, "_strategy_cache", {})
+        taken: dict[asyncio.AbstractEventLoop | None, list[BaseGraphRAGRetriever]] = {}
+        with lock:
+            for key in list(retriever_cache):
+                if loops is None or key[1] in loops:
+                    taken.setdefault(key[1], []).append(retriever_cache.pop(key))
+            # Strategies hold the retrievers, so they go with them.
+            for skey in list(strategy_cache):
+                if loops is None or skey[1] in loops:
+                    del strategy_cache[skey]
+        return taken
 
     @staticmethod
     def _release_retrievers(
@@ -826,35 +867,35 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         loop they are bound to, then the chain's sync-API loop is stopped.
         Never raises.
         """
-        retrievers, loop = self._take_cached_retrievers()
         try:
             current = asyncio.get_running_loop()
         except RuntimeError:
             current = None
-        if loop is None or loop is current:
-            await _aclose_retrievers(retrievers)
-        elif loop.is_running() and not loop.is_closed():
-            try:
-                await asyncio.wait_for(
-                    asyncio.wrap_future(
-                        asyncio.run_coroutine_threadsafe(
-                            _aclose_retrievers(retrievers), loop
-                        )
-                    ),
-                    timeout=_TEARDOWN_TIMEOUT_SECONDS,
-                )
-            except Exception as e:  # noqa: BLE001 - teardown must never raise
-                logger.debug("Error closing retrievers on their loop: %s", e)
-        else:
-            self._release_retrievers(retrievers, None, wait=False)
+        for loop, retrievers in self._take_cached_retrievers().items():
+            if loop is None or loop is current:
+                await _aclose_retrievers(retrievers)
+            elif loop.is_running() and not loop.is_closed():
+                try:
+                    await asyncio.wait_for(
+                        asyncio.wrap_future(
+                            asyncio.run_coroutine_threadsafe(
+                                _aclose_retrievers(retrievers), loop
+                            )
+                        ),
+                        timeout=_TEARDOWN_TIMEOUT_SECONDS,
+                    )
+                except Exception as e:  # noqa: BLE001 - teardown must never raise
+                    logger.debug("Error closing retrievers on their loop: %s", e)
+            else:
+                self._release_retrievers(retrievers, None, wait=False)
         runner = getattr(self, "_loop_runner", None)
         if runner is not None:
             await asyncio.to_thread(runner.stop)
 
     def close(self) -> None:
         """Synchronous teardown of cached retrievers and the sync-API loop."""
-        retrievers, loop = self._take_cached_retrievers()
-        self._release_retrievers(retrievers, loop, wait=True)
+        for loop, retrievers in self._take_cached_retrievers().items():
+            self._release_retrievers(retrievers, loop, wait=True)
         runner = getattr(self, "_loop_runner", None)
         if runner is not None:
             runner.stop()
@@ -895,7 +936,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             query: ProcessedQuery = state["processed_query"]
             optimized: OptimizedContext | None = state.get("optimized_context")
             if optimized is None:
-                optimized = self._optimize_context(state)
+                optimized = await asyncio.to_thread(self._optimize_context, state)
             search_context = self.token_manager.build_context_string(optimized)
             history = state.get("history")
 

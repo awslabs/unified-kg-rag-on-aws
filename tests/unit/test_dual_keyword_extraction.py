@@ -18,6 +18,7 @@ from unified_kg_rag.domain.retrieval.strategy_registry import (
     QueryInput,
     get_strategy_spec,
 )
+from unified_kg_rag.shared import LanguageModelError
 
 pytestmark = pytest.mark.unit
 
@@ -108,6 +109,51 @@ class TestExtractDualKeywords:
         )
         with pytest.raises(json.JSONDecodeError):
             await chain._extract_dual_keywords("q", "English")
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            '{"high_level_keywords": "theme", "low_level_keywords": ["Alice"]}',
+            '{"high_level_keywords": null, "low_level_keywords": ["Alice"]}',
+            '{"high_level_keywords": [1, {"k": 2}], "low_level_keywords": []}',
+            '["theme", "Alice"]',
+            "{}",
+        ],
+    )
+    async def test_wrong_shape_raises_when_not_ignoring(
+        self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch, raw: str
+    ) -> None:
+        chain.ignore_errors = False
+        monkeypatch.setattr(
+            chain, "_get_chain_for_prompt", lambda *a, **k: _StubChain(raw)
+        )
+        with pytest.raises(LanguageModelError, match="keyword"):
+            await chain._extract_dual_keywords("q", "English")
+
+    async def test_wrong_shape_degrades_to_empty_when_ignoring(
+        self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A bare string must never be split into single-character keywords.
+        chain.ignore_errors = True
+        monkeypatch.setattr(
+            chain,
+            "_get_chain_for_prompt",
+            lambda *a, **k: _StubChain(
+                '{"high_level_keywords": "theme", "low_level_keywords": ["Alice"]}'
+            ),
+        )
+        assert await chain._extract_dual_keywords("q", "English") == ([], [])
+
+    async def test_missing_level_is_empty(
+        self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        chain.ignore_errors = False
+        monkeypatch.setattr(
+            chain,
+            "_get_chain_for_prompt",
+            lambda *a, **k: _StubChain('{"low_level_keywords": ["Alice"]}'),
+        )
+        assert await chain._extract_dual_keywords("q", "English") == ([], ["Alice"])
 
 
 class TestSearchStepThreading:

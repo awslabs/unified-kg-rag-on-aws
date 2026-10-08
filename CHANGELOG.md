@@ -401,6 +401,34 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   profiling model returns no JSON profile, splits an `entity_types` string
   (`"PERSON, ORGANIZATION"`) into types instead of characters, and builds the
   example `GraphExtractor` from the tuner's providers (#158).
+- `GraphRAGChain` keeps one set of cached retrievers and strategies per event
+  loop and releases a loop's set only once that loop is closed (or on chain
+  close). A query on a second loop (e.g. `ainvoke()` on the caller's loop while
+  `invoke()` runs on the chain's loop thread) used to evict and close the first
+  loop's clients under its in-flight queries. The caches are guarded by a lock
+  (#160).
+- The process-wide `MemoryManager` guards its conversation state with a
+  threading lock instead of an `asyncio.Lock`, which bound to the first event
+  loop that contended for it (`RuntimeError` on another loop) and did not
+  exclude other threads, so turns appended from two threads could interleave
+  or hang (#160).
+- Context budgeting counts section tokens concurrently (up to 8 at a time,
+  each distinct text once) instead of one Bedrock CountTokens call after
+  another, which made token counting dominate mix/hybrid query latency. Global
+  search packs its ranked key points the same way, off the event loop. Counts
+  stay exact (#160).
+- With `ignore_errors: false`, a fatal error (no model access, bad credentials,
+  unreachable endpoint) in a global-search map call or a DRIFT query
+  refinement/keyword expansion fails the query. Global search turned every such
+  map call into an unrated batch and answered from the raw reports, and DRIFT
+  dropped the error without a log line; non-fatal failures still degrade, now
+  with a warning (#160).
+- LightRAG keyword extraction checks the shape of the model's JSON: each
+  keyword level must be a list of strings. A bare string was split into
+  one-character keywords, `null` raised a bare `TypeError`, and a JSON array
+  passed as "no keywords" even with `ignore_errors: false`; these now raise
+  `LanguageModelError` (or degrade to no keywords when errors are ignored)
+  (#160).
 
 ### Security
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or

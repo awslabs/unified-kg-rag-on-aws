@@ -11,6 +11,9 @@ word-count stub so assertions are exact and AWS is never touched.
 
 from __future__ import annotations
 
+import threading
+import time
+
 import pytest
 from pydantic import ValidationError
 
@@ -646,3 +649,73 @@ def test_default_config_budget_is_fixed_not_window_derived(mocker) -> None:
     )
     assert config.search.token_manager.max_context_tokens == 30_000
     assert TokenManager(config, providers=providers)._max_context_tokens == 30_000
+
+
+class _SlowCounter:
+    """Exact word-count counter that takes time per call, like CountTokens."""
+
+    def __init__(self, delay: float = 0.02) -> None:
+        self.delay = delay
+        self.calls: list[str] = []
+        self.active = 0
+        self.max_active = 0
+        self._lock = threading.Lock()
+
+    def count_tokens(self, text: str) -> int:
+        with self._lock:
+            self.calls.append(text)
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        time.sleep(self.delay)
+        with self._lock:
+            self.active -= 1
+        return len(text.split())
+
+    def truncate_to_token_limit(self, text: str, max_tokens: int) -> tuple[str, int]:
+        return text, len(text.split())
+
+
+def _manager_with_counter(mocker, counter: _SlowCounter) -> TokenManager:
+    config = Config()
+    providers = Providers(
+        config,
+        boto_session=mocker.Mock(),
+        token_counter_factory=lambda *_, **__: counter,
+    )
+    return TokenManager(config, providers=providers)
+
+
+class TestConcurrentCounting:
+    def test_optimize_context_counts_sections_concurrently_and_exactly(
+        self, mocker
+    ) -> None:
+        counter = _SlowCounter()
+        mgr = _manager_with_counter(mocker, counter)
+        results = [
+            _r(" ".join(["w"] * (i + 1)), 0.5, "text", f"s{i}") for i in range(12)
+        ]
+        # A duplicate text is counted once.
+        results.append(_r("w w w", 0.5, "text", "dup"))
+
+        out = mgr.optimize_context(results, query="the query", max_tokens=10_000)
+
+        assert counter.max_active > 1
+        assert sorted(counter.calls) == sorted(
+            {r.content for r in results} | {"the query"}
+        )
+        by_source = {s.source_id: s.token_count for s in out.sections}
+        assert by_source["s0"] == 1 and by_source["s11"] == 12
+        assert by_source["dup"] == 3
+
+    def test_count_tokens_many_is_bounded(self, mocker) -> None:
+        counter = _SlowCounter(delay=0.01)
+        mgr = _manager_with_counter(mocker, counter)
+        texts = [f"text {i}" for i in range(40)]
+        assert mgr.count_tokens_many(texts) == [2] * 40
+        assert 1 < counter.max_active <= TokenManager.COUNT_CONCURRENCY
+
+    def test_count_tokens_many_skips_empty_text(self, mocker) -> None:
+        counter = _SlowCounter(delay=0)
+        mgr = _manager_with_counter(mocker, counter)
+        assert mgr.count_tokens_many(["", "a b"]) == [0, 2]
+        assert counter.calls == ["a b"]
