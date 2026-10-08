@@ -240,3 +240,12 @@ def test_save_metadata_sorts_into_canonical_order(tmp_path) -> None:
     reloaded = state.load_pipeline_metadata(pid)
     names = [r["stage_name"] for r in reloaded["stage_results"]]
     assert names == ["translation", "graph_extraction", "indexing"]
+
+
+def test_pipeline_runs_stages_in_the_declared_stage_order() -> None:
+    # PipelineStageType's declaration order is the one canonical stage order
+    # (cache keys and run metadata derive from it); the pipeline must agree.
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.domain.models import PipelineStageType
+
+    assert list(DataIngestionPipeline.STAGE_CLASSES) == list(PipelineStageType)

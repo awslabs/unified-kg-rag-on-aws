@@ -25,18 +25,25 @@ _logger = logging.getLogger(__name__)
 
 
 class PipelineStageType(Enum):
-    CLAIM_EXTRACTION = "claim_extraction"
-    CLAIM_RESOLUTION = "claim_resolution"
-    COMMUNITY_DETECTION = "community_detection"
-    DOCUMENT_LOADING = "document_loading"
+    """Ingestion stages, declared in pipeline order.
+
+    The declaration order is the canonical stage order: the pipeline runs the
+    stages, the cache keys fold in upstream inputs, and the run metadata
+    sorts stage results in this order.
+    """
+
     DOCUMENT_PARSING = "document_parsing"
-    GLEANING = "gleaning"
-    GRAPH_ANALYSIS = "graph_analysis"
-    GRAPH_EXTRACTION = "graph_extraction"
-    GRAPH_RESOLUTION = "graph_resolution"
-    INDEXING = "indexing"
+    DOCUMENT_LOADING = "document_loading"
     TEXT_CHUNKING = "text_chunking"
     TRANSLATION = "translation"
+    GRAPH_EXTRACTION = "graph_extraction"
+    GLEANING = "gleaning"
+    GRAPH_RESOLUTION = "graph_resolution"
+    CLAIM_EXTRACTION = "claim_extraction"
+    CLAIM_RESOLUTION = "claim_resolution"
+    GRAPH_ANALYSIS = "graph_analysis"
+    COMMUNITY_DETECTION = "community_detection"
+    INDEXING = "indexing"
 
 
 class ChunkingStrategy(str, Enum):

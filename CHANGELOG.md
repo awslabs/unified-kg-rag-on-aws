@@ -216,6 +216,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - Effort levels are declared once, as `EffortLevel` (with `EFFORT_LEVELS`
   derived from it); `evaluation.judge_effort` and the model catalog use it,
   and `BedrockLanguageModelFactory.VALID_EFFORTS` is removed (#PR).
+- `PipelineStageType` members are declared in pipeline order, and the cache
+  keys and run metadata derive their stage order from it instead of keeping
+  their own copies; iterating the enum now yields the stages in run order
+  (#PR).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).

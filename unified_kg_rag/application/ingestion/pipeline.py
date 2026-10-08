@@ -62,6 +62,7 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class DataIngestionPipeline:
+    # Run order; kept in PipelineStageType's declaration order (tested).
     STAGE_CLASSES = {
         PipelineStageType.DOCUMENT_PARSING: DocumentParsingStage,
         PipelineStageType.DOCUMENT_LOADING: DocumentLoadingStage,
