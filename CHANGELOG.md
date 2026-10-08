@@ -244,7 +244,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   well-formed single-root response (claims, gleaning refinement plan) parsed
   into lists of one-key dicts that the extractors cannot read. Every response
   now goes through the lxml recovery path, which produced all results before,
-  so parsed output does not change (#PR).
+  so parsed output does not change (#165).
 - `indexing.reset` with the doc-status registry enabled rebuilds from the
   whole corpus and records every document again. The loading stage used to
   diff against the registry first, so the reset cleared the stores but
