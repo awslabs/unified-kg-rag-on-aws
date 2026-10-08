@@ -46,6 +46,8 @@ Context keys (all optional; sensible defaults shown):
                                        encryption (S3/Neptune/OpenSearch/DDB); the
                                        alarm topic always has its own CMK
   vpc_flow_logs       dev:False/else:True  enable VPC flow logs (created VPC only)
+  flow_log_retention_days 731         flow-log log group retention (a CloudWatch
+                                       Logs retention value, e.g. 30/90/365/731)
   deletion_protection dev:False/else:True  deletion protection on Neptune + the
                                        DynamoDB table (OpenSearch has none; it
                                        is only retained via removal_destroy)
@@ -73,6 +75,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+
+# Retention values CloudWatch Logs accepts (AWS::Logs::LogGroup RetentionInDays).
+_LOG_RETENTION_DAYS = frozenset(
+    (1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827)
+    + (2192, 2557, 2922, 3288, 3653)
+)
 
 
 @dataclass(frozen=True)
@@ -105,6 +113,7 @@ class DeploymentConfig:
     guardrail_identifier: str | None
     use_cmk: bool
     vpc_flow_logs: bool
+    flow_log_retention_days: int
     deletion_protection: bool
     bedrock_model_arns: list[str] | None
     alarm_email: str | None
@@ -179,6 +188,12 @@ class DeploymentConfig:
             raise ValueError(
                 f"network_mode must be 'private' or 'public', got '{network_mode}'"
             )
+        flow_log_retention_days = int(ctx("flow_log_retention_days", 731))
+        if flow_log_retention_days not in _LOG_RETENTION_DAYS:
+            raise ValueError(
+                "flow_log_retention_days must be a CloudWatch Logs retention value "
+                f"{sorted(_LOG_RETENTION_DAYS)}, got {flow_log_retention_days}"
+            )
         return cls(
             env_name=env_name,
             bedrock_region=ctx("bedrock_region"),
@@ -220,6 +235,7 @@ class DeploymentConfig:
             guardrail_identifier=ctx("guardrail_identifier"),
             use_cmk=as_bool(ctx("use_cmk"), default=False),
             vpc_flow_logs=as_bool(ctx("vpc_flow_logs"), default=not is_dev),
+            flow_log_retention_days=flow_log_retention_days,
             deletion_protection=as_bool(ctx("deletion_protection"), default=not is_dev),
             bedrock_model_arns=ctx("bedrock_model_arns"),
             alarm_email=ctx("alarm_email"),

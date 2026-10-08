@@ -47,6 +47,13 @@ def test_public_mode_creates_only_free_gateway_endpoints() -> None:
     }
 
 
+def test_flow_log_retention_is_configurable() -> None:
+    stack = _network({"vpc_flow_logs": "true", "flow_log_retention_days": "90"})
+    template = Template.from_stack(stack)
+    template.resource_count_is("AWS::EC2::FlowLog", 1)
+    template.has_resource_properties("AWS::Logs::LogGroup", {"RetentionInDays": 90})
+
+
 def _reuse_warnings(stack: NetworkingStack) -> list[str]:
     found = Annotations.from_stack(stack).find_warning("*", Match.any_value())
     return [str(w.entry.data) for w in found if "Reusing VPC" in str(w.entry.data)]

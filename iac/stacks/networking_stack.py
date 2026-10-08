@@ -18,8 +18,9 @@ no endpoints: synth warns with the list it must already provide.
 
 from __future__ import annotations
 
-from aws_cdk import Annotations, Stack
+from aws_cdk import Annotations, RemovalPolicy, Stack
 from aws_cdk import aws_ec2 as ec2
+from aws_cdk import aws_logs as logs
 from constructs import Construct
 
 from iac.config import DeploymentConfig
@@ -120,9 +121,25 @@ class NetworkingStack(Stack):
 
     # --------------------------------------------------------- flow logs
     def _enable_flow_logs(self) -> None:
+        # An explicit log group so retention is configurable (the value is
+        # validated against what CloudWatch Logs accepts in config.py).
+        log_group = logs.LogGroup(
+            self,
+            "FlowLogsGroup",
+            removal_policy=(
+                RemovalPolicy.DESTROY
+                if self.config.removal_destroy
+                else RemovalPolicy.RETAIN
+            ),
+        )
+        # The RetentionDays enum cannot be built from a number in Python, so set
+        # the CloudFormation property directly.
+        cfn_log_group = log_group.node.default_child
+        assert isinstance(cfn_log_group, logs.CfnLogGroup)
+        cfn_log_group.retention_in_days = self.config.flow_log_retention_days
         self.vpc.add_flow_log(
             "FlowLogs",
-            destination=ec2.FlowLogDestination.to_cloud_watch_logs(),
+            destination=ec2.FlowLogDestination.to_cloud_watch_logs(log_group),
             traffic_type=ec2.FlowLogTrafficType.ALL,
         )
 
