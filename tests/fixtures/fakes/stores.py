@@ -241,9 +241,6 @@ class FakeVectorStore(_Recorder):
     def initialize(self) -> bool:
         return True
 
-    def index_text_units(self, items: list[Any] | None = None) -> IndexingStats:
-        return self._put("text_units", items)
-
     def index_text_units(self, text_units: list[Any]) -> IndexingStats:
         return self._put("text_units", text_units)
 
