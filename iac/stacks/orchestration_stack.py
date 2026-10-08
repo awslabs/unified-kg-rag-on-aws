@@ -135,6 +135,12 @@ class OrchestrationStack(Stack):
             "PipelineLogs",
             log_group_name=f"/{config.prefix}/pipeline",
             retention=logs.RetentionDays.ONE_MONTH,
+            # Fixed name: retained copies would collide on the next deploy.
+            removal_policy=(
+                RemovalPolicy.DESTROY
+                if config.removal_destroy
+                else RemovalPolicy.RETAIN
+            ),
         )
 
         definition = self._build_definition()

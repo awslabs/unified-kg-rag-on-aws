@@ -11,7 +11,7 @@ stack. Store endpoints are injected as the env vars the app reads
 
 from __future__ import annotations
 
-from aws_cdk import Stack
+from aws_cdk import RemovalPolicy, Stack
 from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_iam as iam
@@ -46,6 +46,12 @@ class ComputeStack(Stack):
         # the mutable "latest" default (dev iteration) must stay MUTABLE so it
         # can be re-pushed. So mutability tracks whether a real tag was pinned.
         pinned_image = config.image_tag != "latest"
+        # Fixed physical names (repo, log group) must go with the stack when
+        # removal_destroy is set, or the next deploy collides with the
+        # retained copy. Outside dev they are kept (image provenance, logs).
+        removal_policy = (
+            RemovalPolicy.DESTROY if config.removal_destroy else RemovalPolicy.RETAIN
+        )
         self.repository = ecr.Repository(
             self,
             "Repo",
@@ -57,6 +63,9 @@ class ComputeStack(Stack):
                 else ecr.TagMutability.MUTABLE
             ),
             lifecycle_rules=[ecr.LifecycleRule(max_image_count=10)],
+            removal_policy=removal_policy,
+            # A non-empty repository cannot be deleted.
+            empty_on_delete=config.removal_destroy,
         )
 
         self.cluster = ecs.Cluster(
@@ -72,6 +81,7 @@ class ComputeStack(Stack):
             "TaskLogs",
             log_group_name=f"/{config.prefix}/tasks",
             retention=logs.RetentionDays.ONE_MONTH,
+            removal_policy=removal_policy,
         )
 
         self.task_role = self._build_task_role(storage)

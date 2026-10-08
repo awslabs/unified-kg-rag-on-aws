@@ -119,7 +119,7 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `enable_cdk_nag` | `false` | run cdk-nag AwsSolutions (Well-Architected) checks at synth |
 | `owner` | `aws-proserve` | `owner` tag applied to every resource |
 | `cost_center` | `unified-kg-rag-on-aws` | `cost-center` tag applied to every resource |
-| `removal_destroy` | `true` (dev) / `false` (non-dev) | `DESTROY` vs `RETAIN` stateful resources on stack deletion |
+| `removal_destroy` | `true` (dev) / `false` (non-dev) | `DESTROY` vs `RETAIN` on stack deletion for the stateful stores, the KMS keys, the guardrail, and the fixed-name ECR repository (emptied first) and log groups (`/<prefix>/tasks`, `/<prefix>/pipeline`). Retained fixed-name resources make the next deploy fail on the duplicate name, so delete them by hand after a `cdk destroy` with `removal_destroy=false` |
 
 > Every resource is tagged `project=unified-kg-rag-on-aws`, `env=<env_name>`,
 > `managed-by=cdk`, `owner`, and `cost-center` for cost allocation and ownership.
