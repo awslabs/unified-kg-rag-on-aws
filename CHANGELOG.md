@@ -219,6 +219,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   test-only helpers on the guardrail handler and token counter (#120).
 
 ### Fixed
+- A Neptune relationship whose source entity vertex is missing is counted as
+  a failed write instead of a success: the add-edge traversal returns the
+  edge id and an empty result is recorded as an error (#PR).
 - A graph-extraction answer of only empty sections
   (`<entities></entities><relationships></relationships>`) parses as a valid
   zero-entity result instead of failing, being retried, and going to the

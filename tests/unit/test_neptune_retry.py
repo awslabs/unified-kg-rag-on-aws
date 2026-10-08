@@ -52,6 +52,18 @@ class _FlakyTraversal:
             raise self._exc
 
 
+class _ResultTraversal(_FlakyTraversal):
+    """A fake traversal whose ``toList()`` fails, then returns ``result``."""
+
+    def __init__(self, fail_times: int, exc: Exception, result: list) -> None:
+        super().__init__(fail_times, exc)
+        self._result = result
+
+    def toList(self) -> list:  # noqa: N802 - gremlin-python method name
+        self.iterate()
+        return self._result
+
+
 @pytest.fixture
 def indexer(mocker):
     mocker.patch("unified_kg_rag.adapters.storage.neptune_indexer.NeptuneClient")
@@ -158,3 +170,15 @@ def test_other_errors_are_retried(exc: BaseException) -> None:
 )
 def test_permanent_errors_fail_fast(exc: BaseException) -> None:
     assert is_permanent_neptune_error(exc)
+
+
+def test_results_mode_returns_the_traversal_results(indexer) -> None:
+    indexer.neptune_config.max_attempts = 3
+    traversal = _ResultTraversal(fail_times=1, exc=_CME, result=["r1"])
+    assert indexer._execute_with_retries(traversal, "edge", results=True) == ["r1"]
+    assert traversal.calls == 2
+
+
+def test_results_mode_returns_empty_when_nothing_matched(indexer) -> None:
+    traversal = _ResultTraversal(fail_times=0, exc=_CME, result=[])
+    assert indexer._execute_with_retries(traversal, "edge", results=True) == []
