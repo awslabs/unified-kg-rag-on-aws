@@ -70,7 +70,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `shared.utils.langchain`, `convert_langchain_to_document` from
   `shared.utils.document_converter`, and `console`/`display_*` from
   `shared.utils.display`. The domain purity test now also checks transitive
-  imports in a clean interpreter (#PR).
+  imports in a clean interpreter (#164).
 - Model ids are free-form strings; `aws.bedrock.default_model_id` and
   `fast_model_id` set every role of their tier, `aws.bedrock.model_overrides`
   describes unknown models, and Claude 4.5 fails fast without an inference
