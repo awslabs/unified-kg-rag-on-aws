@@ -260,6 +260,16 @@ class StorageStack(Stack):
             tls_security_policy=opensearch.TLSSecurityPolicy.TLS_1_2,
             removal_policy=self.removal_policy,
         )
+        # The domain creates these log groups itself with CDK's default
+        # RETAIN; give them the stack's policy so a removal_destroy teardown
+        # deletes them like the other log groups.
+        for log_group in (
+            domain.app_log_group,
+            domain.slow_index_log_group,
+            domain.slow_search_log_group,
+        ):
+            assert log_group is not None  # enabled in `logging` above
+            log_group.apply_removal_policy(self.removal_policy)
         # Resource-scoped access policy (added post-construction so it can
         # reference the domain's own ARN). Network access is already restricted
         # to the VPC + service SG; this requires IAM-signed requests AND scopes
