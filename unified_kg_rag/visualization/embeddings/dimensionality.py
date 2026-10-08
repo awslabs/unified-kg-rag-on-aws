@@ -80,29 +80,22 @@ class DimensionalityReducer:
             )
             return {nodes[0]: (0.0, 0.0)} if nodes else {}
 
-        try:
-            if method.lower() == "umap":
-                reduced_matrix = self._apply_umap(embedding_matrix)
-            elif method.lower() == "tsne":
-                reduced_matrix = self._apply_tsne(embedding_matrix)
-            else:
-                reduced_matrix = self._apply_pca(embedding_matrix)
+        # A failure propagates: the caller falls back to a seeded topology
+        # layout and marks it degraded, instead of a random layout that looks
+        # valid.
+        if method.lower() == "umap":
+            reduced_matrix = self._apply_umap(embedding_matrix)
+        elif method.lower() == "tsne":
+            reduced_matrix = self._apply_tsne(embedding_matrix)
+        else:
+            reduced_matrix = self._apply_pca(embedding_matrix)
 
-            layout = {
-                node: (float(reduced_matrix[i, 0]), float(reduced_matrix[i, 1]))
-                for i, node in enumerate(nodes)
-            }
-            logger.info("Dimensionality reduction completed.")
-            return layout
-
-        except Exception as e:
-            logger.error(
-                "Dimensionality reduction failed with method %s: %s",
-                method.upper(),
-                e,
-                exc_info=True,
-            )
-            return self._generate_random_layout(nodes)
+        layout = {
+            node: (float(reduced_matrix[i, 0]), float(reduced_matrix[i, 1]))
+            for i, node in enumerate(nodes)
+        }
+        logger.info("Dimensionality reduction completed.")
+        return layout
 
     def _apply_umap(self, embeddings: np.ndarray) -> np.ndarray:
         try:
@@ -145,10 +138,3 @@ class DimensionalityReducer:
         )
         pca = PCA(n_components=n_components, random_state=self.pca_config.random_state)
         return np.asarray(pca.fit_transform(embeddings))
-
-    @staticmethod
-    def _generate_random_layout(nodes: list[str]) -> dict[str, tuple[float, float]]:
-        logger.warning("Generating random 2D layout as a fallback.")
-        return {
-            node: (np.random.uniform(-1, 1), np.random.uniform(-1, 1)) for node in nodes
-        }

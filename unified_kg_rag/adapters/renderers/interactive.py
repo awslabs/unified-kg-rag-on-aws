@@ -92,7 +92,8 @@ class InteractiveRenderer:
         color_map = dict(zip(sorted(community_ids), colors, strict=True))
 
         degrees = dict(graph.degree())
-        max_degree = max(degrees.values()) if degrees else 1
+        # At least 1: an edgeless graph would divide log1p(0) by log1p(0) (NaN).
+        max_degree = max(max(degrees.values(), default=0), 1)
 
         for node, attrs in graph.nodes(data=True):
             node_id = str(node)

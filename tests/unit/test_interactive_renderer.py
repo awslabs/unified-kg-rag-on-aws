@@ -122,6 +122,19 @@ class TestNetworkVisualization:
         assert out.exists()
 
 
+class TestNodeSize:
+    def test_edgeless_graph_gets_finite_sizes(self, mocker) -> None:
+        # max_degree 0 made log1p(0)/log1p(0) = NaN, an invalid pyvis size.
+        g = nx.Graph()
+        g.add_node("a", name="A")
+        g.add_node("b", name="B")
+        net = mocker.MagicMock()
+        renderer = InteractiveRenderer({})
+        renderer._add_nodes(net, g, {})
+        sizes = [c.kwargs["size"] for c in net.add_node.call_args_list]
+        assert sizes == [renderer.NODE_SIZE_BASE] * 2
+
+
 class TestCommunityHierarchy:
     def _hierarchy(self) -> list[HierarchicalCommunity]:
         child0 = HierarchicalCommunity(

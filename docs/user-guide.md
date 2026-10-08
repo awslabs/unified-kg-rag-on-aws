@@ -1143,7 +1143,11 @@ Layout and error behaviour:
   visualization step fails when `processing.ignore_errors` is `false` (ingestion
   itself continues and logs the failure). With `ignore_errors: true` it logs an
   ERROR, falls back to a topology-only spring layout, and records
-  `"layout_degraded": true` in `visualization_data.json`.
+  `"layout_degraded": true` in `visualization_data.json`. A failed
+  dimensionality reduction falls back the same way (seeded spring layout,
+  `layout_degraded: true`) whatever `ignore_errors` says.
+- `embeddings.bedrock_model_id` must be one of the supported embedding model
+  ids; any other value is rejected when the configuration loads.
 - Edge width/opacity in the interactive graph is scaled relative to the graph's
   own weight range (log-scaled, then min-max normalised), so 1-10 strength
   scores and merged counts are both distinguishable.

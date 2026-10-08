@@ -208,3 +208,24 @@ def test_degraded_embeddings_mark_layout_degraded(
     assert data["layout_degraded"] is True
     # Topology-based fallback still positions every node.
     assert set(data["layout"]) == {"e1", "e2", "e3"}
+
+
+def test_failed_reduction_marks_layout_degraded_and_is_deterministic(
+    config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _boom(*_a: Any, **_k: Any) -> None:
+        raise ValueError("reduction blew up")
+
+    layouts = []
+    for attempt in range(2):
+        manager = _manager(
+            config,
+            tmp_path / str(attempt),
+            embedder=_FakeEmbedder(),
+            embedding_method="node2vec",
+        )
+        monkeypatch.setattr(manager.reducer, "_apply_pca", _boom)
+        layouts.append(manager._generate_layout())
+        assert manager.layout_degraded is True
+    assert set(layouts[0]) == {"e1", "e2", "e3"}
+    assert layouts[0] == layouts[1]  # seeded, not np.random

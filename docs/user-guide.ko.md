@@ -1106,7 +1106,11 @@ S3 캐시 동기화를 켜면 `visualization_data.json`이 캐시와 함께 업�
   `processing.ignore_errors`가 `false`일 때 시각화 단계가 실패합니다(인제스천은
   계속 진행하고 실패를 로그에 남깁니다). `ignore_errors: true`이면 ERROR 로그를
   남기고 그래프 구조만 반영하는 spring 레이아웃으로 대체하며,
-  `visualization_data.json`에 `"layout_degraded": true`를 기록합니다.
+  `visualization_data.json`에 `"layout_degraded": true`를 기록합니다. 차원
+  축소가 실패해도 `ignore_errors`와 관계없이 같은 방식(시드를 고정한 spring
+  레이아웃, `layout_degraded: true`)으로 대체합니다.
+- `embeddings.bedrock_model_id`는 지원하는 임베딩 모델 ID 중 하나여야 하며, 다른
+  값은 설정을 읽을 때 거부합니다.
 - 인터랙티브 그래프의 엣지 두께·불투명도는 그래프 자체의 가중치 범위를
   기준으로 조정합니다(로그 스케일 후 min-max 정규화). 따라서 1–10 강도 점수와
   병합 횟수 모두 구분됩니다.

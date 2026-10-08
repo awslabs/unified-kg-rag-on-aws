@@ -357,6 +357,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `site-packages`). Only the CLIs call `setup_logging`, and a relative
   `logging.log_file_path` is now resolved against the working directory
   (#PR).
+- Visualization: `graph.visualization.embeddings.bedrock_model_id` given as a
+  YAML string is validated as an embedding model id at config load (it used to
+  fail with `'str' object has no attribute 'value'`, which ingestion logged
+  and skipped, so no visualization was written); an edgeless graph no longer
+  gets NaN node sizes in the interactive view; a failed dimensionality
+  reduction falls back to a seeded spring layout and sets `layout_degraded`
+  instead of returning an unseeded random layout (#PR).
 
 ### Security
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or
