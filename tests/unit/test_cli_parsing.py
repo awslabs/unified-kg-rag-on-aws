@@ -247,6 +247,35 @@ def test_eval_exceeds_failure_budget(total, failed, budget, expected) -> None:
     assert run_evaluation.exceeds_failure_budget(summary, budget) is expected
 
 
+@pytest.mark.parametrize(
+    ("outcomes", "budget", "expected"),
+    [
+        # A metric that failed on every attempted query fails the run even
+        # though every answer was generated.
+        ({"langchain": {"correctness": {"scored": 0, "failed": 3}}}, 1.0, True),
+        ({"langchain": {"correctness": {"scored": 2, "failed": 1}}}, 1.0, False),
+        ({"langchain": {"correctness": {"scored": 2, "failed": 1}}}, 0.2, True),
+        ({"ragas": {"faithfulness": {"scored": 9, "failed": 1}}}, 0.2, False),
+        # Skipped (not applicable) is not a failure.
+        (
+            {"graph_aware": {"entity_coverage": {"scored": 0, "skipped": 3}}},
+            0.0,
+            False,
+        ),
+    ],
+)
+def test_eval_metric_failures_count_against_budget(outcomes, budget, expected) -> None:
+    summary = EvaluationSummary(
+        total_queries=3,
+        successful_evaluations=3,
+        failed_evaluations=0,
+        metric_outcomes=outcomes,
+        evaluation_start_time=datetime(2026, 1, 1),
+        evaluation_end_time=datetime(2026, 1, 1),
+    )
+    assert run_evaluation.exceeds_failure_budget(summary, budget) is expected
+
+
 class _DictChain:
     def __init__(self, error: bool) -> None:
         self.error = error

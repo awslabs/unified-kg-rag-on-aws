@@ -39,14 +39,39 @@ def _failure_rate(value: str) -> float:
     return rate
 
 
+def failure_budget_breaches(
+    summary: EvaluationSummary, max_failure_rate: float
+) -> list[str]:
+    """Why the run must exit non-zero; empty when it is within budget.
+
+    The budget applies to answer generation (failed / total queries) and to
+    every metric (failed / attempted, where attempted = scored + failed;
+    skipped metrics were not applicable and do not count). A share of 1.0,
+    or an empty run, always breaches it.
+    """
+
+    def _over(failed: int, total: int) -> bool:
+        return total == 0 or failed >= total or failed / total > max_failure_rate
+
+    breaches = []
+    if _over(summary.failed_evaluations, summary.total_queries):
+        breaches.append(
+            f"{summary.failed_evaluations}/{summary.total_queries} queries failed"
+        )
+    for evaluator_name, metrics in summary.metric_outcomes.items():
+        for metric_name, counts in metrics.items():
+            failed = counts.get("failed", 0)
+            attempted = counts.get("scored", 0) + failed
+            if failed and _over(failed, attempted):
+                breaches.append(
+                    f"{evaluator_name}/{metric_name}: {failed}/{attempted} failed"
+                )
+    return breaches
+
+
 def exceeds_failure_budget(summary: EvaluationSummary, max_failure_rate: float) -> bool:
-    """True when the run must exit non-zero (all failed, or rate above budget)."""
-    if (
-        summary.total_queries == 0
-        or summary.failed_evaluations >= summary.total_queries
-    ):
-        return True
-    return summary.failed_evaluations / summary.total_queries > max_failure_rate
+    """True when the run must exit non-zero (see ``failure_budget_breaches``)."""
+    return bool(failure_budget_breaches(summary, max_failure_rate))
 
 
 class CommandLineInterface:
@@ -110,8 +135,10 @@ class CommandLineInterface:
             default=1.0,
             help=(
                 "Exit non-zero when the fraction of queries whose answer generation\n"
-                "failed exceeds this value (0.0-1.0). A run where every query failed\n"
-                "always exits non-zero. Default 1.0 = fail only when all failed."
+                "failed, or the fraction of attempted values of any metric that\n"
+                "failed, exceeds this value (0.0-1.0). Skipped metrics do not count.\n"
+                "Default 1.0 = fail only when all queries, or all attempts of a\n"
+                "metric, failed."
             ),
         )
         parser.add_argument(
@@ -275,10 +302,11 @@ class EvaluationRunner:
         console.rule("[bold]Evaluation Complete[/bold]", style="blue")
         self._print_summary(summary, total_time, Path(outputs_directory))
 
-        if exceeds_failure_budget(summary, self.args.max_failure_rate):
+        breaches = failure_budget_breaches(summary, self.args.max_failure_rate)
+        if breaches:
             console.print(
-                f"[red]{summary.failed_evaluations}/{summary.total_queries} queries "
-                f"failed (allowed failure rate: {self.args.max_failure_rate}).[/red]"
+                f"[red]Failure budget exceeded ({'; '.join(breaches)}; allowed "
+                f"failure rate: {self.args.max_failure_rate}).[/red]"
             )
             return 1
         return 0

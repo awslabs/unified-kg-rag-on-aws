@@ -962,7 +962,7 @@ its edit until a full rebuild.
 | `--search-type` | `hybrid` | Search method |
 | `--top-k` | `10` | Max results |
 | `--retrieval-multiplier` | `1` | Retrieval depth |
-| `--max-failure-rate` | `1.0` | Exit non-zero when the fraction of queries whose answer generation failed exceeds this (0.0-1.0). A run where every query failed always exits non-zero |
+| `--max-failure-rate` | `1.0` | Exit non-zero when the fraction of queries whose answer generation failed, or the fraction of a metric's attempted values that failed (`metric_outcomes`; skipped values do not count), exceeds this (0.0-1.0). A run where every query, or every attempt of a metric, failed always exits non-zero |
 | `--verbose`, `-v` | off | Debug logging |
 | `--config-path` | — | Path to `config.yaml` |
 
@@ -971,7 +971,11 @@ its edit until a full rebuild.
 Selected via `evaluation.enabled_evaluators`. An enabled evaluator that cannot
 be built (e.g. no Bedrock access for the judge) or rejects its configuration
 stops the run; with `processing.ignore_errors: true` it is dropped instead and
-listed in `run_manifest.dropped_evaluators`. By default all five are enabled:
+listed in `run_manifest.dropped_evaluators`. The same applies while scoring:
+an evaluator error (e.g. a judge call that fails) stops the run unless
+`ignore_errors` is `true`, in which case the metric is recorded as failed. A
+judge reply without a usable score is always recorded as failed, never as 0.
+By default all five are enabled:
 the deterministic, LLM-free ones (`answer_match`, `retrieval`, `graph_aware`)
 are free and skip a query that lacks their dataset fields; for a judge-free run
 set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.

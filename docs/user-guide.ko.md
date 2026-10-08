@@ -934,7 +934,7 @@ URI로 설정)에 기록된 문서만 삭제된 것으로 판단합니다. 따�
 | `--search-type` | `hybrid` | 검색 방법 |
 | `--top-k` | `10` | 최대 결과 수 |
 | `--retrieval-multiplier` | `1` | 검색 깊이 |
-| `--max-failure-rate` | `1.0` | 답변 생성에 실패한 질문의 비율이 이 값(0.0-1.0)을 넘으면 0이 아닌 코드로 종료. 모든 질문이 실패한 실행은 항상 0이 아닌 코드로 종료 |
+| `--max-failure-rate` | `1.0` | 답변 생성에 실패한 질문의 비율, 또는 지표별로 시도한 값 중 실패한 비율(`metric_outcomes`, 건너뛴 값은 제외)이 이 값(0.0-1.0)을 넘으면 0이 아닌 코드로 종료. 모든 질문이 실패했거나 한 지표의 모든 시도가 실패한 실행은 항상 0이 아닌 코드로 종료 |
 | `--verbose`, `-v` | off | 디버그 로깅 |
 | `--config-path` | — | `config.yaml` 경로 |
 
@@ -943,7 +943,10 @@ URI로 설정)에 기록된 문서만 삭제된 것으로 판단합니다. 따�
 `evaluation.enabled_evaluators`로 선택합니다. 활성화한 평가자를 만들 수 없거나
 (예: judge용 Bedrock 접근 불가) 설정이 잘못되면 실행을 멈춥니다.
 `processing.ignore_errors: true`이면 해당 평가자를 빼고 계속하며
-`run_manifest.dropped_evaluators`에 기록합니다. 기본값은 다섯 개 모두
+`run_manifest.dropped_evaluators`에 기록합니다. 채점 중에도 같습니다.
+평가자 오류(예: judge 호출 실패)가 나면 실행을 멈추고, `ignore_errors: true`이면
+해당 지표를 실패로 기록합니다. judge 응답에 쓸 수 있는 점수가 없으면 0점이 아니라
+항상 실패로 기록합니다. 기본값은 다섯 개 모두
 활성화입니다. 결정적이고 LLM이 필요 없는 평가자(`answer_match`, `retrieval`,
 `graph_aware`)는 비용이 없고 필요한 데이터셋 필드가 없는 질의는 건너뜁니다. LLM
 judge 없이 실행하려면 `enabled_evaluators: [answer_match, retrieval, graph_aware]`로

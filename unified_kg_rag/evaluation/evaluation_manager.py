@@ -702,6 +702,8 @@ class EvaluationManager:
                 )
                 all_reports.extend(reports)
             except Exception as e:
+                if not self.config.processing.ignore_errors:
+                    raise
                 logger.error(
                     "Failed to run '%s' evaluation: %s", evaluator_type.value, e
                 )

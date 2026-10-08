@@ -343,7 +343,61 @@ class TestEvaluateResults:
         assert result.ground_truth == ""  # no GT for this id
         assert reports  # still produced a report
 
+    async def test_evaluator_crash_raises_without_ignore_errors(
+        self, config: Config
+    ) -> None:
+        manager = _graph_aware_manager(config)
+        assert config.processing.ignore_errors is False
+
+        async def _boom(*a, **k):
+            raise RuntimeError("eval down")
+
+        manager.evaluators[EvaluatorType.GRAPH_AWARE].aevaluate_batch = _boom
+        query = EvaluationQuery(query_id="q1", question="?")
+        result = EvaluationResult(
+            query_id="q1", question="?", generated_answer="x", ground_truth=""
+        )
+        gt = EvaluationGroundTruth(query_id="q1", ground_truth="ref")
+        with pytest.raises(RuntimeError, match="eval down"):
+            await manager._evaluate_results([query], [result], [gt])
+
+    async def test_per_query_error_raises_without_ignore_errors(
+        self, config: Config
+    ) -> None:
+        manager = _graph_aware_manager(config)
+        evaluator = manager.evaluators[EvaluatorType.GRAPH_AWARE]
+
+        async def _boom(*a, **k):
+            raise RuntimeError("judge down")
+
+        evaluator.aevaluate_single = _boom
+        query = EvaluationQuery(query_id="q1", question="?")
+        result = EvaluationResult(
+            query_id="q1", question="?", generated_answer="x", ground_truth=""
+        )
+        with pytest.raises(RuntimeError, match="judge down"):
+            await evaluator.aevaluate_batch([query], [result], [""])
+
+    async def test_per_query_error_recorded_with_ignore_errors(
+        self, config: Config
+    ) -> None:
+        config.processing.ignore_errors = True
+        manager = _graph_aware_manager(config)
+        evaluator = manager.evaluators[EvaluatorType.GRAPH_AWARE]
+
+        async def _boom(*a, **k):
+            raise RuntimeError("judge down")
+
+        evaluator.aevaluate_single = _boom
+        query = EvaluationQuery(query_id="q1", question="?")
+        result = EvaluationResult(
+            query_id="q1", question="?", generated_answer="x", ground_truth=""
+        )
+        reports = await evaluator.aevaluate_batch([query], [result], [""])
+        assert reports[0].metadata["evaluation_failed"] is True
+
     async def test_evaluator_failure_isolated(self, config: Config, mocker) -> None:
+        config.processing.ignore_errors = True
         manager = _graph_aware_manager(config)
 
         async def _boom(*a, **k):

@@ -341,6 +341,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (`"Score: 8/10"` → 1.0) are gone. A judge reply without a valid score in
   [0, 1] (either metric) is recorded under `failed_metrics` instead of as 0.0
   or a clamped value (#PR).
+- `run-eval` no longer exits 0 when scoring fails: with
+  `processing.ignore_errors: false` (the default) an evaluator error stops the
+  run instead of being recorded per query, and `--max-failure-rate` now also
+  applies to each metric's failed share of attempted values, so a metric that
+  failed on every query exits non-zero (#PR).
 
 ### Security
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or
