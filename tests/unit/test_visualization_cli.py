@@ -107,6 +107,7 @@ class TestLoadRenderContext:
 
 
 class TestRunVisualization:
+    @pytest.mark.usefixtures("restore_renderer_registry")
     def test_drives_registered_renderer(
         self, export_json: Path, tmp_path: Path, config: Config
     ) -> None:

@@ -11,6 +11,7 @@ be exercised against a boto3 surface.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 
 import nest_asyncio
 import pytest
@@ -172,6 +173,21 @@ def _fresh_shared_memory(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(memory_manager, "_memory_manager", None)
     monkeypatch.setattr(memory_manager, "_mismatch_logged", False)
+
+
+@pytest.fixture
+def restore_renderer_registry() -> Iterator[None]:
+    """Undo renderers a test registers with ``@register_renderer``.
+
+    The registry is module-level, so a test-only renderer would otherwise stay
+    registered for the rest of the session.
+    """
+    from unified_kg_rag.adapters.renderers import base
+
+    saved = dict(base._REGISTRY)
+    yield
+    base._REGISTRY.clear()
+    base._REGISTRY.update(saved)
 
 
 @pytest.fixture
