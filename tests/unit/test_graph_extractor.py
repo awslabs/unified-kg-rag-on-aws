@@ -22,7 +22,7 @@ from unified_kg_rag.adapters.ingestion.graph_extractor import (
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
 from unified_kg_rag.shared import DataProcessingError
-from unified_kg_rag.shared.utils import BATCH_ITEM_FAILED
+from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
 

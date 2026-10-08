@@ -33,7 +33,7 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, Entity, ModelPurpose, Relationship
 from unified_kg_rag.domain.prompts import DescriptionSummarizationPrompt
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import BatchProcessor
+from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 if TYPE_CHECKING:
     from unified_kg_rag.domain.models.config import DescriptionSummarizationConfig

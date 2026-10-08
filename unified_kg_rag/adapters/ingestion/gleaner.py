@@ -32,14 +32,13 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.prompts import GraphRefinementPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
-    BATCH_ITEM_FAILED,
-    BatchProcessor,
     clean_display_name,
     default_max_workers,
     ensure_list,
     entity_key,
 )
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
+from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 logger = get_logger(__name__)
 

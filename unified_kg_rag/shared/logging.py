@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any, TextIO
 
 import structlog
-from langsmith.utils import tracing_is_enabled
 from structlog.stdlib import LoggerFactory, ProcessorFormatter
 
 from .config import Config
@@ -158,6 +157,10 @@ def warn_if_langsmith_tracing() -> None:
     retrieved context and model outputs. That may be intended, so it is
     reported, not disabled.
     """
+    # Imported here: langsmith pulls in httpx/requests, and the kernel is
+    # imported by the pure domain layer.
+    from langsmith.utils import tracing_is_enabled
+
     if tracing_is_enabled():
         get_logger(__name__).warning(
             "LangSmith tracing is enabled by the environment "

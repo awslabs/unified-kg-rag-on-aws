@@ -2,16 +2,25 @@
 # SPDX-License-Identifier: Apache-2.0
 """Architecture guard: the domain/ layer stays technology-agnostic.
 
-CLAUDE.md/design.md advertise "No boto3/LangChain/backend imports" in domain/ as
-a grep-verifiable invariant. This test statically scans every domain module's
-imports and fails on a forbidden one, so an accidental infra import into a pure
-model or algorithm is caught. There are no carve-outs: LangChain documents are
-converted to the domain ``Document`` in ``shared.utils.document_converter``.
+CLAUDE.md/design.md advertise "No boto3/LangChain/backend imports" in domain/.
+Two checks enforce it:
+
+* a static scan of every domain file's own imports (catches function-local
+  imports too), and
+* a runtime check that imports every domain module in a clean interpreter and
+  asserts no forbidden package was loaded *transitively* (e.g. through an eager
+  re-export in ``shared``).
+
+There are no carve-outs: LangChain documents are converted to the domain
+``Document`` in ``shared.utils.document_converter``.
 """
 
 from __future__ import annotations
 
 import ast
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -28,6 +37,16 @@ _FORBIDDEN_PREFIXES = (
     "opensearchpy",
     "gremlin_python",
     "tqdm",
+)
+
+# Top-level packages that must not be in sys.modules after importing the
+# domain. Broader than the static list: also the heavy deps that the
+# LangChain-coupled shared helpers pull in.
+_FORBIDDEN_LOADED = (
+    *_FORBIDDEN_PREFIXES,
+    "langsmith",
+    "lxml",
+    "tenacity",
 )
 
 
@@ -51,3 +70,41 @@ def test_domain_has_no_infra_imports() -> None:
             if match:
                 violations.append(f"{rel} imports '{mod}' (forbidden: {match})")
     assert not violations, "domain purity violated:\n" + "\n".join(violations)
+
+
+def _domain_module_names() -> list[str]:
+    # Walk files, not packages: domain/ingestion and domain/retrieval are
+    # namespace packages (no __init__.py), which pkgutil.walk_packages skips.
+    pkg_root = _DOMAIN_ROOT.parent.parent
+    names = []
+    for py_file in sorted(_DOMAIN_ROOT.rglob("*.py")):
+        parts = py_file.relative_to(pkg_root).with_suffix("").parts
+        if parts[-1] == "__init__":
+            parts = parts[:-1]
+        names.append(".".join(parts))
+    return names
+
+
+def test_domain_import_loads_no_infra_packages() -> None:
+    modules = _domain_module_names()
+    assert any(".ingestion." in m for m in modules)  # the walk reached them
+    script = (
+        "import importlib, json, sys\n"
+        f"for name in {modules!r}:\n"
+        "    importlib.import_module(name)\n"
+        f"forbidden = {_FORBIDDEN_LOADED!r}\n"
+        "loaded = {m.split('.')[0] for m in sys.modules}\n"
+        "print(json.dumps(sorted(t for t in loaded if t.startswith(forbidden))))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
+    )
+    leaked = json.loads(result.stdout.strip().splitlines()[-1])
+    assert not leaked, (
+        f"importing unified_kg_rag.domain.* loaded {leaked}; find the chain with "
+        "`python -X importtime -c 'import <module>'`"
+    )

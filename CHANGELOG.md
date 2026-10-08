@@ -63,6 +63,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   after its prompt (e.g. `AnswerGenerationPrompt`) in traces (#156).
 
 ### Changed
+- **Breaking:** `unified_kg_rag.shared.utils` no longer re-exports the
+  LangChain-coupled and console helpers, so importing a `domain` module no
+  longer loads LangChain, LangSmith, lxml, tenacity or tqdm. Import
+  `BatchProcessor`, `BATCH_ITEM_FAILED` and `RobustXMLOutputParser` from
+  `shared.utils.langchain`, `convert_langchain_to_document` from
+  `shared.utils.document_converter`, and `console`/`display_*` from
+  `shared.utils.display`. The domain purity test now also checks transitive
+  imports in a clean interpreter (#PR).
 - Model ids are free-form strings; `aws.bedrock.default_model_id` and
   `fast_model_id` set every role of their tier, `aws.bedrock.model_overrides`
   describes unknown models, and Claude 4.5 fails fast without an inference

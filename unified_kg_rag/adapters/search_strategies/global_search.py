@@ -32,11 +32,8 @@ from unified_kg_rag.domain.prompts import (
 )
 from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import (
-    BatchProcessor,
-    parse_llm_json,
-    safe_float_parse,
-)
+from unified_kg_rag.shared.utils import parse_llm_json, safe_float_parse
+from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 logger = get_logger(__name__)
 

@@ -22,7 +22,8 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 )
 from unified_kg_rag.domain.models import Constants, SearchStrategy, SearchType
 from unified_kg_rag.shared import get_config, get_logger, setup_logging
-from unified_kg_rag.shared.utils import console, display_ascii_art, event_loop
+from unified_kg_rag.shared.utils import event_loop
+from unified_kg_rag.shared.utils.display import console, display_ascii_art
 
 ROOT_DIRECTORY = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIRECTORY))

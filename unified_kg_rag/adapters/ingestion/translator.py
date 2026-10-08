@@ -13,7 +13,7 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, LanguageCode, ModelPurpose, TextUnit
 from unified_kg_rag.domain.prompts import TextTranslationPrompt
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import BATCH_ITEM_FAILED, BatchProcessor
+from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 logger = get_logger(__name__)
 
