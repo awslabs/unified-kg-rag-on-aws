@@ -63,18 +63,10 @@ class OpenSearchIndexer(VectorIndexer):
         # Per-process content-hash -> embedding cache (avoids re-embedding
         # duplicate/unchanged text within and across incremental runs).
         self._embedding_cache: dict[str, list[float]] = {}
-        self._embedding_cache_hits = 0
-        self._embedding_cache_misses = 0
         # Optional S3-persisted cache so unchanged text is not re-embedded across
         # separate runs/phases (each Fargate phase is a fresh process). Loaded
         # lazily on first embed; best-effort (S3 errors degrade to in-process).
         self._s3_embedding_cache = self._build_s3_embedding_cache()
-
-    @property
-    def embedding_cache_hit_rate(self) -> float:
-        """Fraction of embedding lookups served from cache (observability)."""
-        total = self._embedding_cache_hits + self._embedding_cache_misses
-        return self._embedding_cache_hits / total if total else 0.0
 
     def _build_s3_embedding_cache(self) -> "S3EmbeddingCache | None":
         """Construct the optional S3-persisted embedding cache, if enabled."""
@@ -741,9 +733,7 @@ class OpenSearchIndexer(VectorIndexer):
                     self._embedding_cache[key] = cached
             if cached is not None:
                 result[i] = cached
-                self._embedding_cache_hits += 1
             else:
-                self._embedding_cache_misses += 1
                 if key not in seen_keys:
                     seen_keys.add(key)
                     unique.append((key, text))

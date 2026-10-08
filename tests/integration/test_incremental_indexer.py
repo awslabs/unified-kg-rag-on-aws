@@ -15,7 +15,10 @@ import pytest
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
 from unified_kg_rag.application.storage.indexing_manager import CrossRunMergeResult
-from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
+from unified_kg_rag.domain.ingestion.delta_detector import (
+    compute_doc_id,
+    filter_documents_to_process,
+)
 from unified_kg_rag.domain.models import Document, DocumentLineage, Entity
 from unified_kg_rag.ports.indexer import IndexingStats
 
@@ -88,7 +91,7 @@ def test_first_run_marks_all_new_and_records_registry(indexer) -> None:
     assert set(delta.new) == set(fingerprints)
     assert not delta.deleted
 
-    to_process = inc.documents_to_process(docs, delta)
+    to_process = filter_documents_to_process(docs, delta)
     assert len(to_process) == 2
 
     inc.commit(
@@ -108,7 +111,7 @@ def test_second_run_unchanged_is_noop_delta(indexer) -> None:
 
     delta2, _ = inc.plan(docs)
     assert delta2.is_empty
-    assert inc.documents_to_process(docs, delta2) == []
+    assert filter_documents_to_process(docs, delta2) == []
 
 
 def test_changed_document_is_reprocessed(indexer) -> None:
@@ -120,7 +123,7 @@ def test_changed_document_is_reprocessed(indexer) -> None:
     edited = [_doc("/a.txt", "EDITED")]
     delta, _ = inc.plan(edited)
     assert delta.changed == [compute_doc_id("/a.txt")]
-    assert len(inc.documents_to_process(edited, delta)) == 1
+    assert len(filter_documents_to_process(edited, delta)) == 1
 
 
 def test_changed_document_prunes_stale_artifacts(indexer) -> None:

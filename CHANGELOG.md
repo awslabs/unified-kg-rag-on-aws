@@ -254,6 +254,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - `OptimizedContext.quality_score` and `TokenManager._calculate_quality_score`:
   the score was computed for every query and never read. **Breaking** for code
   that reads or constructs `OptimizedContext` with `quality_score` (#PR).
+- Production methods only tests called: `IncrementalIndexer.documents_to_process`
+  (use `domain.ingestion.delta_detector.filter_documents_to_process`),
+  `BaseGraphRAGRetriever.retrieve` (use `aretrieve`, or LangChain `invoke`),
+  `OpenSearchIndexer.embedding_cache_hit_rate` and the explicit `fuzzy_matcher`
+  argument of `graph_resolver.find_all_matches_for_entity_task`. **Breaking**
+  for code that called them (#PR).
 
 ### Fixed
 - The LLM XML parser no longer tries LangChain's `XMLOutputParser.parse`

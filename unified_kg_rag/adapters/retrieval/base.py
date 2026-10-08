@@ -110,9 +110,6 @@ class BaseGraphRAGRetriever(BaseRetriever, MetricsMixin, ABC):
             logger.error("Document retrieval failed: %s", str(e))
             raise
 
-    def retrieve(self, query: SearchQuery) -> list[RetrievalResult]:
-        return asyncio.run(self.aretrieve(query))
-
     @abstractmethod
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         pass

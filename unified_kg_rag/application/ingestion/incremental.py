@@ -26,7 +26,6 @@ from pydantic import BaseModel, Field
 from unified_kg_rag.domain.ingestion.delta_detector import (
     detect_delta,
     document_doc_id,
-    filter_documents_to_process,
 )
 from unified_kg_rag.domain.models import (
     Claim,
@@ -198,12 +197,6 @@ class IncrementalIndexer:
         return detect_delta(
             documents, self.doc_status, self.scope, failed_doc_ids or ()
         )
-
-    def documents_to_process(
-        self, documents: list[Document], delta: DocumentDelta
-    ) -> list[Document]:
-        """Return the documents requiring extraction this run (new + changed)."""
-        return filter_documents_to_process(documents, delta)
 
     def remove_obsolete_artifacts(self, doc_ids: list[str]) -> bool:
         """Delete artifacts belonging only to the given (deleted/changed) docs.
