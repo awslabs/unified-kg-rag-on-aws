@@ -39,6 +39,7 @@ GPT_MODELS = [m for m in LanguageModelId if m.value.startswith("openai.")]
 NEW_CLAUDE_MODELS = [
     LanguageModelId.CLAUDE_V5_5_SONNET,
     LanguageModelId.CLAUDE_V5_5_OPUS,
+    LanguageModelId.CLAUDE_V5_5_HAIKU,
     LanguageModelId.CLAUDE_V4_8_OPUS,
     LanguageModelId.CLAUDE_V4_7_OPUS,
     LanguageModelId.CLAUDE_V4_6_OPUS,

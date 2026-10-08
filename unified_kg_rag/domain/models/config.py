@@ -121,6 +121,7 @@ class LanguageModelId(str, Enum):
     # 'us.'/'apac.'/'global.' inference-profile prefixes.
     CLAUDE_V5_5_SONNET = "anthropic.claude-sonnet-5-5"
     CLAUDE_V5_5_OPUS = "anthropic.claude-opus-5-5"
+    CLAUDE_V5_5_HAIKU = "anthropic.claude-haiku-5-5"
     CLAUDE_V5_SONNET = "anthropic.claude-sonnet-5"
     CLAUDE_V5_OPUS = "anthropic.claude-opus-5"
     CLAUDE_V4_8_OPUS = "anthropic.claude-opus-4-8"

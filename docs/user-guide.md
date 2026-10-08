@@ -351,6 +351,7 @@ against the tokens-per-minute quota.
 | --- | --- | --- | --- |
 | `anthropic.claude-sonnet-5-5` (default) | Anthropic | 1M / 128K | adaptive, always on; `effort` low–max |
 | `anthropic.claude-opus-5-5` | Anthropic | 1M / 128K | adaptive, always on; `effort` low–max |
+| `anthropic.claude-haiku-5-5` | Anthropic | 1M / 128K | adaptive, on by default; `effort` low–max |
 | `anthropic.claude-sonnet-5`, `anthropic.claude-opus-5` | Anthropic | 1M / 128K | adaptive, always on; `effort` |
 | `anthropic.claude-opus-4-8`, `anthropic.claude-opus-4-7` | Anthropic | 1M / 128K | adaptive, always on; `effort` low–max |
 | `anthropic.claude-opus-4-6-v1` | Anthropic | 1M / 128K | opt-in (`--enable-thinking`), adaptive; `effort` low/medium/high/max |
