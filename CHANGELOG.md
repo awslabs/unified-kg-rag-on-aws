@@ -223,7 +223,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   candidate count and the candidates were emitted first, so it returned only
   the candidates: a Neptune and an OpenSearch round trip that re-fetched the
   same reports and counted each twice in fusion. Global search now needs only
-  the document retriever; an old config key is ignored (#PR).
+  the document retriever; an old config key is ignored (#161).
 
 ### Fixed
 - A doc-status record over the DynamoDB 400 KB item limit (a document with
@@ -252,16 +252,16 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   and the seeds themselves were never emitted (10 seeds with 6 neighbours
   each: 1 seed and 2 neighbourhoods came back). The fetch width is now split
   across the seeds, `max_results_per_hop` caps neighbours per node and hop,
-  and a seed scores proximity 1.0 (#PR).
+  and a seed scores proximity 1.0 (#161).
 - Global search's map key points (or reduce summary) reach the answer context
   whole: they are seated before the per-type split instead of sharing the
   `general` share, which cut 7,000 tokens of key points to about 4,200 while
   most of the window stayed unused. Points are still sized by
-  `max_map_reduce_tokens` (#PR).
+  `max_map_reduce_tokens` (#161).
 - DRIFT fusion orders each section type by its native score. All results
   share one RRF bucket, so the rank within a type was arrival order and a
   later iteration's best item ranked below an earlier iteration's worst. The
-  positions of the types in the bucket are unchanged (#PR).
+  positions of the types in the bucket are unchanged (#161).
 - `NeptuneRetriever` seeding by name or query text (no `id` filter) always
   returned nothing: it required and sorted by an `importance` property that
   entity vertices never store. It now orders entities by `rank` and
