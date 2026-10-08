@@ -166,7 +166,8 @@ class GraphExtractor(BaseProcessor):
             if not self.ignore_errors:
                 raise
             logger.error("Error during graph extraction: %s", e)
-            return [], [], ExtractionStats()
+            self.stats.num_failed_extractions = len(text_units)
+            return [], [], self.stats
 
         all_entities, all_relationships = self._process_extraction_results(
             text_units, extraction_results

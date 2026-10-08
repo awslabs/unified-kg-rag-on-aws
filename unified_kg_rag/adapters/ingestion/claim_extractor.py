@@ -180,6 +180,7 @@ class ClaimExtractor(BaseProcessor):
         # results list and misaligning the positional zip in
         # _process_extraction_results (claims attributed to the wrong unit).
         units_to_process = [u for u in text_units if u.id in unit_to_input]
+        self.stats.num_failed_extractions += len(text_units) - len(units_to_process)
 
         def prepare_inputs_for_chunk(
             chunk_items: list[TextUnit],
@@ -200,7 +201,8 @@ class ClaimExtractor(BaseProcessor):
             if not self.ignore_errors:
                 raise
             logger.error("Error during claim extraction: %s", e)
-            return [], ClaimExtractionStats()
+            self.stats.num_failed_extractions += len(units_to_process)
+            return [], self.stats
 
         all_claims = self._process_extraction_results(
             units_to_process, extraction_results

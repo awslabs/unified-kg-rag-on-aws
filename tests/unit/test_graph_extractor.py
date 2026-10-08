@@ -602,9 +602,12 @@ class TestExtractFromTextUnits:
         fake_bp.execute_with_fallback.side_effect = RuntimeError("boom")
         extractor.batch_processor = fake_bp
         ents, rels, stats = extractor.extract_from_text_units(
-            [TextUnit(id="t1", text="x")]
+            [TextUnit(id="t1", text="x"), TextUnit(id="t2", text="y")]
         )
         assert ents == [] and rels == []
+        # Every unit failed; the stats must say so, not report zero failures.
+        assert stats.num_total_units == 2
+        assert stats.num_failed_extractions == 2
 
     def test_batch_error_without_ignore_raises(self, extractor, mocker) -> None:
         extractor.ignore_errors = False
