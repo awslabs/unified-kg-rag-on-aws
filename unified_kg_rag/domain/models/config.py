@@ -5,7 +5,7 @@ import math
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from pydantic import (
     AfterValidator,
@@ -163,6 +163,7 @@ class LanguageModelId(str, Enum):
 
 ModelTier = Literal["default", "fast"]
 EffortLevel = Literal["low", "medium", "high", "xhigh", "max"]
+EFFORT_LEVELS: frozenset[str] = frozenset(get_args(EffortLevel))
 
 # The two shipped model tiers. Every per-role model field declares one of them
 # and inherits aws.bedrock.default_model_id / aws.bedrock.fast_model_id unless
@@ -2484,7 +2485,7 @@ class EvaluationConfig(BaseModel):
         ge=1,
         description="Maximum number of tokens allowed in context for evaluation processing",
     )
-    judge_effort: Literal["low", "medium", "high", "xhigh", "max"] | None = Field(
+    judge_effort: EffortLevel | None = Field(
         default="low",
         description=(
             "Reasoning effort for the LLM judge (RAGAS and LangChain evaluators) "

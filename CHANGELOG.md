@@ -213,6 +213,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   deprecation WARNING like the other renamed keys, instead of living on as a
   config field; stage cache keys are unchanged. **Breaking** for library
   callers: the `BedrockConfig.effort` attribute is removed (#PR).
+- Effort levels are declared once, as `EffortLevel` (with `EFFORT_LEVELS`
+  derived from it); `evaluation.judge_effort` and the model catalog use it,
+  and `BedrockLanguageModelFactory.VALID_EFFORTS` is removed (#PR).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).

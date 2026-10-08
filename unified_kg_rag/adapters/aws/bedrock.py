@@ -35,6 +35,7 @@ from unified_kg_rag.domain.models import (
     RerankModelId,
 )
 from unified_kg_rag.domain.models.config import (
+    EFFORT_LEVELS,
     ModelTier,
     TransientRetryConfig,
 )
@@ -491,9 +492,6 @@ class BedrockLanguageModelFactory(
     DEFAULT_TEMPERATURE: ClassVar[float] = 0.0
     DEFAULT_TOP_K: ClassVar[int] = 50
     DEFAULT_THINKING_BUDGET_TOKENS: ClassVar[int] = 2048
-    VALID_EFFORTS: ClassVar[frozenset[str]] = frozenset(
-        {"low", "medium", "high", "xhigh", "max"}
-    )
 
     def _get_boto_service_name(self) -> str:
         return "bedrock-runtime"
@@ -727,10 +725,10 @@ class BedrockLanguageModelFactory(
             )
             effort = self.config.aws.bedrock.tier_effort(tier)
             source = f"aws.bedrock.{tier}_effort"
-        if effort not in self.VALID_EFFORTS:
+        if effort not in EFFORT_LEVELS:
             raise LanguageModelError(
                 f"Invalid effort level '{effort}' ({source}). "
-                f"Valid levels: {sorted(self.VALID_EFFORTS)}"
+                f"Valid levels: {sorted(EFFORT_LEVELS)}"
             )
         allowed = model_info.supported_efforts
         if allowed is not None and effort not in allowed:
