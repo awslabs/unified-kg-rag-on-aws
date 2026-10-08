@@ -22,7 +22,7 @@ enabled in the baked-in config, and the same phases run either way.
 
 from __future__ import annotations
 
-from aws_cdk import CfnOutput, Duration, Stack
+from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_ecs as ecs  # noqa: F401  (FargatePlatformVersion)
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_kms as kms
@@ -80,17 +80,39 @@ class OrchestrationStack(Stack):
         self.compute = compute
         self.cache_bucket_name = cache_bucket_name
 
-        # Encrypt the topic at rest always: use the provided CMK when present,
-        # otherwise fall back to the AWS-managed SNS key (alias/aws/sns) so the
-        # default (no-CMK) configuration is still encrypted rather than plaintext.
-        topic_key = kms_key or kms.Alias.from_alias_name(
-            self, "SnsManagedKey", "alias/aws/sns"
+        # The alarm topic always gets its OWN customer-managed key. CloudWatch
+        # alarms can only publish to an encrypted topic whose key policy lets
+        # cloudwatch.amazonaws.com use the key; the AWS-managed alias/aws/sns key
+        # policy cannot be edited and the shared data CMK only trusts the account
+        # root, so either one silently drops every alarm notification. See
+        # "Enable compatibility between event sources from AWS services and
+        # encrypted topics" in the SNS developer guide.
+        self.topic_key = kms.Key(
+            self,
+            "AlarmTopicKey",
+            description="unified-kg-rag-on-aws alarm topic key (CloudWatch alarms "
+            "+ Step Functions publish)",
+            enable_key_rotation=True,
+            removal_policy=(
+                RemovalPolicy.DESTROY
+                if config.removal_destroy
+                else RemovalPolicy.RETAIN
+            ),
+        )
+        self.topic_key.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="AllowCloudWatchAlarmsToPublish",
+                principals=[iam.ServicePrincipal("cloudwatch.amazonaws.com")],
+                actions=["kms:Decrypt", "kms:GenerateDataKey*"],
+                resources=["*"],
+                conditions={"StringEquals": {"aws:SourceAccount": self.account}},
+            )
         )
         self.alarm_topic = sns.Topic(
             self,
             "PipelineAlarms",
             topic_name=f"{config.prefix}-pipeline-alarms",
-            master_key=topic_key,
+            master_key=self.topic_key,
         )
         # Require TLS for all publishers (defense in depth).
         self.alarm_topic.add_to_resource_policy(
@@ -125,6 +147,9 @@ class OrchestrationStack(Stack):
             tracing_enabled=True,  # X-Ray
             logs=sfn.LogOptions(destination=self.log_group, level=sfn.LogLevel.ALL),
         )
+        # SnsPublish grants sns:Publish only; publishing to an encrypted topic
+        # also needs the key (SNS docs: kms:GenerateDataKey* + kms:Decrypt).
+        self.topic_key.grant(self.state_machine, "kms:Decrypt", "kms:GenerateDataKey*")
         CfnOutput(self, "StateMachineArn", value=self.state_machine.state_machine_arn)
 
     # --------------------------------------------------------- phase task

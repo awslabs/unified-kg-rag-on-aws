@@ -40,7 +40,8 @@ Context keys (all optional; sensible defaults shown):
                                        (BEDROCK_GUARDRAIL_IDENTIFIER); does NOT
                                        disable creation
   use_cmk             False            customer-managed KMS key for at-rest
-                                       encryption (S3/Neptune/OpenSearch/SNS/DDB)
+                                       encryption (S3/Neptune/OpenSearch/DDB); the
+                                       alarm topic always has its own CMK
   vpc_flow_logs       dev:False/else:True  enable VPC flow logs (created VPC only)
   deletion_protection dev:False/else:True  protect Neptune/OpenSearch from deletion
   bedrock_model_arns  None             scope Bedrock IAM to specific model ARNs

@@ -3,9 +3,10 @@
 """Security: shared CMK (optional).
 
 KMS: when config.use_cmk, a single customer-managed key encrypts at-rest data
-across the deployment (S3 cache, Neptune, OpenSearch, SNS, DynamoDB). Key
-rotation is enabled. When use_cmk is False, services use AWS-managed keys
-(cheaper; fine for dev). Exposed as ``self.kms_key`` (None if disabled).
+across the deployment (S3 cache, Neptune, OpenSearch, DynamoDB). The SNS alarm
+topic has its own key in the orchestration stack, because CloudWatch must be
+allowed to use it. Key rotation is enabled. When use_cmk is False, services use
+AWS-managed keys (cheaper; fine for dev). Exposed as ``self.kms_key`` (None if disabled).
 
 The Bedrock Guardrail lives in its own ``GuardrailStack`` because it must be
 created in the Bedrock runtime region (``bedrock_region``), which can differ
@@ -40,7 +41,7 @@ class SecurityStack(Stack):
             self,
             "DataKey",
             alias=f"alias/{self.config.prefix}-data",
-            description="unified-kg-rag-on-aws at-rest encryption key (S3/Neptune/OpenSearch/SNS/DDB)",
+            description="unified-kg-rag-on-aws at-rest encryption key (S3/Neptune/OpenSearch/DDB)",
             enable_key_rotation=True,
             removal_policy=(
                 RemovalPolicy.DESTROY
