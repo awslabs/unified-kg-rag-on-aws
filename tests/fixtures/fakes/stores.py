@@ -31,10 +31,10 @@ class _Recorder:
         # collection name -> {id: item}
         self.data: dict[str, dict[str, Any]] = {}
 
-    def _put(self, collection: str, items: list[Any] | None) -> IndexingStats:
+    def _put(self, collection: str, items: list[Any]) -> IndexingStats:
         stats = IndexingStats()
         bucket = self.data.setdefault(collection, {})
-        for item in items or []:
+        for item in items:
             bucket[item.id] = item
             stats.add_success()
         return stats
@@ -101,15 +101,15 @@ class FakeGraphStore:
 
     # --- writes ------------------------------------------------------------
 
-    def index_entities(self, entities: list[Any] | None = None) -> IndexingStats:
-        for suffix in {BaseIndexer.get_suffix(e) for e in entities or []}:
+    def index_entities(self, entities: list[Any]) -> IndexingStats:
+        for suffix in {BaseIndexer.get_suffix(e) for e in entities}:
             self._drop_vertices(suffix, list(self.ids("entities")))
         return self.upsert_entities(entities)
 
-    def upsert_entities(self, entities: list[Any] | None = None) -> IndexingStats:
-        stats = IndexingStats(total_items=len(entities or []))
+    def upsert_entities(self, entities: list[Any]) -> IndexingStats:
+        stats = IndexingStats(total_items=len(entities))
         bucket = self.data.setdefault("entities", {})
-        for entity in entities or []:
+        for entity in entities:
             value_map = bucket.setdefault(
                 (BaseIndexer.get_suffix(entity), entity.id), {"id": [entity.id]}
             )
@@ -119,13 +119,13 @@ class FakeGraphStore:
             stats.add_success()
         return stats
 
-    def index_relationships(self, rels: list[Any] | None = None) -> IndexingStats:
-        return self.upsert_relationships(rels)
+    def index_relationships(self, relationships: list[Any]) -> IndexingStats:
+        return self.upsert_relationships(relationships)
 
-    def upsert_relationships(self, rels: list[Any] | None = None) -> IndexingStats:
-        stats = IndexingStats(total_items=len(rels or []))
+    def upsert_relationships(self, relationships: list[Any]) -> IndexingStats:
+        stats = IndexingStats(total_items=len(relationships))
         bucket = self.data.setdefault("relationships", {})
-        for rel in rels or []:
+        for rel in relationships:
             bucket[(BaseIndexer.get_suffix(rel), rel.id)] = {
                 "props": {
                     "id": rel.id,
@@ -138,13 +138,13 @@ class FakeGraphStore:
             stats.add_success()
         return stats
 
-    def index_communities(self, comms: list[Any] | None = None) -> IndexingStats:
-        return self.upsert_communities(comms)
+    def index_communities(self, communities: list[Any]) -> IndexingStats:
+        return self.upsert_communities(communities)
 
-    def upsert_communities(self, comms: list[Any] | None = None) -> IndexingStats:
-        stats = IndexingStats(total_items=len(comms or []))
+    def upsert_communities(self, communities: list[Any]) -> IndexingStats:
+        stats = IndexingStats(total_items=len(communities))
         bucket = self.data.setdefault("communities", {})
-        for comm in comms or []:
+        for comm in communities:
             bucket[(BaseIndexer.get_suffix(comm), comm.id)] = comm
             stats.add_success()
         return stats
@@ -236,9 +236,9 @@ class FakeVectorStore(_Recorder):
         super().__init__()
         # IndexingManager.delete_documents reads index prefixes off this.
         self.opensearch_config = opensearch_config
-        # Records (prefix, suffix) of each delete_by_id call so tests can assert
-        # per-index routing (delete is fanned out once per index prefix).
-        self.delete_calls: list[tuple[str | None, str | None]] = []
+        # Records (alias_prefix, suffix) of each delete_by_id call so tests can
+        # assert per-index routing (delete is fanned out once per index prefix).
+        self.delete_calls: list[tuple[str, str]] = []
 
     def clear(self, suffixes: list[str]) -> bool:
         self.data.clear()
@@ -250,40 +250,44 @@ class FakeVectorStore(_Recorder):
     def get_stats(self) -> dict[str, Any]:
         return {k: len(v) for k, v in self.data.items()}
 
-    def index_text_units(self, items: list[Any] | None = None) -> IndexingStats:
-        return self._put("text_units", items)
+    def get_entity_count(self, suffixes: list[str]) -> int:
+        # Like clear(), not suffix-scoped: this fake keys items by id only.
+        return len(self.data.get("entities", {}))
 
-    def index_entities(self, items: list[Any] | None = None) -> IndexingStats:
-        return self._put("entities", items)
+    def index_text_units(self, text_units: list[Any]) -> IndexingStats:
+        return self._put("text_units", text_units)
 
-    def index_relationships(self, items: list[Any] | None = None) -> IndexingStats:
-        return self._put("relationships", items)
+    def index_entities(self, entities: list[Any]) -> IndexingStats:
+        return self._put("entities", entities)
 
-    def index_community_reports(self, items: list[Any] | None = None) -> IndexingStats:
-        return self._put("community_reports", items)
+    def index_relationships(self, relationships: list[Any]) -> IndexingStats:
+        return self._put("relationships", relationships)
 
-    def index_claims(self, items: list[Any] | None = None) -> IndexingStats:
-        return self._put("claims", items)
+    def index_community_reports(self, reports: list[Any]) -> IndexingStats:
+        return self._put("community_reports", reports)
 
-    def upsert_text_units(self, items: list[Any] | None = None) -> IndexingStats:
-        return self._put("text_units", items)
+    def index_claims(self, claims: list[Any]) -> IndexingStats:
+        return self._put("claims", claims)
 
-    def upsert_entities(self, items: list[Any] | None = None) -> IndexingStats:
-        return self._put("entities", items)
+    def upsert_text_units(self, text_units: list[Any]) -> IndexingStats:
+        return self._put("text_units", text_units)
 
-    def upsert_relationships(self, items: list[Any] | None = None) -> IndexingStats:
-        return self._put("relationships", items)
+    def upsert_entities(self, entities: list[Any]) -> IndexingStats:
+        return self._put("entities", entities)
 
-    def upsert_claims(self, items: list[Any] | None = None) -> IndexingStats:
-        return self._put("claims", items)
+    def upsert_relationships(self, relationships: list[Any]) -> IndexingStats:
+        return self._put("relationships", relationships)
 
-    def upsert_community_reports(self, items: list[Any] | None = None) -> IndexingStats:
-        return self._put("community_reports", items)
+    def upsert_claims(self, claims: list[Any]) -> IndexingStats:
+        return self._put("claims", claims)
+
+    def upsert_community_reports(self, reports: list[Any]) -> IndexingStats:
+        return self._put("community_reports", reports)
 
     def delete_by_id(
-        self, ids: list[str], prefix: str | None = None, suffix: str | None = None
+        self, ids: list[str], alias_prefix: str, suffix: str
     ) -> IndexingStats:
-        self.delete_calls.append((prefix, suffix))
+        self.delete_calls.append((alias_prefix, suffix))
         return self.delete(ids)
 
     def delete_document_artifacts(
