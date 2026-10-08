@@ -695,6 +695,48 @@ async def test_asearch_fuses_with_per_type_quota() -> None:
     assert captured["rerank_only_types"] == {"text"}
 
 
+def _typed(source: str, retriever_type: str, score: float) -> RetrievalResult:
+    return RetrievalResult(
+        content=source, score=score, source=source, retriever_type=retriever_type
+    )
+
+
+async def test_asearch_ranks_each_type_by_score_before_fusion() -> None:
+    # RRF ranks the one "results" bucket by position. Results arrive per
+    # retrieval call, so a later iteration's best entity ranked below an
+    # earlier iteration's worst one.
+    seeds = [_typed("c0", "community", 0.9)]
+    first = [_typed("e-weak", "entity", 0.2), _typed("t-weak", "text", 0.1)]
+    second = [_typed("e-strong", "entity", 0.8), _typed("t-strong", "text", 0.7)]
+    strat = _bare_strategy(
+        enable_llm_convergence=False, retrievers={"document": _StubRetriever(seeds)}
+    )
+    fused: list[list[RetrievalResult]] = []
+
+    async def _fake_iterative(query, all_results, seen, metrics, config=None):
+        all_results.extend(first + second)
+
+    def _fuse(groups, **kw):
+        fused.append(groups["results"])
+        return groups["results"]
+
+    strat._iterative_search = _fake_iterative  # type: ignore[method-assign]
+    strat.hybrid_scorer = SimpleNamespace(fuse_and_rerank_results=_fuse)
+    strat._record_search_metrics = lambda *a, **k: None  # type: ignore[method-assign]
+    strat.drift_config.enable_primer = False
+
+    await strat.asearch(SearchQuery(query="q", top_k=10))
+
+    # Within each type: best score first. The type of each slot is unchanged.
+    assert [r.source for r in fused[0]] == [
+        "c0",
+        "e-strong",
+        "t-strong",
+        "e-weak",
+        "t-weak",
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # The caller's RunnableConfig reaches every DRIFT LLM call
 # --------------------------------------------------------------------------- #

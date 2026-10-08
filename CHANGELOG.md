@@ -258,6 +258,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `general` share, which cut 7,000 tokens of key points to about 4,200 while
   most of the window stayed unused. Points are still sized by
   `max_map_reduce_tokens` (#PR).
+- DRIFT fusion orders each section type by its native score. All results
+  share one RRF bucket, so the rank within a type was arrival order and a
+  later iteration's best item ranked below an earlier iteration's worst. The
+  positions of the types in the bucket are unchanged (#PR).
 - `NeptuneRetriever` seeding by name or query text (no `id` filter) always
   returned nothing: it required and sorted by an `importance` property that
   entity vertices never store. It now orders entities by `rank` and
