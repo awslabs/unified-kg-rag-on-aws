@@ -403,3 +403,31 @@ def test_visualization_explicit_directory_wins(tmp_path) -> None:
 
 def test_visualization_without_cache_dir_falls_back(tmp_path) -> None:
     assert _viz_dir(None, None) is None
+
+
+# --- extraction stages: failed text units reach the context ---------------
+
+
+def test_extraction_stage_records_failed_units_and_rerun_replaces_them(
+    mocker,
+) -> None:
+    from unified_kg_rag.adapters.ingestion.graph_extractor import ExtractionStats
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+
+    extractor = mocker.MagicMock()
+    mocker.patch.object(ps, "GraphExtractor", return_value=extractor)
+    stage = ps.GraphExtractionStage(config=Config(), boto_session=mocker.MagicMock())
+    ctx = _context()
+
+    extractor.extract_from_text_units.return_value = (
+        [],
+        [],
+        ExtractionStats(num_failed_extractions=1, failed_text_unit_ids=["t1"]),
+    )
+    stage._execute_core(ctx)
+    assert ctx.failed_text_unit_ids == {"graph_extraction": ["t1"]}
+
+    # A re-run of the stage replaces its entry rather than accumulating.
+    extractor.extract_from_text_units.return_value = ([], [], ExtractionStats())
+    stage._execute_core(ctx)
+    assert ctx.failed_text_unit_ids == {"graph_extraction": []}

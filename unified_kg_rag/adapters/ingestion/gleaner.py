@@ -154,6 +154,8 @@ class GleaningStats(BaseModel):
     # Unit refinements that failed (input prep, LLM call, or whole batch),
     # summed over rounds; such units simply gain nothing from gleaning.
     num_failed_units: int = 0
+    # Distinct ids of the units with at least one failed refinement.
+    failed_text_unit_ids: list[str] = Field(default_factory=list)
     rounds: list[GleaningRound] = Field(default_factory=list)
 
     @property
@@ -204,7 +206,7 @@ class GraphGleaner(BaseProcessor):
         self.max_workers = max_workers or default_max_workers()
         self.use_process_pool = use_process_pool
         self.show_progress = show_progress
-        self._failed_units = 0
+        self._failed_unit_ids: list[str] = []
 
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor(
@@ -246,7 +248,7 @@ class GraphGleaner(BaseProcessor):
             current_entities, current_relationships
         )
         stats = GleaningStats(initial_quality_score=initial_quality)
-        self._failed_units = 0
+        self._failed_unit_ids = []
 
         logger.info(
             "Starting graph gleaning from %s text units, "
@@ -334,7 +336,8 @@ class GraphGleaner(BaseProcessor):
             units_to_glean = [unit for unit in units_to_glean if unit.id in gained]
 
         stats.total_rounds = len(stats.rounds)
-        stats.num_failed_units = self._failed_units
+        stats.num_failed_units = len(self._failed_unit_ids)
+        stats.failed_text_unit_ids = sorted(set(self._failed_unit_ids))
         stats.final_quality_score = current_quality
         stats.total_processing_time = time.time() - start_time
 
@@ -506,7 +509,9 @@ class GraphGleaner(BaseProcessor):
         # the zip to the prepared units so a single failed prep degrades to
         # skipping that unit, not crashing the stage.
         prepared_units = [u for u in text_units if u.id in unit_to_input]
-        self._failed_units += len(text_units) - len(prepared_units)
+        self._failed_unit_ids.extend(
+            u.id for u in text_units if u.id not in unit_to_input
+        )
 
         try:
             results = self.batch_processor.execute_with_fallback(
@@ -522,7 +527,7 @@ class GraphGleaner(BaseProcessor):
             if not self.ignore_errors:
                 raise
             logger.error("Error during graph refinement: %s", e)
-            self._failed_units += len(prepared_units)
+            self._failed_unit_ids.extend(u.id for u in prepared_units)
             return [], [], {}
 
         all_new_entities, all_new_relationships = [], []
@@ -535,7 +540,7 @@ class GraphGleaner(BaseProcessor):
         # relationship carried by the round in place without racing another chunk.
         for item, result_data in zip(prepared_units, results, strict=True):
             if result_data is BATCH_ITEM_FAILED:
-                self._failed_units += 1
+                self._failed_unit_ids.append(item.id)
                 continue
             new_entities, new_relationships, quality_scores = (
                 self._parse_refinement_output(

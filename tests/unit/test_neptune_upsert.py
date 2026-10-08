@@ -140,10 +140,11 @@ def test_write_relationships_isolates_a_failing_edge(indexer, mocker) -> None:
 
     calls = {"n": 0}
 
-    def flaky_execute(traversal, op):
+    def flaky_execute(traversal, op, *, results=False):
         calls["n"] += 1
         if calls["n"] == 2:  # second edge fails
             raise RuntimeError("neptune write rejected")
+        return ["edge-id"]
 
     mocker.patch.object(indexer, "_execute_with_retries", side_effect=flaky_execute)
 
@@ -157,6 +158,42 @@ def test_write_relationships_isolates_a_failing_edge(indexer, mocker) -> None:
     assert stats.total_items == 3
     assert stats.successful_items == 2
     assert stats.failed_items == 1
+
+
+def test_write_relationships_counts_an_edge_without_source_as_failed(
+    indexer, mocker
+) -> None:
+    # addE off V().has(id, source) yields no traverser and no error when the
+    # source vertex is missing; the edge must not be counted as written.
+    indexer.neptune_client.g = RecordingTraversal([])
+    written = {"r1": ["r1"], "r2": [], "r3": ["r3"]}
+    rels = [
+        Relationship(id="r1", source_id="e1", target_id="e2"),
+        Relationship(id="r2", source_id="missing", target_id="e3"),
+        Relationship(id="r3", source_id="e3", target_id="e4"),
+    ]
+    # Edges are written in input order, so key the fake result on call order.
+    order = iter(r.id for r in rels)
+    mocker.patch.object(
+        indexer,
+        "_execute_with_retries",
+        side_effect=lambda traversal, op, *, results=False: written[next(order)],
+    )
+
+    stats = indexer.upsert_relationships(rels)
+    assert stats.total_items == 3
+    assert stats.successful_items == 2
+    assert stats.failed_items == 1
+
+
+def test_add_edge_traversal_returns_the_edge_id(indexer) -> None:
+    calls: list[str] = []
+    indexer._build_add_edge_traversal(
+        RecordingTraversal(calls),
+        Relationship(id="r1", source_id="e1", target_id="e2"),
+        "Entity-default",
+    )
+    assert calls[-1] == "id_"
 
 
 def test_write_relationships_empty_input_returns_empty_stats(indexer) -> None:

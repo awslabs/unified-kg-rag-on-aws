@@ -47,6 +47,7 @@ class DocStatusPort(Protocol):
         incremental run. With ``scope``, only stored records of that scope are
         candidates for ``deleted`` (a record without a scope never is), so one
         tenant's or one corpus's run cannot delete another's documents.
-        ``scope=None`` considers every stored record.
+        ``scope=None`` considers every stored record. A stored ``FAILED``
+        record is ``changed`` even when its hash matches, so it is retried.
         """
         ...

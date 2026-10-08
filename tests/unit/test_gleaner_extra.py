@@ -778,7 +778,7 @@ class TestGleanGraphOrchestration:
             [TextUnit(id="t1", text="a")], [], []
         )
         assert new_e == [] and new_r == [] and scores == {}
-        assert gleaner._failed_units == 1
+        assert gleaner._failed_unit_ids == ["t1"]
 
     def test_glean_graph_counts_failed_unit_refinements(self, gleaner, mocker) -> None:
         units = [TextUnit(id="t1", text="a"), TextUnit(id="t2", text="b")]
@@ -794,6 +794,7 @@ class TestGleanGraphOrchestration:
         _, _, stats = gleaner.glean_graph(units, [], [])
 
         assert stats.num_failed_units == 1
+        assert stats.failed_text_unit_ids == ["t2"]
 
     def test_perform_llm_refinement_reraises_when_not_ignoring(
         self, gleaner, mocker

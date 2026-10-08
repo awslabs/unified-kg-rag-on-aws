@@ -932,6 +932,13 @@ the container entrypoint sets it to the S3 URI it syncs from). So:
 Moving a local corpus to another directory changes its default scope: set
 `source_scope` to a stable name first, or rebuild.
 
+### Document size limit
+
+The registry stores each document's artifact ids (text units, entities,
+relationships, claims, communities, reports) in one DynamoDB item, and an item
+is limited to 400 KB, roughly 10,000 ids. A document that produces more fails
+the indexing stage with an error naming the file; split it into smaller files.
+
 ### Cross-run merge
 
 By default (`indexing.cross_run_merge: true`) a delta run *unions* the delta

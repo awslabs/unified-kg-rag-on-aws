@@ -480,7 +480,10 @@ class NeptuneIndexer(GraphIndexer):
             .property("id", rel.id)
         )
         self._set_edge_properties_on_traversal(add_edge, props)
-        return cast(GraphTraversal, add_edge)
+        # Return the new edge's id: with no source vertex addE gets no traverser
+        # and raises nothing (a missing target does raise), so an empty result
+        # is the only sign of a dropped edge.
+        return cast(GraphTraversal, add_edge.id_())
 
     def _write_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Write relationship edges one small traversal per edge (idempotent).
@@ -529,8 +532,19 @@ class NeptuneIndexer(GraphIndexer):
                     traversal = self._build_add_edge_traversal(
                         self.neptune_client.g, rel, entity_label
                     )
-                    self._execute_with_retries(traversal, "Relationship indexing")
-                    stats.add_success(1)
+                    written = self._execute_with_retries(
+                        traversal, "Relationship indexing", results=True
+                    )
+                    if written:
+                        stats.add_success(1)
+                    else:
+                        stats.add_error("source entity vertex not found")
+                        logger.warning(
+                            "Relationship '%s' not written: source entity '%s' "
+                            "not found",
+                            rel.id,
+                            rel.source_id,
+                        )
                 except Exception as e:
                     stats.add_error(str(e))
                     logger.warning("Failed indexing relationship '%s': %s", rel.id, e)
@@ -885,14 +899,22 @@ class NeptuneIndexer(GraphIndexer):
         return stats
 
     def _execute_with_retries(
-        self, traversal: GraphTraversal, operation_name: str
-    ) -> None:
+        self, traversal: GraphTraversal, operation_name: str, *, results: bool = False
+    ) -> list[Any]:
+        """Run ``traversal`` with retries; with ``results``, return its results.
+
+        Without ``results`` the traversal is iterated (nothing sent back) and
+        ``[]`` is returned.
+        """
         max_attempts = self.neptune_config.max_attempts
         delay = self.neptune_config.retry_delay_seconds
-        for attempt in range(max_attempts):
+        attempt = 0
+        while True:
             try:
+                if results:
+                    return list(traversal.toList())
                 traversal.iterate()
-                return
+                return []
             except Exception as e:
                 if is_permanent_neptune_error(e) or attempt + 1 == max_attempts:
                     logger.error(
@@ -914,6 +936,7 @@ class NeptuneIndexer(GraphIndexer):
                     e,
                 )
                 _sleep(sleep_for)
+                attempt += 1
 
     def _batch_iterator(self, items: list[Any]) -> Iterator[list[Any]]:
         batch_size = self.neptune_config.batch_size

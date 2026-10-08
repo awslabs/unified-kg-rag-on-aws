@@ -725,8 +725,10 @@ class RobustXMLOutputParser(XMLOutputParser):
                 section_result = RobustXMLOutputParser._parse_xml_section(
                     section_content
                 )
-                if section_result is not None:
-                    result[section_name] = section_result
+                # An empty section is an empty answer (e.g. a chunk with no
+                # relationships), kept as {} like the lxml path does, so a
+                # response of only empty sections still parses.
+                result[section_name] = {} if section_result is None else section_result
 
             return result if result else None
 

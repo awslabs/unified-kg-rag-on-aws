@@ -18,8 +18,13 @@ from typing import TYPE_CHECKING, Any
 import boto3
 from botocore.exceptions import ClientError
 
-from unified_kg_rag.domain.models import Config, DocStatusRecord, DocumentDelta
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.domain.models import (
+    Config,
+    DocStatus,
+    DocStatusRecord,
+    DocumentDelta,
+)
+from unified_kg_rag.shared import DataProcessingError, get_logger
 
 if TYPE_CHECKING:
     from types_boto3_dynamodb import DynamoDBClient
@@ -30,6 +35,8 @@ logger = get_logger(__name__)
 # is the partition key.
 _PARTITION_KEY = "doc_id"
 _SCOPE_ATTRIBUTE = "registry_scope"
+# DynamoDB rejects an item over 400 KB (attribute names plus values).
+_MAX_ITEM_BYTES = 400 * 1024
 
 
 class DynamoDBDocStatusStore:
@@ -86,7 +93,37 @@ class DynamoDBDocStatusStore:
         return self._deserialize(item)
 
     def put(self, record: DocStatusRecord) -> None:
-        self.client.put_item(TableName=self.table_name, Item=self._serialize(record))
+        """Write ``record``; raise ``DataProcessingError`` if it is over 400 KB.
+
+        The record holds every artifact id of the document (~36 bytes each),
+        so one item fits roughly 10,000 ids; a larger document must be split
+        into smaller files.
+        """
+        item = self._serialize(record)
+        size = self._item_size(item)
+        if size > _MAX_ITEM_BYTES:
+            raise DataProcessingError(
+                f"Doc-status record for '{record.file_path or record.doc_id}' is "
+                f"{size} bytes, over the DynamoDB 400 KB item limit; split the "
+                "document into smaller files"
+            )
+        self.client.put_item(TableName=self.table_name, Item=item)
+
+    @staticmethod
+    def _item_size(item: dict[str, Any]) -> int:
+        """Item size as DynamoDB counts it: names plus UTF-8 values."""
+        size = 0
+        for name, cell in item.items():
+            size += len(name.encode())
+            if "S" in cell:
+                size += len(cell["S"].encode())
+            elif "SS" in cell:
+                size += sum(len(value.encode()) for value in cell["SS"])
+            elif "N" in cell:
+                size += len(cell["N"])
+            else:  # NULL
+                size += 1
+        return size
 
     def delete(self, doc_id: str) -> None:
         self.client.delete_item(
@@ -101,34 +138,37 @@ class DynamoDBDocStatusStore:
                 records.append(self._deserialize(item))
         return records
 
-    def _scan_fingerprints(self) -> dict[str, tuple[str, str | None]]:
-        """Scan only ``{doc_id: (content_hash, scope)}`` for delta classification.
+    def _scan_fingerprints(self) -> dict[str, tuple[str, str | None, bool]]:
+        """Scan only ``{doc_id: (content_hash, scope, failed)}`` for diffing.
 
-        ``diff`` needs just the partition key, the content hash and the scope,
+        ``diff`` needs just the partition key, the content hash, the scope and
+        whether the last run failed on the document,
         so this uses a ``ProjectionExpression`` to fetch those attributes instead
         of deserializing the full ``DocStatusRecord`` (content hash + six
         artifact-id lists) for every row. (A full ``scan`` is still required
         because deletion detection needs every stored doc_id of the scope.)
         """
-        fingerprints: dict[str, tuple[str, str | None]] = {}
+        fingerprints: dict[str, tuple[str, str | None, bool]] = {}
         paginator = self.client.get_paginator("scan")
         for page in paginator.paginate(
             TableName=self.table_name,
             # Attribute-name placeholders keep the projection clear of
             # DynamoDB reserved words.
-            ProjectionExpression="#pk, #hash, #scope",
+            ProjectionExpression="#pk, #hash, #scope, #status",
             ExpressionAttributeNames={
                 "#pk": _PARTITION_KEY,
                 "#hash": "content_hash",
                 "#scope": _SCOPE_ATTRIBUTE,
+                "#status": "status",
             },
         ):
             for item in page.get("Items", []):
                 doc_id = item.get(_PARTITION_KEY, {}).get("S")
                 content_hash = item.get("content_hash", {}).get("S", "")
                 scope = item.get(_SCOPE_ATTRIBUTE, {}).get("S")
+                failed = item.get("status", {}).get("S") == DocStatus.FAILED.value
                 if doc_id is not None:
-                    fingerprints[doc_id] = (content_hash, scope)
+                    fingerprints[doc_id] = (content_hash, scope, failed)
         return fingerprints
 
     def diff(self, incoming: dict[str, str], scope: str | None = None) -> DocumentDelta:
@@ -136,21 +176,22 @@ class DynamoDBDocStatusStore:
 
         Mirrors ``FakeDocStatusStore.diff`` exactly so the production and test
         implementations stay behaviourally identical: with ``scope``, only
-        stored records of that scope can be classified deleted.
+        stored records of that scope can be classified deleted. A FAILED
+        record is ``changed`` even with an unchanged hash, so it is retried.
         """
         stored = self._scan_fingerprints()
         delta = DocumentDelta()
         for doc_id, content_hash in incoming.items():
             if doc_id not in stored:
                 delta.new.append(doc_id)
-            elif stored[doc_id][0] != content_hash:
+            elif stored[doc_id][0] != content_hash or stored[doc_id][2]:
                 delta.changed.append(doc_id)
             else:
                 delta.unchanged.append(doc_id)
         incoming_ids = set(incoming)
         delta.deleted = [
             doc_id
-            for doc_id, (_, stored_scope) in stored.items()
+            for doc_id, (_, stored_scope, _) in stored.items()
             if doc_id not in incoming_ids and (scope is None or stored_scope == scope)
         ]
         return delta

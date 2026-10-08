@@ -424,8 +424,14 @@ class TestParseExtractionResult:
         with pytest.raises(DataProcessingError):
             extractor._parse_extraction_result(result, text_unit)
 
-    def test_empty_entities_section_is_valid(self, extractor, text_unit) -> None:
-        ents, rels = extractor._parse_extraction_result({"entities": {}}, text_unit)
+    @pytest.mark.parametrize(
+        "result",
+        [{"entities": {}}, {"entities": {}, "relationships": {}}],
+    )
+    def test_empty_entities_section_is_valid(
+        self, extractor, text_unit, result
+    ) -> None:
+        ents, rels = extractor._parse_extraction_result(result, text_unit)
         assert ents == [] and rels == []
 
     def test_missing_relationships_keeps_entities(self, extractor, text_unit) -> None:
@@ -587,6 +593,7 @@ class TestExtractFromTextUnits:
         _, _, stats = extractor.extract_from_text_units(units)
         assert stats.num_failed_extractions == 2
         assert stats.num_successful_extractions == 1
+        assert stats.failed_text_unit_ids == ["t0", "t1"]
 
     def test_batch_error_with_ignore_errors_returns_empty(
         self, extractor, mocker
@@ -596,9 +603,13 @@ class TestExtractFromTextUnits:
         fake_bp.execute_with_fallback.side_effect = RuntimeError("boom")
         extractor.batch_processor = fake_bp
         ents, rels, stats = extractor.extract_from_text_units(
-            [TextUnit(id="t1", text="x")]
+            [TextUnit(id="t1", text="x"), TextUnit(id="t2", text="y")]
         )
         assert ents == [] and rels == []
+        # Every unit failed; the stats must say so, not report zero failures.
+        assert stats.num_total_units == 2
+        assert stats.num_failed_extractions == 2
+        assert stats.failed_text_unit_ids == ["t1", "t2"]
 
     def test_batch_error_without_ignore_raises(self, extractor, mocker) -> None:
         extractor.ignore_errors = False
