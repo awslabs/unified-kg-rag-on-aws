@@ -249,6 +249,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   OpenSearch domain's app, slow-index and slow-search log groups. The domain
   created them with CDK's default `Retain`, so every dev teardown left three
   log groups behind (#166).
+- Changing a `graph.analysis` setting (centrality or statistics) no longer
+  invalidates the `graph_analysis`, `community_detection` and `indexing`
+  stage caches. These settings only shape the stage's centrality and
+  statistics, which no later stage reads, yet they were part of every later
+  stage's cache key, so a tuning change regenerated every community report.
+  The `graph_analysis` and `community_detection` keys change once on upgrade,
+  so a resumed pipeline recomputes those stages one time (#167).
 - `indexing.reset` with the doc-status registry enabled rebuilds from the
   whole corpus and records every document again. The loading stage used to
   diff against the registry first, so the reset cleared the stores but

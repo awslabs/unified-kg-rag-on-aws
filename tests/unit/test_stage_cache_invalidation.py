@@ -228,6 +228,39 @@ class TestFingerprintScope:
             baseline, PipelineStageType.COMMUNITY_DETECTION
         ) != stage_input_fingerprint(changed, PipelineStageType.COMMUNITY_DETECTION)
 
+    def test_graph_analysis_knobs_change_no_stage_key(self) -> None:
+        # Centrality and statistics settings shape only values no later stage
+        # reads, so changing them must not discard the community reports
+        # (LLM output) or the indexing cache.
+        baseline = Config()
+        changed = Config()
+        changed.graph.analysis.centrality.pagerank_alpha = 0.5
+        changed.graph.analysis.centrality.calculate_betweenness = (
+            not baseline.graph.analysis.centrality.calculate_betweenness
+        )
+        changed.graph.analysis.statistics.calculate_diameter = (
+            not baseline.graph.analysis.statistics.calculate_diameter
+        )
+        assert changed.graph.analysis != baseline.graph.analysis
+
+        for stage in (
+            PipelineStageType.GRAPH_ANALYSIS,
+            PipelineStageType.COMMUNITY_DETECTION,
+            PipelineStageType.INDEXING,
+        ):
+            assert stage_input_fingerprint(baseline, stage) == (
+                stage_input_fingerprint(changed, stage)
+            ), stage
+
+    def test_graph_analysis_key_follows_its_upstream_inputs(self) -> None:
+        # The stage passes the resolved graph through, so its cached output
+        # must still go stale when resolution changes.
+        changed = Config()
+        changed.processing.similarity_threshold = 0.5
+        assert stage_input_fingerprint(
+            Config(), PipelineStageType.GRAPH_ANALYSIS
+        ) != stage_input_fingerprint(changed, PipelineStageType.GRAPH_ANALYSIS)
+
     def test_stage_outside_the_canonical_order_folds_in_every_input(self) -> None:
         # A stage added without extending the canonical order must not get a
         # narrower fingerprint than its predecessors.
@@ -248,9 +281,11 @@ class TestFingerprintScope:
         PipelineStageType.GRAPH_RESOLUTION: "09067b47d9fb",
         PipelineStageType.CLAIM_EXTRACTION: "96015659a99b",
         PipelineStageType.CLAIM_RESOLUTION: "96015659a99b",
-        PipelineStageType.GRAPH_ANALYSIS: "6b559362dde3",
-        # auto_resolution now defaults to false.
-        PipelineStageType.COMMUNITY_DETECTION: "b815bca04521",
+        # graph.analysis is no longer an input (it shapes nothing a later
+        # stage reads), so graph analysis shares claim resolution's inputs.
+        PipelineStageType.GRAPH_ANALYSIS: "96015659a99b",
+        # auto_resolution now defaults to false; graph.analysis dropped.
+        PipelineStageType.COMMUNITY_DETECTION: "98d775b8f65c",
     }
 
     def test_default_config_fingerprints_are_unchanged(self) -> None:
