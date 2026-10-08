@@ -60,11 +60,13 @@ class NeptuneIndexer(GraphIndexer):
         if not suffixes:
             return True
 
-        entity_prefix = self.neptune_config.entity_label_prefix.capitalize()
-        community_prefix = self.neptune_config.community_label_prefix.capitalize()
-
-        labels_to_delete = {self._get_name(entity_prefix, s) for s in suffixes} | {
-            self._get_name(community_prefix, s) for s in suffixes
+        labels_to_delete = {
+            self._get_label(prefix, s)
+            for prefix in (
+                self.neptune_config.entity_label_prefix,
+                self.neptune_config.community_label_prefix,
+            )
+            for s in suffixes
         }
 
         try:
@@ -90,9 +92,7 @@ class NeptuneIndexer(GraphIndexer):
         """
         if not ids:
             return []
-        entity_label = self._get_name(
-            self.neptune_config.entity_label_prefix.capitalize(), suffix
-        )
+        entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
         try:
             g = self.neptune_client.g
             entities: list[Entity] = []
@@ -125,9 +125,7 @@ class NeptuneIndexer(GraphIndexer):
         """
         if not ids:
             return []
-        entity_label = self._get_name(
-            self.neptune_config.entity_label_prefix.capitalize(), suffix
-        )
+        entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
         try:
             g = self.neptune_client.g
             rels: list[Relationship] = []
@@ -170,8 +168,8 @@ class NeptuneIndexer(GraphIndexer):
         """
         try:
             g = self.neptune_client.g
-            entity_label = self._get_name(
-                self.neptune_config.entity_label_prefix.capitalize(), suffix
+            entity_label = self._get_label(
+                self.neptune_config.entity_label_prefix, suffix
             )
             rows = (
                 g.V()
@@ -213,9 +211,9 @@ class NeptuneIndexer(GraphIndexer):
         return self._index_generic(
             entities,
             "Entity",
-            self.neptune_config.entity_label_prefix.capitalize(),
-            self.neptune_config.entity_label_prefix.capitalize(),
+            self.neptune_config.entity_label_prefix,
             get_traversal_builder,
+            clear_first=True,
         )
 
     def index_relationships(self, relationships: list[Relationship]) -> IndexingStats:
@@ -250,11 +248,11 @@ class NeptuneIndexer(GraphIndexer):
         for suffix, comms in grouped_items.items():
             stats = IndexingStats()
             start_time = time.time()
-            community_label = self._get_name(
-                self.neptune_config.community_label_prefix.capitalize(), suffix
+            community_label = self._get_label(
+                self.neptune_config.community_label_prefix, suffix
             )
-            entity_label = self._get_name(
-                self.neptune_config.entity_label_prefix.capitalize(), suffix
+            entity_label = self._get_label(
+                self.neptune_config.entity_label_prefix, suffix
             )
 
             if not upsert:
@@ -382,9 +380,9 @@ class NeptuneIndexer(GraphIndexer):
         return self._index_generic(
             entities,
             "Entity",
-            self.neptune_config.entity_label_prefix.capitalize(),
-            "",  # no clear: upsert is non-destructive
+            self.neptune_config.entity_label_prefix,
             get_traversal_builder,
+            clear_first=False,  # upsert is non-destructive
         )
 
     def upsert_relationships(self, relationships: list[Relationship]) -> IndexingStats:
@@ -445,8 +443,8 @@ class NeptuneIndexer(GraphIndexer):
         for suffix, rels in grouped_items.items():
             stats = IndexingStats(total_items=len(rels))
             start_time = time.time()
-            entity_label = self._get_name(
-                self.neptune_config.entity_label_prefix.capitalize(), suffix
+            entity_label = self._get_label(
+                self.neptune_config.entity_label_prefix, suffix
             )
 
             logger.info(
@@ -524,9 +522,7 @@ class NeptuneIndexer(GraphIndexer):
             g = self.neptune_client.g
             base = (
                 g.V().hasLabel(
-                    self._get_name(
-                        self.neptune_config.entity_label_prefix.capitalize(), suffix
-                    )
+                    self._get_label(self.neptune_config.entity_label_prefix, suffix)
                 )
                 if suffix is not None
                 else g.V()
@@ -559,11 +555,11 @@ class NeptuneIndexer(GraphIndexer):
 
         entity_label = community_label = None
         if suffix is not None:
-            entity_label = self._get_name(
-                self.neptune_config.entity_label_prefix.capitalize(), suffix
+            entity_label = self._get_label(
+                self.neptune_config.entity_label_prefix, suffix
             )
-            community_label = self._get_name(
-                self.neptune_config.community_label_prefix.capitalize(), suffix
+            community_label = self._get_label(
+                self.neptune_config.community_label_prefix, suffix
             )
 
         for id_batch in self._batch_iterator(ids):
@@ -641,9 +637,9 @@ class NeptuneIndexer(GraphIndexer):
         items: list[Any],
         item_type_name: str,
         label_prefix: str,
-        clear_label_prefix: str,
         traversal_builder_func: Callable,
-        **kwargs: Any,
+        *,
+        clear_first: bool,
     ) -> IndexingStats:
         if not items:
             return IndexingStats()
@@ -652,23 +648,16 @@ class NeptuneIndexer(GraphIndexer):
         total_stats = IndexingStats()
 
         for suffix, chunk in grouped_items.items():
-            label = self._get_name(label_prefix, suffix)
-            if clear_label_prefix:
-                clear_label = self._get_name(clear_label_prefix, suffix)
-                self._clear_existing_data_by_label(clear_label)
+            label = self._get_label(label_prefix, suffix)
+            if clear_first:
+                self._clear_existing_data_by_label(label)
 
             start_time = time.time()
 
             logger.info(
                 "Indexing %s %ss for '%s'...", len(chunk), item_type_name.lower(), label
             )
-            final_kwargs = kwargs.copy()
-            if "entity_label" in final_kwargs:
-                final_kwargs["entity_label"] = self._get_name(
-                    final_kwargs["entity_label"], suffix
-                )
-
-            traversal_builder = traversal_builder_func(label=label, **final_kwargs)
+            traversal_builder = traversal_builder_func(label=label)
             stats = self._execute_batch_traversal(
                 chunk, traversal_builder, f"{item_type_name} indexing"
             )

@@ -3,7 +3,6 @@
 import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -19,6 +18,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils.store_names import graph_label, store_name
 
 logger = get_logger(__name__)
 
@@ -125,16 +125,16 @@ class BaseIndexer(ABC):
     def _get_name(
         self, base: str, suffix: str | None, add_timestamp: bool = False
     ) -> str:
-        final_suffix = suffix or Constants.DEFAULT_SUFFIX.value
+        return store_name(
+            base,
+            suffix,
+            self.config.indexing.additional_suffix,
+            timestamp=add_timestamp,
+        )
 
-        if self.config.indexing.additional_suffix:
-            final_suffix = f"{final_suffix}-{self.config.indexing.additional_suffix}"
-
-        if add_timestamp:
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            return f"{base}-{final_suffix}-{timestamp}"
-
-        return f"{base}-{final_suffix}"
+    def _get_label(self, prefix: str, suffix: str | None) -> str:
+        """Graph vertex label for ``prefix`` under ``suffix``."""
+        return graph_label(prefix, suffix, self.config.indexing.additional_suffix)
 
     def _group_items_by_suffix(self, items: list[Any]) -> dict[str, list[Any]]:
         grouped = defaultdict(list)

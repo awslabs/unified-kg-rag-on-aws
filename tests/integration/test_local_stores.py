@@ -196,8 +196,8 @@ async def _vector_retrieve(
 
 
 def _graph_entity_count(graph_indexer) -> int:
-    label = graph_indexer._get_name(
-        graph_indexer.neptune_config.entity_label_prefix.capitalize(), _SUFFIX
+    label = graph_indexer._get_label(
+        graph_indexer.neptune_config.entity_label_prefix, _SUFFIX
     )
     return int(graph_indexer.neptune_client.g.V().hasLabel(label).count().next())
 

@@ -57,7 +57,7 @@ def _run_full_entity_builder(indexer, entities: list[Entity]) -> list[str]:
     calls: list[str] = []
     captured_factory = None
 
-    def fake_index_generic(items, name, prefix, clear, factory, **kw):
+    def fake_index_generic(items, name, prefix, factory, *, clear_first):
         nonlocal captured_factory
         captured_factory = factory("Entity")
         return None
@@ -96,19 +96,19 @@ def test_index_entities_one_add_v_per_entity(indexer) -> None:
 
 
 def test_index_entities_passes_full_label_to_factory(indexer, mocker) -> None:
-    # _index_generic must be called with item type, the capitalized entity
-    # prefix as both label and clear prefix (full index clears its own label).
+    # _index_generic must be called with the item type and the entity label
+    # prefix, clearing that label first (full index rebuilds its own label).
     captured: dict = {}
 
-    def fake_index_generic(items, name, prefix, clear, factory, **kw):
-        captured.update({"name": name, "prefix": prefix, "clear": clear, "kw": kw})
+    def fake_index_generic(items, name, prefix, factory, *, clear_first):
+        captured.update({"name": name, "prefix": prefix, "clear": clear_first})
 
     indexer._index_generic = fake_index_generic  # type: ignore[assignment]
     indexer.index_entities([Entity(id="e1", name="Alice")])
     assert captured["name"] == "Entity"
     assert captured["prefix"] == "Entity"
     # Full index clears its own label before rebuild.
-    assert captured["clear"] == "Entity"
+    assert captured["clear"] is True
 
 
 def test_index_entities_writes_list_props_multi_valued(indexer) -> None:
@@ -117,7 +117,7 @@ def test_index_entities_writes_list_props_multi_valued(indexer) -> None:
     calls: list[str] = []
     captured_factory = None
 
-    def fake_index_generic(items, name, prefix, clear, factory, **kw):
+    def fake_index_generic(items, name, prefix, factory, *, clear_first):
         nonlocal captured_factory
         captured_factory = factory("Entity")
 
