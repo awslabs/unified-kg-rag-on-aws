@@ -130,7 +130,7 @@ The stacks apply WAF defaults out of the box — least-privilege IAM
 (`bedrock:InvokeModel` scoped to model/inference-profile ARNs, `neptune-db:connect`,
 domain-scoped `es:ESHttp*`), encryption in transit + at rest, Graviton instances,
 S3 cache
-lifecycle + access logs, Step Functions X-Ray tracing + execution logging,
+lifecycle (checkpoint prefixes only) + access logs, Step Functions X-Ray tracing + execution logging,
 CloudWatch dashboard + failure alarm, and an SSL-only alarm topic. Production
 hardening is opt-in via the flags above. Validate with:
 
@@ -195,12 +195,20 @@ cdk deploy --all
    S3 cache uploads default to the bucket's own encryption
    (`aws.s3.encryption.encryption_type: BUCKET_DEFAULT`), so `use_cmk=true`
    objects are encrypted with the CMK.
-2. Upload the corpus under a prefix of the cache bucket and start an ingestion run:
+2. Upload the corpus under a prefix of the cache bucket (for example `corpus/`)
+   and start an ingestion run:
    ```bash
    aws stepfunctions start-execution \
      --state-machine-arn <…-ingestion arn> \
-     --input '{"source_directory":"s3://<cache-bucket>/<corpus-prefix>/","pipeline_id":"run-001"}'
+     --input '{"source_directory":"s3://<cache-bucket>/corpus/","pipeline_id":"run-001"}'
    ```
+   The bucket's 30-day expiry applies only to the prefixes the app writes,
+   `pipeline-runs/` (stage checkpoints) and `embedding-cache/`; any other
+   prefix never expires. Do not put the corpus under those two prefixes: with
+   incremental indexing an expired source file looks deleted, and the next run
+   removes its graph and vector artifacts. A reused bucket
+   (`cache_bucket_name`) keeps its own lifecycle rules, so check them the same
+   way.
    The input takes exactly these two keys, passed to every phase as
    `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID`. Each phase runs in a
    fresh Fargate task, so `source_directory` must be an `s3://` URI: the

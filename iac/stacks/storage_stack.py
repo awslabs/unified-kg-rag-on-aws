@@ -26,6 +26,13 @@ from constructs import Construct
 from iac.config import DeploymentConfig
 from iac.stacks.networking_stack import NetworkingStack
 
+# Cache-bucket prefixes the app writes and that are safe to expire: the stage
+# checkpoints of `run-ingestion --s3-sync` (PipelineConfig.s3_prefix /
+# --s3-prefix, default "pipeline-runs") and the optional persisted embedding
+# cache (embedding_cache_s3_key, default "embedding-cache/cache.json"). Anything
+# else in the bucket, such as an uploaded corpus, is never expired.
+CACHE_EXPIRY_PREFIXES = ("pipeline-runs/", "embedding-cache/")
+
 
 class StorageStack(Stack):
     def __init__(
@@ -113,13 +120,24 @@ class StorageStack(Stack):
             server_access_logs_prefix="cache-access/",
             versioned=False,
             # Cost/sustainability: expire stale pipeline cache + clean up
-            # incomplete multipart uploads.
+            # incomplete multipart uploads. Expiry is scoped to the prefixes the
+            # app writes (CACHE_EXPIRY_PREFIXES) and never applies bucket-wide:
+            # the corpus may live in this bucket too, and with incremental
+            # indexing an expired source file looks deleted, so its graph and
+            # vector artifacts would be removed on the next run.
             lifecycle_rules=[
                 s3.LifecycleRule(
-                    id="expire-cache",
-                    expiration=Duration.days(30),
+                    id="abort-incomplete-uploads",
                     abort_incomplete_multipart_upload_after=Duration.days(7),
-                )
+                ),
+                *(
+                    s3.LifecycleRule(
+                        id=f"expire-{prefix.rstrip('/')}",
+                        prefix=prefix,
+                        expiration=Duration.days(30),
+                    )
+                    for prefix in CACHE_EXPIRY_PREFIXES
+                ),
             ],
             removal_policy=self.removal_policy,
             auto_delete_objects=self.config.removal_destroy,

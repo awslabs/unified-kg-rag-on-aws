@@ -12,11 +12,11 @@ from typing import Any
 
 import aws_cdk as cdk
 import pytest
-from aws_cdk.assertions import Template
+from aws_cdk.assertions import Match, Template
 
 from iac.config import DeploymentConfig
 from iac.stacks.networking_stack import NetworkingStack
-from iac.stacks.storage_stack import StorageStack
+from iac.stacks.storage_stack import CACHE_EXPIRY_PREFIXES, StorageStack
 
 _ENV = cdk.Environment(account="111111111111", region="us-west-2")
 _DATA_STORES = (
@@ -65,3 +65,16 @@ def test_dev_defaults_tear_down() -> None:
     (cluster,) = dev.find_resources("AWS::Neptune::DBCluster").values()
     assert cluster["DeletionPolicy"] == "Delete"
     assert cluster["Properties"].get("DeletionProtection") in (False, None)
+
+
+def test_cache_expiry_never_applies_bucket_wide() -> None:
+    """A corpus uploaded to the cache bucket must not expire: incremental
+    indexing would treat it as deleted and remove its artifacts."""
+    dev = _storage_template({})
+    buckets = dev.find_resources(
+        "AWS::S3::Bucket", {"Properties": {"BucketName": Match.any_value()}}
+    )
+    (cache,) = buckets.values()
+    rules = cache["Properties"]["LifecycleConfiguration"]["Rules"]
+    expiring = [r for r in rules if "ExpirationInDays" in r]
+    assert sorted(r.get("Prefix") for r in expiring) == sorted(CACHE_EXPIRY_PREFIXES)
