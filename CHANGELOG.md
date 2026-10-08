@@ -248,7 +248,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - `cdk destroy` with `removal_destroy=true` (dev default) deletes the
   OpenSearch domain's app, slow-index and slow-search log groups. The domain
   created them with CDK's default `Retain`, so every dev teardown left three
-  log groups behind (#PR).
+  log groups behind (#166).
 - `indexing.reset` with the doc-status registry enabled rebuilds from the
   whole corpus and records every document again. The loading stage used to
   diff against the registry first, so the reset cleared the stores but
