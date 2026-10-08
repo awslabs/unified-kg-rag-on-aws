@@ -685,8 +685,11 @@ class TestDiversityFilteringScaling:
         )
         assert scorer.get_metrics()["metrics"]["diversity_filtered_count"] == 0
 
+    @pytest.mark.slow
     def test_scales_to_hundreds_of_candidates(self) -> None:
-        # Mix-shaped candidate counts used to take 2-19 s with the cubic loop.
+        # Mix-shaped candidate counts used to take 2-19 s with the cubic loop;
+        # the incremental loop takes ~0.1 s. The bound leaves ~15x headroom for
+        # slow shared runners while still catching a return to cubic work.
         import time
 
         results = self._candidates(400, seed=7, words=60)
@@ -697,7 +700,7 @@ class TestDiversityFilteringScaling:
         elapsed = time.perf_counter() - start
 
         assert len(out) == 399
-        assert elapsed < 0.5
+        assert elapsed < 1.5
 
 
 class TestRerankDegradation:
