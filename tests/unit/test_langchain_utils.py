@@ -631,6 +631,25 @@ class TestRobustXMLOutputParser:
             "#text": "just text"
         }
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "<entities></entities><relationships></relationships>",
+            "<entities>\n</entities>\n<relationships>\n</relationships>\n",
+        ],
+    )
+    def test_only_empty_sections_parse_as_empty_result(self, text) -> None:
+        # A chunk with nothing to extract is a valid answer, not a parse
+        # failure (which would be retried and sent to the fixing LLM).
+        out = RobustXMLOutputParser().parse(text)
+        assert out == {"entities": {}, "relationships": {}}
+
+    def test_extract_xml_fallback_keeps_empty_sections(self) -> None:
+        out = RobustXMLOutputParser._extract_xml_fallback(
+            "<entities><entity>a</entity></entities><relationships></relationships>"
+        )
+        assert out == {"entities": {"entity": "a"}, "relationships": {}}
+
     def test_parse_xml_section_empty_is_none(self) -> None:
         assert RobustXMLOutputParser._parse_xml_section("   ") is None
 

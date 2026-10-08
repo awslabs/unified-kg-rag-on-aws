@@ -219,6 +219,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   test-only helpers on the guardrail handler and token counter (#120).
 
 ### Fixed
+- A graph-extraction answer of only empty sections
+  (`<entities></entities><relationships></relationships>`) parses as a valid
+  zero-entity result instead of failing, being retried, and going to the
+  output-fixing model (#PR).
 - `NeptuneRetriever` seeding by name or query text (no `id` filter) always
   returned nothing: it required and sorted by an `importance` property that
   entity vertices never store. It now orders entities by `rank` and

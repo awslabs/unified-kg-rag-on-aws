@@ -424,8 +424,14 @@ class TestParseExtractionResult:
         with pytest.raises(DataProcessingError):
             extractor._parse_extraction_result(result, text_unit)
 
-    def test_empty_entities_section_is_valid(self, extractor, text_unit) -> None:
-        ents, rels = extractor._parse_extraction_result({"entities": {}}, text_unit)
+    @pytest.mark.parametrize(
+        "result",
+        [{"entities": {}}, {"entities": {}, "relationships": {}}],
+    )
+    def test_empty_entities_section_is_valid(
+        self, extractor, text_unit, result
+    ) -> None:
+        ents, rels = extractor._parse_extraction_result(result, text_unit)
         assert ents == [] and rels == []
 
     def test_missing_relationships_keeps_entities(self, extractor, text_unit) -> None:
