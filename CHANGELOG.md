@@ -417,6 +417,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   another, which made token counting dominate mix/hybrid query latency. Global
   search packs its ranked key points the same way, off the event loop. Counts
   stay exact (#PR).
+- With `ignore_errors: false`, a fatal error (no model access, bad credentials,
+  unreachable endpoint) in a global-search map call or a DRIFT query
+  refinement/keyword expansion fails the query. Global search turned every such
+  map call into an unrated batch and answered from the raw reports, and DRIFT
+  dropped the error without a log line; non-fatal failures still degrade, now
+  with a warning (#PR).
 
 ### Security
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or

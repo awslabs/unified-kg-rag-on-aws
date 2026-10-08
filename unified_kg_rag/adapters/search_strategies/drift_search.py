@@ -15,6 +15,7 @@ from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    is_fatal_retrieval_error,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
@@ -472,6 +473,15 @@ class DriftSearchStrategy(BaseSearchStrategy):
         try:
             task_results = await asyncio.gather(*tasks.values(), return_exceptions=True)
             results_map = dict(zip(tasks.keys(), task_results, strict=True))
+            # return_exceptions keeps one failed step from discarding the
+            # other's result, but a fatal error (no model access, bad
+            # credentials) must still surface, and every failure is logged.
+            for name, outcome in results_map.items():
+                if not isinstance(outcome, Exception):
+                    continue
+                if is_fatal_retrieval_error(outcome) and not self.ignore_errors:
+                    raise outcome
+                logger.warning("DRIFT query %s failed: %s", name, outcome)
 
             refinement = results_map.get("refinement")
             if (
