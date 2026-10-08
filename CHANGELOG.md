@@ -371,6 +371,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   started in the same second no longer overwrite each other, and a numeric
   `answer` of `0` is kept as a ground truth instead of being treated as
   missing (#PR).
+- `run-prompt-tuning` fails instead of emitting a default profile when the
+  profiling model returns no JSON profile, splits an `entity_types` string
+  (`"PERSON, ORGANIZATION"`) into types instead of characters, and builds the
+  example `GraphExtractor` from the tuner's providers (#PR).
 
 ### Security
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or

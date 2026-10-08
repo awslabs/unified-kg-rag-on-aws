@@ -1165,7 +1165,9 @@ run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --conf
 포함됩니다. **검토한 후** 원하는 프롬프트를 `config.yaml`의 `custom_prompts:`
 아래로 복사하세요. 일반 텍스트 파일은 그대로 읽고, 그 밖의 포맷(PDF, CSV, JSON,
 `ParserFactory.register_loader`로 등록한 포맷)은 인제스션과 같은 로더로 파싱합니다.
-파싱에 실패한 파일은 경고를 남기고 건너뜁니다.
+파싱에 실패한 파일은 경고를 남기고 건너뜁니다. 프로파일링 모델이 JSON
+프로파일을 돌려주지 않으면 아무것도 쓰지 않고 0이 아닌 코드로 종료합니다(기본
+프로파일은 튜닝된 것처럼 보이기 때문입니다).
 
 ---
 

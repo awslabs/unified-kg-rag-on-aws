@@ -1203,7 +1203,8 @@ detected domain). **Review it**, then copy the prompts you want into your
 `config.yaml` under `custom_prompts:`. Plain-text files are read as-is; other
 formats (PDF, CSV, JSON, custom `ParserFactory.register_loader` formats) go
 through the same loaders as ingestion. Files that fail to parse are skipped
-with a warning.
+with a warning. If the profiling model returns no JSON profile, the command
+exits non-zero and writes nothing (a default profile would look tuned).
 
 ---
 
