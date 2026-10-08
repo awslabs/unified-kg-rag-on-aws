@@ -255,7 +255,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   statistics, which no later stage reads, yet they were part of every later
   stage's cache key, so a tuning change regenerated every community report.
   The `graph_analysis` and `community_detection` keys change once on upgrade,
-  so a resumed pipeline recomputes those stages one time (#PR).
+  so a resumed pipeline recomputes those stages one time (#167).
 - `indexing.reset` with the doc-status registry enabled rebuilds from the
   whole corpus and records every document again. The loading stage used to
   diff against the registry first, so the reset cleared the stores but
