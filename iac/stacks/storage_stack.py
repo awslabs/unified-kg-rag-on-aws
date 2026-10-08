@@ -237,8 +237,10 @@ class StorageStack(Stack):
                 # Dedicated master nodes stabilize the cluster under load; enable
                 # for HA (multi-node) deployments only.
                 master_nodes=3 if multi_node else 0,
+                # Masters only manage cluster state, so they default to a
+                # smaller type than the data nodes (opensearch_master_instance).
                 master_node_instance_type=(
-                    self.config.opensearch_instance if multi_node else None
+                    self.config.opensearch_master_instance if multi_node else None
                 ),
             ),
             zone_awareness=zone_awareness,

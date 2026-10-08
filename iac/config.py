@@ -30,6 +30,9 @@ Context keys (all optional; sensible defaults shown):
   opensearch_instance "r6g.large.search"  OpenSearch data node type (Graviton)
   opensearch_count    dev:1/else:2     OpenSearch data node count (>1 =>
                                        zone-aware multi-node + 3 dedicated masters)
+  opensearch_master_instance "m6g.large.search"  dedicated master type when
+                                       opensearch_count > 1 (8 GiB Graviton; sized
+                                       for <=10 nodes / 10K shards on OS 2.13)
   doc_status_table    dev:"graphrag-doc-status"/else:"<env>-graphrag-doc-status"
   backup_retention_days 7              Neptune automated backup retention
 
@@ -84,6 +87,7 @@ class DeploymentConfig:
     neptune_instances: int
     opensearch_instance: str
     opensearch_count: int
+    opensearch_master_instance: str
     doc_status_table: str
     backup_retention_days: int
     fargate_cpu: int
@@ -189,6 +193,9 @@ class DeploymentConfig:
             neptune_instances=int(ctx("neptune_instances", 1 if is_dev else 2)),
             opensearch_instance=str(ctx("opensearch_instance", "r6g.large.search")),
             opensearch_count=int(ctx("opensearch_count", 1 if is_dev else 2)),
+            opensearch_master_instance=str(
+                ctx("opensearch_master_instance", "m6g.large.search")
+            ),
             # Default DDB table name follows the same env-scoped prefix as the
             # other physical names (dev: "graphrag-doc-status";
             # non-dev: "<env>-graphrag-doc-status") so environments don't share a

@@ -67,6 +67,14 @@ def test_dev_defaults_tear_down() -> None:
     assert cluster["Properties"].get("DeletionProtection") in (False, None)
 
 
+def test_multi_node_opensearch_uses_smaller_dedicated_masters(prod: Template) -> None:
+    (domain,) = prod.find_resources("AWS::OpenSearchService::Domain").values()
+    cluster = domain["Properties"]["ClusterConfig"]
+    assert cluster["DedicatedMasterEnabled"] is True
+    assert cluster["DedicatedMasterType"] == "m6g.large.search"
+    assert cluster["InstanceType"] == "r6g.large.search"
+
+
 def test_opensearch_endpoint_output_is_a_bare_host() -> None:
     """The output feeds OPENSEARCH_ENDPOINT, which the adapter uses as a host."""
     output = _storage_template({}).find_outputs("OpenSearchEndpoint")
