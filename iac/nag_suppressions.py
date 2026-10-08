@@ -133,8 +133,13 @@ def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
             # regions, so model/profile/guardrail ARNs need region + id wildcards.
             "Resource::arn:aws:bedrock:*::foundation-model/*",
             "Resource::arn:aws:bedrock:*::inference-profile/*",
-            "Resource::arn:aws:bedrock:*:<AWS::AccountId>:inference-profile/*",
-            "Resource::arn:aws:bedrock:*:<AWS::AccountId>:guardrail/*",
+            # The account renders as the <AWS::AccountId> token for an
+            # environment-agnostic synth and as the literal 12-digit id once
+            # CDK_DEFAULT_ACCOUNT is set (any real deploy), so match both.
+            {
+                "regex": r"/^Resource::arn:aws:bedrock:\*:(<AWS::AccountId>|\d{12}):"
+                r"(inference-profile|guardrail)\/\*$/"
+            },
             # Data-plane paths under this one Neptune cluster / OpenSearch domain.
             {
                 "regex": r"/^Resource::arn:aws:neptune-db:.+:<Neptune\w+\.ClusterResourceId>\/\*$/"

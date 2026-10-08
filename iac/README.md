@@ -140,7 +140,10 @@ cdk synth -c enable_cdk_nag=true -c use_cmk=true \
   -c vpc_flow_logs=true -c neptune_instances=2 -c opensearch_count=2 \
   -c deletion_protection=true -c removal_destroy=false  # prod-hardened
 ```
-Both report zero AwsSolutions findings, and CI runs both. Accepted findings are
+Both report zero AwsSolutions findings, and CI runs both. These CI synths have
+no account, so account ids stay `<AWS::AccountId>` tokens; the IaC test
+`iac/tests/test_app_nag.py` repeats both shapes with a dummy concrete account,
+as a real deploy renders them. Accepted findings are
 documented in `iac/nag_suppressions.py`: `AwsSolutions-IAM5` is suppressed per
 role for the listed wildcards only (`appliesTo`), so a new wildcard fails the
 synth, and the OpenSearch HA findings (OS4/OS7) are accepted only for a
