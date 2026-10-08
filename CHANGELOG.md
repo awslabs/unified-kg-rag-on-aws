@@ -15,7 +15,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 ### Added
 - Claude Haiku 5.5 (`anthropic.claude-haiku-5-5`) in the model catalog: 1M
   context, 128K output, adaptive thinking with `effort` low–max, 512-token
-  cache minimum, served through inference profiles only (#PR).
+  cache minimum, served through inference profiles only (#162).
 - Two selectable retrieval methodologies: GraphRAG community-summary
   (`auto`/`drift`/`global`/`local`/`simple`) and LightRAG dual-level keyword
   (`mix`/`hybrid`/`naive`) on one ingestion/indexing/caching/hybrid-search stack.
