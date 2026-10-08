@@ -13,12 +13,12 @@ An existing VPC is imported when config.vpc_id is set; otherwise a VPC is
 created. For a created VPC the free S3/DynamoDB gateway endpoints are added in
 both modes; the interface endpoints (billed per AZ-hour) only in private mode,
 where they are the data plane's only route to those services. A reused VPC gets
-no endpoints.
+no endpoints: synth warns with the list it must already provide.
 """
 
 from __future__ import annotations
 
-from aws_cdk import Stack
+from aws_cdk import Annotations, Stack
 from aws_cdk import aws_ec2 as ec2
 from constructs import Construct
 
@@ -66,6 +66,8 @@ class NetworkingStack(Stack):
             self._add_vpc_endpoints()
             if config.vpc_flow_logs:
                 self._enable_flow_logs()
+        else:
+            self._warn_reused_vpc_requirements()
 
     # ------------------------------------------------------------------ VPC
     def _resolve_vpc(self) -> ec2.IVpc:
@@ -141,3 +143,26 @@ class NetworkingStack(Stack):
                 security_groups=[self.service_sg],
                 private_dns_enabled=True,
             )
+
+    def _warn_reused_vpc_requirements(self) -> None:
+        # A reused VPC is imported as-is: nothing here adds endpoints or subnets,
+        # and a missing endpoint only shows up at runtime as a hung call.
+        gateways = "s3, dynamodb"
+        if self.config.is_private:
+            interfaces = ", ".join(s.short_name for s in INTERFACE_ENDPOINTS.values())
+            message = (
+                f"Reusing VPC '{self.config.vpc_id}' in private mode: this stack "
+                "creates NO VPC endpoints. The VPC needs PRIVATE_ISOLATED subnets "
+                "(no NAT or internet gateway route) for the data plane, gateway "
+                f"endpoints ({gateways}) on their route tables, and interface "
+                "endpoints with private DNS enabled, reachable from those subnets "
+                f"on port 443: {interfaces}."
+            )
+        else:
+            message = (
+                f"Reusing VPC '{self.config.vpc_id}' in public mode: this stack "
+                "creates NO VPC endpoints. The VPC needs PRIVATE_WITH_EGRESS "
+                "subnets (a NAT route) for the data plane; gateway endpoints "
+                f"({gateways}) are optional and keep that traffic off the NAT."
+            )
+        Annotations.of(self).add_warning(message)

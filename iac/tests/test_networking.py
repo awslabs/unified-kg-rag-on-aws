@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 import aws_cdk as cdk
-from aws_cdk.assertions import Template
+from aws_cdk.assertions import Annotations, Match, Template
 
 from iac.config import DeploymentConfig
 from iac.stacks.networking_stack import INTERFACE_ENDPOINTS, NetworkingStack
@@ -45,3 +45,27 @@ def test_public_mode_creates_only_free_gateway_endpoints() -> None:
         "Gateway": 2,
         "Interface": 0,
     }
+
+
+def _reuse_warnings(stack: NetworkingStack) -> list[str]:
+    found = Annotations.from_stack(stack).find_warning("*", Match.any_value())
+    return [str(w.entry.data) for w in found if "Reusing VPC" in str(w.entry.data)]
+
+
+def test_reused_vpc_warns_with_required_endpoints() -> None:
+    stack = _network({"vpc_id": "vpc-0example"})
+    assert _endpoint_counts(stack) == {"Gateway": 0, "Interface": 0}
+    (warning,) = _reuse_warnings(stack)
+    assert "PRIVATE_ISOLATED" in warning
+    for service in INTERFACE_ENDPOINTS.values():
+        assert service.short_name in warning
+
+
+def test_reused_vpc_public_mode_warns_about_egress_subnets() -> None:
+    stack = _network({"vpc_id": "vpc-0example", "network_mode": "public"})
+    (warning,) = _reuse_warnings(stack)
+    assert "PRIVATE_WITH_EGRESS" in warning
+
+
+def test_created_vpc_does_not_warn() -> None:
+    assert _reuse_warnings(_network({})) == []
