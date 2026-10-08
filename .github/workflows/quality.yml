@@ -68,13 +68,13 @@ jobs:
       - name: pytest + coverage
         # The `aws` marker gates tests needing real AWS services; excluded in CI.
         # This one run also covers the property and integration suites. The
-        # coverage floor sits just under the measured level (~86%) so new
+        # coverage floor sits just under the measured level (~90%) so new
         # untested code cannot silently regress it; ratchet it up as it grows.
         run: >-
           uv run pytest -m "not aws"
           --cov=unified_kg_rag --cov-report=term-missing
           --cov-report=xml:coverage.xml --junitxml=report.xml
-          --cov-fail-under=84
+          --cov-fail-under=88
 
       - name: Upload coverage + test report
         # Surface coverage.xml / report.xml as artifacts for inspection on each run.
