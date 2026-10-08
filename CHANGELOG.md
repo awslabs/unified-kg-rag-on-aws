@@ -335,6 +335,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   submitter's `contextvars`. `pipeline_id` is now bound for the whole
   `run-ingestion` run, including the S3 cache sync and the failure report
   (#156).
+- The LangChain `partial_correctness` judge is scored only from the JSON
+  `score` its prompt asks for: LangChain's CORRECT/INCORRECT word heuristic
+  (which scored `"... is correct"}` as 1.0) and the free-text regex fallbacks
+  (`"Score: 8/10"` → 1.0) are gone. A judge reply without a valid score in
+  [0, 1] (either metric) is recorded under `failed_metrics` instead of as 0.0
+  or a clamped value (#PR).
 
 ### Security
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or

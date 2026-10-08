@@ -70,65 +70,63 @@ def _result(answer: str = "Alice founded Acme.") -> EvaluationResult:
     )
 
 
-class TestClampScore:
-    def test_clamps_above_one(self) -> None:
-        # A regex fallback grabbing a year / a "5 out of 10" mis-scale must not
-        # dominate the aggregate.
-        assert LangChainEvaluator._clamp_score(5.0) == 1.0
-        assert LangChainEvaluator._clamp_score(2024.0) == 1.0
-
-    def test_clamps_below_zero(self) -> None:
-        assert LangChainEvaluator._clamp_score(-0.3) == 0.0
-
-    def test_passes_in_range(self) -> None:
-        assert LangChainEvaluator._clamp_score(0.42) == 0.42
-
-    def test_nan_becomes_zero(self) -> None:
-        assert LangChainEvaluator._clamp_score(float("nan")) == 0.0
+_PC = EvaluationMetricType.PARTIAL_CORRECTNESS
+_C = EvaluationMetricType.CORRECTNESS
 
 
-class TestParseScore:
-    def test_numeric_score_field(self) -> None:
-        assert LangChainEvaluator._parse_score({"score": 0.7}) == 0.7
+class TestJudgeScore:
+    def test_partial_json_score_beats_langchain_word_heuristic(self) -> None:
+        # LangChain's QA parser sees the last word "correct" and sets score=1;
+        # the JSON score the custom prompt asked for is the real one.
+        raw = '{"score": 0.2, "reasoning": "Only the city name is correct"}'
+        result = {"reasoning": raw, "value": "CORRECT", "score": 1}
+        assert LangChainEvaluator._judge_score(_PC, result) == (
+            0.2,
+            "Only the city name is correct",
+        )
 
-    def test_value_field_fallback(self) -> None:
-        # No "score" key -> falls back to "value".
-        assert LangChainEvaluator._parse_score({"value": 1}) == 1.0
+    def test_partial_fenced_json(self) -> None:
+        fenced = '```json\n{"score": 0.5, "reasoning": "fenced"}\n```'
+        assert LangChainEvaluator._judge_score(_PC, {"reasoning": fenced}) == (
+            0.5,
+            "fenced",
+        )
 
-    def test_json_embedded_in_reasoning(self) -> None:
-        reasoning = '{"score": 0.42, "reasoning": "ok"}'
-        assert LangChainEvaluator._parse_score({"reasoning": reasoning}) == 0.42
+    def test_partial_json_with_surrounding_text(self) -> None:
+        raw = 'Here is my judgment: {"score": 0.6} done.'
+        score, explanation = LangChainEvaluator._judge_score(_PC, {"reasoning": raw})
+        assert score == 0.6
+        assert explanation == raw  # no JSON reasoning -> raw text kept
 
-    def test_json_with_surrounding_text_via_brace_regex(self) -> None:
-        reasoning = 'Here is my judgment: {"score": 0.6} done.'
-        assert LangChainEvaluator._parse_score({"reasoning": reasoning}) == 0.6
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "It scored 2 of 5",  # used to become 2 -> clamped 1.0
+            "Score: 8/10",  # used to become 8 -> clamped 1.0
+            "no numbers here",  # used to become a real 0.0
+            "0.75",  # bare number: not the JSON the prompt asked for
+            '{"score": 8, "reasoning": "out of 10"}',  # out of range: no clamp
+            '{"score": -0.1}',
+            '{"score": "0.5"}',
+            '{"score": true}',
+            '{"score": NaN}',
+            "",
+        ],
+    )
+    def test_partial_without_valid_json_score_is_unscored(self, raw: str) -> None:
+        with pytest.raises(lc_module.UnscoredJudgeOutputError):
+            LangChainEvaluator._judge_score(_PC, {"reasoning": raw, "score": 1})
 
-    def test_first_number_fallback_regex(self) -> None:
-        # Not valid JSON and no brace block -> first number is extracted.
-        reasoning = "The score is 0.85 overall."
-        assert LangChainEvaluator._parse_score({"reasoning": reasoning}) == 0.85
+    def test_correctness_uses_langchain_verdict(self) -> None:
+        assert LangChainEvaluator._judge_score(
+            _C, {"score": 0, "value": "N", "reasoning": "wrong"}
+        ) == (0.0, "wrong")
 
-    def test_score_label_preferred_over_leading_number(self) -> None:
-        # A citation/year before the actual score must NOT be grabbed; the
-        # score-labeled number wins.
-        reasoning = "Per clause 1998 and figure 42, the score: 0.3 is fair."
-        assert LangChainEvaluator._parse_score({"reasoning": reasoning}) == 0.3
-
-    def test_ambiguous_multiple_numbers_no_label_returns_zero(self) -> None:
-        # No "score" label and several numbers -> refuse to guess (was: grabbed
-        # the first number, e.g. a year).
-        reasoning = "The contract from 2021 references 3 schedules and 95 percent."
-        assert LangChainEvaluator._parse_score({"reasoning": reasoning}) == 0.0
-
-    def test_single_standalone_number_still_used(self) -> None:
-        # Exactly one number and no label is unambiguous enough to use.
-        assert LangChainEvaluator._parse_score({"reasoning": "0.75"}) == 0.75
-
-    def test_unparseable_returns_zero(self) -> None:
-        assert LangChainEvaluator._parse_score({"reasoning": "no numbers here"}) == 0.0
-
-    def test_empty_result_returns_zero(self) -> None:
-        assert LangChainEvaluator._parse_score({}) == 0.0
+    def test_correctness_without_verdict_is_unscored(self) -> None:
+        with pytest.raises(lc_module.UnscoredJudgeOutputError):
+            LangChainEvaluator._judge_score(
+                _C, {"score": None, "value": "maybe", "reasoning": "maybe"}
+            )
 
 
 class TestPrepareEvalArgs:
@@ -185,17 +183,16 @@ class TestEvaluateWithMetric:
         assert metric.value == 0.9
         assert metric.explanation == "great"
 
-    def test_correctness_missing_score_defaults_zero(self, mocker) -> None:
+    def test_correctness_missing_score_is_unscored(self, mocker) -> None:
         ev = _make_evaluator(mocker)
         fake = _FakeEvaluator({"reasoning": "no score"})
-        metric = ev._evaluate_with_metric(
-            fake, EvaluationMetricType.CORRECTNESS, "q", "a", "gt"
-        )
-        assert metric.value == 0.0
+        with pytest.raises(lc_module.UnscoredJudgeOutputError):
+            ev._evaluate_with_metric(
+                fake, EvaluationMetricType.CORRECTNESS, "q", "a", "gt"
+            )
 
-    def test_partial_correctness_uses_parse_score(self, mocker) -> None:
+    def test_partial_correctness_reads_json_from_reasoning(self, mocker) -> None:
         ev = _make_evaluator(mocker)
-        # No top-level score -> parse_score digs into reasoning JSON.
         fake = _FakeEvaluator(
             {"reasoning": json.dumps({"score": 0.75, "reasoning": "partial"})}
         )
@@ -203,27 +200,7 @@ class TestEvaluateWithMetric:
             fake, EvaluationMetricType.PARTIAL_CORRECTNESS, "q", "a", "gt"
         )
         assert metric.value == 0.75
-        # Reasoning JSON's "reasoning" field becomes the explanation.
         assert metric.explanation == "partial"
-
-    def test_partial_correctness_fenced_reasoning_extracted(self, mocker) -> None:
-        ev = _make_evaluator(mocker)
-        fenced = '```json\n{"score": 0.5, "reasoning": "fenced reason"}\n```'
-        fake = _FakeEvaluator({"score": 0.5, "reasoning": fenced})
-        metric = ev._evaluate_with_metric(
-            fake, EvaluationMetricType.PARTIAL_CORRECTNESS, "q", "a", "gt"
-        )
-        assert metric.value == 0.5
-        assert metric.explanation == "fenced reason"
-
-    def test_partial_correctness_plain_reasoning_kept(self, mocker) -> None:
-        ev = _make_evaluator(mocker)
-        fake = _FakeEvaluator({"score": 0.3, "reasoning": "just text"})
-        metric = ev._evaluate_with_metric(
-            fake, EvaluationMetricType.PARTIAL_CORRECTNESS, "q", "a", "gt"
-        )
-        # Not JSON -> explanation stays the raw reasoning.
-        assert metric.explanation == "just text"
 
     def test_eval_args_passed_through(self, mocker) -> None:
         ev = _make_evaluator(mocker)
@@ -296,7 +273,9 @@ class TestEvaluateSingle:
         boom.evaluate_strings = mocker.Mock(side_effect=RuntimeError("x"))
         ev.evaluators = {
             EvaluationMetricType.CORRECTNESS: boom,
-            EvaluationMetricType.PARTIAL_CORRECTNESS: _FakeEvaluator({"score": 0.8}),
+            EvaluationMetricType.PARTIAL_CORRECTNESS: _FakeEvaluator(
+                {"reasoning": '{"score": 0.8}'}
+            ),
         }
         report = ev.evaluate_single(_query(), _result(), ground_truth="gt")
         assert [m.metric_type for m in report.metrics] == [
@@ -338,6 +317,18 @@ class TestEvaluateSingle:
         with pytest.raises(RuntimeError):
             ev.evaluate_single(_query(), _result(), ground_truth="gt")
 
+    def test_unparseable_judge_output_is_failed_even_without_ignore_errors(
+        self, mocker
+    ) -> None:
+        # A malformed judge reply is a measurement outcome (like a RAGAS NaN):
+        # recorded as failed, never as 0.0, and it does not abort the run.
+        ev = _make_evaluator(mocker, langchain_metrics=[_PC])
+        ev.ignore_errors = False
+        ev.evaluators = {_PC: _FakeEvaluator({"reasoning": "Score: 8/10"})}
+        report = ev.evaluate_single(_query(), _result(), ground_truth="gt")
+        assert report.metrics == []
+        assert "partial_correctness" in report.metadata["failed_metrics"]
+
 
 class TestAevaluateSingle:
     async def test_gathers_async_metrics(self, mocker) -> None:
@@ -367,6 +358,14 @@ class TestAevaluateSingle:
         report = await ev.aevaluate_single(_query(), _result(), ground_truth="gt")
         assert report.metrics == []
         assert "async boom" in report.metadata["failed_metrics"]["correctness"]
+
+    async def test_async_unparseable_judge_output_is_failed(self, mocker) -> None:
+        ev = _make_evaluator(mocker, langchain_metrics=[_PC])
+        ev.ignore_errors = False
+        ev.evaluators = {_PC: _FakeEvaluator({"reasoning": "scored 2 of 5"})}
+        report = await ev.aevaluate_single(_query(), _result(), ground_truth="gt")
+        assert report.metrics == []
+        assert "partial_correctness" in report.metadata["failed_metrics"]
 
     async def test_async_empty_reference_skips(self, mocker) -> None:
         ev = _make_evaluator(

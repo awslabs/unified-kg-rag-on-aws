@@ -1,7 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-import re
 from collections.abc import Coroutine
 from datetime import datetime
 from typing import Any
@@ -34,6 +33,17 @@ from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.utils import parse_llm_json
 
 logger = get_logger(__name__)
+
+
+class UnscoredJudgeOutputError(EvaluationException):
+    """The judge answered, but its output carries no usable score.
+
+    Like a RAGAS NaN, this is a measurement outcome rather than an
+    infrastructure error: the metric is recorded under ``failed_metrics``
+    whatever ``processing.ignore_errors`` says.
+    """
+
+
 PARTIAL_CORRECTNESS_PROMPT_TEMPLATE = """You are an expert evaluator tasked with assessing the correctness of a
 submitted answer against a reference answer.
 
@@ -148,52 +158,42 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             )
 
     @staticmethod
-    def _parse_score(eval_result: dict[str, Any]) -> float:
-        score = eval_result.get("score") or eval_result.get("value")
-        if isinstance(score, (int | float)):
-            return float(score)
+    def _judge_score(
+        metric_type: EvaluationMetricType, eval_result: dict[str, Any]
+    ) -> tuple[float, str]:
+        """Return ``(score, explanation)`` from one judge result.
 
-        reasoning = eval_result.get("reasoning", "")
-        if isinstance(reasoning, str) and reasoning.strip():
-            json_score = parse_llm_json(reasoning).get("score")
-            if isinstance(json_score, int | float):
-                return float(json_score)
+        ``correctness`` uses LangChain's criteria grader, whose ``score`` is the
+        parsed Y/N verdict (1/0, ``None`` when no verdict was found).
+        ``partial_correctness`` uses a custom prompt that asks for a JSON
+        ``{"score", "reasoning"}`` object; LangChain's QA chain still runs its
+        CORRECT/INCORRECT word heuristic over that text (``"... is correct"}``
+        becomes score 1), so its ``score`` is ignored and only the JSON score
+        in the raw output (``reasoning``) counts.
 
-            # Prefer a score-LABELED number ("score: 0.8", "score is 0.8") so a
-            # bare first number in free-text reasoning (a citation, a year, a
-            # quantity) is not mistaken for the score.
-            labeled = re.search(r"score\D{0,8}(\d+\.?\d*)", reasoning, re.IGNORECASE)
-            if labeled:
-                return float(labeled.group(1))
-            # Last resort: a single standalone number is unambiguous; if there
-            # are multiple numbers, refuse to guess rather than grab the first.
-            numbers = re.findall(r"\d+\.?\d*", reasoning)
-            if len(numbers) == 1:
-                return float(numbers[0])
-            logger.warning(
-                "Ambiguous score in reasoning (%s numbers found), not guessing: '%s'",
-                len(numbers),
-                reasoning[:120],
-            )
-            return 0.0
-
-        logger.warning(
-            "Could not parse score from evaluation result: '%s'", eval_result
-        )
-        return 0.0
-
-    @staticmethod
-    def _clamp_score(score: float) -> float:
-        """Clamp an LLM-judge score to the [0,1] metric range.
-
-        The judge can emit an out-of-range value (a regex fallback grabbing a
-        year, a "5 out of 10" mis-scale, or a model that ignores the rubric);
-        an unclamped value would dominate the mean/max aggregate. RAGAS already
-        skips NaN — mirror that defensiveness here.
+        Raises ``UnscoredJudgeOutputError`` when no valid score in [0, 1] is
+        present: the metric is then recorded as failed, never as 0.0.
         """
-        if score != score:  # NaN
-            return 0.0
-        return max(0.0, min(1.0, score))
+        reasoning = eval_result.get("reasoning")
+        raw = reasoning if isinstance(reasoning, str) else ""
+        if metric_type == EvaluationMetricType.PARTIAL_CORRECTNESS:
+            data = parse_llm_json(raw)
+            score = data.get("score")
+            explanation = data.get("reasoning")
+            if not isinstance(explanation, str):
+                explanation = raw
+        else:
+            score = eval_result.get("score")
+            explanation = raw
+        if (
+            isinstance(score, bool)
+            or not isinstance(score, int | float)
+            or not 0.0 <= score <= 1.0  # also rejects NaN
+        ):
+            raise UnscoredJudgeOutputError(
+                f"No valid score in judge output: {raw[:120]!r}"
+            )
+        return float(score), explanation
 
     def metric_types(self) -> list[EvaluationMetricType]:
         return [
@@ -288,6 +288,10 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
                     ground_truth,
                 )
                 metrics.append(metric)
+            except UnscoredJudgeOutputError as e:
+                failed[metric_type.value] = self._handle_evaluation_error(
+                    metric_type, query.query_id, e
+                )
             except Exception as e:
                 if not self.ignore_errors:
                     raise
@@ -306,30 +310,14 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
     ) -> EvaluationMetric:
         eval_args = self._prepare_eval_args(metric_type, question, answer, ground_truth)
         eval_result = evaluator.evaluate_strings(**eval_args)
+        return self._to_metric(metric_type, eval_result)
 
-        score: float
-        if metric_type == EvaluationMetricType.CORRECTNESS:
-            score = float(eval_result.get("score", 0.0))
-        else:
-            score = self._parse_score(eval_result)
-        score = self._clamp_score(score)
-
-        raw_explanation = eval_result.get("reasoning", "")
-        explanation = raw_explanation
-
-        if metric_type == EvaluationMetricType.PARTIAL_CORRECTNESS:
-            data = parse_llm_json(raw_explanation)
-            if "reasoning" in data:
-                explanation = data["reasoning"]
-            elif not data:
-                logger.warning(
-                    "Could not parse reasoning as JSON: '%s'", raw_explanation
-                )
-
+    def _to_metric(
+        self, metric_type: EvaluationMetricType, eval_result: dict[str, Any]
+    ) -> EvaluationMetric:
+        score, explanation = self._judge_score(metric_type, eval_result)
         return EvaluationMetric(
-            metric_type=metric_type,
-            value=score,
-            explanation=explanation,
+            metric_type=metric_type, value=score, explanation=explanation
         )
 
     async def aevaluate_single(
@@ -366,7 +354,9 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         for i, res in enumerate(results):
             metric_type = metric_types_to_run[i]
             if isinstance(res, Exception):
-                if not self.ignore_errors:
+                if not self.ignore_errors and not isinstance(
+                    res, UnscoredJudgeOutputError
+                ):
                     raise res
                 failed[metric_type.value] = self._handle_evaluation_error(
                     metric_type, query.query_id, res
@@ -386,31 +376,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
     ) -> EvaluationMetric:
         eval_args = self._prepare_eval_args(metric_type, question, answer, ground_truth)
         eval_result = await evaluator.aevaluate_strings(**eval_args)
-
-        score: float
-        if metric_type == EvaluationMetricType.CORRECTNESS:
-            score = float(eval_result.get("score", 0.0))
-        else:
-            score = self._parse_score(eval_result)
-        score = self._clamp_score(score)
-
-        raw_explanation = eval_result.get("reasoning", "")
-        explanation = raw_explanation
-
-        if metric_type == EvaluationMetricType.PARTIAL_CORRECTNESS:
-            data = parse_llm_json(raw_explanation)
-            if "reasoning" in data:
-                explanation = data["reasoning"]
-            elif not data:
-                logger.warning(
-                    "Could not parse reasoning as JSON: '%s'", raw_explanation
-                )
-
-        return EvaluationMetric(
-            metric_type=metric_type,
-            value=score,
-            explanation=explanation,
-        )
+        return self._to_metric(metric_type, eval_result)
 
     def validate_config(self) -> bool:
         unsupported = set(self.config.evaluation.langchain_metrics) - set(
