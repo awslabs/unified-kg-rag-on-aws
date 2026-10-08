@@ -54,7 +54,6 @@ def _orchestration_template(context: dict[str, Any]) -> Template:
         networking=networking,
         compute=compute,
         cache_bucket_name=storage.cache_bucket.bucket_name,
-        kms_key=security.kms_key,
         env=_ENV,
     )
     return Template.from_stack(orchestration)

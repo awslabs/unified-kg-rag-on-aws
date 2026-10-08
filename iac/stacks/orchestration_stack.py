@@ -71,7 +71,6 @@ class OrchestrationStack(Stack):
         networking: NetworkingStack,
         compute: ComputeStack,
         cache_bucket_name: str,
-        kms_key=None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)

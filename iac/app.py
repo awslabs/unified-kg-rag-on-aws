@@ -112,7 +112,6 @@ orchestration = OrchestrationStack(
     networking=networking,
     compute=compute,
     cache_bucket_name=storage.cache_bucket.bucket_name,
-    kms_key=security.kms_key,
     env=env,
 )
 ObservabilityStack(
