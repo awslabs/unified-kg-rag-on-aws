@@ -68,13 +68,13 @@ jobs:
       - name: pytest + coverage
         # The `aws` marker gates tests needing real AWS services; excluded in CI.
         # This one run also covers the property and integration suites. The
-        # coverage floor sits just under the measured level (~86%) so new
+        # coverage floor sits just under the measured level (~90%) so new
         # untested code cannot silently regress it; ratchet it up as it grows.
         run: >-
           uv run pytest -m "not aws"
           --cov=unified_kg_rag --cov-report=term-missing
           --cov-report=xml:coverage.xml --junitxml=report.xml
-          --cov-fail-under=84
+          --cov-fail-under=88
 
       - name: Upload coverage + test report
         # Surface coverage.xml / report.xml as artifacts for inspection on each run.
@@ -86,6 +86,40 @@ jobs:
             coverage.xml
             report.xml
           if-no-files-found: ignore
+
+  local-stores:
+    # tests/integration/test_local_stores.py is skipped unless LOCAL_STORES=1,
+    # so the quality job never runs the graph/vector adapters against a real
+    # Gremlin Server and OpenSearch (with nori). Start the dev compose stack
+    # (no AWS, hashing embeddings) and run that smoke test here.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Start Gremlin Server and OpenSearch
+        run: docker compose -f docker/compose.local.yaml up -d --wait
+
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - name: Adapter smoke test against the local stores
+        env:
+          LOCAL_STORES: "1"
+        run: uv run pytest tests/integration/test_local_stores.py
+
+      - name: Store logs
+        if: failure()
+        run: docker compose -f docker/compose.local.yaml logs
+
+      - name: Stop the stores
+        if: always()
+        run: docker compose -f docker/compose.local.yaml down -v
 
   oldest-python:
     # The quality job runs one interpreter, so nothing checked the LOWER bound of

@@ -32,6 +32,7 @@ from unified_kg_rag.visualization.embeddings.node2vec import NodeEmbeddings
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.usefixtures("restore_renderer_registry")
 class TestRegistry:
     def test_builtin_renderers_registered(self) -> None:
         assert {"interactive", "static"} <= set(registered_renderers())

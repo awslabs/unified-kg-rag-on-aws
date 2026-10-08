@@ -533,11 +533,6 @@ class TestJudgeSamplingParams:
         assert judge.seen_temperatures == [None]
         assert judge.temperature is None
 
-    async def test_evaluate_receives_wrapped_judge(self, mocker) -> None:
-        ev, _ = _make_evaluator(
-            mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
-        )
-
 
 class TestRunConfigAndJudgeEffort:
     def test_default_run_config_suits_thinking_judges(self, mocker) -> None:

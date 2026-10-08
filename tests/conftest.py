@@ -11,10 +11,12 @@ be exercised against a boto3 surface.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 
 import nest_asyncio
 import pytest
 from hypothesis import settings
+from langsmith.utils import get_env_var
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.adapters.aws.bedrock import BedrockCrossRegionModelHelper
@@ -76,7 +78,19 @@ _CONFIG_ENV_OVERRIDES = (
     "BEDROCK_GUARDRAIL_IDENTIFIER",
     "S3_BUCKET_NAME",
     "GRAPHRAG_DOC_STATUS_TABLE",
+    "GRAPHRAG_SOURCE_SCOPE",
     "GRAPHRAG_DOC_STATUS_CREATE_TABLE",
+)
+# Other environment the package reads: run-ingestion argument defaults, and
+# LangSmith tracing (every name langsmith accepts), which would upload test
+# prompts and outputs and log a warning from every setup_logging() call.
+_OTHER_ENV_TO_CLEAR = (
+    "GRAPHRAG_SOURCE_DIRECTORY",
+    "GRAPHRAG_PIPELINE_ID",
+    "LANGSMITH_TRACING",
+    "LANGSMITH_TRACING_V2",
+    "LANGCHAIN_TRACING",
+    "LANGCHAIN_TRACING_V2",
 )
 _FAKE_AWS_ENV = {
     "AWS_ACCESS_KEY_ID": "testing",
@@ -92,6 +106,10 @@ _FAKE_AWS_ENV = {
 def _isolated_aws_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin every test to fake, local-only AWS credentials and config.
 
+    Also clears the other environment the package reads (config overrides,
+    CLI defaults, LangSmith tracing) so the developer's shell cannot change
+    what a test exercises.
+
     Without this the suite inherits the developer's shell: a non-existent
     ``AWS_PROFILE`` makes boto3 raise ``ProfileNotFound`` in hundreds of tests,
     and a valid one (or an instance role via IMDS) lets an accidentally
@@ -99,10 +117,11 @@ def _isolated_aws_env(monkeypatch: pytest.MonkeyPatch) -> None:
     and IMDS is disabled so no credential source other than the fake keys is
     consulted. Tests that need a specific value set it with ``monkeypatch``.
     """
-    for name in _AWS_ENV_TO_CLEAR + _CONFIG_ENV_OVERRIDES:
+    for name in _AWS_ENV_TO_CLEAR + _CONFIG_ENV_OVERRIDES + _OTHER_ENV_TO_CLEAR:
         monkeypatch.delenv(name, raising=False)
     for name, value in _FAKE_AWS_ENV.items():
         monkeypatch.setenv(name, value)
+    get_env_var.cache_clear()  # langsmith caches its environment lookups
 
 
 class RealAWSCallBlocked(RuntimeError):
@@ -172,6 +191,21 @@ def _fresh_shared_memory(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(memory_manager, "_memory_manager", None)
     monkeypatch.setattr(memory_manager, "_mismatch_logged", False)
+
+
+@pytest.fixture
+def restore_renderer_registry() -> Iterator[None]:
+    """Undo renderers a test registers with ``@register_renderer``.
+
+    The registry is module-level, so a test-only renderer would otherwise stay
+    registered for the rest of the session.
+    """
+    from unified_kg_rag.adapters.renderers import base
+
+    saved = dict(base._REGISTRY)
+    yield
+    base._REGISTRY.clear()
+    base._REGISTRY.update(saved)
 
 
 @pytest.fixture

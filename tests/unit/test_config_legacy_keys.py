@@ -23,13 +23,14 @@ def _messages(caplog: pytest.LogCaptureFixture) -> list[str]:
 def test_neptune_max_retries_keeps_its_attempt_count(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # max_retries counted retries after the first try: 3 retries = 4 attempts.
+    # max_retries counted retries after the first try: 6 retries = 7 attempts.
+    # (7 is not the default, so a silently dropped key fails here.)
     with caplog.at_level(logging.WARNING):
-        config = Config.model_validate({"indexing": {"neptune": {"max_retries": 3}}})
-    assert config.indexing.neptune.max_attempts == 4
+        config = Config.model_validate({"indexing": {"neptune": {"max_retries": 6}}})
+    assert config.indexing.neptune.max_attempts == 7
     assert (
         "Config key 'indexing.neptune.max_retries' is deprecated; applied as "
-        "'indexing.neptune.max_attempts: 4'. Rename it in your config."
+        "'indexing.neptune.max_attempts: 7'. Rename it in your config."
     ) in _messages(caplog)
 
 

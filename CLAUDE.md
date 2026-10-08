@@ -133,11 +133,17 @@ Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
 - Tests run **AWS-free by default**. Use the port-based in-memory fakes in
   `tests/fixtures/fakes/` (e.g. `FakeDocStatusStore`) instead of mocking boto3
   ad hoc; use `moto` when an adapter must be exercised against a boto3 surface.
+  `tests/unit/test_fake_port_signatures.py` fails if a fake's method
+  signatures drift from the port's.
+- Each test times out after 120 s (`pytest-timeout`; override with
+  `@pytest.mark.timeout(n)`).
+- `tests/integration/test_local_stores.py` needs `LOCAL_STORES=1` and the
+  `docker/compose.local.yaml` stores; the CI `local-stores` job runs it.
 - `pytest-asyncio` is in `asyncio_mode = "auto"` — `async def test_*` just works.
 - Property tests (`hypothesis`) cover invariants: hashing determinism, diff
   partition completeness, merge laws, fusion monotonicity.
-- Coverage gate ratchets up with measured coverage (currently `--cov-fail-under=84`
-  in CI, measured ~86%). Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
+- Coverage gate ratchets up with measured coverage (currently `--cov-fail-under=88`
+  in CI, measured ~90%). Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 
 ## Quality gate
 

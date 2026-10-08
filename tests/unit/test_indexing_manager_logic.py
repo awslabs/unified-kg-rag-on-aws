@@ -307,11 +307,16 @@ def test_log_completion_summary_no_warnings_on_full_success(caplog) -> None:
     assert "Failed items" not in caplog.text
 
 
-def test_log_completion_summary_handles_empty_results() -> None:
+def test_log_completion_summary_handles_empty_results(caplog) -> None:
+    import logging
+
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 
-    # No items -> success_rate guard divides safely (no exception).
-    IndexingManager._log_completion_summary({}, elapsed_time=0.0)
+    # No items -> the success_rate guard avoids dividing by zero.
+    with caplog.at_level(logging.INFO):
+        IndexingManager._log_completion_summary({}, elapsed_time=0.0)
+    assert "0/0 items (0.0%)" in caplog.text
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
 # --- _discover_suffixes --------------------------------------------------

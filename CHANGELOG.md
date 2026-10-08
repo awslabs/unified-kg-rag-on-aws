@@ -71,6 +71,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `shared.utils.document_converter`, and `console`/`display_*` from
   `shared.utils.display`. The domain purity test now also checks transitive
   imports in a clean interpreter (#164).
+- CI runs the local-store adapter smoke test (`tests/integration/test_local_stores.py`)
+  against the `docker/compose.local.yaml` Gremlin Server and OpenSearch (#168).
+- Tests time out after 120 s each (`pytest-timeout` in the dev group), so a
+  hung test fails fast instead of running until the CI job times out (#168).
 - Model ids are free-form strings; `aws.bedrock.default_model_id` and
   `fast_model_id` set every role of their tier, `aws.bedrock.model_overrides`
   describes unknown models, and Claude 4.5 fails fast without an inference

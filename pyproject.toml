@@ -233,6 +233,10 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short --strict-markers"
 asyncio_mode = "auto"
+# Fail a hung test (e.g. an unmocked network wait or a deadlocked pool) after
+# two minutes instead of letting it burn the whole CI job. The slowest test
+# takes a few seconds; override per test with @pytest.mark.timeout(n).
+timeout = 120
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",
@@ -284,6 +288,7 @@ dev = [
     "pytest-asyncio>=1.0.0",
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.12.0",
+    "pytest-timeout>=2.4.0",
     "ruff>=0.16.1",
     # boto3 type stubs (mypy only): boto3-stubs covers the top-level boto3
     # package; types-boto3 covers the per-service clients used under TYPE_CHECKING.
