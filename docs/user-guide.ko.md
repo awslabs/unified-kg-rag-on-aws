@@ -623,8 +623,8 @@ CDK compute 스택은 `AWS_REGION`, `BEDROCK_REGION`, `NEPTUNE_ENDPOINT`,
 | `--s3-prefix` | `pipeline-runs` | 캐시 파일의 S3 키 프리픽스 |
 | `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | 재개/검사할 기존 실행. 플래그를 생략하면 `GRAPHRAG_PIPELINE_ID` 환경 변수로 대체됩니다. |
 | `--resume-from-stage` | — | 재개할 스테이지 (`--pipeline-id` 필요) |
-| `--verify-metadata` | off | 파이프라인 메타데이터 무결성 검증 (`--pipeline-id` 필요) |
-| `--repair-metadata` | off | 메타데이터 복구 시도 (`--pipeline-id` 필요) |
+| `--verify-metadata` | off | 파이프라인 메타데이터 무결성 검증 (`--pipeline-id` 필요). 손상되었으면 0이 아닌 코드로 종료 |
+| `--repair-metadata` | off | 메타데이터 복구 시도 (`--pipeline-id` 필요). 복구에 실패하면 0이 아닌 코드로 종료 |
 | `--continue-on-error` | off | 스테이지 에러 시에도 계속 진행 |
 | `--enabled-stages` | all | 실행할 스테이지 목록(쉼표 구분) |
 | `--metrics-sink` | `none` | `none`, 또는 `cloudwatch` (CloudWatch EMF — Embedded Metric Format — 메트릭을 stdout으로 출력) |

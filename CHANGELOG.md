@@ -346,6 +346,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   run instead of being recorded per query, and `--max-failure-rate` now also
   applies to each metric's failed share of attempted values, so a metric that
   failed on every query exits non-zero (#PR).
+- `run-ingestion --verify-metadata` exits non-zero when the metadata is
+  corrupt, and `--repair-metadata` when the repair fails or raises (#PR).
+- `run-rag` reports `success: false` and exits non-zero when the chain returns
+  its `ignore_errors` error fallback (`metadata.error`) instead of an answer
+  (#PR).
 
 ### Security
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or

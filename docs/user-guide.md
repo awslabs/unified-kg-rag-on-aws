@@ -637,8 +637,8 @@ OpenSearch + Neptune.
 | `--s3-prefix` | `pipeline-runs` | S3 key prefix for cache files |
 | `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | Existing run to resume/inspect. If the flag is omitted it falls back to the `GRAPHRAG_PIPELINE_ID` environment variable. |
 | `--resume-from-stage` | — | Stage to resume from (requires `--pipeline-id`) |
-| `--verify-metadata` | off | Verify pipeline metadata integrity (needs `--pipeline-id`) |
-| `--repair-metadata` | off | Attempt metadata repair (needs `--pipeline-id`) |
+| `--verify-metadata` | off | Verify pipeline metadata integrity (needs `--pipeline-id`); exits non-zero when it is corrupt |
+| `--repair-metadata` | off | Attempt metadata repair (needs `--pipeline-id`); exits non-zero when the repair fails |
 | `--continue-on-error` | off | Keep going when a stage errors |
 | `--enabled-stages` | all | Comma-separated stage list to run |
 | `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout) |
