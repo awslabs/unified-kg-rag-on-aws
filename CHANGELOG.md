@@ -219,6 +219,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   test-only helpers on the guardrail handler and token counter (#120).
 
 ### Fixed
+- Incremental runs no longer record a document as PROCESSED when graph
+  extraction, gleaning or claim extraction failed on any of its text units.
+  It is recorded FAILED with the lineage of what was written, and the
+  registry diff treats a FAILED record as changed, so the next run prunes and
+  re-extracts it instead of leaving the hole in place (#PR).
 - A Neptune relationship whose source entity vertex is missing is counted as
   a failed write instead of a success: the add-edge traversal returns the
   edge id and an empty result is recorded as an error (#PR).

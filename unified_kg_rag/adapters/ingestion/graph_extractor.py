@@ -45,6 +45,10 @@ class ExtractionStats(BaseModel):
     num_failed_extractions: int = Field(
         default=0, description="Number of text units that encountered extraction errors"
     )
+    failed_text_unit_ids: list[str] = Field(
+        default_factory=list,
+        description="Ids of the text units whose extraction failed",
+    )
     total_entities_extracted: int = Field(
         default=0, description="Total number of entities extracted from all text units"
     )
@@ -167,6 +171,7 @@ class GraphExtractor(BaseProcessor):
                 raise
             logger.error("Error during graph extraction: %s", e)
             self.stats.num_failed_extractions = len(text_units)
+            self.stats.failed_text_unit_ids = [unit.id for unit in text_units]
             return [], [], self.stats
 
         all_entities, all_relationships = self._process_extraction_results(
@@ -268,6 +273,7 @@ class GraphExtractor(BaseProcessor):
         for text_unit, result in zip(text_units, extraction_results, strict=True):
             if result is BATCH_ITEM_FAILED:
                 self.stats.num_failed_extractions += 1
+                self.stats.failed_text_unit_ids.append(text_unit.id)
                 logger.warning("No extraction result for text unit '%s'", text_unit.id)
                 continue
             try:
@@ -279,6 +285,7 @@ class GraphExtractor(BaseProcessor):
                 self.stats.num_successful_extractions += 1
             except Exception as e:
                 self.stats.num_failed_extractions += 1
+                self.stats.failed_text_unit_ids.append(text_unit.id)
                 logger.error(
                     "Failed to parse extraction result for text unit '%s': %s",
                     text_unit.id,

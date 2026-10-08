@@ -123,17 +123,25 @@ def test_roundtrip_failed_status_and_zero_length(
 
 def test_diff_matches_fake(ddb_store: DynamoDBDocStatusStore) -> None:
     fake = FakeDocStatusStore()
-    for doc_id, content_hash in [("keep", "h1"), ("edit", "old"), ("gone", "h3")]:
-        record = DocStatusRecord(doc_id=doc_id, content_hash=content_hash)
+    for doc_id, content_hash, status in [
+        ("keep", "h1", DocStatus.PROCESSED),
+        ("edit", "old", DocStatus.PROCESSED),
+        ("gone", "h3", DocStatus.PROCESSED),
+        # Same content, but its last extraction failed: it must be retried.
+        ("retry", "h5", DocStatus.FAILED),
+    ]:
+        record = DocStatusRecord(
+            doc_id=doc_id, content_hash=content_hash, status=status
+        )
         ddb_store.put(record)
         fake.put(record)
 
-    incoming = {"keep": "h1", "edit": "new", "fresh": "h4"}
+    incoming = {"keep": "h1", "edit": "new", "fresh": "h4", "retry": "h5"}
     ddb_delta = ddb_store.diff(incoming)
     fake_delta = fake.diff(incoming)
 
     assert sorted(ddb_delta.new) == sorted(fake_delta.new) == ["fresh"]
-    assert sorted(ddb_delta.changed) == sorted(fake_delta.changed) == ["edit"]
+    assert sorted(ddb_delta.changed) == sorted(fake_delta.changed) == ["edit", "retry"]
     assert sorted(ddb_delta.unchanged) == sorted(fake_delta.unchanged) == ["keep"]
     assert sorted(ddb_delta.deleted) == sorted(fake_delta.deleted) == ["gone"]
 
@@ -142,7 +150,7 @@ def test_scan_fingerprints_returns_doc_id_and_hash_only(
     ddb_store: DynamoDBDocStatusStore,
 ) -> None:
     # The projection-scan helper backing diff() returns just {doc_id: (hash,
-    # scope)}, even for records carrying full artifact-id lineage.
+    # scope, failed)}, even for records carrying full artifact-id lineage.
     ddb_store.put(
         DocStatusRecord(
             doc_id="d1",
@@ -153,7 +161,12 @@ def test_scan_fingerprints_returns_doc_id_and_hash_only(
         )
     )
     ddb_store.put(DocStatusRecord(doc_id="d2", content_hash="h2"))
-    assert ddb_store._scan_fingerprints() == {"d1": ("h1", None), "d2": ("h2", None)}
+    ddb_store.put(DocStatusRecord(doc_id="d3", content_hash="h3", status="failed"))
+    assert ddb_store._scan_fingerprints() == {
+        "d1": ("h1", None, False),
+        "d2": ("h2", None, False),
+        "d3": ("h3", None, True),
+    }
 
 
 def test_diff_after_projection_optimization_on_empty_table(

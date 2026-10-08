@@ -593,6 +593,7 @@ class TestExtractFromTextUnits:
         _, _, stats = extractor.extract_from_text_units(units)
         assert stats.num_failed_extractions == 2
         assert stats.num_successful_extractions == 1
+        assert stats.failed_text_unit_ids == ["t0", "t1"]
 
     def test_batch_error_with_ignore_errors_returns_empty(
         self, extractor, mocker
@@ -608,6 +609,7 @@ class TestExtractFromTextUnits:
         # Every unit failed; the stats must say so, not report zero failures.
         assert stats.num_total_units == 2
         assert stats.num_failed_extractions == 2
+        assert stats.failed_text_unit_ids == ["t1", "t2"]
 
     def test_batch_error_without_ignore_raises(self, extractor, mocker) -> None:
         extractor.ignore_errors = False

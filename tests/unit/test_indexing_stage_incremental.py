@@ -271,3 +271,29 @@ def test_failed_prune_does_not_record_changed_doc_as_processed(mocker) -> None:
     # the doc retried) rather than overwritten with the new hash.
     record = store.get(compute_doc_id(_CHANGED))
     assert record is not None and record.content_hash == "hash-v1"
+
+
+def test_doc_with_failed_extraction_is_recorded_failed_and_retried(mocker) -> None:
+    store = FakeDocStatusStore()
+    _seed_registry(store)
+    stage = _stage(mocker, store, _RecordingManager())
+    text_units, entities = _delta_inputs()
+    ctx = _context(
+        DocumentDelta(changed=[compute_doc_id(_CHANGED)]),
+        [_document("run-changed", _CHANGED)],
+    )
+    ctx.failed_text_unit_ids = {"graph_extraction": ["t-new"]}
+
+    _run(stage, ctx, text_units, entities)
+
+    # The lineage of what WAS written is kept (so the next prune removes it),
+    # but the doc is FAILED, so the next run re-extracts it although its
+    # content hash is unchanged.
+    record = store.get(compute_doc_id(_CHANGED))
+    assert record is not None
+    assert record.status is DocStatus.FAILED
+    assert record.content_hash == "hash-v2"
+    assert record.entity_ids == ["e-new"]
+    assert store.diff({compute_doc_id(_CHANGED): "hash-v2"}).changed == [
+        compute_doc_id(_CHANGED)
+    ]

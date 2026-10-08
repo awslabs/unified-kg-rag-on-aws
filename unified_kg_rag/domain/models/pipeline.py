@@ -226,6 +226,12 @@ class PipelineContext(BaseModel):
         description="Corpus files that failed to parse or load this run. "
         "Incremental delta detection keeps them out of the deleted set.",
     )
+    failed_text_unit_ids: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Ids of the text units an extraction stage failed on, by "
+        "stage name. An incremental commit records their documents as FAILED "
+        "so the next run re-extracts them.",
+    )
 
     class Config:
         arbitrary_types_allowed = True

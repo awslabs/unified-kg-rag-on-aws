@@ -93,6 +93,7 @@ class ClaimExtractionStats(BaseModel):
     num_total_units: int = 0
     num_successful_extractions: int = 0
     num_failed_extractions: int = 0
+    failed_text_unit_ids: list[str] = []
     total_claims_extracted: int = 0
     total_processing_time: float = 0.0
 
@@ -180,7 +181,9 @@ class ClaimExtractor(BaseProcessor):
         # results list and misaligning the positional zip in
         # _process_extraction_results (claims attributed to the wrong unit).
         units_to_process = [u for u in text_units if u.id in unit_to_input]
-        self.stats.num_failed_extractions += len(text_units) - len(units_to_process)
+        for unit in text_units:
+            if unit.id not in unit_to_input:
+                self._record_failure(unit)
 
         def prepare_inputs_for_chunk(
             chunk_items: list[TextUnit],
@@ -201,7 +204,8 @@ class ClaimExtractor(BaseProcessor):
             if not self.ignore_errors:
                 raise
             logger.error("Error during claim extraction: %s", e)
-            self.stats.num_failed_extractions += len(units_to_process)
+            for unit in units_to_process:
+                self._record_failure(unit)
             return [], self.stats
 
         all_claims = self._process_extraction_results(
@@ -284,18 +288,22 @@ class ClaimExtractor(BaseProcessor):
                     all_claims.extend(claims)
                     self.stats.num_successful_extractions += 1
                 except Exception as e:
-                    self.stats.num_failed_extractions += 1
+                    self._record_failure(text_unit)
                     logger.warning(
                         "Failed to parse extraction result for text unit '%s': %s",
                         text_unit.id,
                         e,
                     )
             else:
-                self.stats.num_failed_extractions += 1
+                self._record_failure(text_unit)
                 logger.debug(
                     "No claim extraction result for text unit '%s'", text_unit.id
                 )
         return all_claims
+
+    def _record_failure(self, text_unit: TextUnit) -> None:
+        self.stats.num_failed_extractions += 1
+        self.stats.failed_text_unit_ids.append(text_unit.id)
 
     def _parse_extraction_result(
         self, result: dict[str, Any], text_unit: TextUnit

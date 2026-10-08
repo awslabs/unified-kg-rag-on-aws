@@ -9,7 +9,7 @@ match; both are exercised by the same test suite.
 
 from __future__ import annotations
 
-from unified_kg_rag.domain.models import DocStatusRecord, DocumentDelta
+from unified_kg_rag.domain.models import DocStatus, DocStatusRecord, DocumentDelta
 
 
 class FakeDocStatusStore:
@@ -36,7 +36,10 @@ class FakeDocStatusStore:
             existing = self._records.get(doc_id)
             if existing is None:
                 delta.new.append(doc_id)
-            elif existing.content_hash != content_hash:
+            elif (
+                existing.content_hash != content_hash
+                or existing.status is DocStatus.FAILED
+            ):
                 delta.changed.append(doc_id)
             else:
                 delta.unchanged.append(doc_id)

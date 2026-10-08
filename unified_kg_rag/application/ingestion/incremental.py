@@ -18,6 +18,7 @@ stays storage-focused and is exercised end-to-end with in-memory fakes.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Collection
 from typing import TYPE_CHECKING
 
 from unified_kg_rag.domain.ingestion.delta_detector import (
@@ -205,6 +206,7 @@ class IncrementalIndexer:
         lineages: list[DocumentLineage],
         fingerprints: dict[str, str],
         *,
+        failed_doc_ids: Collection[str] = (),
         text_units: list[TextUnit] | None = None,
         entities: list[Entity] | None = None,
         relationships: list[Relationship] | None = None,
@@ -217,7 +219,10 @@ class IncrementalIndexer:
         ``lineages`` attributes artifacts to their source document (one entry
         per processed doc), so per-document deletion later removes only a doc's
         *exclusive* artifacts. The artifact lists passed separately are the union
-        actually written to the stores this run.
+        actually written to the stores this run. Docs in ``failed_doc_ids`` (an
+        extraction stage failed on some of their text units) are recorded
+        FAILED with their lineage, so the next run re-extracts them and first
+        prunes what this run wrote.
         """
         results = self.indexing_manager.index_delta(
             text_units=text_units,
@@ -236,7 +241,7 @@ class IncrementalIndexer:
         # zero successes (a hard write failure), skip the registry write-back so
         # the affected docs are re-detected and retried next run.
         if self._delta_writes_succeeded(results):
-            self._record_processed(lineages, fingerprints)
+            self._record_processed(lineages, fingerprints, failed_doc_ids)
         else:
             logger.error(
                 "Delta indexing failed for at least one artifact type (complete "
@@ -354,16 +359,27 @@ class IncrementalIndexer:
         return result
 
     def _record_processed(
-        self, lineages: list[DocumentLineage], fingerprints: dict[str, str]
+        self,
+        lineages: list[DocumentLineage],
+        fingerprints: dict[str, str],
+        failed_doc_ids: Collection[str] = (),
     ) -> None:
+        if failed_doc_ids:
+            logger.warning(
+                "Extraction failed on part of %d documents; recording them FAILED "
+                "so the next run re-extracts them",
+                len(failed_doc_ids),
+            )
         for lineage in lineages:
+            failed = lineage.doc_id in failed_doc_ids
             existing = self.doc_status.get(lineage.doc_id)
             record = DocStatusRecord(
                 doc_id=lineage.doc_id,
                 content_hash=fingerprints.get(
                     lineage.doc_id, existing.content_hash if existing else ""
                 ),
-                status=DocStatus.PROCESSED,
+                status=DocStatus.FAILED if failed else DocStatus.PROCESSED,
+                error_info=("extraction failed on some text units" if failed else None),
                 suffix=lineage.suffix,
                 scope=(
                     self.scope
