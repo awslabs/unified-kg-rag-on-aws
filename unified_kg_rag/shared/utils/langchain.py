@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import concurrent.futures
-import html
 import math
 import re
 import time
@@ -596,20 +595,18 @@ class BatchProcessor(BaseModel):
 
 
 class RobustXMLOutputParser(XMLOutputParser):
+    """Parse LLM XML into nested dicts, recovering from malformed output.
+
+    Every path yields the same shape: an element's children keyed by tag, a
+    repeated tag as a list, a leaf as its text. ``XMLOutputParser.parse`` is
+    deliberately not used: it returns lists of one-key dicts
+    (``{"claims": [{"claim": [{"subject": ...}, ...]}]}``) that the
+    extractors cannot read, so a well-formed single-root response would parse
+    into a different shape than a recovered one.
+    """
+
     def parse(self, text: str) -> dict[str, Any]:
         original_sections = self._detect_xml_sections(text)
-
-        try:
-            result = super().parse(text)
-            if self._sections_preserved(original_sections, result):
-                return result
-            raise ValueError("Missing sections in parsed result")
-        except Exception as e:
-            logger.debug(
-                "Standard XML parsing failed: %s: %s. Trying lxml recovery...",
-                type(e).__name__,
-                e,
-            )
 
         try:
             cleaned_text = self._clean_xml_for_lxml(text)
@@ -619,33 +616,7 @@ class RobustXMLOutputParser(XMLOutputParser):
             raise ValueError("Missing sections in lxml result")
         except Exception as e:
             logger.debug(
-                "LXML recovery parsing failed: %s: %s. Trying sanitization...",
-                type(e).__name__,
-                e,
-            )
-
-        try:
-            sanitized_text = self._sanitize_xml_content(text)
-            result = super().parse(sanitized_text)
-            if self._sections_preserved(original_sections, result):
-                return result
-            raise ValueError("Missing sections in sanitized result")
-        except Exception as e:
-            logger.debug(
-                "Sanitized XML parsing failed: %s: %s. Trying aggressive cleaning...",
-                type(e).__name__,
-                e,
-            )
-
-        try:
-            aggressively_cleaned = self._aggressively_clean_xml(text)
-            result = super().parse(aggressively_cleaned)
-            if self._sections_preserved(original_sections, result):
-                return result
-            raise ValueError("Missing sections in aggressive result")
-        except Exception as e:
-            logger.debug(
-                "Aggressive cleaning parsing failed: %s: %s. Trying XML fallback...",
+                "LXML recovery parsing failed: %s: %s. Trying XML fallback...",
                 type(e).__name__,
                 e,
             )
@@ -855,30 +826,6 @@ class RobustXMLOutputParser(XMLOutputParser):
             return result
 
         return _convert_etree_to_dict(tree)
-
-    @staticmethod
-    def _sanitize_xml_content(xml_content: str) -> str:
-        def escape_text_content(match: re.Match) -> str:
-            tag_open = match.group(1)
-            content = match.group(2)
-            tag_close = match.group(3)
-            escaped_content = html.escape(content, quote=False)
-            return f"{tag_open}{escaped_content}{tag_close}"
-
-        pattern = r"(<[a-zA-Z0-9_]+\s*[^>]*>)(.*?)(</[a-zA-Z0-9_]+>)"
-        return re.sub(pattern, escape_text_content, xml_content, flags=re.DOTALL)
-
-    @staticmethod
-    def _aggressively_clean_xml(xml_content: str) -> str:
-        cleaned = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", "", xml_content)
-        cleaned = re.sub(r"&(?!(?:amp|lt|gt|quot|apos);)", "&amp;", cleaned)
-
-        def selective_escape(match: re.Match[str]) -> str:
-            escaped: str = html.escape(match.group(0), quote=False)
-            return escaped
-
-        cleaned = re.sub(r">([^<]*)<", selective_escape, cleaned)
-        return cleaned.strip()
 
     @staticmethod
     def _extract_tags_fallback(text: str) -> dict[str, Any] | None:

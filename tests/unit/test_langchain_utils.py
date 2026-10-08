@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 from langchain_core.exceptions import OutputParserException
+from langchain_core.output_parsers import XMLOutputParser
 from langchain_core.runnables import RunnableLambda
 
 import unified_kg_rag.shared.utils.langchain as langchain_module
@@ -602,20 +603,62 @@ class TestRobustXMLOutputParser:
         assert RobustXMLOutputParser._sections_preserved({"a"}, ["x"]) is False
 
     def test_lxml_recovery_on_malformed(self) -> None:
-        # Unclosed tag defeats the strict parser; lxml recover handles it and the
-        # top-level <plan> section is preserved.
+        # An unclosed tag is recovered by lxml and the top-level <plan>
+        # section is preserved.
         parser = RobustXMLOutputParser()
         out = parser.parse("<plan><item>one</item><item>two</plan>")
         assert isinstance(out, dict)
         assert "plan" in out
 
-    def test_sanitization_recovers_unescaped_ampersand(self) -> None:
+    def test_unescaped_ampersand_keeps_section(self) -> None:
         parser = RobustXMLOutputParser()
-        # A bare & in text content; recovery ladder should yield a dict with the
-        # section preserved.
+        # A bare & in text content still yields a dict with the section.
         out = parser.parse("<note>Tom & Jerry</note>")
         assert isinstance(out, dict)
         assert "note" in out
+
+    def test_single_root_parses_to_children_by_tag(self) -> None:
+        # A well-formed single-root response (claims, refinement plan) parses
+        # into children keyed by tag, the shape the extractors read, not
+        # XMLOutputParser's lists of one-key dicts.
+        text = (
+            "<claims>\n<claim><subject>Vendor</subject><object>Buyer</object>"
+            "</claim>\n<claim><subject>Buyer</subject><object>Vendor</object>"
+            "</claim>\n</claims>"
+        )
+        assert RobustXMLOutputParser().parse(text) == {
+            "claims": {
+                "claim": [
+                    {"subject": "Vendor", "object": "Buyer"},
+                    {"subject": "Buyer", "object": "Vendor"},
+                ]
+            }
+        }
+
+    def test_single_root_shape_does_not_depend_on_defusedxml(self, mocker) -> None:
+        # XMLOutputParser.parse raises ImportError without defusedxml and
+        # returns a different shape with it; the parser must not call it.
+        strict = mocker.patch.object(XMLOutputParser, "parse")
+        out = RobustXMLOutputParser().parse(
+            "<refinement_plan><quality_scores><completeness_score>0.8"
+            "</completeness_score></quality_scores></refinement_plan>"
+        )
+        strict.assert_not_called()
+        assert out == {
+            "refinement_plan": {"quality_scores": {"completeness_score": "0.8"}}
+        }
+
+    def test_multiple_sections_parse_by_section(self) -> None:
+        # Extraction output has two top-level sections (no single root).
+        text = (
+            "<entities>\n<entity><name>Vendor</name><type>ORG</type></entity>\n"
+            "</entities>\n<relationships>\n<relationship><source>Vendor</source>"
+            "<target>Buyer</target></relationship>\n</relationships>"
+        )
+        assert RobustXMLOutputParser().parse(text) == {
+            "entities": {"entity": {"name": "Vendor", "type": "ORG"}},
+            "relationships": {"relationship": {"source": "Vendor", "target": "Buyer"}},
+        }
 
     def test_extract_xml_fallback_nested(self) -> None:
         text = "<issues><issue>a</issue><issue>b</issue></issues>"
@@ -694,14 +737,6 @@ class TestRobustXMLOutputParser:
         out = RobustXMLOutputParser._clean_xml_for_lxml("a\x00b\x07c")
         assert out == b"abc"
 
-    def test_aggressively_clean_escapes_bare_ampersand(self) -> None:
-        out = RobustXMLOutputParser._aggressively_clean_xml("<a>x & y</a>")
-        assert "&amp;" in out
-
-    def test_sanitize_xml_content_escapes_inner(self) -> None:
-        out = RobustXMLOutputParser._sanitize_xml_content("<a>1 < 2</a>")
-        assert "&lt;" in out
-
     def test_try_lxml_recover_parse_nested(self) -> None:
         out = RobustXMLOutputParser._try_lxml_recover_parse(
             b"<root><a>1</a><b>2</b></root>"
@@ -715,9 +750,8 @@ class TestRobustXMLOutputParser:
 
     def test_all_methods_exhausted_raises(self) -> None:
         # Plain prose with no recoverable tag/bullet/number structure: every
-        # recovery method (strict parse, lxml recover, sanitize, aggressive
-        # clean, xml/tags/list fallbacks) fails or returns None, so the ladder
-        # exhausts and raises.
+        # recovery method (lxml recover, xml/tags/list fallbacks) fails or
+        # returns None, so the ladder exhausts and raises.
         parser = RobustXMLOutputParser()
         with pytest.raises(OutputParserException, match="Failed to parse XML"):
             parser.parse("this is just prose with no structure at all")

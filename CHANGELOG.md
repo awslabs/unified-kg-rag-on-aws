@@ -237,6 +237,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   the document retriever; an old config key is ignored (#161).
 
 ### Fixed
+- The LLM XML parser no longer tries LangChain's `XMLOutputParser.parse`
+  first. Without `defusedxml` (not a dependency) that call raised
+  `ImportError` on every response, so the strict and the two re-escaping
+  attempts never ran; with `defusedxml` present in the environment, a
+  well-formed single-root response (claims, gleaning refinement plan) parsed
+  into lists of one-key dicts that the extractors cannot read. Every response
+  now goes through the lxml recovery path, which produced all results before,
+  so parsed output does not change (#165).
 - `indexing.reset` with the doc-status registry enabled rebuilds from the
   whole corpus and records every document again. The loading stage used to
   diff against the registry first, so the reset cleared the stores but
