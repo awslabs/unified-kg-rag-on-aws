@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+from collections.abc import Sequence
 from enum import Enum
 from typing import Any, ClassVar
 
@@ -16,6 +17,7 @@ from unified_kg_rag.domain.models import Config, RetrievalResult
 from unified_kg_rag.domain.prompts import AnswerGenerationPrompt
 from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
 
@@ -75,6 +77,9 @@ class OptimizedContext(BaseModel):
 
 class TokenManager(MetricsMixin):
     MIN_DERIVED_CONTEXT_TOKENS: ClassVar[int] = 1024
+    # Concurrent token counts per count_tokens_many call (each may be one
+    # CountTokens request).
+    COUNT_CONCURRENCY: ClassVar[int] = 8
     PRIORITY_MULTIPLIERS: ClassVar[dict[SectionType, float]] = {
         SectionType.TEXT: 1.3,
         SectionType.ENTITY: 1.2,
@@ -170,6 +175,28 @@ class TokenManager(MetricsMixin):
             return 0
         return self._token_counter.count_tokens(text)
 
+    def count_tokens_many(self, texts: Sequence[str]) -> list[int]:
+        """Exact counts for ``texts``, in order, with distinct texts counted
+        concurrently (at most ``COUNT_CONCURRENCY`` at a time).
+
+        Each count can be a CountTokens round trip, and a mix/hybrid context
+        has hundreds of sections; counting them one after another dominated
+        query latency. Duplicates are counted once (and the counter's own cache
+        still applies). Blocking: run it off the event loop from async code.
+        """
+        unique = list(dict.fromkeys(t for t in texts if t))
+        if len(unique) <= 1:
+            counts = {t: self.count_tokens(t) for t in unique}
+        else:
+            workers = min(self.COUNT_CONCURRENCY, len(unique))
+            with ContextThreadPoolExecutor(
+                max_workers=workers, thread_name_prefix="count-tokens"
+            ) as pool:
+                counts = dict(
+                    zip(unique, pool.map(self.count_tokens, unique), strict=True)
+                )
+        return [counts[t] if t else 0 for t in texts]
+
     def optimize_context(
         self,
         retrieval_results: list[RetrievalResult],
@@ -227,13 +254,14 @@ class TokenManager(MetricsMixin):
     def _create_context_sections(
         self, results: list[RetrievalResult]
     ) -> list[ContextSection]:
+        counts = self.count_tokens_many([result.content for result in results])
         return [
-            self._create_context_section(result, index)
-            for index, result in enumerate(results)
+            self._create_context_section(result, index, token_count=count)
+            for index, (result, count) in enumerate(zip(results, counts, strict=True))
         ]
 
     def _create_context_section(
-        self, result: RetrievalResult, index: int
+        self, result: RetrievalResult, index: int, token_count: int | None = None
     ) -> ContextSection:
         section_type_str = result.retriever_type or SectionType.GENERAL.value
         try:
@@ -251,7 +279,11 @@ class TokenManager(MetricsMixin):
 
         return ContextSection(
             content=result.content,
-            token_count=self.count_tokens(result.content),
+            token_count=(
+                self.count_tokens(result.content)
+                if token_count is None
+                else token_count
+            ),
             priority=priority,
             section_type=section_type,
             source_id=result.source or f"result_{index}",

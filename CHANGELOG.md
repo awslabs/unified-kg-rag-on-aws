@@ -412,6 +412,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   loop that contended for it (`RuntimeError` on another loop) and did not
   exclude other threads, so turns appended from two threads could interleave
   or hang (#PR).
+- Context budgeting counts section tokens concurrently (up to 8 at a time,
+  each distinct text once) instead of one Bedrock CountTokens call after
+  another, which made token counting dominate mix/hybrid query latency. Global
+  search packs its ranked key points the same way, off the event loop. Counts
+  stay exact (#PR).
 
 ### Security
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or

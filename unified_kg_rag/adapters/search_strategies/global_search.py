@@ -517,7 +517,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             )
             return []
 
-        packed_points = self._pack_points_within_budget(ranked_points)
+        # Counting can be one CountTokens request per point: off the loop.
+        packed_points = await asyncio.to_thread(
+            self._pack_points_within_budget, ranked_points
+        )
         return await self._reduce_from_points(
             packed_points, results, query, config=config
         )
@@ -665,8 +668,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         budget = self.global_search_config.max_map_reduce_tokens
         packed: list[_MapPoint] = []
         used = 0
-        for point in points:
-            cost = self.token_manager.count_tokens(point.description)
+        # Exact counts, taken concurrently rather than one request per point.
+        costs = self.token_manager.count_tokens_many([p.description for p in points])
+        for point, cost in zip(points, costs, strict=True):
             if packed and used + cost > budget:
                 break
             packed.append(point)

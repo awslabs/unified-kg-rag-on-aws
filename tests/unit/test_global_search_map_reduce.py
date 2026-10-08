@@ -81,6 +81,9 @@ class _TokenCounter:
     def count_tokens(self, text: str) -> int:
         return self._cost
 
+    def count_tokens_many(self, texts: list[str]) -> list[int]:
+        return [self.count_tokens(t) for t in texts]
+
 
 def _map_payload(*scored: tuple[str, int]) -> str:
     return json.dumps({"points": [{"description": d, "score": s} for d, s in scored]})
@@ -458,3 +461,25 @@ async def test_default_degraded_path_passes_unrated_reports_through() -> None:
 
     reducer.ainvoke.assert_not_awaited()
     assert [r.source for r in out] == ["c0", "c1"]
+
+
+async def test_pack_does_not_count_tokens_on_the_event_loop() -> None:
+    import threading
+
+    strat = _strategy(
+        map_batch_size=1,
+        map_reduce_min_results=2,
+        map_outputs=[_map_payload(("a", 90)), _map_payload(("b", 80))],
+    )
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    counter = strat.token_manager
+
+    def count_tokens_many(texts: list[str]) -> list[int]:
+        seen.append(threading.get_ident())
+        return [counter.count_tokens(t) for t in texts]
+
+    counter.count_tokens_many = count_tokens_many  # type: ignore[attr-defined]
+    out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
+    assert out[0].metadata["ranked_key_points"] == 2
+    assert seen and loop_thread not in seen

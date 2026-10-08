@@ -572,7 +572,9 @@ async def test_map_reduce_passes_the_callers_config_to_map_and_reduce() -> None:
     strat.batch_processor = BatchProcessor(
         batch_size=1, max_concurrency=4, max_attempts=1
     )
-    strat.token_manager = SimpleNamespace(count_tokens=len)
+    strat.token_manager = SimpleNamespace(
+        count_tokens=len, count_tokens_many=lambda texts: [len(t) for t in texts]
+    )
     caller_config = {"tags": ["caller"]}
 
     await strat._apply_map_reduce(

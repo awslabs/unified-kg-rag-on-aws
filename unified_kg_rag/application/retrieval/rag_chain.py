@@ -906,7 +906,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             query: ProcessedQuery = state["processed_query"]
             optimized: OptimizedContext | None = state.get("optimized_context")
             if optimized is None:
-                optimized = self._optimize_context(state)
+                optimized = await asyncio.to_thread(self._optimize_context, state)
             search_context = self.token_manager.build_context_string(optimized)
             history = state.get("history")
 
