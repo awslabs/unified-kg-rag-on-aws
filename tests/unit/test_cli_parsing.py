@@ -151,6 +151,58 @@ async def test_rag_runner_leaves_the_target_language_to_the_chain(
     assert rag_input.target_language is None
 
 
+async def test_rag_runner_error_fallback_is_not_success(config, mocker) -> None:
+    # Under ignore_errors the chain returns DEFAULT_ERROR_MESSAGE with
+    # metadata.error instead of raising; the CLI must not call that success.
+    from unified_kg_rag.application.retrieval.rag_chain import (
+        DEFAULT_ERROR_MESSAGE,
+        ProcessedQuery,
+        RAGOutput,
+    )
+    from unified_kg_rag.domain.models import SearchQuery, SearchResult
+
+    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    runner = run_rag_chain.RAGChainRunner(_rag_parser().parse_args(["-q", "hi"]))
+    runner.rag_chain = mocker.AsyncMock()
+    runner.rag_chain.ainvoke.return_value = RAGOutput(
+        answer=DEFAULT_ERROR_MESSAGE,
+        sources=[],
+        search_results=SearchResult(
+            query=SearchQuery(query="hi"),
+            results=[],
+            total_results=0,
+            search_strategy="error",
+            processing_time=0.0,
+            metadata={"error": "Neptune down"},
+        ),
+        conversation_id=None,
+        processed_query=ProcessedQuery(original_query="hi", final_query="hi"),
+        metadata={"error": True},
+    )
+    result = await runner._run_query(run_rag_chain.RAGInput(query="hi"))
+    assert result["success"] is False
+    assert result["error"] == "Neptune down"
+
+
+async def test_rag_runner_exits_non_zero_on_error_fallback(config, mocker) -> None:
+    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    mocker.patch.object(run_rag_chain, "display_ascii_art")
+    mocker.patch.object(
+        run_rag_chain, "create_rag_chain", return_value=mocker.AsyncMock()
+    )
+    runner = run_rag_chain.RAGChainRunner(_rag_parser().parse_args(["-q", "hi"]))
+    runner.rag_chain = None
+    mocker.patch.object(
+        runner,
+        "_run_query",
+        return_value={"success": False, "error": "x", "metadata": {"error": True}},
+    )
+    mocker.patch.object(runner, "_print_result")
+    with pytest.raises(SystemExit) as exc:
+        await runner.run()
+    assert exc.value.code == 1
+
+
 # --- run_rag_chain: _parse_filters --------------------------------------
 
 
@@ -241,6 +293,35 @@ def test_eval_exceeds_failure_budget(total, failed, budget, expected) -> None:
         total_queries=total,
         successful_evaluations=total - failed,
         failed_evaluations=failed,
+        evaluation_start_time=datetime(2026, 1, 1),
+        evaluation_end_time=datetime(2026, 1, 1),
+    )
+    assert run_evaluation.exceeds_failure_budget(summary, budget) is expected
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "budget", "expected"),
+    [
+        # A metric that failed on every attempted query fails the run even
+        # though every answer was generated.
+        ({"langchain": {"correctness": {"scored": 0, "failed": 3}}}, 1.0, True),
+        ({"langchain": {"correctness": {"scored": 2, "failed": 1}}}, 1.0, False),
+        ({"langchain": {"correctness": {"scored": 2, "failed": 1}}}, 0.2, True),
+        ({"ragas": {"faithfulness": {"scored": 9, "failed": 1}}}, 0.2, False),
+        # Skipped (not applicable) is not a failure.
+        (
+            {"graph_aware": {"entity_coverage": {"scored": 0, "skipped": 3}}},
+            0.0,
+            False,
+        ),
+    ],
+)
+def test_eval_metric_failures_count_against_budget(outcomes, budget, expected) -> None:
+    summary = EvaluationSummary(
+        total_queries=3,
+        successful_evaluations=3,
+        failed_evaluations=0,
+        metric_outcomes=outcomes,
         evaluation_start_time=datetime(2026, 1, 1),
         evaluation_end_time=datetime(2026, 1, 1),
     )
@@ -645,3 +726,50 @@ async def test_rag_run_query_raises_without_chain(config, mocker) -> None:
     runner.rag_chain = None
     with pytest.raises(RuntimeError, match="not initialized"):
         await runner._run_query(RAGInput(query="hi"))
+
+
+# --- run_ingestion_pipeline: metadata operations exit codes ---------------
+
+
+def _metadata_runner(config, mocker, *flags: str):
+    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    mocker.patch.object(run_ingestion_pipeline.Confirm, "ask", return_value=True)
+    args = _ing_parser().parse_args([*flags, "--pipeline-id", "pid"])
+    runner = run_ingestion_pipeline.IngestionPipelineRunner(args)
+    runner.pipeline = mocker.MagicMock()
+    return runner
+
+
+def test_verify_metadata_valid_is_handled(config, mocker) -> None:
+    runner = _metadata_runner(config, mocker, "--verify-metadata")
+    runner.pipeline.verify_pipeline_metadata.return_value = True
+    assert runner._handle_metadata_operations() is True
+
+
+def test_verify_metadata_corrupt_fails(config, mocker) -> None:
+    from unified_kg_rag.shared import PipelineExecutionError
+
+    runner = _metadata_runner(config, mocker, "--verify-metadata")
+    runner.pipeline.verify_pipeline_metadata.return_value = False
+    with pytest.raises(PipelineExecutionError, match="corrupted"):
+        runner._handle_metadata_operations()
+
+
+@pytest.mark.parametrize("outcome", [False, RuntimeError("disk full")])
+def test_repair_metadata_failure_fails(config, mocker, outcome) -> None:
+    from unified_kg_rag.shared import PipelineExecutionError
+
+    runner = _metadata_runner(config, mocker, "--repair-metadata")
+    if isinstance(outcome, Exception):
+        runner.pipeline.repair_pipeline_metadata.side_effect = outcome
+    else:
+        runner.pipeline.repair_pipeline_metadata.return_value = outcome
+    with pytest.raises(PipelineExecutionError, match="repair"):
+        runner._handle_metadata_operations()
+
+
+def test_repair_metadata_success_is_handled(config, mocker) -> None:
+    runner = _metadata_runner(config, mocker, "--verify-metadata", "--repair-metadata")
+    runner.pipeline.verify_pipeline_metadata.return_value = False
+    runner.pipeline.repair_pipeline_metadata.return_value = True
+    assert runner._handle_metadata_operations() is True

@@ -151,3 +151,49 @@ def test_no_langsmith_warning_without_tracing(
 ) -> None:
     setup_logging(_config(), stream=stream)
     assert _records(stream) == []
+
+
+def test_importing_the_package_leaves_host_logging_alone(tmp_path: Path) -> None:
+    # A library import must not replace the host's handlers, change the root
+    # level, or open a log file (next to the package or anywhere else); only
+    # the CLIs call setup_logging.
+    import subprocess
+    import sys
+
+    script = (
+        "import logging, sys\n"
+        "host = logging.StreamHandler(sys.stdout)\n"
+        "logging.getLogger().addHandler(host)\n"
+        "logging.getLogger().setLevel(logging.ERROR)\n"
+        "import unified_kg_rag.application.cli.run_evaluation\n"
+        "from unified_kg_rag.shared import get_logger\n"
+        "get_logger('unified_kg_rag.host_test').error('lib says %s', 'hi')\n"
+        "root = logging.getLogger()\n"
+        "assert root.handlers == [host], root.handlers\n"
+        "assert root.level == logging.ERROR, root.level\n"
+    )
+    package_logs = Path(__file__).resolve().parents[2] / "logs"
+    before = set(package_logs.glob("*")) if package_logs.exists() else set()
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "lib says hi" in completed.stdout
+    assert list(tmp_path.iterdir()) == []
+    after = set(package_logs.glob("*")) if package_logs.exists() else set()
+    assert after == before
+
+
+def test_relative_log_file_path_resolves_against_cwd(
+    stream: io.StringIO, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    setup_logging(
+        _config(log_to_file=True, log_file_path="logs/run.txt"), stream=stream
+    )
+    (log_file,) = (tmp_path / "logs").glob("run_*.txt")
+    assert log_file.is_file()

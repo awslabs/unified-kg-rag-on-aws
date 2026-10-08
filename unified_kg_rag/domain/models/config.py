@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     BeforeValidator,
     Field,
@@ -1290,6 +1291,20 @@ class CommunityDetectionConfig(BaseModel):
     )
 
 
+def _coerce_visualization_embeddings(value: dict[str, Any]) -> dict[str, Any]:
+    """Validate ``bedrock_model_id`` as an ``EmbeddingModelId`` (YAML gives a str)."""
+    if value.get("bedrock_model_id") is None:
+        return value
+    try:
+        model_id = EmbeddingModelId(value["bedrock_model_id"])
+    except ValueError as e:
+        raise ValueError(
+            f"bedrock_model_id: {e}; expected one of "
+            f"{[m.value for m in EmbeddingModelId]}"
+        ) from e
+    return {**value, "bedrock_model_id": model_id}
+
+
 class VisualizationConfig(BaseModel):
     enabled: bool = Field(
         default=True, description="Enable or disable the entire visualization pipeline."
@@ -1311,7 +1326,9 @@ class VisualizationConfig(BaseModel):
         pattern="^(umap|tsne|pca)$",
         description="Method for dimensionality reduction ('umap', 'tsne', 'pca').",
     )
-    embeddings: dict[str, Any] = Field(
+    embeddings: Annotated[
+        dict[str, Any], AfterValidator(_coerce_visualization_embeddings)
+    ] = Field(
         default_factory=dict,
         description="Embedding parameters for node embedding. Only "
         "'bedrock_model_id' is honored (node embeddings come from Bedrock; the "
@@ -2304,7 +2321,7 @@ class LoggingConfig(BaseModel):
         default="logs/log.txt",
         min_length=1,
         max_length=255,
-        description="Log file path",
+        description="Log file path (CLIs only); relative to the working directory",
     )
     library_levels: dict[str, str] = Field(
         default_factory=lambda: {

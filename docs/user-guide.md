@@ -538,7 +538,7 @@ quotas (`search.local_search.type_quota`) are in the template.
 | `cache.ttl_seconds` | `86400` | Cache entry TTL; `null` = never expire. |
 | `logging.level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `logging.log_format` | `"structured"` | `structured` or `plain`. |
-| `logging.log_to_file` | `true` | Also write logs to `log_file_path` (`logs/log.txt`). |
+| `logging.log_to_file` | `true` | The CLIs also write logs to `log_file_path` (`logs/log.txt`, dated as `log_YYYYMMDD.txt`; a relative path is resolved against the working directory). Importing the package as a library configures no handler or file: the host application's logging setup applies. |
 | `logging.library_levels` | `{langchain_aws: WARNING, botocore: WARNING, urllib3: WARNING}` | Per-logger levels for chatty libraries. Setting the key replaces the whole map. |
 
 ### 2.8 `evaluation`
@@ -637,11 +637,11 @@ OpenSearch + Neptune.
 | `--s3-prefix` | `pipeline-runs` | S3 key prefix for cache files |
 | `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | Existing run to resume/inspect. If the flag is omitted it falls back to the `GRAPHRAG_PIPELINE_ID` environment variable. |
 | `--resume-from-stage` | — | Stage to resume from (requires `--pipeline-id`) |
-| `--verify-metadata` | off | Verify pipeline metadata integrity (needs `--pipeline-id`) |
-| `--repair-metadata` | off | Attempt metadata repair (needs `--pipeline-id`) |
+| `--verify-metadata` | off | Verify pipeline metadata integrity (needs `--pipeline-id`); exits non-zero when it is corrupt |
+| `--repair-metadata` | off | Attempt metadata repair (needs `--pipeline-id`); exits non-zero when the repair fails |
 | `--continue-on-error` | off | Keep going when a stage errors |
 | `--enabled-stages` | all | Comma-separated stage list to run |
-| `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout) |
+| `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout as dimensionless series; `pipeline_id` is recorded as a log property, not a dimension, so runs add no new metric series) |
 | `--config-path` | — | Path to `config.yaml` |
 
 ### The 12 pipeline stages
@@ -962,7 +962,7 @@ its edit until a full rebuild.
 | `--search-type` | `hybrid` | Search method |
 | `--top-k` | `10` | Max results |
 | `--retrieval-multiplier` | `1` | Retrieval depth |
-| `--max-failure-rate` | `1.0` | Exit non-zero when the fraction of queries whose answer generation failed exceeds this (0.0-1.0). A run where every query failed always exits non-zero |
+| `--max-failure-rate` | `1.0` | Exit non-zero when the fraction of queries whose answer generation failed, or the fraction of a metric's attempted values that failed (`metric_outcomes`; skipped values do not count), exceeds this (0.0-1.0). A run where every query, or every attempt of a metric, failed always exits non-zero |
 | `--verbose`, `-v` | off | Debug logging |
 | `--config-path` | — | Path to `config.yaml` |
 
@@ -971,7 +971,11 @@ its edit until a full rebuild.
 Selected via `evaluation.enabled_evaluators`. An enabled evaluator that cannot
 be built (e.g. no Bedrock access for the judge) or rejects its configuration
 stops the run; with `processing.ignore_errors: true` it is dropped instead and
-listed in `run_manifest.dropped_evaluators`. By default all five are enabled:
+listed in `run_manifest.dropped_evaluators`. The same applies while scoring:
+an evaluator error (e.g. a judge call that fails) stops the run unless
+`ignore_errors` is `true`, in which case the metric is recorded as failed. A
+judge reply without a usable score is always recorded as failed, never as 0.
+By default all five are enabled:
 the deterministic, LLM-free ones (`answer_match`, `retrieval`, `graph_aware`)
 are free and skip a query that lacks their dataset fields; for a judge-free run
 set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
@@ -1097,8 +1101,9 @@ The summary holds, per metric, mean/median/stdev/min/max/count
   `correct_abstentions`, `accuracy`). On answerable items an abstention is
   graded like any answer (normally a miss); each result carries `abstained`.
 - `run_manifest` — CLI arguments, model ids (answer generation, evaluation
-  judge/embedding), package version, git commit (`git_sha`, when run from a
-  checkout), `config_sha256` of the full resolved config, `library_versions`
+  judge/embedding), package version, git commit (`git_sha`, and `git_dirty`
+  when tracked files differ from it; both `null` unless the package runs from
+  a checkout that tracks it), `config_sha256` of the full resolved config, `library_versions`
   (ragas, langchain*), the dataset (path + file sha256, query count and a hash
   of the parsed content) and a UTC timestamp, so two runs can be compared.
   It also lists `dropped_evaluators`. `EvaluationManager.evaluate_dataset`
@@ -1139,7 +1144,11 @@ Layout and error behaviour:
   visualization step fails when `processing.ignore_errors` is `false` (ingestion
   itself continues and logs the failure). With `ignore_errors: true` it logs an
   ERROR, falls back to a topology-only spring layout, and records
-  `"layout_degraded": true` in `visualization_data.json`.
+  `"layout_degraded": true` in `visualization_data.json`. A failed
+  dimensionality reduction falls back the same way (seeded spring layout,
+  `layout_degraded: true`) whatever `ignore_errors` says.
+- `embeddings.bedrock_model_id` must be one of the supported embedding model
+  ids; any other value is rejected when the configuration loads.
 - Edge width/opacity in the interactive graph is scaled relative to the graph's
   own weight range (log-scaled, then min-max normalised), so 1-10 strength
   scores and merged counts are both distinguishable.
@@ -1194,7 +1203,8 @@ detected domain). **Review it**, then copy the prompts you want into your
 `config.yaml` under `custom_prompts:`. Plain-text files are read as-is; other
 formats (PDF, CSV, JSON, custom `ParserFactory.register_loader` formats) go
 through the same loaders as ingestion. Files that fail to parse are skipped
-with a warning.
+with a warning. If the profiling model returns no JSON profile, the command
+exits non-zero and writes nothing (a default profile would look tuned).
 
 ---
 

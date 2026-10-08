@@ -525,7 +525,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `cache.ttl_seconds` | `86400` | 캐시 항목 TTL입니다. `null`이면 만료하지 않습니다. |
 | `logging.level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` 중 하나입니다. |
 | `logging.log_format` | `"structured"` | `structured` 또는 `plain`입니다. |
-| `logging.log_to_file` | `true` | 로그를 `log_file_path`(`logs/log.txt`)에도 기록합니다. |
+| `logging.log_to_file` | `true` | CLI가 로그를 `log_file_path`(`logs/log.txt`, 실제 파일명은 `log_YYYYMMDD.txt`)에도 기록합니다. 상대 경로는 작업 디렉터리 기준입니다. 패키지를 라이브러리로 import하면 핸들러나 파일을 설정하지 않고 호스트 애플리케이션의 로깅 설정을 따릅니다. |
 | `logging.library_levels` | `{langchain_aws: WARNING, botocore: WARNING, urllib3: WARNING}` | 로그가 많은 라이브러리의 로거별 수준입니다. 지정하면 기본 목록 전체가 대체됩니다. |
 
 ### 2.8 `evaluation`
@@ -623,11 +623,11 @@ CDK compute 스택은 `AWS_REGION`, `BEDROCK_REGION`, `NEPTUNE_ENDPOINT`,
 | `--s3-prefix` | `pipeline-runs` | 캐시 파일의 S3 키 프리픽스 |
 | `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | 재개/검사할 기존 실행. 플래그를 생략하면 `GRAPHRAG_PIPELINE_ID` 환경 변수로 대체됩니다. |
 | `--resume-from-stage` | — | 재개할 스테이지 (`--pipeline-id` 필요) |
-| `--verify-metadata` | off | 파이프라인 메타데이터 무결성 검증 (`--pipeline-id` 필요) |
-| `--repair-metadata` | off | 메타데이터 복구 시도 (`--pipeline-id` 필요) |
+| `--verify-metadata` | off | 파이프라인 메타데이터 무결성 검증 (`--pipeline-id` 필요). 손상되었으면 0이 아닌 코드로 종료 |
+| `--repair-metadata` | off | 메타데이터 복구 시도 (`--pipeline-id` 필요). 복구에 실패하면 0이 아닌 코드로 종료 |
 | `--continue-on-error` | off | 스테이지 에러 시에도 계속 진행 |
 | `--enabled-stages` | all | 실행할 스테이지 목록(쉼표 구분) |
-| `--metrics-sink` | `none` | `none`, 또는 `cloudwatch` (CloudWatch EMF — Embedded Metric Format — 메트릭을 stdout으로 출력) |
+| `--metrics-sink` | `none` | `none`, 또는 `cloudwatch` (CloudWatch EMF — Embedded Metric Format — 메트릭을 차원 없는 시리즈로 stdout에 출력. `pipeline_id`는 차원이 아닌 로그 속성으로 기록하므로 실행할 때마다 메트릭 시리즈가 늘지 않음) |
 | `--config-path` | — | `config.yaml` 경로 |
 
 ### 12개 파이프라인 스테이지
@@ -934,7 +934,7 @@ URI로 설정)에 기록된 문서만 삭제된 것으로 판단합니다. 따�
 | `--search-type` | `hybrid` | 검색 방법 |
 | `--top-k` | `10` | 최대 결과 수 |
 | `--retrieval-multiplier` | `1` | 검색 깊이 |
-| `--max-failure-rate` | `1.0` | 답변 생성에 실패한 질문의 비율이 이 값(0.0-1.0)을 넘으면 0이 아닌 코드로 종료. 모든 질문이 실패한 실행은 항상 0이 아닌 코드로 종료 |
+| `--max-failure-rate` | `1.0` | 답변 생성에 실패한 질문의 비율, 또는 지표별로 시도한 값 중 실패한 비율(`metric_outcomes`, 건너뛴 값은 제외)이 이 값(0.0-1.0)을 넘으면 0이 아닌 코드로 종료. 모든 질문이 실패했거나 한 지표의 모든 시도가 실패한 실행은 항상 0이 아닌 코드로 종료 |
 | `--verbose`, `-v` | off | 디버그 로깅 |
 | `--config-path` | — | `config.yaml` 경로 |
 
@@ -943,7 +943,10 @@ URI로 설정)에 기록된 문서만 삭제된 것으로 판단합니다. 따�
 `evaluation.enabled_evaluators`로 선택합니다. 활성화한 평가자를 만들 수 없거나
 (예: judge용 Bedrock 접근 불가) 설정이 잘못되면 실행을 멈춥니다.
 `processing.ignore_errors: true`이면 해당 평가자를 빼고 계속하며
-`run_manifest.dropped_evaluators`에 기록합니다. 기본값은 다섯 개 모두
+`run_manifest.dropped_evaluators`에 기록합니다. 채점 중에도 같습니다.
+평가자 오류(예: judge 호출 실패)가 나면 실행을 멈추고, `ignore_errors: true`이면
+해당 지표를 실패로 기록합니다. judge 응답에 쓸 수 있는 점수가 없으면 0점이 아니라
+항상 실패로 기록합니다. 기본값은 다섯 개 모두
 활성화입니다. 결정적이고 LLM이 필요 없는 평가자(`answer_match`, `retrieval`,
 `graph_aware`)는 비용이 없고 필요한 데이터셋 필드가 없는 질의는 건너뜁니다. LLM
 judge 없이 실행하려면 `enabled_evaluators: [answer_match, retrieval, graph_aware]`로
@@ -1064,7 +1067,8 @@ run-eval --eval-data-path my_eval_data.json \
   있는 질문에서의 답변 거부는 일반 답변처럼 채점되며(대개 오답), 각 결과에는
   `abstained`가 기록됩니다.
 - `run_manifest` — CLI 인자, 모델 ID(답변 생성, 평가 judge/임베딩), 패키지 버전,
-  git 커밋(`git_sha`, 체크아웃에서 실행한 경우), 전체 확정 설정의
+  git 커밋(`git_sha`, 추적 파일이 커밋과 다르면 `git_dirty`가 true. 패키지를
+  추적하는 체크아웃에서 실행하지 않으면 둘 다 `null`), 전체 확정 설정의
   `config_sha256`, `library_versions`(ragas, langchain*), 데이터셋(경로와 파일
   sha256, 질문 수, 파싱된 내용의 해시), UTC 타임스탬프. 두 실행을 비교할 때
   사용합니다. 제외된 평가자(`dropped_evaluators`)도 담깁니다.
@@ -1103,7 +1107,11 @@ S3 캐시 동기화를 켜면 `visualization_data.json`이 캐시와 함께 업�
   `processing.ignore_errors`가 `false`일 때 시각화 단계가 실패합니다(인제스천은
   계속 진행하고 실패를 로그에 남깁니다). `ignore_errors: true`이면 ERROR 로그를
   남기고 그래프 구조만 반영하는 spring 레이아웃으로 대체하며,
-  `visualization_data.json`에 `"layout_degraded": true`를 기록합니다.
+  `visualization_data.json`에 `"layout_degraded": true`를 기록합니다. 차원
+  축소가 실패해도 `ignore_errors`와 관계없이 같은 방식(시드를 고정한 spring
+  레이아웃, `layout_degraded: true`)으로 대체합니다.
+- `embeddings.bedrock_model_id`는 지원하는 임베딩 모델 ID 중 하나여야 하며, 다른
+  값은 설정을 읽을 때 거부합니다.
 - 인터랙티브 그래프의 엣지 두께·불투명도는 그래프 자체의 가중치 범위를
   기준으로 조정합니다(로그 스케일 후 min-max 정규화). 따라서 1–10 강도 점수와
   병합 횟수 모두 구분됩니다.
@@ -1157,7 +1165,9 @@ run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --conf
 포함됩니다. **검토한 후** 원하는 프롬프트를 `config.yaml`의 `custom_prompts:`
 아래로 복사하세요. 일반 텍스트 파일은 그대로 읽고, 그 밖의 포맷(PDF, CSV, JSON,
 `ParserFactory.register_loader`로 등록한 포맷)은 인제스션과 같은 로더로 파싱합니다.
-파싱에 실패한 파일은 경고를 남기고 건너뜁니다.
+파싱에 실패한 파일은 경고를 남기고 건너뜁니다. 프로파일링 모델이 JSON
+프로파일을 돌려주지 않으면 아무것도 쓰지 않고 0이 아닌 코드로 종료합니다(기본
+프로파일은 튜닝된 것처럼 보이기 때문입니다).
 
 ---
 

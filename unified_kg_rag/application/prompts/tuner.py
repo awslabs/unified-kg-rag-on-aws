@@ -13,6 +13,8 @@ than opaque runtime behaviour.
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,7 +32,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.domain.prompts import CorpusProfilePrompt
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import LanguageModelError, get_logger
 from unified_kg_rag.shared.utils import generate_stable_id, parse_llm_json
 
 logger = get_logger(__name__)
@@ -49,11 +51,18 @@ class CorpusProfile:
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> CorpusProfile:
         entity_types = payload.get("entity_types") or []
+        if isinstance(entity_types, str):
+            # A model may answer "PERSON, ORGANIZATION" instead of a list.
+            entity_types = re.split(r"[,;\n]", entity_types)
+        elif not isinstance(entity_types, list):
+            entity_types = []
         return cls(
             domain=str(payload.get("domain") or cls.domain).strip(),
             language=str(payload.get("language") or cls.language).strip(),
             persona=str(payload.get("persona") or cls.persona).strip(),
-            entity_types=[str(t).strip().upper() for t in entity_types if t],
+            entity_types=[
+                str(t).strip().upper() for t in entity_types if str(t).strip()
+            ],
         )
 
 
@@ -104,8 +113,17 @@ class PromptTuner:
             custom_prompts=self.config.custom_prompts,
         )
         raw = await chain.ainvoke({"corpus_sample": corpus_sample})
-        # A malformed response yields {} -> the default profile, not a crash.
-        return CorpusProfile.from_payload(parse_llm_json(raw))
+        try:
+            payload = parse_llm_json(raw, strict=True)
+        except json.JSONDecodeError as e:
+            # A default profile here would yield generic prompts presented as
+            # tuned ones; fail so the user can retry or fix the model.
+            raise LanguageModelError(
+                f"Corpus profiling returned no JSON profile: {str(raw)[:200]!r}"
+            ) from e
+        if not payload:
+            logger.warning("Corpus profile is empty; using the default profile")
+        return CorpusProfile.from_payload(payload)
 
     MAX_EXAMPLES = 3
     EXAMPLE_CHUNK_CHARS = 1200
@@ -163,7 +181,7 @@ class PromptTuner:
             for idx, chunk in enumerate(chunks)
         ]
         try:
-            extractor = GraphExtractor(self.config, boto_session=self.boto_session)
+            extractor = GraphExtractor(self.config, providers=self.providers)
             extractor.show_progress = False
             entities, relationships, _ = extractor.extract_from_text_units(text_units)
         except Exception as exc:  # noqa: BLE001 - examples are best-effort

@@ -45,13 +45,34 @@ def test_emf_emits_numeric_metrics_and_dimensions() -> None:
     cw = out["_aws"]["CloudWatchMetrics"][0]
     assert cw["Namespace"] == "unified_kg_rag/ingestion"
     assert {m["Name"] for m in cw["Metrics"]} == {"entities", "rate"}
-    # Both the zero-dimension aggregate AND the keyed set are published, so that
-    # dimensionless CloudWatch alarms/widgets (which query the aggregate) are
-    # populated in addition to the per-pipeline_id series.
-    assert cw["Dimensions"] == [[], ["pipeline_id"]]
+    # Only the zero-dimension aggregate (what the alarms and dashboard query)
+    # is a metric series: a per-run pipeline_id dimension would create new
+    # custom-metric series every run. pipeline_id stays a log property.
+    assert cw["Dimensions"] == [[]]
     assert out["entities"] == 42
     assert out["pipeline_id"] == "p1"
     assert "name" not in out  # non-numeric dropped
+
+
+def test_emf_declares_only_the_configured_dimension_keys() -> None:
+    lg, buf = _emf_logger()
+    CloudWatchEMFSink(emf_logger=lg, dimension_keys=("environment",)).emit(
+        "ns", {"x": 1}, {"pipeline_id": "p1", "environment": "dev"}
+    )
+    out = json.loads(buf.getvalue())
+    assert out["_aws"]["CloudWatchMetrics"][0]["Dimensions"] == [[], ["environment"]]
+    assert out["pipeline_id"] == "p1" and out["environment"] == "dev"
+
+
+def test_emf_default_logger_writes_to_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    emf = logging.getLogger("unified_kg_rag.emf")
+    monkeypatch.setattr(emf, "handlers", [])
+    CloudWatchEMFSink()
+    (handler,) = emf.handlers
+    assert isinstance(handler, logging.StreamHandler)
+    assert handler.stream is sys.stdout
 
 
 def test_emf_no_numeric_metrics_emits_nothing() -> None:

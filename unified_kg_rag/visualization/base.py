@@ -115,7 +115,8 @@ class GraphVisualizationManager:
         if self.layout_degraded:
             logger.warning(
                 "Visualization report created with a DEGRADED layout (node "
-                "embeddings unavailable; spring layout used instead)."
+                "embeddings or their reduction unavailable; spring layout used "
+                "instead)."
             )
         else:
             logger.info("Comprehensive visualization report created successfully.")
@@ -134,17 +135,24 @@ class GraphVisualizationManager:
         embeddings = self.embedder.generate_embeddings(self.analyzer.graph)
         # Failed generation yields no embeddings (never random substitutes).
         if not embeddings.embeddings:
-            self.layout_degraded = True
-            logger.error(
-                "Node embedding generation failed; the layout is DEGRADED "
-                "(spring layout from graph topology, not semantic embeddings)."
+            return self._degraded_layout("node embedding generation failed")
+        try:
+            return self.reducer.reduce_dimensions(
+                embeddings, method=self.viz_config.layout_method
             )
-            spring_layout = nx.spring_layout(self.analyzer.graph, seed=42)
-            return {str(k): v.tolist() for k, v in spring_layout.items()}
+        except Exception as e:
+            return self._degraded_layout(f"dimensionality reduction failed: {e}")
 
-        return self.reducer.reduce_dimensions(
-            embeddings, method=self.viz_config.layout_method
+    def _degraded_layout(self, reason: str) -> dict[str, Any]:
+        """Seeded spring layout from graph topology, flagged as degraded."""
+        self.layout_degraded = True
+        logger.error(
+            "%s; the layout is DEGRADED (spring layout from graph topology, not "
+            "semantic embeddings).",
+            reason,
         )
+        spring_layout = nx.spring_layout(self.analyzer.graph, seed=42)
+        return {str(k): v.tolist() for k, v in spring_layout.items()}
 
     def _generate_visualizations(
         self, outputs_dir: Path, layout: dict[str, Any]

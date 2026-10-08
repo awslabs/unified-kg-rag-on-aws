@@ -20,6 +20,18 @@ class TestCorpusProfile:
         assert p.domain == "law"
         assert p.entity_types == ["STATUTE", "COURT"]
 
+    @pytest.mark.parametrize(
+        "value",
+        ["person, organization", "PERSON\nORGANIZATION", "person; organization"],
+    )
+    def test_from_payload_splits_a_string_of_entity_types(self, value: str) -> None:
+        # A string used to be iterated character by character.
+        p = CorpusProfile.from_payload({"entity_types": value})
+        assert p.entity_types == ["PERSON", "ORGANIZATION"]
+
+    def test_from_payload_ignores_non_list_entity_types(self) -> None:
+        assert CorpusProfile.from_payload({"entity_types": 3}).entity_types == []
+
     def test_from_payload_defaults(self) -> None:
         p = CorpusProfile.from_payload({})
         assert p.domain == "general knowledge"
@@ -85,17 +97,6 @@ class TestSampleAndParse:
         self, tuner: PromptTuner
     ) -> None:
         profile = await tuner.profile_corpus([])
-        assert profile.domain == "general knowledge"
-
-    async def test_profile_corpus_malformed_response_returns_default(
-        self, tuner: PromptTuner, mocker
-    ) -> None:
-        chain = mocker.Mock()
-        chain.ainvoke = mocker.AsyncMock(return_value="I cannot help with that")
-        mocker.patch(
-            "unified_kg_rag.application.prompts.tuner.setup_chain", return_value=chain
-        )
-        profile = await tuner.profile_corpus(["some text"])
         assert profile.domain == "general knowledge"
 
     async def test_tune_returns_profile_and_custom_prompts(
@@ -214,13 +215,29 @@ class TestSampleAndParse:
         result = await tuner.generate_examples(CorpusProfile(), ["some text"])
         assert result == ""
 
-    async def test_profile_corpus_degrades_on_unparseable_output(
-        self, tuner: PromptTuner, mocker
+    @pytest.mark.parametrize("raw", ["I cannot help with that", '{"domain": "x"'])
+    async def test_profile_corpus_fails_on_unparseable_output(
+        self, tuner: PromptTuner, mocker, raw: str
     ) -> None:
+        # A silent default profile would emit generic prompts that look tuned.
+        from unified_kg_rag.shared import LanguageModelError
+
         chain = mocker.MagicMock()
-        chain.ainvoke = mocker.AsyncMock(return_value="sorry, no JSON here")
+        chain.ainvoke = mocker.AsyncMock(return_value=raw)
         mocker.patch(
             "unified_kg_rag.application.prompts.tuner.setup_chain", return_value=chain
         )
-        profile = await tuner.profile_corpus(["some text"])
-        assert profile.domain == "general knowledge"
+        with pytest.raises(LanguageModelError, match="profile"):
+            await tuner.profile_corpus(["some text"])
+
+    async def test_generate_examples_uses_the_injected_providers(
+        self, tuner: PromptTuner, mocker
+    ) -> None:
+        extractor = mocker.MagicMock()
+        extractor.extract_from_text_units.return_value = ([], [], None)
+        cls = mocker.patch(
+            "unified_kg_rag.application.prompts.tuner.GraphExtractor",
+            return_value=extractor,
+        )
+        await tuner.generate_examples(CorpusProfile(), ["some text"])
+        assert cls.call_args.kwargs["providers"] is tuner.providers

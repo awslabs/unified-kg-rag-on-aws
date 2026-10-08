@@ -292,7 +292,12 @@ class IngestionPipelineRunner:
             else:
                 console.print("[red]✗ Metadata file is corrupted or invalid[/red]")
                 if not self.args.repair_metadata:
-                    return True
+                    # Raise so main() exits non-zero: a scripted check must see
+                    # the corruption, not a success exit code.
+                    raise PipelineExecutionError(
+                        f"Metadata for pipeline '{self.args.pipeline_id}' is "
+                        "corrupted or invalid"
+                    )
 
         if self.args.repair_metadata:
             console.print(
@@ -303,14 +308,18 @@ class IngestionPipelineRunner:
                 return True
 
             try:
-                if self.pipeline.repair_pipeline_metadata(self.args.pipeline_id):
-                    console.print(
-                        "[green]✓ Metadata file repaired successfully[/green]"
-                    )
-                else:
-                    console.print("[red]✗ Failed to repair metadata file[/red]")
+                repaired = self.pipeline.repair_pipeline_metadata(self.args.pipeline_id)
             except Exception as e:
                 console.print(f"[red]Error during repair: {e}[/red]")
+                raise PipelineExecutionError(
+                    f"Metadata repair failed for pipeline '{self.args.pipeline_id}'"
+                ) from e
+            if not repaired:
+                console.print("[red]✗ Failed to repair metadata file[/red]")
+                raise PipelineExecutionError(
+                    f"Metadata repair failed for pipeline '{self.args.pipeline_id}'"
+                )
+            console.print("[green]✓ Metadata file repaired successfully[/green]")
             return True
 
         return self.args.verify_metadata and not self.args.repair_metadata

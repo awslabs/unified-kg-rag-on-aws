@@ -12,6 +12,7 @@ never constructed.
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import datetime
 
 import pytest
@@ -148,6 +149,12 @@ class TestLoadData:
         )
         queries, _ = EvaluationManager.load_data(path)
         assert queries[0].metadata["answer_aliases"] == ["x"]
+
+    def test_numeric_zero_answer_is_a_ground_truth(self, tmp_path) -> None:
+        path = tmp_path / "eval.json"
+        path.write_text(json.dumps([{"question": "How many?", "answer": 0}]))
+        _, gts = EvaluationManager.load_data(path)
+        assert [gt.ground_truth for gt in gts] == ["0"]
 
     def test_ground_truth_built_from_expected_only(self, tmp_path) -> None:
         # No textual answer, but expected_entities present -> still build a GT.
@@ -343,7 +350,61 @@ class TestEvaluateResults:
         assert result.ground_truth == ""  # no GT for this id
         assert reports  # still produced a report
 
+    async def test_evaluator_crash_raises_without_ignore_errors(
+        self, config: Config
+    ) -> None:
+        manager = _graph_aware_manager(config)
+        assert config.processing.ignore_errors is False
+
+        async def _boom(*a, **k):
+            raise RuntimeError("eval down")
+
+        manager.evaluators[EvaluatorType.GRAPH_AWARE].aevaluate_batch = _boom
+        query = EvaluationQuery(query_id="q1", question="?")
+        result = EvaluationResult(
+            query_id="q1", question="?", generated_answer="x", ground_truth=""
+        )
+        gt = EvaluationGroundTruth(query_id="q1", ground_truth="ref")
+        with pytest.raises(RuntimeError, match="eval down"):
+            await manager._evaluate_results([query], [result], [gt])
+
+    async def test_per_query_error_raises_without_ignore_errors(
+        self, config: Config
+    ) -> None:
+        manager = _graph_aware_manager(config)
+        evaluator = manager.evaluators[EvaluatorType.GRAPH_AWARE]
+
+        async def _boom(*a, **k):
+            raise RuntimeError("judge down")
+
+        evaluator.aevaluate_single = _boom
+        query = EvaluationQuery(query_id="q1", question="?")
+        result = EvaluationResult(
+            query_id="q1", question="?", generated_answer="x", ground_truth=""
+        )
+        with pytest.raises(RuntimeError, match="judge down"):
+            await evaluator.aevaluate_batch([query], [result], [""])
+
+    async def test_per_query_error_recorded_with_ignore_errors(
+        self, config: Config
+    ) -> None:
+        config.processing.ignore_errors = True
+        manager = _graph_aware_manager(config)
+        evaluator = manager.evaluators[EvaluatorType.GRAPH_AWARE]
+
+        async def _boom(*a, **k):
+            raise RuntimeError("judge down")
+
+        evaluator.aevaluate_single = _boom
+        query = EvaluationQuery(query_id="q1", question="?")
+        result = EvaluationResult(
+            query_id="q1", question="?", generated_answer="x", ground_truth=""
+        )
+        reports = await evaluator.aevaluate_batch([query], [result], [""])
+        assert reports[0].metadata["evaluation_failed"] is True
+
     async def test_evaluator_failure_isolated(self, config: Config, mocker) -> None:
+        config.processing.ignore_errors = True
         manager = _graph_aware_manager(config)
 
         async def _boom(*a, **k):
@@ -746,6 +807,22 @@ class TestComparability:
         names = [f.name for f in (tmp_path / "mixed").iterdir()]
         assert names and not any("local" in n or "global" in n for n in names)
 
+    async def test_runs_in_the_same_second_do_not_overwrite(
+        self, config, tmp_path, mocker
+    ) -> None:
+        manager, results, reports, summary = await self._run(
+            config, {"A?": "local", "B?": "local"}
+        )
+        frozen = datetime(2026, 1, 1, 12, 0, 0)
+        mocker.patch(
+            "unified_kg_rag.evaluation.evaluation_manager.datetime",
+            wraps=datetime,
+            **{"now.return_value": frozen},
+        )
+        manager.save_results(results, reports, summary, tmp_path)
+        manager.save_results(results, reports, summary, tmp_path)
+        assert len(list(tmp_path.glob("evaluation_summary_*.json"))) == 2
+
     def test_run_manifest(self, config: Config, tmp_path) -> None:
         import hashlib
 
@@ -771,6 +848,7 @@ class TestComparability:
         assert manifest["library_versions"]["ragas"]
         assert manifest["library_versions"]["langchain-core"]
         assert "git_sha" in manifest
+        assert "git_dirty" in manifest
         json.dumps(manifest)  # serializable as-is
 
     def test_config_hash_tracks_resolved_config(self, config: Config) -> None:
@@ -780,12 +858,70 @@ class TestComparability:
         config.search.answer_generation_model_id = "another-model"
         assert manager.build_run_manifest()["config_sha256"] != before
 
-    def test_git_sha_none_without_git(self, mocker) -> None:
+    def test_git_state_none_without_git(self, mocker) -> None:
         mocker.patch(
             "unified_kg_rag.evaluation.evaluation_manager.shutil.which",
             return_value=None,
         )
-        assert EvaluationManager._git_sha() is None
+        assert EvaluationManager._git_state() == (None, None)
+
+    @pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+    def test_git_state_ignores_a_host_repo_that_does_not_track_the_package(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        # e.g. the package installed into a host project's .venv: the host
+        # repo's HEAD says nothing about the code that ran.
+        import subprocess
+
+        from unified_kg_rag.evaluation import evaluation_manager as em
+
+        package_dir = tmp_path / ".venv" / "unified_kg_rag"
+        package_dir.mkdir(parents=True)
+        (package_dir / "__init__.py").write_text("")
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        (tmp_path / "app.py").write_text("")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "app.py"], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(tmp_path),
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-qm",
+                "host",
+            ],
+            check=True,
+        )
+        monkeypatch.setattr(em, "_PACKAGE_DIR", package_dir)
+        assert EvaluationManager._git_state() == (None, None)
+
+    @pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+    def test_git_state_reports_checkout_sha_and_dirty_flag(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        import subprocess
+
+        from unified_kg_rag.evaluation import evaluation_manager as em
+
+        package_dir = tmp_path / "unified_kg_rag"
+        package_dir.mkdir()
+        (package_dir / "__init__.py").write_text("")
+        git = ["git", "-C", str(tmp_path)]
+        ident = ["-c", "user.name=t", "-c", "user.email=t@example.com"]
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        subprocess.run([*git, "add", "."], check=True)
+        subprocess.run([*git, *ident, "commit", "-qm", "pkg"], check=True)
+        head = subprocess.run(
+            [*git, "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        monkeypatch.setattr(em, "_PACKAGE_DIR", package_dir)
+        assert EvaluationManager._git_state() == (head, False)
+        (package_dir / "__init__.py").write_text("changed = True\n")
+        assert EvaluationManager._git_state() == (head, True)
 
     async def test_evaluate_dataset_attaches_manifest(self, config: Config) -> None:
         manager, results, reports, summary = await self._run(

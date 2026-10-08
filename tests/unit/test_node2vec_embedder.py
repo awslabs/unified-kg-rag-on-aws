@@ -126,3 +126,31 @@ def test_unsupported_model_raises(config: Config) -> None:
 
     with pytest.raises(ValueError, match="Unsupported Bedrock model"):
         BedrockNodeEmbedder(config=config, embedding_factory=_NoInfoFactory())
+
+
+def test_yaml_string_model_id_is_coerced_to_the_enum() -> None:
+    # The documented YAML form is a plain string; it used to reach the embedder
+    # as str and fail on '.value', silently dropping the visualization.
+    from unified_kg_rag.domain.models import EmbeddingModelId
+
+    config = Config.model_validate(
+        {
+            "graph": {
+                "visualization": {
+                    "embeddings": {"bedrock_model_id": "amazon.titan-embed-text-v1"}
+                }
+            }
+        }
+    )
+    model_id = config.graph.visualization.embeddings["bedrock_model_id"]
+    assert model_id is EmbeddingModelId.TITAN_EMBED_V1
+    BedrockNodeEmbedder(config=config, embedding_factory=_FakeEmbeddingFactory())
+
+
+def test_unknown_model_id_is_rejected_at_config_load() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="bedrock_model_id"):
+        Config.model_validate(
+            {"graph": {"visualization": {"embeddings": {"bedrock_model_id": "nope"}}}}
+        )

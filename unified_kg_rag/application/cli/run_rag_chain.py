@@ -318,12 +318,16 @@ class RAGChainRunner:
                 "[dim]This may take some time depending on query complexity[/dim]",
             )
             result = await self.rag_chain.ainvoke(rag_input)
+            output = result if isinstance(result, dict) else result.model_dump()
+            # With processing.ignore_errors the chain does not raise: it returns
+            # its error fallback flagged by metadata.error. That is a failure.
+            if (output.get("metadata") or {}).get("error"):
+                detail = (output.get("search_results") or {}).get("metadata", {})
+                error = str(detail.get("error") or "RAG chain returned an error")
+                console.print(f"\n[bold red]Error executing query: {error}[/bold red]")
+                return {"success": False, "error": error, **output}
             console.print("\n[bold green]Query executed successfully![/bold green]")
-
-            if isinstance(result, dict):
-                return {"success": True, **result}
-            else:
-                return {"success": True, **result.model_dump()}
+            return {"success": True, **output}
 
         except Exception as e:
             logger.exception("Error during query execution: %s", e)

@@ -10,7 +10,7 @@ import structlog
 from langsmith.utils import tracing_is_enabled
 from structlog.stdlib import LoggerFactory, ProcessorFormatter
 
-from .config import Config, get_config
+from .config import Config
 
 # Shared by structlog-native and foreign (stdlib: botocore, langchain_aws, ...)
 # records so both carry the same keys, including context bound with
@@ -23,8 +23,29 @@ _SHARED_PROCESSORS: list[structlog.types.Processor] = [
 ]
 
 
+def _configure_structlog() -> None:
+    """Route structlog through stdlib logging; installs no handler.
+
+    Records then reach whatever handlers the process has: the CLI's (see
+    ``setup_logging``) or a host application's own. Levels are the stdlib
+    logger levels.
+    """
+    structlog.configure(
+        processors=[
+            structlog.stdlib.filter_by_level,
+            *_SHARED_PROCESSORS,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.UnicodeDecoder(),
+            ProcessorFormatter.wrap_for_formatter,
+        ],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        logger_factory=LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+
+
 class LoggingSetup:
-    _initialized = False
     _handlers: list[logging.Handler] = []
 
     @classmethod
@@ -33,18 +54,14 @@ class LoggingSetup:
         config: Config,
         config_override: dict[str, Any] | None = None,
         *,
-        force: bool = False,
         stream: TextIO | None = None,
     ) -> None:
         """Configure structlog + the root handlers from ``config.logging``.
 
-        The first call (from ``get_logger``) uses the default config; CLIs call
-        again with ``force=True`` after loading ``--config-path`` so the file's
-        ``logging`` section takes effect. ``stream`` defaults to stdout.
+        Called by the CLIs only (after loading ``--config-path``); importing the
+        package never touches the root logger. A repeated call replaces only
+        the handlers a previous call added. ``stream`` defaults to stdout.
         """
-        if cls._initialized and not force:
-            return
-
         log_config = config.logging
 
         if config_override:
@@ -55,23 +72,9 @@ class LoggingSetup:
         structured = log_config.log_format == "structured"
         stream = stream or sys.stdout
 
-        structlog.configure(
-            processors=[
-                structlog.stdlib.filter_by_level,
-                *_SHARED_PROCESSORS,
-                structlog.stdlib.PositionalArgumentsFormatter(),
-                structlog.processors.StackInfoRenderer(),
-                structlog.processors.UnicodeDecoder(),
-                ProcessorFormatter.wrap_for_formatter,
-            ],
-            wrapper_class=structlog.stdlib.BoundLogger,
-            logger_factory=LoggerFactory(),
-            cache_logger_on_first_use=True,
-        )
+        _configure_structlog()
 
         root_logger = logging.getLogger()
-        if not cls._initialized:
-            root_logger.handlers.clear()
         # Re-init replaces only our own handlers (keeps e.g. pytest's caplog).
         for handler in cls._handlers:
             root_logger.removeHandler(handler)
@@ -102,8 +105,6 @@ class LoggingSetup:
         for name, level in log_config.library_levels.items():
             logging.getLogger(name).setLevel(level.upper())
 
-        cls._initialized = True
-
     @staticmethod
     def _formatter(json: bool, colors: bool) -> ProcessorFormatter:
         renderer: list[structlog.types.Processor] = (
@@ -119,20 +120,22 @@ class LoggingSetup:
             foreign_pre_chain=_SHARED_PROCESSORS,
         )
 
-    @classmethod
-    def _get_log_file_path_with_date(cls, log_file_path: str) -> Path:
-        root_dir = Path(__file__).parent.parent.parent
-        log_path = root_dir / Path(log_file_path)
+    @staticmethod
+    def _get_log_file_path_with_date(log_file_path: str) -> Path:
+        """Dated variant of ``log_file_path``; a relative path is under the CWD."""
+        log_path = Path(log_file_path).expanduser().resolve()
         current_date = datetime.now().strftime("%Y%m%d")
-        stem = log_path.stem
-        suffix = log_path.suffix
-        new_name = f"{stem}_{current_date}{suffix}"
-        return log_path.parent / new_name
+        return log_path.with_name(f"{log_path.stem}_{current_date}{log_path.suffix}")
 
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
-    config = get_config()
-    LoggingSetup.setup_logging(config)
+    """A structlog logger that emits through stdlib logging.
+
+    Configures structlog on first use unless the host application already
+    did; never adds handlers or changes levels.
+    """
+    if not structlog.is_configured():
+        _configure_structlog()
     logger: structlog.stdlib.BoundLogger = structlog.get_logger(name)
     return logger
 
@@ -143,7 +146,7 @@ def setup_logging(
     stream: TextIO | None = None,
 ) -> None:
     """(Re-)initialise logging from ``config`` — call after loading a CLI config."""
-    LoggingSetup.setup_logging(config, config_override, force=True, stream=stream)
+    LoggingSetup.setup_logging(config, config_override, stream=stream)
     warn_if_langsmith_tracing()
 
 
