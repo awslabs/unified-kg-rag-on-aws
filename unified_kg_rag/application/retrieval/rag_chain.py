@@ -80,7 +80,7 @@ from unified_kg_rag.domain.retrieval.strategy_registry import (
     get_strategy_spec,
 )
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
-from unified_kg_rag.shared import InvalidFilterError, get_logger
+from unified_kg_rag.shared import InvalidFilterError, LanguageModelError, get_logger
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
     parse_llm_json,
@@ -591,14 +591,44 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             # Strict: with ignore_errors=False a broken keyword extraction
             # surfaces instead of silently yielding empty keyword lists.
             payload = parse_llm_json(raw, strict=True)
-            hl = [str(k) for k in payload.get("high_level_keywords", []) if k]
-            ll = [str(k) for k in payload.get("low_level_keywords", []) if k]
-            return hl, ll
+            return self._keyword_lists(payload)
         except Exception as e:
             if not self.ignore_errors:
                 raise
             logger.warning("Dual-keyword extraction failed: %s", e)
             return [], []
+
+    _KEYWORD_LEVELS: ClassVar[tuple[str, str]] = (
+        "high_level_keywords",
+        "low_level_keywords",
+    )
+
+    @classmethod
+    def _keyword_lists(cls, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
+        """Validate the keyword payload: an object whose keyword fields are
+        lists of strings (a missing level is empty).
+
+        Anything else raises: iterating a bare string would yield one-character
+        keywords, and a non-object payload parses to ``{}``, which must not pass
+        for "no keywords".
+        """
+        if not any(level in payload for level in cls._KEYWORD_LEVELS):
+            raise LanguageModelError(
+                "Keyword extraction returned no high_level_keywords or "
+                "low_level_keywords object"
+            )
+        lists: list[list[str]] = []
+        for level in cls._KEYWORD_LEVELS:
+            value = payload.get(level, [])
+            if not isinstance(value, list) or not all(
+                isinstance(k, str) for k in value
+            ):
+                raise LanguageModelError(
+                    f"Keyword extraction returned {level} that is not a list of "
+                    f"strings: {value!r}"
+                )
+            lists.append([k.strip() for k in value if k.strip()])
+        return lists[0], lists[1]
 
     async def _load_memory_step(self, state: dict[str, Any]) -> dict[str, Any]:
         if not state.get("use_memory") or not (cid := state.get("conversation_id")):

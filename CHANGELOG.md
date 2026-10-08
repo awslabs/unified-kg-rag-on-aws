@@ -423,6 +423,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   map call into an unrated batch and answered from the raw reports, and DRIFT
   dropped the error without a log line; non-fatal failures still degrade, now
   with a warning (#PR).
+- LightRAG keyword extraction checks the shape of the model's JSON: each
+  keyword level must be a list of strings. A bare string was split into
+  one-character keywords, `null` raised a bare `TypeError`, and a JSON array
+  passed as "no keywords" even with `ignore_errors: false`; these now raise
+  `LanguageModelError` (or degrade to no keywords when errors are ignored)
+  (#PR).
 
 ### Security
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or
