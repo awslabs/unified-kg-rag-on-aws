@@ -67,7 +67,10 @@ AWS 네이티브 Knowledge Graph RAG 프레임워크입니다. 두 가지 검색
   ```
 
   배포가 끝나면 CloudFormation 출력값의 Neptune / OpenSearch / S3 엔드포인트를
-  `config.yaml`에 복사하세요. `cdk destroy --all`로 `dev` 프로파일을 다시 정리할 수
+  `config.yaml`에 복사하세요(엔드포인트는 `https://` 없는 호스트 이름입니다).
+  Neptune과 OpenSearch는 VPC 안에서만 접근할 수 있으므로, CLI는 배포된 태스크
+  정의의 태스크처럼 VPC 안에서 실행하세요. 스택이 만든 태스크는 엔드포인트를 환경
+  변수로 이미 받습니다. `cdk destroy --all`로 `dev` 프로파일을 다시 정리할 수
   있습니다. 모든 스택, `-c key=value` 옵션(VPC 재사용, 인스턴스 사이징, CMK, 삭제
   보호, cdk-nag), 프로덕션 하드닝 체크리스트는 [`iac/README.md`](../iac/README.md)를
   참고하세요.

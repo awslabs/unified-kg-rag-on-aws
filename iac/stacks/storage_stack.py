@@ -63,17 +63,23 @@ class StorageStack(Stack):
 
     # ------------------------------------------------------------ outputs
     def _export_outputs(self) -> None:
+        # Both stores are VPC-only: these hosts resolve and accept connections
+        # only from inside the VPC (service security group), e.g. the Fargate
+        # task, which already receives them as env vars.
         CfnOutput(
             self,
             "NeptuneEndpoint",
             value=self.neptune_cluster.cluster_endpoint.hostname,
-            description="Set as NEPTUNE_ENDPOINT for the app",
+            description="Set as NEPTUNE_ENDPOINT for the app (VPC-only host)",
         )
         CfnOutput(
             self,
             "OpenSearchEndpoint",
-            value=f"https://{self.opensearch_domain.domain_endpoint}",
-            description="Set as OPENSEARCH_ENDPOINT for the app",
+            # Bare host, like the task env var: the adapter builds the URL from
+            # aws.opensearch.port/use_ssl, so a scheme here breaks the client.
+            value=self.opensearch_domain.domain_endpoint,
+            description="Set as OPENSEARCH_ENDPOINT for the app (bare VPC-only "
+            "host, no https://)",
         )
         CfnOutput(self, "CacheBucketName", value=self.cache_bucket.bucket_name)
         CfnOutput(self, "DocStatusTableName", value=self.doc_status_table.table_name)

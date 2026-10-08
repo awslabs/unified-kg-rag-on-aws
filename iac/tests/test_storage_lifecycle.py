@@ -67,6 +67,15 @@ def test_dev_defaults_tear_down() -> None:
     assert cluster["Properties"].get("DeletionProtection") in (False, None)
 
 
+def test_opensearch_endpoint_output_is_a_bare_host() -> None:
+    """The output feeds OPENSEARCH_ENDPOINT, which the adapter uses as a host."""
+    output = _storage_template({}).find_outputs("OpenSearchEndpoint")
+    (value,) = (o["Value"] for o in output.values())
+    # A bare GetAtt of the domain endpoint, not a Fn::Join with "https://".
+    assert "Fn::GetAtt" in value, value
+    assert value["Fn::GetAtt"][1] == "DomainEndpoint"
+
+
 def test_cache_expiry_never_applies_bucket_wide() -> None:
     """A corpus uploaded to the cache bucket must not expire: incremental
     indexing would treat it as deleted and remove its artifacts."""

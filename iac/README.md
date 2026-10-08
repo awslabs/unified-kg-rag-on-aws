@@ -205,13 +205,6 @@ cdk deploy --all
      --state-machine-arn <…-ingestion arn> \
      --input '{"source_directory":"s3://<cache-bucket>/corpus/","pipeline_id":"run-001"}'
    ```
-   The bucket's 30-day expiry applies only to the prefixes the app writes,
-   `pipeline-runs/` (stage checkpoints) and `embedding-cache/`; any other
-   prefix never expires. Do not put the corpus under those two prefixes: with
-   incremental indexing an expired source file looks deleted, and the next run
-   removes its graph and vector artifacts. A reused bucket
-   (`cache_bucket_name`) keeps its own lifecycle rules, so check them the same
-   way.
    The input takes exactly these two keys, passed to every phase as
    `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID`. Each phase runs in a
    fresh Fargate task, so `source_directory` must be an `s3://` URI: the
@@ -219,3 +212,20 @@ cdk deploy --all
    before running the CLI. The config file is fixed at `/app/config.yaml` in
    the image. The task role is granted read/write on the cache bucket only;
    to read a corpus from another bucket, grant the role access to it.
+
+   The bucket's 30-day expiry applies only to the prefixes the app writes,
+   `pipeline-runs/` (stage checkpoints) and `embedding-cache/`; any other
+   prefix never expires. Do not put the corpus under those two prefixes: with
+   incremental indexing an expired source file looks deleted, and the next run
+   removes its graph and vector artifacts. A reused bucket
+   (`cache_bucket_name`) keeps its own lifecycle rules, so check them the same
+   way.
+3. To query (`run-rag`) or run other CLIs against the deployed stores, use the
+   `GraphRagStorage` outputs: `NeptuneEndpoint` and `OpenSearchEndpoint` are
+   bare hostnames (no `https://`), the form `NEPTUNE_ENDPOINT` /
+   `OPENSEARCH_ENDPOINT` and `aws.neptune.endpoint` / `aws.opensearch.endpoint`
+   expect. Both stores are VPC-only: they accept connections only from inside
+   the VPC through the service security group. Run the CLI there, for example as
+   a one-off task of the same task definition (`aws ecs run-task` with a
+   `run-rag …` command override, in the app subnets and service security
+   group), not from a laptop.

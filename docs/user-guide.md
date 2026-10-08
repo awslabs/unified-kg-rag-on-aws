@@ -67,7 +67,10 @@ them. You have two ways to get there:
   ```
 
   When the deploy finishes, copy the Neptune / OpenSearch / S3 endpoints from the
-  CloudFormation outputs into your `config.yaml`. `cdk destroy --all` tears the
+  CloudFormation outputs into your `config.yaml` (the endpoints are bare
+  hostnames). Neptune and OpenSearch are VPC-only, so run the CLIs inside the
+  VPC, for example as a task of the deployed task definition; the stack's own
+  task already receives the endpoints as env vars. `cdk destroy --all` tears the
   `dev` profile back down. See [`iac/README.md`](../iac/README.md) for every
   stack, all `-c key=value` knobs (VPC reuse, instance sizing, CMK, deletion
   protection, cdk-nag), and the production-hardening checklist.
