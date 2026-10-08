@@ -351,6 +351,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - `run-rag` reports `success: false` and exits non-zero when the chain returns
   its `ignore_errors` error fallback (`metadata.error`) instead of an answer
   (#PR).
+- Importing the package no longer configures logging: it used to replace the
+  host's root handlers, set the root level to INFO and open a `FileHandler` in
+  `logs/` next to the installed package (failing on a read-only
+  `site-packages`). Only the CLIs call `setup_logging`, and a relative
+  `logging.log_file_path` is now resolved against the working directory
+  (#PR).
 
 ### Security
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or

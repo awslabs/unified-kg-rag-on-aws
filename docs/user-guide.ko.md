@@ -525,7 +525,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `cache.ttl_seconds` | `86400` | 캐시 항목 TTL입니다. `null`이면 만료하지 않습니다. |
 | `logging.level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` 중 하나입니다. |
 | `logging.log_format` | `"structured"` | `structured` 또는 `plain`입니다. |
-| `logging.log_to_file` | `true` | 로그를 `log_file_path`(`logs/log.txt`)에도 기록합니다. |
+| `logging.log_to_file` | `true` | CLI가 로그를 `log_file_path`(`logs/log.txt`, 실제 파일명은 `log_YYYYMMDD.txt`)에도 기록합니다. 상대 경로는 작업 디렉터리 기준입니다. 패키지를 라이브러리로 import하면 핸들러나 파일을 설정하지 않고 호스트 애플리케이션의 로깅 설정을 따릅니다. |
 | `logging.library_levels` | `{langchain_aws: WARNING, botocore: WARNING, urllib3: WARNING}` | 로그가 많은 라이브러리의 로거별 수준입니다. 지정하면 기본 목록 전체가 대체됩니다. |
 
 ### 2.8 `evaluation`

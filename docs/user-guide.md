@@ -538,7 +538,7 @@ quotas (`search.local_search.type_quota`) are in the template.
 | `cache.ttl_seconds` | `86400` | Cache entry TTL; `null` = never expire. |
 | `logging.level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `logging.log_format` | `"structured"` | `structured` or `plain`. |
-| `logging.log_to_file` | `true` | Also write logs to `log_file_path` (`logs/log.txt`). |
+| `logging.log_to_file` | `true` | The CLIs also write logs to `log_file_path` (`logs/log.txt`, dated as `log_YYYYMMDD.txt`; a relative path is resolved against the working directory). Importing the package as a library configures no handler or file: the host application's logging setup applies. |
 | `logging.library_levels` | `{langchain_aws: WARNING, botocore: WARNING, urllib3: WARNING}` | Per-logger levels for chatty libraries. Setting the key replaces the whole map. |
 
 ### 2.8 `evaluation`

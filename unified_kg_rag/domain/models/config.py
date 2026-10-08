@@ -2304,7 +2304,7 @@ class LoggingConfig(BaseModel):
         default="logs/log.txt",
         min_length=1,
         max_length=255,
-        description="Log file path",
+        description="Log file path (CLIs only); relative to the working directory",
     )
     library_levels: dict[str, str] = Field(
         default_factory=lambda: {
