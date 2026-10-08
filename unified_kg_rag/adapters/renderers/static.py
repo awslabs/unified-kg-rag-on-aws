@@ -10,7 +10,6 @@ from bokeh.models import (  # type: ignore[attr-defined]
     NumeralTickFormatter,
     Title,
 )
-from bokeh.palettes import Blues8
 from bokeh.plotting import figure, output_file, save
 from bokeh.transform import dodge
 
@@ -27,7 +26,6 @@ class StaticRenderer:
         self.figure_height = config.get("figure_height", 600)
         self.font = config.get("font", "Arial, sans-serif")
         self.background_color = config.get("background_color", "#fdfdfd")
-        self.color_palette = config.get("color_palette", Blues8)
         self.log_scale_x = config.get("log_scale_x", False)
 
     def plot_degree_distribution(self, graph: nx.Graph, outputs_path: str) -> None:

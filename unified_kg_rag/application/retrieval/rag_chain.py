@@ -926,7 +926,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 total_tokens=0,
                 sections_included=0,
                 sections_excluded=len(state["search_results"].results),
-                quality_score=0.0,
             )
 
     async def _context_building_step(

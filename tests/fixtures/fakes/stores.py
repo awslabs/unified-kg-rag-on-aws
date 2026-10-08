@@ -96,9 +96,6 @@ class FakeGraphStore:
     def initialize(self) -> bool:
         return True
 
-    def get_stats(self) -> dict[str, Any]:
-        return {k: len(v) for k, v in self.data.items()}
-
     # --- writes ------------------------------------------------------------
 
     def index_entities(self, entities: list[Any]) -> IndexingStats:
@@ -181,9 +178,6 @@ class FakeGraphStore:
 
     # --- reads ---------------------------------------------------------------
 
-    def get_entity_count(self, suffixes: list[str]) -> int:
-        return sum(1 for s, _ in self.data.get("entities", {}) if s in suffixes)
-
     def read_entities(self, ids: list[str], suffix: str | None = None) -> list[Any]:
         bucket = self.data.get("entities", {})
         scope = suffix or Constants.DEFAULT_SUFFIX.value
@@ -246,13 +240,6 @@ class FakeVectorStore(_Recorder):
 
     def initialize(self) -> bool:
         return True
-
-    def get_stats(self) -> dict[str, Any]:
-        return {k: len(v) for k, v in self.data.items()}
-
-    def get_entity_count(self, suffixes: list[str]) -> int:
-        # Like clear(), not suffix-scoped: this fake keys items by id only.
-        return len(self.data.get("entities", {}))
 
     def index_text_units(self, text_units: list[Any]) -> IndexingStats:
         return self._put("text_units", text_units)

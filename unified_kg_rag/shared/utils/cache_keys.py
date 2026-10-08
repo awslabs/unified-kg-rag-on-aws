@@ -54,28 +54,12 @@ from pydantic import BaseModel
 from unified_kg_rag.domain.models import Config, PipelineStageType
 from unified_kg_rag.domain.models.config import BedrockConfig
 
-from ..logging import get_logger
 from .common import compute_hash
-
-logger = get_logger(__name__)
 
 FINGERPRINT_LENGTH = 12
 
-# Canonical ingestion order (mirrors DataIngestionPipeline.STAGE_CLASSES).
-_STAGE_ORDER: tuple[PipelineStageType, ...] = (
-    PipelineStageType.DOCUMENT_PARSING,
-    PipelineStageType.DOCUMENT_LOADING,
-    PipelineStageType.TEXT_CHUNKING,
-    PipelineStageType.TRANSLATION,
-    PipelineStageType.GRAPH_EXTRACTION,
-    PipelineStageType.GLEANING,
-    PipelineStageType.GRAPH_RESOLUTION,
-    PipelineStageType.CLAIM_EXTRACTION,
-    PipelineStageType.CLAIM_RESOLUTION,
-    PipelineStageType.GRAPH_ANALYSIS,
-    PipelineStageType.COMMUNITY_DETECTION,
-    PipelineStageType.INDEXING,
-)
+# Canonical ingestion order: PipelineStageType is declared in pipeline order.
+_STAGE_ORDER: tuple[PipelineStageType, ...] = tuple(PipelineStageType)
 
 # Config paths whose value determines a stage's OUTPUT. Each stage's model id
 # lives inside its own subtree (e.g. `processing.graph_extraction`
@@ -138,16 +122,11 @@ _STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
 }
 
 
-def _effective_default_effort(config: Config) -> Any:
-    return config.aws.bedrock.tier_effort("default")
-
-
 # Paths fingerprinted by a derived value instead of the raw attribute.
-# "aws.bedrock.effort" stands for the default tier's effective effort (the
-# legacy key or default_effort), so an unchanged configuration keeps the key
-# it had before effort was split per tier.
+# "aws.bedrock.effort" (the deprecated name of default_effort) stands for the
+# default tier's effort, so an unchanged configuration keeps its cache key.
 _DERIVED_PATHS: dict[str, Callable[[Config], Any]] = {
-    "aws.bedrock.effort": _effective_default_effort,
+    "aws.bedrock.effort": lambda config: config.aws.bedrock.default_effort,
 }
 
 
@@ -194,17 +173,7 @@ _NON_OUTPUT_SUBFIELDS: dict[str, frozenset[str]] = {
 
 def _input_paths_through(stage_type: PipelineStageType) -> list[str]:
     """Return the stage's own input paths plus every upstream stage's."""
-    try:
-        cutoff = _STAGE_ORDER.index(stage_type) + 1
-    except ValueError:
-        # A stage added without extending _STAGE_ORDER must not silently get a
-        # narrower fingerprint than its predecessors, so fold in everything.
-        logger.warning(
-            "Stage '%s' is not in the canonical cache-key stage order; "
-            "fingerprinting all known inputs",
-            stage_type,
-        )
-        cutoff = len(_STAGE_ORDER)
+    cutoff = _STAGE_ORDER.index(stage_type) + 1
 
     paths: list[str] = []
     for stage in _STAGE_ORDER[:cutoff]:

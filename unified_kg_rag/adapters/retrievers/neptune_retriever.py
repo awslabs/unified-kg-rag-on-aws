@@ -171,7 +171,7 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         # vertices "size"; seeds are the highest-valued matches.
         order_by_prop = "size" if is_community else "rank"
 
-        label = self._get_name(label_prefix.capitalize(), query.suffix)
+        label = self._get_label(label_prefix, query.suffix)
         traversal = g.V().hasLabel(label)
 
         if query.entity_focus:
@@ -327,8 +327,8 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         # unset value — clamping UP to it silently ignored a user lowering hops
         # to bound entity-expansion cost.
         hops = self._max_hops or self.DEFAULT_MAX_HOPS
-        entity_label = self._get_name(
-            self._neptune_config.entity_label_prefix.capitalize(), query.suffix
+        entity_label = self._get_label(
+            self._neptune_config.entity_label_prefix, query.suffix
         )
         logger.info(
             "Traversing from entities with label: '%s', seed_count: %s, max_hops: %s",
@@ -400,11 +400,11 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         # NeptuneIndexingConfig) rather than capping at DEFAULT_MAX_HOPS, so the
         # config is authoritative in both directions.
         hops = self._max_hops or self.DEFAULT_MAX_HOPS
-        community_label = self._get_name(
-            self._neptune_config.community_label_prefix.capitalize(), query.suffix
+        community_label = self._get_label(
+            self._neptune_config.community_label_prefix, query.suffix
         )
-        entity_label = self._get_name(
-            self._neptune_config.entity_label_prefix.capitalize(), query.suffix
+        entity_label = self._get_label(
+            self._neptune_config.entity_label_prefix, query.suffix
         )
         logger.info(
             "Traversing from communities with label: '%s', seed_count: %s, max_hops: %s",

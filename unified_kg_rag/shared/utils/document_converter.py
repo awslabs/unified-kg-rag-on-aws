@@ -15,7 +15,6 @@ from unified_kg_rag.shared.utils.document_identity import (
 def convert_langchain_to_document(
     langchain_docs: list[LangChainDocument],
     file_path: str | Path,
-    n_chars: int = 100,  # unused: the id now hashes the full text (kept for API)
     index_value: str | None = None,
 ) -> Document:
     path = Path(file_path)

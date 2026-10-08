@@ -19,7 +19,7 @@ from unified_kg_rag.domain.models import (
     LanguageModelId,
     RerankModelId,
 )
-from unified_kg_rag.domain.models.config import BedrockConfig
+from unified_kg_rag.domain.models.config import EFFORT_LEVELS, BedrockConfig
 from unified_kg_rag.shared import LanguageModelError, get_logger
 
 logger = get_logger(__name__)
@@ -47,16 +47,12 @@ ModelProvider = Literal["anthropic", "openai", "other"]
 # Effort levels each model family accepts on bedrock-runtime, as reported by
 # the service's own validation errors. Anthropic levels are sent as
 # ``output_config.effort``; OpenAI levels as ``reasoning.effort``.
-_ANTHROPIC_EFFORTS_ALL: frozenset[str] = frozenset(
-    {"low", "medium", "high", "xhigh", "max"}
-)
+_ANTHROPIC_EFFORTS_ALL: frozenset[str] = EFFORT_LEVELS
 # Claude 4.6 rejects 'xhigh' ("Input should be 'low', 'medium', 'high' or 'max'").
-_ANTHROPIC_EFFORTS_NO_XHIGH: frozenset[str] = frozenset(
-    {"low", "medium", "high", "max"}
-)
-# GPT also accepts 'none' (reasoning off); it is not exposed because
-# the BedrockConfig effort fields and VALID_EFFORTS only carry the shared levels.
-_OPENAI_EFFORTS: frozenset[str] = frozenset({"low", "medium", "high", "xhigh", "max"})
+_ANTHROPIC_EFFORTS_NO_XHIGH: frozenset[str] = EFFORT_LEVELS - {"xhigh"}
+# GPT also accepts 'none' (reasoning off); it is not exposed because the
+# BedrockConfig effort fields (EffortLevel) only carry the shared levels.
+_OPENAI_EFFORTS: frozenset[str] = EFFORT_LEVELS
 
 
 class LanguageModelInfo(BaseModel):

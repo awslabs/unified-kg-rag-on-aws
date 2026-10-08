@@ -32,22 +32,11 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-# Canonical ingestion stage order (mirrors DataIngestionPipeline.STAGE_CLASSES).
+# Canonical ingestion stage order (PipelineStageType's declaration order).
 # Used to keep stage_results sorted when merging across phased executions so the
 # accumulated history reads in pipeline order regardless of which phase wrote it.
-_CANONICAL_STAGE_ORDER: tuple[str, ...] = (
-    "document_parsing",
-    "document_loading",
-    "text_chunking",
-    "translation",
-    "graph_extraction",
-    "gleaning",
-    "graph_resolution",
-    "claim_extraction",
-    "claim_resolution",
-    "graph_analysis",
-    "community_detection",
-    "indexing",
+_CANONICAL_STAGE_ORDER: tuple[str, ...] = tuple(
+    stage.value for stage in PipelineStageType
 )
 
 

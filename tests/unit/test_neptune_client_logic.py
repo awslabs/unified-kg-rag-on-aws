@@ -5,8 +5,8 @@
 No real Neptune/Gremlin connection is opened. ``DriverRemoteConnection`` is
 patched and the traversal source ``g`` is faked, so we exercise: SigV4 auth-header
 assembly, ``_create_connection`` URL/header wiring, the missing-endpoint guard,
-the ``delete_vertices_in_batches`` no-progress guard, ``get_graph_stats``
-parsing, and the ``_handle_neptune_errors`` wrapping.
+the ``delete_vertices_in_batches`` no-progress guard, and the
+``_handle_neptune_errors`` wrapping.
 """
 
 from __future__ import annotations
@@ -275,43 +275,6 @@ def test_delete_batches_count_increases_raises(monkeypatch) -> None:
         client.delete_vertices_in_batches("MyLabel", delay=0.0)
 
 
-# --- get_graph_stats -----------------------------------------------------
-
-
-def test_get_graph_stats_parses_counts(monkeypatch) -> None:
-    client = _client(_config_with_neptune())
-
-    class _StatsTraversal:
-        def V(self):  # noqa: N802
-            return self
-
-        def E(self):  # noqa: N802
-            return self
-
-        def count(self):
-            return self
-
-        def label(self):
-            return self
-
-        def dedup(self):
-            return self
-
-        def next(self):
-            return 42
-
-        def toList(self):
-            return ["A", "B"]
-
-    fake = _StatsTraversal()
-    monkeypatch.setattr(type(client), "g", property(lambda self: fake))
-    stats = client.get_graph_stats()
-    assert stats["vertex_count"] == 42
-    assert stats["edge_count"] == 42
-    assert stats["vertex_labels"] == ["A", "B"]
-    assert stats["edge_labels"] == ["A", "B"]
-
-
 # --- _handle_neptune_errors decorator ------------------------------------
 
 
@@ -323,5 +286,5 @@ def test_handle_neptune_errors_wraps_exceptions(monkeypatch) -> None:
             raise RuntimeError("gremlin exploded")
 
     monkeypatch.setattr(type(client), "g", property(lambda self: _BoomTraversal()))
-    with pytest.raises(AWSServiceError, match="get_graph_stats.*failed"):
-        client.get_graph_stats()
+    with pytest.raises(AWSServiceError, match="delete_vertices_in_batches.*failed"):
+        client.delete_vertices_in_batches("MyLabel", delay=0.0)

@@ -5,7 +5,7 @@ import math
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from pydantic import (
     AfterValidator,
@@ -25,18 +25,25 @@ _logger = logging.getLogger(__name__)
 
 
 class PipelineStageType(Enum):
-    CLAIM_EXTRACTION = "claim_extraction"
-    CLAIM_RESOLUTION = "claim_resolution"
-    COMMUNITY_DETECTION = "community_detection"
-    DOCUMENT_LOADING = "document_loading"
+    """Ingestion stages, declared in pipeline order.
+
+    The declaration order is the canonical stage order: the pipeline runs the
+    stages, the cache keys fold in upstream inputs, and the run metadata
+    sorts stage results in this order.
+    """
+
     DOCUMENT_PARSING = "document_parsing"
-    GLEANING = "gleaning"
-    GRAPH_ANALYSIS = "graph_analysis"
-    GRAPH_EXTRACTION = "graph_extraction"
-    GRAPH_RESOLUTION = "graph_resolution"
-    INDEXING = "indexing"
+    DOCUMENT_LOADING = "document_loading"
     TEXT_CHUNKING = "text_chunking"
     TRANSLATION = "translation"
+    GRAPH_EXTRACTION = "graph_extraction"
+    GLEANING = "gleaning"
+    GRAPH_RESOLUTION = "graph_resolution"
+    CLAIM_EXTRACTION = "claim_extraction"
+    CLAIM_RESOLUTION = "claim_resolution"
+    GRAPH_ANALYSIS = "graph_analysis"
+    COMMUNITY_DETECTION = "community_detection"
+    INDEXING = "indexing"
 
 
 class ChunkingStrategy(str, Enum):
@@ -163,6 +170,7 @@ class LanguageModelId(str, Enum):
 
 ModelTier = Literal["default", "fast"]
 EffortLevel = Literal["low", "medium", "high", "xhigh", "max"]
+EFFORT_LEVELS: frozenset[str] = frozenset(get_args(EffortLevel))
 
 # The two shipped model tiers. Every per-role model field declares one of them
 # and inherits aws.bedrock.default_model_id / aws.bedrock.fast_model_id unless
@@ -430,13 +438,6 @@ class BedrockConfig(BaseModel):
             "fast_model_id is an adaptive-thinking or GPT model."
         ),
     )
-    effort: EffortLevel | None = Field(
-        default=None,
-        description=(
-            "Deprecated alias for default_effort, kept for existing configs. "
-            "Used only when default_effort is not set."
-        ),
-    )
     guardrail: GuardrailConfig = Field(
         default_factory=GuardrailConfig,
         description="Amazon Bedrock Guardrails configuration (disabled unless identifier set)",
@@ -446,15 +447,6 @@ class BedrockConfig(BaseModel):
         description="Retry for embedding and query-time LLM calls on transient "
         "Bedrock errors",
     )
-
-    @model_validator(mode="after")
-    def _apply_legacy_effort(self) -> "BedrockConfig":
-        # Mirror the legacy key into default_effort so a dumped config reloads
-        # with the same effort. Written through __dict__ to stay out of
-        # model_fields_set, as tier_effort reads that to pick the winner.
-        if self.effort is not None and "default_effort" not in self.model_fields_set:
-            self.__dict__["default_effort"] = self.effort
-        return self
 
     def model_tier(self, model_id: str) -> ModelTier:
         """Tier a call on ``model_id`` belongs to, for picking its effort.
@@ -469,16 +461,8 @@ class BedrockConfig(BaseModel):
         return "default"
 
     def tier_effort(self, tier: ModelTier) -> EffortLevel:
-        """Configured effort for ``tier``, honouring the legacy ``effort`` key.
-
-        Resolved on read as well as at validation, so assigning ``effort`` or
-        ``default_effort`` after construction behaves the same way.
-        """
-        if tier == "fast":
-            return self.fast_effort
-        if self.effort is not None and "default_effort" not in self.model_fields_set:
-            return self.effort
-        return self.default_effort
+        """Configured effort for ``tier``."""
+        return self.fast_effort if tier == "fast" else self.default_effort
 
 
 class NeptuneConfig(BaseModel):
@@ -2508,7 +2492,7 @@ class EvaluationConfig(BaseModel):
         ge=1,
         description="Maximum number of tokens allowed in context for evaluation processing",
     )
-    judge_effort: Literal["low", "medium", "high", "xhigh", "max"] | None = Field(
+    judge_effort: EffortLevel | None = Field(
         default="low",
         description=(
             "Reasoning effort for the LLM judge (RAGAS and LangChain evaluators) "
@@ -2616,6 +2600,7 @@ def _retries_to_attempts(value: Any) -> Any:
 # Every *max_attempts knob counts total attempts, including the first.
 LEGACY_CONFIG_KEYS: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "search.llm_retry": ("aws.bedrock.transient_retry", lambda value: value),
+    "aws.bedrock.effort": ("aws.bedrock.default_effort", lambda value: value),
     "processing.max_retries": ("processing.max_attempts", lambda value: value),
     "indexing.neptune.max_retries": (
         "indexing.neptune.max_attempts",
@@ -2740,12 +2725,6 @@ class PipelineConfig(BaseModel):
         default="pipeline-runs",
         min_length=1,
         description="The S3 key prefix for storing cache objects.",
-    )
-    batch_size: int = Field(
-        default=100,
-        ge=1,
-        le=10000,
-        description="The number of items to process in a single batch.",
     )
     continue_on_error: bool = Field(
         default=False,

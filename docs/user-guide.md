@@ -202,6 +202,7 @@ ignored if the replacement is also set.
 | Former key | Replacement |
 |---|---|
 | `search.llm_retry` | `aws.bedrock.transient_retry` |
+| `aws.bedrock.effort` | `aws.bedrock.default_effort` (same value) |
 | `processing.max_retries` | `processing.max_attempts` (same value) |
 | `indexing.neptune.max_retries` | `indexing.neptune.max_attempts`, plus one: the former key counted retries after the first try |
 | `evaluation.ragas_max_retries` | `evaluation.ragas_max_attempts` (same value) |
@@ -225,7 +226,6 @@ the same values.
 | `aws.bedrock.default_max_output_tokens` | `16384` | `max_tokens` per request, clamped to the model maximum. Raise it if answers are cut off (`stopReason: max_tokens`); `null` sends the model maximum. |
 | `aws.bedrock.default_effort` | `"high"` | Reasoning depth for calls on `default_model_id` (adaptive-thinking Claude and GPT models): `low`, `medium`, `high`, `xhigh`, `max`. Lower it to cut cost and latency. |
 | `aws.bedrock.fast_effort` | `"low"` | Reasoning depth for calls on `fast_model_id` when it differs from `default_model_id`. No effect with the shipped Claude Haiku 4.5; matters once the fast tier runs a thinking model. |
-| `aws.bedrock.effort` | `null` | Deprecated alias for `default_effort`, kept for existing configs. `default_effort` wins if both are set. |
 | `aws.bedrock.enable_1m_context` | `false` | Opt into the 1M window on models where it is a beta (premium billing). Claude 5 has a native 1M window. |
 | `aws.bedrock.model_overrides` | `{}` | Capability records for a language model the package does not know (see Model selection notes). Embedding and rerank models are a closed list. |
 | `aws.bedrock.guardrail.identifier` | `null` | Bedrock guardrail ID or ARN; setting it enables the guardrail. |
@@ -378,9 +378,7 @@ Three things differ for Claude 4.7-and-later models:
   A call uses `fast_effort` when its model is `fast_model_id` (and that differs
   from `default_model_id`), otherwise `default_effort`; the shipped fast model,
   Claude Haiku 4.5, does not reason on these calls, so `fast_effort` only
-  matters once the fast tier runs a thinking model. The older single
-  `bedrock.effort` key is still accepted as an alias for `default_effort`
-  (deprecated). Claude Sonnet 5.5 always thinks, so `--enable-thinking` is a
+  matters once the fast tier runs a thinking model. Claude Sonnet 5.5 always thinks, so `--enable-thinking` is a
   no-op for it — depth is `effort` only. A level the model does not accept
   (e.g. `xhigh` on Opus or Sonnet 4.6) fails fast.
 - **Sampling parameters are dropped.** `temperature`/`top_k` are not accepted

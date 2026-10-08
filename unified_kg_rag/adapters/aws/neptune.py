@@ -12,7 +12,7 @@ from botocore.awsrequest import AWSRequest
 from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
 from gremlin_python.driver.protocol import GremlinServerError
 from gremlin_python.process.anonymous_traversal import traversal
-from gremlin_python.process.graph_traversal import GraphTraversal, GraphTraversalSource
+from gremlin_python.process.graph_traversal import GraphTraversalSource
 
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import AWSServiceError, get_logger
@@ -214,36 +214,3 @@ class NeptuneClient:
         exc_tb: Any,
     ) -> None:
         self.close()
-
-    @_handle_neptune_errors
-    def get_graph_stats(self) -> dict[str, Any]:
-        logger.debug("Retrieving Neptune graph statistics")
-        stats = {
-            "vertex_count": self.g.V().count().next(),
-            "edge_count": self.g.E().count().next(),
-            "vertex_labels": self.g.V().label().dedup().toList(),
-            "edge_labels": self.g.E().label().dedup().toList(),
-        }
-        logger.info(
-            "Graph stats: %s vertices, %s edges",
-            stats["vertex_count"],
-            stats["edge_count"],
-        )
-        return stats
-
-    @_handle_neptune_errors
-    def submit(self, traversal_query: GraphTraversal) -> list[Any] | Any:
-        try:
-            terminating_steps = {"count", "next", "head"}
-            has_terminating_step = any(
-                step[0] in terminating_steps
-                for step in traversal_query.bytecode.step_instructions
-            )
-            return (
-                traversal_query.next()
-                if has_terminating_step
-                else traversal_query.to_list()
-            )
-        except Exception as e:
-            logger.exception("Failed to execute traversal: %s", e)
-            raise AWSServiceError(f"Traversal execution failed: {e}") from e

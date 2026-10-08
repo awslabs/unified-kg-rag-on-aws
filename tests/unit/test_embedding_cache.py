@@ -63,14 +63,6 @@ def test_cache_persists_in_dict(indexer) -> None:
     assert len(indexer._embedding_cache) == 2
 
 
-def test_cache_hit_rate_tracked(indexer) -> None:
-    indexer._batch_embed(["a", "b"])  # 2 misses
-    assert indexer.embedding_cache_hit_rate == 0.0
-    indexer._batch_embed(["a", "b"])  # 2 hits
-    # 2 hits / 4 total lookups = 0.5
-    assert indexer.embedding_cache_hit_rate == 0.5
-
-
 def test_batch_embed_does_not_flush_s3_per_call(indexer) -> None:
     # The S3 cache must NOT be flushed inside _batch_embed (it is called once per
     # extractor per item-type; flushing there read-merge-overwrites the whole

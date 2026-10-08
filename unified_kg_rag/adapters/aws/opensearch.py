@@ -462,22 +462,6 @@ class OpenSearchClient:
             return False
 
     @_handle_opensearch_errors
-    def count(
-        self, index_names: str | list[str], query: dict[str, Any] | None = None
-    ) -> int:
-        final_indices = (
-            ",".join(index_names) if isinstance(index_names, list) else index_names
-        )
-
-        params: dict[str, Any] = {"index": final_indices}
-        if query:
-            params["body"] = query
-
-        logger.debug("Executing count on indices '%s'", final_indices)
-        response = self.client.count(**params)
-        return int(response.get("count", 0))
-
-    @_handle_opensearch_errors
     def delete_alias(
         self, index_names: str | list[str], alias_names: str | list[str]
     ) -> None:
@@ -511,19 +495,6 @@ class OpenSearchClient:
             return list(self.client.indices.get_alias(name=alias_name).keys())
         except NotFoundError:
             return []
-
-    @_handle_opensearch_errors
-    def get_index_stats(self, index_patterns: str | list[str]) -> dict[str, Any]:
-        target = (
-            ",".join(index_patterns)
-            if isinstance(index_patterns, list)
-            else index_patterns
-        )
-        try:
-            result = self.client.indices.stats(index=target, metric="_all")
-            return dict(result)
-        except NotFoundError:
-            return {}
 
     @_handle_opensearch_errors
     def search(self, **kwargs: Any) -> dict[str, Any]:

@@ -42,10 +42,6 @@ class Community(Named):
     relationship_ids: list[str] | None = Field(
         None, description="List of relationship IDs related to the community"
     )
-    covariate_ids: dict[str, list[str]] | None = Field(
-        None,
-        description="Dictionary of different types of covariates related to the community",
-    )
     text_unit_ids: list[str] | None = Field(
         None, description="List of text unit IDs related to the community"
     )

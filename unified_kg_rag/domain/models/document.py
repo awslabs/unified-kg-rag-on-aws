@@ -78,20 +78,11 @@ class DocumentElement(BaseModel):
     content: ElementContent | None = Field(
         default=None, description="Content of the element in various formats"
     )
-    coordinates: list[float] | None = Field(
-        default=None,
-        min_length=4,
-        description="Bounding box coordinates of the element [x1, y1, x2, y2, ...]",
-    )
     confidence: float | None = Field(
         default=None,
         ge=0.0,
         le=1.0,
         description="Confidence score for element detection (0.0 to 1.0)",
-    )
-    base64_encoding: str | None = Field(
-        default=None,
-        description="Base64 encoded representation of the element (e.g., for images)",
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict,
@@ -107,53 +98,10 @@ class DocumentElement(BaseModel):
             return ElementContent(**v)
         raise ValueError("Content must be an ElementContent instance, a dict, or None")
 
-    @field_validator("coordinates", mode="before")
-    @classmethod
-    def validate_coordinates(cls, v: list[Any] | None) -> list[float] | None:
-        if not v:
-            return None
-
-        if not isinstance(v, list):
-            raise ValueError("Coordinates must be a list")
-
-        first_item = v[0]
-        if isinstance(first_item, dict):
-            normalized_coords = cls._normalize_from_dicts(v)
-        elif isinstance(first_item, (int | float)):
-            normalized_coords = cls._normalize_from_numbers(v)
-        else:
-            raise ValueError(
-                "Coordinates must be a list of dicts with 'x'/'y' keys or a list of numbers"
-            )
-
-        if len(normalized_coords) % 2 != 0:
-            raise ValueError("Coordinates must contain an even number of values")
-
-        return normalized_coords
-
     @field_validator("metadata", mode="before")
     @classmethod
     def validate_metadata(cls, v: Any) -> dict[str, Any]:
         return v or {}
-
-    @staticmethod
-    def _normalize_from_dicts(coords: list[Any]) -> list[float]:
-        normalized: list[float] = []
-        try:
-            for coord in coords:
-                if not isinstance(coord, dict) or "x" not in coord or "y" not in coord:
-                    raise ValueError("Coordinate dict must have 'x' and 'y' keys")
-                normalized.extend([float(coord["x"]), float(coord["y"])])
-        except (ValueError, TypeError) as e:
-            raise ValueError(f"Invalid coordinate dictionary values: {e}") from e
-        return normalized
-
-    @staticmethod
-    def _normalize_from_numbers(coords: list[Any]) -> list[float]:
-        try:
-            return [float(c) for c in coords]
-        except (ValueError, TypeError) as e:
-            raise ValueError(f"Invalid numeric coordinate value: {e}") from e
 
     def __str__(self) -> str:
         return f"Element({self.category.value}, id={self.id}, page={self.page})"

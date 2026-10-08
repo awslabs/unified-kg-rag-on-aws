@@ -42,18 +42,13 @@ def _init_worker_fuzzy_matcher(fuzzy_matcher: FuzzyMatcher) -> None:
     _worker_fuzzy_matcher = fuzzy_matcher
 
 
-def find_all_matches_for_entity_task(
-    entity_name: str, fuzzy_matcher: FuzzyMatcher | None = None
-) -> list[tuple[str, float]]:
-    # Prefer the explicit argument (kept for direct/back-compat calls and tests);
-    # otherwise use the per-worker matcher installed by _init_worker_fuzzy_matcher.
-    matcher = fuzzy_matcher if fuzzy_matcher is not None else _worker_fuzzy_matcher
-    if matcher is None:
+def find_all_matches_for_entity_task(entity_name: str) -> list[tuple[str, float]]:
+    if _worker_fuzzy_matcher is None:
         raise RuntimeError(
-            "FuzzyMatcher not initialized: pass one explicitly or run inside a "
-            "pool started with _init_worker_fuzzy_matcher"
+            "FuzzyMatcher not initialized: run inside a pool started with "
+            "_init_worker_fuzzy_matcher"
         )
-    return matcher.find_all_matches(entity_name)
+    return _worker_fuzzy_matcher.find_all_matches(entity_name)
 
 
 class _TypeAwareUnionFind:

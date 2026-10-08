@@ -199,6 +199,7 @@ ignored` WARNING 로그를 남긴 뒤 버려집니다. 파일을 고치거나 �
 | 이전 키 | 새 키 |
 |---|---|
 | `search.llm_retry` | `aws.bedrock.transient_retry` |
+| `aws.bedrock.effort` | `aws.bedrock.default_effort`(값 그대로) |
 | `processing.max_retries` | `processing.max_attempts`(값 그대로) |
 | `indexing.neptune.max_retries` | `indexing.neptune.max_attempts`(값에 1을 더함. 이전 키는 첫 시도를 뺀 재시도 횟수였습니다) |
 | `evaluation.ragas_max_retries` | `evaluation.ragas_max_attempts`(값 그대로) |
@@ -221,7 +222,6 @@ ignored` WARNING 로그를 남긴 뒤 버려집니다. 파일을 고치거나 �
 | `aws.bedrock.default_max_output_tokens` | `16384` | 요청마다 보내는 `max_tokens`이며 모델 최대값을 넘지 않게 맞춥니다. 답변이 잘리면(`stopReason: max_tokens`) 올리고, `null`이면 모델 최대값을 보냅니다. |
 | `aws.bedrock.default_effort` | `"high"` | `default_model_id` 호출의 추론 깊이입니다(adaptive thinking Claude와 GPT 모델). `low`, `medium`, `high`, `xhigh`, `max` 중 하나이며, 낮추면 비용과 지연 시간이 줄어듭니다. |
 | `aws.bedrock.fast_effort` | `"low"` | `fast_model_id`가 `default_model_id`와 다를 때 fast 모델 호출의 추론 깊이입니다. 기본 fast 모델인 Claude Haiku 4.5에서는 효과가 없고, fast 등급에 사고 모델을 지정했을 때 의미가 있습니다. |
-| `aws.bedrock.effort` | `null` | `default_effort`의 이전 이름으로, 기존 설정 호환용입니다(사용 중단 예정). 둘 다 지정하면 `default_effort`가 우선합니다. |
 | `aws.bedrock.enable_1m_context` | `false` | 1M 컨텍스트가 베타인 모델에서 이를 사용합니다(추가 요금). Claude 5는 기본으로 1M입니다. |
 | `aws.bedrock.model_overrides` | `{}` | 패키지가 모르는 언어 모델의 기능 정보를 지정합니다(모델 선택 주의사항 참고). 임베딩·리랭킹 모델은 정해진 목록에서만 고릅니다. |
 | `aws.bedrock.guardrail.identifier` | `null` | Bedrock Guardrail ID 또는 ARN입니다. 지정하면 Guardrail이 켜집니다. |
@@ -368,8 +368,7 @@ Claude 4.7 이후 모델은 세 가지가 다릅니다.
   호출 모델이 `fast_model_id`이고 `default_model_id`와 다르면 `fast_effort`를,
   그 밖에는 `default_effort`를 씁니다. 기본 fast 모델인 Claude Haiku 4.5는 이
   호출에서 추론하지 않으므로, `fast_effort`는 fast 등급에 사고 모델을 지정했을
-  때만 의미가 있습니다. 기존 단일 키 `bedrock.effort`는 `default_effort`의
-  별칭으로 계속 동작합니다(사용 중단 예정). Claude Sonnet 5.5는 사고를 끌 수
+  때만 의미가 있습니다. Claude Sonnet 5.5는 사고를 끌 수
   없어 `--enable-thinking`이 무의미하며, 깊이는 `effort`로만 조절합니다.
   모델이 받지 않는 수준(예: Opus·Sonnet 4.6의 `xhigh`)은 즉시 실패합니다.
 - **샘플링 파라미터가 제거됩니다.** `temperature`/`top_k`는 수용되지 않으므로

@@ -209,6 +209,21 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   metric series per ingestion run. Pass `CloudWatchEMFSink(dimension_keys=...)`
   for stable dimensions. EMF lines now go to stdout, as the help text and docs
   already said (they went to stderr) (#158).
+- `aws.bedrock.effort` is migrated to `aws.bedrock.default_effort` with a
+  deprecation WARNING like the other renamed keys, instead of living on as a
+  config field; stage cache keys are unchanged. **Breaking** for library
+  callers: the `BedrockConfig.effort` attribute is removed (#169).
+- Effort levels are declared once, as `EffortLevel` (with `EFFORT_LEVELS`
+  derived from it); `evaluation.judge_effort` and the model catalog use it,
+  and `BedrockLanguageModelFactory.VALID_EFFORTS` is removed (#169).
+- `PipelineStageType` members are declared in pipeline order, and the cache
+  keys and run metadata derive their stage order from it instead of keeping
+  their own copies; iterating the enum now yields the stages in run order
+  (#169).
+- Indexers and retrievers derive OpenSearch alias/index names and Neptune
+  vertex labels from one helper (`shared/utils/store_names.py`) instead of two
+  copies of the naming rule and a repeated `prefix.capitalize()` at every
+  Neptune call site; the names are unchanged (#169).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
@@ -239,6 +254,33 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   the candidates: a Neptune and an OpenSearch round trip that re-fetched the
   same reports and counted each twice in fusion. Global search now needs only
   the document retriever; an old config key is ignored (#161).
+- **Breaking** for custom indexers: the unreachable `BaseIndexer.get_stats` and
+  `GraphIndexer`/`VectorIndexer.get_entity_count` port methods, their Neptune
+  and OpenSearch implementations, and the client helpers that served only them
+  (`NeptuneClient.get_graph_stats`, `NeptuneClient.submit`,
+  `OpenSearchClient.get_index_stats`, `OpenSearchClient.count`). Nothing in the
+  pipeline called them (#169).
+- Unused parameters and fields: `BaseSearchStrategy(optimization_threshold_factor=,
+  default_max_tokens=)`, `convert_langchain_to_document(n_chars=)`,
+  `PipelineConfig.batch_size` (the CLI set it, nothing read it),
+  `BedrockLanguageModelFactory.DEFAULT_EFFORT`, `StaticRenderer.color_palette`
+  and `evaluation.base.SKIP_REASON_ANSWER_FAILED`. **Breaking** for callers
+  that pass the removed keyword arguments (#169).
+- `OptimizedContext.quality_score` and `TokenManager._calculate_quality_score`:
+  the score was computed for every query and never read. **Breaking** for code
+  that reads or constructs `OptimizedContext` with `quality_score` (#169).
+- Production methods only tests called: `IncrementalIndexer.documents_to_process`
+  (use `domain.ingestion.delta_detector.filter_documents_to_process`),
+  `BaseGraphRAGRetriever.retrieve` (use `aretrieve`, or LangChain `invoke`),
+  `OpenSearchIndexer.embedding_cache_hit_rate` and the explicit `fuzzy_matcher`
+  argument of `graph_resolver.find_all_matches_for_entity_task`. **Breaking**
+  for code that called them (#169).
+- Model fields nothing populated or read: `TextUnit.covariate_ids`,
+  `Community.covariate_ids`, `Covariate.covariate_type`/`subject_type`,
+  `ConversationContext.current_topics`/`user_intent`, and
+  `DocumentElement.coordinates`/`base64_encoding`. Cached stage outputs and
+  exported data that still carry them load unchanged (the keys are ignored)
+  (#169).
 
 ### Fixed
 - The LLM XML parser no longer tries LangChain's `XMLOutputParser.parse`

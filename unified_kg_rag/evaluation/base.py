@@ -28,14 +28,14 @@ logger = get_logger(__name__)
 FAILED_METRICS_KEY = "failed_metrics"
 SKIPPED_METRICS_KEY = "skipped_metrics"
 SKIP_REASON_EMPTY_REFERENCE = "empty_reference"
-SKIP_REASON_ANSWER_FAILED = "answer_generation_failed"
 
 
 def judge_model_kwargs(config: Config) -> dict[str, Any]:
     """Per-call ``get_model`` overrides for an LLM judge.
 
     Applies ``evaluation.judge_effort`` (when set) so evaluation calls can run
-    at a lower reasoning effort than the RAG pipeline's ``aws.bedrock.effort``.
+    at a lower reasoning effort than the RAG pipeline's
+    ``aws.bedrock.default_effort``.
     """
     effort = config.evaluation.judge_effort
     return {"effort": effort} if effort else {}

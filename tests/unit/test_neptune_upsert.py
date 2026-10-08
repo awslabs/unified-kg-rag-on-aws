@@ -46,7 +46,7 @@ def _run_entity_builder(indexer, entities: list[Entity]) -> list[str]:
     # Reach the inner builder the same way _index_generic does.
     builder_factory = None
 
-    def fake_index_generic(items, name, prefix, clear, factory, **kw):
+    def fake_index_generic(items, name, prefix, factory, *, clear_first):
         nonlocal builder_factory
         builder_factory = factory("Entity")
         return None

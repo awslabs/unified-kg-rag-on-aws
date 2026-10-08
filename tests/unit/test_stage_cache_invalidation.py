@@ -261,13 +261,6 @@ class TestFingerprintScope:
             Config(), PipelineStageType.GRAPH_ANALYSIS
         ) != stage_input_fingerprint(changed, PipelineStageType.GRAPH_ANALYSIS)
 
-    def test_stage_outside_the_canonical_order_folds_in_every_input(self) -> None:
-        # A stage added without extending the canonical order must not get a
-        # narrower fingerprint than its predecessors.
-        assert cache_keys._input_paths_through(
-            "not_a_pipeline_stage"  # type: ignore[arg-type]
-        ) == cache_keys._input_paths_through(PipelineStageType.INDEXING)
-
     # Default-config fingerprints of every cached stage as released before the
     # per-tier effort split (#128) and before the fields added since. They must
     # not move, or every existing stage cache turns into a miss on upgrade.

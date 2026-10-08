@@ -208,7 +208,7 @@ def test_thinking_config_legacy_model_keeps_budget_tokens() -> None:
 
 def test_thinking_config_effort_from_config_and_override() -> None:
     config = Config()
-    config.aws.bedrock.effort = "low"
+    config.aws.bedrock.default_effort = "low"
     factory = _lang_factory(config)
     info = factory.get_model_info(LanguageModelId.CLAUDE_V5_OPUS)
     assert info is not None
@@ -666,9 +666,7 @@ def test_legacy_effort_key_aliases_default_effort(monkeypatch, recorded_chat) ->
     assert bedrock.default_effort == "medium"
     assert bedrock.tier_effort("default") == "medium"
     assert bedrock.tier_effort("fast") == "low"
-    # A dumped config reloads with the same effective effort.
-    reloaded = Config.model_validate(config.model_dump())
-    assert reloaded.aws.bedrock.tier_effort("default") == "medium"
+    assert "effort" not in config.aws.bedrock.model_dump()
     _resolve_to(monkeypatch, f"global.{LanguageModelId.CLAUDE_V5_5_SONNET.value}")
     _lang_factory(config).get_model(bedrock.default_model_id)
     assert _sent_effort(recorded_chat) == "medium"

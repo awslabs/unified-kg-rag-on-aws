@@ -240,7 +240,7 @@ def test_gpt_request_has_reasoning_effort_object_and_no_anthropic_fields(
 ) -> None:
     config = Config()
     config.aws.bedrock.enable_1m_context = True
-    config.aws.bedrock.effort = "medium"
+    config.aws.bedrock.default_effort = "medium"
     factory = _factory(config)
     cfg = factory._build_model_config(_info(model_id), f"us.{model_id.value}", True)
     fields = cfg["additional_model_request_fields"]

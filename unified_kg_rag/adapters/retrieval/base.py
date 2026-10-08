@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 from abc import ABC, abstractmethod
-from datetime import datetime
 from typing import Any
 
 import boto3
@@ -20,7 +19,6 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
 from unified_kg_rag.adapters.storage.filter_schema import FilterFields
 from unified_kg_rag.domain.models import (
     Config,
-    Constants,
     RetrievalResult,
     SearchQuery,
     SearchResult,
@@ -28,6 +26,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils.store_names import graph_label, store_name
 
 logger = get_logger(__name__)
 
@@ -110,9 +109,6 @@ class BaseGraphRAGRetriever(BaseRetriever, MetricsMixin, ABC):
             logger.error("Document retrieval failed: %s", str(e))
             raise
 
-    def retrieve(self, query: SearchQuery) -> list[RetrievalResult]:
-        return asyncio.run(self.aretrieve(query))
-
     @abstractmethod
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         pass
@@ -125,19 +121,12 @@ class BaseGraphRAGRetriever(BaseRetriever, MetricsMixin, ABC):
         """
         return None
 
-    def _get_name(
-        self, base: str, suffix: str | None, add_timestamp: bool = False
-    ) -> str:
-        final_suffix = suffix or Constants.DEFAULT_SUFFIX.value
+    def _get_name(self, base: str, suffix: str | None) -> str:
+        return store_name(base, suffix, self._config.indexing.additional_suffix)
 
-        if self._config.indexing.additional_suffix:
-            final_suffix = f"{final_suffix}-{self._config.indexing.additional_suffix}"
-
-        if add_timestamp:
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            return f"{base}-{final_suffix}-{timestamp}"
-
-        return f"{base}-{final_suffix}"
+    def _get_label(self, prefix: str, suffix: str | None) -> str:
+        """Graph vertex label for ``prefix`` under ``suffix``."""
+        return graph_label(prefix, suffix, self._config.indexing.additional_suffix)
 
 
 class BaseSearchStrategy(MetricsMixin, ABC):
@@ -156,8 +145,6 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         config: Config,
         retrievers: dict[str, BaseGraphRAGRetriever],
         boto_session: boto3.Session | None = None,
-        optimization_threshold_factor: int = 2,
-        default_max_tokens: int = 4096,
         *,
         providers: Providers | None = None,
         **kwargs: Any,
@@ -177,8 +164,6 @@ class BaseSearchStrategy(MetricsMixin, ABC):
             self.config, boto_session=self.boto_session, providers=self.providers
         )
         self.token_manager = TokenManager(self.config, providers=self.providers)
-        self.optimization_threshold_factor = optimization_threshold_factor
-        self.default_max_tokens = default_max_tokens
 
     @property
     def graph_retriever(self) -> BaseGraphRAGRetriever | None:
