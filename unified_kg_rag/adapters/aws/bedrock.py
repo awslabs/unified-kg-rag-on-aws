@@ -491,9 +491,6 @@ class BedrockLanguageModelFactory(
     DEFAULT_TEMPERATURE: ClassVar[float] = 0.0
     DEFAULT_TOP_K: ClassVar[int] = 50
     DEFAULT_THINKING_BUDGET_TOKENS: ClassVar[int] = 2048
-    # Effort replaces budget_tokens on adaptive-thinking models. "high" is the
-    # Bedrock default; "medium" trades some depth for tokens and latency.
-    DEFAULT_EFFORT: ClassVar[str] = "high"
     VALID_EFFORTS: ClassVar[frozenset[str]] = frozenset(
         {"low", "medium", "high", "xhigh", "max"}
     )

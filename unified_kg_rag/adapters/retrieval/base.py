@@ -156,8 +156,6 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         config: Config,
         retrievers: dict[str, BaseGraphRAGRetriever],
         boto_session: boto3.Session | None = None,
-        optimization_threshold_factor: int = 2,
-        default_max_tokens: int = 4096,
         *,
         providers: Providers | None = None,
         **kwargs: Any,
@@ -177,8 +175,6 @@ class BaseSearchStrategy(MetricsMixin, ABC):
             self.config, boto_session=self.boto_session, providers=self.providers
         )
         self.token_manager = TokenManager(self.config, providers=self.providers)
-        self.optimization_threshold_factor = optimization_threshold_factor
-        self.default_max_tokens = default_max_tokens
 
     @property
     def graph_retriever(self) -> BaseGraphRAGRetriever | None:

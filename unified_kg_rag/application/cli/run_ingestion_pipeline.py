@@ -264,7 +264,6 @@ class IngestionPipelineRunner:
 
         return PipelineConfig(
             stages_enabled=stages,
-            batch_size=self.config.processing.batch_size,
             continue_on_error=self.args.continue_on_error,
             cache_enabled=not self.args.force_rebuild,
             local_directory=self.args.cache_directory,

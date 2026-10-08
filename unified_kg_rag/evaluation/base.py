@@ -28,7 +28,6 @@ logger = get_logger(__name__)
 FAILED_METRICS_KEY = "failed_metrics"
 SKIPPED_METRICS_KEY = "skipped_metrics"
 SKIP_REASON_EMPTY_REFERENCE = "empty_reference"
-SKIP_REASON_ANSWER_FAILED = "answer_generation_failed"
 
 
 def judge_model_kwargs(config: Config) -> dict[str, Any]:

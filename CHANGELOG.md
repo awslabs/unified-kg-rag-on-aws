@@ -245,6 +245,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (`NeptuneClient.get_graph_stats`, `NeptuneClient.submit`,
   `OpenSearchClient.get_index_stats`, `OpenSearchClient.count`). Nothing in the
   pipeline called them (#PR).
+- Unused parameters and fields: `BaseSearchStrategy(optimization_threshold_factor=,
+  default_max_tokens=)`, `convert_langchain_to_document(n_chars=)`,
+  `PipelineConfig.batch_size` (the CLI set it, nothing read it),
+  `BedrockLanguageModelFactory.DEFAULT_EFFORT`, `StaticRenderer.color_palette`
+  and `evaluation.base.SKIP_REASON_ANSWER_FAILED`. **Breaking** for callers
+  that pass the removed keyword arguments (#PR).
 
 ### Fixed
 - The LLM XML parser no longer tries LangChain's `XMLOutputParser.parse`

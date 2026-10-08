@@ -2741,12 +2741,6 @@ class PipelineConfig(BaseModel):
         min_length=1,
         description="The S3 key prefix for storing cache objects.",
     )
-    batch_size: int = Field(
-        default=100,
-        ge=1,
-        le=10000,
-        description="The number of items to process in a single batch.",
-    )
     continue_on_error: bool = Field(
         default=False,
         description="If true, the pipeline continues execution even if a stage fails.",
