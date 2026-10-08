@@ -222,23 +222,23 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - A doc-status record over the DynamoDB 400 KB item limit (a document with
   roughly 10,000+ artifact ids) fails with an error naming the file before the
   registry write, instead of a bare `ValidationException`; the limit is
-  documented in the user guide (#PR).
+  documented in the user guide (#159).
 - A failed removal of a deleted document's artifacts now fails the indexing
   stage (after the delta is committed) instead of only logging a warning, so
   the run status and the `IndexingFailures` alarm report it; the registry
-  rows are still kept for a retry (#PR).
+  rows are still kept for a retry (#159).
 - Incremental runs no longer record a document as PROCESSED when graph
   extraction, gleaning or claim extraction failed on any of its text units.
   It is recorded FAILED with the lineage of what was written, and the
   registry diff treats a FAILED record as changed, so the next run prunes and
-  re-extracts it instead of leaving the hole in place (#PR).
+  re-extracts it instead of leaving the hole in place (#159).
 - A Neptune relationship whose source entity vertex is missing is counted as
   a failed write instead of a success: the add-edge traversal returns the
-  edge id and an empty result is recorded as an error (#PR).
+  edge id and an empty result is recorded as an error (#159).
 - A graph-extraction answer of only empty sections
   (`<entities></entities><relationships></relationships>`) parses as a valid
   zero-entity result instead of failing, being retried, and going to the
-  output-fixing model (#PR).
+  output-fixing model (#159).
 - `NeptuneRetriever` seeding by name or query text (no `id` filter) always
   returned nothing: it required and sorted by an `importance` property that
   entity vertices never store. It now orders entities by `rank` and
