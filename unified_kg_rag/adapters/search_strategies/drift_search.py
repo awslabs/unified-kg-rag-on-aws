@@ -148,9 +148,10 @@ class DriftSearchStrategy(BaseSearchStrategy):
         # DRIFT accumulates communities, entities, relationships and chunks
         # from several iterations; reserve slots per section type (shared with
         # local search) so the final cut does not collapse them to one type, and
-        # rerank only text chunks, as local search does.
+        # rerank only text chunks, as local search does. RRF ranks the single
+        # bucket by position, so order each type by its native score first.
         final_results = await self._fuse_and_rerank(
-            {"results": all_results},
+            {"results": self._rank_within_type(all_results)},
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,
             query=query.query,
@@ -596,6 +597,27 @@ class DriftSearchStrategy(BaseSearchStrategy):
             for result in results
             if result.metadata or result.source
         ]
+
+    @staticmethod
+    def _rank_within_type(results: list[RetrievalResult]) -> list[RetrievalResult]:
+        """Order each section type by native score, keeping the type positions.
+
+        Results arrive per retrieval call (seed communities, then each
+        iteration's graph and document results), so within a type the arrival
+        order ranked a later iteration's best item below an earlier one's worst.
+        The slots each type occupies are kept, so the mix of types that reaches
+        the diversity cut is unchanged; only the order within a type changes.
+        """
+        by_type: dict[str, list[RetrievalResult]] = {}
+        for result in results:
+            by_type.setdefault(result.retriever_type, []).append(result)
+        ranked = {
+            section_type: iter(
+                sorted(group, key=lambda r: r.score or 0.0, reverse=True)
+            )
+            for section_type, group in by_type.items()
+        }
+        return [next(ranked[result.retriever_type]) for result in results]
 
     @staticmethod
     def _filter_unique_results(

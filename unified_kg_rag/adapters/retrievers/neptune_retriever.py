@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import math
 import re
 import time
 from collections.abc import Coroutine
@@ -337,25 +338,46 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         )
 
         # Over-fetch, then let `_process_traversal_results` rank and cut to
-        # top_k * retrieval_multiplier: the limit here runs in emit order, which
-        # carries no relevance, so a limit at the final width kept an arbitrary
-        # subset. The repeat().times().emit() shape stays (an emit() before
-        # repeat() is not optimized by Neptune and times out).
+        # top_k * retrieval_multiplier. The fetch budget is split evenly across
+        # the seeds and spent inside a per-seed local(), because a limit()
+        # inside repeat() counts every traverser of the whole traversal: one
+        # global cap let the first seeds' neighbourhoods use it up and left the
+        # other seeds with none. Within a seed, local(both().limit(n)) caps how
+        # many neighbours any one node contributes per hop (max_results_per_hop)
+        # so a hub cannot fan out unbounded. The seeds come back through the
+        # identity() branch (path length 1, proximity 1.0); repeat().emit()
+        # emits from the first hop on, never the seed itself, and the expansion
+        # excludes the seeds so it spends its budget on new entities. Both
+        # shapes stay Neptune-friendly: repeat().times().emit() and
+        # union(identity(), ...). An emit() before repeat() is not optimized by
+        # Neptune and times out.
         fetch_limit = (
             query.top_k
             * query.retrieval_multiplier
             * self._neptune_config.traversal_fetch_multiplier
         )
+        per_seed_limit = math.ceil(fetch_limit / len(seed_ids))
         traversal = (
             g.V()
             .hasLabel(entity_label)
             .has("id", P.within(seed_ids))
-            .repeat(__.both().dedup().limit(self._max_results_per_hop))
-            .times(hops)
-            .emit()
-            .dedup()
-            .hasLabel(entity_label)
-            .limit(fetch_limit)
+            .union(
+                __.identity(),
+                __.local(
+                    __.repeat(
+                        __.local(
+                            __.both()
+                            .hasLabel(entity_label)
+                            .limit(self._max_results_per_hop)
+                        )
+                        .has("id", P.without(seed_ids))
+                        .dedup()
+                        .limit(per_seed_limit)
+                    )
+                    .times(hops)
+                    .emit()
+                ),
+            )
         )
         filters, exempt = self._scope_filters_to_labels(
             {entity_label: "entity"}, query.filters
@@ -463,7 +485,6 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
     def _process_traversal_results(
         self, traversal_results: list[dict[str, Any]], query: SearchQuery
     ) -> list[RetrievalResult]:
-        results, seen_ids = [], set()
         community_sizes = [
             float(self._clean_property_map(item.get("node", {})).get("size") or 0)
             for item in traversal_results
@@ -484,10 +505,13 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
                 default=0.0,
             )
 
+        # Entity expansion runs per seed, so a node two seeds reach arrives once
+        # per seed; keep the copy with the best score (its shortest path).
+        best: dict[Any, RetrievalResult] = {}
         for item in traversal_results:
             node_data = self._node_data(item)
             node_id = node_data.get("id")
-            if not node_id or node_id in seen_ids:
+            if not node_id:
                 continue
 
             result = self._create_retrieval_result(
@@ -498,10 +522,11 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
                 importance_key=importance_key,
                 max_importance=max_importance,
             )
-            results.append(result)
-            seen_ids.add(node_id)
+            kept = best.get(node_id)
+            if kept is None or (result.score or 0.0) > (kept.score or 0.0):
+                best[node_id] = result
 
-        results.sort(key=lambda x: x.score or 0.0, reverse=True)
+        results = sorted(best.values(), key=lambda x: x.score or 0.0, reverse=True)
         if self._neptune_config.traversal_fetch_multiplier > 1:
             results = self._cut_entities(
                 results, query.top_k * query.retrieval_multiplier

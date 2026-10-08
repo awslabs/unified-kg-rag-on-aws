@@ -259,6 +259,70 @@ def test_graph_round_trip(local_config: Config, graph_indexer) -> None:
     assert graph_indexer.get_entity_count([_SUFFIX]) == 2
 
 
+def test_graph_expansion_returns_every_seed_and_its_neighbourhood(
+    local_config: Config, graph_indexer
+) -> None:
+    # Each seed has its own neighbours. One traversal-wide limit used to let
+    # the first seeds' neighbourhoods consume it, and the seeds themselves
+    # were never emitted.
+    seeds = [f"e-seed{i}" for i in range(4)]
+    neighbours = {seed: [f"{seed}-n{j}" for j in range(4)] for seed in seeds}
+    ids = seeds + [n for group in neighbours.values() for n in group]
+    entities = [
+        Entity(
+            id=entity_id,
+            name=entity_id,
+            type="ORG",
+            description=f"{entity_id} description",
+            text_unit_ids=["t1"],
+            rank=1,
+        )
+        for entity_id in ids
+    ]
+    relationships = [
+        Relationship(
+            id=f"r-{seed}-{neighbour}",
+            source_id=seed,
+            target_id=neighbour,
+            source_name=seed,
+            target_name=neighbour,
+            description=f"{seed} works with {neighbour}",
+            weight=1.0,
+            text_unit_ids=["t1"],
+        )
+        for seed, group in neighbours.items()
+        for neighbour in group
+    ]
+    assert graph_indexer.index_entities(entities).failed_items == 0
+    assert graph_indexer.index_relationships(relationships).failed_items == 0
+    try:
+        config = local_config.model_copy(deep=True)
+        # Keep everything the traversal returns (no rank-then-cut).
+        config.indexing.neptune.traversal_fetch_multiplier = 1
+        (results,) = asyncio.run(
+            _graph_retrieve(
+                config,
+                SearchQuery(
+                    query="",
+                    suffix=_SUFFIX,
+                    top_k=8,
+                    label_prefixes=config.indexing.neptune.entity_label_prefix,
+                    filters={"id": seeds},
+                ),
+            )
+        )
+        scores = {r.source: r.score for r in results}
+        # Every seed comes back at proximity 1.0 (equal ranks -> importance 1.0).
+        assert all(scores.get(seed) == 1.0 for seed in seeds), scores
+        # 8 new entities split over 4 seeds: 2 neighbours each, none starved.
+        for seed, group in neighbours.items():
+            found = [n for n in group if n in scores]
+            assert len(found) == 2, (seed, sorted(scores))
+            assert all(scores[n] == 0.75 for n in found)
+    finally:
+        graph_indexer.delete_by_id(ids, _SUFFIX)
+
+
 def test_vector_round_trip(local_config: Config, vector_indexer) -> None:
     text_units_prefix = local_config.indexing.opensearch.text_units_index_prefix
     assert vector_indexer.initialize()

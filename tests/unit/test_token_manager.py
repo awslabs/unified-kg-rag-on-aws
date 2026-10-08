@@ -538,6 +538,83 @@ class TestPerTypeBudgetIsAHardCap:
         assert out.total_tokens <= 1000
 
 
+def _synthesized(tokens: int) -> RetrievalResult:
+    return RetrievalResult(
+        content=" ".join(["k"] * tokens),
+        score=1.0,
+        retriever_type="general",
+        source="synthesized_key_points",
+        metadata={"synthesized": True},
+    )
+
+
+def _tokens_by_source(out: OptimizedContext) -> dict[str, int]:
+    return {s.source_id: s.token_count for s in out.sections}
+
+
+class TestSynthesizedSectionReservation:
+    """Global search's map key points are seated before the per-type split.
+
+    They condense every selected report and are already sized by
+    ``max_map_reduce_tokens``; as one GENERAL section they got the GENERAL share
+    (0.10 renormalized over the present types) and were cut to a fraction of
+    their size while most of the window stayed unused.
+    """
+
+    def _evidence(self) -> list[RetrievalResult]:
+        return [_r(" ".join(["t"] * 100), 0.9, "text", f"t{i}") for i in range(40)] + [
+            _r(" ".join(["c"] * 100), 0.4, "community", f"c{i}") for i in range(5)
+        ]
+
+    def test_key_points_are_kept_whole(self, mocker) -> None:
+        mgr = _make_manager(mocker)
+        out = mgr.optimize_context(
+            [_synthesized(400), *self._evidence()],
+            query="q",
+            max_tokens=1001,
+            max_context_tokens_buffer=0,
+        )
+        tokens = _tokens_by_source(out)
+        # Before: GENERAL 0.10 of {TEXT 0.50, COMMUNITY 0.10, GENERAL 0.10} of
+        # 1000 = 142 tokens of the 400.
+        assert tokens["synthesized_key_points"] == 400
+        # The other 600 tokens keep the per-type split: TEXT 5/6, COMMUNITY 1/6.
+        by_type: dict[SectionType, int] = {}
+        for section in out.sections:
+            by_type[section.section_type] = (
+                by_type.get(section.section_type, 0) + section.token_count
+            )
+        assert by_type[SectionType.TEXT] == 500
+        assert 0 < by_type[SectionType.COMMUNITY] <= 100
+        assert out.total_tokens <= 1000
+
+    def test_key_points_larger_than_the_window_are_truncated(self, mocker) -> None:
+        mgr = _make_manager(mocker)
+        out = mgr.optimize_context(
+            [_synthesized(2000), *self._evidence()],
+            query="q",
+            max_tokens=1001,
+            max_context_tokens_buffer=0,
+        )
+        assert [s.source_id for s in out.sections] == ["synthesized_key_points"]
+        assert out.total_tokens == 1000
+        assert out.sections[0].metadata["truncated"] is True
+
+    def test_without_synthesized_sections_the_split_is_unchanged(self, mocker) -> None:
+        mgr = _make_manager(mocker)
+        plain = mgr.optimize_context(
+            self._evidence(), query="q", max_tokens=1001, max_context_tokens_buffer=0
+        )
+        assert (
+            sum(
+                s.token_count
+                for s in plain.sections
+                if s.section_type == SectionType.TEXT
+            )
+            == 800
+        )  # TEXT's 833-token share seats 8 whole 100-token chunks
+
+
 class TestQualityScore:
     def test_empty_inputs_zero(self, mocker) -> None:
         mgr = _make_manager(mocker)

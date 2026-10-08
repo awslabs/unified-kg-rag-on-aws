@@ -536,15 +536,16 @@ indexing:
     # Graph-traversal tuning for retrieval (neighbor expansion). max_hops is
     # honored directly by the retriever (NeptuneIndexingConfig default 3).
     max_hops: 3
+    # At most this many neighbours per node and hop (bounds hub fan-out).
     max_results_per_hop: 50
     # Graph-expansion relevance = mean(entity importance, proximity to seeds).
     # Importance: "rank" (indexed entity rank), "degree" (edge count, computed
     # at query time) or "none" (neutral 0.5 for every entity, the old
     # behaviour). Each is normalized by the largest value in the result.
     entity_importance_source: "rank"
-    # Expansion fetches top_k * retrieval_multiplier * this many entities,
-    # ranks them, and keeps top_k * retrieval_multiplier. 1 = the old
-    # behaviour (cut in traversal order, before ranking).
+    # Expansion returns the seeds plus top_k * retrieval_multiplier * this
+    # many entities, split evenly across the seeds, ranks them, and keeps
+    # top_k * retrieval_multiplier. 1 = keep every traversed entity.
     traversal_fetch_multiplier: 3
 
 # Search Configuration
@@ -579,7 +580,6 @@ search:
       opensearch_all: 1.0
       opensearch_community_reports: 1.0
       opensearch_candidate_community_reports: 1.0
-      opensearch_expanded_community_reports: 1.0
       results: 1.0
 
   # Reranking Configuration
@@ -615,9 +615,6 @@ search:
     # reports for the query. Mainly useful with enable_map_reduce: false.
     use_dynamic_selection: false
     enable_map_reduce: true
-    # Timeout (seconds) for the Neptune community-graph retrieval; raise for very
-    # large graphs or slow clusters.
-    graph_timeout_seconds: 30.0
     # Upper bound on text units pulled into the global-search context.
     max_text_units: 100
     # Minimum community results before map-reduce synthesis kicks in; below

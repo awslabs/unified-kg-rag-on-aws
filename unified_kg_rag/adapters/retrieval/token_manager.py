@@ -334,6 +334,44 @@ class TokenManager(MetricsMixin):
     def _select_optimal_sections(
         self, sections: list[ContextSection], token_budget: int
     ) -> list[ContextSection]:
+        # Synthesized sections (global search's ranked map key points or reduce
+        # summary) are not one retrieved item of their type: they condense every
+        # selected community report, and their producer already sized them
+        # (`max_map_reduce_tokens`). Splitting them into the GENERAL share cut
+        # them to a fraction of that budget while most of the window stayed
+        # unused, so they are seated first and the per-type split covers the
+        # remaining budget.
+        reserved: list[ContextSection] = []
+        remaining = token_budget
+        for section in sorted(
+            (
+                s
+                for s in sections
+                if s.token_count > 0 and s.metadata.get("synthesized")
+            ),
+            key=lambda s: s.priority,
+            reverse=True,
+        ):
+            if section.token_count <= remaining:
+                reserved.append(section)
+                remaining -= section.token_count
+                continue
+            head = self._truncate_to_tokens(section, remaining)
+            if head is not None:
+                reserved.append(head)
+                remaining -= head.token_count
+            break
+        evidence = [s for s in sections if not s.metadata.get("synthesized")]
+        if not reserved:
+            return self._select_per_type(evidence, token_budget)
+        return reserved + self._select_per_type(evidence, remaining, fallback=False)
+
+    def _select_per_type(
+        self,
+        sections: list[ContextSection],
+        token_budget: int,
+        fallback: bool = True,
+    ) -> list[ContextSection]:
         # The per-type budget is a HARD CAP, not a floor.
         #
         # This used to pack each type to its sub-budget and then run a second pass
@@ -396,7 +434,7 @@ class TokenManager(MetricsMixin):
                     selected.append(head)
                 break
 
-        if selected:
+        if selected or not fallback:
             return selected
 
         # Last resort: every present type's renormalized share came out below the
