@@ -217,6 +217,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   dependencies (#119).
 - `S3EncryptionType.NONE` ("NONE" still validates as `BUCKET_DEFAULT`) and
   test-only helpers on the guardrail handler and token counter (#120).
+- Global search's Neptune community expansion, with
+  `search.global_search.graph_timeout_seconds` and the
+  `opensearch_expanded_community_reports` fusion bucket. Its limit equalled the
+  candidate count and the candidates were emitted first, so it returned only
+  the candidates: a Neptune and an OpenSearch round trip that re-fetched the
+  same reports and counted each twice in fusion. Global search now needs only
+  the document retriever; an old config key is ignored (#PR).
 
 ### Fixed
 - A doc-status record over the DynamoDB 400 KB item limit (a document with

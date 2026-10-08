@@ -5,7 +5,7 @@
 Complements ``test_global_search_scoring.py`` (which covers the 0-10 -> 0-1
 relevance-normalization regression). Here we exercise community selection
 (static vs dynamic), map-reduce gating, the map-reduce-applied detector, the
-relevance-scorer error path, and the retrieve-by-ids / context retrieval
+relevance-scorer error path, and the report / context retrieval
 guards. The strategy is built via ``__new__`` so its Bedrock-backed ``__init__``
 never runs; retriever and chain objects are replaced with fakes / AsyncMocks.
 """
@@ -89,7 +89,6 @@ def _bare_strategy(
         enable_map_reduce=enable_map_reduce,
         map_reduce_min_results=map_reduce_min_results,
         max_text_units=10,
-        graph_timeout_seconds=5.0,
         map_batch_size=2,
         map_relevance_threshold=0,
         max_map_reduce_tokens=8000,
@@ -264,7 +263,7 @@ def test_was_map_reduce_applied_no_synthesized_is_false() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# _retrieve_documents / _retrieve_reports_by_ids / _retrieve_community_context guards
+# _retrieve_documents / _retrieve_community_context guards
 # --------------------------------------------------------------------------- #
 
 
@@ -293,26 +292,6 @@ async def test_retrieve_documents_swallows_error() -> None:
     )
     out = await strat._retrieve_documents(SearchQuery(query="q"), ["x"])
     assert out == []
-
-
-async def test_retrieve_reports_by_ids_empty_ids_returns_empty() -> None:
-    strat = _bare_strategy(retrievers={"document": _StubRetriever([_community(0)])})
-    assert await strat._retrieve_reports_by_ids([], SearchQuery(query="q")) == []
-
-
-async def test_retrieve_reports_by_ids_sets_filter_and_top_k() -> None:
-    retriever = _StubRetriever([_community(0)])
-    strat = _bare_strategy(retrievers={"document": retriever})
-    query = SearchQuery(query="original", top_k=99)
-    out = await strat._retrieve_reports_by_ids(["a", "b"], query)
-    assert [c.source for c in out] == ["c0"]
-    sent = retriever.last_query
-    assert sent is not None
-    assert sent.filters is not None
-    assert sent.query == ""  # cleared for an id-filtered lookup
-    assert sent.filters["community_id"] == ["a", "b"]
-    assert sent.top_k == 2
-    assert sent.index_prefixes == ["community_reports"]
 
 
 async def test_retrieve_community_context_no_community_ids_returns_empty() -> None:
@@ -353,7 +332,7 @@ async def test_augment_empty_selection_returns_fallback() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# _retrieve_community_reports / _retrieve_community_nodes
+# _retrieve_community_reports
 # --------------------------------------------------------------------------- #
 
 
@@ -367,33 +346,28 @@ async def test_retrieve_community_reports_uses_community_reports_prefix() -> Non
     assert sent.index_prefixes == ["community_reports"]
 
 
-async def test_retrieve_community_nodes_no_graph_retriever_returns_empty() -> None:
-    strat = _bare_strategy(retrievers={})
-    out = await strat._retrieve_community_nodes(SearchQuery(query="q"), ["cid"])
-    assert out == []
-
-
-async def test_retrieve_community_nodes_sets_filter_and_community_prefix() -> None:
-    retriever = _StubRetriever([_community(0)])
-    strat = _bare_strategy(retrievers={"graph": retriever})
-    strat.config.indexing.neptune = SimpleNamespace(community_label_prefix="Community")
-    out = await strat._retrieve_community_nodes(SearchQuery(query="q"), ["cid-1"])
-    assert [c.source for c in out] == ["c0"]
-    sent = retriever.last_query
-    assert sent is not None
-    assert sent.filters is not None
-    assert sent.query == ""
-    assert sent.filters["id"] == ["cid-1"]
-    assert sent.label_prefixes == ["Community"]
-
-
-async def test_retrieve_community_nodes_swallows_error() -> None:
+async def test_reports_are_fused_without_a_graph_round_trip() -> None:
+    # The Neptune community expansion returned only the candidate communities
+    # (its limit equalled their count and they were emitted first), so it was
+    # removed: one report bucket is fused, and the graph is never queried.
+    candidates = [_community(0, metadata={"community_id": "cid0"}), _community(1)]
+    graph = _StubRetriever(raises=AssertionError("graph must not be queried"))
     strat = _bare_strategy(
-        retrievers={"graph": _StubRetriever(raises=RuntimeError("neptune"))}
+        retrievers={"document": _StubRetriever(candidates), "graph": graph}
     )
-    strat.config.indexing.neptune = SimpleNamespace(community_label_prefix="Community")
-    out = await strat._retrieve_community_nodes(SearchQuery(query="q"), ["cid"])
-    assert out == []
+    fused: list[dict] = []
+
+    async def _fuse(results, **kwargs):
+        fused.append(results)
+        return results["opensearch_candidate_community_reports"]
+
+    strat._fuse_and_rerank = _fuse  # type: ignore[method-assign]
+    out = await strat._retrieve_and_fuse_communities(SearchQuery(query="q"))
+    assert out == candidates
+    assert [list(buckets) for buckets in fused] == [
+        ["opensearch_candidate_community_reports"]
+    ]
+    assert graph.last_query is None
 
 
 # --- _parse_map_points robustness to non-finite LLM scores (R3 fix) ---

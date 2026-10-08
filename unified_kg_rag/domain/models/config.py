@@ -1709,7 +1709,6 @@ class FusionConfig(BaseModel):
             "opensearch_all": 1.0,
             "opensearch_community_reports": 1.0,
             "opensearch_candidate_community_reports": 1.0,
-            "opensearch_expanded_community_reports": 1.0,
             "results": 1.0,
         },
         description=(
@@ -1791,12 +1790,6 @@ class GlobalSearchConfig(BaseModel):
         ge=1,
         description="Minimum community results before map-reduce synthesis is "
         "applied; below this the results are returned directly.",
-    )
-    graph_timeout_seconds: float = Field(
-        default=30.0,
-        gt=0.0,
-        description="Timeout (seconds) for the Neptune community-graph retrieval "
-        "in global search; raise for very large graphs or slow clusters.",
     )
     map_model_id: BedrockModelId = role_model_field(
         "fast",

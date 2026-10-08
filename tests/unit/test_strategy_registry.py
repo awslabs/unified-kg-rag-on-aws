@@ -50,14 +50,18 @@ def test_spec_maps_to_correct_class(
     assert get_strategy_spec(strategy).strategy_class is expected_class
 
 
-def test_simple_requires_only_document_role() -> None:
-    spec = get_strategy_spec(SearchStrategy.SIMPLE)
+@pytest.mark.parametrize("strategy", [SearchStrategy.SIMPLE, SearchStrategy.GLOBAL])
+def test_document_only_strategies_require_only_the_document_role(
+    strategy: SearchStrategy,
+) -> None:
+    # Global search reads community reports from OpenSearch only.
+    spec = get_strategy_spec(strategy)
     assert spec.required_roles == (RetrieverRole.DOCUMENT,)
 
 
 @pytest.mark.parametrize(
     "strategy",
-    [SearchStrategy.LOCAL, SearchStrategy.GLOBAL, SearchStrategy.DRIFT],
+    [SearchStrategy.LOCAL, SearchStrategy.DRIFT],
 )
 def test_graph_strategies_require_both_roles(strategy: SearchStrategy) -> None:
     spec = get_strategy_spec(strategy)

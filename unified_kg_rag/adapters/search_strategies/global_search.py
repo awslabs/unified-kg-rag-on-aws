@@ -20,6 +20,7 @@ from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
+    RetrieverRole,
     SearchQuery,
     SearchResult,
     SearchStrategy,
@@ -54,7 +55,7 @@ class _MapPoint:
         self.score = score
 
 
-@register_strategy(SearchStrategy.GLOBAL)
+@register_strategy(SearchStrategy.GLOBAL, required_roles=(RetrieverRole.DOCUMENT,))
 class GlobalSearchStrategy(BaseSearchStrategy):
     def __init__(
         self,
@@ -210,48 +211,19 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     async def _retrieve_and_fuse_communities(
         self, query: SearchQuery
     ) -> list[RetrievalResult]:
+        # Reports come from the community-reports index alone. A Neptune
+        # community expansion used to follow: re-reading the candidate
+        # communities' vertices, their members and the members' neighbours,
+        # then fetching the reports of the communities it returned. Its limit
+        # (top_k * retrieval_multiplier) equalled the candidate count and the
+        # candidates were emitted first, so it returned only the candidates; the
+        # re-fetched copies cost a Neptune and an OpenSearch round trip and
+        # double-counted every candidate in fusion.
         candidate_community_reports = await self._retrieve_community_reports(query)
         if not candidate_community_reports:
             return []
-
-        candidate_community_ids = self._get_ids(
-            candidate_community_reports, "community_id"
-        )
-        if not candidate_community_ids:
-            return candidate_community_reports
-
-        logger.debug(
-            "Found %s candidate communities: '%s%s'",
-            len(candidate_community_ids),
-            ", ".join(str(cid) for cid in candidate_community_ids[:5]),
-            "..." if len(candidate_community_ids) > 5 else "",
-        )
-
-        expanded_community_nodes = await self._retrieve_community_nodes(
-            query, candidate_community_ids
-        )
-        if not expanded_community_nodes:
-            return candidate_community_reports
-
-        expanded_community_ids = self._get_ids(expanded_community_nodes, "id")
-        if not expanded_community_ids:
-            return candidate_community_reports
-
-        expanded_community_reports = await self._retrieve_reports_by_ids(
-            expanded_community_ids, query
-        )
-        logger.debug(
-            "Expanded to %s communities: '%s%s'",
-            len(expanded_community_reports),
-            ", ".join(str(cid) for cid in expanded_community_ids[:5]),
-            "..." if len(expanded_community_ids) > 5 else "",
-        )
-
         return await self._fuse_and_rerank(
-            {
-                "opensearch_candidate_community_reports": candidate_community_reports,
-                "opensearch_expanded_community_reports": expanded_community_reports,
-            },
+            {"opensearch_candidate_community_reports": candidate_community_reports},
             top_k=query.top_k,
             retrieval_multiplier=query.retrieval_multiplier,
             query=query.query,
@@ -265,23 +237,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         ]
         return await self._retrieve_documents(query, index_prefixes)
 
-    async def _retrieve_reports_by_ids(
-        self, community_ids: list[str], query: SearchQuery
-    ) -> list[RetrievalResult]:
-        if not self.document_retriever or not community_ids:
-            return []
-
-        search_query = query.model_copy(deep=True)
-        search_query.query = ""
-        search_query.filters = (search_query.filters or {}).copy()
-        search_query.filters["community_id"] = community_ids
-        search_query.top_k = len(community_ids)
-
-        index_prefixes = [
-            self.config.indexing.opensearch.community_reports_index_prefix
-        ]
-        return await self._retrieve_documents(search_query, index_prefixes)
-
     async def _retrieve_documents(
         self, query: SearchQuery, index_prefixes: list[str]
     ) -> list[RetrievalResult]:
@@ -292,27 +247,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         search_query.index_prefixes = index_prefixes
         return await self._safe_aretrieve(
             self.document_retriever, search_query, "OpenSearch retrieval"
-        )
-
-    async def _retrieve_community_nodes(
-        self, query: SearchQuery, community_ids: list[str]
-    ) -> list[RetrievalResult]:
-        if not self.graph_retriever:
-            return []
-
-        search_query = query.model_copy(deep=True)
-        search_query.query = ""
-        search_query.filters = (search_query.filters or {}).copy()
-        search_query.filters["id"] = community_ids
-        search_query.label_prefixes = [
-            self.config.indexing.neptune.community_label_prefix
-        ]
-
-        return await self._safe_aretrieve(
-            self.graph_retriever,
-            search_query,
-            "Neptune community retrieval",
-            timeout=self.global_search_config.graph_timeout_seconds,
         )
 
     async def _select_relevant_communities(
