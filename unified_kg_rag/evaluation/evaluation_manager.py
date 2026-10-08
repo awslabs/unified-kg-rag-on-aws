@@ -35,7 +35,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
 )
 from unified_kg_rag.shared import EvaluationException, get_logger
-from unified_kg_rag.shared.utils import BATCH_ITEM_FAILED, BatchProcessor
+from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 from .answer_match_evaluator import AnswerMatchEvaluator
 from .base import FAILED_METRICS_KEY, SKIPPED_METRICS_KEY, BaseEvaluator

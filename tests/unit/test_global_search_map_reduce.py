@@ -26,7 +26,7 @@ from unified_kg_rag.adapters.search_strategies.global_search import (
     _MapPoint,
 )
 from unified_kg_rag.domain.models import RetrievalResult, SearchQuery
-from unified_kg_rag.shared.utils import BATCH_ITEM_FAILED
+from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
 
@@ -122,7 +122,7 @@ def _strategy(
     strat.token_manager = _TokenCounter(cost=token_cost)
     # The stub assigns outputs in call order, so run chunks serially.
     # Chunk concurrency and result ordering have dedicated BatchProcessor tests.
-    from unified_kg_rag.shared.utils import BatchProcessor
+    from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
     strat.batch_processor = BatchProcessor(
         batch_size=1, max_concurrency=4, chunk_concurrency=1

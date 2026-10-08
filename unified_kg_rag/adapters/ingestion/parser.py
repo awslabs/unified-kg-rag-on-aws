@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from unified_kg_rag.adapters.ingestion.json_loader import JsonTextLoader
 from unified_kg_rag.domain.models import Config, Document
 from unified_kg_rag.shared import DataProcessingError, get_logger
-from unified_kg_rag.shared.utils import convert_langchain_to_document
+from unified_kg_rag.shared.utils.document_converter import convert_langchain_to_document
 
 logger = get_logger(__name__)
 

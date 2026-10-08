@@ -21,7 +21,8 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.shared import get_config, get_logger, setup_logging
-from unified_kg_rag.shared.utils import console, display_ascii_art, event_loop
+from unified_kg_rag.shared.utils import event_loop
+from unified_kg_rag.shared.utils.display import console, display_ascii_art
 
 nest_asyncio.apply()
 logger = get_logger(__name__)

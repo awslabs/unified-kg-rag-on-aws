@@ -39,7 +39,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.evaluation.evaluation_manager import GraphAwareEvaluator
 from unified_kg_rag.shared import EvaluationException
-from unified_kg_rag.shared.utils import BATCH_ITEM_FAILED
+from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
 

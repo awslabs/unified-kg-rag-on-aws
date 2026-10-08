@@ -30,11 +30,8 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts import CommunityReportPrompt
 from unified_kg_rag.shared import GraphError, get_logger
-from unified_kg_rag.shared.utils import (
-    BATCH_ITEM_FAILED,
-    BatchProcessor,
-    generate_stable_id,
-)
+from unified_kg_rag.shared.utils import generate_stable_id
+from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 logger = get_logger(__name__)
 

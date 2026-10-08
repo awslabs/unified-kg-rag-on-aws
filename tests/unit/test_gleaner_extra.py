@@ -27,7 +27,7 @@ from unified_kg_rag.adapters.ingestion.gleaner import (
 )
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
-from unified_kg_rag.shared.utils import BATCH_ITEM_FAILED
+from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
 

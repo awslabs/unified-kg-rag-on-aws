@@ -15,7 +15,9 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
 - **`domain/`**: technology-agnostic core — `models/` (Pydantic), pure
   algorithms (`ingestion/` merge/delta/resolve/analyze, `retrieval/`
   strategy registry + mixins), and `prompts/` templates. No boto3/LangChain/
-  backend imports (enforced by review; verifiable with grep).
+  backend imports, direct or transitive (`tests/unit/test_domain_purity.py`
+  imports every domain module in a clean interpreter and checks
+  `sys.modules`).
 - **`ports/`**: the abstract interfaces the domain depends on — `DocStatusPort`
   (`Protocol`) and the write-side indexer ABCs `BaseIndexer`/`GraphIndexer`/
   `VectorIndexer` (+ `IndexingStats`). `ports/__init__` is the port catalog and
@@ -30,7 +32,10 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   resolve to `unified_kg_rag.application.cli.*`), `ingestion/` (pipeline + stages),
   `storage/indexing_manager`, `retrieval/rag_chain`.
 - **`shared/`**: cross-cutting kernel — config, logging, exceptions, metrics,
-  cache/pipeline managers, `utils/`.
+  cache/pipeline managers, `utils/`. Keep `shared/__init__` and
+  `shared/utils/__init__` dependency-light: import LangChain-coupled helpers
+  from `shared.utils.langchain` / `shared.utils.document_converter` (and rich
+  helpers from `shared.utils.display`), not from the package root.
 - **`evaluation/` and `visualization/`**: real logic packages (evaluators +
   manager; render loop + `embeddings/`/`exporters/`/`renderers/`). Import
   everything else from its real location (`application.retrieval.rag_chain`,

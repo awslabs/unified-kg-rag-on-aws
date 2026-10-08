@@ -28,7 +28,7 @@ from unified_kg_rag.shared import (
     get_logger,
     setup_logging,
 )
-from unified_kg_rag.shared.utils import (
+from unified_kg_rag.shared.utils.display import (
     console,
     display_ascii_art,
     display_pipeline_results,
