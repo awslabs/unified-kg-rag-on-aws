@@ -1431,7 +1431,8 @@ class NeptuneIndexingConfig(BaseModel):
     max_results_per_hop: int = Field(
         default=50,
         ge=1,
-        description="Maximum number of results to return per traversal hop",
+        description="Maximum number of neighbours one node contributes per "
+        "traversal hop, so a hub entity cannot fan the expansion out unbounded",
     )
     entity_importance_source: Literal["rank", "degree", "none"] = Field(
         default="rank",
@@ -1450,10 +1451,10 @@ class NeptuneIndexingConfig(BaseModel):
         ge=1,
         description=(
             "Graph expansion fetches top_k * retrieval_multiplier * this many "
-            "entities, ranks them by relevance, then keeps the top "
-            "top_k * retrieval_multiplier. 1 = the previous behaviour: the "
-            "traversal's limit cut entities in Neptune's arbitrary emit order, "
-            "before any ranking."
+            "entities besides the seeds, split evenly across the seeds, ranks "
+            "them with the seeds by relevance, then keeps the top "
+            "top_k * retrieval_multiplier. 1 = no over-fetch: every traversed "
+            "entity is kept, with no cut after ranking."
         ),
     )
 

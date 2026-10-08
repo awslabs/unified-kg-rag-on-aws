@@ -536,15 +536,16 @@ indexing:
     # Graph-traversal tuning for retrieval (neighbor expansion). max_hops is
     # honored directly by the retriever (NeptuneIndexingConfig default 3).
     max_hops: 3
+    # At most this many neighbours per node and hop (bounds hub fan-out).
     max_results_per_hop: 50
     # Graph-expansion relevance = mean(entity importance, proximity to seeds).
     # Importance: "rank" (indexed entity rank), "degree" (edge count, computed
     # at query time) or "none" (neutral 0.5 for every entity, the old
     # behaviour). Each is normalized by the largest value in the result.
     entity_importance_source: "rank"
-    # Expansion fetches top_k * retrieval_multiplier * this many entities,
-    # ranks them, and keeps top_k * retrieval_multiplier. 1 = the old
-    # behaviour (cut in traversal order, before ranking).
+    # Expansion returns the seeds plus top_k * retrieval_multiplier * this
+    # many entities, split evenly across the seeds, ranks them, and keeps
+    # top_k * retrieval_multiplier. 1 = keep every traversed entity.
     traversal_fetch_multiplier: 3
 
 # Search Configuration

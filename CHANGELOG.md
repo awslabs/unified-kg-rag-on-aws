@@ -239,6 +239,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (`<entities></entities><relationships></relationships>`) parses as a valid
   zero-entity result instead of failing, being retried, and going to the
   output-fixing model (#159).
+- Graph expansion (local search, LightRAG `enable_graph_expansion`) returns
+  the seed entities and a neighbourhood for every seed. The per-hop limit
+  inside `repeat()` counted the whole traversal, so the first seeds used it up
+  and the seeds themselves were never emitted (10 seeds with 6 neighbours
+  each: 1 seed and 2 neighbourhoods came back). The fetch width is now split
+  across the seeds, `max_results_per_hop` caps neighbours per node and hop,
+  and a seed scores proximity 1.0 (#PR).
 - `NeptuneRetriever` seeding by name or query text (no `id` filter) always
   returned nothing: it required and sorted by an `importance` property that
   entity vertices never store. It now orders entities by `rank` and

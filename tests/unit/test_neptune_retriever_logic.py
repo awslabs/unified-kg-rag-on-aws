@@ -14,6 +14,8 @@ is never constructed.
 from __future__ import annotations
 
 import pytest
+from gremlin_python.process.translator import Translator
+from gremlin_python.structure.graph import Graph
 
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
@@ -330,41 +332,14 @@ async def test_get_seed_nodes_no_label_prefixes_returns_empty(
 
 @pytest.mark.parametrize("configured_hops", [1, 2, 5])
 async def test_entity_traversal_honors_configured_max_hops(
-    retriever, mocker, configured_hops
+    retriever, configured_hops
 ) -> None:
     # Regression: hops was max(self._max_hops, DEFAULT_MAX_HOPS=3), so a
     # configured max_hops < 3 was silently raised to 3 (and the config was
     # ignored). The configured value must be used directly.
     object.__setattr__(retriever, "_max_hops", configured_hops)
-
-    captured: dict[str, int] = {}
-
-    class FluentTraversal:
-        """Records every step; .times() captures its arg."""
-
-        def times(self, n, *a, **k):
-            captured["times"] = n
-            return self
-
-        def __getattr__(self, name):
-            return lambda *a, **k: self
-
-    g = mocker.MagicMock()
-    g.V.return_value = FluentTraversal()
-
-    # Patch via object.__setattr__ (not mocker.patch.object): the retriever is a
-    # __new__-constructed pydantic model whose attribute deletion at teardown
-    # raises, so set bound replacements directly.
-    async def _fake_execute(_traversal):
-        return []
-
-    object.__setattr__(retriever, "_apply_filters", lambda t, f, *_: t)
-    object.__setattr__(retriever, "_with_projection", lambda t, **_: t)
-    object.__setattr__(retriever, "_execute_traversal", _fake_execute)
-
-    await retriever._traverse_from_entities(g, [{"id": "e1"}], SearchQuery(query="x"))
-
-    assert captured.get("times") == configured_hops
+    text = await _entity_traversal_text(retriever, ["e1"], SearchQuery(query="x"))
+    assert f".times({configured_hops}).emit()" in text
 
 
 # --------------------------------------------------------------------------- #
@@ -528,36 +503,64 @@ def test_fetch_multiplier_one_keeps_every_traversed_entity(retriever, config) ->
     assert len(retriever._process_traversal_results(items, query)) == 3
 
 
-@pytest.mark.parametrize("multiplier", [1, 3])
-async def test_entity_traversal_limit_scales_with_fetch_multiplier(
-    retriever, config, mocker, multiplier
-) -> None:
-    config.indexing.neptune.traversal_fetch_multiplier = multiplier
-    limits: list[int] = []
+async def _entity_traversal_text(retriever, seed_ids: list[str], query) -> str:
+    """The Gremlin text `_traverse_from_entities` sends, projection left out."""
+    captured: list = []
 
-    class FluentTraversal:
-        def limit(self, n, *a, **k):
-            limits.append(n)
-            return self
-
-        def __getattr__(self, name):
-            return lambda *a, **k: self
-
-    g = mocker.MagicMock()
-    g.V.return_value = FluentTraversal()
-
-    async def _fake_execute(_traversal):
+    async def _capture(traversal):
+        captured.append(traversal)
         return []
 
-    object.__setattr__(retriever, "_apply_filters", lambda t, f, *_: t)
     object.__setattr__(retriever, "_with_projection", lambda t, **_: t)
-    object.__setattr__(retriever, "_execute_traversal", _fake_execute)
+    object.__setattr__(retriever, "_execute_traversal", _capture)
+    await retriever._traverse_from_entities(
+        Graph().traversal(), [{"id": s} for s in seed_ids], query
+    )
+    return Translator("g").translate(captured[0].bytecode)
 
+
+async def test_entity_traversal_returns_the_seeds_and_expands_each_one(
+    retriever, config
+) -> None:
+    # A limit() inside repeat() counts every traverser of the traversal, so a
+    # single cap let the first seeds use it up; emit() after repeat() never
+    # emits the seed itself. The seeds come back via identity() and the
+    # expansion runs, with its own budget, per seed inside local().
+    config.indexing.neptune.traversal_fetch_multiplier = 3
+    object.__setattr__(retriever, "_max_hops", 2)
+    object.__setattr__(retriever, "_max_results_per_hop", 7)
+    query = SearchQuery(query="x", top_k=10, retrieval_multiplier=1)
+    text = await _entity_traversal_text(retriever, ["e1", "e2", "e3", "e4"], query)
+    # Fetch width 10 * 1 * 3 = 30 split over 4 seeds -> 8 new entities per seed.
+    assert text == (
+        "g.V().hasLabel('Entity-default')"
+        ".has('id',within(['e1','e2','e3','e4']))"
+        ".union(__.identity(),__.local(__.repeat(__.local(__.both()"
+        ".hasLabel('Entity-default').limit(7))"
+        ".has('id',without(['e1','e2','e3','e4'])).dedup().limit(8))"
+        ".times(2).emit()))"
+    )
+
+
+@pytest.mark.parametrize(("multiplier", "per_seed"), [(1, 4), (3, 12)])
+async def test_entity_traversal_budget_scales_with_fetch_multiplier(
+    retriever, config, multiplier, per_seed
+) -> None:
+    config.indexing.neptune.traversal_fetch_multiplier = multiplier
     query = SearchQuery(query="x", top_k=4, retrieval_multiplier=2)
-    await retriever._traverse_from_entities(g, [{"id": "e1"}], query)
+    text = await _entity_traversal_text(retriever, ["e1", "e2"], query)
+    assert f".dedup().limit({per_seed}))" in text
 
-    # The final width is the last limit() (the per-hop limit is anonymous).
-    assert limits[-1] == 4 * 2 * multiplier
+
+def test_a_node_reached_from_two_seeds_keeps_its_shortest_path(retriever) -> None:
+    items = [
+        _entity_item("seed", 0, rank=1),
+        _entity_item("shared", 2, rank=1),
+        _entity_item("shared", 1, rank=1),
+    ]
+    results = retriever._process_traversal_results(items, SearchQuery(query="x"))
+    by_id = {r.source: r.score for r in results}
+    assert by_id == {"seed": pytest.approx(1.0), "shared": pytest.approx(0.75)}
 
 
 # --------------------------------------------------------------------------- #
