@@ -246,6 +246,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   each: 1 seed and 2 neighbourhoods came back). The fetch width is now split
   across the seeds, `max_results_per_hop` caps neighbours per node and hop,
   and a seed scores proximity 1.0 (#PR).
+- Global search's map key points (or reduce summary) reach the answer context
+  whole: they are seated before the per-type split instead of sharing the
+  `general` share, which cut 7,000 tokens of key points to about 4,200 while
+  most of the window stayed unused. Points are still sized by
+  `max_map_reduce_tokens` (#PR).
 - `NeptuneRetriever` seeding by name or query text (no `id` filter) always
   returned nothing: it required and sorted by an `importance` property that
   entity vertices never store. It now orders entities by `rank` and
