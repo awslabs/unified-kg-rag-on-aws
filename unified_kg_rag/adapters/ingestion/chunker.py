@@ -509,7 +509,6 @@ class BaseChunker(ABC):
                 document_ids=[document.document_id],
                 entity_ids=[],
                 relationship_ids=[],
-                covariate_ids={},
                 community_ids=[],
                 n_tokens=n_tokens,
                 attributes=attributes,

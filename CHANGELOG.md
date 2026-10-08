@@ -260,6 +260,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `OpenSearchIndexer.embedding_cache_hit_rate` and the explicit `fuzzy_matcher`
   argument of `graph_resolver.find_all_matches_for_entity_task`. **Breaking**
   for code that called them (#PR).
+- Model fields nothing populated or read: `TextUnit.covariate_ids`,
+  `Community.covariate_ids`, `Covariate.covariate_type`/`subject_type`,
+  `ConversationContext.current_topics`/`user_intent`, and
+  `DocumentElement.coordinates`/`base64_encoding`. Cached stage outputs and
+  exported data that still carry them load unchanged (the keys are ignored)
+  (#PR).
 
 ### Fixed
 - The LLM XML parser no longer tries LangChain's `XMLOutputParser.parse`

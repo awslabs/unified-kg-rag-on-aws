@@ -16,10 +16,6 @@ class TextUnit(Identified):
     relationship_ids: list[str] | None = Field(
         None, description="List of relationship IDs related to the text unit"
     )
-    covariate_ids: dict[str, list[str]] | None = Field(
-        None,
-        description="Dictionary of different types of covariates related to the text unit",
-    )
     community_ids: list[str] | None = Field(
         None, description="List of community IDs related to the text unit"
     )

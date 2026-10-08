@@ -705,7 +705,6 @@ class CommunityDetector(BaseProcessor):
                 for source, target in subgraph.edges()
                 if (rel_id := self.graph.edges[source, target].get("id")) is not None
             ],
-            covariate_ids={},
             # Union the member entities' source text units. Nodes are added with
             # the full entity dump (graph_builder), so text_unit_ids is present.
             # Without this the community's text_unit_ids stayed empty, so

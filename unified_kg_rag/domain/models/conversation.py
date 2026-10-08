@@ -21,12 +21,6 @@ class ConversationContext(BaseModel):
         default_factory=list,
         description="Entities currently in focus or being actively discussed",
     )
-    current_topics: list[str] = Field(
-        default_factory=list, description="Current conversation topics and themes"
-    )
-    user_intent: str | None = Field(
-        default=None, description="Detected or inferred user intent and purpose"
-    )
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional contextual metadata and tracking information",
