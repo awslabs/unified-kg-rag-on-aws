@@ -267,7 +267,7 @@ def test_cleanup_oldest_no_op_for_nonpositive(patched_history) -> None:
 
     async def scenario():
         await manager.get_or_create_memory("a")
-        await manager._cleanup_oldest_unsafe(0)
+        manager._cleanup_oldest_unsafe(0)
         return list(manager._memories.keys())
 
     assert asyncio.run(scenario()) == ["a"]
@@ -360,3 +360,51 @@ def test_add_turn_records_given_entities_without_extraction(patched_history) -> 
     assert [type(m).__name__ for m in history.messages] == ["HumanMessage", "AIMessage"]
     assert "Vendor" in history.get_relevant_entities()
     patched_history.extractor.invoke.assert_not_called()
+
+
+def test_turns_from_threads_on_separate_loops_stay_atomic(
+    patched_history, mocker
+) -> None:
+    # The process-wide manager serves chains on different threads/loops (the
+    # sync API's loop thread and the caller's loop). Its lock must exclude
+    # across threads and must not bind to one event loop.
+    import asyncio
+    import threading
+    import time
+
+    original = mm.GraphRAGChatMessageHistory.append_message
+
+    def slow_append(self, message):
+        time.sleep(0.002)  # widen the critical section so threads contend
+        original(self, message)
+
+    mocker.patch.object(mm.GraphRAGChatMessageHistory, "append_message", slow_append)
+    manager = mm.MemoryManager(config=Config())
+    errors: list[BaseException] = []
+
+    def worker(tag: str) -> None:
+        async def turns() -> None:
+            await asyncio.gather(
+                *(
+                    manager.add_turn("c1", f"q{tag}{i}", f"a{tag}{i}", entities=[])
+                    for i in range(5)
+                )
+            )
+
+        try:
+            asyncio.run(turns())
+        except BaseException as e:  # noqa: BLE001 - surfaced by the assert
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(t,), daemon=True) for t in "xy"]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert errors == []
+    contents = [m.content for m in manager._memories["c1"].messages]
+    assert len(contents) == 20
+    for question, answer in zip(contents[::2], contents[1::2], strict=True):
+        assert question.startswith("q") and answer == "a" + question[1:]

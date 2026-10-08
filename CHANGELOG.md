@@ -407,6 +407,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `invoke()` runs on the chain's loop thread) used to evict and close the first
   loop's clients under its in-flight queries. The caches are guarded by a lock
   (#PR).
+- The process-wide `MemoryManager` guards its conversation state with a
+  threading lock instead of an `asyncio.Lock`, which bound to the first event
+  loop that contended for it (`RuntimeError` on another loop) and did not
+  exclude other threads, so turns appended from two threads could interleave
+  or hang (#PR).
 
 ### Security
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or

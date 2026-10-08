@@ -246,7 +246,11 @@ class MemoryManager:
         self.providers = Providers.resolve(config, providers)
         self._entity_extractor: Runnable | None = None
         self._memories: dict[str, GraphRAGChatMessageHistory] = {}
-        self._lock = asyncio.Lock()
+        # A threading lock, not asyncio.Lock: the process-wide manager is shared
+        # by chains on different threads and event loops (an asyncio.Lock binds
+        # to one loop and does not exclude across threads). Every section it
+        # guards is a short, non-awaiting state mutation.
+        self._lock = threading.Lock()
 
     def _shared_entity_extractor(self) -> Runnable:
         if self._entity_extractor is None:
@@ -259,12 +263,12 @@ class MemoryManager:
         # Built once, outside the lock: a new conversation then costs no
         # model construction while other queries wait on the lock.
         extractor = self._shared_entity_extractor()
-        async with self._lock:
+        with self._lock:
             if memory := self._memories.get(conv_id):
                 return memory
 
             if len(self._memories) >= self.config.memory.max_conversations:
-                await self._cleanup_oldest_unsafe(1)
+                self._cleanup_oldest_unsafe(1)
 
             memory = GraphRAGChatMessageHistory(
                 config=self.config,
@@ -311,7 +315,7 @@ class MemoryManager:
         # concurrent query sharing this manager (e.g. under abatch). Run it off
         # the loop, outside the lock. It only mutates ConversationContext, which
         # is read via get_context_summary at the start of the next turn.
-        async with self._lock:
+        with self._lock:
             memory.append_message(message)
 
         if not isinstance(message, HumanMessage):
@@ -338,7 +342,7 @@ class MemoryManager:
         """
         memory = await self.get_or_create_memory(conv_id)
         user_message = HumanMessage(content=user_content)
-        async with self._lock:
+        with self._lock:
             memory.append_message(user_message)
             memory.append_message(AIMessage(content=assistant_content))
 
@@ -347,7 +351,7 @@ class MemoryManager:
         else:
             await asyncio.to_thread(memory.update_context, user_message)
 
-    async def _cleanup_oldest_unsafe(self, count: int) -> None:
+    def _cleanup_oldest_unsafe(self, count: int) -> None:
         if count <= 0:
             return
 
