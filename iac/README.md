@@ -222,6 +222,16 @@ cdk deploy --all
    removes its graph and vector artifacts. A reused bucket
    (`cache_bucket_name`) keeps its own lifecycle rules, so check them the same
    way.
+
+   **Run one ingestion at a time.** The state machine does not stop a second
+   execution from starting while one is running, and two runs against the same
+   stores race on the doc-status registry and on the graph and vector writes
+   (both may index, merge or delete the same documents). Before starting a run,
+   check that none is in progress:
+   ```bash
+   aws stepfunctions list-executions --state-machine-arn <…-ingestion arn> \
+     --status-filter RUNNING
+   ```
 3. To query (`run-rag`) or run other CLIs against the deployed stores, use the
    `GraphRagStorage` outputs: `NeptuneEndpoint` and `OpenSearchEndpoint` are
    bare hostnames (no `https://`), the form `NEPTUNE_ENDPOINT` /
