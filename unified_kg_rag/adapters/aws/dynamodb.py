@@ -24,7 +24,7 @@ from unified_kg_rag.domain.models import (
     DocStatusRecord,
     DocumentDelta,
 )
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import DataProcessingError, get_logger
 
 if TYPE_CHECKING:
     from types_boto3_dynamodb import DynamoDBClient
@@ -35,6 +35,8 @@ logger = get_logger(__name__)
 # is the partition key.
 _PARTITION_KEY = "doc_id"
 _SCOPE_ATTRIBUTE = "registry_scope"
+# DynamoDB rejects an item over 400 KB (attribute names plus values).
+_MAX_ITEM_BYTES = 400 * 1024
 
 
 class DynamoDBDocStatusStore:
@@ -91,7 +93,37 @@ class DynamoDBDocStatusStore:
         return self._deserialize(item)
 
     def put(self, record: DocStatusRecord) -> None:
-        self.client.put_item(TableName=self.table_name, Item=self._serialize(record))
+        """Write ``record``; raise ``DataProcessingError`` if it is over 400 KB.
+
+        The record holds every artifact id of the document (~36 bytes each),
+        so one item fits roughly 10,000 ids; a larger document must be split
+        into smaller files.
+        """
+        item = self._serialize(record)
+        size = self._item_size(item)
+        if size > _MAX_ITEM_BYTES:
+            raise DataProcessingError(
+                f"Doc-status record for '{record.file_path or record.doc_id}' is "
+                f"{size} bytes, over the DynamoDB 400 KB item limit; split the "
+                "document into smaller files"
+            )
+        self.client.put_item(TableName=self.table_name, Item=item)
+
+    @staticmethod
+    def _item_size(item: dict[str, Any]) -> int:
+        """Item size as DynamoDB counts it: names plus UTF-8 values."""
+        size = 0
+        for name, cell in item.items():
+            size += len(name.encode())
+            if "S" in cell:
+                size += len(cell["S"].encode())
+            elif "SS" in cell:
+                size += sum(len(value.encode()) for value in cell["SS"])
+            elif "N" in cell:
+                size += len(cell["N"])
+            else:  # NULL
+                size += 1
+        return size
 
     def delete(self, doc_id: str) -> None:
         self.client.delete_item(

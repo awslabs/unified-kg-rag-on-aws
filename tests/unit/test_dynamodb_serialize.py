@@ -67,3 +67,31 @@ def test_empty_id_lists_round_trip_as_empty() -> None:
     restored = DynamoDBDocStatusStore._deserialize(item)
     assert restored.claim_ids == []
     assert restored.community_report_ids == []
+
+
+def _store(mocker) -> DynamoDBDocStatusStore:
+    from unified_kg_rag.domain.models import Config
+
+    store = DynamoDBDocStatusStore(Config(), boto_session=mocker.MagicMock())
+    store._client = mocker.MagicMock()
+    return store
+
+
+def test_put_rejects_a_record_over_the_item_size_limit(mocker) -> None:
+    from unified_kg_rag.shared import DataProcessingError
+
+    store = _store(mocker)
+    # ~12k uuid-length ids is over DynamoDB's 400 KB item limit.
+    ids = [f"{i:036d}" for i in range(12_000)]
+    record = DocStatusRecord(
+        doc_id="big", content_hash="h", file_path="big.pdf", entity_ids=ids
+    )
+    with pytest.raises(DataProcessingError, match="400 KB"):
+        store.put(record)
+    store._client.put_item.assert_not_called()
+
+
+def test_put_writes_a_record_within_the_limit(mocker) -> None:
+    store = _store(mocker)
+    store.put(_full_record())
+    store._client.put_item.assert_called_once()

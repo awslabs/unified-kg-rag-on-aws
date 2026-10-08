@@ -219,6 +219,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   test-only helpers on the guardrail handler and token counter (#120).
 
 ### Fixed
+- A doc-status record over the DynamoDB 400 KB item limit (a document with
+  roughly 10,000+ artifact ids) fails with an error naming the file before the
+  registry write, instead of a bare `ValidationException`; the limit is
+  documented in the user guide (#PR).
 - A failed removal of a deleted document's artifacts now fails the indexing
   stage (after the delta is committed) instead of only logging a warning, so
   the run status and the `IndexingFailures` alarm report it; the registry
