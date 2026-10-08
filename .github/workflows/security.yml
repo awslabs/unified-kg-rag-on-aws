@@ -7,6 +7,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# The scan only reads the checkout and uploads its reports as a workflow
+# artifact (no SARIF upload to code scanning), so read access is enough.
+permissions:
+  contents: read
+
 jobs:
   ash-scan:
     runs-on: ubuntu-latest

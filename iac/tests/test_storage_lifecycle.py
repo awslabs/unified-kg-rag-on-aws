@@ -12,11 +12,11 @@ from typing import Any
 
 import aws_cdk as cdk
 import pytest
-from aws_cdk.assertions import Template
+from aws_cdk.assertions import Match, Template
 
 from iac.config import DeploymentConfig
 from iac.stacks.networking_stack import NetworkingStack
-from iac.stacks.storage_stack import StorageStack
+from iac.stacks.storage_stack import CACHE_EXPIRY_PREFIXES, StorageStack
 
 _ENV = cdk.Environment(account="111111111111", region="us-west-2")
 _DATA_STORES = (
@@ -65,3 +65,33 @@ def test_dev_defaults_tear_down() -> None:
     (cluster,) = dev.find_resources("AWS::Neptune::DBCluster").values()
     assert cluster["DeletionPolicy"] == "Delete"
     assert cluster["Properties"].get("DeletionProtection") in (False, None)
+
+
+def test_multi_node_opensearch_uses_smaller_dedicated_masters(prod: Template) -> None:
+    (domain,) = prod.find_resources("AWS::OpenSearchService::Domain").values()
+    cluster = domain["Properties"]["ClusterConfig"]
+    assert cluster["DedicatedMasterEnabled"] is True
+    assert cluster["DedicatedMasterType"] == "m6g.large.search"
+    assert cluster["InstanceType"] == "r6g.large.search"
+
+
+def test_opensearch_endpoint_output_is_a_bare_host() -> None:
+    """The output feeds OPENSEARCH_ENDPOINT, which the adapter uses as a host."""
+    output = _storage_template({}).find_outputs("OpenSearchEndpoint")
+    (value,) = (o["Value"] for o in output.values())
+    # A bare GetAtt of the domain endpoint, not a Fn::Join with "https://".
+    assert "Fn::GetAtt" in value, value
+    assert value["Fn::GetAtt"][1] == "DomainEndpoint"
+
+
+def test_cache_expiry_never_applies_bucket_wide() -> None:
+    """A corpus uploaded to the cache bucket must not expire: incremental
+    indexing would treat it as deleted and remove its artifacts."""
+    dev = _storage_template({})
+    buckets = dev.find_resources(
+        "AWS::S3::Bucket", {"Properties": {"BucketName": Match.any_value()}}
+    )
+    (cache,) = buckets.values()
+    rules = cache["Properties"]["LifecycleConfiguration"]["Rules"]
+    expiring = [r for r in rules if "ExpirationInDays" in r]
+    assert sorted(r.get("Prefix") for r in expiring) == sorted(CACHE_EXPIRY_PREFIXES)

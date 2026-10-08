@@ -12,17 +12,24 @@ bucket when provided, and supports a fully-private (no-NAT) data plane.
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 
 import aws_cdk as cdk
 
-from iac.config import DeploymentConfig
-from iac.stacks.compute_stack import ComputeStack
-from iac.stacks.guardrail_stack import GuardrailStack
-from iac.stacks.networking_stack import NetworkingStack
-from iac.stacks.observability_stack import ObservabilityStack
-from iac.stacks.orchestration_stack import OrchestrationStack
-from iac.stacks.security_stack import SecurityStack
-from iac.stacks.storage_stack import StorageStack
+# `cdk synth` runs this file from iac/ (cdk.json "app"), where the `iac` package
+# is not importable. Put the repo root on sys.path so a fresh checkout works
+# without PYTHONPATH.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from iac.config import DeploymentConfig  # noqa: E402
+from iac.stacks.compute_stack import ComputeStack  # noqa: E402
+from iac.stacks.guardrail_stack import GuardrailStack  # noqa: E402
+from iac.stacks.networking_stack import NetworkingStack  # noqa: E402
+from iac.stacks.observability_stack import ObservabilityStack  # noqa: E402
+from iac.stacks.orchestration_stack import OrchestrationStack  # noqa: E402
+from iac.stacks.security_stack import SecurityStack  # noqa: E402
+from iac.stacks.storage_stack import StorageStack  # noqa: E402
 
 app = cdk.App()
 config = DeploymentConfig.from_context(app)
@@ -105,7 +112,6 @@ orchestration = OrchestrationStack(
     networking=networking,
     compute=compute,
     cache_bucket_name=storage.cache_bucket.bucket_name,
-    kms_key=security.kms_key,
     env=env,
 )
 ObservabilityStack(

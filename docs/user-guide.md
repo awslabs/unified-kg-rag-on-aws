@@ -67,7 +67,10 @@ them. You have two ways to get there:
   ```
 
   When the deploy finishes, copy the Neptune / OpenSearch / S3 endpoints from the
-  CloudFormation outputs into your `config.yaml`. `cdk destroy --all` tears the
+  CloudFormation outputs into your `config.yaml` (the endpoints are bare
+  hostnames). Neptune and OpenSearch are VPC-only, so run the CLIs inside the
+  VPC, for example as a task of the deployed task definition; the stack's own
+  task already receives the endpoints as env vars. `cdk destroy --all` tears the
   `dev` profile back down. See [`iac/README.md`](../iac/README.md) for every
   stack, all `-c key=value` knobs (VPC reuse, instance sizing, CMK, deletion
   protection, cdk-nag), and the production-hardening checklist.
@@ -251,7 +254,11 @@ the same values.
 > guardrail that anonymizes `NAME` rewrites extracted entity names to a
 > placeholder such as `{NAME}` (distinct people merge into one node), and a
 > `PROMPT_ATTACK` filter can block instruction-like corpus text. Use
-> `apply_to: "all"` only with a policy that is safe for extraction. Each
+> `apply_to: "all"` only with a policy that is safe for extraction. On the
+> query path `NAME` anonymization also hurts: answers show `{NAME}` instead of
+> the people they are about, and entity-seeded search loses its seeds. The
+> baseline guardrail that `iac/` creates therefore anonymizes email, phone and
+> card numbers but not `NAME`. Each
 > intervention is logged at WARNING (`Bedrock guardrail '<id>' intervened on a
 > <purpose> model call ...`) with a running count. On the InvokeModel path
 > (`ChatBedrock`, used for non-cross-region model ids) an intervention is

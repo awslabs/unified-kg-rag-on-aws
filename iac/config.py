@@ -30,6 +30,9 @@ Context keys (all optional; sensible defaults shown):
   opensearch_instance "r6g.large.search"  OpenSearch data node type (Graviton)
   opensearch_count    dev:1/else:2     OpenSearch data node count (>1 =>
                                        zone-aware multi-node + 3 dedicated masters)
+  opensearch_master_instance "m6g.large.search"  dedicated master type when
+                                       opensearch_count > 1 (8 GiB Graviton; sized
+                                       for <=10 nodes / 10K shards on OS 2.13)
   doc_status_table    dev:"graphrag-doc-status"/else:"<env>-graphrag-doc-status"
   backup_retention_days 7              Neptune automated backup retention
 
@@ -40,9 +43,14 @@ Context keys (all optional; sensible defaults shown):
                                        (BEDROCK_GUARDRAIL_IDENTIFIER); does NOT
                                        disable creation
   use_cmk             False            customer-managed KMS key for at-rest
-                                       encryption (S3/Neptune/OpenSearch/SNS/DDB)
+                                       encryption (S3/Neptune/OpenSearch/DDB); the
+                                       alarm topic always has its own CMK
   vpc_flow_logs       dev:False/else:True  enable VPC flow logs (created VPC only)
-  deletion_protection dev:False/else:True  protect Neptune/OpenSearch from deletion
+  flow_log_retention_days 731         flow-log log group retention (a CloudWatch
+                                       Logs retention value, e.g. 30/90/365/731)
+  deletion_protection dev:False/else:True  deletion protection on Neptune + the
+                                       DynamoDB table (OpenSearch has none; it
+                                       is only retained via removal_destroy)
   bedrock_model_arns  None             scope Bedrock IAM to specific model ARNs
                                        (list); None => account/region foundation
                                        + inference-profile ARNs
@@ -68,6 +76,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+# Retention values CloudWatch Logs accepts (AWS::Logs::LogGroup RetentionInDays).
+_LOG_RETENTION_DAYS = frozenset(
+    (1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827)
+    + (2192, 2557, 2922, 3288, 3653)
+)
+
 
 @dataclass(frozen=True)
 class DeploymentConfig:
@@ -83,6 +97,7 @@ class DeploymentConfig:
     neptune_instances: int
     opensearch_instance: str
     opensearch_count: int
+    opensearch_master_instance: str
     doc_status_table: str
     backup_retention_days: int
     fargate_cpu: int
@@ -98,6 +113,7 @@ class DeploymentConfig:
     guardrail_identifier: str | None
     use_cmk: bool
     vpc_flow_logs: bool
+    flow_log_retention_days: int
     deletion_protection: bool
     bedrock_model_arns: list[str] | None
     alarm_email: str | None
@@ -172,6 +188,12 @@ class DeploymentConfig:
             raise ValueError(
                 f"network_mode must be 'private' or 'public', got '{network_mode}'"
             )
+        flow_log_retention_days = int(ctx("flow_log_retention_days", 731))
+        if flow_log_retention_days not in _LOG_RETENTION_DAYS:
+            raise ValueError(
+                "flow_log_retention_days must be a CloudWatch Logs retention value "
+                f"{sorted(_LOG_RETENTION_DAYS)}, got {flow_log_retention_days}"
+            )
         return cls(
             env_name=env_name,
             bedrock_region=ctx("bedrock_region"),
@@ -188,6 +210,9 @@ class DeploymentConfig:
             neptune_instances=int(ctx("neptune_instances", 1 if is_dev else 2)),
             opensearch_instance=str(ctx("opensearch_instance", "r6g.large.search")),
             opensearch_count=int(ctx("opensearch_count", 1 if is_dev else 2)),
+            opensearch_master_instance=str(
+                ctx("opensearch_master_instance", "m6g.large.search")
+            ),
             # Default DDB table name follows the same env-scoped prefix as the
             # other physical names (dev: "graphrag-doc-status";
             # non-dev: "<env>-graphrag-doc-status") so environments don't share a
@@ -210,6 +235,7 @@ class DeploymentConfig:
             guardrail_identifier=ctx("guardrail_identifier"),
             use_cmk=as_bool(ctx("use_cmk"), default=False),
             vpc_flow_logs=as_bool(ctx("vpc_flow_logs"), default=not is_dev),
+            flow_log_retention_days=flow_log_retention_days,
             deletion_protection=as_bool(ctx("deletion_protection"), default=not is_dev),
             bedrock_model_arns=ctx("bedrock_model_arns"),
             alarm_email=ctx("alarm_email"),

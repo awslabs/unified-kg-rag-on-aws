@@ -26,6 +26,13 @@ from constructs import Construct
 from iac.config import DeploymentConfig
 from iac.stacks.networking_stack import NetworkingStack
 
+# Cache-bucket prefixes the app writes and that are safe to expire: the stage
+# checkpoints of `run-ingestion --s3-sync` (PipelineConfig.s3_prefix /
+# --s3-prefix, default "pipeline-runs") and the optional persisted embedding
+# cache (embedding_cache_s3_key, default "embedding-cache/cache.json"). Anything
+# else in the bucket, such as an uploaded corpus, is never expired.
+CACHE_EXPIRY_PREFIXES = ("pipeline-runs/", "embedding-cache/")
+
 
 class StorageStack(Stack):
     def __init__(
@@ -56,17 +63,23 @@ class StorageStack(Stack):
 
     # ------------------------------------------------------------ outputs
     def _export_outputs(self) -> None:
+        # Both stores are VPC-only: these hosts resolve and accept connections
+        # only from inside the VPC (service security group), e.g. the Fargate
+        # task, which already receives them as env vars.
         CfnOutput(
             self,
             "NeptuneEndpoint",
             value=self.neptune_cluster.cluster_endpoint.hostname,
-            description="Set as NEPTUNE_ENDPOINT for the app",
+            description="Set as NEPTUNE_ENDPOINT for the app (VPC-only host)",
         )
         CfnOutput(
             self,
             "OpenSearchEndpoint",
-            value=f"https://{self.opensearch_domain.domain_endpoint}",
-            description="Set as OPENSEARCH_ENDPOINT for the app",
+            # Bare host, like the task env var: the adapter builds the URL from
+            # aws.opensearch.port/use_ssl, so a scheme here breaks the client.
+            value=self.opensearch_domain.domain_endpoint,
+            description="Set as OPENSEARCH_ENDPOINT for the app (bare VPC-only "
+            "host, no https://)",
         )
         CfnOutput(self, "CacheBucketName", value=self.cache_bucket.bucket_name)
         CfnOutput(self, "DocStatusTableName", value=self.doc_status_table.table_name)
@@ -113,13 +126,24 @@ class StorageStack(Stack):
             server_access_logs_prefix="cache-access/",
             versioned=False,
             # Cost/sustainability: expire stale pipeline cache + clean up
-            # incomplete multipart uploads.
+            # incomplete multipart uploads. Expiry is scoped to the prefixes the
+            # app writes (CACHE_EXPIRY_PREFIXES) and never applies bucket-wide:
+            # the corpus may live in this bucket too, and with incremental
+            # indexing an expired source file looks deleted, so its graph and
+            # vector artifacts would be removed on the next run.
             lifecycle_rules=[
                 s3.LifecycleRule(
-                    id="expire-cache",
-                    expiration=Duration.days(30),
+                    id="abort-incomplete-uploads",
                     abort_incomplete_multipart_upload_after=Duration.days(7),
-                )
+                ),
+                *(
+                    s3.LifecycleRule(
+                        id=f"expire-{prefix.rstrip('/')}",
+                        prefix=prefix,
+                        expiration=Duration.days(30),
+                    )
+                    for prefix in CACHE_EXPIRY_PREFIXES
+                ),
             ],
             removal_policy=self.removal_policy,
             auto_delete_objects=self.config.removal_destroy,
@@ -213,8 +237,10 @@ class StorageStack(Stack):
                 # Dedicated master nodes stabilize the cluster under load; enable
                 # for HA (multi-node) deployments only.
                 master_nodes=3 if multi_node else 0,
+                # Masters only manage cluster state, so they default to a
+                # smaller type than the data nodes (opensearch_master_instance).
                 master_node_instance_type=(
-                    self.config.opensearch_instance if multi_node else None
+                    self.config.opensearch_master_instance if multi_node else None
                 ),
             ),
             zone_awareness=zone_awareness,

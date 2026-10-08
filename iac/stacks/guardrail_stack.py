@@ -39,6 +39,10 @@ from constructs import Construct
 
 from iac.config import DeploymentConfig
 
+# PII types the baseline guardrail anonymizes (see _build_guardrail for why NAME
+# is not one of them).
+PII_ANONYMIZED = ("EMAIL", "PHONE", "CREDIT_DEBIT_CARD_NUMBER")
+
 
 class GuardrailStack(Stack):
     def __init__(
@@ -88,11 +92,18 @@ class GuardrailStack(Stack):
             description="Baseline guardrail for unified-kg-rag-on-aws (PII + prompt attack).",
             sensitive_information_policy_config=(
                 bedrock.CfnGuardrail.SensitiveInformationPolicyConfigProperty(
+                    # NAME is deliberately absent. The guardrail runs on the
+                    # query path (answer generation, query-time entity and
+                    # keyword extraction), where person names are corpus
+                    # content: anonymizing them turns answers into "{NAME}" and
+                    # strips the entity seeds that local/LightRAG search looks
+                    # up. Add it only for a corpus whose names must not leave
+                    # the model, accepting that retrieval by name stops working.
                     pii_entities_config=[
                         bedrock.CfnGuardrail.PiiEntityConfigProperty(
                             type=t, action="ANONYMIZE"
                         )
-                        for t in ("EMAIL", "PHONE", "NAME", "CREDIT_DEBIT_CARD_NUMBER")
+                        for t in PII_ANONYMIZED
                     ]
                 )
             ),
