@@ -41,6 +41,17 @@ def test_step1_creates_guardrail_destroyed_in_dev() -> None:
     assert stack.guardrail is not None
 
 
+def test_guardrail_does_not_anonymize_names() -> None:
+    # The guardrail runs on the query path; NAME anonymization would put
+    # "{NAME}" in answers and strip entity-search seeds.
+    _, template = _synth({})
+    (guardrail,) = template.find_resources(_GUARDRAIL).values()
+    pii = guardrail["Properties"]["SensitiveInformationPolicyConfig"]
+    types = {e["Type"] for e in pii["PiiEntitiesConfig"]}
+    assert "NAME" not in types
+    assert {"EMAIL", "PHONE", "CREDIT_DEBIT_CARD_NUMBER"} <= types
+
+
 def test_non_dev_retains_guardrail() -> None:
     _, template = _synth({"env_name": "prod"})
     template.has_resource(

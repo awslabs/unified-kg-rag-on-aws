@@ -254,7 +254,11 @@ the same values.
 > guardrail that anonymizes `NAME` rewrites extracted entity names to a
 > placeholder such as `{NAME}` (distinct people merge into one node), and a
 > `PROMPT_ATTACK` filter can block instruction-like corpus text. Use
-> `apply_to: "all"` only with a policy that is safe for extraction. Each
+> `apply_to: "all"` only with a policy that is safe for extraction. On the
+> query path `NAME` anonymization also hurts: answers show `{NAME}` instead of
+> the people they are about, and entity-seeded search loses its seeds. The
+> baseline guardrail that `iac/` creates therefore anonymizes email, phone and
+> card numbers but not `NAME`. Each
 > intervention is logged at WARNING (`Bedrock guardrail '<id>' intervened on a
 > <purpose> model call ...`) with a running count. On the InvokeModel path
 > (`ChatBedrock`, used for non-cross-region model ids) an intervention is

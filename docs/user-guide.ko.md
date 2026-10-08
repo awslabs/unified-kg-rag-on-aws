@@ -249,7 +249,10 @@ ignored` WARNING 로그를 남긴 뒤 버려집니다. 파일을 고치거나 �
 > 않습니다. `NAME`을 익명화하는 PII Guardrail은 추출된 엔터티 이름을 `{NAME}` 같은
 > 플레이스홀더로 바꿔 서로 다른 인물을 한 노드로 병합하고, `PROMPT_ATTACK` 필터는
 > 지시문처럼 보이는 코퍼스 텍스트를 차단할 수 있기 때문입니다. `apply_to: "all"`은
-> 추출에 안전한 정책일 때만 사용하세요. Guardrail이 개입할 때마다 누적 횟수와 함께
+> 추출에 안전한 정책일 때만 사용하세요. 질의 경로에서도 `NAME` 익명화는 답변의
+> 인물 이름을 `{NAME}`으로 바꾸고 엔터티 기반 검색의 시드를 없애므로, `iac/`가
+> 만드는 기본 Guardrail은 이메일·전화번호·카드 번호만 익명화하고 `NAME`은
+> 익명화하지 않습니다. Guardrail이 개입할 때마다 누적 횟수와 함께
 > WARNING 로그(`Bedrock guardrail '<id>' intervened on a <purpose> model call ...`)를
 > 남깁니다. InvokeModel 경로(`ChatBedrock`, 크로스 리전이 아닌 모델 ID 사용 시)에서는
 > `trace: true`일 때만 개입을 감지하며, Guardrail 자체는 어느 경우든 적용됩니다.
