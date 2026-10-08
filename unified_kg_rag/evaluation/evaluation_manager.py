@@ -44,6 +44,9 @@ from .source_resolver import SourceFileResolver, TextUnitFileResolver, file_name
 
 logger = get_logger(__name__)
 
+# The installed ``unified_kg_rag`` package directory (for the run manifest).
+_PACKAGE_DIR = Path(__file__).resolve().parents[1]
+
 # Per reported source, in rank order: (file names it names directly,
 # text-unit ids whose files it derives from).
 SourceProvenance = list[tuple[list[str], list[str]]]
@@ -825,10 +828,12 @@ class EvaluationManager:
                     ],
                 }
             )
+        git_sha, git_dirty = self._git_state()
         return {
             "created_at": datetime.now(timezone.utc).isoformat(),
             "package_version": self._package_version("unified-kg-rag-on-aws"),
-            "git_sha": self._git_sha(),
+            "git_sha": git_sha,
+            "git_dirty": git_dirty,
             "config_sha256": self._sha256_json(self.config.model_dump(mode="json")),
             "library_versions": {
                 name: self._package_version(name) for name in self._LIBRARIES
@@ -866,23 +871,35 @@ class EvaluationManager:
             return None
 
     @staticmethod
-    def _git_sha() -> str | None:
-        """Commit of the source checkout this package runs from, if any."""
+    def _git_state() -> tuple[str | None, bool | None]:
+        """``(HEAD sha, dirty)`` of the checkout this package runs from.
+
+        Only a repository that tracks this package's own files counts: an
+        install inside some other repository (e.g. a host project's ``.venv``)
+        reports ``(None, None)`` rather than that repository's HEAD. ``dirty``
+        is True when tracked files differ from HEAD.
+        """
         git = shutil.which("git")
         if git is None:
-            return None
-        try:
-            completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
-                [git, "rev-parse", "HEAD"],
-                cwd=Path(__file__).resolve().parent,
+            return None, None
+
+        def _git(*args: str) -> str:
+            return subprocess.run(  # noqa: S603 - fixed argv, no shell
+                [git, *args],
+                cwd=_PACKAGE_DIR,
                 capture_output=True,
                 text=True,
                 timeout=5,
                 check=True,
-            )
+            ).stdout.strip()
+
+        try:
+            _git("ls-files", "--error-unmatch", "__init__.py")
+            sha = _git("rev-parse", "HEAD")
+            dirty = bool(_git("status", "--porcelain", "--untracked-files=no"))
         except (OSError, subprocess.SubprocessError):
-            return None
-        return completed.stdout.strip() or None
+            return None, None
+        return sha or None, dirty
 
     def _calculate_metric_outcomes(
         self,

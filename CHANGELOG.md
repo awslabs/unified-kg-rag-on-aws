@@ -364,6 +364,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   gets NaN node sizes in the interactive view; a failed dimensionality
   reduction falls back to a seeded spring layout and sets `layout_degraded`
   instead of returning an unseeded random layout (#PR).
+- The evaluation `run_manifest` records `git_sha` only when the package runs
+  from a checkout that tracks it (an install inside another repository used to
+  report that repository's HEAD) and adds `git_dirty` (#PR).
 
 ### Security
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or

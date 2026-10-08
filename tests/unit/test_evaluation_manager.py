@@ -12,6 +12,7 @@ never constructed.
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import datetime
 
 import pytest
@@ -825,6 +826,7 @@ class TestComparability:
         assert manifest["library_versions"]["ragas"]
         assert manifest["library_versions"]["langchain-core"]
         assert "git_sha" in manifest
+        assert "git_dirty" in manifest
         json.dumps(manifest)  # serializable as-is
 
     def test_config_hash_tracks_resolved_config(self, config: Config) -> None:
@@ -834,12 +836,70 @@ class TestComparability:
         config.search.answer_generation_model_id = "another-model"
         assert manager.build_run_manifest()["config_sha256"] != before
 
-    def test_git_sha_none_without_git(self, mocker) -> None:
+    def test_git_state_none_without_git(self, mocker) -> None:
         mocker.patch(
             "unified_kg_rag.evaluation.evaluation_manager.shutil.which",
             return_value=None,
         )
-        assert EvaluationManager._git_sha() is None
+        assert EvaluationManager._git_state() == (None, None)
+
+    @pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+    def test_git_state_ignores_a_host_repo_that_does_not_track_the_package(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        # e.g. the package installed into a host project's .venv: the host
+        # repo's HEAD says nothing about the code that ran.
+        import subprocess
+
+        from unified_kg_rag.evaluation import evaluation_manager as em
+
+        package_dir = tmp_path / ".venv" / "unified_kg_rag"
+        package_dir.mkdir(parents=True)
+        (package_dir / "__init__.py").write_text("")
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        (tmp_path / "app.py").write_text("")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "app.py"], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(tmp_path),
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-qm",
+                "host",
+            ],
+            check=True,
+        )
+        monkeypatch.setattr(em, "_PACKAGE_DIR", package_dir)
+        assert EvaluationManager._git_state() == (None, None)
+
+    @pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+    def test_git_state_reports_checkout_sha_and_dirty_flag(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        import subprocess
+
+        from unified_kg_rag.evaluation import evaluation_manager as em
+
+        package_dir = tmp_path / "unified_kg_rag"
+        package_dir.mkdir()
+        (package_dir / "__init__.py").write_text("")
+        git = ["git", "-C", str(tmp_path)]
+        ident = ["-c", "user.name=t", "-c", "user.email=t@example.com"]
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        subprocess.run([*git, "add", "."], check=True)
+        subprocess.run([*git, *ident, "commit", "-qm", "pkg"], check=True)
+        head = subprocess.run(
+            [*git, "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        monkeypatch.setattr(em, "_PACKAGE_DIR", package_dir)
+        assert EvaluationManager._git_state() == (head, False)
+        (package_dir / "__init__.py").write_text("changed = True\n")
+        assert EvaluationManager._git_state() == (head, True)
 
     async def test_evaluate_dataset_attaches_manifest(self, config: Config) -> None:
         manager, results, reports, summary = await self._run(

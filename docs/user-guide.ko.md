@@ -1067,7 +1067,8 @@ run-eval --eval-data-path my_eval_data.json \
   있는 질문에서의 답변 거부는 일반 답변처럼 채점되며(대개 오답), 각 결과에는
   `abstained`가 기록됩니다.
 - `run_manifest` — CLI 인자, 모델 ID(답변 생성, 평가 judge/임베딩), 패키지 버전,
-  git 커밋(`git_sha`, 체크아웃에서 실행한 경우), 전체 확정 설정의
+  git 커밋(`git_sha`, 추적 파일이 커밋과 다르면 `git_dirty`가 true. 패키지를
+  추적하는 체크아웃에서 실행하지 않으면 둘 다 `null`), 전체 확정 설정의
   `config_sha256`, `library_versions`(ragas, langchain*), 데이터셋(경로와 파일
   sha256, 질문 수, 파싱된 내용의 해시), UTC 타임스탬프. 두 실행을 비교할 때
   사용합니다. 제외된 평가자(`dropped_evaluators`)도 담깁니다.
