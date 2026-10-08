@@ -367,6 +367,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - The evaluation `run_manifest` records `git_sha` only when the package runs
   from a checkout that tracks it (an install inside another repository used to
   report that repository's HEAD) and adds `git_dirty` (#PR).
+- `run-eval` output files carry a random suffix after the timestamp, so runs
+  started in the same second no longer overwrite each other, and a numeric
+  `answer` of `0` is kept as a ground truth instead of being treated as
+  missing (#PR).
 
 ### Security
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or

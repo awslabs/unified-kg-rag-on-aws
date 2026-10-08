@@ -5,6 +5,7 @@ import json
 import shutil
 import statistics
 import subprocess
+import uuid
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -293,14 +294,14 @@ class EvaluationManager:
             reference_sources = item.get("reference_sources") or []
             gt = None
             if (
-                answer
+                answer is not None
                 or expected_entities
                 or expected_relationships
                 or reference_sources
             ):
                 gt = EvaluationGroundTruth(
                     query_id=query_id,
-                    ground_truth=str(answer) if answer else "",
+                    ground_truth=str(answer) if answer is not None else "",
                     reference_sources=reference_sources,
                     expected_entities=expected_entities,
                     expected_relationships=expected_relationships,
@@ -1006,7 +1007,9 @@ class EvaluationManager:
         if isinstance(outputs_dir, str):
             outputs_dir = Path(outputs_dir)
         outputs_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # A random suffix keeps runs started in the same second (parallel
+        # strategies, CI matrices) from overwriting each other's files.
+        timestamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         # Name files after the strategy when every answered query used the same
         # one, so runs of different strategies are distinguishable on disk.
         strategies = {r.search_strategy for r in results if r.search_strategy}

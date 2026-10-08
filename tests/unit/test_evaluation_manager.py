@@ -150,6 +150,12 @@ class TestLoadData:
         queries, _ = EvaluationManager.load_data(path)
         assert queries[0].metadata["answer_aliases"] == ["x"]
 
+    def test_numeric_zero_answer_is_a_ground_truth(self, tmp_path) -> None:
+        path = tmp_path / "eval.json"
+        path.write_text(json.dumps([{"question": "How many?", "answer": 0}]))
+        _, gts = EvaluationManager.load_data(path)
+        assert [gt.ground_truth for gt in gts] == ["0"]
+
     def test_ground_truth_built_from_expected_only(self, tmp_path) -> None:
         # No textual answer, but expected_entities present -> still build a GT.
         path = tmp_path / "data.json"
@@ -800,6 +806,22 @@ class TestComparability:
         manager.save_results(results, reports, summary, tmp_path / "mixed")
         names = [f.name for f in (tmp_path / "mixed").iterdir()]
         assert names and not any("local" in n or "global" in n for n in names)
+
+    async def test_runs_in_the_same_second_do_not_overwrite(
+        self, config, tmp_path, mocker
+    ) -> None:
+        manager, results, reports, summary = await self._run(
+            config, {"A?": "local", "B?": "local"}
+        )
+        frozen = datetime(2026, 1, 1, 12, 0, 0)
+        mocker.patch(
+            "unified_kg_rag.evaluation.evaluation_manager.datetime",
+            wraps=datetime,
+            **{"now.return_value": frozen},
+        )
+        manager.save_results(results, reports, summary, tmp_path)
+        manager.save_results(results, reports, summary, tmp_path)
+        assert len(list(tmp_path.glob("evaluation_summary_*.json"))) == 2
 
     def test_run_manifest(self, config: Config, tmp_path) -> None:
         import hashlib
