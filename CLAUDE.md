@@ -18,11 +18,13 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   backend imports, direct or transitive (`tests/unit/test_domain_purity.py`
   imports every domain module in a clean interpreter and checks
   `sys.modules`).
-- **`ports/`**: the abstract interfaces the domain depends on — `DocStatusPort`
-  (`Protocol`) and the write-side indexer ABCs `BaseIndexer`/`GraphIndexer`/
-  `VectorIndexer` (+ `IndexingStats`). `ports/__init__` is the port catalog and
-  documents that the retrieval/evaluation abstract bases are *adapter bases*
-  (they construct infra in `__init__`) re-exported for discovery.
+- **`ports/`**: the abstract interfaces the domain depends on — `DocStatusPort`,
+  `CachePort`, `ModelFactoryPort`/`TokenCounterPort` (`Protocol`s) and the
+  write-side indexer ABCs `BaseIndexer`/`GraphIndexer`/`VectorIndexer`
+  (+ `IndexingStats`). `ports/__init__` is the port catalog. The
+  retrieval/evaluation abstract bases are *adapter bases* (they construct infra
+  in `__init__`): `ports/__init__` names them but does not export them; import
+  them from `adapters.retrieval.base` / `evaluation.base`.
 - **`adapters/`**: concrete technology bindings — `aws/` (Bedrock, Neptune,
   OpenSearch, DynamoDB, S3), `storage/` (indexers), `retrievers/`,
   `search_strategies/`, `retrieval/` (base + hybrid scorer + token/memory
