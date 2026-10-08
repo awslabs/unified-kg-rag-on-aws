@@ -46,7 +46,9 @@ Context keys (all optional; sensible defaults shown):
                                        encryption (S3/Neptune/OpenSearch/DDB); the
                                        alarm topic always has its own CMK
   vpc_flow_logs       dev:False/else:True  enable VPC flow logs (created VPC only)
-  deletion_protection dev:False/else:True  protect Neptune/OpenSearch from deletion
+  deletion_protection dev:False/else:True  deletion protection on Neptune + the
+                                       DynamoDB table (OpenSearch has none; it
+                                       is only retained via removal_destroy)
   bedrock_model_arns  None             scope Bedrock IAM to specific model ARNs
                                        (list); None => account/region foundation
                                        + inference-profile ARNs

@@ -114,7 +114,7 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `guardrail_identifier` | _(none)_ | guardrail id the compute task **uses**, injected as `BEDROCK_GUARDRAIL_IDENTIFIER`. The created guardrail's id is **not** injected automatically: pass the `GuardrailIdentifier` output of `GraphRagGuardrail` here (two-step flow above), or an external id with `create_guardrail=false`. Unset = no guardrail on the task |
 | `use_cmk` | `false` | customer-managed KMS key for at-rest encryption (S3/Neptune/OpenSearch/DDB). The SNS alarm topic always uses its own customer-managed key (see below) |
 | `vpc_flow_logs` | `false` (dev) / `true` (non-dev) | enable VPC flow logs (created VPC only) |
-| `deletion_protection` | `false` (dev) / `true` (non-dev) | protect Neptune/OpenSearch from deletion |
+| `deletion_protection` | `false` (dev) / `true` (non-dev) | deletion protection on the Neptune cluster and the DynamoDB doc-status table (blocks a direct delete API/console call). OpenSearch domains have no deletion-protection setting; outside dev the domain is only kept by `removal_destroy=false` (CloudFormation `Retain`), which does not stop a direct `DeleteDomain` call |
 | `bedrock_model_arns` | _(none)_ | scope Bedrock IAM to specific model ARNs (list) |
 | `alarm_email` | _(none)_ | subscribe an email to the pipeline alarm topic |
 | `enable_cdk_nag` | `false` | run cdk-nag AwsSolutions (Well-Architected) checks at synth |
