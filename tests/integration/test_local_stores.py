@@ -195,12 +195,26 @@ async def _vector_retrieve(
         await retriever.aclose()
 
 
+def _graph_entity_count(graph_indexer) -> int:
+    label = graph_indexer._get_name(
+        graph_indexer.neptune_config.entity_label_prefix.capitalize(), _SUFFIX
+    )
+    return int(graph_indexer.neptune_client.g.V().hasLabel(label).count().next())
+
+
+def _vector_entity_count(vector_indexer) -> int:
+    alias = vector_indexer._get_name(
+        vector_indexer.opensearch_config.entities_index_prefix, _SUFFIX
+    )
+    return int(vector_indexer.opensearch_client.client.count(index=alias)["count"])
+
+
 def test_graph_round_trip(local_config: Config, graph_indexer) -> None:
     entities, relationships = _entities(), _relationships()
     assert graph_indexer.index_entities(entities).failed_items == 0
     assert graph_indexer.index_relationships(relationships).failed_items == 0
     assert graph_indexer.index_communities(_communities()).failed_items == 0
-    assert graph_indexer.get_entity_count([_SUFFIX]) == 3
+    assert _graph_entity_count(graph_indexer) == 3
 
     # Multi-valued vertex properties keep every value (set cardinality).
     by_id = {e.id: e for e in graph_indexer.read_entities(["e-vendor", "e-buyer"])}
@@ -222,7 +236,7 @@ def test_graph_round_trip(local_config: Config, graph_indexer) -> None:
     assert graph_indexer.upsert_entities([updated]).failed_items == 0
     assert graph_indexer.upsert_relationships(relationships[:1]).failed_items == 0
     assert graph_indexer.upsert_communities(_communities()).failed_items == 0
-    assert graph_indexer.get_entity_count([_SUFFIX]) == 3
+    assert _graph_entity_count(graph_indexer) == 3
     (vendor,) = graph_indexer.read_entities(["e-vendor"])
     assert vendor.description == "Vendor sells widgets"
     assert sorted(vendor.text_unit_ids or []) == ["t1", "t2"]
@@ -256,7 +270,7 @@ def test_graph_round_trip(local_config: Config, graph_indexer) -> None:
         "r-ships"
     ]
     assert graph_indexer.delete_by_id(["e-depot"], _SUFFIX).failed_items == 0
-    assert graph_indexer.get_entity_count([_SUFFIX]) == 2
+    assert _graph_entity_count(graph_indexer) == 2
 
 
 def test_graph_expansion_returns_every_seed_and_its_neighbourhood(
@@ -343,7 +357,7 @@ def test_vector_round_trip(local_config: Config, vector_indexer) -> None:
         ).failed_items
         == 0
     )
-    assert vector_indexer.get_entity_count([_SUFFIX]) == 3
+    assert _vector_entity_count(vector_indexer) == 3
 
     queries = [
         SearchQuery(
@@ -372,4 +386,4 @@ def test_vector_round_trip(local_config: Config, vector_indexer) -> None:
     entities_prefix = local_config.indexing.opensearch.entities_index_prefix
     stats = vector_indexer.delete_by_id(["e-depot"], entities_prefix, _SUFFIX)
     assert stats.failed_items == 0
-    assert vector_indexer.get_entity_count([_SUFFIX]) == 2
+    assert _vector_entity_count(vector_indexer) == 2

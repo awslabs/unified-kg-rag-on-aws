@@ -79,10 +79,6 @@ class BaseIndexer(ABC):
         pass
 
     @abstractmethod
-    def get_stats(self) -> dict[str, Any]:
-        pass
-
-    @abstractmethod
     def initialize(self) -> bool:
         pass
 
@@ -252,10 +248,6 @@ class GraphIndexer(BaseIndexer):
         """
         return []
 
-    @abstractmethod
-    def get_entity_count(self, suffixes: list[str]) -> int:
-        pass
-
 
 class VectorIndexer(BaseIndexer):
     """Write-side port for the vector/lexical backend (full + delta).
@@ -330,7 +322,3 @@ class VectorIndexer(BaseIndexer):
         ``extra_relationship_ids`` are additionally removed from the relationship
         index only (orphaned incident edges). Returns a per-index stats map.
         """
-
-    @abstractmethod
-    def get_entity_count(self, suffixes: list[str]) -> int:
-        pass

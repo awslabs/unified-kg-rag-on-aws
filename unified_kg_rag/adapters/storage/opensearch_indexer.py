@@ -5,7 +5,6 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import boto3
-from opensearchpy.exceptions import NotFoundError
 
 from unified_kg_rag.adapters.aws import BedrockEmbeddingModelFactory, OpenSearchClient
 from unified_kg_rag.domain.models import (
@@ -177,43 +176,6 @@ class OpenSearchIndexer(VectorIndexer):
                 "Failed to clear OpenSearch indices for '%s': %s", aliases_to_delete, e
             )
             return False
-
-    def get_entity_count(self, suffixes: list[str]) -> int:
-        if not suffixes:
-            return 0
-
-        try:
-            alias_names = [
-                self._get_name(self.opensearch_config.entities_index_prefix, suffix)
-                for suffix in suffixes
-            ]
-            count = self.opensearch_client.count(alias_names)
-            return int(count) if count is not None else 0
-        except NotFoundError:
-            return 0
-        except Exception as e:
-            logger.error("Failed to get entity count for '%s': %s", alias_names, e)
-            return 0
-
-    def get_stats(self) -> dict[str, Any]:
-        try:
-            patterns = [
-                f"{prefix}-*"
-                for prefix in [
-                    self.opensearch_config.text_units_index_prefix,
-                    self.opensearch_config.entities_index_prefix,
-                    self.opensearch_config.community_reports_index_prefix,
-                    self.opensearch_config.relationships_index_prefix,
-                    self.opensearch_config.claims_index_prefix,
-                ]
-            ]
-            return {
-                "last_run": self.stats.to_dict(),
-                "cluster_indices": self.opensearch_client.get_index_stats(patterns),
-            }
-        except Exception as e:
-            logger.error("Failed to retrieve stats: %s", e)
-            return {"error": str(e), "last_run": self.stats.to_dict()}
 
     def initialize(self) -> bool:
         try:

@@ -239,6 +239,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   the candidates: a Neptune and an OpenSearch round trip that re-fetched the
   same reports and counted each twice in fusion. Global search now needs only
   the document retriever; an old config key is ignored (#161).
+- **Breaking** for custom indexers: the unreachable `BaseIndexer.get_stats` and
+  `GraphIndexer`/`VectorIndexer.get_entity_count` port methods, their Neptune
+  and OpenSearch implementations, and the client helpers that served only them
+  (`NeptuneClient.get_graph_stats`, `NeptuneClient.submit`,
+  `OpenSearchClient.get_index_stats`, `OpenSearchClient.count`). Nothing in the
+  pipeline called them (#PR).
 
 ### Fixed
 - The LLM XML parser no longer tries LangChain's `XMLOutputParser.parse`

@@ -79,27 +79,6 @@ class NeptuneIndexer(GraphIndexer):
             )
             return False
 
-    def get_entity_count(self, suffixes: list[str]) -> int:
-        if not suffixes:
-            return 0
-
-        entity_prefix = self.neptune_config.entity_label_prefix.capitalize()
-        entity_labels = [self._get_name(entity_prefix, s) for s in suffixes]
-
-        try:
-            g = self.neptune_client.g
-            result = g.V().hasLabel(*entity_labels).count().next()
-            return int(result) if isinstance(result, (int | float)) else 0
-        except Exception as e:
-            logger.error("Failed to get entity count for '%s': %s", entity_labels, e)
-            return 0
-
-    def get_stats(self) -> dict[str, Any]:
-        stats = self.neptune_client.get_graph_stats()
-        if not isinstance(stats, dict):
-            return {}
-        return stats
-
     def read_entities(self, ids: list[str], suffix: str | None = None) -> list[Entity]:
         """Read existing entities by id for cross-run merge (best-effort).
 
