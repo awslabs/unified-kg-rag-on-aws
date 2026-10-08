@@ -219,6 +219,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   test-only helpers on the guardrail handler and token counter (#120).
 
 ### Fixed
+- A failed removal of a deleted document's artifacts now fails the indexing
+  stage (after the delta is committed) instead of only logging a warning, so
+  the run status and the `IndexingFailures` alarm report it; the registry
+  rows are still kept for a retry (#PR).
 - Incremental runs no longer record a document as PROCESSED when graph
   extraction, gleaning or claim extraction failed on any of its text units.
   It is recorded FAILED with the lineage of what was written, and the

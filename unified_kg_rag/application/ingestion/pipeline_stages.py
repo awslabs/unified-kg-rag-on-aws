@@ -1408,14 +1408,16 @@ class IndexingStage(PipelineStage):
 
         # Drop stale artifacts of changed docs (before re-upsert) and of deleted
         # docs. A failed prune must stop the run before commit: committing would
-        # overwrite the changed docs' lineage and orphan the stale artifacts.
+        # overwrite the changed docs' lineage and orphan the stale artifacts. A
+        # failed deletion keeps its registry rows for a retry and need not hold
+        # back the delta, so it fails the stage only after the commit.
         if not incremental.prune_changed(delta):
             raise PipelineStageError(
                 "Removing stale artifacts of changed documents failed; not "
                 "committing the delta so the registry keeps their old lineage "
                 "and the next run retries the removal"
             )
-        incremental.remove_deleted(delta)
+        deleted_removed = incremental.remove_deleted(delta)
 
         lineages = build_document_lineage(
             documents=context.documents,
@@ -1427,7 +1429,7 @@ class IndexingStage(PipelineStage):
             community_reports=community_reports,
             suffix=suffix,
         )
-        return incremental.commit(
+        results = incremental.commit(
             lineages=lineages,
             fingerprints=context.incremental_fingerprints,
             failed_doc_ids=self._documents_with_failed_units(context, text_units),
@@ -1438,6 +1440,12 @@ class IndexingStage(PipelineStage):
             community_reports=community_reports,
             claims=claims,
         )
+        if not deleted_removed:
+            raise PipelineStageError(
+                "Removing the artifacts of deleted documents failed; their "
+                "registry records are kept so the next run retries the removal"
+            )
+        return results
 
     @staticmethod
     def _documents_with_failed_units(

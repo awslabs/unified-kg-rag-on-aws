@@ -36,6 +36,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.ports.indexer import IndexingStats
+from unified_kg_rag.shared import PipelineStageError
 
 pytestmark = pytest.mark.unit
 
@@ -235,21 +236,30 @@ def test_missing_delta_falls_back_to_full_indexing(mocker) -> None:
     build_store.assert_not_called()
 
 
-def test_failed_deleted_doc_removal_keeps_its_registry_row(mocker) -> None:
+def test_failed_deleted_doc_removal_keeps_its_row_and_fails_the_stage(
+    mocker,
+) -> None:
     store = FakeDocStatusStore()
     _seed_registry(store)
-    stage = _stage(mocker, store, _RecordingManager(delete_failures=1))
+    manager = _RecordingManager(delete_failures=1)
+    stage = _stage(mocker, store, manager)
     text_units, entities = _delta_inputs()
     ctx = _context(
         DocumentDelta(deleted=[compute_doc_id(_DELETED)]),
         [_document("run-changed", _CHANGED)],
     )
 
-    _run(stage, ctx, text_units, entities)
+    with pytest.raises(PipelineStageError, match="deleted documents"):
+        _run(stage, ctx, text_units, entities)
 
     # Removal reported a failure, so the row stays for a retry next run instead
-    # of orphaning still-live artifacts.
+    # of orphaning still-live artifacts, and the stage fails so the run (and
+    # the IndexingFailures alarm) reports it. The delta itself was still
+    # committed: a failed deletion does not hold back new documents.
     assert store.get(compute_doc_id(_DELETED)) is not None
+    assert [name for name, _ in manager.calls][-1] == "index_delta"
+    changed = store.get(compute_doc_id(_CHANGED))
+    assert changed is not None and changed.content_hash == "hash-v2"
 
 
 def test_failed_prune_does_not_record_changed_doc_as_processed(mocker) -> None:

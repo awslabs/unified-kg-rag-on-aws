@@ -284,7 +284,7 @@ class IncrementalIndexer:
                     return False
         return True
 
-    def remove_deleted(self, delta: DocumentDelta) -> None:
+    def remove_deleted(self, delta: DocumentDelta) -> bool:
         """Remove artifacts and registry records for deleted documents.
 
         The registry record is only deleted when artifact removal fully
@@ -292,9 +292,13 @@ class IncrementalIndexer:
         run retries the removal — deleting the record first would strand the
         still-live artifacts with no lineage to ever clean them up (permanent
         orphans).
+
+        Returns True when every artifact was removed (or nothing was deleted).
+        The caller must report False as a failed run: the stores still hold
+        the deleted documents' content.
         """
         if not delta.deleted:
-            return
+            return True
         removed = self.remove_obsolete_artifacts(delta.deleted)
         if not removed:
             logger.warning(
@@ -302,9 +306,10 @@ class IncrementalIndexer:
                 "removal did not fully succeed; will retry next run.",
                 len(delta.deleted),
             )
-            return
+            return False
         for doc_id in delta.deleted:
             self.doc_status.delete(doc_id)
+        return True
 
     def prune_changed(self, delta: DocumentDelta) -> bool:
         """Remove the now-stale artifacts of changed docs before re-extraction.
