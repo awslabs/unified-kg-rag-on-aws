@@ -124,7 +124,11 @@ _STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
     ),
     # Claim resolution reuses the resolution knobs already folded in upstream.
     PipelineStageType.CLAIM_RESOLUTION: (),
-    PipelineStageType.GRAPH_ANALYSIS: ("graph.analysis",),
+    # Graph analysis caches the resolved entities and relationships it passes
+    # through; `graph.analysis` only shapes centrality and statistics, which
+    # no later stage reads (visualization recomputes them), so it is not an
+    # output-determining input of this stage or any later one.
+    PipelineStageType.GRAPH_ANALYSIS: (),
     PipelineStageType.COMMUNITY_DETECTION: (
         "graph.community_detection",
         "custom_prompts.community_report_system",
