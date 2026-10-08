@@ -401,6 +401,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   profiling model returns no JSON profile, splits an `entity_types` string
   (`"PERSON, ORGANIZATION"`) into types instead of characters, and builds the
   example `GraphExtractor` from the tuner's providers (#158).
+- `GraphRAGChain` keeps one set of cached retrievers and strategies per event
+  loop and releases a loop's set only once that loop is closed (or on chain
+  close). A query on a second loop (e.g. `ainvoke()` on the caller's loop while
+  `invoke()` runs on the chain's loop thread) used to evict and close the first
+  loop's clients under its in-flight queries. The caches are guarded by a lock
+  (#PR).
 
 ### Security
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or

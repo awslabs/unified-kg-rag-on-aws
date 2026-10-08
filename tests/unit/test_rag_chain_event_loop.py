@@ -5,7 +5,9 @@
 Regression: ``invoke`` ran ``asyncio.run`` per call (so ``batch(6)`` built six
 retriever sets on six loops and closed none), raised inside a running loop, and
 the cache was keyed by ``id(loop)``, which a new loop can reuse. The sync API
-now runs on one chain-owned loop and evicted retrievers are closed.
+now runs on one chain-owned loop; each loop keeps its own retrievers until that
+loop closes (or the chain does), so a query on one loop never closes clients an
+in-flight query on another loop is using.
 """
 
 from __future__ import annotations
@@ -107,13 +109,19 @@ def test_loop_change_closes_evicted_retrievers() -> None:
     assert built[-1].closed == 1
 
 
-def test_evicted_retriever_on_a_live_loop_is_closed_there() -> None:
+def test_retriever_on_a_live_loop_is_kept_then_closed_there() -> None:
     chain, built = _chain()
     other = _LoopRunner()
     try:
         other.run(chain.ainvoke({"query": "q"}))  # type: ignore[arg-type]
         _run_on_fresh_loop(chain.ainvoke({"query": "q"}))  # type: ignore[arg-type]
-        other.run(asyncio.sleep(0.01))  # let the scheduled aclose run
+        # A query on another loop leaves the live loop's retriever alone ...
+        assert built[0].aclosed == 0 and built[0].closed == 0
+        # ... and the next query on that loop reuses it.
+        other.run(chain.ainvoke({"query": "q"}))  # type: ignore[arg-type]
+        assert len(built) == 2
+        chain.close()
+        # Chain close releases it on its own (still running) loop.
         assert built[0].aclosed == 1
         assert built[0].aclose_loop is built[0].loop
         assert built[0].closed == 0
@@ -179,3 +187,38 @@ async def test_release_skips_retrievers_without_close() -> None:
     chain._retriever_cache = {("document", None): aclosing}  # type: ignore[dict-item]
     await chain.aclose()  # never raises
     aclosing.aclose.assert_awaited_once()
+
+
+async def test_query_on_another_loop_does_not_close_in_flight_retrievers() -> None:
+    # invoke() runs on the chain's loop thread while ainvoke() runs on the
+    # caller's loop. The second loop must get its own retriever without closing
+    # the one an in-flight query on the first loop is still using.
+    chain, built = _chain()
+    started = asyncio.Event()
+    caller_loop = asyncio.get_running_loop()
+
+    async def fake_ainvoke(input: Any, config: Any = None, **kwargs: Any) -> Any:
+        retriever = chain._get_retriever(RetrieverRole.DOCUMENT)
+        if input["query"] == "slow":
+            caller_loop.call_soon_threadsafe(started.set)
+            await asyncio.sleep(0.2)
+        return retriever.closed + retriever.aclosed
+
+    chain.ainvoke = fake_ainvoke  # type: ignore[method-assign]
+    try:
+        slow = asyncio.create_task(
+            asyncio.to_thread(chain.invoke, {"query": "slow"})  # type: ignore[arg-type]
+        )
+        await started.wait()
+        fast_closed = await chain.ainvoke({"query": "fast"})  # type: ignore[arg-type]
+        slow_closed = await slow
+    finally:
+        await chain.aclose()
+
+    assert len(built) == 2
+    assert built[0].loop is not built[1].loop
+    assert slow_closed == 0
+    assert fast_closed == 0
+    # Both are released on chain close, each on its own loop when it is live.
+    assert built[0].aclosed == 1 and built[0].aclose_loop is built[0].loop
+    assert built[1].aclosed == 1
