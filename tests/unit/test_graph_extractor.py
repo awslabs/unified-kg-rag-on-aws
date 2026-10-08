@@ -11,6 +11,8 @@ touches AWS.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 import unified_kg_rag.adapters.ingestion.graph_extractor as ge_module
@@ -621,10 +623,10 @@ class TestExtractFromTextUnits:
 
 
 # --------------------------------------------------------------------------- #
-# _log_completion_summary (smoke — exercises the logging branches)
+# _log_completion_summary
 # --------------------------------------------------------------------------- #
 class TestLogCompletionSummary:
-    def test_logs_with_filtering_and_failures(self) -> None:
+    def test_logs_with_filtering_and_failures(self, caplog) -> None:
         stats = ExtractionStats(
             num_total_units=3,
             num_successful_extractions=2,
@@ -637,8 +639,12 @@ class TestLogCompletionSummary:
             confidence_threshold_applied=0.5,
             total_processing_time=1.23,
         )
-        # Should not raise; covers both the confidence and failure log branches.
-        GraphExtractor._log_completion_summary(stats)
+        with caplog.at_level(logging.INFO):
+            GraphExtractor._log_completion_summary(stats)
+        assert "Entities filtered: 2, Relationships filtered: 1" in caplog.text
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "Failed to extract from 1 text units" in caplog.text
 
 
 # --------------------------------------------------------------------------- #

@@ -14,6 +14,8 @@ in the ``gleaner`` fixture exactly as in the logic suite.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 import unified_kg_rag.adapters.ingestion.gleaner as gleaner_module
@@ -702,10 +704,10 @@ class TestGleaningStats:
 
 
 # --------------------------------------------------------------------------- #
-# _log_completion_summary (smoke: exercises both convergence branches)
+# _log_completion_summary (both convergence branches)
 # --------------------------------------------------------------------------- #
 class TestLogCompletionSummary:
-    def test_converged_summary(self) -> None:
+    def test_converged_summary(self, caplog) -> None:
         stats = GleaningStats(
             total_rounds=1,
             rounds=[
@@ -722,10 +724,22 @@ class TestLogCompletionSummary:
             ],
             convergence_achieved=True,
         )
-        GraphGleaner._log_completion_summary(stats)  # must not raise
+        with caplog.at_level(logging.INFO):
+            GraphGleaner._log_completion_summary(stats)
+        assert "Gleaning process converged successfully" in caplog.text
+        assert "Average per round" in caplog.text
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
-    def test_non_converged_summary(self) -> None:
-        GraphGleaner._log_completion_summary(GleaningStats(convergence_achieved=False))
+    def test_non_converged_summary(self, caplog) -> None:
+        with caplog.at_level(logging.INFO):
+            GraphGleaner._log_completion_summary(
+                GleaningStats(convergence_achieved=False)
+            )
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "Gleaning process did not converge after 0 rounds" in caplog.text
+        # Zero rounds skips the per-round averages.
+        assert "Average per round" not in caplog.text
 
 
 # --------------------------------------------------------------------------- #

@@ -11,6 +11,8 @@ never touches AWS, and a single-worker thread pool keeps the executor cheap.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 import unified_kg_rag.adapters.ingestion.claim_extractor as ce_module
@@ -467,10 +469,10 @@ class TestExtractFromTextUnits:
 
 
 # --------------------------------------------------------------------------- #
-# _log_completion_summary (smoke)
+# _log_completion_summary
 # --------------------------------------------------------------------------- #
 class TestLogCompletionSummary:
-    def test_logs_with_failures(self) -> None:
+    def test_logs_with_failures(self, caplog) -> None:
         stats = ClaimExtractionStats(
             num_total_units=3,
             num_successful_extractions=2,
@@ -478,5 +480,9 @@ class TestLogCompletionSummary:
             total_claims_extracted=4,
             total_processing_time=1.5,
         )
-        # Should not raise; covers the failure-warning branch.
-        ClaimExtractor._log_completion_summary(stats)
+        with caplog.at_level(logging.INFO):
+            ClaimExtractor._log_completion_summary(stats)
+        assert "(2/3 units processed)" in caplog.text
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "1 text units failed during extraction" in caplog.text
