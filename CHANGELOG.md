@@ -193,7 +193,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   property: the per-run `pipeline_id` dimension created about 20 new custom
   metric series per ingestion run. Pass `CloudWatchEMFSink(dimension_keys=...)`
   for stable dimensions. EMF lines now go to stdout, as the help text and docs
-  already said (they went to stderr) (#PR).
+  already said (they went to stderr) (#158).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
@@ -346,41 +346,41 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (which scored `"... is correct"}` as 1.0) and the free-text regex fallbacks
   (`"Score: 8/10"` → 1.0) are gone. A judge reply without a valid score in
   [0, 1] (either metric) is recorded under `failed_metrics` instead of as 0.0
-  or a clamped value (#PR).
+  or a clamped value (#158).
 - `run-eval` no longer exits 0 when scoring fails: with
   `processing.ignore_errors: false` (the default) an evaluator error stops the
   run instead of being recorded per query, and `--max-failure-rate` now also
   applies to each metric's failed share of attempted values, so a metric that
-  failed on every query exits non-zero (#PR).
+  failed on every query exits non-zero (#158).
 - `run-ingestion --verify-metadata` exits non-zero when the metadata is
-  corrupt, and `--repair-metadata` when the repair fails or raises (#PR).
+  corrupt, and `--repair-metadata` when the repair fails or raises (#158).
 - `run-rag` reports `success: false` and exits non-zero when the chain returns
   its `ignore_errors` error fallback (`metadata.error`) instead of an answer
-  (#PR).
+  (#158).
 - Importing the package no longer configures logging: it used to replace the
   host's root handlers, set the root level to INFO and open a `FileHandler` in
   `logs/` next to the installed package (failing on a read-only
   `site-packages`). Only the CLIs call `setup_logging`, and a relative
   `logging.log_file_path` is now resolved against the working directory
-  (#PR).
+  (#158).
 - Visualization: `graph.visualization.embeddings.bedrock_model_id` given as a
   YAML string is validated as an embedding model id at config load (it used to
   fail with `'str' object has no attribute 'value'`, which ingestion logged
   and skipped, so no visualization was written); an edgeless graph no longer
   gets NaN node sizes in the interactive view; a failed dimensionality
   reduction falls back to a seeded spring layout and sets `layout_degraded`
-  instead of returning an unseeded random layout (#PR).
+  instead of returning an unseeded random layout (#158).
 - The evaluation `run_manifest` records `git_sha` only when the package runs
   from a checkout that tracks it (an install inside another repository used to
-  report that repository's HEAD) and adds `git_dirty` (#PR).
+  report that repository's HEAD) and adds `git_dirty` (#158).
 - `run-eval` output files carry a random suffix after the timestamp, so runs
   started in the same second no longer overwrite each other, and a numeric
   `answer` of `0` is kept as a ground truth instead of being treated as
-  missing (#PR).
+  missing (#158).
 - `run-prompt-tuning` fails instead of emitting a default profile when the
   profiling model returns no JSON profile, splits an `entity_types` string
   (`"PERSON, ORGANIZATION"`) into types instead of characters, and builds the
-  example `GraphExtractor` from the tuner's providers (#PR).
+  example `GraphExtractor` from the tuner's providers (#158).
 
 ### Security
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or
