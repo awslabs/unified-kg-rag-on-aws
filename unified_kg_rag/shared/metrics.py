@@ -9,8 +9,8 @@ choice. Two adapters ship:
 
 - ``NullMetricsSink`` (default): discards — zero overhead, no AWS dependency.
 - ``CloudWatchEMFSink``: writes CloudWatch Embedded Metric Format (EMF) JSON to
-  a logger, so any CloudWatch Logs pipeline auto-extracts metrics without a
-  ``PutMetricData`` API call (ideal for Lambda/ECS/EKS).
+  stdout (or a given logger), so any CloudWatch Logs pipeline auto-extracts
+  metrics without a ``PutMetricData`` API call (ideal for Lambda/ECS/EKS).
 
 Callers select a sink and pass it to the pipeline/manager; the library never
 hard-codes CloudWatch.
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import time
 from typing import Any, Protocol, runtime_checkable
 
@@ -59,15 +60,29 @@ class CloudWatchEMFSink:
 
     EMF lets CloudWatch Logs auto-extract metrics from structured log events
     (no PutMetricData call). Drop this into Lambda/ECS/EKS and the metrics appear
-    in CloudWatch under ``namespace``. Defaults to a dedicated stdout logger so
-    EMF lines are not mixed with the app's structured logs.
+    in CloudWatch under ``namespace``. Defaults to a dedicated, non-propagating
+    logger that writes bare EMF lines to stdout (the stream the container's
+    awslogs driver ships, like the app logs).
+
+    Every metric is published as the zero-dimension aggregate, which the
+    CloudWatch alarms and dashboard query. ``emit`` dimensions are written as
+    log properties (searchable in Logs Insights); only keys listed in
+    ``dimension_keys`` also become a metric dimension. Each distinct dimension
+    value is a separately billed custom-metric series, so never list a per-run
+    key such as ``pipeline_id``.
     """
 
-    def __init__(self, emf_logger: logging.Logger | None = None) -> None:
+    def __init__(
+        self,
+        emf_logger: logging.Logger | None = None,
+        *,
+        dimension_keys: tuple[str, ...] = (),
+    ) -> None:
+        self._dimension_keys = dimension_keys
         if emf_logger is None:
             emf_logger = logging.getLogger("unified_kg_rag.emf")
             if not emf_logger.handlers:
-                handler = logging.StreamHandler()
+                handler = logging.StreamHandler(sys.stdout)
                 handler.setFormatter(logging.Formatter("%(message)s"))
                 emf_logger.addHandler(handler)
                 emf_logger.setLevel(logging.INFO)
@@ -90,15 +105,13 @@ class CloudWatchEMFSink:
         if not numeric:
             return
         dims = dimensions or {}
-        # Emit BOTH the zero-dimension aggregate ([]) AND the keyed set (e.g.
-        # ['pipeline_id']). The aggregate is what dimensionless CloudWatch alarms
-        # and dashboard widgets query — without it, an alarm built on the bare
-        # metric (e.g. the silent-artifact-drop IndexingFailures alarm) sits in
-        # INSUFFICIENT_DATA forever because only the per-pipeline_id series is
-        # ever populated. Publishing multiple dimension sets is standard EMF.
+        # The zero-dimension aggregate ([]) is what the dimensionless alarms
+        # (e.g. IndexingFailures) and dashboard widgets query. Other dimension
+        # values stay log properties unless configured as dimension keys.
         dimension_sets: list[list[str]] = [[]]
-        if dims:
-            dimension_sets.append(list(dims.keys()))
+        keyed = [k for k in dims if k in self._dimension_keys]
+        if keyed:
+            dimension_sets.append(keyed)
         emf: dict[str, Any] = {
             "_aws": {
                 # Timestamp is a REQUIRED member of the EMF metadata object

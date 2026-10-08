@@ -627,7 +627,7 @@ CDK compute 스택은 `AWS_REGION`, `BEDROCK_REGION`, `NEPTUNE_ENDPOINT`,
 | `--repair-metadata` | off | 메타데이터 복구 시도 (`--pipeline-id` 필요). 복구에 실패하면 0이 아닌 코드로 종료 |
 | `--continue-on-error` | off | 스테이지 에러 시에도 계속 진행 |
 | `--enabled-stages` | all | 실행할 스테이지 목록(쉼표 구분) |
-| `--metrics-sink` | `none` | `none`, 또는 `cloudwatch` (CloudWatch EMF — Embedded Metric Format — 메트릭을 stdout으로 출력) |
+| `--metrics-sink` | `none` | `none`, 또는 `cloudwatch` (CloudWatch EMF — Embedded Metric Format — 메트릭을 차원 없는 시리즈로 stdout에 출력. `pipeline_id`는 차원이 아닌 로그 속성으로 기록하므로 실행할 때마다 메트릭 시리즈가 늘지 않음) |
 | `--config-path` | — | `config.yaml` 경로 |
 
 ### 12개 파이프라인 스테이지

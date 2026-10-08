@@ -641,7 +641,7 @@ OpenSearch + Neptune.
 | `--repair-metadata` | off | Attempt metadata repair (needs `--pipeline-id`); exits non-zero when the repair fails |
 | `--continue-on-error` | off | Keep going when a stage errors |
 | `--enabled-stages` | all | Comma-separated stage list to run |
-| `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout) |
+| `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout as dimensionless series; `pipeline_id` is recorded as a log property, not a dimension, so runs add no new metric series) |
 | `--config-path` | — | Path to `config.yaml` |
 
 ### The 12 pipeline stages

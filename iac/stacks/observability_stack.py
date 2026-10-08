@@ -4,9 +4,10 @@
 
 The application emits Embedded Metric Format (EMF) records under the
 ``unified_kg_rag/ingestion`` namespace when run with ``--metrics-sink cloudwatch``
-(see core/metrics.py). This stack surfaces those plus Step Functions execution
-health on a dashboard, and alarms on pipeline failures -> the orchestration SNS
-topic.
+(see unified_kg_rag/shared/metrics.py). The alarms and widgets query the
+dimensionless aggregate series the sink always publishes. This stack surfaces
+those plus Step Functions execution health on a dashboard, and alarms on
+pipeline failures -> the orchestration SNS topic.
 """
 
 from __future__ import annotations

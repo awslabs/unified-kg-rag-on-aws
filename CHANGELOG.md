@@ -188,6 +188,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `strict=True` mode raises on unparseable text for LightRAG keyword
   extraction. LangChain judge scores and `partial_correctness` reasoning now
   also accept JSON wrapped in prose (#153).
+- The CloudWatch EMF sink publishes only the dimensionless aggregate series
+  (what the alarms and dashboard query) and records `pipeline_id` as a log
+  property: the per-run `pipeline_id` dimension created about 20 new custom
+  metric series per ingestion run. Pass `CloudWatchEMFSink(dimension_keys=...)`
+  for stable dimensions. EMF lines now go to stdout, as the help text and docs
+  already said (they went to stderr) (#PR).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
