@@ -251,6 +251,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `BedrockLanguageModelFactory.DEFAULT_EFFORT`, `StaticRenderer.color_palette`
   and `evaluation.base.SKIP_REASON_ANSWER_FAILED`. **Breaking** for callers
   that pass the removed keyword arguments (#PR).
+- `OptimizedContext.quality_score` and `TokenManager._calculate_quality_score`:
+  the score was computed for every query and never read. **Breaking** for code
+  that reads or constructs `OptimizedContext` with `quality_score` (#PR).
 
 ### Fixed
 - The LLM XML parser no longer tries LangChain's `XMLOutputParser.parse`

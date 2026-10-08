@@ -183,7 +183,6 @@ class TestBudgeting:
         assert out.sections == []
         assert out.sections_included == 0
         assert out.sections_excluded == 1
-        assert out.quality_score == 0.0
 
     def test_fits_within_budget_includes_section(self, mocker) -> None:
         mgr = _make_manager(mocker, max_context_tokens=200000)
@@ -615,38 +614,6 @@ class TestSynthesizedSectionReservation:
         )  # TEXT's 833-token share seats 8 whole 100-token chunks
 
 
-class TestQualityScore:
-    def test_empty_inputs_zero(self, mocker) -> None:
-        mgr = _make_manager(mocker)
-        assert mgr._calculate_quality_score([], []) == 0.0
-
-    def test_full_selection_scores_one(self, mocker) -> None:
-        # All sections selected -> priority_coverage 1.0 and type_diversity 1.0.
-        mgr = _make_manager(mocker)
-        results = [
-            _r("a b", 0.5, "text", "s1"),
-            _r("c d", 0.5, "entity", "s2"),
-        ]
-        out = mgr.optimize_context(results, query="q", max_tokens=10000)
-        assert out.sections_included == 2
-        assert out.quality_score == pytest.approx(1.0)
-
-    def test_partial_selection_blends_coverage_and_diversity(self, mocker) -> None:
-        # Two TEXT sections, only one fits. priority_coverage = 0.5 of total
-        # priority; type_diversity = 1/1 (one type) = 1.0.
-        # score = 0.5*0.7 + 1.0*0.3 = 0.65.
-        mgr = _make_manager(mocker)
-        results = [
-            _r("a b c d e", 0.5, "text", "s1"),
-            _r("f g h i j", 0.5, "text", "s2"),
-        ]
-        out = mgr.optimize_context(
-            results, query="q", max_tokens=6, max_context_tokens_buffer=0
-        )
-        assert out.sections_included == 1
-        assert out.quality_score == pytest.approx(0.65)
-
-
 class TestBuildContextString:
     def test_empty_context_fallback_message(self) -> None:
         empty = OptimizedContext(
@@ -654,7 +621,6 @@ class TestBuildContextString:
             total_tokens=0,
             sections_included=0,
             sections_excluded=0,
-            quality_score=0.0,
         )
         assert (
             TokenManager.build_context_string(empty) == "No relevant information found."

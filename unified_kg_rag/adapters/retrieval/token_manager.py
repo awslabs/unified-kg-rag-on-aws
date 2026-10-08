@@ -70,9 +70,6 @@ class OptimizedContext(BaseModel):
     sections_excluded: int = Field(
         description="Number of sections excluded from the optimization"
     )
-    quality_score: float = Field(
-        description="Quality score of the optimized context (0.0 to 1.0)"
-    )
 
 
 class TokenManager(MetricsMixin):
@@ -226,7 +223,6 @@ class TokenManager(MetricsMixin):
                 total_tokens=0,
                 sections_included=0,
                 sections_excluded=len(retrieval_results),
-                quality_score=0.0,
             )
 
         all_sections = self._create_context_sections(retrieval_results)
@@ -235,12 +231,11 @@ class TokenManager(MetricsMixin):
         )
 
         total_tokens = sum(section.token_count for section in selected_sections)
-        quality_score = self._calculate_quality_score(selected_sections, all_sections)
         sections_included = len(selected_sections)
         sections_excluded = len(all_sections) - sections_included
 
         self._record_optimization_metrics(
-            total_tokens, sections_included, sections_excluded, quality_score
+            total_tokens, sections_included, sections_excluded
         )
 
         return OptimizedContext(
@@ -248,7 +243,6 @@ class TokenManager(MetricsMixin):
             total_tokens=total_tokens,
             sections_included=sections_included,
             sections_excluded=sections_excluded,
-            quality_score=quality_score,
         )
 
     def _create_context_sections(
@@ -489,37 +483,15 @@ class TokenManager(MetricsMixin):
             }
         )
 
-    @staticmethod
-    def _calculate_quality_score(
-        selected_sections: list[ContextSection],
-        all_sections: list[ContextSection],
-    ) -> float:
-        if not all_sections or not selected_sections:
-            return 0.0
-
-        total_priority = sum(section.priority for section in all_sections)
-        selected_priority = sum(section.priority for section in selected_sections)
-        priority_coverage = (
-            selected_priority / total_priority if total_priority > 0 else 0.0
-        )
-
-        all_types = {section.section_type for section in all_sections}
-        selected_types = {section.section_type for section in selected_sections}
-        type_diversity = len(selected_types) / len(all_types) if all_types else 0.0
-
-        return min((priority_coverage * 0.7) + (type_diversity * 0.3), 1.0)
-
     def _record_optimization_metrics(
         self,
         total_tokens: int,
         sections_included: int,
         sections_excluded: int,
-        quality_score: float,
     ) -> None:
         self._record_metric("optimization_tokens", total_tokens)
         self._record_metric("sections_included", sections_included)
         self._record_metric("sections_excluded", sections_excluded)
-        self._record_metric("quality_score", quality_score)
 
     @staticmethod
     def build_context_string(optimized_context: OptimizedContext) -> str:
