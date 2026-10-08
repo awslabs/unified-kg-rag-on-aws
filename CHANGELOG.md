@@ -229,6 +229,50 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   the document retriever; an old config key is ignored (#161).
 
 ### Fixed
+- `indexing.reset` with the doc-status registry enabled rebuilds from the
+  whole corpus and records every document again. The loading stage used to
+  diff against the registry first, so the reset cleared the stores but
+  indexed only new and changed documents, and the unchanged ones were lost
+  (#163).
+- Cross-run merge reads relationships back from Neptune with their type (the
+  edge label), endpoint names, attributes and `text_unit_ids`, scoped to the
+  delta's index suffix. The type and endpoint names were dropped and the
+  JSON-encoded `text_unit_ids` came back as one string, so every delta run
+  added a second edge with the same id next to the stored one, nested the
+  lineage one JSON level deeper and reset the weight. Serialized JSON
+  properties are no longer cut at `indexing.neptune.property_max_length`,
+  which left long lists unparseable (#163).
+- Cross-run merge reads entities back with their attributes,
+  `community_ids`, rank and confidence, from the delta's index suffix only,
+  and merges each suffix's delta separately. The read was not scoped by
+  label, so another tenant's vertex with the same id could be merged in, and
+  it dropped the attributes, so the merged entity lost its `index` suffix and
+  was written into the default suffix's graph and indices. The merge now
+  unions attributes (the delta wins on a shared key, as in the full build)
+  (#163).
+- Re-applying a delta no longer appends its entity and relationship
+  descriptions again: the merge compares description lines instead of the
+  whole stored multi-line description (#163).
+- The registry lineage records the ids the cross-run merge kept. With
+  `indexing.cross_run_fuzzy_merge`, a delta entity folded into a stored one
+  was recorded under its own id, so deleting the document never removed the
+  stored entity. A delta edge whose endpoint was remapped is now merged with
+  the stored edge between the same entities instead of being added next to
+  it. The merge moved from `IndexingManager.index_delta` (now a plain upsert)
+  to `IncrementalIndexer.commit` through the new
+  `IndexingManager.merge_with_existing_graph` (#163).
+- Deleting or changing a document strips its text units from the entities
+  and relationships it shared with surviving documents and recomputes their
+  frequency and weight, in Neptune and OpenSearch. They kept citing the
+  removed chunks. Their descriptions still keep the removed document's text
+  until a full rebuild, since removing it needs an LLM re-summary (#163).
+- An untyped relationship merges with its stored edge: Neptune stores it
+  under the `RELATED_TO` label, so it read back with that type and the merge
+  key treated it as a different relationship (#163).
+- **Breaking** for direct callers: `IndexingManager.index_delta` no longer
+  merges with the stored graph (call `merge_with_existing_graph` first, or go
+  through `IncrementalIndexer.commit`), and `read_entities`/`read_relationships`
+  take the index `suffix` (#163).
 - A doc-status record over the DynamoDB 400 KB item limit (a document with
   roughly 10,000+ artifact ids) fails with an error naming the file before the
   registry write, instead of a bare `ValidationException`; the limit is

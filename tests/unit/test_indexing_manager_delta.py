@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from unified_kg_rag.domain.models import Entity, Relationship
-from unified_kg_rag.ports.indexer import IndexingStats
+from unified_kg_rag.ports.indexer import BaseIndexer, IndexingStats
 
 pytestmark = pytest.mark.unit
 
@@ -146,7 +146,8 @@ def test_cross_run_merge_threads_entity_id_remap_to_relationships(manager) -> No
     delta_rel = Relationship(
         id="r1", source_id="e_dup", target_id="e_other", type="WORKS_AT"
     )
-    merged_entities, merged_rels = mgr._merge_with_existing_graph([dup], [delta_rel])
+    result = mgr.merge_with_existing_graph([dup], [delta_rel])
+    merged_rels = result.relationships
 
     # The relationship endpoint that referenced the merged-away id is remapped.
     assert merged_rels is not None and len(merged_rels) == 1
@@ -183,8 +184,71 @@ def test_fuzzy_cross_run_merge_collapses_near_duplicate_entity(mocker) -> None:
     mgr._description_summarizer.summarize_relationships.side_effect = lambda rs: rs
 
     delta = Entity(id="e_new", name="Acme Corporatio", text_unit_ids=["t2"])
-    merged_entities, _ = mgr._merge_with_existing_graph([delta], None)
+    result = mgr.merge_with_existing_graph([delta], None)
+    merged_entities, _ = result.entities, result.relationships
 
     assert merged_entities is not None and len(merged_entities) == 1
     assert merged_entities[0].id == "e_old"
     assert set(merged_entities[0].text_unit_ids) == {"t1", "t2"}
+
+
+def test_cross_run_merge_is_scoped_per_suffix(manager) -> None:
+    # Entity and relationship ids are suffix-independent: "Vendor" has the same
+    # id in every tenant. Each tenant's delta must merge with that tenant's
+    # stored state only and stay in its own suffix.
+    mgr, _, neptune_indexer = manager
+    stored = {
+        suffix: Entity(
+            id="e-vendor",
+            name="Vendor",
+            text_unit_ids=[f"{suffix}-old"],
+            attributes={"index": suffix},
+        )
+        for suffix in ("tenant-a", "tenant-b")
+    }
+    neptune_indexer.read_entities.side_effect = lambda ids, suffix=None: (
+        [stored[suffix]] if suffix in stored else []
+    )
+    neptune_indexer.read_relationships.return_value = []
+    delta = [
+        Entity(
+            id="e-vendor",
+            name="Vendor",
+            text_unit_ids=[f"{suffix}-new"],
+            attributes={"index": suffix},
+        )
+        for suffix in ("tenant-a", "tenant-b")
+    ]
+
+    result = mgr.merge_with_existing_graph(delta, None)
+    merged, _ = result.entities, result.relationships
+
+    assert merged is not None
+    by_suffix = {BaseIndexer.get_suffix(e): e for e in merged}
+    assert set(by_suffix) == {"tenant-a", "tenant-b"}
+    for suffix, entity in by_suffix.items():
+        assert entity.text_unit_ids == [f"{suffix}-old", f"{suffix}-new"]
+    assert sorted(
+        call.kwargs["suffix"] for call in neptune_indexer.read_entities.call_args_list
+    ) == ["tenant-a", "tenant-b"]
+
+
+def test_read_back_entity_without_attributes_keeps_the_delta_suffix(manager) -> None:
+    # A merged entity is written back under get_suffix(entity): losing the
+    # attributes would move it into the default suffix.
+    mgr, _, neptune_indexer = manager
+    neptune_indexer.read_entities.return_value = [
+        Entity(id="e-vendor", name="Vendor", text_unit_ids=["t1"])
+    ]
+    delta = Entity(
+        id="e-vendor",
+        name="Vendor",
+        text_unit_ids=["t2"],
+        attributes={"index": "tenant-a"},
+    )
+
+    result = mgr.merge_with_existing_graph([delta], None)
+    merged, _ = result.entities, result.relationships
+
+    assert merged is not None
+    assert [BaseIndexer.get_suffix(e) for e in merged] == ["tenant-a"]

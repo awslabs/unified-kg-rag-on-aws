@@ -4,7 +4,7 @@
 
 Covers the pure-logic helpers that ``test_indexing_manager_delta`` does NOT
 exercise: ``_enrich_text_units`` back-linking, ``_run_indexing_phase`` pool
-sizing + empty-task skipping, ``_merge_with_existing_graph`` cross-run union,
+sizing + empty-task skipping, ``merge_with_existing_graph`` cross-run union,
 and ``_log_completion_summary``. Indexers are replaced with the in-memory
 ``FakeGraphStore`` / ``FakeVectorStore`` fakes so no AWS clients are built.
 """
@@ -219,7 +219,7 @@ def test_run_indexing_phase_pool_size_matches_task_count_when_small(
     assert captured["max_workers"] == 3
 
 
-# --- _merge_with_existing_graph ------------------------------------------
+# --- merge_with_existing_graph ------------------------------------------
 
 
 def test_merge_with_existing_graph_unions_existing(manager) -> None:
@@ -233,7 +233,8 @@ def test_merge_with_existing_graph_unions_existing(manager) -> None:
     new_e = Entity(id="e1", name="Alice", description="new", text_unit_ids=["t1"])
     new_r = Relationship(id="r1", source_id="e1", target_id="e2", weight=2.0)
 
-    merged_e, merged_r = mgr._merge_with_existing_graph([new_e], [new_r])
+    result = mgr.merge_with_existing_graph([new_e], [new_r])
+    merged_e, merged_r = result.entities, result.relationships
 
     assert len(merged_e) == 1
     # Merge unions text_unit_ids from existing + new.
@@ -246,7 +247,8 @@ def test_merge_with_existing_graph_passthrough_when_nothing_existing(manager) ->
     new_e = [Entity(id="e9", name="Bob")]
     new_r = [Relationship(id="r9", source_id="e9", target_id="e8")]
 
-    merged_e, merged_r = mgr._merge_with_existing_graph(new_e, new_r)
+    result = mgr.merge_with_existing_graph(new_e, new_r)
+    merged_e, merged_r = result.entities, result.relationships
 
     # No existing rows read back -> returns the inputs unchanged (overwrite mode).
     assert merged_e == new_e
@@ -255,7 +257,8 @@ def test_merge_with_existing_graph_passthrough_when_nothing_existing(manager) ->
 
 def test_merge_with_existing_graph_handles_empty_inputs(manager) -> None:
     mgr, _graph, _vector, _t = manager
-    merged_e, merged_r = mgr._merge_with_existing_graph(None, None)
+    result = mgr.merge_with_existing_graph(None, None)
+    merged_e, merged_r = result.entities, result.relationships
     assert merged_e is None
     assert merged_r is None
 

@@ -46,6 +46,8 @@ class ChunkingStrategy(str, Enum):
 
 class Constants(str, Enum):
     ATTRIBUTE_PREFIX = "attr"
+    # Type of a relationship extracted without one (its Neptune edge label).
+    DEFAULT_RELATIONSHIP_TYPE = "RELATED_TO"
     DEFAULT_SUFFIX = "default"
     FILTERS = "filters"
     INDEX = "index"

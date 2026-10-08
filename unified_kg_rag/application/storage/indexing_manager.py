@@ -5,11 +5,18 @@ from collections.abc import Callable
 from concurrent.futures import as_completed
 from typing import Any, NamedTuple
 
+from pydantic import BaseModel, Field
+
 from unified_kg_rag.adapters.ingestion.description_summarizer import (
     DescriptionSummarizer,
 )
 from unified_kg_rag.adapters.providers import Providers
-from unified_kg_rag.domain.ingestion.merge import merge_entities, merge_relationships
+from unified_kg_rag.domain.ingestion.merge import (
+    merge_entities,
+    merge_relationships,
+    relationship_id_remap,
+    remove_text_units,
+)
 from unified_kg_rag.domain.models import (
     Claim,
     Community,
@@ -29,6 +36,16 @@ from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
+
+
+class CrossRunMergeResult(BaseModel):
+    """A delta merged with the stored graph state it touches."""
+
+    entities: list[Entity] | None = None
+    relationships: list[Relationship] | None = None
+    # Per index suffix: delta entity/relationship id -> the stored id it merged
+    # into, so lineage can record the ids actually written.
+    id_remap_by_suffix: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
 class IndexingTask(NamedTuple):
@@ -125,6 +142,13 @@ class IndexingManager:
         except Exception as e:
             logger.error("Clear operation failed: %s", e)
             return False
+
+    @staticmethod
+    def _group_by_suffix(items: list[Any]) -> dict[str, list[Any]]:
+        grouped: dict[str, list[Any]] = {}
+        for item in items:
+            grouped.setdefault(BaseIndexer.get_suffix(item), []).append(item)
+        return grouped
 
     @staticmethod
     def _discover_suffixes(items: list[Any] | None) -> list[str]:
@@ -236,15 +260,12 @@ class IndexingManager:
         Routes to the indexers' ``upsert_*`` methods instead of the full
         rebuild path, so only changed/new artifacts are written and existing
         data is preserved. Entities (graph + vector) are upserted before
-        relationships, which depend on entity vertices existing.
+        relationships, which depend on entity vertices existing. Writes the
+        given artifacts as they are: the cross-run merge with stored state is
+        :meth:`merge_with_existing_graph`, run by the incremental commit.
         """
         start_time = time.time()
         results: dict[str, IndexingStats] = {}
-
-        if self.config.indexing.cross_run_merge:
-            entities, relationships = self._merge_with_existing_graph(
-                entities, relationships
-            )
 
         self._enrich_text_units(text_units, communities)
 
@@ -308,11 +329,11 @@ class IndexingManager:
         self._log_completion_summary(results, elapsed_time)
         return results
 
-    def _merge_with_existing_graph(
+    def merge_with_existing_graph(
         self,
         entities: list[Entity] | None,
         relationships: list[Relationship] | None,
-    ) -> tuple[list[Entity] | None, list[Relationship] | None]:
+    ) -> CrossRunMergeResult:
         """Union delta artifacts with existing graph state before upsert.
 
         Reads the existing entities/relationships the delta touches back from the
@@ -320,6 +341,46 @@ class IndexingManager:
         recompute) via the pure merge functions, so a cross-run upsert accumulates
         rather than overwriting. If the adapter does not support read-back it
         returns ``[]`` and this degenerates to the existing overwrite behaviour.
+        With ``indexing.cross_run_merge`` off the delta is returned unchanged.
+
+        Merges one index suffix at a time: entity and relationship ids are
+        suffix-independent, so each tenant's delta must meet that tenant's stored
+        state only (and its entity-id remap must not leak into another tenant).
+        """
+        if not self.config.indexing.cross_run_merge:
+            return CrossRunMergeResult(entities=entities, relationships=relationships)
+        entity_groups = self._group_by_suffix(entities or [])
+        relationship_groups = self._group_by_suffix(relationships or [])
+        merged_entities: list[Entity] = []
+        merged_relationships: list[Relationship] = []
+        id_remap_by_suffix: dict[str, dict[str, str]] = {}
+        for suffix in sorted(entity_groups.keys() | relationship_groups.keys()):
+            suffix_entities, suffix_relationships, id_remap = self._merge_suffix(
+                suffix,
+                entity_groups.get(suffix, []),
+                relationship_groups.get(suffix, []),
+            )
+            merged_entities.extend(suffix_entities)
+            merged_relationships.extend(suffix_relationships)
+            if id_remap:
+                id_remap_by_suffix[suffix] = id_remap
+        return CrossRunMergeResult(
+            entities=merged_entities if entities is not None else None,
+            relationships=(merged_relationships if relationships is not None else None),
+            id_remap_by_suffix=id_remap_by_suffix,
+        )
+
+    def _merge_suffix(
+        self,
+        suffix: str,
+        entities: list[Entity],
+        relationships: list[Relationship],
+    ) -> tuple[list[Entity], list[Relationship], dict[str, str]]:
+        """Cross-run merge of one suffix's delta (see merge_with_existing_graph).
+
+        Returns the merged entities and relationships plus ``{delta id: kept
+        id}`` for every delta entity or relationship that merged into a stored
+        one under a different id.
         """
         merged_entities = entities
         entity_id_remap: dict[str, str] = {}
@@ -329,11 +390,15 @@ class IndexingManager:
             if self.config.indexing.cross_run_fuzzy_merge:
                 # Fuzzy merge needs old entities whose ids DIFFER from the delta's
                 # (exact-id read-back only surfaces normalized-name-equal ones).
-                # Project existing (id, name) per suffix, fuzzy-match delta names,
-                # and pull the matched olds into the read-back set.
-                fuzzy_matcher, fuzzy_old_ids = self._build_fuzzy_old_matcher(entities)
+                # Project existing (id, name), fuzzy-match delta names, and pull
+                # the matched olds into the read-back set.
+                fuzzy_matcher, fuzzy_old_ids = self._build_fuzzy_old_matcher(
+                    suffix, entities
+                )
                 existing_ids |= fuzzy_old_ids
-            existing = self.neptune_indexer.read_entities(list(existing_ids))
+            existing = self.neptune_indexer.read_entities(
+                sorted(existing_ids), suffix=suffix
+            )
             if existing:
                 merged_entities, entity_id_remap = merge_entities(
                     existing, entities, fuzzy_matcher=fuzzy_matcher
@@ -342,12 +407,23 @@ class IndexingManager:
                 # seen across many runs can grow unbounded — re-summarize the
                 # over-threshold ones (no-op below the threshold / when disabled).
                 merged_entities = self.description_summarizer.summarize_entities(
-                    merged_entities or []
+                    merged_entities
                 )
         merged_relationships = relationships
+        relationship_remap: dict[str, str] = {}
         if relationships:
+            rel_ids = {r.id for r in relationships}
+            if entity_id_remap:
+                # A delta edge whose endpoint merged into a stored entity can only
+                # match a stored edge of that entity: its id derives from the
+                # stored names, not the delta's, so read the incident edges too.
+                rel_ids |= set(
+                    self.neptune_indexer.find_incident_relationship_ids(
+                        sorted(set(entity_id_remap.values())), suffix=suffix
+                    )
+                )
             existing_rels = self.neptune_indexer.read_relationships(
-                [r.id for r in relationships]
+                sorted(rel_ids), suffix=suffix
             )
             # Even when no existing relationships are read back, delta endpoints
             # must follow any entity-id collapse from the entity merge above —
@@ -355,34 +431,41 @@ class IndexingManager:
             # now-nonexistent id. Pass the remap through unconditionally.
             if existing_rels or entity_id_remap:
                 merged_relationships = merge_relationships(
-                    existing_rels or [],
+                    existing_rels,
                     relationships,
                     entity_id_remap=entity_id_remap or None,
                 )
                 merged_relationships = (
                     self.description_summarizer.summarize_relationships(
-                        merged_relationships or []
+                        merged_relationships
                     )
                 )
-        return merged_entities, merged_relationships
+                relationship_remap = relationship_id_remap(
+                    relationships, merged_relationships, entity_id_remap
+                )
+        return (
+            merged_entities,
+            merged_relationships,
+            {**entity_id_remap, **relationship_remap},
+        )
 
-    def _build_fuzzy_old_matcher(self, entities: list[Entity]) -> tuple[Any, set[str]]:
+    def _build_fuzzy_old_matcher(
+        self, suffix: str, entities: list[Entity]
+    ) -> tuple[Any, set[str]]:
         """Build a FuzzyMatcher over existing entity names and find fuzzy hits.
 
         Returns ``(matcher, old_ids)`` where ``matcher`` is built over all
-        existing entity names in the delta's suffix(es) and ``old_ids`` is the
-        set of existing entity ids whose name fuzzy-matches some delta name — so
-        the caller can read those olds back for merging. Returns ``(None, set())``
+        existing entity names in ``suffix`` and ``old_ids`` is the set of
+        existing entity ids whose name fuzzy-matches some delta name — so the
+        caller can read those olds back for merging. Returns ``(None, set())``
         if no existing names can be projected (adapter without the capability),
         degrading to exact-name merge.
         """
         from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
 
-        suffixes = self._discover_suffixes(entities)
         id_by_name: dict[str, str] = {}
-        for suffix in suffixes:
-            for eid, name in self.neptune_indexer.read_entity_names(suffix):
-                id_by_name.setdefault(name, eid)
+        for eid, name in self.neptune_indexer.read_entity_names(suffix):
+            id_by_name.setdefault(name, eid)
         if not id_by_name:
             return None, set()
 
@@ -397,6 +480,46 @@ class IndexingManager:
                 if name in id_by_name:
                     old_ids.add(id_by_name[name])
         return matcher, old_ids
+
+    def remove_text_units_from_shared(
+        self,
+        suffix: str,
+        *,
+        entity_ids: list[str],
+        relationship_ids: list[str],
+        text_unit_ids: list[str],
+    ) -> dict[str, IndexingStats]:
+        """Strip removed text units from kept entities/relationships of a suffix.
+
+        Reads the stored items back, removes ``text_unit_ids`` from their
+        lineage (recomputing frequency/weight, see ``remove_text_units``) and
+        upserts the changed ones to both stores. A graph adapter without
+        read-back leaves them unchanged.
+        """
+        entities = (
+            self.neptune_indexer.read_entities(entity_ids, suffix=suffix)
+            if entity_ids
+            else []
+        )
+        relationships = (
+            self.neptune_indexer.read_relationships(relationship_ids, suffix=suffix)
+            if relationship_ids
+            else []
+        )
+        entities, relationships = remove_text_units(
+            entities, relationships, text_unit_ids
+        )
+        if not entities and not relationships:
+            return {}
+        logger.info(
+            "Removing %d text units from %d shared entities and %d shared "
+            "relationships in '%s'",
+            len(text_unit_ids),
+            len(entities),
+            len(relationships),
+            suffix,
+        )
+        return self.index_delta(entities=entities, relationships=relationships)
 
     def delete_documents(
         self, ids_by_suffix: dict[str, list[str]]

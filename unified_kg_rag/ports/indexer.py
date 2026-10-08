@@ -193,8 +193,14 @@ class GraphIndexer(BaseIndexer):
         """
         return self.index_communities(communities)
 
-    def read_entities(self, ids: list[str]) -> list[Entity]:
+    def read_entities(self, ids: list[str], suffix: str | None = None) -> list[Entity]:
         """Read existing entities by id for cross-run merge (read-merge-write).
+
+        Scoped to ``suffix``'s graph (``None`` is the default suffix), since
+        entity ids are suffix-independent. Must return every field the write
+        path stores (attributes, ``text_unit_ids``, ``community_ids``, rank,
+        confidence): the merged entity is written back, and its attributes
+        decide the suffix it is written under.
 
         Default returns ``[]`` (no read-back) so an adapter that cannot or does
         not support reads simply falls back to overwrite-on-upsert. Adapters that
@@ -202,9 +208,17 @@ class GraphIndexer(BaseIndexer):
         """
         return []
 
-    def read_relationships(self, ids: list[str]) -> list[Relationship]:
+    def read_relationships(
+        self, ids: list[str], suffix: str | None = None
+    ) -> list[Relationship]:
         """Read existing relationships by id for cross-run merge. See
-        :meth:`read_entities`."""
+        :meth:`read_entities`.
+
+        Scoped to ``suffix``'s graph (``None`` is the default suffix), since
+        relationship ids are suffix-independent. Must return every field the
+        write path stores (type, endpoint names, ``text_unit_ids``, attributes):
+        the merge keys on ``(source, target, type)`` and the result is written
+        back."""
         return []
 
     def read_entity_names(self, suffix: str | None = None) -> list[tuple[str, str]]:

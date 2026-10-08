@@ -14,6 +14,7 @@ import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
+from unified_kg_rag.application.storage.indexing_manager import CrossRunMergeResult
 from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
 from unified_kg_rag.domain.models import Document, DocumentLineage, Entity
 from unified_kg_rag.ports.indexer import IndexingStats
@@ -34,10 +35,22 @@ class FakeIndexingManager:
     def __init__(self, max_failure_rate: float = 0.2) -> None:
         self.delta_calls: list[dict] = []
         self.delete_calls: list[dict] = []
+        self.strip_calls: list[tuple] = []
         self.config = _FakeIndexingCfg(max_failure_rate)
+
+    def merge_with_existing_graph(self, entities, relationships):
+        return CrossRunMergeResult(entities=entities, relationships=relationships)
 
     def index_delta(self, **kwargs) -> dict[str, IndexingStats]:
         self.delta_calls.append(kwargs)
+        return {}
+
+    def remove_text_units_from_shared(
+        self, suffix, *, entity_ids, relationship_ids, text_unit_ids
+    ) -> dict[str, IndexingStats]:
+        self.strip_calls.append(
+            (suffix, list(entity_ids), list(relationship_ids), list(text_unit_ids))
+        )
         return {}
 
     def delete_documents(self, ids_by_suffix) -> dict[str, IndexingStats]:

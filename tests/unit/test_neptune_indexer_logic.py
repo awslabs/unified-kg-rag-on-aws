@@ -11,8 +11,7 @@ non-upsert paths and pure helpers:
 * ``get_entity_count`` label construction + result coercion.
 * ``_group_items_by_suffix`` partitioning by item ``attributes["index"]``.
 * ``_build_vertex_properties`` (None drop, attribute_ prefix, truncation).
-* ``_truncate`` length clamping.
-* ``_set_edge_properties_on_traversal`` JSON serialization for list values.
+* ``neptune_codec`` truncation and JSON serialization for edge list values.
 
 NeptuneClient is patched so no real connection is made.
 """
@@ -23,7 +22,11 @@ import json
 
 import pytest
 
-from unified_kg_rag.domain.models import Community, Config, Entity
+from unified_kg_rag.adapters.storage.neptune_codec import (
+    property_value,
+    relationship_properties,
+)
+from unified_kg_rag.domain.models import Community, Config, Entity, Relationship
 
 pytestmark = pytest.mark.unit
 
@@ -350,64 +353,46 @@ def test_build_vertex_properties_serializes_dict_value(indexer) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# _truncate
+# neptune_codec.property_value (truncation)
 # --------------------------------------------------------------------------- #
 
 
-def test_truncate_clamps_overlong_string(indexer) -> None:
-    max_len = indexer.neptune_config.property_max_length
-    assert indexer._truncate("y" * (max_len * 2)) == "y" * max_len
+def test_property_value_clamps_overlong_string() -> None:
+    assert property_value("y" * 20, 10) == "y" * 10
 
 
-def test_truncate_passes_short_string_through(indexer) -> None:
-    assert indexer._truncate("short") == "short"
+def test_property_value_passes_short_string_and_non_strings_through() -> None:
+    assert property_value("short", 10) == "short"
+    assert property_value(42, 10) == 42
+    assert property_value(["a", "b"], 1) == ["a", "b"]
 
 
-def test_truncate_non_string_unchanged(indexer) -> None:
-    assert indexer._truncate(42) == 42
-    assert indexer._truncate(None) is None
+def test_property_value_never_truncates_serialized_json() -> None:
+    # A cut JSON string no longer parses, so the read-back would lose it.
+    value = {"region": "north", "tier": "gold"}
+    assert json.loads(property_value(value, 5)) == value
 
 
 # --------------------------------------------------------------------------- #
-# _set_edge_properties_on_traversal (JSON serialization for lists)
+# neptune_codec.relationship_properties (JSON serialization for lists)
 # --------------------------------------------------------------------------- #
 
 
-def test_set_edge_properties_skips_none(indexer) -> None:
-    recorded: list[tuple] = []
+def test_relationship_properties_skip_none() -> None:
+    rel = Relationship(id="r1", source_id="a", target_id="b", weight=0.5, rank=None)
+    assert relationship_properties(rel, 100) == {"weight": 0.5}
 
-    class ArgRecorder:
-        def property(self, *args, **kwargs):
-            recorded.append(args)
-            return self
 
-        def __getattr__(self, name):
-            return lambda *a, **k: self
-
-    indexer._set_edge_properties_on_traversal(
-        ArgRecorder(), {"weight": 0.5, "description": None}
+def test_relationship_properties_never_truncate_serialized_list() -> None:
+    rel = Relationship(
+        id="r1",
+        source_id="a",
+        target_id="b",
+        rank=None,
+        text_unit_ids=["aaaa", "bbbb", "cccc"],
     )
-    # None value is skipped; only weight is set.
-    assert recorded == [("weight", 0.5)]
-
-
-def test_set_edge_properties_truncates_serialized_list(indexer, mocker) -> None:
-    # The JSON-serialized list passes through _truncate; force a small cap.
-    mocker.patch.object(indexer.neptune_config, "property_max_length", 5)
-    recorded: list[tuple] = []
-
-    class ArgRecorder:
-        def property(self, *args, **kwargs):
-            recorded.append(args)
-            return self
-
-    indexer._set_edge_properties_on_traversal(
-        ArgRecorder(), {"text_unit_ids": ["aaaa", "bbbb", "cccc"]}
-    )
-    assert len(recorded) == 1
-    key, value = recorded[0]
-    assert key == "text_unit_ids"
-    assert len(value) == 5  # truncated
+    props = relationship_properties(rel, 5)
+    assert json.loads(props["text_unit_ids"]) == ["aaaa", "bbbb", "cccc"]
 
 
 # --------------------------------------------------------------------------- #

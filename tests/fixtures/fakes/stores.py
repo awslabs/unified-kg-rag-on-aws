@@ -13,7 +13,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from unified_kg_rag.ports.indexer import IndexingStats
+from unified_kg_rag.adapters.storage.neptune_codec import (
+    entity_from_vertex,
+    entity_properties,
+    relationship_from_edge,
+    relationship_label,
+    relationship_properties,
+)
+from unified_kg_rag.domain.models import Config, Constants
+from unified_kg_rag.ports.indexer import BaseIndexer, IndexingStats
 
 
 class _Recorder:
@@ -50,11 +58,39 @@ class _Recorder:
         return stats
 
 
-class FakeGraphStore(_Recorder):
-    """In-memory stand-in for the Neptune graph indexer."""
+class FakeGraphStore:
+    """In-memory stand-in for the Neptune graph indexer.
+
+    Stores what Neptune would hold, not the models: each entity is the
+    ``valueMap()`` of its vertex and each relationship is its edge (label,
+    endpoints, properties), both encoded by the REAL ``neptune_codec`` the
+    Neptune indexer writes with, and read back through the real decoders. A
+    lossy encode/decode pair therefore fails the AWS-free tests too. Items are
+    keyed by ``(suffix, id)``: ids are suffix-independent, and reads, deletes
+    and counts are scoped per suffix like the label-scoped Neptune traversals.
+
+    Neptune semantics kept: list properties of a vertex are set-cardinality
+    (distinct values, a re-upsert replaces the list), a property absent from an
+    upsert keeps its stored value, re-adding an edge replaces it, dropping a
+    vertex drops its incident edges, and a full ``index_entities`` first clears
+    the suffix's entity vertices.
+    """
+
+    def __init__(self, config: Config | None = None) -> None:
+        self._max_length = (config or Config()).indexing.neptune.property_max_length
+        # collection -> {(suffix, id): stored value map / edge row / model}
+        self.data: dict[str, dict[tuple[str, str], Any]] = {}
+
+    def close(self) -> None:
+        return None
+
+    def ids(self, collection: str) -> set[str]:
+        return {item_id for _, item_id in self.data.get(collection, {})}
 
     def clear(self, suffixes: list[str]) -> bool:
-        self.data.clear()
+        for bucket in self.data.values():
+            for key in [key for key in bucket if key[0] in suffixes]:
+                del bucket[key]
         return True
 
     def initialize(self) -> bool:
@@ -63,41 +99,118 @@ class FakeGraphStore(_Recorder):
     def get_stats(self) -> dict[str, Any]:
         return {k: len(v) for k, v in self.data.items()}
 
+    # --- writes ------------------------------------------------------------
+
     def index_entities(self, entities: list[Any] | None = None) -> IndexingStats:
-        return self._put("entities", entities)
-
-    def index_relationships(self, rels: list[Any] | None = None) -> IndexingStats:
-        return self._put("relationships", rels)
-
-    def index_communities(self, comms: list[Any] | None = None) -> IndexingStats:
-        return self._put("communities", comms)
+        for suffix in {BaseIndexer.get_suffix(e) for e in entities or []}:
+            self._drop_vertices(suffix, list(self.ids("entities")))
+        return self.upsert_entities(entities)
 
     def upsert_entities(self, entities: list[Any] | None = None) -> IndexingStats:
-        return self._put("entities", entities)
+        stats = IndexingStats(total_items=len(entities or []))
+        bucket = self.data.setdefault("entities", {})
+        for entity in entities or []:
+            value_map = bucket.setdefault(
+                (BaseIndexer.get_suffix(entity), entity.id), {"id": [entity.id]}
+            )
+            for key, value in entity_properties(entity, self._max_length).items():
+                values = value if isinstance(value, list) else [value]
+                value_map[key] = list(dict.fromkeys(values))
+            stats.add_success()
+        return stats
+
+    def index_relationships(self, rels: list[Any] | None = None) -> IndexingStats:
+        return self.upsert_relationships(rels)
 
     def upsert_relationships(self, rels: list[Any] | None = None) -> IndexingStats:
-        return self._put("relationships", rels)
+        stats = IndexingStats(total_items=len(rels or []))
+        bucket = self.data.setdefault("relationships", {})
+        for rel in rels or []:
+            bucket[(BaseIndexer.get_suffix(rel), rel.id)] = {
+                "props": {
+                    "id": rel.id,
+                    **relationship_properties(rel, self._max_length),
+                },
+                "label": relationship_label(rel),
+                "source_id": rel.source_id,
+                "target_id": rel.target_id,
+            }
+            stats.add_success()
+        return stats
+
+    def index_communities(self, comms: list[Any] | None = None) -> IndexingStats:
+        return self.upsert_communities(comms)
 
     def upsert_communities(self, comms: list[Any] | None = None) -> IndexingStats:
-        return self._put("communities", comms)
+        stats = IndexingStats(total_items=len(comms or []))
+        bucket = self.data.setdefault("communities", {})
+        for comm in comms or []:
+            bucket[(BaseIndexer.get_suffix(comm), comm.id)] = comm
+            stats.add_success()
+        return stats
 
     def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
-        return self.delete(ids)
+        stats = IndexingStats(total_items=len(ids))
+        suffixes = (
+            [suffix]
+            if suffix is not None
+            else sorted({s for bucket in self.data.values() for s, _ in bucket})
+        )
+        for scope in suffixes:
+            edges = self.data.get("relationships", {})
+            for item_id in ids:
+                edges.pop((scope, item_id), None)
+            self._drop_vertices(scope, ids)
+        stats.add_success(len(ids))
+        return stats
+
+    def _drop_vertices(self, suffix: str, ids: list[str]) -> None:
+        dropped = set(ids)
+        for collection in ("entities", "communities"):
+            bucket = self.data.get(collection, {})
+            for item_id in dropped:
+                bucket.pop((suffix, item_id), None)
+        edges = self.data.get("relationships", {})
+        for key in [
+            key
+            for key, edge in edges.items()
+            if key[0] == suffix
+            and (edge["source_id"] in dropped or edge["target_id"] in dropped)
+        ]:
+            del edges[key]
+
+    # --- reads ---------------------------------------------------------------
 
     def get_entity_count(self, suffixes: list[str]) -> int:
-        return len(self.data.get("entities", {}))
+        return sum(1 for s, _ in self.data.get("entities", {}) if s in suffixes)
 
-    def read_entities(self, ids: list[str]) -> list[Any]:
+    def read_entities(self, ids: list[str], suffix: str | None = None) -> list[Any]:
         bucket = self.data.get("entities", {})
-        return [bucket[i] for i in ids if i in bucket]
+        scope = suffix or Constants.DEFAULT_SUFFIX.value
+        rows = [bucket[(scope, i)] for i in ids if (scope, i) in bucket]
+        return [e for e in (entity_from_vertex(row) for row in rows) if e]
 
-    def read_relationships(self, ids: list[str]) -> list[Any]:
+    def read_relationships(
+        self, ids: list[str], suffix: str | None = None
+    ) -> list[Any]:
         bucket = self.data.get("relationships", {})
-        return [bucket[i] for i in ids if i in bucket]
+        scope = suffix or Constants.DEFAULT_SUFFIX.value
+        rows = [bucket[(scope, i)] for i in ids if (scope, i) in bucket]
+        rels = (
+            relationship_from_edge(
+                row["props"], row["label"], row["source_id"], row["target_id"]
+            )
+            for row in rows
+        )
+        return [r for r in rels if r]
 
     def read_entity_names(self, suffix: str | None = None) -> list[tuple[str, str]]:
-        bucket = self.data.get("entities", {})
-        return [(e.id, e.name) for e in bucket.values()]
+        scope = suffix or Constants.DEFAULT_SUFFIX.value
+        return [
+            (item_id, row["name"][0])
+            for (s, item_id), row in self.data.get("entities", {}).items()
+            if s == scope
+        ]
 
     def find_incident_relationship_ids(
         self, entity_ids: list[str], suffix: str | None = None
@@ -105,15 +218,14 @@ class FakeGraphStore(_Recorder):
         # Model the real contract: ids of stored relationships whose source or
         # target endpoint is one of the given entities (these become orphaned
         # when the entity is deleted).
-        if not entity_ids:
-            return []
         targets = set(entity_ids)
-        bucket = self.data.get("relationships", {})
         return sorted(
-            rid
-            for rid, rel in bucket.items()
-            if getattr(rel, "source_id", None) in targets
-            or getattr(rel, "target_id", None) in targets
+            {
+                item_id
+                for (s, item_id), edge in self.data.get("relationships", {}).items()
+                if (suffix is None or s == suffix)
+                and (edge["source_id"] in targets or edge["target_id"] in targets)
+            }
         )
 
 

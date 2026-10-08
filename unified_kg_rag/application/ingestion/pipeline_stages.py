@@ -39,6 +39,8 @@ from unified_kg_rag.domain.models import (
     Config,
     Constants,
     Document,
+    DocumentDelta,
+    DocumentLineage,
     Entity,
     PipelineContext,
     PipelineStageResult,
@@ -50,6 +52,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.shared import PipelineStageError, get_logger
 
 if TYPE_CHECKING:
+    from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
     from unified_kg_rag.ports import DocStatusPort
 
 logger = get_logger(__name__)
@@ -371,10 +374,26 @@ class DocumentLoadingStage(PipelineStage):
             from unified_kg_rag.domain.ingestion.delta_detector import (
                 detect_delta,
                 filter_documents_to_process,
+                fingerprint_documents,
             )
 
-            store = self._build_doc_status_store()
             scope, failed_doc_ids = self._registry_scope(context)
+            if self.config.indexing.reset:
+                # A reset clears the stores and the registry before indexing, so
+                # every document is new: diffing against the registry here would
+                # rebuild from the delta alone and lose the unchanged documents.
+                fingerprints = fingerprint_documents(documents)
+                context.incremental_delta = DocumentDelta(new=list(fingerprints))
+                context.incremental_fingerprints = fingerprints
+                context.incremental_scope = scope
+                logger.info(
+                    "Incremental filter skipped (indexing.reset): processing all "
+                    "%d documents",
+                    len(documents),
+                )
+                return documents, 0
+
+            store = self._build_doc_status_store()
             delta, fingerprints = detect_delta(
                 documents, store, scope=scope, failed_doc_ids=failed_doc_ids
             )
@@ -1319,6 +1338,25 @@ class IndexingStage(PipelineStage):
                 community_reports=community_reports,
                 claims=claims,
             )
+            if context.incremental_delta is not None:
+                # Reset with the registry enabled: the registry was cleared with
+                # the stores, so record the rebuilt corpus for the next delta run.
+                incremental = self._incremental_indexer(context, text_units)
+                incremental.record(
+                    self._document_lineages(
+                        context,
+                        incremental.suffix,
+                        text_units,
+                        entities,
+                        relationships,
+                        communities,
+                        community_reports,
+                        claims,
+                    ),
+                    context.incremental_fingerprints,
+                    indexing_results,
+                    self._documents_with_failed_units(context, text_units),
+                )
 
         total_indexed = sum(
             stats.successful_items for stats in indexing_results.values()
@@ -1375,12 +1413,6 @@ class IndexingStage(PipelineStage):
         extracted delta is upserted and the registry updated with per-document
         lineage so subsequent runs diff correctly.
         """
-        from unified_kg_rag.application.ingestion.incremental import (
-            IncrementalIndexer,
-            build_document_lineage,
-        )
-        from unified_kg_rag.ports.indexer import BaseIndexer
-
         delta = context.incremental_delta
         if delta is None:  # defensive; caller already guards
             return self.indexing_manager.index_all_data(
@@ -1391,20 +1423,7 @@ class IndexingStage(PipelineStage):
                 community_reports=community_reports,
                 claims=claims,
             )
-        store = self._build_doc_status_store()
-        # Artifacts carry their own index suffix (multi-tenant/version aware);
-        # derive the run's suffix from the text units the same way the indexers do.
-        suffix = (
-            BaseIndexer.get_suffix(text_units[0])
-            if text_units
-            else Constants.DEFAULT_SUFFIX.value
-        )
-        incremental = IncrementalIndexer(
-            store,
-            self.indexing_manager,
-            suffix=suffix,
-            scope=context.incremental_scope,
-        )
+        incremental = self._incremental_indexer(context, text_units)
 
         # Drop stale artifacts of changed docs (before re-upsert) and of deleted
         # docs. A failed prune must stop the run before commit: committing would
@@ -1419,15 +1438,15 @@ class IndexingStage(PipelineStage):
             )
         deleted_removed = incremental.remove_deleted(delta)
 
-        lineages = build_document_lineage(
-            documents=context.documents,
-            text_units=text_units,
-            entities=entities,
-            relationships=relationships,
-            communities=communities,
-            claims=claims,
-            community_reports=community_reports,
-            suffix=suffix,
+        lineages = self._document_lineages(
+            context,
+            incremental.suffix,
+            text_units,
+            entities,
+            relationships,
+            communities,
+            community_reports,
+            claims,
         )
         results = incremental.commit(
             lineages=lineages,
@@ -1466,6 +1485,54 @@ class IndexingStage(PipelineStage):
             for document in context.documents
             if document.document_id in run_document_ids
         }
+
+    def _incremental_indexer(
+        self, context: PipelineContext, text_units: list[TextUnit]
+    ) -> "IncrementalIndexer":
+        from unified_kg_rag.application.ingestion.incremental import (
+            IncrementalIndexer,
+        )
+        from unified_kg_rag.ports.indexer import BaseIndexer
+
+        # Artifacts carry their own index suffix (multi-tenant/version aware);
+        # derive the run's suffix from the text units the same way the indexers do.
+        suffix = (
+            BaseIndexer.get_suffix(text_units[0])
+            if text_units
+            else Constants.DEFAULT_SUFFIX.value
+        )
+        return IncrementalIndexer(
+            self._build_doc_status_store(),
+            self.indexing_manager,
+            suffix=suffix,
+            scope=context.incremental_scope,
+        )
+
+    @staticmethod
+    def _document_lineages(
+        context: PipelineContext,
+        suffix: str,
+        text_units: list[TextUnit],
+        entities: list[Entity],
+        relationships: list[Relationship],
+        communities: list[Community],
+        community_reports: list[CommunityReport],
+        claims: list[Claim],
+    ) -> list[DocumentLineage]:
+        from unified_kg_rag.application.ingestion.incremental import (
+            build_document_lineage,
+        )
+
+        return build_document_lineage(
+            documents=context.documents,
+            text_units=text_units,
+            entities=entities,
+            relationships=relationships,
+            communities=communities,
+            claims=claims,
+            community_reports=community_reports,
+            suffix=suffix,
+        )
 
     def _validate_backend_success(self, indexing_results: dict[str, Any]) -> None:
         # 1) Per-index-type validation: fail if any individual index type failed
