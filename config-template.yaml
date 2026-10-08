@@ -68,9 +68,8 @@ aws:
     # differs from default_model_id) uses fast_effort, every other call uses
     # default_effort. The shipped fast model (Claude Haiku 4.5) does not reason
     # on these calls, so fast_effort only matters once fast_model_id is an
-    # adaptive-thinking or GPT model. The older single `effort` key still works
-    # as an alias for default_effort (deprecated; default_effort wins if both
-    # are set).
+    # adaptive-thinking or GPT model. The former `effort` key is migrated to
+    # default_effort with a deprecation warning.
     default_effort: "high"
     fast_effort: "low"
     # Amazon Bedrock Guardrails (WAF security pillar). Disabled unless an

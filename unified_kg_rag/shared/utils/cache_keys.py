@@ -138,16 +138,11 @@ _STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
 }
 
 
-def _effective_default_effort(config: Config) -> Any:
-    return config.aws.bedrock.tier_effort("default")
-
-
 # Paths fingerprinted by a derived value instead of the raw attribute.
-# "aws.bedrock.effort" stands for the default tier's effective effort (the
-# legacy key or default_effort), so an unchanged configuration keeps the key
-# it had before effort was split per tier.
+# "aws.bedrock.effort" (the deprecated name of default_effort) stands for the
+# default tier's effort, so an unchanged configuration keeps its cache key.
 _DERIVED_PATHS: dict[str, Callable[[Config], Any]] = {
-    "aws.bedrock.effort": _effective_default_effort,
+    "aws.bedrock.effort": lambda config: config.aws.bedrock.default_effort,
 }
 
 

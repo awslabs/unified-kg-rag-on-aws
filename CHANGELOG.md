@@ -209,6 +209,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   metric series per ingestion run. Pass `CloudWatchEMFSink(dimension_keys=...)`
   for stable dimensions. EMF lines now go to stdout, as the help text and docs
   already said (they went to stderr) (#158).
+- `aws.bedrock.effort` is migrated to `aws.bedrock.default_effort` with a
+  deprecation WARNING like the other renamed keys, instead of living on as a
+  config field; stage cache keys are unchanged. **Breaking** for library
+  callers: the `BedrockConfig.effort` attribute is removed (#PR).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).

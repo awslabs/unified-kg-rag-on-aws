@@ -430,13 +430,6 @@ class BedrockConfig(BaseModel):
             "fast_model_id is an adaptive-thinking or GPT model."
         ),
     )
-    effort: EffortLevel | None = Field(
-        default=None,
-        description=(
-            "Deprecated alias for default_effort, kept for existing configs. "
-            "Used only when default_effort is not set."
-        ),
-    )
     guardrail: GuardrailConfig = Field(
         default_factory=GuardrailConfig,
         description="Amazon Bedrock Guardrails configuration (disabled unless identifier set)",
@@ -446,15 +439,6 @@ class BedrockConfig(BaseModel):
         description="Retry for embedding and query-time LLM calls on transient "
         "Bedrock errors",
     )
-
-    @model_validator(mode="after")
-    def _apply_legacy_effort(self) -> "BedrockConfig":
-        # Mirror the legacy key into default_effort so a dumped config reloads
-        # with the same effort. Written through __dict__ to stay out of
-        # model_fields_set, as tier_effort reads that to pick the winner.
-        if self.effort is not None and "default_effort" not in self.model_fields_set:
-            self.__dict__["default_effort"] = self.effort
-        return self
 
     def model_tier(self, model_id: str) -> ModelTier:
         """Tier a call on ``model_id`` belongs to, for picking its effort.
@@ -469,16 +453,8 @@ class BedrockConfig(BaseModel):
         return "default"
 
     def tier_effort(self, tier: ModelTier) -> EffortLevel:
-        """Configured effort for ``tier``, honouring the legacy ``effort`` key.
-
-        Resolved on read as well as at validation, so assigning ``effort`` or
-        ``default_effort`` after construction behaves the same way.
-        """
-        if tier == "fast":
-            return self.fast_effort
-        if self.effort is not None and "default_effort" not in self.model_fields_set:
-            return self.effort
-        return self.default_effort
+        """Configured effort for ``tier``."""
+        return self.fast_effort if tier == "fast" else self.default_effort
 
 
 class NeptuneConfig(BaseModel):
@@ -2616,6 +2592,7 @@ def _retries_to_attempts(value: Any) -> Any:
 # Every *max_attempts knob counts total attempts, including the first.
 LEGACY_CONFIG_KEYS: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "search.llm_retry": ("aws.bedrock.transient_retry", lambda value: value),
+    "aws.bedrock.effort": ("aws.bedrock.default_effort", lambda value: value),
     "processing.max_retries": ("processing.max_attempts", lambda value: value),
     "indexing.neptune.max_retries": (
         "indexing.neptune.max_attempts",
