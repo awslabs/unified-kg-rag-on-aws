@@ -5,10 +5,11 @@
 Ports Microsoft GraphRAG's ``index/update/*`` merge semantics to operate on
 unified-kg-rag-on-aws's Pydantic domain models (no pandas):
 
-- entities merge by name (natural key): concatenate descriptions, union
-  ``text_unit_ids``, recompute frequency/rank.
-- relationships merge by (source, target): union ``text_unit_ids``, average
-  weight.
+- entities merge by identity key (``entity_key``): union description lines,
+  ``text_unit_ids``, ``community_ids`` and attributes; recompute frequency;
+  keep the max rank/confidence.
+- relationships merge by (source, target, type): union description lines,
+  ``text_unit_ids`` and attributes; weight = number of supporting text units.
 - communities/reports: id-offset append (MS never re-clusters globally on an
   incremental run; new communities are appended, not merged into existing ones).
 
@@ -22,6 +23,8 @@ from .merger import (
     merge_community_reports,
     merge_entities,
     merge_relationships,
+    relationship_id_remap,
+    remove_text_units,
 )
 
 __all__ = [
@@ -30,4 +33,6 @@ __all__ = [
     "merge_community_reports",
     "merge_entities",
     "merge_relationships",
+    "relationship_id_remap",
+    "remove_text_units",
 ]

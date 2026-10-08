@@ -24,6 +24,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
     build_document_lineage,
 )
+from unified_kg_rag.application.storage.indexing_manager import CrossRunMergeResult
 from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
 from unified_kg_rag.domain.ingestion.merge import (
     merge_communities,
@@ -61,10 +62,22 @@ class FakeIndexingManager:
     def __init__(self, max_failure_rate: float = 0.2) -> None:
         self.delta_calls: list[dict] = []
         self.delete_calls: list[dict] = []
+        self.strip_calls: list[tuple] = []
         self.config = _FakeIndexingCfg(max_failure_rate)
+
+    def merge_with_existing_graph(self, entities, relationships):
+        return CrossRunMergeResult(entities=entities, relationships=relationships)
 
     def index_delta(self, **kwargs) -> dict[str, IndexingStats]:
         self.delta_calls.append(kwargs)
+        return {}
+
+    def remove_text_units_from_shared(
+        self, suffix, *, entity_ids, relationship_ids, text_unit_ids
+    ) -> dict[str, IndexingStats]:
+        self.strip_calls.append(
+            (suffix, list(entity_ids), list(relationship_ids), list(text_unit_ids))
+        )
         return {}
 
     def delete_documents(self, ids_by_suffix) -> dict[str, IndexingStats]:
@@ -486,6 +499,8 @@ class TestCombinations:
         deleted = _all_deleted_ids(manager)
         assert "e_bob" in deleted
         assert "e_alice" not in deleted
+        # The kept 'alice' loses the deleted doc's chunk t1.
+        assert manager.strip_calls == [("default", ["e_alice"], [], ["t1"])]
         # Surviving record's lineage still references alice.
         surviving = store.get(compute_doc_id("/b.txt"))
         assert surviving is not None and "e_alice" in surviving.entity_ids

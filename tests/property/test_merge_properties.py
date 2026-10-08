@@ -135,7 +135,7 @@ def _relationships(draw, prefix: str) -> list[Relationship]:
 
 def _rel_key(r: Relationship) -> tuple[str, str, str]:
     # Mirror merge_relationships._key exactly (no entity_id_remap in these tests).
-    return (r.source_id, r.target_id, (r.type or "").strip().lower())
+    return (r.source_id, r.target_id, (r.type or "RELATED_TO").strip().lower())
 
 
 @given(old=_relationships("o"), delta=_relationships("d"))

@@ -10,13 +10,15 @@ references stay stable.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Collection
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.domain.models import (
     Community,
     CommunityReport,
+    Constants,
     Entity,
     Relationship,
 )
@@ -52,12 +54,32 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
 
 
 def _merge_descriptions(old: str | None, new: str | None) -> str | None:
-    """Combine two descriptions, dropping duplicates and empties."""
-    parts = [p for p in (old, new) if p]
-    if not parts:
+    """Combine two descriptions, dropping duplicate and blank lines.
+
+    A stored description is the newline join of earlier merges, so the dedupe
+    compares lines: comparing whole strings would append a re-applied delta's
+    description again on every run.
+    """
+    lines = [
+        line for part in (old, new) if part for line in part.split("\n") if line.strip()
+    ]
+    if not lines:
         return None
-    deduped = _dedupe_preserve_order(parts)
-    return "\n".join(deduped)
+    return "\n".join(_dedupe_preserve_order(lines))
+
+
+def _merge_attributes(
+    old: dict[str, Any] | None, new: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """Union two attribute maps, the newer value winning on a shared key.
+
+    Same rule as the full-build resolver's ``_merge_attributes``. Attributes
+    carry the index suffix the item is written under, so dropping them would
+    move a merged item into the default suffix.
+    """
+    if not old and not new:
+        return None
+    return {**(old or {}), **(new or {})}
 
 
 def _merge_entity_fields(surviving: Entity, incoming: Entity) -> None:
@@ -66,11 +88,12 @@ def _merge_entity_fields(surviving: Entity, incoming: Entity) -> None:
     Shared by the exact-name and fuzzy-match paths so both converge to the same
     field semantics as the full-build resolver (``EntityResolver._merge_entities``):
     description union, text-unit/community-id union, frequency = #text-units,
-    max confidence/rank, first-known type.
+    max confidence/rank, first-known type, attribute union.
     """
     surviving.description = _merge_descriptions(
         surviving.description, incoming.description
     )
+    surviving.attributes = _merge_attributes(surviving.attributes, incoming.attributes)
     surviving.text_unit_ids = _dedupe_preserve_order(
         (surviving.text_unit_ids or []) + (incoming.text_unit_ids or [])
     )
@@ -201,6 +224,23 @@ def _relationship_weight(rel: Relationship, supporting_text_units: list[str]) ->
     return rel.weight if rel.weight is not None else 1.0
 
 
+def _remapped_endpoints(
+    rel: Relationship, entity_id_remap: dict[str, str]
+) -> tuple[str, str]:
+    return entity_id_remap.get(rel.source_id, rel.source_id), entity_id_remap.get(
+        rel.target_id, rel.target_id
+    )
+
+
+def _relationship_key(
+    source_id: str, target_id: str, rel: Relationship
+) -> tuple[str, str, str]:
+    # An untyped relationship is stored (and read back) as the default type,
+    # so both forms must share a key.
+    rel_type = rel.type or Constants.DEFAULT_RELATIONSHIP_TYPE.value
+    return source_id, target_id, rel_type.strip().lower()
+
+
 def merge_relationships(
     old: list[Relationship],
     delta: list[Relationship],
@@ -223,15 +263,6 @@ def merge_relationships(
     edges and would otherwise diverge from this path.
     """
     remap = entity_id_remap or {}
-
-    def _endpoints(rel: Relationship) -> tuple[str, str]:
-        return remap.get(rel.source_id, rel.source_id), remap.get(
-            rel.target_id, rel.target_id
-        )
-
-    def _key(source_id: str, target_id: str, rel: Relationship) -> tuple[str, str, str]:
-        return source_id, target_id, (rel.type or "").strip().lower()
-
     by_key: dict[tuple[str, str, str], Relationship] = {}
 
     for rel in old:
@@ -242,16 +273,16 @@ def merge_relationships(
             continue
         existing = rel.model_copy(deep=True)
         existing.weight = _relationship_weight(existing, existing.text_unit_ids or [])
-        by_key[_key(rel.source_id, rel.target_id, rel)] = existing
+        by_key[_relationship_key(rel.source_id, rel.target_id, rel)] = existing
 
     for rel in delta:
-        source_id, target_id = _endpoints(rel)
+        source_id, target_id = _remapped_endpoints(rel, remap)
         if source_id == target_id:
             # Either an inherent self-loop or one the remap created by collapsing
             # both endpoints onto one entity; the full-build resolver drops these,
             # so the incremental path must too.
             continue
-        key = _key(source_id, target_id, rel)
+        key = _relationship_key(source_id, target_id, rel)
         match = by_key.get(key)
         if match is None:
             new_rel = rel.model_copy(deep=True)
@@ -262,6 +293,7 @@ def merge_relationships(
             continue
 
         match.description = _merge_descriptions(match.description, rel.description)
+        match.attributes = _merge_attributes(match.attributes, rel.attributes)
         match.text_unit_ids = _dedupe_preserve_order(
             (match.text_unit_ids or []) + (rel.text_unit_ids or [])
         )
@@ -275,6 +307,65 @@ def merge_relationships(
         len(merged),
     )
     return merged
+
+
+def relationship_id_remap(
+    delta: list[Relationship],
+    merged: list[Relationship],
+    entity_id_remap: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Map each delta relationship id to the id :func:`merge_relationships` kept.
+
+    A delta edge that merged into an existing edge (same remapped source,
+    target and type) survives under the existing edge's id; callers recording
+    lineage need that id, not the delta's. Self-loops the merge dropped have
+    no entry.
+    """
+    remap = entity_id_remap or {}
+    kept = {_relationship_key(r.source_id, r.target_id, r): r.id for r in merged}
+    result: dict[str, str] = {}
+    for rel in delta:
+        source_id, target_id = _remapped_endpoints(rel, remap)
+        kept_id = kept.get(_relationship_key(source_id, target_id, rel))
+        if kept_id is not None and kept_id != rel.id:
+            result[rel.id] = kept_id
+    return result
+
+
+def remove_text_units(
+    entities: list[Entity],
+    relationships: list[Relationship],
+    text_unit_ids: Collection[str],
+) -> tuple[list[Entity], list[Relationship]]:
+    """Strip removed text units from kept artifacts, recomputing derived counts.
+
+    Used when a changed or deleted document's artifacts are shared with
+    surviving documents: they stay, but must stop citing the removed chunks.
+    Returns updated copies of only the items that referenced one of
+    ``text_unit_ids``. Frequency and weight follow the same rules as the merge
+    (number of supporting text units). Descriptions are left as they are:
+    removing a document's contribution would need an LLM re-summary.
+    """
+    removed = set(text_unit_ids)
+    updated_entities: list[Entity] = []
+    for entity in entities:
+        if removed.isdisjoint(entity.text_unit_ids or []):
+            continue
+        kept = [t for t in entity.text_unit_ids or [] if t not in removed]
+        updated_entities.append(
+            entity.model_copy(
+                deep=True, update={"text_unit_ids": kept, "frequency": len(kept)}
+            )
+        )
+    updated_relationships: list[Relationship] = []
+    for rel in relationships:
+        if removed.isdisjoint(rel.text_unit_ids or []):
+            continue
+        kept = [t for t in rel.text_unit_ids or [] if t not in removed]
+        updated = rel.model_copy(deep=True, update={"text_unit_ids": kept})
+        updated.weight = _relationship_weight(updated, kept)
+        updated_relationships.append(updated)
+    return updated_entities, updated_relationships
 
 
 def _community_content_key(community: Community) -> tuple:

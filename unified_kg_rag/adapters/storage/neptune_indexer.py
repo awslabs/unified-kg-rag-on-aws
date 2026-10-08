@@ -1,6 +1,5 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-import json
 import random
 import time
 from collections.abc import Callable, Iterator
@@ -16,10 +15,17 @@ from gremlin_python.process.traversal import Cardinality, P
 
 from unified_kg_rag.adapters.aws import NeptuneClient
 from unified_kg_rag.adapters.aws.neptune import is_permanent_neptune_error
+from unified_kg_rag.adapters.storage.neptune_codec import (
+    entity_from_vertex,
+    entity_properties,
+    item_properties,
+    relationship_from_edge,
+    relationship_label,
+    relationship_properties,
+)
 from unified_kg_rag.domain.models import (
     Community,
     Config,
-    Constants,
     Entity,
     Relationship,
 )
@@ -94,78 +100,81 @@ class NeptuneIndexer(GraphIndexer):
             return {}
         return stats
 
-    def read_entities(self, ids: list[str]) -> list[Entity]:
+    def read_entities(self, ids: list[str], suffix: str | None = None) -> list[Entity]:
         """Read existing entities by id for cross-run merge (best-effort).
 
-        Returns ``[]`` on any error so cross-run merge degrades to overwrite
-        rather than failing the run. Reconstructs only the fields the merge needs
-        (id/name/description/text_unit_ids/frequency/type). Requires real
-        Neptune; validated under the ``aws`` test marker.
+        Scoped to this suffix's entity label: entity ids are suffix-independent,
+        so an unscoped read could return another tenant's vertex. Inverts the
+        vertex encoding (``neptune_codec``), attributes included, so a merged
+        entity is written back under its own suffix. Returns ``[]`` on any
+        error so cross-run merge degrades to overwrite.
         """
         if not ids:
             return []
+        entity_label = self._get_name(
+            self.neptune_config.entity_label_prefix.capitalize(), suffix
+        )
         try:
             g = self.neptune_client.g
-            rows = g.V().has("id", P.within(ids)).valueMap(True).toList()
-            entities = []
-            for row in rows:
-                props = self._flatten_value_map(row)
-                if "id" not in props or "name" not in props:
-                    continue
-                entities.append(
-                    Entity.model_validate(
-                        {
-                            "id": str(props["id"]),
-                            "name": str(props["name"]),
-                            "type": props.get("type"),
-                            "description": props.get("description"),
-                            "text_unit_ids": self._as_list(props.get("text_unit_ids")),
-                            "frequency": props.get("frequency"),
-                        }
-                    )
+            entities: list[Entity] = []
+            for id_batch in self._batch_iterator(ids):
+                rows = (
+                    g.V()
+                    .hasLabel(entity_label)
+                    .has("id", P.within(id_batch))
+                    .valueMap()
+                    .toList()
                 )
+                for row in rows:
+                    entity = entity_from_vertex(row)
+                    if entity is not None:
+                        entities.append(entity)
             return entities
         except Exception as e:  # noqa: BLE001 - degrade to overwrite
             logger.warning("read_entities failed (%s); cross-run merge disabled", e)
             return []
 
-    def read_relationships(self, ids: list[str]) -> list[Relationship]:
-        """Read existing relationships by id for cross-run merge (best-effort)."""
+    def read_relationships(
+        self, ids: list[str], suffix: str | None = None
+    ) -> list[Relationship]:
+        """Read existing relationships by id for cross-run merge (best-effort).
+
+        Scoped to edges leaving this suffix's entity label (relationship ids are
+        suffix-independent). Inverts the edge encoding (``neptune_codec``): the
+        type is the edge label and list properties are JSON strings. Returns
+        ``[]`` on any error so cross-run merge degrades to overwrite.
+        """
         if not ids:
             return []
+        entity_label = self._get_name(
+            self.neptune_config.entity_label_prefix.capitalize(), suffix
+        )
         try:
             g = self.neptune_client.g
-            # source_id/target_id are edge TOPOLOGY (endpoint vertex ids), not
-            # edge properties, so valueMap() does not contain them. Project the
-            # edge's own properties alongside the endpoint vertex ids.
-            rows = (
-                g.E()
-                .has("id", P.within(ids))
-                .project("props", "source_id", "target_id")
-                .by(__.valueMap(True))
-                .by(__.outV().values("id"))
-                .by(__.inV().values("id"))
-                .toList()
-            )
-            rels = []
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                props = self._flatten_value_map(row.get("props"))
-                if "id" not in props:
-                    continue
-                rels.append(
-                    Relationship.model_validate(
-                        {
-                            "id": str(props["id"]),
-                            "source_id": str(row.get("source_id")),
-                            "target_id": str(row.get("target_id")),
-                            "description": props.get("description"),
-                            "weight": props.get("weight"),
-                            "text_unit_ids": self._as_list(props.get("text_unit_ids")),
-                        }
-                    )
+            rels: list[Relationship] = []
+            for id_batch in self._batch_iterator(ids):
+                # source_id/target_id are edge TOPOLOGY (endpoint vertex ids)
+                # and the type is the edge label, so neither is in valueMap().
+                rows = (
+                    g.E()
+                    .has("id", P.within(id_batch))
+                    .where(__.outV().hasLabel(entity_label))
+                    .project("props", "label", "source_id", "target_id")
+                    .by(__.valueMap())
+                    .by(__.label())
+                    .by(__.outV().values("id"))
+                    .by(__.inV().values("id"))
+                    .toList()
                 )
+                for row in rows:
+                    rel = relationship_from_edge(
+                        row.get("props") or {},
+                        str(row.get("label")),
+                        row.get("source_id"),
+                        row.get("target_id"),
+                    )
+                    if rel is not None:
+                        rels.append(rel)
             return rels
         except Exception as e:  # noqa: BLE001 - degrade to overwrite
             logger.warning(
@@ -204,28 +213,6 @@ class NeptuneIndexer(GraphIndexer):
             )
             return []
 
-    @staticmethod
-    def _flatten_value_map(row: Any) -> dict[str, Any]:
-        """Gremlin valueMap returns {key: [value]}; flatten single-element lists."""
-        if not isinstance(row, dict):
-            return {}
-        flat: dict[str, Any] = {}
-        for key, value in row.items():
-            k = str(key)
-            if isinstance(value, list):
-                flat[k] = value[0] if len(value) == 1 else value
-            else:
-                flat[k] = value
-        return flat
-
-    @staticmethod
-    def _as_list(value: Any) -> list[str] | None:
-        if value is None:
-            return None
-        if isinstance(value, list):
-            return [str(v) for v in value]
-        return [str(value)]
-
     def initialize(self) -> bool:
         return True
 
@@ -234,17 +221,8 @@ class NeptuneIndexer(GraphIndexer):
             def builder(g: GraphTraversalSource, batch: list[Entity]) -> GraphTraversal:
                 t = g
                 for entity in batch:
-                    props = self._build_vertex_properties(
-                        entity,
-                        {
-                            "name": entity.name,
-                            "type": entity.type,
-                            "description": entity.description,
-                            "rank": entity.rank,
-                            "confidence": entity.confidence,
-                            "text_unit_ids": entity.text_unit_ids,
-                            "community_ids": entity.community_ids,
-                        },
+                    props = entity_properties(
+                        entity, self.neptune_config.property_max_length
                     )
                     v_traversal = t.add_v(label).property("id", entity.id)
                     self._add_properties_to_traversal(v_traversal, props)
@@ -404,17 +382,8 @@ class NeptuneIndexer(GraphIndexer):
             def builder(g: GraphTraversalSource, batch: list[Entity]) -> GraphTraversal:
                 t = g
                 for entity in batch:
-                    props = self._build_vertex_properties(
-                        entity,
-                        {
-                            "name": entity.name,
-                            "type": entity.type,
-                            "description": entity.description,
-                            "rank": entity.rank,
-                            "confidence": entity.confidence,
-                            "text_unit_ids": entity.text_unit_ids,
-                            "community_ids": entity.community_ids,
-                        },
+                    props = entity_properties(
+                        entity, self.neptune_config.property_max_length
                     )
                     v_traversal = (
                         t.V()
@@ -459,27 +428,21 @@ class NeptuneIndexer(GraphIndexer):
         small standalone traversal (measured ~1.7 s/edge vs ~7 ms/edge on a real
         cluster), so a real corpus's tens of thousands of edges effectively never
         finished. Each edge as its own traversal keeps the cost linear.
+
+        Edge properties take no cardinality (Neptune rejects it) and hold one
+        value each, so ``relationship_properties`` serializes lists to JSON.
         """
-        props = self._build_vertex_properties(
-            rel,
-            {
-                "source_name": rel.source_name,
-                "target_name": rel.target_name,
-                "weight": rel.weight,
-                "description": rel.description,
-                "rank": rel.rank,
-                "text_unit_ids": rel.text_unit_ids,
-            },
-        )
         add_edge = (
             g.V()
             .hasLabel(entity_label)
             .has("id", rel.source_id)
-            .addE(rel.type or "RELATED_TO")
+            .addE(relationship_label(rel))
             .to(__.V().hasLabel(entity_label).has("id", rel.target_id))
             .property("id", rel.id)
         )
-        self._set_edge_properties_on_traversal(add_edge, props)
+        props = relationship_properties(rel, self.neptune_config.property_max_length)
+        for key, value in props.items():
+            add_edge.property(key, value)
         # Return the new edge's id: with no source vertex addE gets no traverser
         # and raises nothing (a missing target does raise), so an empty result
         # is the only sign of a dropped edge.
@@ -687,66 +650,11 @@ class NeptuneIndexer(GraphIndexer):
             else:
                 traversal.property(Cardinality.single, key, value)
 
-    def _set_edge_properties_on_traversal(
-        self, traversal: GraphTraversal, props: dict[str, Any]
-    ) -> None:
-        """Set properties on an EDGE traversal.
-
-        Neptune edge properties differ from vertex properties in two ways that
-        make the vertex helpers (:meth:`_add_properties_to_traversal` /
-        :meth:`_set_properties_on_traversal`) unsafe here:
-
-        1. Cardinality (``single``/``set``) may NOT be specified for edge
-           properties — doing so raises ``UnsupportedOperationException``
-           ("Cardinality specification may not be used with Edge properties").
-        2. Edges cannot hold multi-valued properties at all, so a list (e.g.
-           ``text_unit_ids``) must be serialized to a single JSON string rather
-           than emitted as repeated ``property(key, item)`` calls (which on a
-           vertex create a multi-property but on an edge silently keep only the
-           last value).
-
-        Edge ``id`` is always single-valued and is set positionally; re-running
-        an upsert overwrites a scalar in place, so no explicit cardinality is
-        needed for idempotency.
-        """
-        for key, value in props.items():
-            if value is None:
-                continue
-            if isinstance(value, list):
-                serialized = self._truncate(json.dumps(value))
-                traversal.property(key, serialized)
-            else:
-                traversal.property(key, value)
-
     def _build_vertex_properties(
         self, item: Any, base_props: dict[str, Any]
     ) -> dict[str, Any]:
-        properties = {
-            k: self._safe_property_value(v)
-            for k, v in base_props.items()
-            if v is not None
-        }
-        if hasattr(item, "attributes") and item.attributes:
-            for key, value in item.attributes.items():
-                if value is not None:
-                    properties[f"{Constants.ATTRIBUTE_PREFIX.value}_{key}"] = (
-                        self._safe_property_value(value)
-                    )
-        return properties
-
-    def _safe_property_value(self, value: Any) -> Any:
-        if value is None:
-            return None
-        if isinstance(value, dict):
-            return self._truncate(json.dumps(value))
-        return self._truncate(value)
-
-    def _truncate(self, value: Any) -> Any:
-        max_len = self.neptune_config.property_max_length
-        return (
-            value[:max_len]
-            if isinstance(value, str) and len(value) > max_len
-            else value
+        return item_properties(
+            item, base_props, self.neptune_config.property_max_length
         )
 
     def _index_generic(

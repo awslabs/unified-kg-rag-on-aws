@@ -203,49 +203,47 @@ def test_write_relationships_empty_input_returns_empty_stats(indexer) -> None:
     assert stats.failed_items == 0
 
 
+def _edge_property_steps(indexer, rel: Relationship) -> list[list]:
+    from gremlin_python.process.anonymous_traversal import traversal
+    from gremlin_python.structure.graph import Graph
+
+    g = traversal().withGraph(Graph())
+    steps = indexer._build_add_edge_traversal(
+        g, rel, "Entity-default"
+    ).bytecode.step_instructions
+    add_e = next(i for i, step in enumerate(steps) if step[0] == "addE")
+    return [step for step in steps[add_e + 1 :] if step[0] == "property"]
+
+
 def test_edge_properties_never_use_cardinality(indexer) -> None:
     # Regression: Neptune raises "Cardinality specification may not be used with
-    # Edge properties". _set_edge_properties_on_traversal must emit plain
-    # property(key, value) calls with NO Cardinality positional argument.
-    recorded: list[tuple] = []
-
-    class ArgRecordingTraversal:
-        def property(self, *args, **kwargs):
-            recorded.append(args)
-            return self
-
-        def __getattr__(self, name):
-            return lambda *a, **k: self
-
-    indexer._set_edge_properties_on_traversal(
-        ArgRecordingTraversal(),
-        {"weight": 0.5, "text_unit_ids": ["t1", "t2"], "description": "x"},
+    # Edge properties". The edge write must emit plain property(key, value)
+    # steps with NO Cardinality positional argument.
+    rel = Relationship(
+        id="r1",
+        source_id="a",
+        target_id="b",
+        weight=0.5,
+        description="x",
+        text_unit_ids=["t1", "t2"],
     )
-    assert recorded, "expected property() calls"
-    for args in recorded:
-        # Each call is (key, value): exactly two positional args, key is a str
-        # (a Cardinality arg would make the first positional a Cardinality enum).
-        assert len(args) == 2, f"edge property got cardinality arg: {args}"
-        assert isinstance(args[0], str)
+    steps = _edge_property_steps(indexer, rel)
+    assert steps, "expected property() steps"
+    for step in steps:
+        # Each step is (key, value): a Cardinality arg would make the first
+        # positional a Cardinality enum.
+        assert len(step) == 3, f"edge property got cardinality arg: {step}"
+        assert isinstance(step[1], str)
 
 
 def test_edge_list_property_serialized_to_json_string(indexer) -> None:
     # Edges cannot hold multi-valued properties, so a list must become a single
-    # JSON string (one property call), not repeated property() calls.
-    recorded: list[tuple] = []
-
-    class ArgRecordingTraversal:
-        def property(self, *args, **kwargs):
-            recorded.append(args)
-            return self
-
-    indexer._set_edge_properties_on_traversal(
-        ArgRecordingTraversal(), {"text_unit_ids": ["t1", "t2"]}
+    # JSON string (one property step), not repeated property() steps.
+    rel = Relationship(
+        id="r1", source_id="a", target_id="b", text_unit_ids=["t1", "t2"]
     )
-    assert len(recorded) == 1
-    key, value = recorded[0]
-    assert key == "text_unit_ids"
-    assert value == '["t1", "t2"]'
+    steps = [s for s in _edge_property_steps(indexer, rel) if s[1] == "text_unit_ids"]
+    assert steps == [["property", "text_unit_ids", '["t1", "t2"]']]
 
 
 def test_delete_by_id_scopes_by_label_when_suffix_given(indexer) -> None:

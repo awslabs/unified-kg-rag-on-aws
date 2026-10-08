@@ -21,6 +21,8 @@ from collections import defaultdict
 from collections.abc import Collection
 from typing import TYPE_CHECKING
 
+from pydantic import BaseModel, Field
+
 from unified_kg_rag.domain.ingestion.delta_detector import (
     detect_delta,
     document_doc_id,
@@ -133,6 +135,45 @@ def build_document_lineage(
     return lineages
 
 
+class _SuffixRemoval(BaseModel):
+    """What removing some documents does to one suffix's artifacts."""
+
+    # Artifacts no surviving document references: deleted.
+    exclusive_ids: list[str] = Field(default_factory=list)
+    # Entities/relationships a survivor still references: kept, but stripped
+    # of the removed text units.
+    shared_entity_ids: list[str] = Field(default_factory=list)
+    shared_relationship_ids: list[str] = Field(default_factory=list)
+    removed_text_unit_ids: list[str] = Field(default_factory=list)
+
+
+def _artifact_ids(record: DocStatusRecord) -> list[str]:
+    return (
+        record.entity_ids
+        + record.relationship_ids
+        + record.text_unit_ids
+        + record.community_ids
+        + record.claim_ids
+        + record.community_report_ids
+    )
+
+
+def _remap_lineage(
+    lineage: DocumentLineage, id_remap: dict[str, str]
+) -> DocumentLineage:
+    """Point a lineage's entity/relationship ids at the ids the merge kept."""
+    if not id_remap:
+        return lineage
+    return lineage.model_copy(
+        update={
+            "entity_ids": sorted({id_remap.get(i, i) for i in lineage.entity_ids}),
+            "relationship_ids": sorted(
+                {id_remap.get(i, i) for i in lineage.relationship_ids}
+            ),
+        }
+    )
+
+
 class IncrementalIndexer:
     """Orchestrates an incremental indexing run against a document registry."""
 
@@ -177,22 +218,47 @@ class IncrementalIndexer:
         error stats rather than raising, so the caller must inspect this result
         before deleting the registry record — otherwise a transient delete
         failure would orphan the artifacts (record gone, artifacts still live).
+
+        Artifacts the documents share with survivors are kept, but the text
+        units being removed are stripped from them and their frequency/weight
+        recomputed, so they no longer cite chunks that no longer exist. Their
+        descriptions keep the removed documents' contribution: re-deriving a
+        description needs an LLM call (a full rebuild does it).
         """
         if not doc_ids:
             return True
 
-        obsolete_by_suffix = self._collect_exclusive_artifact_ids(doc_ids)
-        if not obsolete_by_suffix:
+        removals = self._plan_removal(doc_ids)
+        exclusive_by_suffix = {
+            suffix: removal.exclusive_ids
+            for suffix, removal in removals.items()
+            if removal.exclusive_ids
+        }
+        if not exclusive_by_suffix:
             return True
 
-        total = sum(len(ids) for ids in obsolete_by_suffix.values())
+        total = sum(len(ids) for ids in exclusive_by_suffix.values())
         logger.info(
             "Removing %d artifacts for %d obsolete documents",
             total,
             len(doc_ids),
         )
-        results = self.indexing_manager.delete_documents(obsolete_by_suffix)
-        failed = sum(s.failed_items for s in results.values() if s is not None)
+        results = list(
+            self.indexing_manager.delete_documents(exclusive_by_suffix).values()
+        )
+        for suffix, removal in removals.items():
+            if removal.removed_text_unit_ids and (
+                removal.shared_entity_ids or removal.shared_relationship_ids
+            ):
+                results.extend(
+                    self.indexing_manager.remove_text_units_from_shared(
+                        suffix,
+                        entity_ids=removal.shared_entity_ids,
+                        relationship_ids=removal.shared_relationship_ids,
+                        text_unit_ids=removal.removed_text_unit_ids,
+                    ).values()
+                )
+        failed = sum(s.failed_items for s in results if s is not None)
         if failed:
             logger.warning(
                 "Artifact removal for obsolete docs had %d failures; caller "
@@ -223,7 +289,19 @@ class IncrementalIndexer:
         extraction stage failed on some of their text units) are recorded
         FAILED with their lineage, so the next run re-extracts them and first
         prunes what this run wrote.
+
+        Entities and relationships are first merged with the stored graph state
+        they touch (``indexing.cross_run_merge``); a delta item that merged into
+        a stored one under another id is recorded in the lineage by that id.
         """
+        merged = self.indexing_manager.merge_with_existing_graph(
+            entities, relationships
+        )
+        entities, relationships = merged.entities, merged.relationships
+        lineages = [
+            _remap_lineage(lineage, merged.id_remap_by_suffix.get(lineage.suffix, {}))
+            for lineage in lineages
+        ]
         results = self.indexing_manager.index_delta(
             text_units=text_units,
             entities=entities,
@@ -232,25 +310,36 @@ class IncrementalIndexer:
             community_reports=community_reports,
             claims=claims,
         )
-        # Only write the registry back if the delta actually landed. index_delta
-        # (via _run_indexing_phase) SWALLOWS per-task write errors into stats and
-        # never raises, so recording PROCESSED unconditionally would persist a
-        # doc's new content_hash + lineage even when its backend writes failed —
-        # the doc would then be classified `unchanged` on the next run and its
-        # missing artifacts never re-indexed. If any index type had items but
-        # zero successes (a hard write failure), skip the registry write-back so
-        # the affected docs are re-detected and retried next run.
+        self.record(lineages, fingerprints, results, failed_doc_ids)
+        return results
+
+    def record(
+        self,
+        lineages: list[DocumentLineage],
+        fingerprints: dict[str, str],
+        results: dict[str, IndexingStats],
+        failed_doc_ids: Collection[str] = (),
+    ) -> bool:
+        """Record the processed docs in the registry if their writes landed.
+
+        Used after a delta upsert (:meth:`commit`) and after a reset's full
+        rebuild. The indexing manager SWALLOWS per-task write errors into stats
+        and never raises, so recording PROCESSED unconditionally would persist a
+        doc's new content_hash + lineage even when its backend writes failed —
+        the doc would then be classified `unchanged` on the next run and its
+        missing artifacts never re-indexed. Returns whether the docs were
+        recorded.
+        """
         if self._delta_writes_succeeded(results):
             self._record_processed(lineages, fingerprints, failed_doc_ids)
-        else:
-            logger.error(
-                "Delta indexing failed for at least one artifact type (complete "
-                "failure or failure rate above the tolerated threshold); NOT "
-                "recording docs as PROCESSED so they are retried on the next "
-                "run. Stats: %s",
-                {k: (v.successful_items, v.failed_items) for k, v in results.items()},
-            )
-        return results
+            return True
+        logger.error(
+            "Indexing failed for at least one artifact type (complete failure "
+            "or failure rate above the tolerated threshold); NOT recording docs "
+            "as PROCESSED so they are retried on the next run. Stats: %s",
+            {k: (v.successful_items, v.failed_items) for k, v in results.items()},
+        )
+        return False
 
     def _delta_writes_succeeded(self, results: dict[str, IndexingStats]) -> bool:
         """False if any index type failed hard enough that the delta must retry.
@@ -331,37 +420,37 @@ class IncrementalIndexer:
             return True
         return self.remove_obsolete_artifacts(delta.changed)
 
-    def _collect_exclusive_artifact_ids(
-        self, doc_ids: list[str]
-    ) -> dict[str, list[str]]:
+    def _plan_removal(self, doc_ids: list[str]) -> dict[str, _SuffixRemoval]:
         target = set(doc_ids)
         # Artifact ids referenced by SURVIVING documents -> keep them. Tracked
         # PER SUFFIX: artifact ids are suffix-independent (an entity "Vendor"
         # yields the same uuid5 id in every tenant), so a global retained set
         # would let a surviving doc in tenant B suppress the deletion of the same
         # id in tenant A. Only a same-suffix survivor should retain an id.
-        retained_by_suffix: dict[str, set[str]] = defaultdict(set)
-        removing_by_suffix: dict[str, set[str]] = defaultdict(set)
+        retained: dict[str, set[str]] = defaultdict(set)
+        removing: dict[str, list[DocStatusRecord]] = defaultdict(list)
         for record in self.doc_status.list_all():
-            ids = (
-                record.entity_ids
-                + record.relationship_ids
-                + record.text_unit_ids
-                + record.community_ids
-                + record.claim_ids
-                + record.community_report_ids
-            )
             if record.doc_id in target:
-                removing_by_suffix[record.suffix].update(ids)
+                removing[record.suffix].append(record)
             else:
-                retained_by_suffix[record.suffix].update(ids)
+                retained[record.suffix].update(_artifact_ids(record))
 
-        result: dict[str, list[str]] = {}
-        for suffix, suffix_ids in removing_by_suffix.items():
-            exclusive = sorted(suffix_ids - retained_by_suffix[suffix])
-            if exclusive:
-                result[suffix] = exclusive
-        return result
+        plan: dict[str, _SuffixRemoval] = {}
+        for suffix, records in removing.items():
+            kept = retained[suffix]
+            ids = {i for record in records for i in _artifact_ids(record)}
+            text_units = {i for record in records for i in record.text_unit_ids}
+            plan[suffix] = _SuffixRemoval(
+                exclusive_ids=sorted(ids - kept),
+                shared_entity_ids=sorted(
+                    {i for record in records for i in record.entity_ids} & kept
+                ),
+                shared_relationship_ids=sorted(
+                    {i for record in records for i in record.relationship_ids} & kept
+                ),
+                removed_text_unit_ids=sorted(text_units - kept),
+            )
+        return plan
 
     def _record_processed(
         self,

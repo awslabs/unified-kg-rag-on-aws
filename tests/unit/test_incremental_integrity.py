@@ -49,6 +49,51 @@ def _incremental_indexing_stage(mocker, store: FakeDocStatusStore, manager):
     )
 
 
+# --- the commit gate and the pipeline gate agree -----------------------------
+
+
+@pytest.mark.parametrize(
+    ("total", "successful", "failed", "passes"),
+    [
+        pytest.param(10, 10, 0, True, id="all-written"),
+        pytest.param(10, 8, 2, True, id="failure-rate-equals-max"),
+        pytest.param(10, 7, 3, False, id="failure-rate-above-max"),
+        pytest.param(0, 0, 3, False, id="raised-before-counting"),
+        pytest.param(0, 2, 3, True, id="uncounted-partial-success"),
+        pytest.param(5, 0, 0, False, id="zero-successes"),
+        pytest.param(5, 0, 5, False, id="all-failed"),
+        pytest.param(0, 0, 0, True, id="nothing-to-write"),
+    ],
+)
+def test_commit_gate_matches_the_pipeline_gate(
+    mocker, total: int, successful: int, failed: int, passes: bool
+) -> None:
+    # commit() writes the registry BEFORE the stage's gate runs, so a commit
+    # gate more lenient than the stage gate would record PROCESSED for docs
+    # whose run then fails, and they would never be retried.
+    from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
+
+    manager = mocker.MagicMock()
+    manager.config = Config()
+    assert manager.config.indexing.max_failure_rate == 0.2
+    results = {
+        "neptune_entities": IndexingStats(
+            total_items=total, successful_items=successful, failed_items=failed
+        )
+    }
+    stage = _incremental_indexing_stage(mocker, FakeDocStatusStore(), manager)
+
+    try:
+        stage._validate_backend_success(results)
+        stage_passes = True
+    except PipelineStageError:
+        stage_passes = False
+
+    incremental = IncrementalIndexer(FakeDocStatusStore(), manager)
+    assert incremental._delta_writes_succeeded(results) is passes
+    assert stage_passes is passes
+
+
 # --- prune failure blocks commit --------------------------------------------
 
 
@@ -152,7 +197,7 @@ def test_delta_run_unions_an_entity_shared_with_unchanged_docs_by_default() -> N
         ],
     )
 
-    stored = graph.data["entities"]["e-vendor"]
+    (stored,) = graph.read_entities(["e-vendor"])
     # The unchanged docs' chunk lineage (followed by mix) and description survive.
     assert set(stored.text_unit_ids or []) == {"ta", "tb", "tc"}
     assert "Vendor supplies parts." in (stored.description or "")

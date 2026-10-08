@@ -951,8 +951,9 @@ descriptions over the summarization budget are re-summarized. Setting it to
 `false` overwrites the affected fields with the delta's values instead; the
 entity then loses its lineage to the unchanged documents' chunks. Requires a
 graph adapter that supports read-back (one without it degrades to overwrite).
-A shared entity keeps the description a changed document contributed before
-its edit until a full rebuild.
+When a document changes or is deleted, entities and relationships it shares
+with other documents lose its chunks from `text_unit_ids` (frequency and
+weight follow), but keep the description it contributed until a full rebuild.
 
 ---
 

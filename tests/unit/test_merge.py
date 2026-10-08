@@ -11,6 +11,8 @@ from unified_kg_rag.domain.ingestion.merge import (
     merge_community_reports,
     merge_entities,
     merge_relationships,
+    relationship_id_remap,
+    remove_text_units,
 )
 from unified_kg_rag.domain.models import (
     Community,
@@ -82,6 +84,43 @@ class TestMergeEntities:
         merged, _ = merge_entities(old, delta)
         assert len(merged) == 1
         assert merged[0].text_unit_ids == ["t1"]
+
+    def test_reapplying_a_delta_does_not_repeat_its_description(self) -> None:
+        # The stored description is the newline join of earlier merges, so the
+        # dedupe must compare lines, not the whole multi-line string.
+        old = [_entity("e1", "Vendor", description="Vendor supplies parts.")]
+        delta = [_entity("e1", "Vendor", description="Vendor invoices Buyer.")]
+        once, _ = merge_entities(old, delta)
+        twice, _ = merge_entities(once, delta)
+        assert (
+            once[0].description
+            == twice[0].description
+            == "Vendor supplies parts.\nVendor invoices Buyer."
+        )
+
+    def test_attributes_union_with_the_delta_winning(self) -> None:
+        # Same rule as the full-build resolver (later attributes win), so the
+        # surviving entity keeps its suffix and picks up the delta's filters.
+        old = [
+            _entity("e1", "Vendor", attributes={"index": "tenant-a", "sector": "parts"})
+        ]
+        delta = [
+            _entity("e1", "Vendor", attributes={"index": "tenant-a", "region": "north"})
+        ]
+        merged, _ = merge_entities(old, delta)
+        assert merged[0].attributes == {
+            "index": "tenant-a",
+            "sector": "parts",
+            "region": "north",
+        }
+
+    def test_attributes_of_an_old_entity_without_any_come_from_the_delta(
+        self,
+    ) -> None:
+        old = [_entity("e1", "Vendor")]
+        delta = [_entity("e1", "Vendor", attributes={"index": "tenant-a"})]
+        merged, _ = merge_entities(old, delta)
+        assert merged[0].attributes == {"index": "tenant-a"}
 
 
 class TestMergeEntitiesFuzzy:
@@ -158,6 +197,28 @@ class TestMergeEntitiesFuzzy:
 
 
 class TestMergeRelationships:
+    def test_attributes_union_with_the_delta_winning(self) -> None:
+        old = [
+            Relationship(
+                id="r1",
+                source_id="e1",
+                target_id="e2",
+                type="SUPPLIES",
+                attributes={"index": "tenant-a", "term": "net-30"},
+            )
+        ]
+        delta = [
+            Relationship(
+                id="r1",
+                source_id="e1",
+                target_id="e2",
+                type="SUPPLIES",
+                attributes={"term": "net-60"},
+            )
+        ]
+        (merged,) = merge_relationships(old, delta)
+        assert merged.attributes == {"index": "tenant-a", "term": "net-60"}
+
     def test_new_relationship_appended(self) -> None:
         old = [Relationship(id="r1", source_id="e1", target_id="e2")]
         delta = [Relationship(id="r2", source_id="e2", target_id="e3")]
@@ -205,6 +266,21 @@ class TestMergeRelationships:
         assert once[0].weight == twice[0].weight == 2.0
         assert set(twice[0].text_unit_ids) == {"t1", "t2"}
 
+    def test_reapplying_a_delta_does_not_repeat_its_description(self) -> None:
+        old = [
+            Relationship(
+                id="r1", source_id="e1", target_id="e2", description="Ships parts."
+            )
+        ]
+        delta = [
+            Relationship(
+                id="r1", source_id="e1", target_id="e2", description="Sends invoices."
+            )
+        ]
+        once = merge_relationships(old, delta)
+        twice = merge_relationships(once, delta)
+        assert twice[0].description == "Ships parts.\nSends invoices."
+
     def test_remap_collapsing_endpoints_drops_self_loop(self) -> None:
         # When the entity remap collapses both endpoints onto one entity, the
         # resulting self-loop must be dropped (parity with the full-build
@@ -221,6 +297,20 @@ class TestMergeRelationships:
         merged = merge_relationships(old, delta, entity_id_remap={"e9": "e1"})
         # After remap, (e1,e2) collides with old -> merged into one.
         assert len(merged) == 1
+
+    def test_id_remap_maps_a_merged_delta_edge_to_the_kept_id(self) -> None:
+        old = [Relationship(id="r1", source_id="e1", target_id="e2", type="SUPPLIES")]
+        delta = [
+            # Merges into r1 once e9 is remapped onto e1.
+            Relationship(id="r2", source_id="e9", target_id="e2", type="SUPPLIES"),
+            # A new edge keeps its own id.
+            Relationship(id="r3", source_id="e1", target_id="e3", type="SUPPLIES"),
+            # Collapses into a self-loop and is dropped: no entry.
+            Relationship(id="r4", source_id="e9", target_id="e1", type="SUPPLIES"),
+        ]
+        remap = {"e9": "e1"}
+        merged = merge_relationships(old, delta, entity_id_remap=remap)
+        assert relationship_id_remap(delta, merged, remap) == {"r2": "r1"}
 
     def test_distinct_types_between_same_endpoints_kept_separate(self) -> None:
         # A delta edge of a DIFFERENT type between the same endpoints must stay
@@ -249,6 +339,40 @@ class TestMergeRelationships:
         assert len(merged) == 1
         # No text-unit lineage -> falls back to the surviving edge's own weight.
         assert merged[0].weight == 1.0
+
+
+class TestRemoveTextUnits:
+    def test_strips_units_and_recomputes_counts_of_affected_items_only(
+        self,
+    ) -> None:
+        entities = [
+            _entity("e1", "Vendor", description="d", text_unit_ids=["ta", "tb"]),
+            _entity("e2", "Buyer", text_unit_ids=["ta"]),
+        ]
+        relationships = [
+            Relationship(
+                id="r1",
+                source_id="e1",
+                target_id="e2",
+                weight=2.0,
+                text_unit_ids=["ta", "tb"],
+            ),
+            Relationship(id="r2", source_id="e2", target_id="e1", text_unit_ids=["ta"]),
+        ]
+
+        kept_entities, kept_relationships = remove_text_units(
+            entities, relationships, {"tb"}
+        )
+
+        assert [(e.id, e.text_unit_ids, e.frequency) for e in kept_entities] == [
+            ("e1", ["ta"], 1)
+        ]
+        assert kept_entities[0].description == "d"
+        assert [(r.id, r.text_unit_ids, r.weight) for r in kept_relationships] == [
+            ("r1", ["ta"], 1.0)
+        ]
+        # Inputs are not mutated.
+        assert entities[0].text_unit_ids == ["ta", "tb"]
 
 
 class TestMergeCommunities:

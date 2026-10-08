@@ -20,7 +20,14 @@ from unified_kg_rag.application.ingestion.incremental import (
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
-from unified_kg_rag.domain.models import Config, Document, Entity, TextUnit
+from unified_kg_rag.domain.models import (
+    Config,
+    Document,
+    DocumentLineage,
+    Entity,
+    Relationship,
+    TextUnit,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -119,3 +126,101 @@ def test_shared_entity_survives_deletion(harness) -> None:
     inc.remove_deleted(delta)
     assert "e-shared" in vector.ids("entities")
     assert "e-shared" in graph.ids("entities")
+
+
+def _shared_vendor_corpus(inc):
+    """doc a and doc b both mention Vendor and its edge to Buyer."""
+    a, b = _doc("/a.txt", "x"), _doc("/b.txt", "y")
+    tu_a = TextUnit(id="tu-a", text="...", document_ids=[a.document_id])
+    tu_b = TextUnit(id="tu-b", text="...", document_ids=[b.document_id])
+    vendor = Entity(
+        id="e-vendor",
+        name="Vendor",
+        description="Vendor supplies parts.",
+        text_unit_ids=["tu-a", "tu-b"],
+    )
+    buyer = Entity(id="e-buyer", name="Buyer", text_unit_ids=["tu-a", "tu-b"])
+    supplies = Relationship(
+        id="r-supplies",
+        source_id="e-vendor",
+        target_id="e-buyer",
+        type="SUPPLIES",
+        text_unit_ids=["tu-a", "tu-b"],
+    )
+    _commit(inc, [a, b], [tu_a, tu_b], [vendor, buyer], [supplies])
+    return a, b
+
+
+def test_deleting_a_doc_strips_its_text_units_from_shared_artifacts(harness) -> None:
+    inc, _, graph, vector = harness
+    a, _ = _shared_vendor_corpus(inc)
+
+    inc.remove_deleted(inc.plan([a])[0])
+
+    (vendor,) = graph.read_entities(["e-vendor"])
+    assert vendor.text_unit_ids == ["tu-a"]
+    # Neptune does not store frequency; the vector index does.
+    assert vector.data["entities"]["e-vendor"].frequency == 1
+    # The description cannot be re-derived without an LLM call and is kept.
+    assert vendor.description == "Vendor supplies parts."
+    (edge,) = graph.read_relationships(["r-supplies"])
+    assert edge.text_unit_ids == ["tu-a"]
+    assert edge.weight == 1.0
+    assert vector.data["entities"]["e-vendor"].text_unit_ids == ["tu-a"]
+    assert vector.data["relationships"]["r-supplies"].text_unit_ids == ["tu-a"]
+
+
+def test_changed_doc_replaces_its_text_units_on_shared_artifacts(harness) -> None:
+    inc, _, graph, vector = harness
+    a, _ = _shared_vendor_corpus(inc)
+    edited = _doc("/b.txt", "y, edited")
+    tu_b2 = TextUnit(id="tu-b2", text="...", document_ids=[edited.document_id])
+
+    delta = inc.plan([a, edited])[0]
+    assert inc.prune_changed(delta)
+    _commit(
+        inc,
+        [edited],
+        [tu_b2],
+        [Entity(id="e-vendor", name="Vendor", text_unit_ids=["tu-b2"])],
+    )
+
+    (vendor,) = graph.read_entities(["e-vendor"])
+    assert vendor.text_unit_ids == ["tu-a", "tu-b2"]
+    assert vector.data["entities"]["e-vendor"].frequency == 2
+
+
+def test_exclusive_deletion_is_scoped_per_suffix(harness) -> None:
+    # "Vendor" has the same id in both tenants. Deleting tenant-a's only
+    # document must remove tenant-a's Vendor even though tenant-b's document
+    # still references the same id, and must leave tenant-b's Vendor alone.
+    inc, store, graph, vector = harness
+    for suffix in ("tenant-a", "tenant-b"):
+        inc.commit(
+            lineages=[
+                DocumentLineage(
+                    doc_id=f"doc-{suffix}",
+                    suffix=suffix,
+                    entity_ids=["e-vendor"],
+                    text_unit_ids=[f"tu-{suffix}"],
+                )
+            ],
+            fingerprints={f"doc-{suffix}": "h"},
+            entities=[
+                Entity(
+                    id="e-vendor",
+                    name="Vendor",
+                    text_unit_ids=[f"tu-{suffix}"],
+                    attributes={"index": suffix},
+                )
+            ],
+        )
+
+    assert inc.remove_obsolete_artifacts(["doc-tenant-a"])
+    inc.doc_status.delete("doc-tenant-a")
+
+    assert graph.read_entities(["e-vendor"], suffix="tenant-a") == []
+    (kept,) = graph.read_entities(["e-vendor"], suffix="tenant-b")
+    assert kept.text_unit_ids == ["tu-tenant-b"]
+    assert {suffix for _, suffix in vector.delete_calls} == {"tenant-a"}
+    assert [r.doc_id for r in store.list_all()] == ["doc-tenant-b"]

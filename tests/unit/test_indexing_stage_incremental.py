@@ -23,6 +23,7 @@ import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
+from unified_kg_rag.application.storage.indexing_manager import CrossRunMergeResult
 from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
 from unified_kg_rag.domain.models import (
     Config,
@@ -68,6 +69,9 @@ class _RecordingManager:
                 failed_items=self._delete_failures,
             )
         }
+
+    def merge_with_existing_graph(self, entities, relationships):
+        return CrossRunMergeResult(entities=entities, relationships=relationships)
 
     def index_delta(self, **kwargs: Any) -> dict[str, IndexingStats]:
         self.calls.append(("index_delta", kwargs))
