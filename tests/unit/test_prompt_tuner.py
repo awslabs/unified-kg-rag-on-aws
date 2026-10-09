@@ -5,9 +5,12 @@
 from __future__ import annotations
 
 import pytest
+from langchain_core.prompts import SystemMessagePromptTemplate
 
 from unified_kg_rag.application.prompts.tuner import CorpusProfile, PromptTuner
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models.config import CustomPromptConfig
+from unified_kg_rag.domain.prompts import CommunityReportPrompt, GraphExtractionPrompt
 
 pytestmark = pytest.mark.unit
 
@@ -76,6 +79,32 @@ class TestBuildCustomPrompts:
         profile = CorpusProfile(few_shot_examples="")
         system = PromptTuner.build_custom_prompts(profile)["graph_extraction_system"]
         assert "DOMAIN EXAMPLE" not in system
+
+    def test_corpus_braces_render_literally_in_the_prompt_template(self) -> None:
+        # The overrides are LangChain f-string templates: a JSON sample must
+        # not break formatting and "{input_text}" in corpus text must not be
+        # substituted.
+        profile = CorpusProfile(
+            domain="config {files}",
+            language="English {x}",
+            persona='You read {"retries": 3} configs.',
+            entity_types=["SETTING{}"],
+            few_shot_examples='EXAMPLE TEXT:\n{"retries": 3} {input_text}',
+        )
+        custom = CustomPromptConfig(**PromptTuner.build_custom_prompts(profile))
+        rendered = {}
+        for prompt_class in (GraphExtractionPrompt, CommunityReportPrompt):
+            resolved = prompt_class.resolve(custom_prompts=custom)
+            template = SystemMessagePromptTemplate.from_template(
+                resolved.system_prompt_template
+            )
+            assert template.input_variables == []
+            rendered[prompt_class] = template.format().content
+            assert "config {files}" in rendered[prompt_class]
+            assert '{"retries": 3}' in rendered[prompt_class]
+        extraction = rendered[GraphExtractionPrompt]
+        assert "{input_text}" in extraction
+        assert "SETTING{}" in extraction
 
 
 class TestSampleAndParse:

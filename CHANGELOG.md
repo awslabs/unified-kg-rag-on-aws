@@ -317,6 +317,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- `run-prompt-tuning` doubles the braces in every corpus- or model-derived
+  field (persona, domain, language, entity types, few-shot examples) before
+  writing the `custom_prompts` templates. A sample containing `{"retries": 3}`
+  made graph extraction fail to format, and `{input_text}` in a sample was
+  substituted with the chunk being extracted (#PR).
 - The LLM XML parser no longer tries LangChain's `XMLOutputParser.parse`
   first. Without `defusedxml` (not a dependency) that call raised
   `ImportError` on every response, so the strict and the two re-escaping
