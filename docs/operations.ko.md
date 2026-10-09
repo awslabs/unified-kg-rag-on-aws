@@ -73,6 +73,13 @@
 (`indexing.reset: true`)으로 둘 다 새로 고칩니다. 자세한 내용은
 [사용자 가이드](./user-guide.ko.md) §5에 있습니다.
 
+레지스트리를 읽을 수 없으면(테이블 없음, 접근 거부, 클라이언트 재시도로도 풀리지
+않는 스로틀링) `document_loading` 단계가 테이블 이름과 원인을 담은
+`DocStatusRegistryError`로 실패합니다. 모든 문서를 인덱싱하는 경로로 넘어가지
+않습니다. 그 경로는 접미사의 인덱스 내용을 이번 실행의 문서만으로 바꾸기
+때문입니다. 레지스트리를 고친 뒤 같은 `--pipeline-id`로 다시 실행하거나, 증분
+인덱싱 없이 실행하려면 `aws.dynamodb.enabled: false`로 설정합니다.
+
 ## 실패한 문서
 
 번역, 그래프 추출, gleaning, 주장 추출 중 하나가 문서의 텍스트 단위 일부에서
@@ -150,6 +157,8 @@ Error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoi
 | `No indices found for suffix '<suffix>' ...` | 그 인덱스 접미사로 수집한 데이터가 없음 | 수집을 실행하거나, 코퍼스를 수집할 때 쓴 접미사로 질의 |
 | `InvalidFilterError` | 전략이 읽는 어떤 저장소도 그 필터 키를 선언하지 않음 | 메시지에 나온 키 목록에서 선택 |
 | `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | `unstructured` 추가 패키지가 설치되지 않음 | 설치(Python 3.11 이상)하거나 파일 형식을 변환 |
+| `DocStatusRegistryError` | 문서 상태 레지스트리 테이블이 없거나, 접근할 수 없거나, 스로틀링됨 | 테이블을 만들거나 `aws.dynamodb.table_name`을 고치고, 메시지에 나온 DynamoDB 권한을 부여한 뒤 같은 `--pipeline-id`로 재개 |
+| `Incremental indexing is enabled but no document delta was computed` | 레지스트리 비교 없이 인덱싱 단계가 실행됨(`continue_on_error`로 로딩 단계 실패 뒤 진행) | 레지스트리에 접근할 수 있게 한 뒤 `document_loading`부터 다시 실행 |
 | `CacheSyncError` | S3 단계 캐시 다운로드나 업로드가 실패함 | 버킷 권한과 `aws.s3.encryption`을 확인한 뒤 같은 `--pipeline-id`로 재개 |
 | `Pipeline failed at stage(s): ...` | 단계가 실패해 CLI가 1로 종료함 | 해당 단계 로그를 확인해 고친 뒤 같은 `--pipeline-id`로 재개 |
 | 프라이빗 VPC에서 Bedrock 호출이 멈춤 | VPC 엔드포인트가 처리하지 않는 리전으로 Bedrock을 호출함 | `aws.bedrock.region_name`을 비우거나 VPC 리전과 같게 설정 |

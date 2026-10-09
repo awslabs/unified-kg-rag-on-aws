@@ -54,7 +54,11 @@ from unified_kg_rag.domain.models import (
     Relationship,
     TextUnit,
 )
-from unified_kg_rag.shared import PipelineStageError, get_logger
+from unified_kg_rag.shared import (
+    DocStatusRegistryError,
+    PipelineStageError,
+    get_logger,
+)
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
@@ -302,6 +306,15 @@ class DocumentLoadingStage(PipelineStage):
         logger.info("DOCUMENT LOADING STAGE - STARTED")
         logger.info("=" * 60)
 
+        # A context restored from a reused pipeline id carries the previous
+        # run's delta in its metadata. This stage recomputes the document set,
+        # so that delta no longer describes it: drop it before (re)deriving one,
+        # or a run with the registry now disabled (or a failed diff under
+        # continue_on_error) would index against stale fingerprints.
+        context.incremental_delta = None
+        context.incremental_fingerprints = {}
+        context.incremental_scope = None
+
         failed_files: list[str] = []
         if self._parsing_completed(context):
             documents = list(context.documents)
@@ -373,33 +386,36 @@ class DocumentLoadingStage(PipelineStage):
         IndexingStage can prune stale artifacts, propagate deletions, and record
         per-document lineage (the full incremental commit path).
 
-        Degrades to processing everything (and logs) if the registry is
-        unreachable, so an enabled-but-misconfigured registry never blocks a run.
+        Raises :class:`DocStatusRegistryError` when the registry cannot be
+        read. There is no safe fallback: without a delta the indexing stage
+        takes the full-rebuild path, which replaces the suffix's live index
+        content with this run's documents and never records them, so other
+        scopes' documents would be lost and every later run would rebuild.
         Imported lazily to avoid a hard dependency when the feature is off.
         """
-        try:
-            from unified_kg_rag.domain.ingestion.delta_detector import (
-                detect_delta,
-                filter_documents_to_process,
-                fingerprint_documents,
+        from unified_kg_rag.domain.ingestion.delta_detector import (
+            detect_delta,
+            filter_documents_to_process,
+            fingerprint_documents,
+        )
+
+        scope, failed_doc_ids = self._registry_scope(context)
+        if self.config.indexing.reset:
+            # A reset clears the stores and the registry before indexing, so
+            # every document is new: diffing against the registry here would
+            # rebuild from the delta alone and lose the unchanged documents.
+            fingerprints = fingerprint_documents(documents)
+            context.incremental_delta = DocumentDelta(new=list(fingerprints))
+            context.incremental_fingerprints = fingerprints
+            context.incremental_scope = scope
+            logger.info(
+                "Incremental filter skipped (indexing.reset): processing all "
+                "%d documents",
+                len(documents),
             )
+            return documents, 0
 
-            scope, failed_doc_ids = self._registry_scope(context)
-            if self.config.indexing.reset:
-                # A reset clears the stores and the registry before indexing, so
-                # every document is new: diffing against the registry here would
-                # rebuild from the delta alone and lose the unchanged documents.
-                fingerprints = fingerprint_documents(documents)
-                context.incremental_delta = DocumentDelta(new=list(fingerprints))
-                context.incremental_fingerprints = fingerprints
-                context.incremental_scope = scope
-                logger.info(
-                    "Incremental filter skipped (indexing.reset): processing all "
-                    "%d documents",
-                    len(documents),
-                )
-                return documents, 0
-
+        try:
             store = self._build_doc_status_store()
             delta, fingerprints = detect_delta(
                 documents,
@@ -408,26 +424,29 @@ class DocumentLoadingStage(PipelineStage):
                 failed_doc_ids=failed_doc_ids,
                 max_failures=self.config.indexing.max_document_failures,
             )
-            context.incremental_delta = delta
-            context.incremental_fingerprints = fingerprints
-            context.incremental_scope = scope
-            if delta.is_empty:
-                logger.info("Incremental: no new/changed documents detected")
-            to_process = filter_documents_to_process(documents, delta)
-            skipped = len(documents) - len(to_process)
-            logger.info(
-                "Incremental filter: %d to process, %d unchanged (skipped), "
-                "%d deleted",
-                len(to_process),
-                skipped,
-                len(delta.deleted),
-            )
-            return to_process, skipped
+        except DocStatusRegistryError:
+            raise
         except Exception as e:
-            logger.warning(
-                "Incremental filter unavailable (%s); processing all documents", e
-            )
-            return documents, 0
+            raise DocStatusRegistryError(
+                f"Doc-status registry: could not diff the corpus against the "
+                f"registry ({type(e).__name__}: {e}). Incremental indexing needs "
+                "the registry; fix it and re-run, or set aws.dynamodb.enabled: "
+                "false to run without it."
+            ) from e
+        context.incremental_delta = delta
+        context.incremental_fingerprints = fingerprints
+        context.incremental_scope = scope
+        if delta.is_empty:
+            logger.info("Incremental: no new/changed documents detected")
+        to_process = filter_documents_to_process(documents, delta)
+        skipped = len(documents) - len(to_process)
+        logger.info(
+            "Incremental filter: %d to process, %d unchanged (skipped), %d deleted",
+            len(to_process),
+            skipped,
+            len(delta.deleted),
+        )
+        return to_process, skipped
 
     def _registry_scope(self, context: PipelineContext) -> tuple[str, list[str]]:
         """The run's registry scope and the registry ids of its failed files.
@@ -1366,6 +1385,25 @@ class IndexingStage(PipelineStage):
             + len(community_reports)
             + len(claims)
         )
+
+        if (
+            context.incremental_delta is None
+            and not self.config.indexing.reset
+            and (self._doc_status is not None or self.config.aws.dynamodb.enabled)
+        ):
+            # Incremental indexing is on but no delta reached this stage (the
+            # loading stage failed under continue_on_error, or the run was
+            # resumed from metadata written with the registry off). The full
+            # path would replace the live index content with this run's
+            # documents only, so stop instead.
+            raise PipelineStageError(
+                "Incremental indexing is enabled but no document delta was "
+                "computed for this run, so the indexing stage cannot tell "
+                "which stored documents to keep. Re-run from the "
+                "document_loading stage (--resume-from-stage document_loading) "
+                "once the doc-status registry is reachable, or set "
+                "indexing.reset: true to rebuild the stores."
+            )
 
         if context.incremental_delta is not None and not self.config.indexing.reset:
             indexing_results = self._index_incremental(

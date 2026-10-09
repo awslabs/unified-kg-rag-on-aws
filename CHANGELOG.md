@@ -91,6 +91,20 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#157).
 
 ### Changed
+- **Behaviour change:** with incremental indexing on (`aws.dynamodb.enabled`
+  or an injected `doc_status`), a doc-status registry that cannot be read
+  fails the `document_loading` stage with the new `DocStatusRegistryError`,
+  naming the table, the cause and the fix. Before, the stage logged a warning
+  and processed every document with no delta, so the indexing stage took the
+  full-rebuild path: it cleared the suffix's Neptune entities, pointed the
+  OpenSearch aliases at indices holding only this run's documents and never
+  wrote the registry. A missing table, AccessDenied or throttling thus turned
+  every incremental run into a rebuild that dropped other scopes' documents.
+  The DynamoDB client now retries throttling with botocore's standard mode
+  (10 attempts) first; the indexing stage also refuses to rebuild when
+  incremental indexing is on but no delta reached it (e.g. under
+  `continue_on_error`), and the loading stage drops a delta restored from a
+  reused pipeline id's metadata before recomputing it (#PR).
 - MinHash entity resolution shares one set of seeded permutations instead of
   regenerating them for every name and query, hashes each name's shingles in
   one batch, and reuses the candidates' signatures when they are queried;
