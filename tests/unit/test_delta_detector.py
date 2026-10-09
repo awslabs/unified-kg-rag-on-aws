@@ -8,13 +8,18 @@ import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.domain.ingestion.delta_detector import (
+    assign_document_identity,
+    assign_registry_source,
     compute_content_hash,
     compute_doc_id,
     detect_delta,
+    document_doc_id,
     filter_documents_to_process,
     fingerprint_documents,
+    legacy_doc_id,
 )
 from unified_kg_rag.domain.models import DocStatusRecord, Document
+from unified_kg_rag.ports import DocStatusPort
 
 pytestmark = pytest.mark.unit
 
@@ -99,6 +104,70 @@ class TestDetectDelta:
         assert delta.new == []
 
 
+class _CountingStore(FakeDocStatusStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.gets = 0
+        self.batches: list[int] = []
+
+    def get(self, doc_id: str) -> DocStatusRecord | None:
+        self.gets += 1
+        return super().get(doc_id)
+
+    def get_many(self, doc_ids):
+        ids = list(doc_ids)
+        self.batches.append(len(ids))
+        return super().get_many(ids)
+
+
+class TestLegacyLookups:
+    SCOPE = "default|/corpus"
+
+    def _docs(self, count: int) -> list[Document]:
+        docs = [_doc(f"/corpus/f{i}.txt", f"text {i}") for i in range(count)]
+        for document in docs:
+            assign_document_identity(document, "/corpus")
+            assign_registry_source(document, "/corpus")
+        return docs
+
+    def test_new_documents_are_looked_up_in_one_batch(self) -> None:
+        store = _CountingStore()
+        docs = self._docs(250)
+        legacy = {document_doc_id(d): legacy_doc_id(d) for d in docs}
+
+        delta, _ = detect_delta(
+            docs, store, scope=self.SCOPE, legacy_doc_ids=legacy, max_failures=3
+        )
+
+        assert len(delta.new) == 250
+        assert store.gets == 0
+        assert store.batches == [250]
+
+    def test_a_legacy_record_is_adopted_through_the_batch(self) -> None:
+        store = _CountingStore()
+        docs = self._docs(3)
+        legacy = {document_doc_id(d): legacy_doc_id(d) for d in docs}
+        first = docs[0]
+        store.put(
+            DocStatusRecord(
+                doc_id=legacy_doc_id(first),
+                content_hash=compute_content_hash(first),
+                status="processed",
+                scope=self.SCOPE,
+                file_path="f0.txt",
+                entity_ids=["e1"],
+            )
+        )
+
+        delta, _ = detect_delta(docs, store, scope=self.SCOPE, legacy_doc_ids=legacy)
+
+        assert delta.unchanged == [document_doc_id(first)]
+        assert len(delta.new) == 2 and delta.deleted == []
+        assert store.gets == 0
+        assert store.get(legacy_doc_id(first)) is None
+        assert store.get(document_doc_id(first)).entity_ids == ["e1"]
+
+
 class TestFilterDocumentsToProcess:
     def test_keeps_only_new_and_changed(self) -> None:
         store = FakeDocStatusStore()
@@ -113,3 +182,35 @@ class TestFilterDocumentsToProcess:
 
         kept = filter_documents_to_process(docs, delta)
         assert [d.file_path for d in kept] == ["/b.txt"]
+
+
+class _PortSubclassStore(DocStatusPort):
+    """Explicitly subclasses the port, so it inherits the default get_many."""
+
+    def __init__(self) -> None:
+        self.inner = FakeDocStatusStore()
+        self.gets: list[str] = []
+
+    def get(self, doc_id: str) -> DocStatusRecord | None:
+        self.gets.append(doc_id)
+        return self.inner.get(doc_id)
+
+    def put(self, record: DocStatusRecord) -> None:
+        self.inner.put(record)
+
+    def delete(self, doc_id: str) -> None:
+        self.inner.delete(doc_id)
+
+    def list_all(self) -> list[DocStatusRecord]:
+        return self.inner.list_all()
+
+    def diff(self, incoming: dict[str, str], scope: str | None = None):
+        return self.inner.diff(incoming, scope=scope)
+
+
+def test_port_default_get_many_loops_get_and_skips_unknown_ids() -> None:
+    store = _PortSubclassStore()
+    store.put(DocStatusRecord(doc_id="a", content_hash="h"))
+
+    assert list(store.get_many(["a", "b", "a"])) == ["a"]
+    assert store.gets == ["a", "b"]

@@ -13,7 +13,8 @@ tests; both conform structurally to ``unified_kg_rag.ports.DocStatusPort``.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import time
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -49,6 +50,13 @@ _MAX_ITEM_BYTES = 400 * 1024
 # RequestLimitExceeded) and transient 5xx/connection errors. Ten attempts ride
 # out a throttling burst; an error that outlasts them fails the run.
 _RETRY_CONFIG = BotoConfig(retries={"mode": "standard", "total_max_attempts": 10})
+# BatchGetItem reads at most 100 keys per request. Keys it returns unprocessed
+# (throttling, or the 16 MB response limit) are re-requested with exponential
+# backoff, up to this many requests per batch.
+_BATCH_GET_SIZE = 100
+_BATCH_GET_MAX_ATTEMPTS = 8
+_BATCH_GET_BASE_DELAY = 0.05
+_BATCH_GET_MAX_DELAY = 2.0
 
 _MISSING_TABLE_CODES = frozenset({"ResourceNotFoundException"})
 _ACCESS_CODES = frozenset(
@@ -117,7 +125,8 @@ class DynamoDBDocStatusStore:
         elif code in _ACCESS_CODES:
             hint = (
                 "Refresh the credentials, or grant the caller dynamodb:Scan, "
-                "GetItem, PutItem, DeleteItem and DescribeTable on the table "
+                "GetItem, BatchGetItem, PutItem, DeleteItem and DescribeTable on "
+                "the table "
                 "(and the use of the table's KMS key, if it has one)."
             )
         elif code in _THROTTLING_CODES:
@@ -165,6 +174,50 @@ class DynamoDBDocStatusStore:
         if not item:
             return None
         return self._deserialize(item)
+
+    def get_many(self, doc_ids: Iterable[str]) -> dict[str, DocStatusRecord]:
+        """Read the stored ``doc_ids`` with ``BatchGetItem``, 100 keys per call.
+
+        Keys DynamoDB returns as ``UnprocessedKeys`` are re-requested with
+        exponential backoff; keys still unprocessed after
+        ``_BATCH_GET_MAX_ATTEMPTS`` requests raise
+        :class:`DocStatusRegistryError` rather than reading as absent (an
+        absent record means a new document).
+        """
+        unique = list(dict.fromkeys(doc_ids))
+        records: dict[str, DocStatusRecord] = {}
+        for start in range(0, len(unique), _BATCH_GET_SIZE):
+            batch = unique[start : start + _BATCH_GET_SIZE]
+            for item in self._batch_get(batch):
+                record = self._deserialize(item)
+                records[record.doc_id] = record
+        return records
+
+    def _batch_get(self, doc_ids: list[str]) -> list[dict[str, Any]]:
+        request: dict[str, Any] = {
+            self.table_name: {
+                "Keys": [{_PARTITION_KEY: {"S": doc_id}} for doc_id in doc_ids]
+            }
+        }
+        items: list[dict[str, Any]] = []
+        for attempt in range(_BATCH_GET_MAX_ATTEMPTS):
+            if attempt:
+                time.sleep(
+                    min(_BATCH_GET_MAX_DELAY, _BATCH_GET_BASE_DELAY * 2**attempt)
+                )
+            with self._registry_errors("read records"):
+                response = self.client.batch_get_item(RequestItems=request)
+            items.extend(response.get("Responses", {}).get(self.table_name, []))
+            request = dict(response.get("UnprocessedKeys") or {})
+            if not request.get(self.table_name, {}).get("Keys"):
+                return items
+        remaining = len(request[self.table_name]["Keys"])
+        raise DocStatusRegistryError(
+            f"Doc-status registry: DynamoDB table '{self.table_name}' left "
+            f"{remaining} of {len(doc_ids)} keys unprocessed after "
+            f"{_BATCH_GET_MAX_ATTEMPTS} BatchGetItem requests. Raise the table's "
+            "capacity or switch it to on-demand billing, then re-run."
+        )
 
     def put(self, record: DocStatusRecord) -> None:
         """Write ``record``; raise ``DataProcessingError`` if it is over 400 KB.

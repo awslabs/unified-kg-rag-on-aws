@@ -470,6 +470,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (`merge.merger.merge_descriptions`); the resolver also compares lines
   rather than whole descriptions. Descriptions written before stay as they
   are until the item is re-extracted or the index is rebuilt (#190).
+- Delta detection looks up the pre-scope registry keys of new documents in
+  batches instead of one DynamoDB `GetItem` per document on every run (1,000
+  new documents were 1,000 sequential reads, repeated until they were
+  committed). `DocStatusPort` gains `get_many(doc_ids)`, whose default loops
+  `get`; `DynamoDBDocStatusStore` reads 100 keys per `BatchGetItem` and
+  retries unprocessed keys with backoff, failing the run rather than reading
+  a key it could not fetch as absent. The task role needs
+  `dynamodb:BatchGetItem`, which the CDK stack's `grant_read_write_data`
+  already grants (#PR).
 - An incremental commit no longer records every document FAILED when one
   community's `MemberOf` edges fail in more than one Neptune entity batch.
   Each failed batch carries the community id, and the commit deduplicated the

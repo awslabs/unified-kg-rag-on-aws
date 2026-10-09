@@ -32,6 +32,7 @@ from pathlib import Path
 from unified_kg_rag.domain.models import (
     Constants,
     DocStatus,
+    DocStatusRecord,
     Document,
     DocumentDelta,
 )
@@ -222,9 +223,10 @@ def detect_delta(
         and legacy_doc_ids
         and adopt_legacy_records(doc_status, delta, legacy_doc_ids, scope)
     ):
-        # The adopted records now sit under this run's keys: diff again so
-        # they classify like any other stored document (one extra scan, only
-        # on the first run after an upgrade).
+        # The legacy keys are looked up on every run (batched, see
+        # adopt_legacy_records); only when a record was re-keyed or a stale
+        # legacy key deleted is the corpus diffed again, so the adopted
+        # records classify like any other stored document.
         delta = doc_status.diff(fingerprints, scope=scope)
     if max_failures is not None and delta.changed:
         _stop_retrying_exhausted(delta, doc_status, fingerprints, max_failures)
@@ -265,22 +267,36 @@ def adopt_legacy_records(
     have a current record (an adoption interrupted between the write and the
     delete), so only the stale legacy key is deleted. A legacy record of
     another scope is left untouched, so that scope adopts it on its own run.
+    The lookups run on every run and are batched
+    (:meth:`DocStatusPort.get_many`), so a corpus of new documents costs a
+    few batch reads rather than one read per document.
 
     Returns:
         The number of legacy keys adopted or deleted.
     """
     current = set(delta.changed) | set(delta.unchanged)
     deleted = set(delta.deleted)
+    lookups = {
+        doc_id: legacy_id
+        for doc_id, legacy_id in sorted(legacy_doc_ids.items())
+        if legacy_id != doc_id and (doc_id not in current or legacy_id in deleted)
+    }
+    legacy_records = _get_many(doc_status, lookups.values())
+    candidates = {
+        doc_id: legacy_records[legacy_id]
+        for doc_id, legacy_id in lookups.items()
+        if legacy_id in legacy_records
+        and legacy_records[legacy_id].scope in (scope, None)
+    }
+    # A failed file is in neither ``delta.new`` nor ``current``: look its
+    # current key up before writing over it.
+    known = current | set(delta.new)
+    stored = _get_many(doc_status, [d for d in candidates if d not in known])
     adopted: list[str] = []
-    for doc_id, legacy_id in sorted(legacy_doc_ids.items()):
-        if legacy_id == doc_id or (doc_id in current and legacy_id not in deleted):
-            continue
-        legacy = doc_status.get(legacy_id)
-        if legacy is None or legacy.scope not in (scope, None):
-            continue
-        if doc_id not in current and doc_status.get(doc_id) is None:
+    for doc_id, legacy in candidates.items():
+        if doc_id not in current and doc_id not in stored:
             doc_status.put(legacy.model_copy(update={"doc_id": doc_id, "scope": scope}))
-        doc_status.delete(legacy_id)
+        doc_status.delete(legacy.doc_id)
         adopted.append(legacy.file_path or doc_id)
     if adopted:
         logger.info(
@@ -290,6 +306,21 @@ def adopt_legacy_records(
             ", ".join(adopted[:10]),
         )
     return len(adopted)
+
+
+def _get_many(
+    doc_status: DocStatusPort, doc_ids: Iterable[str]
+) -> dict[str, DocStatusRecord]:
+    """``doc_status.get_many``; one :meth:`~DocStatusPort.get` per id for a
+    custom store written before ``get_many`` joined the port."""
+    ids = list(doc_ids)
+    if not ids:
+        return {}
+    get_many = getattr(doc_status, "get_many", None)
+    if get_many is None:
+        records = {doc_id: doc_status.get(doc_id) for doc_id in dict.fromkeys(ids)}
+        return {doc_id: r for doc_id, r in records.items() if r is not None}
+    return dict(get_many(ids))
 
 
 def _stop_retrying_exhausted(
