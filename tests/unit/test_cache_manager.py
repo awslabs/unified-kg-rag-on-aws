@@ -12,6 +12,7 @@ expensive pipeline stages, so each assertion guards real resume behavior.
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -64,8 +65,9 @@ class TestSingleFileRoundTrip:
         entry = mgr.save_stage_result({"x": 1}, "k1", STAGE, PIPELINE)
         assert entry is not None
         assert entry.metadata["is_chunked"] is False
-        assert entry.local_path == tmp_path / PIPELINE / STAGE / "k1.json"
-        assert entry.local_path.exists()
+        # Stored relative to the pipeline cache directory.
+        assert entry.local_path == Path(STAGE) / "k1.json"
+        assert (tmp_path / PIPELINE / entry.local_path).exists()
 
     def test_round_trip_with_pydantic_data_type(self, tmp_path: Path) -> None:
         mgr = _manager(tmp_path)
@@ -334,3 +336,49 @@ class TestIntegrity:
         mgr.save_stage_result(list(range(20)), "big", STAGE, PIPELINE)
         assert not list(tmp_path.rglob("*.tmp"))
         assert mgr.load_stage_result("big", PIPELINE) == list(range(20))
+
+
+class TestRelocation:
+    """A cache directory moved or restored elsewhere keeps its hits."""
+
+    def test_copied_cache_directory_still_hits(self, tmp_path: Path) -> None:
+        original = tmp_path / "original"
+        mgr = _manager(original, chunk_size=3)
+        mgr.save_stage_result({"x": 1}, "single", STAGE, PIPELINE)
+        mgr.save_stage_result(list(range(10)), "big", STAGE, PIPELINE)
+
+        moved = tmp_path / "moved"
+        shutil.copytree(original, moved)
+        shutil.rmtree(original)
+
+        restored = _manager(moved, chunk_size=3)
+        assert restored.cache_exists("single", PIPELINE) is True
+        assert restored.cache_exists("big", PIPELINE) is True
+        assert restored.load_stage_result("single", PIPELINE) == {"x": 1}
+        assert restored.load_stage_result("big", PIPELINE) == list(range(10))
+        assert restored.get_cache_stats(PIPELINE).local_entries == 2
+
+    def test_legacy_absolute_paths_resolve_under_the_new_root(
+        self, tmp_path: Path
+    ) -> None:
+        # Entries written by earlier versions hold the absolute path at write
+        # time; after a move they are re-rooted by stage and file name.
+        original = tmp_path / "original"
+        mgr = _manager(original, chunk_size=3)
+        mgr.save_stage_result({"x": 1}, "single", STAGE, PIPELINE)
+        mgr.save_stage_result(list(range(10)), "big", STAGE, PIPELINE)
+        index = mgr.load_cache_index(PIPELINE)
+        pipeline_dir = original / PIPELINE
+        for entry in index.entries.values():
+            entry.local_path = pipeline_dir / entry.local_path
+        mgr._save_cache_index(index)
+        stored = json.loads((pipeline_dir / "cache_index.json").read_text())
+        assert Path(stored["entries"]["single"]["local_path"]).is_absolute()
+
+        moved = tmp_path / "moved"
+        shutil.copytree(original, moved)
+        shutil.rmtree(original)
+
+        restored = _manager(moved, chunk_size=3)
+        assert restored.load_stage_result("single", PIPELINE) == {"x": 1}
+        assert restored.load_stage_result("big", PIPELINE) == list(range(10))

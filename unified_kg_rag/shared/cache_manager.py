@@ -113,7 +113,7 @@ class CacheManager:
         Raises:
             _CorruptCacheEntry: The file is missing or its hash does not match.
         """
-        path = entry.local_path
+        path = entry.resolve_local_path(self.get_pipeline_cache_dir(pipeline_id))
         if path is None or not path.is_file():
             raise _CorruptCacheEntry(f"missing file '{path}'")
         content = path.read_text(encoding="utf-8")
@@ -132,7 +132,7 @@ class CacheManager:
             _CorruptCacheEntry: The chunk count is invalid, or a chunk file is
                 missing or fails its recorded hash.
         """
-        chunks_dir = entry.local_path
+        chunks_dir = entry.resolve_local_path(self.get_pipeline_cache_dir(pipeline_id))
         chunk_count = entry.metadata.get("chunk_count")
         if (
             chunks_dir is None
@@ -205,7 +205,13 @@ class CacheManager:
         stats.total_size_bytes = sum(
             e.file_size for e in index.entries.values() if e.file_size
         )
-        stats.local_entries = sum(1 for e in index.entries.values() if e.exists_locally)
+        pipeline_dir = self.get_pipeline_cache_dir(pipeline_id)
+        stats.local_entries = sum(
+            1
+            for e in index.entries.values()
+            if (path := e.resolve_local_path(pipeline_dir)) is not None
+            and path.exists()
+        )
         return stats
 
     def get_pipeline_cache_dir(self, pipeline_id: str) -> Path:
@@ -413,7 +419,9 @@ class CacheManager:
             key=cache_key,
             stage_name=stage_name,
             pipeline_id=pipeline_id,
-            local_path=cache_file,
+            # Relative to the pipeline cache directory, so the cache still
+            # resolves after it is moved or restored elsewhere.
+            local_path=cache_file.relative_to(cache_directory),
             file_size=cache_file.stat().st_size,
             content_hash=content_hash,
             record_count=len(data) if isinstance(data, list) else 1,
@@ -482,7 +490,7 @@ class CacheManager:
             key=cache_key,
             stage_name=stage_name,
             pipeline_id=pipeline_id,
-            local_path=stage_cache_dir,
+            local_path=stage_cache_dir.relative_to(cache_directory),
             file_size=total_size,
             content_hash=master_hash,
             record_count=len(data),

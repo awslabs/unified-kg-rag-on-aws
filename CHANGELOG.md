@@ -463,6 +463,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   load, so a missing, truncated or rewritten file recomputes the stage with a
   WARNING. Chunk files, single-file entries and the index are written to a
   temp file and renamed into place, the index last (#PR).
+- A stage cache directory that is moved or restored to another path keeps
+  its hits. `CacheEntry.local_path` held the absolute path at write time, so
+  every entry became a miss after a move. It is now stored relative to the
+  pipeline cache directory; entries written before hold an absolute path and
+  are re-rooted by stage and file name under the current directory.
+  `CacheEntry.exists_locally` is replaced by `resolve_local_path(dir)` (#PR).
 - `run-prompt-tuning` doubles the braces in every corpus- or model-derived
   field (persona, domain, language, entity types, few-shot examples) before
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`
