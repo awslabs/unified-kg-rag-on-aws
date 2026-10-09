@@ -31,7 +31,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   default-tier model) separately from query-time
   `default_effort`, so ingestion cost can be lowered on its own. `null` (the
   default) inherits `default_effort`, so behaviour and stage cache keys are
-  unchanged unless it is set; fast-tier calls keep `fast_effort` (#PR).
+  unchanged unless it is set; fast-tier calls keep `fast_effort` (#179).
 - Claude Haiku 5.5 (`anthropic.claude-haiku-5-5`) in the model catalog: 1M
   context, 128K output, adaptive thinking with `effort` low–max, 512-token
   cache minimum, served through inference profiles only (#162).
@@ -136,7 +136,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   summarization already wrote in the target language. Entity names and
   verbatim evidence spans stay in the source text's form. Both prompts take a
   new `target_language` variable; existing `custom_prompts` overrides without
-  it keep working (#PR).
+  it keep working (#179).
 - The fast tier (`aws.bedrock.fast_model_id`) defaults to Claude Haiku 5.5
   (`anthropic.claude-haiku-5-5`) instead of Haiku 4.5. In a real-AWS A/B (79
   documents, 20 questions, 5 strategies, 2 ingests per arm) it matched Haiku
@@ -156,7 +156,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   tokens), claim extraction from 32768 to 29792, and community reports from
   32768 to the 16384 default cap. `setup_chain` takes an optional
   `min_output_tokens` that overrides the prompt's static floor, and
-  `BasePrompt.output_floor(config)` returns the derived one (#PR).
+  `BasePrompt.output_floor(config)` returns the derived one (#179).
 - Gleaning stops per text unit on what the model returned, not on scores: each
   unit gets up to `max_rounds` refinement calls and is re-sent only while its
   previous answer added an entity or relationship the graph did not have (an
@@ -178,14 +178,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   completion as well-formed XML. `fixing` is an input of every stage cache
   key, so every cached stage output misses once after upgrading. Set
   `fixing.fixing_model_id` to `anthropic.claude-sonnet-5-5` to keep the
-  previous model (#PR).
+  previous model (#179).
 - The AUTO router prompt describes exactly `search.auto_routable_strategies`,
   built from the configured list in its order. It used to describe SIMPLE
   (not routable by default) first and steer "simple factual" and "direct
   lookup" queries to it, and left MIX out of two of its three decision axes;
   the hardcoded axes are gone, each strategy's own description carries the
   guidance. `StrategySelectionPrompt` takes a new `strategy_descriptions`
-  variable, and `auto` in `auto_routable_strategies` is now rejected (#PR).
+  variable, and `auto` in `auto_routable_strategies` is now rejected (#179).
 - **Breaking:** `unified_kg_rag.shared.utils` no longer re-exports the
   LangChain-coupled and console helpers, so importing a `domain` module no
   longer loads LangChain, LangSmith, lxml, tenacity or tqdm. Import
@@ -196,7 +196,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   imports in a clean interpreter (#164).
 - The claim extraction prompt defines one claim taxonomy: the unused "Claim
   Categories" list (FACTUAL_ASSERTION, ENTITY_PROPERTY, ...) is removed, so
-  only the CLAIM TYPES that `<claim_type>` takes remain (#PR).
+  only the CLAIM TYPES that `<claim_type>` takes remain (#179).
 - CI runs the local-store adapter smoke test (`tests/integration/test_local_stores.py`)
   against the `docker/compose.local.yaml` Gremlin Server and OpenSearch (#168).
 - Tests time out after 120 s each (`pytest-timeout` in the dev group), so a
@@ -551,7 +551,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   by up to ~30%. The factor is a new capability-record field,
   `token_estimate_multiplier` (default 1.0, overridable through
   `aws.bedrock.model_overrides`), applied by the default token counter; API
-  counts are never scaled (#PR).
+  counts are never scaled (#179).
 - The LLM XML parser no longer tries LangChain's `XMLOutputParser.parse`
   first. Without `defusedxml` (not a dependency) that call raised
   `ImportError` on every response, so the strict and the two re-escaping
@@ -950,18 +950,18 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   plain text with terminal control characters (other than newline and tab)
   removed. Model output was rendered as rich markup, so `[link=...]` became a
   terminal hyperlink, and escape sequences in it reached the terminal (#173).
-  terminal hyperlink, and escape sequences in it reached the terminal (#PR).
+  terminal hyperlink, and escape sequences in it reached the terminal (#179).
 - Ingestion prompts (graph extraction, gleaning, claim extraction, description
   summarization, community reports) wrap corpus text and corpus-derived inputs
   in named tags (`<input_text>`, `<current_entities>`, `<entity_data>`, ...)
   and say once that tagged content is data whose instructions are not to be
   followed. A corpus `## heading` no longer reads as a prompt section. Template
   variable names are unchanged, so `custom_prompts` overrides keep working;
-  built-in prompt text is not part of the stage cache keys (#PR).
+  built-in prompt text is not part of the stage cache keys (#179).
 - Query-time prompts do the same for retrieved content: answer generation
   (`<context>`), context building, community relevance, global map/reduce
   (`<community_reports>`, `<summaries>`) and the DRIFT primer and query
-  refinement prompts (#PR).
+  refinement prompts (#179).
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or
   `LANGCHAIN_TRACING_V2` enables LangSmith tracing, which uploads prompts,
   retrieved context and model outputs. Tracing is not turned off (#156).
