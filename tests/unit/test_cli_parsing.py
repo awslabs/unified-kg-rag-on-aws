@@ -818,6 +818,9 @@ def test_eval_main_closes_the_chain(config, mocker, fails) -> None:
     mocker.patch.object(run_evaluation, "GraphRAGChain", return_value=chain)
     mocker.patch.object(run_evaluation, "get_config", return_value=config)
     mocker.patch.object(run_evaluation, "setup_logging")
+    # The endpoint preflight runs before the chain is built; this test is
+    # about closing the chain, so let the preflight pass.
+    mocker.patch.object(run_evaluation, "missing_endpoints_error", return_value=None)
     runner = MagicMock()
     runner.run = AsyncMock(side_effect=RuntimeError("boom") if fails else None)
     runner.run.return_value = 0
