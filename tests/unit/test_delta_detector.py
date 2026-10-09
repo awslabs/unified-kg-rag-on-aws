@@ -17,6 +17,8 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     filter_documents_to_process,
     fingerprint_documents,
     legacy_doc_id,
+    registry_scope,
+    scope_namespace,
 )
 from unified_kg_rag.domain.models import DocStatusRecord, Document
 from unified_kg_rag.ports import DocStatusPort
@@ -216,3 +218,10 @@ def test_port_default_get_many_loops_get_and_skips_unknown_ids() -> None:
 
     assert list(store.get_many(["a", "b", "a"])) == ["a"]
     assert store.gets == ["a", "b"]
+
+
+def test_scope_namespace_reads_the_namespace_of_a_registry_scope() -> None:
+    assert scope_namespace(registry_scope("default-x", "/corpus|a")) == "default-x"
+    assert scope_namespace(registry_scope("tenant", "s3://bucket/p/")) == "tenant"
+    assert scope_namespace(None) is None
+    assert scope_namespace("no-separator") is None

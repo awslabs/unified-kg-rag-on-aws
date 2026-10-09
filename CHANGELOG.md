@@ -466,6 +466,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- `indexing.reset` on one index namespace (`index_value` +
+  `indexing.additional_suffix`) no longer deletes the doc-status records of
+  every namespace sharing the registry table. Every config uses the same
+  default table name, and the reset only clears its own namespace's stores,
+  so the other namespaces lost the lineage of intact stores: their next run
+  re-extracted the whole corpus, and a file removed from them before that run
+  was never removed from their stores. The reset now deletes only the records
+  whose scope belongs to the cleared namespaces, and a record written before
+  scopes existed only when its key is such a namespace's legacy key (#PR).
 - An incremental run interrupted inside the indexing stage (a killed task, a
   store outage, the failure gate) is repaired by the next run. Before, a run
   that stopped after pruning a changed document left its old content hash in

@@ -32,7 +32,7 @@ Three operations look alike but act on different state:
 |---|---|---|---|
 | Finish an interrupted run | Re-run with the same `--pipeline-id`; it resumes at the first failed or incomplete stage. `--resume-from-stage <stage>` picks the stage. | Reused | Written by the stages that run |
 | Recompute every stage | `--force-rebuild` | Ignored and rewritten | Written as usual (incremental when enabled) |
-| Rebuild the stores from scratch | `indexing.reset: true` for one run | Unchanged | Cleared, then the whole corpus is indexed and every document recorded again |
+| Rebuild the stores from scratch | `indexing.reset: true` for one run | Unchanged | Cleared for the run's index namespace (other namespaces in the table keep their records), then the whole corpus is indexed and every document recorded again |
 
 Use `indexing.reset: true` (and `--force-rebuild` if stage outputs must change
 too) after changing anything that is baked into the stored data:

@@ -74,6 +74,7 @@ __all__ = [
     "other_local_scopes",
     "registry_scope",
     "retire_source_scopes",
+    "scope_namespace",
     "validate_retired_scopes",
 ]
 
@@ -176,6 +177,21 @@ def registry_scope(namespace: str, source_scope: str) -> str:
     never classifies another scope's documents as deleted.
     """
     return f"{namespace}|{source_scope}"
+
+
+def scope_namespace(scope: str | None) -> str | None:
+    """The index namespace of a :func:`registry_scope`.
+
+    This is how a record's namespace is read: ``DocStatusRecord.suffix`` is
+    the item suffix the indexers are called with (``index_value``), which
+    every ``indexing.additional_suffix`` shares, so it cannot tell two
+    namespaces in one registry table apart. ``None`` for a record written
+    before scopes existed, whose namespace is unknown.
+    """
+    if scope is None:
+        return None
+    namespace, separator, _ = scope.partition("|")
+    return namespace if separator else None
 
 
 def fingerprint_documents(documents: list[Document]) -> dict[str, str]:
