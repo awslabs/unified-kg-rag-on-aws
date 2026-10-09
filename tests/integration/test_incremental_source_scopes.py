@@ -366,3 +366,74 @@ def test_an_interrupted_scopeless_adoption_does_not_keep_old_content(
     assert stack.texts() == {"Vendor supplies Depot."}
     assert stack.entity_names() == {"Vendor", "Depot"}
     assert [r.doc_id for r in registry.list_all()] == [current.doc_id]
+
+
+DEPOT_TEXT = "Depot stores widgets."
+
+
+def test_a_moved_local_corpus_keeps_its_records(registry, tmp_path) -> None:
+    stack = ScopeStack(registry, tmp_path)
+    old = write_corpus(
+        tmp_path / "old", {"contract.txt": A_TEXT, "depot.txt": DEPOT_TEXT}
+    )
+    stack.run(old)
+    before = {r.file_path: r for r in registry.list_all()}
+    new = old.rename(tmp_path / "new")
+
+    moved = stack.run(new)
+
+    # Adopted, not re-extracted: one record per file, under the new scope.
+    delta = moved.incremental_delta
+    assert len(delta.unchanged) == 2
+    assert delta.new == delta.changed == delta.deleted == []
+    assert not stack.model.extractions
+    after = {r.file_path: r for r in registry.list_all()}
+    assert set(after) == {"contract.txt", "depot.txt"}
+    for path, record in after.items():
+        assert record.scope == _scope_of(moved)
+        assert record.model_dump(exclude={"doc_id", "scope"}) == before[
+            path
+        ].model_dump(exclude={"doc_id", "scope"})
+
+    # An edit and a deletion then prune the old content.
+    write_corpus(new, {"contract.txt": "Vendor supplies Bank."})
+    edited = stack.run(new)
+    assert len(edited.incremental_delta.changed) == 1
+    assert len(edited.incremental_delta.deleted) == 1
+    assert stack.texts() == {"Vendor supplies Bank."}
+    assert stack.entity_names() == {"Vendor", "Bank"}
+    assert [r.file_path for r in registry.list_all()] == ["contract.txt"]
+
+
+def test_a_copied_local_corpus_is_a_separate_corpus(registry, tmp_path, caplog) -> None:
+    stack = ScopeStack(registry, tmp_path)
+    first = write_corpus(tmp_path / "first", {"contract.txt": A_TEXT})
+    second = write_corpus(tmp_path / "second", {"contract.txt": B_TEXT})
+    stack.run(first)
+    (first_record,) = registry.list_all()
+
+    with caplog.at_level("INFO"):
+        context = stack.run(second)
+
+    # The first source still exists: nothing is adopted from it.
+    assert len(context.incremental_delta.new) == 1
+    assert registry.get(first_record.doc_id) == first_record
+    assert stack.texts() == {A_TEXT, B_TEXT}
+    shared = [r for r in caplog.records if "Other local corpora" in r.getMessage()]
+    assert len(shared) == 1 and first.as_posix() in shared[0].getMessage()
+
+
+def test_a_fixed_source_scope_never_adopts_a_vanished_directory(
+    registry, tmp_path
+) -> None:
+    stack = ScopeStack(registry, tmp_path)
+    old = write_corpus(tmp_path / "old", {"contract.txt": A_TEXT})
+    stack.run(old)
+    (old_record,) = registry.list_all()
+    new = old.rename(tmp_path / "new")
+    stack.config.processing.document_parsing.source_scope = "corpus-a"
+
+    context = stack.run(new)
+
+    assert len(context.incremental_delta.new) == 1
+    assert registry.get(old_record.doc_id) == old_record

@@ -955,10 +955,21 @@ scope. So:
 - a file that fails to parse or load is reported as `failed` and keeps its
   indexed content until a run reads it again.
 
-Moving a local corpus to another directory changes its default scope, so the
-next run indexes every document again under the new scope and the records of
-the old one stay in the registry: set `source_scope` to a stable name first,
-or rebuild.
+Moving a local corpus to another directory changes its default scope. When
+`source_scope` is unset, the first run from the new directory adopts the
+records of the old one: a document new to its scope whose namespace and
+relative path have exactly one record under another local source directory
+that no longer exists is treated as moved, and its record (content hash,
+status, lineage) is re-keyed to the new scope. Nothing is re-extracted, and a
+later edit or deletion prunes the old content as usual. A source directory
+that still exists is a separate corpus (a copy, not a move) and is left
+alone, with one INFO log line naming it; records under an `s3://` or other
+URI scope, under a fixed `source_scope` name, or of another index suffix are
+never adopted. A file recorded under two vanished directories is not adopted
+(WARNING) and is indexed as new. To move a corpus without relying on this,
+set `source_scope` to a stable name first, or rebuild. A fixed
+`source_scope` that looks like an absolute local path is treated as one, so
+use a name or URI instead.
 
 Registries written before the source scope was part of the key are keyed by
 index suffix and relative path only. The first run after an upgrade adopts

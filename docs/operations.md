@@ -62,7 +62,11 @@ missing from the source is treated as deleted, and its exclusive artifacts are
 removed. Therefore:
 
 - keep the same source directory (or a fixed `source_scope`) for a corpus;
-  moving it changes the scope, and the next run re-indexes every document;
+  moving a local directory changes the scope, and the next run adopts the
+  records it finds under the old directory only if that directory no longer
+  exists (a copy left in place is a separate corpus, and every document is
+  indexed again under the new scope; see
+  [User Guide §5](./user-guide.md#deletion-scope));
 - never let corpus files expire or disappear unintentionally: the next run
   removes their graph and vector content;
 - index each tenant or corpus version under its own index suffix, with its own

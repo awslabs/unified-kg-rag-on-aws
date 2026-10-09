@@ -470,6 +470,19 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (`merge.merger.merge_descriptions`); the resolver also compares lines
   rather than whole descriptions. Descriptions written before stay as they
   are until the item is re-extracted or the index is rebuilt (#190).
+- Moving a local corpus to another directory no longer leaves its old content
+  indexed. Without a fixed `document_parsing.source_scope` the scope is the
+  source directory, so every document read as new under the new directory
+  while the old directory's records stayed in the registry; pruning computes
+  exclusivity over all records, so after an edit or deletion those orphans
+  kept the previous version's text units, entities and relationships live.
+  A new document whose index suffix and relative path have exactly one
+  record under another local source directory that no longer exists is now
+  treated as moved: the record is re-keyed to the new scope (content hash,
+  status, lineage and failure count kept), so the document is not
+  re-extracted and later edits prune normally. A directory that still exists
+  is a separate corpus and is left alone (logged once at INFO); URI scopes,
+  fixed `source_scope` values and other suffixes are never adopted (#PR).
 - An interrupted adoption of a doc-status record written before scopes
   existed is now completed. When a run had written the record under its
   scoped key but stopped before deleting the old key, the old record (scope

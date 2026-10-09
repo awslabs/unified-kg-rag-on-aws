@@ -21,13 +21,18 @@ never a corpus file that merely failed to parse this run.
 Registries written before the source scope was part of ``doc_id`` are keyed
 by namespace and path only. :func:`detect_delta` adopts such a record under
 the new key when it belongs to the run's scope (or predates scopes), so an
-upgrade neither re-extracts nor deletes the corpus.
+upgrade neither re-extracts nor deletes the corpus. Likewise, when the source
+scope defaults to the source directory and the corpus moved, a new document
+whose record sits under a local source directory that no longer exists is
+re-keyed to the run's scope (:func:`adopt_relocated_records`), so the old
+records do not keep the previous content indexed.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
+from typing import Literal
 
 from unified_kg_rag.domain.models import (
     Constants,
@@ -51,7 +56,9 @@ from unified_kg_rag.shared.utils.document_identity import (
 )
 
 __all__ = [
+    "SourceLocation",
     "adopt_legacy_records",
+    "adopt_relocated_records",
     "assign_document_identity",
     "assign_registry_source",
     "compute_content_hash",
@@ -65,6 +72,12 @@ __all__ = [
 ]
 
 logger = get_logger(__name__)
+
+# Where a source scope points, as reported by the ``locate_source`` callback of
+# :func:`detect_delta`: a local directory that exists (``"present"``) or no
+# longer does (``"missing"``), or anything else (``"other"``: a URI such as
+# ``s3://...``, or a fixed ``document_parsing.source_scope`` name).
+SourceLocation = Literal["missing", "present", "other"]
 
 
 def compute_content_hash(document: Document) -> str:
@@ -184,6 +197,7 @@ def detect_delta(
     failed_doc_ids: Iterable[str] = (),
     max_failures: int | None = None,
     legacy_doc_ids: Mapping[str, str] | None = None,
+    locate_source: Callable[[str], SourceLocation] | None = None,
 ) -> tuple[DocumentDelta, dict[str, str]]:
     """Classify ``documents`` against the persisted registry.
 
@@ -204,8 +218,14 @@ def detect_delta(
             record stored under the legacy key whose scope is this run's (or
             that predates scopes) is re-keyed to ``doc_id`` before the diff
             (see :func:`adopt_legacy_records`), so it keeps its content hash
-            and lineage instead of reading as new plus deleted. This is the
-            only write this function makes.
+            and lineage instead of reading as new plus deleted.
+        locate_source: With a ``scope``, the run's source scope is a local
+            directory derived from where the corpus sits: a new document
+            whose only other-scope record lies under a local source directory
+            that no longer exists is treated as moved and its record re-keyed
+            to this run (see :func:`adopt_relocated_records`). ``None`` (a
+            fixed source scope) never relocates. Re-keying registry records is
+            the only write this function makes.
 
     Returns:
         The :class:`DocumentDelta` plus the ``{doc_id: content_hash}``
@@ -232,6 +252,12 @@ def detect_delta(
             # so they classify like any other stored document (only on a run
             # that re-keyed or deleted a legacy record).
             delta = doc_status.diff(fingerprints, scope=scope)
+    if (
+        scope is not None
+        and locate_source is not None
+        and adopt_relocated_records(doc_status, delta, documents, scope, locate_source)
+    ):
+        delta = doc_status.diff(fingerprints, scope=scope)
     if max_failures is not None and delta.changed:
         _stop_retrying_exhausted(delta, doc_status, fingerprints, max_failures)
     failed = set(failed_doc_ids) - set(fingerprints)
@@ -328,12 +354,7 @@ def adopt_legacy_records(
         stored = set(_get_many(doc_status, failed))
     else:
         stored = set(failed) & stored_ids
-    adopted: list[str] = []
-    for doc_id, legacy in candidates.items():
-        if doc_id not in current and doc_id not in stored:
-            doc_status.put(legacy.model_copy(update={"doc_id": doc_id, "scope": scope}))
-        doc_status.delete(legacy.doc_id)
-        adopted.append(legacy.file_path or doc_id)
+    adopted = _rekey(doc_status, candidates, scope, keep=current | stored)
     if adopted:
         logger.info(
             "Adopted %d doc-status records keyed without the source scope "
@@ -342,6 +363,134 @@ def adopt_legacy_records(
             ", ".join(adopted[:10]),
         )
     return len(adopted)
+
+
+def adopt_relocated_records(
+    doc_status: DocStatusPort,
+    delta: DocumentDelta,
+    documents: list[Document],
+    scope: str,
+    locate_source: Callable[[str], SourceLocation],
+) -> int:
+    """Re-key the records of a local corpus that moved to this run's source.
+
+    Runs only when ``delta`` has new documents. A new document is *moved*
+    when the registry holds exactly one record with its index namespace and
+    relative path under another source scope that ``locate_source`` reports
+    ``"missing"`` (a local directory that no longer exists): that record is
+    written under the document's key and scope with its content hash, status,
+    lineage and failure count, then deleted under the old key, so the diff
+    then reads the document as changed or unchanged and pruning sees one
+    record per document. A source that is ``"present"`` is a separate corpus
+    sharing the namespace and is left alone; an ``"other"`` source (a URI or
+    a fixed ``source_scope`` name) is never adopted from, and neither is a
+    record of another namespace.
+
+    A moved record whose copy under this run's key already exists unchanged
+    (a relocation interrupted between the write and the delete) is deleted.
+
+    Returns:
+        The number of records re-keyed or deleted.
+    """
+    new = set(delta.new)
+    if not new:
+        return 0
+    current = set(delta.changed) | set(delta.unchanged)
+    # Two documents with one doc_id (the same file loaded twice) count once.
+    paths: dict[str, set[tuple[str, str]]] = {}
+    for document in documents:
+        doc_id = document_doc_id(document)
+        if doc_id in new or doc_id in current:
+            relative, namespace = _identity(document)
+            paths.setdefault(normalize_source_path(relative), set()).add(
+                (namespace, doc_id)
+            )
+    locations: dict[str, SourceLocation] = {}
+    moved_from: dict[str, list[DocStatusRecord]] = {}
+    shared: set[str] = set()
+    for record in doc_status.list_all():
+        if record.scope in (None, scope) or record.file_path is None:
+            continue
+        for namespace, doc_id in paths.get(normalize_source_path(record.file_path), ()):
+            prefix = f"{namespace}|"
+            if not record.scope.startswith(prefix):
+                continue
+            source = record.scope[len(prefix) :]
+            if record.doc_id != compute_doc_id(record.file_path, namespace, source):
+                continue
+            if source not in locations:
+                locations[source] = locate_source(source)
+            if locations[source] == "missing":
+                moved_from.setdefault(doc_id, []).append(record)
+            elif locations[source] == "present":
+                shared.add(source)
+    if shared:
+        logger.info(
+            "Other local corpora write this index namespace and share relative "
+            "paths with this run (%s); their documents are kept separate",
+            ", ".join(sorted(shared)),
+        )
+    ambiguous = sorted(
+        records[0].file_path or doc_id
+        for doc_id, records in moved_from.items()
+        if len(records) > 1
+    )
+    if ambiguous:
+        logger.warning(
+            "Not adopting %d documents recorded under more than one local source "
+            "directory that no longer exists (indexed as new): %s",
+            len(ambiguous),
+            ", ".join(ambiguous[:10]),
+        )
+    candidates = {
+        doc_id: records[0]
+        for doc_id, records in sorted(moved_from.items())
+        if len(records) == 1
+    }
+    already_moved = [doc_id for doc_id in candidates if doc_id in current]
+    copies = _get_many(doc_status, already_moved)
+    for doc_id in already_moved:
+        # Only an exact copy is a finished move; an old record that differs
+        # still references its own artifacts and is left as it is.
+        copy = copies.get(doc_id)
+        if copy is None or _content(copy) != _content(candidates[doc_id]):
+            del candidates[doc_id]
+    moved = _rekey(doc_status, candidates, scope, keep=current)
+    if moved:
+        logger.info(
+            "Adopted %d doc-status records of a local source directory that no "
+            "longer exists (the corpus moved to this run's source), e.g. %s",
+            len(moved),
+            ", ".join(moved[:10]),
+        )
+    return len(moved)
+
+
+def _content(record: DocStatusRecord) -> dict[str, object]:
+    """``record`` without its key and scope (what a re-key copies)."""
+    return record.model_dump(exclude={"doc_id", "scope"})
+
+
+def _rekey(
+    doc_status: DocStatusPort,
+    records: Mapping[str, DocStatusRecord],
+    scope: str,
+    keep: set[str],
+) -> list[str]:
+    """Move each ``{doc_id: record}`` to ``doc_id`` and ``scope``.
+
+    The record is written under the new key before its old key is deleted,
+    so an interrupted run leaves a duplicate (cleaned up by the next run)
+    rather than losing the lineage. A ``doc_id`` in ``keep`` already has its
+    record: only the old key is deleted. Returns the moved file paths.
+    """
+    moved: list[str] = []
+    for doc_id, record in records.items():
+        if doc_id not in keep:
+            doc_status.put(record.model_copy(update={"doc_id": doc_id, "scope": scope}))
+        doc_status.delete(record.doc_id)
+        moved.append(record.file_path or doc_id)
+    return moved
 
 
 def _get_many(
