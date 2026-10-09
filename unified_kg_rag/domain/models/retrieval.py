@@ -7,6 +7,9 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 _SAFE_NAME = re.compile(r"[a-z0-9_-]+")
+# One path segment: starts with a letter or digit, so "." and ".." (and hidden
+# names) cannot occur, and no separator can appear.
+_SAFE_SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
 def validate_safe_name(value: str, field: str) -> str:
@@ -20,6 +23,21 @@ def validate_safe_name(value: str, field: str) -> str:
         raise ValueError(
             f"Invalid {field} '{value}': only lowercase letters, digits, "
             "hyphens, and underscores are allowed."
+        )
+    return value
+
+
+def validate_path_segment(value: str, field: str) -> str:
+    """Return ``value`` if it is safe as one directory name or S3 key segment.
+
+    Letters, digits, ``.``, ``_`` and ``-``, starting with a letter or digit
+    and containing no ``..``: it cannot contain a separator or climb out of
+    its parent directory or prefix.
+    """
+    if not _SAFE_SEGMENT.fullmatch(value) or ".." in value:
+        raise ValueError(
+            f"Invalid {field} '{value}': use letters, digits, '.', '_' or '-' "
+            "(starting with a letter or digit, no '..'), up to 128 characters."
         )
     return value
 

@@ -5,8 +5,8 @@
 Regression: the id became a local cache path (``<cache>/<pipeline_id>``) and
 an S3 prefix unchecked, so ``../x`` or ``a/b`` escaped the cache directory and
 the S3 sync uploaded whatever JSON sat under the resolved path. The id now
-uses the same charset as the index ``suffix`` (lowercase letters, digits,
-hyphens, underscores) at the CLI (``--pipeline-id`` and the
+must be one safe path segment (letters, digits, ``.``, ``_``, ``-``; no
+separator, no ``..``) at the CLI (``--pipeline-id`` and the
 ``GRAPHRAG_PIPELINE_ID`` variable the Step Functions task sets), in
 ``PipelineConfig`` and in ``DataIngestionPipeline.run``.
 """
@@ -25,8 +25,8 @@ from unified_kg_rag.domain.models import PipelineConfig
 
 pytestmark = pytest.mark.unit
 
-_BAD_IDS = ["../escape", "a/b", "..", "Run-1", "run 1", "run.1", "*"]
-_GOOD_IDS = ["run-001", "pipeline-1a2b3c4d-20260101_120000"]
+_BAD_IDS = ["../escape", "a/b", "..", ".hidden", "a..b", "run 1", "a\\b", "*"]
+_GOOD_IDS = ["run-001", "pipeline-1a2b3c4d-20260101_120000", "Run-1", "run.1"]
 
 
 def _parser():
@@ -60,7 +60,7 @@ def test_cli_accepts_safe_pipeline_id(good: str) -> None:
     assert _parser().parse_args(["--pipeline-id", good]).pipeline_id == good
 
 
-@pytest.mark.parametrize("bad", ["../escape", "a/b", "Run-1"])
+@pytest.mark.parametrize("bad", ["../escape", "a/b", ".."])
 def test_pipeline_config_rejects_unsafe_pipeline_id(bad: str) -> None:
     with pytest.raises(ValidationError):
         PipelineConfig(pipeline_id=bad)

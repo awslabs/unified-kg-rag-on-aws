@@ -30,7 +30,7 @@ from unified_kg_rag.evaluation.base import (
     judge_model_kwargs,
 )
 from unified_kg_rag.shared import EvaluationException, get_logger
-from unified_kg_rag.shared.utils import parse_llm_json
+from unified_kg_rag.shared.utils import parse_llm_json, text_digest
 
 logger = get_logger(__name__)
 
@@ -190,8 +190,11 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             or not isinstance(score, int | float)
             or not 0.0 <= score <= 1.0  # also rejects NaN
         ):
+            # The judge's text quotes the answer and reference; keep it out of
+            # the message (DEBUG only), like other model output.
+            logger.debug("Judge output without a valid score: %r", raw)
             raise UnscoredJudgeOutputError(
-                f"No valid score in judge output: {raw[:120]!r}"
+                f"No valid score in judge output ({text_digest(raw)})"
             )
         return float(score), explanation
 

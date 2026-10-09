@@ -18,7 +18,7 @@ from pydantic import (
 )
 
 from .evaluation import EvaluationMetricType, EvaluatorType
-from .retrieval import FusionMethod, SearchStrategy, validate_safe_name
+from .retrieval import FusionMethod, SearchStrategy, validate_path_segment
 
 # Stdlib logger: shared.logging imports this module, so get_logger would cycle.
 _logger = logging.getLogger(__name__)
@@ -2692,7 +2692,9 @@ class PipelineConfig(BaseModel):
     )
     # The id names a local cache directory and an S3 prefix.
     pipeline_id: (
-        Annotated[str, AfterValidator(lambda v: validate_safe_name(v, "pipeline_id"))]
+        Annotated[
+            str, AfterValidator(lambda v: validate_path_segment(v, "pipeline_id"))
+        ]
         | None
     ) = Field(
         default=None,

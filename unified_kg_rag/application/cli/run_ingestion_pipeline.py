@@ -18,7 +18,7 @@ from unified_kg_rag.domain.models import (
     PipelineContext,
     PipelineStageStatus,
     PipelineStageType,
-    validate_safe_name,
+    validate_path_segment,
 )
 from unified_kg_rag.shared import (
     CloudWatchEMFSink,
@@ -43,7 +43,7 @@ def _pipeline_id_arg(value: str) -> str | None:
     if not value:  # an empty GRAPHRAG_PIPELINE_ID means "unset"
         return None
     try:
-        return validate_safe_name(value, "pipeline_id")
+        return validate_path_segment(value, "pipeline_id")
     except ValueError as e:
         raise argparse.ArgumentTypeError(str(e)) from e
 
