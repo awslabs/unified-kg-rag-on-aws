@@ -28,10 +28,12 @@ class IndexingStats(BaseModel):
     successful_items: int = Field(default=0)
     failed_items: int = Field(default=0)
     errors: list[str] = Field(default_factory=list)
-    # Ids of the items whose write failed, where the failure site knows them.
-    # An incremental commit records the documents owning these artifacts
-    # FAILED so the next run rewrites them; failed_items above len(failed_ids)
-    # are failures no id was reported for.
+    # Ids of the items whose write failed, where the failure site knows them,
+    # kept with multiplicity: a failure site records exactly one id per failed
+    # item, so an artifact whose write failed twice (e.g. two MemberOf edge
+    # batches of one community) appears twice. An incremental commit records
+    # the documents owning these artifacts FAILED so the next run rewrites
+    # them; see unattributed_failures for the failures no id was reported for.
     failed_ids: list[str] = Field(default_factory=list)
     processing_time: float = Field(default=0.0)
 
@@ -43,12 +45,32 @@ class IndexingStats(BaseModel):
     def error_rate(self) -> float:
         return self.failed_items / self.total_items if self.total_items > 0 else 0.0
 
+    @property
+    def unattributed_failures(self) -> int:
+        """Failures reported without an artifact id.
+
+        Derived from the counters rather than stored, so stats built directly
+        (``IndexingStats(failed_items=N)``) still count as unattributed. Exact
+        because add_error records at most one id per failed item.
+        """
+        return max(0, self.failed_items - len(self.failed_ids))
+
     def add_success(self, count: int = 1) -> None:
         self.successful_items += count
 
     def add_error(
         self, error_message: str, count: int = 1, ids: list[str] | None = None
     ) -> None:
+        """Record ``count`` failed items, ``ids`` naming the ones known.
+
+        ``ids`` holds one entry per failed item (an id may repeat when the same
+        artifact failed more than once) and must not outnumber ``count``.
+        """
+        if ids and len(ids) > count:
+            raise ValueError(
+                f"add_error got {len(ids)} ids for {count} failed items; "
+                "record one id per failed item"
+            )
         self.failed_items += count
         if ids:
             self.failed_ids.extend(ids)

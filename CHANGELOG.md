@@ -441,6 +441,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- An incremental commit no longer records every document FAILED when one
+  community's `MemberOf` edges fail in more than one Neptune entity batch.
+  Each failed batch carries the community id, and the commit deduplicated the
+  ids before comparing them with the failure count, so the repeated failures
+  counted as failures without an id. Failed ids are now counted once per
+  failed item (`IndexingStats.unattributed_failures`), and only the documents
+  owning the failed community are recorded FAILED (#PR).
 - Merging small chunks no longer drops text when a chunk repeats the previous
   chunk's last lines verbatim, such as a document ending in two identical
   `Signed: ____` lines with an LLM line boundary between them. The repeated
