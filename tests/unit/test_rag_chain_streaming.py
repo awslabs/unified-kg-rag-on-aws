@@ -11,6 +11,7 @@ injected via ``retriever_builders``; memory is a recording fake.
 from __future__ import annotations
 
 import asyncio
+import itertools
 from typing import Any
 
 import pytest
@@ -62,7 +63,8 @@ class _StreamingModelFactory:
     def get_model(self, model_id: Any, **kwargs: Any) -> Any:
         self.get_model_calls += 1
         cls = _FailingChatModel if self.fail_mid_stream else GenericFakeChatModel
-        return cls(messages=iter([AIMessage(content=_ANSWER)]))
+        # Reusable like a real model: the chain builds each prompt chain once.
+        return cls(messages=itertools.repeat(AIMessage(content=_ANSWER)))
 
     def get_model_info(self, model_id: Any) -> Any:
         return None

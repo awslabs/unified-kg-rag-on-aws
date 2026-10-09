@@ -13,6 +13,11 @@ is never constructed.
 
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
+from unittest.mock import MagicMock
+
 import pytest
 from gremlin_python.process.translator import Translator
 from gremlin_python.structure.graph import Graph
@@ -623,3 +628,41 @@ async def test_text_seeds_rank_by_a_stored_property(
     by_steps = [args for name, args in calls if name == "by"]
     assert by_steps and by_steps[0][0] == prop
     assert not any(name == "has" and args[0] == "importance" for name, args in calls)
+
+
+# --------------------------------------------------------------------------- #
+# _execute_traversal: concurrency bound by the connection pool
+# --------------------------------------------------------------------------- #
+
+
+class _SlowTraversal:
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def to_list(self) -> list:
+        cls = type(self)
+        with cls.lock:
+            cls.active += 1
+            cls.max_active = max(cls.max_active, cls.active)
+        time.sleep(0.02)
+        with cls.lock:
+            cls.active -= 1
+        return [1]
+
+
+async def test_traversals_beyond_the_pool_wait_on_the_loop(config: Config) -> None:
+    # gremlinpython blocks a worker thread in pool.get() for every request
+    # beyond pool_size; those threads come from the loop's default executor,
+    # which LangChain also runs Bedrock calls on. Excess traversals must wait
+    # on the loop instead of holding an executor thread.
+    config.aws.neptune.pool_size = 3
+    config.indexing.neptune.index_concurrency = 1
+    retriever = NeptuneRetriever(
+        config=config, neptune_client=MagicMock(), boto_session=MagicMock()
+    )
+    results = await asyncio.gather(
+        *(retriever._execute_traversal(_SlowTraversal()) for _ in range(12))  # type: ignore[arg-type]
+    )
+    assert results == [[1]] * 12
+    assert _SlowTraversal.max_active == 3

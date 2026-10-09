@@ -145,11 +145,13 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
     BOTO_MIN_POOL_CONNECTIONS: ClassVar[int] = 10
     BOTO_MAX_POOL_CONNECTIONS: ClassVar[int] = 200
 
-    def _max_pool_connections(self) -> int:
-        processing = self.config.processing
+    @classmethod
+    def max_pool_connections(cls, config: Config) -> int:
+        """urllib3 pool size for a Bedrock client under ``config``'s concurrency."""
+        processing = config.processing
         wanted = processing.max_concurrency * processing.chunk_concurrency
         return max(
-            self.BOTO_MIN_POOL_CONNECTIONS, min(wanted, self.BOTO_MAX_POOL_CONNECTIONS)
+            cls.BOTO_MIN_POOL_CONNECTIONS, min(wanted, cls.BOTO_MAX_POOL_CONNECTIONS)
         )
 
     def _boto_config(self, read_timeout: int | None = None) -> BotoConfig:
@@ -161,12 +163,12 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
                 connect_timeout=self.BOTO_CONNECT_TIMEOUT,
                 read_timeout=read_timeout,
                 retries=retries,  # type: ignore[arg-type]
-                max_pool_connections=self._max_pool_connections(),
+                max_pool_connections=self.max_pool_connections(self.config),
             )
         return BotoConfig(
             connect_timeout=self.BOTO_CONNECT_TIMEOUT,
             retries=retries,  # type: ignore[arg-type]
-            max_pool_connections=self._max_pool_connections(),
+            max_pool_connections=self.max_pool_connections(self.config),
         )
 
     def __init__(
@@ -645,6 +647,8 @@ class BedrockLanguageModelFactory(
         # No stop sequence: both Converse and the InvokeModel Messages body are
         # turn-structured, so the legacy "\n\nHuman:" text-completion marker
         # only cut off answers whose text contains it (chat transcripts).
+        if is_cross_region and model_info.supports_streaming is not None:
+            config["disable_streaming"] = not model_info.supports_streaming
         if not is_cross_region:
             # top_k is a sampling parameter; Claude 4.7+ rejects it.
             config["model_kwargs"] = (

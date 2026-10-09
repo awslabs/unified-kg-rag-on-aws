@@ -15,6 +15,8 @@ Bedrock ``__init__`` never runs, and chains are replaced with fakes / mocks.
 from __future__ import annotations
 
 import json
+import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -25,7 +27,7 @@ from unified_kg_rag.adapters.search_strategies.global_search import (
     GlobalSearchStrategy,
     _MapPoint,
 )
-from unified_kg_rag.domain.models import RetrievalResult, SearchQuery
+from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
 pytestmark = pytest.mark.unit
@@ -514,3 +516,43 @@ async def test_map_phase_transient_failures_still_degrade_when_not_ignored() -> 
     strat.map_rater = _DeniedMapChain(TimeoutError("read timed out"))
     out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
     assert out
+
+
+class _SlowMapChain:
+    """Map chain whose calls take time; records the peak in-flight count."""
+
+    def __init__(self) -> None:
+        self.active = 0
+        self.max_active = 0
+        self._lock = threading.Lock()
+
+    def batch(
+        self, inputs: list[dict], config: Any = None, return_exceptions: bool = False
+    ) -> list[str]:
+        with self._lock:
+            self.active += len(inputs)
+            self.max_active = max(self.max_active, self.active)
+        time.sleep(0.1)
+        with self._lock:
+            self.active -= len(inputs)
+        return [_map_payload(("p", 50))] * len(inputs)
+
+    def invoke(self, single_input: dict, config: Any = None) -> str:
+        return self.batch([single_input])[0]
+
+
+async def test_map_phase_runs_max_concurrency_calls_at_once() -> None:
+    # processing.max_concurrency is the documented map fan-out; it was capped
+    # at BatchProcessor's default chunk_concurrency (4) instead.
+    config = Config()
+    config.processing.max_concurrency = 20
+    config.search.global_search.map_batch_size = 1
+    strat = GlobalSearchStrategy(config=config, retrievers={})
+    strat.map_rater = _SlowMapChain()  # type: ignore[assignment]
+
+    points, unrated = await strat._run_map_phase(
+        _communities(40), SearchQuery(query="q")
+    )
+
+    assert len(points) == 40 and unrated == []
+    assert strat.map_rater.max_active == 20  # type: ignore[attr-defined]

@@ -25,6 +25,7 @@ import boto3
 from botocore.config import Config as BotoConfig
 
 from unified_kg_rag.adapters.aws.bedrock import (
+    BaseBedrockModelFactory,
     BedrockEmbeddingModelFactory,
     BedrockLanguageModelFactory,
     BedrockRerankModelFactory,
@@ -158,6 +159,13 @@ class Providers:
                 self._bedrock_runtime_client = session.client(
                     "bedrock-runtime",
                     region_name=self.config.aws.bedrock_region,
-                    config=BotoConfig(retries={"max_attempts": 3}),
+                    # Sized like the model clients: every query's
+                    # count_tokens_many sends several counts at once.
+                    config=BotoConfig(
+                        retries={"max_attempts": 3},
+                        max_pool_connections=(
+                            BaseBedrockModelFactory.max_pool_connections(self.config)
+                        ),
+                    ),
                 )
             return self._bedrock_runtime_client

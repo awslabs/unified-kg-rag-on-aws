@@ -70,6 +70,31 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   after its prompt (e.g. `AnswerGenerationPrompt`) in traces (#156).
 
 ### Changed
+- MinHash entity resolution shares one set of seeded permutations instead of
+  regenerating them for every name and query, hashes each name's shingles in
+  one batch, and reuses the candidates' signatures when they are queried;
+  signatures and matches are unchanged (pinned by a property test). Grouping
+  5,000 names: index 0.7 s instead of 3.4 s, queries 0.3 s instead of
+  3.5 s (#176).
+- The indexer's embedding cache holds vectors as float32 arrays instead of
+  lists of Python floats, and keeps one copy (the S3 tier when
+  `persist_embedding_cache` is on, else the in-process tier) instead of two:
+  5,000 1024-dimension vectors take 43 MB instead of 203 MB. A flush skips
+  re-reading the S3 object while its ETag is unchanged since this process
+  read or wrote it. The S3 object format is unchanged, so existing caches
+  load as before; cached vectors now carry float32 precision, which is what
+  the knn field stores (#176).
+- `GraphRAGChain` builds each query-step LLM chain (router, entity/keyword
+  extraction, translation, context building, answer) once per prompt, model
+  and thinking flag and reuses it; it was rebuilt per query, creating two
+  boto clients and fresh connection pools each time (~6 ms and new TLS
+  connections per step, now a dictionary lookup) (#176).
+- The script-aware token estimate, the only counter for models without
+  CountTokens (the default Claude 5.5 models), uses one compiled regex instead
+  of a per-character Python loop, with identical results; with no CountTokens
+  API, `count_tokens_many` counts inline instead of starting an 8-thread pool
+  per call. Budgeting 300 sections of 1.5 KB takes 24 ms instead of 476 ms,
+  and 32 concurrent queries 0.8 s instead of 16 s (#176).
 - The fast tier (`aws.bedrock.fast_model_id`) defaults to Claude Haiku 5.5
   (`anthropic.claude-haiku-5-5`) instead of Haiku 4.5. In a real-AWS A/B (79
   documents, 20 questions, 5 strategies, 2 ingests per arm) it matched Haiku
@@ -329,6 +354,43 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`
   made graph extraction fail to format, and `{input_text}` in a sample was
   substituted with the chunk being extracted (#173).
+- LightRAG keyword extraction keeps numeric keywords (`[2024, "Acme"]`) as
+  text; it rejected the whole payload, which failed the query under the
+  default `processing.ignore_errors: false`. Null, boolean and nested items
+  are still rejected (#176).
+- Claude Haiku 5.5 (the default fast tier) streams. langchain-aws 1.8.0
+  streams only model ids on its allowlist, which lacks Haiku 5.5, so every
+  model construction fell back to non-streaming Converse and logged a
+  warning. A `supports_streaming` capability (also a `model_overrides` key)
+  now sets it per model (#176).
+- A Neptune connection whose probe query fails is closed before the error is
+  raised, instead of leaving its websocket and thread pool open (#176).
+- `memory.max_conversation_age_hours` is enforced: a conversation idle for
+  longer is dropped on the next memory lookup (a returning one starts over).
+  The TTL was stored and never read, so conversations lived until the
+  `max_conversations` limit evicted them (#176).
+- The CountTokens `bedrock-runtime` client sizes its connection pool like the
+  model clients instead of botocore's default 10, which concurrent queries'
+  batched counts (8 at a time each) overran (#176).
+- Global search runs `processing.max_concurrency` map calls at once, as
+  documented; each map call was its own BatchProcessor chunk, so the default
+  chunk concurrency of 4 capped it (40 map calls of 0.5 s: 5.0 s, now
+  1.0 s at the default 20) (#176).
+- Neptune traversals beyond `aws.neptune.pool_size` wait on the event loop
+  instead of in gremlinpython's blocking pool checkout, where each held a
+  default-executor thread and the Bedrock calls LangChain runs on that
+  executor queued behind them (64 concurrent traversals at pool size 4 delayed
+  a 0.2 s executor call to 3.0 s; now 0.2 s). The default pool size stays 4,
+  the query-thread count of the default `db.r6g.large` (#176).
+- A `GraphRAGChain` dropped without `close()`/`aclose()` now releases its
+  cached retrievers when it is garbage-collected; its finalizer only stopped
+  the sync-API loop, so the retrievers' sockets outlived the chain (20 dropped
+  chains against the local stores: +40 sockets and "Unclosed client
+  session" warnings after `gc.collect()`, now +0). Closing the chain
+  explicitly is still required for timely release (#176).
+- `run-eval` closes its chain on exit, whether the run succeeds or fails, so
+  the retrievers' Neptune/OpenSearch sockets are released instead of the
+  process ending with "Unclosed client session / connector" warnings (#176).
 - The LLM XML parser no longer tries LangChain's `XMLOutputParser.parse`
   first. Without `defusedxml` (not a dependency) that call raised
   `ImportError` on every response, so the strict and the two re-escaping

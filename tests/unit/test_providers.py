@@ -147,6 +147,18 @@ def test_default_token_counters_share_one_client(mocker) -> None:
     assert clients[2] is None
 
 
+def test_count_tokens_client_pool_is_sized_like_the_model_clients() -> None:
+    # count_tokens_many sends up to 8 counts at once per query; botocore's
+    # default pool of 10 would discard and re-open connections under load.
+    config = Config()
+    session = MagicMock()
+    Providers(config, boto_session=session).token_counter("model-a")
+
+    boto_config = session.client.call_args.kwargs["config"]
+    expected = config.processing.max_concurrency * config.processing.chunk_concurrency
+    assert boto_config.max_pool_connections == expected
+
+
 def test_resolve_prefers_the_given_bundle() -> None:
     config = Config()
     bundle = Providers(config, boto_session=MagicMock())

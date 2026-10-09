@@ -533,7 +533,7 @@ quotas (`search.local_search.type_quota`) are in the template.
 |---|---|---|
 | `memory.max_conversations` | `100` | Conversations held in conversation memory (§4 Interactive mode). |
 | `memory.max_messages_per_conversation` | `20` | Messages kept per conversation. |
-| `memory.max_conversation_age_hours` | `168` | Age after which a conversation can be cleaned up. |
+| `memory.max_conversation_age_hours` | `168` | Hours a conversation may stay idle; an older one is dropped and starts over. |
 | `cache.ttl_seconds` | `86400` | Cache entry TTL; `null` = never expire. |
 | `logging.level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `logging.log_format` | `"structured"` | `structured` or `plain`. |

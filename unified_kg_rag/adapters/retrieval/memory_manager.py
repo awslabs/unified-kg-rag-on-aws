@@ -64,6 +64,10 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
             self.config, providers
         )
 
+    def is_expired(self, now: datetime) -> bool:
+        """Whether the conversation has been idle for longer than its TTL."""
+        return now - self.updated_at > self.ttl
+
     def add_message(self, message: BaseMessage) -> None:
         self.append_message(message)
         self._update_context(message)
@@ -258,13 +262,17 @@ class MemoryManager:
         return self._entity_extractor
 
     async def get_or_create_memory(self, conv_id: str) -> GraphRAGChatMessageHistory:
-        if (memory := self._memories.get(conv_id)) is not None:
-            return memory
         # Built once, outside the lock: a new conversation then costs no
         # model construction while other queries wait on the lock.
         extractor = self._shared_entity_extractor()
         with self._lock:
-            if memory := self._memories.get(conv_id):
+            # Conversations idle past memory.max_conversation_age_hours are
+            # dropped (a returning one starts over). A sweep over at most
+            # max_conversations entries per lookup.
+            now = datetime.now()
+            for cid in [c for c, m in self._memories.items() if m.is_expired(now)]:
+                del self._memories[cid]
+            if (memory := self._memories.get(conv_id)) is not None:
                 return memory
 
             if len(self._memories) >= self.config.memory.max_conversations:

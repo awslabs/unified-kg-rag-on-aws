@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import re
 import threading
 from functools import lru_cache
 from typing import Any
@@ -97,9 +98,12 @@ _DENSE_SCRIPT_RANGES: tuple[tuple[int, int], ...] = (
 )
 
 
-def _is_dense_script_char(ch: str) -> bool:
-    cp = ord(ch)
-    return any(lo <= cp <= hi for lo, hi in _DENSE_SCRIPT_RANGES)
+# One compiled character class over the ranges above. The estimate runs over
+# every context section of every query, and a per-character Python loop over
+# the ranges cost ~1.5 ms per 1.5 KB section; the regex scan runs in C.
+_DENSE_SCRIPT_RE = re.compile(
+    "[" + "".join(f"\\u{lo:04X}-\\u{hi:04X}" for lo, hi in _DENSE_SCRIPT_RANGES) + "]"
+)
 
 
 def estimate_token_count(text: str) -> int:
@@ -118,7 +122,7 @@ def estimate_token_count(text: str) -> int:
     """
     if not text:
         return 0
-    dense_chars = sum(1 for ch in text if _is_dense_script_char(ch))
+    dense_chars = len(_DENSE_SCRIPT_RE.findall(text))
     other_chars = len(text) - dense_chars
     # ~1 token per dense-script char + ~4 chars per token for the rest.
     char_estimate = dense_chars + (other_chars // 4)

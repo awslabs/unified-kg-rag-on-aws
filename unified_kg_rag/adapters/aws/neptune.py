@@ -66,6 +66,11 @@ def _handle_neptune_errors(func: Callable) -> Callable:
     return wrapper
 
 
+def neptune_pool_size(config: Config) -> int:
+    """Connections in a NeptuneClient's pool: the most requests in flight."""
+    return max(config.aws.neptune.pool_size, config.indexing.neptune.index_concurrency)
+
+
 class NeptuneClient:
     def __init__(self, config: Config, boto_session: boto3.Session | None = None):
         self.config = config
@@ -109,15 +114,13 @@ class NeptuneClient:
             else {}
         )
 
+        remote_connection: DriverRemoteConnection | None = None
         try:
             # pool_size bounds concurrent in-flight requests over the websocket.
             # Never below indexing.neptune.index_concurrency, so concurrent
             # write batches are multiplexed rather than serialized; max_workers
             # tracks it so result-handling threads are not the bottleneck.
-            pool_size = max(
-                self.neptune_config.pool_size,
-                self.config.indexing.neptune.index_concurrency,
-            )
+            pool_size = neptune_pool_size(self.config)
             remote_connection = DriverRemoteConnection(
                 url=connection_url,
                 traversal_source="g",
@@ -133,6 +136,13 @@ class NeptuneClient:
             )
             return remote_connection
         except Exception as e:
+            # The probe failed after the websocket and its thread pool opened;
+            # nothing else holds the connection, so release it here.
+            if remote_connection is not None:
+                try:
+                    remote_connection.close()
+                except Exception as close_error:  # noqa: BLE001 - keep the cause
+                    logger.debug("Error closing failed connection: %s", close_error)
             error_message = f"Failed to establish connection to Neptune: {e}"
             logger.error(error_message)
             raise AWSServiceError(error_message) from e

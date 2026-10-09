@@ -13,13 +13,20 @@ in-flight query on another loop is using.
 from __future__ import annotations
 
 import asyncio
+import gc
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from langchain_core.output_parsers import StrOutputParser
 
+from unified_kg_rag.application.retrieval import rag_chain as rag_chain_module
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, _LoopRunner
 from unified_kg_rag.domain.models import Config, RetrieverRole
+from unified_kg_rag.domain.prompts import (
+    AnswerGenerationPrompt,
+    StrategySelectionPrompt,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -157,6 +164,27 @@ def test_close_stops_the_loop_thread_and_restarts_on_demand() -> None:
     chain.close()
 
 
+def test_dropped_chain_releases_its_retrievers_when_collected() -> None:
+    # A chain dropped without close()/aclose() must not leak its retrievers'
+    # sockets: the GC finalizer closes them (on their still-running loop) and
+    # then stops the sync-API loop.
+    chain, built = _chain()
+    chain.invoke({"query": "q"})  # type: ignore[arg-type]
+    _run_on_fresh_loop(chain.ainvoke({"query": "q"}))  # type: ignore[arg-type]
+    thread = chain._loop_runner._thread
+    assert thread is not None
+
+    del chain
+    gc.collect()
+
+    assert len(built) == 2
+    # The runner-bound retriever is closed on its own loop ...
+    assert built[0].aclosed == 1 and built[0].aclose_loop is built[0].loop
+    # ... the one whose loop is gone, synchronously.
+    assert built[1].closed == 1
+    assert not thread.is_alive()
+
+
 def test_runner_rejects_reentrant_sync_call() -> None:
     runner = _LoopRunner()
 
@@ -222,3 +250,24 @@ async def test_query_on_another_loop_does_not_close_in_flight_retrievers() -> No
     # Both are released on chain close, each on its own loop when it is live.
     assert built[0].aclosed == 1 and built[0].aclose_loop is built[0].loop
     assert built[1].aclosed == 1
+
+
+def test_prompt_chains_are_built_once_per_prompt_model_and_flags(mocker) -> None:
+    # Each setup_chain builds the model and its boto clients (new connection
+    # pools); doing it per query paid that on every request.
+    setup = mocker.patch.object(
+        rag_chain_module, "setup_chain", side_effect=lambda **_: object()
+    )
+    chain = GraphRAGChain(config=Config(), boto_session=MagicMock())
+    try:
+        get = chain._get_chain_for_prompt
+        first = get(AnswerGenerationPrompt, StrOutputParser(), enable_thinking=False)
+        again = get(AnswerGenerationPrompt, StrOutputParser(), enable_thinking=False)
+        thinking = get(AnswerGenerationPrompt, StrOutputParser(), enable_thinking=True)
+        router = get(StrategySelectionPrompt, StrOutputParser())
+    finally:
+        chain.close()
+
+    assert first is again
+    assert len({id(first), id(thinking), id(router)}) == 3
+    assert setup.call_count == 3

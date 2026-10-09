@@ -10,6 +10,11 @@ vectors back. Keyed by the same content hash the indexer already computes, and
 namespaced by embedding model + dimension so a model/dim change can't return
 stale vectors.
 
+Vectors are held as float32 arrays (an OpenSearch knn field stores float32
+anyway), about an eighth of a list of Python floats. The S3 object stays a
+JSON ``{key: [float, ...]}`` map, so caches written by earlier versions load
+unchanged and vice versa.
+
 Best-effort: any S3 error degrades to an in-memory-only cache (load returns
 empty, flush is skipped) rather than failing the run.
 """
@@ -17,6 +22,7 @@ empty, flush is skipped) rather than failing the run.
 from __future__ import annotations
 
 import json
+from array import array
 from typing import TYPE_CHECKING, Any
 
 import boto3
@@ -55,13 +61,17 @@ class S3EmbeddingCache:
         self._namespace = f"{model_id}:{dimension}"
         self._session = boto_session or boto3.Session()
         self._client: S3Client | None = None
-        self._cache: dict[str, list[float]] = {}
-        # Keys this process computed since the last load — flushed by merging
-        # onto the freshest remote state so a concurrent writer's entries are
-        # preserved rather than clobbered by a whole-object overwrite.
-        self._pending: dict[str, list[float]] = {}
+        # This namespace's vectors (float32), loaded and computed.
+        self._cache: dict[str, array] = {}
+        # Other namespaces' entries, kept as read so a flush writes them back.
+        self._foreign: dict[str, Any] = {}
+        # Keys this process computed since the last flush.
+        self._pending: set[str] = set()
+        # ETag of the remote object as last read or written. While it is
+        # unchanged, this process already holds every entry, so a flush skips
+        # re-reading (and re-parsing) the whole object.
+        self._etag: str | None = None
         self._loaded = False
-        self._dirty = False
 
     @property
     def client(self) -> S3Client:
@@ -72,25 +82,38 @@ class S3EmbeddingCache:
     def _namespaced(self, content_hash: str) -> str:
         return f"{self._namespace}|{content_hash}"
 
-    def _read_remote(self) -> dict[str, list[float]]:
-        """Read the current persisted map from S3 (all namespaces), or {}."""
+    def _merge_remote(self) -> None:
+        """Read the persisted map from S3 (all namespaces) and merge it in.
+
+        Other namespaces take the remote entries; in this namespace the
+        vectors this process holds win, so a pending one is never replaced.
+        A missing or unreadable object merges nothing.
+        """
         try:
             obj = self.client.get_object(Bucket=self.bucket_name, Key=self.key)
             data = json.loads(obj["Body"].read())
-            return data if isinstance(data, dict) else {}
         except Exception as e:  # noqa: BLE001 - missing/unreadable object -> empty
             logger.info("Embedding cache not read from S3 (starting empty): %s", e)
-            return {}
+            return
+        self._etag = obj.get("ETag")
+        if not isinstance(data, dict):
+            return
+        prefix = f"{self._namespace}|"
+        for key, vector in data.items():
+            if not key.startswith(prefix):
+                self._foreign[key] = vector
+            elif key not in self._cache:
+                try:
+                    self._cache[key] = array("f", vector)
+                except (TypeError, ValueError):
+                    logger.debug("Skipping malformed embedding-cache entry '%s'", key)
 
     def load(self) -> None:
         """Load the persisted cache from S3 (best-effort, once)."""
         if self._loaded:
             return
         self._loaded = True
-        remote = self._read_remote()
-        # Only keep entries for the current model/dimension namespace.
-        prefix = f"{self._namespace}|"
-        self._cache = {k: v for k, v in remote.items() if k.startswith(prefix)}
+        self._merge_remote()
         if self._cache:
             logger.info(
                 "Loaded %s embedding-cache entries from 's3://%s/%s'",
@@ -100,41 +123,59 @@ class S3EmbeddingCache:
             )
 
     def get(self, content_hash: str) -> list[float] | None:
-        return self._cache.get(self._namespaced(content_hash))
+        vector = self._cache.get(self._namespaced(content_hash))
+        return vector.tolist() if vector is not None else None
 
     def put(self, content_hash: str, vector: list[float]) -> None:
         key = self._namespaced(content_hash)
-        self._cache[key] = vector
-        self._pending[key] = vector
-        self._dirty = True
+        self._cache[key] = array("f", vector)
+        self._pending.add(key)
+
+    def _remote_changed(self) -> bool:
+        if self._etag is None:
+            return True
+        try:
+            head = self.client.head_object(Bucket=self.bucket_name, Key=self.key)
+        except Exception:  # noqa: BLE001 - unknown state -> re-read
+            return True
+        return head.get("ETag") != self._etag
+
+    def _encode(self) -> bytes:
+        # One entry at a time, so the vectors never all exist as float lists.
+        entries = [f"{json.dumps(k)}:{json.dumps(v)}" for k, v in self._foreign.items()]
+        entries.extend(
+            f"{json.dumps(k)}:{json.dumps(v.tolist())}" for k, v in self._cache.items()
+        )
+        return ("{" + ",".join(entries) + "}").encode("utf-8")
 
     def flush(self) -> None:
         """Persist newly-computed vectors back to S3 (best-effort).
 
-        Re-reads the current remote object and merges this process's pending
-        entries on top before writing, so a concurrent writer's entries (in a
-        different namespace, or hashes this process never saw) are preserved
-        rather than clobbered by a blind whole-object overwrite. Worst case under
-        a true write-write race is re-embedding a few vectors, never a wrong one.
+        When another writer changed the object since this process last read or
+        wrote it, its entries are merged in first, so they are preserved rather
+        than clobbered by the whole-object overwrite. Worst case under a true
+        write-write race is re-embedding a few vectors, never a wrong one.
         """
-        if not self._dirty:
+        if not self._pending:
             return
         try:
-            merged = self._read_remote()
-            merged.update(self._pending)
-            body = json.dumps(merged).encode("utf-8")
-            self.client.put_object(
-                Bucket=self.bucket_name, Key=self.key, Body=body, **self._sse_args
+            if self._remote_changed():
+                self._merge_remote()
+            response = self.client.put_object(
+                Bucket=self.bucket_name,
+                Key=self.key,
+                Body=self._encode(),
+                **self._sse_args,
             )
+            self._etag = response.get("ETag") if isinstance(response, dict) else None
             flushed_count = len(self._pending)
             self._pending.clear()
-            self._dirty = False
             logger.info(
                 "Flushed %s embedding-cache entries to 's3://%s/%s' (%s total)",
                 flushed_count,
                 self.bucket_name,
                 self.key,
-                len(merged),
+                len(self._cache) + len(self._foreign),
             )
         except Exception as e:  # noqa: BLE001 - persistence is best-effort
             logger.warning("Failed to flush embedding cache to S3: %s", e)

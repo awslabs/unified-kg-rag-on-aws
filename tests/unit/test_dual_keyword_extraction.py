@@ -144,6 +144,40 @@ class TestExtractDualKeywords:
         )
         assert await chain._extract_dual_keywords("q", "English") == ([], [])
 
+    async def test_numeric_keywords_are_kept_as_text(
+        self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A year or a quantity is a legitimate keyword; the model emits it as a
+        # JSON number, which must not fail the query.
+        chain.ignore_errors = False
+        monkeypatch.setattr(
+            chain,
+            "_get_chain_for_prompt",
+            lambda *a, **k: _StubChain(
+                '{"high_level_keywords": [2024, "Acme"], '
+                '"low_level_keywords": [3.5, "Vendor"]}'
+            ),
+        )
+        assert await chain._extract_dual_keywords("q", "English") == (
+            ["2024", "Acme"],
+            ["3.5", "Vendor"],
+        )
+
+    @pytest.mark.parametrize("item", ["null", "true", '["x"]', '{"k": 1}'])
+    async def test_non_scalar_keyword_raises(
+        self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch, item: str
+    ) -> None:
+        chain.ignore_errors = False
+        monkeypatch.setattr(
+            chain,
+            "_get_chain_for_prompt",
+            lambda *a, **k: _StubChain(
+                f'{{"high_level_keywords": ["Acme", {item}], "low_level_keywords": []}}'
+            ),
+        )
+        with pytest.raises(LanguageModelError, match="keyword"):
+            await chain._extract_dual_keywords("q", "English")
+
     async def test_missing_level_is_empty(
         self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch
     ) -> None:
