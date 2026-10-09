@@ -325,6 +325,10 @@ class DynamoDBDocStatusStore:
             for doc_id, (_, stored_scope, _) in stored.items()
             if doc_id not in incoming_ids and (scope is None or stored_scope == scope)
         ]
+        # Already projected for the deletion filter: reporting it is free.
+        delta.stored_scopes = sorted(
+            {s for _, s, _ in stored.values() if s is not None}
+        )
         return delta
 
     @staticmethod
@@ -384,7 +388,9 @@ class DynamoDBDocStatusStore:
 
         def _str_set(attr: str) -> list[str]:
             cell = item.get(attr)
-            return list(cell["SS"]) if cell and "SS" in cell else []
+            # A string set has no order: sort it so a record reads back the
+            # same on every scan (and compares equal to its written copy).
+            return sorted(cell["SS"]) if cell and "SS" in cell else []
 
         content_length_cell = item.get("content_length")
         content_length = (

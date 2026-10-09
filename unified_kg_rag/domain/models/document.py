@@ -279,6 +279,13 @@ class DocumentDelta(BaseModel):
         "run. They are neither processed nor deleted: their indexed content, if "
         "any, is kept until a run reads them successfully",
     )
+    stored_scopes: list[str] = Field(
+        default_factory=list,
+        description="Distinct scopes of the stored records the diff read "
+        "(records without a scope left out), sorted. Informational: it never "
+        "changes the partition. A store that does not report it leaves it "
+        "empty",
+    )
 
     @property
     def is_empty(self) -> bool:

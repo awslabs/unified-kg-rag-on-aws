@@ -9,6 +9,10 @@ namespace and relative path only, so each corpus's run read the other's
 record as its own changed document, pruned its artifacts and re-registered it
 under its own scope: the corpora deleted each other's content on every run.
 
+A corpus that moves to another directory changes its default scope; its old
+records are only removed when a run retires the old scope explicitly, never
+because a directory is missing on the host that runs.
+
 The whole pipeline runs here with a scripted chat model, the in-memory graph
 and vector stores, and the in-memory or moto-backed DynamoDB registry.
 """
@@ -45,6 +49,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import ChunkingStrategy
 from unified_kg_rag.ports import DocStatusPort
+from unified_kg_rag.shared import PipelineExecutionError
 
 pytestmark = pytest.mark.integration
 
@@ -371,74 +376,6 @@ def test_an_interrupted_scopeless_adoption_does_not_keep_old_content(
 DEPOT_TEXT = "Depot stores widgets."
 
 
-def test_a_moved_local_corpus_keeps_its_records(registry, tmp_path) -> None:
-    stack = ScopeStack(registry, tmp_path)
-    old = write_corpus(
-        tmp_path / "old", {"contract.txt": A_TEXT, "depot.txt": DEPOT_TEXT}
-    )
-    stack.run(old)
-    before = {r.file_path: r for r in registry.list_all()}
-    new = old.rename(tmp_path / "new")
-
-    moved = stack.run(new)
-
-    # Adopted, not re-extracted: one record per file, under the new scope.
-    delta = moved.incremental_delta
-    assert len(delta.unchanged) == 2
-    assert delta.new == delta.changed == delta.deleted == []
-    assert not stack.model.extractions
-    after = {r.file_path: r for r in registry.list_all()}
-    assert set(after) == {"contract.txt", "depot.txt"}
-    for path, record in after.items():
-        assert record.scope == _scope_of(moved)
-        assert record.model_dump(exclude={"doc_id", "scope"}) == before[
-            path
-        ].model_dump(exclude={"doc_id", "scope"})
-
-    # An edit and a deletion then prune the old content.
-    write_corpus(new, {"contract.txt": "Vendor supplies Bank."})
-    edited = stack.run(new)
-    assert len(edited.incremental_delta.changed) == 1
-    assert len(edited.incremental_delta.deleted) == 1
-    assert stack.texts() == {"Vendor supplies Bank."}
-    assert stack.entity_names() == {"Vendor", "Bank"}
-    assert [r.file_path for r in registry.list_all()] == ["contract.txt"]
-
-
-def test_a_copied_local_corpus_is_a_separate_corpus(registry, tmp_path, caplog) -> None:
-    stack = ScopeStack(registry, tmp_path)
-    first = write_corpus(tmp_path / "first", {"contract.txt": A_TEXT})
-    second = write_corpus(tmp_path / "second", {"contract.txt": B_TEXT})
-    stack.run(first)
-    (first_record,) = registry.list_all()
-
-    with caplog.at_level("INFO"):
-        context = stack.run(second)
-
-    # The first source still exists: nothing is adopted from it.
-    assert len(context.incremental_delta.new) == 1
-    assert registry.get(first_record.doc_id) == first_record
-    assert stack.texts() == {A_TEXT, B_TEXT}
-    shared = [r for r in caplog.records if "Other local corpora" in r.getMessage()]
-    assert len(shared) == 1 and first.as_posix() in shared[0].getMessage()
-
-
-def test_a_fixed_source_scope_never_adopts_a_vanished_directory(
-    registry, tmp_path
-) -> None:
-    stack = ScopeStack(registry, tmp_path)
-    old = write_corpus(tmp_path / "old", {"contract.txt": A_TEXT})
-    stack.run(old)
-    (old_record,) = registry.list_all()
-    new = old.rename(tmp_path / "new")
-    stack.config.processing.document_parsing.source_scope = "corpus-a"
-
-    context = stack.run(new)
-
-    assert len(context.incremental_delta.new) == 1
-    assert registry.get(old_record.doc_id) == old_record
-
-
 def test_a_delta_of_one_entity_without_relationships_completes(
     registry, tmp_path
 ) -> None:
@@ -454,3 +391,137 @@ def test_a_delta_of_one_entity_without_relationships_completes(
     assert len(context.incremental_delta.new) == 1
     assert stack.entity_names() == {"Vendor", "Buyer", "Depot"}
     assert stack.texts() == {A_TEXT, DEPOT_TEXT}
+
+
+# --- moving a corpus: explicit retire, never a filesystem guess --------------
+
+C_TEXT = "Buyer banks with Bank."
+
+
+def _store_snapshot(stack: ScopeStack) -> dict[str, Any]:
+    """What a fresh build and an incremental history must agree on."""
+    vectors = stack.vectors.data
+    return {
+        "text_units": stack.texts(),
+        "entities": {
+            e.name: sorted(e.text_unit_ids or [])
+            for e in vectors.get("entities", {}).values()
+        },
+        "relationships": {
+            r.id: sorted(r.text_unit_ids or [])
+            for r in vectors.get("relationships", {}).values()
+        },
+        "graph": {
+            collection: stack.graph.ids(collection)
+            for collection in ("entities", "relationships")
+        },
+        "registry": {
+            (r.file_path, r.scope): (
+                r.content_hash,
+                sorted(r.entity_ids),
+                sorted(r.relationship_ids),
+                sorted(r.text_unit_ids),
+            )
+            for r in stack.registry.list_all()
+        },
+    }
+
+
+def test_retiring_the_old_scope_of_a_moved_corpus_removes_its_content(
+    registry, tmp_path, caplog
+) -> None:
+    stack = ScopeStack(registry, tmp_path)
+    other = write_corpus(tmp_path / "other", {"bank.txt": C_TEXT})
+    old = write_corpus(
+        tmp_path / "old", {"contract.txt": A_TEXT, "depot.txt": DEPOT_TEXT}
+    )
+    stack.run(other)
+    stack.run(old)
+    assert stack.entity_names() == {"Vendor", "Buyer", "Bank", "Depot"}
+
+    # Moved, and depot.txt was removed during the move.
+    new = old.rename(tmp_path / "new")
+    (new / "depot.txt").unlink()
+    with caplog.at_level("WARNING"):
+        unretired = stack.run(new)
+    # Without the flag nothing is deleted: the old records keep Depot, and
+    # the run names the old directory.
+    assert unretired.incremental_delta.deleted == []
+    assert "Depot" in stack.entity_names()
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any(
+        old.as_posix() in m and "--retire-source-scope" in m for m in warnings
+    ), warnings
+
+    stack.config.indexing.retire_source_scopes = [f"{old.as_posix()}/"]
+    retired = stack.run(new)
+
+    delta = retired.incremental_delta
+    assert len(delta.deleted) == 2  # both records of the old directory
+    assert delta.new == delta.changed == []
+    # Depot only came from the old depot.txt; Buyer and Bank are shared with
+    # the other corpus and kept.
+    assert stack.entity_names() == {"Vendor", "Buyer", "Bank"}
+    assert stack.texts() == {A_TEXT, C_TEXT}
+    assert {r.scope for r in registry.list_all()} == {
+        _scope_of(retired),
+        _scope_of(stack.run(other)),
+    }
+
+    fresh = ScopeStack(FakeDocStatusStore(), tmp_path / "fresh")
+    fresh.run(other)
+    fresh.run(new)
+    assert _store_snapshot(stack) == _store_snapshot(fresh)
+
+
+def test_retiring_the_runs_own_scope_fails_without_touching_anything(
+    registry, tmp_path
+) -> None:
+    stack = ScopeStack(registry, tmp_path)
+    source = write_corpus(tmp_path / "src-a", {"contract.txt": A_TEXT})
+    stack.run(source)
+    before = (_store_snapshot(stack), registry.list_all())
+
+    stack.config.indexing.retire_source_scopes = [f"{source.as_posix()}/"]
+    with pytest.raises(PipelineExecutionError, match="own source scope"):
+        stack.run(source)
+
+    assert (_store_snapshot(stack), registry.list_all()) == before
+
+
+def test_two_hosts_sharing_a_registry_never_delete_each_others_content(
+    registry, tmp_path, caplog
+) -> None:
+    # Two hosts index their own directory into one registry and namespace.
+    # Each host sees only its own directory: the other's is hidden while it
+    # runs, which is what a missing directory looked like to #191.
+    stack = ScopeStack(registry, tmp_path)
+    host_a = write_corpus(tmp_path / "host-a" / "corpus", {"contract.txt": A_TEXT})
+    host_b = write_corpus(tmp_path / "host-b" / "corpus", {"contract.txt": B_TEXT})
+
+    def run_alone(source: Path, hidden: Path) -> PipelineContext:
+        parked = hidden.rename(hidden.with_name("parked"))
+        try:
+            return stack.run(source)
+        finally:
+            parked.rename(hidden)
+
+    run_alone(host_a, host_b)
+    with caplog.at_level("WARNING"):
+        first_b = run_alone(host_b, host_a)
+    assert any(
+        host_a.as_posix() in r.getMessage() for r in caplog.records
+    ), "the other local scope is reported"
+    records = {r.doc_id: r for r in registry.list_all()}
+
+    for _ in range(2):
+        for source, hidden in ((host_a, host_b), (host_b, host_a)):
+            context = run_alone(source, hidden)
+            delta = context.incremental_delta
+            assert delta.new == delta.changed == delta.deleted == []
+            assert not stack.model.extractions
+            assert stack.texts() == {A_TEXT, B_TEXT}
+    assert {r.doc_id: r for r in registry.list_all()} == records
+    assert len(records) == 2 and _scope_of(first_b) in {
+        r.scope for r in records.values()
+    }

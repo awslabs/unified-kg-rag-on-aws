@@ -155,6 +155,18 @@ class CommandLineInterface:
             "'cloudwatch' (CloudWatch EMF to stdout, auto-extracted by CloudWatch Logs)",
         )
         parser.add_argument(
+            "--retire-source-scope",
+            action="append",
+            default=[],
+            metavar="SCOPE",
+            help="Incremental runs: treat every doc-status record of this "
+            "former source scope (in this run's index namespace) as deleted, "
+            "removing its exclusive graph and vector content. Use it once "
+            "after moving a corpus, with the old absolute source directory or "
+            "former document_parsing.source_scope value. Repeatable; added to "
+            "indexing.retire_source_scopes. Never this run's own scope.",
+        )
+        parser.add_argument(
             "--config-path",
             type=str,
             help="Path to custom configuration file",
@@ -169,6 +181,14 @@ class IngestionPipelineRunner:
     def __init__(self, args: argparse.Namespace):
         self.args = args
         self.config = get_config(Path(args.config_path) if args.config_path else None)
+        retired = getattr(args, "retire_source_scope", None) or []
+        if retired:
+            indexing = self.config.indexing
+            indexing.retire_source_scopes = list(
+                dict.fromkeys(
+                    [*indexing.retire_source_scopes, *(s.strip() for s in retired)]
+                )
+            )
         setup_logging(self.config)
         self.pipeline: DataIngestionPipeline | None = None
         self._validate_args()

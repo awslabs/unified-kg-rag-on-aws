@@ -21,18 +21,21 @@ never a corpus file that merely failed to parse this run.
 Registries written before the source scope was part of ``doc_id`` are keyed
 by namespace and path only. :func:`detect_delta` adopts such a record under
 the new key when it belongs to the run's scope (or predates scopes), so an
-upgrade neither re-extracts nor deletes the corpus. Likewise, when the source
-scope defaults to the source directory and the corpus moved, a new document
-whose record sits under a local source directory that no longer exists is
-re-keyed to the run's scope (:func:`adopt_relocated_records`), so the old
-records do not keep the previous content indexed.
+upgrade neither re-extracts nor deletes the corpus.
+
+A corpus whose source scope changed (a local directory that moved) leaves its
+records under the old scope. They are never adopted on a guess: whether a
+directory exists on this host says nothing about a corpus another host
+indexes into the same registry. A run that is told the old scope is gone
+(``indexing.retire_source_scopes``) classifies its records as deleted
+(:func:`retire_source_scopes`), and :func:`other_local_scopes` names the other
+local source directories of the run's namespace so the run can warn.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Literal
 
 from unified_kg_rag.domain.models import (
     Constants,
@@ -42,7 +45,7 @@ from unified_kg_rag.domain.models import (
     DocumentDelta,
 )
 from unified_kg_rag.ports import DocStatusPort
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.utils.document_identity import (
     REGISTRY_NAMESPACE_KEY,
     REGISTRY_SOURCE_KEY,
@@ -50,15 +53,15 @@ from unified_kg_rag.shared.utils.document_identity import (
     compute_doc_id,
     compute_document_id,
     compute_text_hash,
+    is_local_path_scope,
     normalize_source_path,
+    normalize_source_scope,
     registry_namespace,
     relative_source_path,
 )
 
 __all__ = [
-    "SourceLocation",
     "adopt_legacy_records",
-    "adopt_relocated_records",
     "assign_document_identity",
     "assign_registry_source",
     "compute_content_hash",
@@ -68,16 +71,13 @@ __all__ = [
     "filter_documents_to_process",
     "fingerprint_documents",
     "legacy_doc_id",
+    "other_local_scopes",
     "registry_scope",
+    "retire_source_scopes",
+    "validate_retired_scopes",
 ]
 
 logger = get_logger(__name__)
-
-# Where a source scope points, as reported by the ``locate_source`` callback of
-# :func:`detect_delta`: a local directory that exists (``"present"``) or no
-# longer does (``"missing"``), or anything else (``"other"``: a URI such as
-# ``s3://...``, or a fixed ``document_parsing.source_scope`` name).
-SourceLocation = Literal["missing", "present", "other"]
 
 
 def compute_content_hash(document: Document) -> str:
@@ -197,7 +197,7 @@ def detect_delta(
     failed_doc_ids: Iterable[str] = (),
     max_failures: int | None = None,
     legacy_doc_ids: Mapping[str, str] | None = None,
-    locate_source: Callable[[str], SourceLocation] | None = None,
+    retired_scopes: Iterable[str] = (),
 ) -> tuple[DocumentDelta, dict[str, str]]:
     """Classify ``documents`` against the persisted registry.
 
@@ -216,23 +216,32 @@ def detect_delta(
         legacy_doc_ids: ``{doc_id: legacy_doc_id}`` for this run's documents
             and failed files (see :func:`legacy_doc_id`). With a ``scope``, a
             record stored under the legacy key whose scope is this run's (or
-            that predates scopes) is re-keyed to ``doc_id`` before the diff
-            (see :func:`adopt_legacy_records`), so it keeps its content hash
-            and lineage instead of reading as new plus deleted.
-        locate_source: With a ``scope``, the run's source scope is a local
-            directory derived from where the corpus sits: a new document
-            whose only other-scope record lies under a local source directory
-            that no longer exists is treated as moved and its record re-keyed
-            to this run (see :func:`adopt_relocated_records`). ``None`` (a
-            fixed source scope) never relocates. Re-keying registry records is
-            the only write this function makes.
+            that predates scopes) is re-keyed to ``doc_id`` (see
+            :func:`adopt_legacy_records`), so it keeps its content hash and
+            lineage instead of reading as new plus deleted. Re-keying is the
+            only registry write this function makes.
+        retired_scopes: Registry scopes (:func:`registry_scope`) every record
+            of which is classified deleted this run (see
+            :func:`retire_source_scopes`). Needs a ``scope``, which it must
+            not contain.
 
     Returns:
         The :class:`DocumentDelta` plus the ``{doc_id: content_hash}``
         fingerprint map (so callers can persist new/changed records without
         recomputing hashes).
+
+    Raises:
+        ConfigurationError: ``retired_scopes`` holds the run's own ``scope``,
+            or is given without one.
     """
+    retired = list(dict.fromkeys(retired_scopes))
+    if retired and (scope is None or scope in retired):
+        raise ConfigurationError(
+            f"Cannot retire the run's own registry scope ({scope!r}): every "
+            "document of the run would be deleted"
+        )
     fingerprints = fingerprint_documents(documents)
+    adopted: dict[str, DocStatusRecord] = {}
     if scope is None:
         delta = doc_status.diff(fingerprints)
     elif not legacy_doc_ids:
@@ -247,19 +256,13 @@ def detect_delta(
             scope,
             [*legacy_doc_ids.values(), *failed_doc_ids],
         )
-        if adopt_legacy_records(doc_status, delta, legacy_doc_ids, scope, stored):
-            # The adopted records now sit under this run's keys: diff again
-            # so they classify like any other stored document (only on a run
-            # that re-keyed or deleted a legacy record).
-            delta = doc_status.diff(fingerprints, scope=scope)
-    if (
-        scope is not None
-        and locate_source is not None
-        and adopt_relocated_records(doc_status, delta, documents, scope, locate_source)
-    ):
-        delta = doc_status.diff(fingerprints, scope=scope)
+        _, adopted = _adopt_legacy_records(
+            doc_status, delta, legacy_doc_ids, scope, fingerprints, stored
+        )
+    if retired:
+        retire_source_scopes(doc_status, delta, retired)
     if max_failures is not None and delta.changed:
-        _stop_retrying_exhausted(delta, doc_status, fingerprints, max_failures)
+        _stop_retrying_exhausted(delta, doc_status, fingerprints, max_failures, adopted)
     failed = set(failed_doc_ids) - set(fingerprints)
     if failed:
         delta.deleted = [doc_id for doc_id in delta.deleted if doc_id not in failed]
@@ -311,6 +314,7 @@ def adopt_legacy_records(
     delta: DocumentDelta,
     legacy_doc_ids: Mapping[str, str],
     scope: str,
+    fingerprints: Mapping[str, str],
     stored_ids: set[str] | None = None,
 ) -> int:
     """Re-key this scope's legacy-keyed records to the current ``doc_id``.
@@ -325,7 +329,16 @@ def adopt_legacy_records(
     artifacts referenced. A legacy record of another scope is left untouched,
     so that scope adopts it on its own run.
 
+    ``delta`` is then updated in place rather than by diffing again: an
+    adopted document moves from ``new`` to ``unchanged`` or ``changed`` by the
+    adopted record's content hash and status, and no legacy key is ever
+    ``deleted``. A second diff would be a second registry scan, and an
+    eventually consistent one (a DynamoDB ``Scan``) can still return the
+    legacy key and miss the new one: the legacy key would read as deleted and
+    its artifacts, now the adopted document's, would be pruned.
+
     Args:
+        fingerprints: ``{doc_id: content_hash}`` of this run's documents.
         stored_ids: The legacy keys, and the current keys of the failed files,
             known to be stored (see :func:`_diff_with_probes`). Only those are
             read, in one batch (:meth:`DocStatusPort.get_many`). ``None``
@@ -334,6 +347,22 @@ def adopt_legacy_records(
     Returns:
         The number of legacy keys adopted or deleted.
     """
+    count, _ = _adopt_legacy_records(
+        doc_status, delta, legacy_doc_ids, scope, fingerprints, stored_ids
+    )
+    return count
+
+
+def _adopt_legacy_records(
+    doc_status: DocStatusPort,
+    delta: DocumentDelta,
+    legacy_doc_ids: Mapping[str, str],
+    scope: str,
+    fingerprints: Mapping[str, str],
+    stored_ids: set[str] | None,
+) -> tuple[int, dict[str, DocStatusRecord]]:
+    """:func:`adopt_legacy_records`; also returns ``{doc_id: record}`` of the
+    records it wrote (the adopted ones, under their new key)."""
     current = set(delta.changed) | set(delta.unchanged)
     lookups = {
         doc_id: legacy_id
@@ -354,121 +383,150 @@ def adopt_legacy_records(
         stored = set(_get_many(doc_status, failed))
     else:
         stored = set(failed) & stored_ids
-    adopted = _rekey(doc_status, candidates, scope, keep=current | stored)
-    if adopted:
+    keep = current | stored
+    written = _rekey(doc_status, candidates, scope, keep=keep)
+    _classify_adopted(delta, written, fingerprints)
+    legacy_ids = set(legacy_doc_ids.values()) - set(fingerprints)
+    delta.deleted = [doc_id for doc_id in delta.deleted if doc_id not in legacy_ids]
+    if candidates:
+        labels = [record.file_path or doc_id for doc_id, record in candidates.items()]
         logger.info(
             "Adopted %d doc-status records keyed without the source scope "
             "(written before it was part of the key), e.g. %s",
-            len(adopted),
-            ", ".join(adopted[:10]),
+            len(candidates),
+            ", ".join(labels[:10]),
         )
-    return len(adopted)
+    return len(candidates), written
 
 
-def adopt_relocated_records(
-    doc_status: DocStatusPort,
+def _classify_adopted(
     delta: DocumentDelta,
-    documents: list[Document],
-    scope: str,
-    locate_source: Callable[[str], SourceLocation],
+    written: Mapping[str, DocStatusRecord],
+    fingerprints: Mapping[str, str],
+) -> None:
+    """Move documents whose record was just written from ``new`` to
+    ``unchanged`` or ``changed``, the way the diff classifies a record.
+
+    A failed file (not in ``fingerprints``) is not in the partition and stays
+    out of it.
+    """
+    moved = {doc_id for doc_id in written if doc_id in fingerprints}
+    if not moved:
+        return
+    delta.new = [doc_id for doc_id in delta.new if doc_id not in moved]
+    for doc_id in sorted(moved):
+        record = written[doc_id]
+        if (
+            record.content_hash == fingerprints[doc_id]
+            and record.status is not DocStatus.FAILED
+        ):
+            delta.unchanged.append(doc_id)
+        else:
+            delta.changed.append(doc_id)
+
+
+def validate_retired_scopes(
+    retired: Iterable[str], source_scope: str, namespace: str
+) -> list[str]:
+    """The registry scopes to retire for the ``retired`` source scopes.
+
+    Each source scope is normalized the way the registry stores it (see
+    :func:`normalize_source_scope`) and joined with the run's ``namespace``
+    (:func:`registry_scope`), so retiring only ever reaches records of the
+    namespace the run writes.
+
+    Raises:
+        ConfigurationError: A retired source scope is empty, or is the run's
+            own ``source_scope`` (every document of the run would be deleted).
+    """
+    own = normalize_source_scope(source_scope)
+    scopes: list[str] = []
+    for value in retired:
+        normalized = normalize_source_scope(value)
+        if not normalized:
+            raise ConfigurationError(
+                "indexing.retire_source_scopes / --retire-source-scope: a "
+                "source scope is empty"
+            )
+        if normalized == own:
+            raise ConfigurationError(
+                "indexing.retire_source_scopes / --retire-source-scope: "
+                f"{value!r} is this run's own source scope. Retiring it would "
+                "delete every document of this corpus; retire the scope the "
+                "corpus was indexed under before it moved."
+            )
+        scopes.append(registry_scope(namespace, normalized))
+    return list(dict.fromkeys(scopes))
+
+
+def retire_source_scopes(
+    doc_status: DocStatusPort, delta: DocumentDelta, retired_scopes: Iterable[str]
 ) -> int:
-    """Re-key the records of a local corpus that moved to this run's source.
+    """Classify every record of ``retired_scopes`` as deleted in ``delta``.
 
-    Runs only when ``delta`` has new documents. A new document is *moved*
-    when the registry holds exactly one record with its index namespace and
-    relative path under another source scope that ``locate_source`` reports
-    ``"missing"`` (a local directory that no longer exists): that record is
-    written under the document's key and scope with its content hash, status,
-    lineage and failure count, then deleted under the old key, so the diff
-    then reads the document as changed or unchanged and pruning sees one
-    record per document. A source that is ``"present"`` is a separate corpus
-    sharing the namespace and is left alone; an ``"other"`` source (a URI or
-    a fixed ``source_scope`` name) is never adopted from, and neither is a
-    record of another namespace.
-
-    A moved record whose copy under this run's key already exists unchanged
-    (a relocation interrupted between the write and the delete) is deleted.
+    The run then prunes their exclusive artifacts in its one removal pass
+    (artifacts a surviving document shares are kept, stripped of their text
+    units) and deletes their records once the removal succeeded, exactly like
+    files removed from its own corpus. Costs one registry diff (a projected
+    scan) per retired scope.
 
     Returns:
-        The number of records re-keyed or deleted.
+        The number of records added to ``delta.deleted``.
     """
-    new = set(delta.new)
-    if not new:
-        return 0
-    current = set(delta.changed) | set(delta.unchanged)
-    # Two documents with one doc_id (the same file loaded twice) count once.
-    paths: dict[str, set[tuple[str, str]]] = {}
-    for document in documents:
-        doc_id = document_doc_id(document)
-        if doc_id in new or doc_id in current:
-            relative, namespace = _identity(document)
-            paths.setdefault(normalize_source_path(relative), set()).add(
-                (namespace, doc_id)
+    deleted = set(delta.deleted)
+    added = 0
+    for retired in dict.fromkeys(retired_scopes):
+        doc_ids = [
+            doc_id
+            for doc_id in doc_status.diff({}, scope=retired).deleted
+            if doc_id not in deleted
+        ]
+        if not doc_ids:
+            logger.warning(
+                "Retired scope %r has no doc-status records (already retired, "
+                "or not spelled the way the registry stores it)",
+                retired,
             )
-    locations: dict[str, SourceLocation] = {}
-    moved_from: dict[str, list[DocStatusRecord]] = {}
-    shared: set[str] = set()
-    for record in doc_status.list_all():
-        if record.scope in (None, scope) or record.file_path is None:
             continue
-        for namespace, doc_id in paths.get(normalize_source_path(record.file_path), ()):
-            prefix = f"{namespace}|"
-            if not record.scope.startswith(prefix):
-                continue
-            source = record.scope[len(prefix) :]
-            if record.doc_id != compute_doc_id(record.file_path, namespace, source):
-                continue
-            if source not in locations:
-                locations[source] = locate_source(source)
-            if locations[source] == "missing":
-                moved_from.setdefault(doc_id, []).append(record)
-            elif locations[source] == "present":
-                shared.add(source)
-    if shared:
-        logger.info(
-            "Other local corpora write this index namespace and share relative "
-            "paths with this run (%s); their documents are kept separate",
-            ", ".join(sorted(shared)),
-        )
-    ambiguous = sorted(
-        records[0].file_path or doc_id
-        for doc_id, records in moved_from.items()
-        if len(records) > 1
-    )
-    if ambiguous:
         logger.warning(
-            "Not adopting %d documents recorded under more than one local source "
-            "directory that no longer exists (indexed as new): %s",
-            len(ambiguous),
-            ", ".join(ambiguous[:10]),
+            "Retiring %d doc-status records of scope %r: their exclusive "
+            "artifacts are removed by this run",
+            len(doc_ids),
+            retired,
         )
-    candidates = {
-        doc_id: records[0]
-        for doc_id, records in sorted(moved_from.items())
-        if len(records) == 1
-    }
-    already_moved = [doc_id for doc_id in candidates if doc_id in current]
-    copies = _get_many(doc_status, already_moved)
-    for doc_id in already_moved:
-        # Only an exact copy is a finished move; an old record that differs
-        # still references its own artifacts and is left as it is.
-        copy = copies.get(doc_id)
-        if copy is None or _content(copy) != _content(candidates[doc_id]):
-            del candidates[doc_id]
-    moved = _rekey(doc_status, candidates, scope, keep=current)
-    if moved:
-        logger.info(
-            "Adopted %d doc-status records of a local source directory that no "
-            "longer exists (the corpus moved to this run's source), e.g. %s",
-            len(moved),
-            ", ".join(moved[:10]),
-        )
-    return len(moved)
+        delta.deleted.extend(doc_ids)
+        deleted.update(doc_ids)
+        added += len(doc_ids)
+    return added
 
 
-def _content(record: DocStatusRecord) -> dict[str, object]:
-    """``record`` without its key and scope (what a re-key copies)."""
-    return record.model_dump(exclude={"doc_id", "scope"})
+def other_local_scopes(
+    delta: DocumentDelta, scope: str, namespace: str, retired: Iterable[str] = ()
+) -> list[str]:
+    """Other local source directories with records in the run's namespace.
+
+    Read from ``delta.stored_scopes``, without a registry call. Each is either
+    another local corpus written to the same index namespace (possibly on
+    another host) or this corpus's location before a move; the two cannot be
+    told apart from here, so the caller only reports them.
+
+    Args:
+        scope: The run's :func:`registry_scope`, left out.
+        namespace: The run's index namespace.
+        retired: Registry scopes retired this run, left out.
+
+    Returns:
+        The source scopes, sorted.
+    """
+    prefix = f"{namespace}|"
+    skip = {scope, *retired}
+    return sorted(
+        stored[len(prefix) :]
+        for stored in delta.stored_scopes
+        if stored.startswith(prefix)
+        and stored not in skip
+        and is_local_path_scope(stored[len(prefix) :])
+    )
 
 
 def _rekey(
@@ -476,21 +534,23 @@ def _rekey(
     records: Mapping[str, DocStatusRecord],
     scope: str,
     keep: set[str],
-) -> list[str]:
+) -> dict[str, DocStatusRecord]:
     """Move each ``{doc_id: record}`` to ``doc_id`` and ``scope``.
 
     The record is written under the new key before its old key is deleted,
     so an interrupted run leaves a duplicate (cleaned up by the next run)
     rather than losing the lineage. A ``doc_id`` in ``keep`` already has its
-    record: only the old key is deleted. Returns the moved file paths.
+    record: only the old key is deleted. Returns the records written, by
+    their new key.
     """
-    moved: list[str] = []
+    written: dict[str, DocStatusRecord] = {}
     for doc_id, record in records.items():
         if doc_id not in keep:
-            doc_status.put(record.model_copy(update={"doc_id": doc_id, "scope": scope}))
+            moved = record.model_copy(update={"doc_id": doc_id, "scope": scope})
+            doc_status.put(moved)
+            written[doc_id] = moved
         doc_status.delete(record.doc_id)
-        moved.append(record.file_path or doc_id)
-    return moved
+    return written
 
 
 def _get_many(
@@ -513,12 +573,19 @@ def _stop_retrying_exhausted(
     doc_status: DocStatusPort,
     fingerprints: dict[str, str],
     max_failures: int,
+    written: Mapping[str, DocStatusRecord] | None = None,
 ) -> None:
-    """Move changed documents that used up their retries to ``unchanged``."""
+    """Move changed documents that used up their retries to ``unchanged``.
+
+    ``written`` holds the records this run just wrote (adopted legacy
+    records), used as they are instead of read back from a store that may
+    not return them yet.
+    """
+    written = written or {}
     exhausted: list[str] = []
     labels: list[str] = []
     for doc_id in delta.changed:
-        record = doc_status.get(doc_id)
+        record = written.get(doc_id) or doc_status.get(doc_id)
         if (
             record is not None
             and record.status is DocStatus.FAILED

@@ -10,8 +10,8 @@ another yields the same ``document_id`` and text-unit ids). The registry key
 does: it also holds the corpus source scope, which defaults to the resolved
 source directory, so a corpus keeps its registry records across runs only
 from the same directory or with a fixed ``document_parsing.source_scope``
-(a local corpus that moved is re-keyed by the delta detector, see
-``adopt_relocated_records``):
+(the records of a corpus that moved stay under the old scope until a run
+retires it, see ``indexing.retire_source_scopes``):
 
 * ``compute_doc_id(relative_path, namespace, source_scope)`` -- the registry
   key of a document across runs: the index namespace (suffix, plus any
@@ -34,8 +34,7 @@ outside the pipeline); the pipeline stages re-derive the id against the root.
 from __future__ import annotations
 
 import re
-from pathlib import Path, PurePosixPath
-from typing import Literal
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from .common import compute_hash, generate_stable_id
 
@@ -116,14 +115,28 @@ def compute_doc_id(
     return compute_hash(key, algorithm="sha256", length=_ID_HASH_LENGTH)
 
 
-def local_source_location(source_scope: str) -> Literal["missing", "present", "other"]:
-    """Where a source scope that defaulted to the source directory points.
+def is_local_path_scope(source_scope: str) -> bool:
+    """Whether ``source_scope`` names a local directory (an absolute path).
 
-    ``"present"``/``"missing"`` for an absolute local path whose directory
-    does or does not exist; ``"other"`` for a URI (``s3://...``) or any other
-    value (a fixed ``document_parsing.source_scope`` name), which never reads
-    as a moved local corpus.
+    A scope that defaulted to the resolved source directory is one; a URI
+    (``s3://...``) or a relative name (a fixed
+    ``document_parsing.source_scope``) is not. Only the string is inspected,
+    never the filesystem: whether a directory exists on this host says
+    nothing about the corpus another host indexes from the same path.
     """
-    if _URI_SCHEME.match(source_scope) or not Path(source_scope).is_absolute():
-        return "other"
-    return "present" if Path(source_scope).exists() else "missing"
+    if _URI_SCHEME.match(source_scope):
+        return False
+    return source_scope.startswith("/") or PureWindowsPath(source_scope).is_absolute()
+
+
+def normalize_source_scope(source_scope: str) -> str:
+    """``source_scope`` as the registry stores it.
+
+    A local path loses trailing and repeated slashes (the pipeline stores the
+    resolved directory, which has neither); a URI or a name is kept as is,
+    since a trailing slash can be part of an ``s3://`` prefix.
+    """
+    scope = source_scope.strip()
+    if scope.startswith("/") and not _URI_SCHEME.match(scope):
+        return PurePosixPath(scope).as_posix()
+    return scope

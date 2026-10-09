@@ -58,4 +58,7 @@ class FakeDocStatusStore:
             for doc_id, record in self._records.items()
             if doc_id not in incoming_ids and (scope is None or record.scope == scope)
         ]
+        delta.stored_scopes = sorted(
+            {r.scope for r in self._records.values() if r.scope is not None}
+        )
         return delta

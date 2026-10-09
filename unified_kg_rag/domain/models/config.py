@@ -15,6 +15,7 @@ from pydantic import (
     Field,
     SecretStr,
     StringConstraints,
+    field_validator,
     model_validator,
 )
 
@@ -1649,6 +1650,24 @@ class IndexingConfig(BaseModel):
         "FAILED and is skipped as unchanged (with a WARNING) until its content "
         "changes or this value is raised.",
     )
+    retire_source_scopes: list[str] = Field(
+        default_factory=list,
+        description="Incremental runs only: source scopes (a former "
+        "document_parsing.source_scope value, or the absolute source directory "
+        "a corpus was indexed from before it moved) whose registry records in "
+        "this run's index namespace are treated as deleted. The run removes "
+        "their exclusive artifacts (shared ones are kept) and deletes their "
+        "records once the removal succeeded. Never the run's own scope. "
+        "run-ingestion --retire-source-scope adds to this list.",
+    )
+
+    @field_validator("retire_source_scopes")
+    @classmethod
+    def _strip_retired_scopes(cls, scopes: list[str]) -> list[str]:
+        stripped = [scope.strip() for scope in scopes]
+        if not all(stripped):
+            raise ValueError("retire_source_scopes entries must not be empty")
+        return list(dict.fromkeys(stripped))
 
 
 class HybridConfig(BaseModel):

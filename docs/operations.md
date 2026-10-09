@@ -61,12 +61,15 @@ never share a record even for files with the same relative path. A file
 missing from the source is treated as deleted, and its exclusive artifacts are
 removed. Therefore:
 
-- keep the same source directory (or a fixed `source_scope`) for a corpus;
-  moving a local directory changes the scope, and the next run adopts the
-  records it finds under the old directory only if that directory no longer
-  exists (a copy left in place is a separate corpus, and every document is
-  indexed again under the new scope; see
-  [User Guide §5](./user-guide.md#deletion-scope));
+- keep the same source directory (or a fixed `source_scope`) for a corpus.
+  Moving a corpus with the default scope changes the scope; the old scope's
+  records are never adopted or deleted on their own, so they keep the old
+  content indexed (files removed during the move included). Either set a
+  fixed `source_scope` before moving it, or run once from the new location
+  with `--retire-source-scope <old source directory>`, which removes the old
+  scope's exclusive content and records in that run (see
+  [User Guide §5](./user-guide.md#deletion-scope)). A run with new documents
+  logs a WARNING naming the other local source directories of its suffix;
 - never let corpus files expire or disappear unintentionally: the next run
   removes their graph and vector content;
 - index each tenant or corpus version under its own index suffix, with its own

@@ -55,6 +55,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.shared import (
+    ConfigurationError,
     DocStatusRegistryError,
     PipelineStageError,
     get_logger,
@@ -412,12 +413,15 @@ class DocumentLoadingStage(PipelineStage):
             filter_documents_to_process,
             fingerprint_documents,
             legacy_doc_id,
-        )
-        from unified_kg_rag.shared.utils.document_identity import (
-            local_source_location,
+            validate_retired_scopes,
         )
 
-        scope, source_scope, failed_doc_ids = self._registry_scope(context)
+        scope, namespace, source_scope, failed_doc_ids = self._registry_scope(context)
+        # Fails before any registry read or write when the run would retire
+        # its own scope.
+        retired = validate_retired_scopes(
+            self.config.indexing.retire_source_scopes, source_scope, namespace
+        )
         for document in documents:
             assign_registry_source(document, source_scope)
         if self.config.indexing.reset:
@@ -433,6 +437,11 @@ class DocumentLoadingStage(PipelineStage):
                 "%d documents",
                 len(documents),
             )
+            if retired:
+                logger.info(
+                    "indexing.retire_source_scopes ignored: the reset clears "
+                    "every record"
+                )
             return documents, 0
 
         try:
@@ -450,16 +459,9 @@ class DocumentLoadingStage(PipelineStage):
                         for document in documents
                     },
                 },
-                # A scope derived from the source directory changes when the
-                # corpus moves: adopt the records of a vanished local source.
-                # A fixed source_scope never moves.
-                locate_source=(
-                    None
-                    if self.config.processing.document_parsing.source_scope
-                    else local_source_location
-                ),
+                retired_scopes=retired,
             )
-        except DocStatusRegistryError:
+        except (DocStatusRegistryError, ConfigurationError):
             raise
         except Exception as e:
             raise DocStatusRegistryError(
@@ -471,6 +473,8 @@ class DocumentLoadingStage(PipelineStage):
         context.incremental_delta = delta
         context.incremental_fingerprints = fingerprints
         context.incremental_scope = scope
+        if delta.new and not self.config.processing.document_parsing.source_scope:
+            self._warn_about_other_local_scopes(delta, scope, namespace, retired)
         if delta.is_empty:
             logger.info("Incremental: no new/changed documents detected")
         to_process = filter_documents_to_process(documents, delta)
@@ -483,10 +487,41 @@ class DocumentLoadingStage(PipelineStage):
         )
         return to_process, skipped
 
+    @staticmethod
+    def _warn_about_other_local_scopes(
+        delta: DocumentDelta, scope: str, namespace: str, retired: list[str]
+    ) -> None:
+        """Name the other local source directories of the run's namespace.
+
+        Only a run whose scope defaulted to its source directory and that has
+        new documents gets here: that is what a moved corpus looks like. The
+        records stay: a directory that is missing here may be another host's
+        corpus sharing the registry, so only the user can tell a move from a
+        second corpus. Uses the scopes the diff already read.
+        """
+        from unified_kg_rag.domain.ingestion.delta_detector import (
+            other_local_scopes,
+        )
+
+        others = other_local_scopes(delta, scope, namespace, retired)
+        if not others:
+            return
+        logger.warning(
+            "The doc-status registry also holds records of index namespace %r "
+            "under other local source directories: %s. If this corpus was "
+            "moved from one of them, its old records keep the previous "
+            "content indexed: run once with --retire-source-scope <old "
+            "directory> (indexing.retire_source_scopes) to remove it. If they "
+            "are other corpora, set document_parsing.source_scope to a stable "
+            "name per corpus.",
+            namespace,
+            ", ".join(others),
+        )
+
     def _registry_scope(
         self, context: PipelineContext
-    ) -> tuple[str, str, dict[str, str]]:
-        """The run's registry scope, its source scope and its failed files.
+    ) -> tuple[str, str, str, dict[str, str]]:
+        """The run's registry scope, namespace, source scope and failed files.
 
         The scope is the index namespace the run writes (``index_value`` +
         ``indexing.additional_suffix``) and the corpus source
@@ -517,7 +552,12 @@ class DocumentLoadingStage(PipelineStage):
             failed_doc_ids[compute_doc_id(relative, namespace, source_scope)] = (
                 compute_doc_id(relative, namespace)
             )
-        return registry_scope(namespace, source_scope), source_scope, failed_doc_ids
+        return (
+            registry_scope(namespace, source_scope),
+            namespace,
+            source_scope,
+            failed_doc_ids,
+        )
 
     def _build_doc_status_store(self) -> "DocStatusPort":
         if self._doc_status is not None:
