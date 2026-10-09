@@ -19,7 +19,7 @@ services:
   opensearch:
     build:
       dockerfile_inline: |
-        FROM opensearchproject/opensearch:2.13.0
+        FROM opensearchproject/opensearch:2.13.0@sha256:2e954ff0e8c9d0f4868b4818150b3aecc92fbb0cc4a24d00dace38ada227291d
         RUN /usr/share/opensearch/bin/opensearch-plugin install --batch analysis-nori
     environment:
       discovery.type: single-node
@@ -37,7 +37,7 @@ services:
       retries: 30
 
   gremlin-server:
-    image: tinkerpop/gremlin-server:3.7.7
+    image: tinkerpop/gremlin-server:3.7.7@sha256:afc395b5e96cfeea72b6d0b59d22ad5cee502c31bfdad6f4d3b2de070d905e0f
     ports:
       - 127.0.0.1:8182:8182
     healthcheck:
