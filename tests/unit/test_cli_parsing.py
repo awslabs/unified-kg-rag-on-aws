@@ -831,3 +831,38 @@ def test_eval_main_closes_the_chain(config, mocker, fails) -> None:
         run_evaluation.main()
 
     chain.aclose.assert_awaited_once()
+
+
+# --- help epilogs ---------------------------------------------------------
+
+
+def _guide_section_slugs() -> set[str]:
+    """GitHub-style section links of the user guide's headings."""
+    guide = Path(__file__).resolve().parents[2] / "docs" / "user-guide.md"
+    slugs = set()
+    for line in guide.read_text(encoding="utf-8").splitlines():
+        if line.startswith("#"):
+            title = line.lstrip("#").strip().lower()
+            slug = "".join(c for c in title if c.isalnum() or c in " -_")
+            slugs.add(slug.replace(" ", "-"))
+    return slugs
+
+
+@pytest.mark.parametrize(
+    ("parser", "command"),
+    [
+        (_ing_parser, "run-ingestion"),
+        (_rag_parser, "run-rag"),
+        (_eval_parser, "run-eval"),
+        (run_visualization._build_parser, "run-visualization"),
+        (run_prompt_tuning._build_parser, "run-prompt-tuning"),
+    ],
+)
+def test_help_epilog_shows_an_example_and_a_live_guide_section(parser, command) -> None:
+    help_text = parser().format_help()
+    assert f"example:\n  {command} " in help_text
+    url = help_text.split("documentation:\n  ", 1)[1].split()[0]
+    assert url.startswith(
+        "https://github.com/awslabs/unified-kg-rag-on-aws/blob/main/docs/user-guide.md#"
+    )
+    assert url.split("#", 1)[1] in _guide_section_slugs()

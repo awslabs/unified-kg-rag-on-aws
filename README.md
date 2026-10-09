@@ -29,13 +29,21 @@ Read the [AWS Open Source Blog introduction](https://aws.amazon.com/ko/blogs/ope
 
 Ingestion is a resumable 12-stage pipeline: parse, load, chunk, optionally translate, extract entities and relationships with an LLM, optionally glean, resolve duplicates, optionally extract claims, compute graph metrics, detect Leiden communities with LLM-written reports, and index into OpenSearch and Neptune. Stage checkpoints are cached locally and can be synced to S3.
 
-![Retrieval Pipeline](./assets/retrieval_pipeline.png)
+```mermaid
+flowchart LR
+    query["Query + strategy"] --> qp["Query processing<br/>translation, entities or keywords"]
+    qp --> graphrag["GraphRAG<br/>simple, local, global, drift"]
+    qp --> lightrag["LightRAG<br/>naive, hybrid, mix"]
+    graphrag --> fuse["Fusion (RRF) + Bedrock rerank"]
+    lightrag --> fuse
+    fuse --> budget["Token budget"] --> answer["Answer + sources"]
+```
 
 Every strategy runs through the same hybrid scorer and token budget. Pick one with `--search-strategy` (CLI) or `RAGInput.search_strategy` (Python):
 
 | Strategy | Methodology | Use when |
 |---|---|---|
-| `auto` (default) | GraphRAG | You are not sure; an LLM router picks `simple`, `local`, `global`, or `drift` per query |
+| `auto` (default) | GraphRAG | You are not sure; an LLM router picks one of `search.auto_routable_strategies` per query (default `local`, `mix`, `global`, `drift`) |
 | `simple` | GraphRAG | Fast factual lookups; vector + keyword search without graph traversal |
 | `local` | GraphRAG | Questions about specific entities and their relationships |
 | `global` | GraphRAG | Broad or thematic questions, answered by map-reduce over community reports |
@@ -48,10 +56,23 @@ See the [User Guide §4](./docs/user-guide.md#4-querying-run-rag) for per-strate
 
 ## Quickstart
 
+### Choose how to run
+
+| Path | Graph and vector stores | Models | Start here |
+|---|---|---|---|
+| **Local stores** (development) | Gremlin Server and OpenSearch in containers ([`docker/compose.local.yaml`](./docker/compose.local.yaml)) | Amazon Bedrock | `docker compose -f docker/compose.local.yaml up -d --wait`, then pass `--config-path docker/config.local.yaml` |
+| **Existing AWS resources** | Your Neptune cluster and OpenSearch domain (plus an S3 bucket, and DynamoDB for incremental indexing) | Amazon Bedrock | Copy `config-template.yaml` to `config.yaml` and set the endpoints |
+| **Bundled CDK stack** | Created by [`iac/`](./iac/README.md), with a Fargate data plane and a Step Functions ingestion pipeline | Amazon Bedrock | [Deploy on AWS](#deploy-on-aws-optional), then [`iac/README.md` After deploy](./iac/README.md#after-deploy) |
+
+Every path calls Amazon Bedrock, so enable the
+[required models](./docs/user-guide.md#required-models) first. The local
+stores are for development only: they are not hardened and keep the graph in
+memory.
+
 ### Prerequisites
 
 - Python 3.10–3.12 and [uv](https://docs.astral.sh/uv/) (`pip` also works).
-- AWS credentials with access to Amazon Bedrock (model access enabled for the models you configure), an Amazon Neptune cluster, an Amazon OpenSearch Service domain, an S3 bucket, and, for incremental indexing only, DynamoDB. The framework connects to existing services; to create them, see [Deploy on AWS](#deploy-on-aws-optional).
+- AWS credentials with access to Amazon Bedrock (model access enabled for the [required models](./docs/user-guide.md#required-models)) and, unless you use the local stores, an Amazon Neptune cluster, an Amazon OpenSearch Service domain, an S3 bucket, and, for incremental indexing only, DynamoDB. The framework connects to existing services; to create them, see [Deploy on AWS](#deploy-on-aws-optional).
 
 ### Install and configure
 
@@ -98,7 +119,7 @@ cdk bootstrap      # once per account and region
 cdk deploy --all   # creates billable resources
 ```
 
-Copy the Neptune, OpenSearch, and S3 values from the stack outputs into `config.yaml`.
+The stores are reachable only from inside the VPC, so the deployed Fargate task runs the CLIs; it receives the endpoints as environment variables. [`iac/README.md` After deploy](./iac/README.md#after-deploy) has the commands to push the image, start an ingestion and run a query task.
 
 > **Cost and teardown.** Neptune and OpenSearch bill hourly, and `public` network mode adds NAT gateways. The default `dev` environment tears down with `cdk destroy --all`; non-dev environments default to retaining stateful stores with deletion protection on. Review the hardening options (`use_cmk`, `deletion_protection`, Multi-AZ sizing, `vpc_flow_logs`) in [`iac/README.md`](./iac/README.md) before production use.
 
@@ -106,10 +127,12 @@ Copy the Neptune, OpenSearch, and S3 values from the stack outputs into `config.
 
 | Document | Covers |
 |---|---|
-| [User Guide](./docs/user-guide.md) ([한국어](./docs/user-guide.ko.md)) | Configuration, CLI flags, incremental indexing, evaluation, operations |
+| [User Guide](./docs/user-guide.md) ([한국어](./docs/user-guide.ko.md)) | Configuration, CLI flags, incremental indexing, evaluation, library usage, [limitations](./docs/user-guide.md#12-limitations) |
+| [Model Catalog](./docs/models.md) ([한국어](./docs/models.ko.md)) | Supported Bedrock models and per-provider request differences |
+| [Operator Runbook](./docs/operations.md) ([한국어](./docs/operations.ko.md)) | Re-ingestion, incremental runs, failed documents, caches, common errors |
 | [Design Doc](./docs/design.md) ([한국어](./docs/design.ko.md)) | Hexagonal architecture, algorithms, data model, extension guide, further reading |
-| [`iac/README.md`](./iac/README.md) | CDK stacks, `-c key=value` options, Guardrail deployment, Step Functions ingestion runs |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | Development setup, tests, quality gate, extension recipes |
+| [`iac/README.md`](./iac/README.md) | CDK stacks, topology, cost drivers, `-c key=value` options, Guardrail deployment, after-deploy commands |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Development setup, tests, quality gate, branch and commit rules |
 | [CHANGELOG.md](./CHANGELOG.md) | Release notes |
 | [SECURITY.md](./SECURITY.md) | Reporting security issues |
 
@@ -124,7 +147,7 @@ This project is a **reference framework provided for educational and illustrativ
 
 ## Contributing
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, tests, and extension recipes; most extensions are a registry registration and need no dispatch-code edits.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, tests and the pull-request workflow, and [Design Doc §15](./docs/design.md#15-extension-guide) for extension recipes; most extensions are a registry registration and need no dispatch-code edits.
 
 ## License
 

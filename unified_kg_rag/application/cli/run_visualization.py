@@ -25,6 +25,7 @@ from unified_kg_rag.adapters.renderers import (
     get_renderer_class,
     registered_renderers,
 )
+from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.domain.ingestion.graph_analyzer import CentralityMetrics
 from unified_kg_rag.domain.models import Community
 from unified_kg_rag.shared import get_config, get_logger, setup_logging
@@ -145,7 +146,12 @@ def run_visualization(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Render graph visualizations from exported data (no ingestion)."
+        description="Render graph visualizations from exported data (no ingestion).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=doc_epilog(
+            "7-visualization-run-visualization",
+            "run-visualization --data-path visualization_data.json --output-dir ./viz",
+        ),
     )
     parser.add_argument(
         "--data-path",

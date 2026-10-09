@@ -16,6 +16,7 @@ from pathlib import Path
 import yaml
 
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
+from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.prompts.tuner import PromptTuner
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import get_config, get_logger, setup_logging
@@ -58,7 +59,12 @@ def load_corpus_texts(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate domain-adapted custom_prompts from a corpus sample."
+        description="Generate domain-adapted custom_prompts from a corpus sample.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=doc_epilog(
+            "8-prompt-tuning-run-prompt-tuning",
+            "run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml",
+        ),
     )
     parser.add_argument(
         # Canonical flag matches run-ingestion's --source-directory; --source-dir
