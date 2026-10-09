@@ -119,6 +119,31 @@ class TestCentralityComparison:
         StaticRenderer({}).plot_centrality_comparison({}, str(out))
         assert not out.exists()
 
+    def test_duplicate_node_names_get_unique_factors(
+        self, tmp_path: Path, mocker, caplog
+    ) -> None:
+        # Two claims with the same subject/type/object share a display name;
+        # repeated x-axis factors are a Bokeh DUPLICATE_FACTORS error.
+        name = "Vendor -> Buyer (obligation)"
+        data = {
+            f"c{i}": CentralityMetrics(
+                node_id=f"c{i}", node_name=name, degree=1.0 - i / 10
+            )
+            for i in range(3)
+        }
+        save = mocker.spy(StaticRenderer, "_save_plot")
+        out = tmp_path / "centrality.html"
+        StaticRenderer({}).plot_centrality_comparison(data, str(out))
+        assert out.exists()
+        factors = list(save.call_args.args[0].x_range.factors)
+        assert factors == [name, f"{name} (2)", f"{name} (3)"]
+        assert "DUPLICATE_FACTORS" not in caplog.text
+
+    def test_unique_factors_skips_suffixes_already_taken(self) -> None:
+        out = StaticRenderer._unique_factors(["A", "A", "A (2)", "B"])
+        assert out == ["A", "A (2)", "A (2) (2)", "B"]
+        assert len(set(out)) == len(out)
+
     def test_no_named_nodes_writes_nothing(self, tmp_path: Path) -> None:
         # All nodes lack a node_name -> nothing to plot.
         data = {"n0": CentralityMetrics(node_id="n0", node_name=None, degree=1.0)}

@@ -424,6 +424,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `innerHTML` to the title, so markup in an attribute such as an LLM-written
   description (`<img src=x onerror=...>`) ran as script when the page was
   opened. Plain-text tooltips are unchanged (#PR).
+- The centrality comparison plot gives repeated node names a ` (2)`, ` (3)`
+  suffix on its x axis. Two claims with the same subject, type and object
+  (or two same-named entities) made Bokeh reject the axis with
+  `DUPLICATE_FACTORS` and draw their bars on one factor (#PR).
 - Merging an undersized chunk into its neighbour no longer duplicates the
   splitter's `chunk_overlap` or fuses words at the seam. Adjacent chunks were
   concatenated as strings, so a single-paragraph document of ~5,100

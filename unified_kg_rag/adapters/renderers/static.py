@@ -112,7 +112,7 @@ class StaticRenderer:
             logger.warning("No nodes with names found for centrality plot.")
             return
 
-        node_names = [n.node_name for n in top_nodes]
+        node_names = self._unique_factors([str(n.node_name) for n in top_nodes])
         metrics = ["degree", "betweenness", "pagerank"]
         colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]
 
@@ -282,6 +282,26 @@ class StaticRenderer:
         p.outline_line_color = None
 
         return p
+
+    @staticmethod
+    def _unique_factors(names: list[str]) -> list[str]:
+        """Make categorical axis factors unique, keeping their order.
+
+        Bokeh rejects a FactorRange with repeated factors (DUPLICATE_FACTORS),
+        and display names repeat: two claims with the same subject, type and
+        object, or two entities sharing a name. A repeat gets the first free
+        `` (2)``, `` (3)``, ... suffix.
+        """
+        seen: set[str] = set()
+        unique: list[str] = []
+        for name in names:
+            factor, n = name, 1
+            while factor in seen:
+                n += 1
+                factor = f"{name} ({n})"
+            seen.add(factor)
+            unique.append(factor)
+        return unique
 
     @staticmethod
     def _save_plot(plot: figure, path: str, title: str) -> None:
