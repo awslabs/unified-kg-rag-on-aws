@@ -67,6 +67,13 @@ def _distinct_keys(names: list[str]) -> set[str]:
     return {normalize_name(n) for n in names}
 
 
+def _stored_entities(names: list[str]) -> list[Entity]:
+    # Stored state after a merge holds one entity per key; the merge keeps every
+    # stored id as it is, so two stored entities sharing a key stay two.
+    by_key = {normalize_name(n): n for n in names}
+    return _entities_unique_ids(list(by_key.values()), "o")
+
+
 @given(old_names=_hard_names, delta_names=_hard_names)
 def test_merged_count_equals_distinct_normalized_keys(
     old_names: list[str], delta_names: list[str]
@@ -75,7 +82,7 @@ def test_merged_count_equals_distinct_normalized_keys(
     # across old+delta. This is the property that protects against both
     # duplicate entities (under-merging) and unrelated entities collapsing
     # (over-merging) in production incremental indexing.
-    old = _entities_unique_ids(old_names, "o")
+    old = _stored_entities(old_names)
     delta = _entities_unique_ids(delta_names, "d")
     merged, _ = merge_entities(old, delta)
     assert {normalize_name(e.name) for e in merged} == _distinct_keys(
@@ -88,15 +95,15 @@ def test_merged_count_equals_distinct_normalized_keys(
 def test_merging_empty_delta_is_identity(old_names: list[str]) -> None:
     old = _entities_unique_ids(old_names, "o")
     merged, remap = merge_entities(old, [])
-    # Old entities collapse to their distinct normalized keys; empty delta adds
-    # nothing and remaps nothing.
-    assert len(merged) == len(_distinct_keys(old_names))
+    # Every stored entity is kept as it is (including two sharing a key); an
+    # empty delta adds nothing and remaps nothing.
+    assert merged == old
     assert remap == {}
 
 
 @given(names=_hard_names)
 def test_self_merge_is_idempotent(names: list[str]) -> None:
-    old = _entities_unique_ids(names, "o")
+    old = _stored_entities(names)
     delta = _entities_unique_ids(names, "d")
     merged, remap = merge_entities(old, delta)
     # Re-applying the same logical set must not grow the entity count beyond the
@@ -138,10 +145,16 @@ def _rel_key(r: Relationship) -> tuple[str, str, str]:
     return (r.source_id, r.target_id, (r.type or "RELATED_TO").strip().lower())
 
 
+def _stored(rels: list[Relationship]) -> list[Relationship]:
+    # Stored state after a merge holds one edge per key (see _stored_entities).
+    return list({_rel_key(r): r for r in rels}.values())
+
+
 @given(old=_relationships("o"), delta=_relationships("d"))
 def test_relationship_merge_collapses_to_distinct_keys(
     old: list[Relationship], delta: list[Relationship]
 ) -> None:
+    old = _stored(old)
     merged = merge_relationships(old, delta)
     # Self-loops are dropped (parity with the full-build resolver), so they are
     # excluded from the expected key set.

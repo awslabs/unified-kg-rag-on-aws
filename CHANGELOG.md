@@ -392,6 +392,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   stage's cache key, so a tuning change regenerated every community report.
   The `graph_analysis` and `community_detection` keys change once on upgrade,
   so a resumed pipeline recomputes those stages one time (#167).
+- The cross-run merge matches a delta entity or relationship to a stored one
+  by id before the name or (source, target, type) key. A gleaning correction
+  renames, retypes or reverses an item in place and keeps the id derived from
+  its old form, so a later document naming the old form produced a second
+  item with the same id: the stored entity's text units and description were
+  overwritten, and Neptune got two edges with one id (#PR).
 - `indexing.reset` with the doc-status registry enabled rebuilds from the
   whole corpus and records every document again. The loading stage used to
   diff against the registry first, so the reset cleared the stores but

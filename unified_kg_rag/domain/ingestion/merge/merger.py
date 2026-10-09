@@ -4,8 +4,8 @@
 
 See package docstring for the porting rationale. Each function takes the
 existing (``old``) artifacts plus the freshly computed ``delta`` and returns the
-merged set, preserving the old item's id where the natural key matches so graph
-references stay stable.
+merged set, preserving the old item's id where the id or natural key matches so
+graph references stay stable.
 """
 
 from __future__ import annotations
@@ -125,7 +125,10 @@ def merge_entities(
     delta: list[Entity],
     fuzzy_matcher: FuzzyMatcher | None = None,
 ) -> tuple[list[Entity], dict[str, str]]:
-    """Merge delta entities into old ones by identity key (``entity_key``).
+    """Merge delta entities into old ones by id, else by identity key.
+
+    The identity key is ``entity_key(name)``. Matching the id first matters
+    when a gleaning correction renamed a stored entity and kept its id.
 
     Returns the merged entity list and ``{delta_id: surviving_id}`` for entities
     that merged into an existing one (so relationships can be remapped).
@@ -140,33 +143,39 @@ def merge_entities(
     *existing old* entity (never delta-onto-delta), which keeps the result
     order-independent and idempotent.
     """
-    by_key: dict[str, Entity] = {}
-    # Normalized old-name -> its by_key entry, so a fuzzy hit on an old name can
-    # find the surviving entity to merge into.
-    old_key_by_name: dict[str, str] = {}
+    by_id: dict[str, Entity] = {}
+    # Identity key -> id of the first entity with that key.
+    id_by_key: dict[str, str] = {}
+    # Old display name -> its id, so a fuzzy hit on an old name can find the
+    # surviving entity to merge into.
+    old_id_by_name: dict[str, str] = {}
     id_remap: dict[str, str] = {}
 
     for entity in old:
-        key = entity_key(entity.name)
-        by_key[key] = entity.model_copy(deep=True)
-        old_key_by_name[entity.name] = key
+        by_id[entity.id] = entity.model_copy(deep=True)
+        id_by_key.setdefault(entity_key(entity.name), entity.id)
+        old_id_by_name[entity.name] = entity.id
 
     for entity in delta:
         key = entity_key(entity.name)
-        existing = by_key.get(key)
+        # Id first: a gleaning correction renames an entity in place and keeps
+        # the id derived from its old name, so a later delta naming the old form
+        # carries the stored id under a different key.
+        existing = by_id.get(entity.id) or by_id.get(id_by_key.get(key, ""))
         if existing is None and fuzzy_matcher is not None:
             existing = _find_fuzzy_old_match(
-                entity, fuzzy_matcher, old_key_by_name, by_key
+                entity, fuzzy_matcher, old_id_by_name, by_id
             )
         if existing is None:
-            by_key[key] = entity.model_copy(deep=True)
+            by_id[entity.id] = entity.model_copy(deep=True)
+            id_by_key.setdefault(key, entity.id)
             continue
 
         # Merge into the surviving (old) entity; keep its id.
         id_remap[entity.id] = existing.id
         _merge_entity_fields(existing, entity)
 
-    merged = list(by_key.values())
+    merged = list(by_id.values())
     logger.info(
         "Merged entities: %d old + %d delta -> %d (%d merged)",
         len(old),
@@ -180,8 +189,8 @@ def merge_entities(
 def _find_fuzzy_old_match(
     entity: Entity,
     fuzzy_matcher: FuzzyMatcher,
-    old_key_by_name: dict[str, str],
-    by_key: dict[str, Entity],
+    old_id_by_name: dict[str, str],
+    by_id: dict[str, Entity],
 ) -> Entity | None:
     """Return the best old entity fuzzy-matching ``entity``'s name, or None.
 
@@ -199,13 +208,13 @@ def _find_fuzzy_old_match(
     matches = [
         (name, score)
         for name, score in fuzzy_matcher.find_all_matches(entity.name)
-        if name in old_key_by_name
-        and entity_types_compatible(entity.type, by_key[old_key_by_name[name]].type)
+        if name in old_id_by_name
+        and entity_types_compatible(entity.type, by_id[old_id_by_name[name]].type)
     ]
     if not matches:
         return None
     best_name, _ = max(matches, key=lambda m: (m[1], -len(m[0]), m[0]))
-    return by_key.get(old_key_by_name[best_name])
+    return by_id.get(old_id_by_name[best_name])
 
 
 def _relationship_weight(rel: Relationship, supporting_text_units: list[str]) -> float:
@@ -246,7 +255,7 @@ def merge_relationships(
     delta: list[Relationship],
     entity_id_remap: dict[str, str] | None = None,
 ) -> list[Relationship]:
-    """Merge delta relationships into old ones by (source, target, type).
+    """Merge delta relationships into old ones by id, else (source, target, type).
 
     ``entity_id_remap`` (from :func:`merge_entities`) is applied to delta
     relationship endpoints first so edges point at surviving entity ids.
@@ -263,7 +272,9 @@ def merge_relationships(
     edges and would otherwise diverge from this path.
     """
     remap = entity_id_remap or {}
-    by_key: dict[tuple[str, str, str], Relationship] = {}
+    by_id: dict[str, Relationship] = {}
+    # (source, target, type) -> id of the first edge with that key.
+    id_by_key: dict[tuple[str, str, str], str] = {}
 
     for rel in old:
         # The full-build resolver drops self-referencing edges, so the merged
@@ -273,7 +284,10 @@ def merge_relationships(
             continue
         existing = rel.model_copy(deep=True)
         existing.weight = _relationship_weight(existing, existing.text_unit_ids or [])
-        by_key[_relationship_key(rel.source_id, rel.target_id, rel)] = existing
+        by_id[rel.id] = existing
+        id_by_key.setdefault(
+            _relationship_key(rel.source_id, rel.target_id, rel), rel.id
+        )
 
     for rel in delta:
         source_id, target_id = _remapped_endpoints(rel, remap)
@@ -283,13 +297,17 @@ def merge_relationships(
             # so the incremental path must too.
             continue
         key = _relationship_key(source_id, target_id, rel)
-        match = by_key.get(key)
+        # Id first: a gleaning correction changes an edge's type or direction in
+        # place and keeps its id, so a later delta of the uncorrected edge
+        # carries the stored id under a different key.
+        match = by_id.get(rel.id) or by_id.get(id_by_key.get(key, ""))
         if match is None:
             new_rel = rel.model_copy(deep=True)
             new_rel.source_id = source_id
             new_rel.target_id = target_id
             new_rel.weight = _relationship_weight(new_rel, new_rel.text_unit_ids or [])
-            by_key[key] = new_rel
+            by_id[rel.id] = new_rel
+            id_by_key.setdefault(key, rel.id)
             continue
 
         match.description = _merge_descriptions(match.description, rel.description)
@@ -299,7 +317,7 @@ def merge_relationships(
         )
         match.weight = _relationship_weight(match, match.text_unit_ids or [])
 
-    merged = list(by_key.values())
+    merged = list(by_id.values())
     logger.info(
         "Merged relationships: %d old + %d delta -> %d",
         len(old),
@@ -322,9 +340,15 @@ def relationship_id_remap(
     no entry.
     """
     remap = entity_id_remap or {}
-    kept = {_relationship_key(r.source_id, r.target_id, r): r.id for r in merged}
+    kept_ids = {r.id for r in merged}
+    kept: dict[tuple[str, str, str], str] = {}
+    for r in merged:
+        kept.setdefault(_relationship_key(r.source_id, r.target_id, r), r.id)
     result: dict[str, str] = {}
     for rel in delta:
+        if rel.id in kept_ids:
+            # Matched by id (or kept as new): it survives under its own id.
+            continue
         source_id, target_id = _remapped_endpoints(rel, remap)
         kept_id = kept.get(_relationship_key(source_id, target_id, rel))
         if kept_id is not None and kept_id != rel.id:
