@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from rich.panel import Panel
 from rich.prompt import Confirm
 
+from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import missing_endpoints_error
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import (
@@ -65,6 +66,10 @@ class CommandLineInterface:
         parser = argparse.ArgumentParser(
             description="GraphRAG Data Ingestion Pipeline - Process documents and build knowledge graphs",
             formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog=doc_epilog(
+                "3-ingestion-run-ingestion",
+                "run-ingestion --source-directory ./source --config-path config.yaml",
+            ),
         )
 
         parser.add_argument(

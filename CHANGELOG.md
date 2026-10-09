@@ -13,6 +13,8 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 **Breaking** change configuration, stored index data, or a public interface.
 
 ### Added
+- Each `run-*` CLI's `--help` ends with one example invocation and a link to
+  its user-guide section.
 - `indexing.max_document_failures` (default `3`): an incremental run stops
   retrying a document recorded FAILED that many consecutive runs with
   unchanged content. It stays FAILED and is skipped as unchanged with a

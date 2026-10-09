@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from rich.markup import escape
 from rich.panel import Panel
 
+from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
     strategy_roles,
@@ -70,6 +71,11 @@ class CommandLineInterface:
         parser = argparse.ArgumentParser(
             description="GraphRAG Chain - Retrieval-augmented generation using knowledge graphs",
             formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog=doc_epilog(
+                "4-querying-run-rag",
+                'run-rag --query "What are the main themes?" --search-strategy global '
+                "--config-path config.yaml",
+            ),
         )
 
         parser.add_argument(

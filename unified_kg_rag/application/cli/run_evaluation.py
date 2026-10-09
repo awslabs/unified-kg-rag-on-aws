@@ -12,6 +12,7 @@ from langchain_core.runnables import Runnable
 from rich.panel import Panel
 from rich.table import Table
 
+from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
     strategy_roles,
@@ -88,6 +89,10 @@ class CommandLineInterface:
         parser = argparse.ArgumentParser(
             description="GraphRAG Evaluation System - Assess retrieval and generation performance",
             formatter_class=argparse.RawTextHelpFormatter,
+            epilog=doc_epilog(
+                "6-evaluation-run-eval",
+                "run-eval --eval-data-path eval_data.json --config-path config.yaml",
+            ),
         )
 
         parser.add_argument(
