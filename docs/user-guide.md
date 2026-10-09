@@ -974,8 +974,10 @@ To move a corpus, either:
   and relationships are removed, content shared with surviving documents is
   kept, and the records are deleted once the removal succeeded. The documents
   at the new location are indexed as new in the same run. Give the scope as
-  the registry stores it: the absolute directory (a trailing slash is
-  ignored) or the former `source_scope` value, `s3://` URIs included. A run
+  the registry stores it: the absolute directory or the former
+  `source_scope` value, `s3://` URIs included. Trailing and repeated slashes
+  of a local path are ignored on both sides, so a former `source_scope` of
+  `/mnt/corpus/` is retired by `/mnt/corpus` too. A run
   that names its own scope fails before reading the registry, and a scope
   without records is reported with a WARNING.
 

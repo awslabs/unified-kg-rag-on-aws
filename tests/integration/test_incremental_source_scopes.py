@@ -525,3 +525,27 @@ def test_two_hosts_sharing_a_registry_never_delete_each_others_content(
     assert len(records) == 2 and _scope_of(first_b) in {
         r.scope for r in records.values()
     }
+
+
+@pytest.mark.parametrize("retire_value", ["/mnt/corpus/", "/mnt/corpus"])
+def test_a_configured_scope_with_a_trailing_slash_can_be_retired(
+    registry, tmp_path, retire_value
+) -> None:
+    # A configured source_scope is stored as given; a retire value is
+    # normalized. Both spellings must reach the stored records.
+    stack = ScopeStack(registry, tmp_path)
+    parsing = stack.config.processing.document_parsing
+    source = write_corpus(tmp_path / "src", {"contract.txt": A_TEXT})
+    parsing.source_scope = "/mnt/corpus/"
+    first = stack.run(source)
+    assert _scope_of(first).endswith("|/mnt/corpus/")
+
+    parsing.source_scope = "corpus-renamed"
+    stack.config.indexing.retire_source_scopes = [retire_value]
+    write_corpus(source, {"depot.txt": DEPOT_TEXT})
+    context = stack.run(source)
+
+    assert len(context.incremental_delta.deleted) == 1
+    assert {r.scope for r in registry.list_all()} == {_scope_of(context)}
+    assert stack.texts() == {DEPOT_TEXT}
+    assert stack.entity_names() == {"Depot"}

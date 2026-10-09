@@ -276,7 +276,7 @@ def detect_delta(
             doc_status, delta, legacy_doc_ids, scope, fingerprints, stored
         )
     if retired:
-        retire_source_scopes(doc_status, delta, retired)
+        retire_source_scopes(doc_status, delta, retired, own_scope=scope)
     if max_failures is not None and delta.changed:
         _stop_retrying_exhausted(delta, doc_status, fingerprints, max_failures, adopted)
     failed = set(failed_doc_ids) - set(fingerprints)
@@ -476,7 +476,10 @@ def validate_retired_scopes(
 
 
 def retire_source_scopes(
-    doc_status: DocStatusPort, delta: DocumentDelta, retired_scopes: Iterable[str]
+    doc_status: DocStatusPort,
+    delta: DocumentDelta,
+    retired_scopes: Iterable[str],
+    own_scope: str | None = None,
 ) -> int:
     """Classify every record of ``retired_scopes`` as deleted in ``delta``.
 
@@ -486,17 +489,28 @@ def retire_source_scopes(
     files removed from its own corpus. Costs one registry diff (a projected
     scan) per retired scope.
 
+    A retired scope also matches the stored scopes of its namespace whose
+    source scope normalizes to the same value (see
+    :func:`normalize_source_scope`): a configured
+    ``document_parsing.source_scope`` is stored as given, so a local path
+    with a trailing slash would otherwise never match its normalized retire
+    value. The stored scopes come from ``delta.stored_scopes``, and
+    ``own_scope`` (the run's scope) is never retired.
+
     Returns:
         The number of records added to ``delta.deleted``.
     """
     deleted = set(delta.deleted)
     added = 0
     for retired in dict.fromkeys(retired_scopes):
-        doc_ids = [
-            doc_id
-            for doc_id in doc_status.diff({}, scope=retired).deleted
-            if doc_id not in deleted
-        ]
+        doc_ids: list[str] = []
+        for variant in _stored_spellings(retired, delta.stored_scopes):
+            if variant == own_scope:
+                continue
+            for doc_id in doc_status.diff({}, scope=variant).deleted:
+                if doc_id not in deleted:
+                    doc_ids.append(doc_id)
+                    deleted.add(doc_id)
         if not doc_ids:
             logger.warning(
                 "Retired scope %r has no doc-status records (already retired, "
@@ -511,9 +525,30 @@ def retire_source_scopes(
             retired,
         )
         delta.deleted.extend(doc_ids)
-        deleted.update(doc_ids)
         added += len(doc_ids)
     return added
+
+
+def _stored_spellings(retired: str, stored_scopes: Iterable[str]) -> list[str]:
+    """``retired`` and every stored scope of its namespace whose source scope
+    normalizes to the same value."""
+    namespace = scope_namespace(retired)
+    if namespace is None:
+        return [retired]
+    source = normalize_source_scope(retired[len(namespace) + 1 :])
+    return list(
+        dict.fromkeys(
+            [
+                retired,
+                *(
+                    stored
+                    for stored in stored_scopes
+                    if scope_namespace(stored) == namespace
+                    and normalize_source_scope(stored[len(namespace) + 1 :]) == source
+                ),
+            ]
+        )
+    )
 
 
 def other_local_scopes(
@@ -529,13 +564,21 @@ def other_local_scopes(
     Args:
         scope: The run's :func:`registry_scope`, left out.
         namespace: The run's index namespace.
-        retired: Registry scopes retired this run, left out.
+        retired: Registry scopes retired this run, left out with every
+            stored spelling of them (see :func:`retire_source_scopes`).
 
     Returns:
         The source scopes, sorted.
     """
     prefix = f"{namespace}|"
-    skip = {scope, *retired}
+    skip = {
+        scope,
+        *(
+            spelling
+            for value in retired
+            for spelling in _stored_spellings(value, delta.stored_scopes)
+        ),
+    }
     return sorted(
         stored[len(prefix) :]
         for stored in delta.stored_scopes

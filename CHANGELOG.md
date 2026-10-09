@@ -466,6 +466,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- A configured `document_parsing.source_scope` that is a local path with a
+  trailing or repeated slash (`/mnt/corpus/`) can now be retired. The scope
+  is stored as given, but `indexing.retire_source_scopes` normalized the
+  retire value, so neither `/mnt/corpus/` nor `/mnt/corpus` matched the
+  stored records and the run only warned that the scope had no records. A
+  retired scope now also matches every stored scope of the run's namespace
+  whose source scope normalizes to the same value (read from the scopes the
+  diff's scan already returns; the run's own scope is never retired). Stored
+  scopes are not re-keyed (#PR).
 - The delta detection reads the records of changed documents in one batch
   (`DocStatusPort.get_many`, `BatchGetItem` on DynamoDB) to check
   `indexing.max_document_failures`, instead of one `GetItem` per changed

@@ -40,6 +40,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     document_doc_id,
     legacy_doc_id,
     other_local_scopes,
+    retire_source_scopes,
     validate_retired_scopes,
 )
 from unified_kg_rag.domain.models import (
@@ -595,6 +596,39 @@ def test_a_retired_scope_is_deleted_and_nothing_else(registry) -> None:
     assert len(registry.list_all()) == 5
 
 
+def test_a_retired_scope_matches_every_stored_spelling_of_it(registry) -> None:
+    # A configured source_scope is stored as given, so a local path can be
+    # stored with a trailing or a repeated slash; the retire value is
+    # normalized (validate_retired_scopes).
+    document = _scoped_document("a.txt", "Vendor ships goods.")
+    for doc_id, scope in (
+        ("slash", f"{_OLD_SCOPE}/"),
+        ("double", _OLD_SCOPE.replace("/old", "//old")),
+        ("exact", _OLD_SCOPE),
+        ("tenant-b", "tenant-b|/corpora/old/"),
+        ("name", "default|corpora/old/"),
+    ):
+        registry.put(_record(doc_id, scope))
+
+    delta, _ = detect_delta(
+        [document], registry, scope=_SCOPE, retired_scopes=[_OLD_SCOPE]
+    )
+
+    assert sorted(delta.deleted) == ["double", "exact", "slash"]
+
+
+def test_retiring_never_reaches_the_runs_own_stored_spelling() -> None:
+    store = FakeDocStatusStore()
+    store.put(_record("own", f"{_OLD_SCOPE}/"))
+    store.put(_record("old", _OLD_SCOPE))
+    delta = store.diff({}, scope=f"{_OLD_SCOPE}/")
+    delta.deleted = []
+
+    added = retire_source_scopes(store, delta, [_OLD_SCOPE], own_scope=f"{_OLD_SCOPE}/")
+
+    assert (added, delta.deleted) == (1, ["old"])
+
+
 @pytest.mark.parametrize(
     ("scope", "retired"),
     [(_SCOPE, [_SCOPE]), (_SCOPE, [_OLD_SCOPE, _SCOPE]), (None, [_OLD_SCOPE])],
@@ -637,6 +671,7 @@ def test_other_local_scopes_names_only_local_directories_of_the_namespace() -> N
             "default|/corpora/new",
             "default|/corpora/old",
             "default|/corpora/retired",
+            "default|/corpora/retired/",
             "default|s3://bucket/corpus/",
             "default|corpus-a",
             "tenant-b|/corpora/other",
