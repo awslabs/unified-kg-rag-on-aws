@@ -18,6 +18,7 @@ from unified_kg_rag.domain.models.config import CustomPromptConfig
 from unified_kg_rag.domain.prompts import (
     AnswerGenerationPrompt,
     CommunityReportPrompt,
+    ContextBuildingPrompt,
     GraphExtractionPrompt,
 )
 from unified_kg_rag.domain.prompts.base import BasePrompt
@@ -60,13 +61,15 @@ def test_system_override_by_key() -> None:
 def test_partial_human_only_override_does_not_crash() -> None:
     # The crux of the old "all-or-nothing" trap: overriding only the human
     # template (which need not contain every built-in input variable) must not
-    # fail the strict missing-variable validation.
-    cp = CustomPromptConfig(answer_generation_human="just answer: ")
-    resolved = AnswerGenerationPrompt.resolve(cp)
-    assert resolved.human_prompt_template == "just answer: "
+    # fail the strict missing-variable validation. Only the data variables are
+    # required (custom_prompts load-time check); {conversation_history} is not.
+    human = "answer {query} from {search_results}"
+    cp = CustomPromptConfig(context_building_human=human)
+    resolved = ContextBuildingPrompt.resolve(cp)
+    assert resolved.human_prompt_template == human
     # System stays the shipped default.
     assert (
-        resolved.system_prompt_template == AnswerGenerationPrompt.system_prompt_template
+        resolved.system_prompt_template == ContextBuildingPrompt.system_prompt_template
     )
 
 
@@ -145,9 +148,10 @@ def test_answer_prompt_keeps_grounding_rules_and_direct_answer_first() -> None:
 
 
 def test_previous_answer_wording_restorable_through_custom_prompts() -> None:
+    human = "{query}\n{context}"
     cp = CustomPromptConfig(
-        answer_generation_system="LEGACY SYSTEM", answer_generation_human="{query}"
+        answer_generation_system="LEGACY SYSTEM", answer_generation_human=human
     )
     resolved = AnswerGenerationPrompt.resolve(cp)
     assert resolved.system_prompt_template == "LEGACY SYSTEM"
-    assert resolved.human_prompt_template == "{query}"
+    assert resolved.human_prompt_template == human

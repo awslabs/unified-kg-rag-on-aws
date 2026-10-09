@@ -437,6 +437,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (`。．｡！？；`) before falling back to spaces and characters, so Chinese and
   Japanese text is no longer cut mid-sentence. Text without these characters
   is chunked exactly as before (#177).
+- `custom_prompts` overrides are checked when the config loads. An unknown
+  `{variable}` (often a literal JSON brace, which raised `KeyError` on every
+  call) or a missing data variable such as `{input_text}` (which ran the
+  prompt on no document text) now fails the load with the offending key;
+  literal braces are written `{{`/`}}`. `run-prompt-tuning` escapes braces
+  in the overrides it writes (#PR).
 - Ingestion warns once per skipped file extension with the remedy (for
   `.md`/`.html`, the `uv sync --extra unstructured` install command) instead
   of skipping unparseable files silently, and an empty first stage reports

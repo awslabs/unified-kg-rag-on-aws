@@ -573,7 +573,9 @@ Metric lists (`langchain_metrics`, `ragas_metrics`) are in the template.
 
 Every prompt has a `*_system` / `*_human` override (default `null` = use the
 built-in prompt in `unified_kg_rag/domain/prompts/`). See §9. Override what you
-need; leave the rest `null`.
+need; leave the rest `null`. Overrides are validated at load: unknown
+`{variables}` and missing data variables (such as `{input_text}`) are errors,
+and a literal brace is written `{{` / `}}` (§9.B).
 
 ### 2.10 Environment variable overrides
 
@@ -1331,6 +1333,18 @@ Available override keys (each `_system` + `_human`): `graph_extraction`,
 `strategy_selection`, `keywords_extraction` (LightRAG dual-level),
 `global_map` (global-search map-reduce), plus the prompt-tuning
 `corpus_profile` prompt.
+
+Overrides are checked when the config loads, and a mistake fails the load
+with the offending key:
+
+- A `{name}` the prompt is not called with is an error (it would raise
+  `KeyError` on every call). Write a literal brace, for example in a JSON
+  sample, as `{{` and `}}`: `{{"name": "Vendor"}}`.
+- Each prompt's data variables must appear in its system or human template:
+  `{input_text}` for `graph_extraction` and `claim_extraction`, `{query}` and
+  `{context}` for `answer_generation`, and so on. The other variables (limits
+  such as `{max_entities_per_chunk}`, `{entity_types}`) may be left out.
+- `run-prompt-tuning` output is already escaped.
 
 **Recommended flow:** run `run-prompt-tuning` to generate a starting point →
 review → merge the useful prompts + tune `entity_types` by hand → re-ingest.

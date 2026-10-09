@@ -296,9 +296,14 @@ class PromptTuner:
             f"{domain} documents and write reports in {language}. "
             "Follow the output format exactly as specified in the human message."
         )
+        # Every part is literal text (the model-generated persona and examples
+        # may contain JSON), so escape braces for the f-string prompt template.
         return {
-            "graph_extraction_system": graph_extraction_system,
-            "community_report_system": community_report_system,
+            key: text.replace("{", "{{").replace("}", "}}")
+            for key, text in (
+                ("graph_extraction_system", graph_extraction_system),
+                ("community_report_system", community_report_system),
+            )
         }
 
     async def tune(self, texts: list[str]) -> dict[str, Any]:

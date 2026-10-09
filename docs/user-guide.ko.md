@@ -560,7 +560,9 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 
 모든 프롬프트에는 `*_system` / `*_human` 오버라이드가 있습니다(기본값 `null` =
 `unified_kg_rag/domain/prompts/`의 내장 프롬프트 사용). §9를 참고하세요. 필요한
-것만 오버라이드하고 나머지는 `null`로 두세요.
+것만 오버라이드하고 나머지는 `null`로 두세요. 오버라이드는 로드할 때 검사합니다.
+알 수 없는 `{변수}`와 빠진 데이터 변수(`{input_text}` 등)는 오류이며, 중괄호를
+글자 그대로 쓰려면 `{{` / `}}`로 씁니다(§9.B).
 
 ### 2.10 환경 변수로 덮어쓰기
 
@@ -1289,6 +1291,18 @@ custom_prompts:
 `strategy_selection`, `keywords_extraction`(LightRAG 이중 레벨),
 `global_map`(글로벌 검색 map-reduce), 그리고 프롬프트 튜닝
 프롬프트(`corpus_profile`).
+
+오버라이드는 설정을 불러올 때 검사하며, 잘못된 오버라이드가 있으면 해당 키를
+알려 주고 로드에 실패합니다.
+
+- 프롬프트가 받지 않는 `{name}` 변수는 오류입니다(그대로 두면 호출마다
+  `KeyError`가 발생합니다). JSON 예시처럼 중괄호를 글자 그대로 쓰려면 `{{`와
+  `}}`로 씁니다. 예: `{{"name": "Vendor"}}`.
+- 프롬프트의 데이터 변수는 system 또는 human 템플릿에 있어야 합니다.
+  `graph_extraction`과 `claim_extraction`은 `{input_text}`,
+  `answer_generation`은 `{query}`와 `{context}`가 필요합니다. 나머지
+  변수(`{max_entities_per_chunk}` 같은 한도, `{entity_types}`)는 빼도 됩니다.
+- `run-prompt-tuning` 출력은 이미 이스케이프되어 있습니다.
 
 **권장 흐름:** `run-prompt-tuning`을 실행해 시작점 생성 → 검토 → 유용한
 프롬프트 병합 + `entity_types`를 직접 튜닝 → 재인제스천.
