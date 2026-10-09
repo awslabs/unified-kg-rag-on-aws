@@ -65,3 +65,71 @@ def test_bulk_index_collects_partial_failures_without_crashing(mocker) -> None:
     out = _client().bulk_index("idx", [{"id": "a"}, {"id": "b"}])
     assert out["errors"] is True
     assert len(out["items"]) == 1  # the single rejected doc
+
+
+def _status_by_id(statuses: dict[str, list[int]], calls: list[list[str]]):
+    """A streaming_bulk stand-in answering each id with its next status."""
+
+    def fake_streaming_bulk(client, actions, **kwargs):
+        sent = [action["_id"] for action in actions]
+        calls.append(sent)
+        for doc_id in sent:
+            status = statuses[doc_id].pop(0) if statuses[doc_id] else 201
+            item = {"_id": doc_id, "status": status}
+            if status >= 300:
+                item["error"] = {"type": "es_rejected_execution_exception"}
+            yield 200 <= status < 300, {"index": item}
+
+    return fake_streaming_bulk
+
+
+def test_bulk_index_resends_items_rejected_with_a_retryable_status(mocker) -> None:
+    # A 200 bulk response can carry per-item 429/503 rejections that the
+    # client's request-level retries never see; those items are resent.
+    calls: list[list[str]] = []
+    statuses = {"a": [], "b": [429, 503], "c": []}
+    mocker.patch.object(
+        opensearch_mod,
+        "streaming_bulk",
+        side_effect=_status_by_id(statuses, calls),
+    )
+    sleep = mocker.patch.object(opensearch_mod, "_sleep")
+
+    out = _client().bulk_index("idx", [{"id": "a"}, {"id": "b"}, {"id": "c"}])
+
+    assert out == {"errors": False, "items": []}
+    assert calls == [["a", "b", "c"], ["b"], ["b"]]
+    assert sleep.call_count == 2
+
+
+def test_bulk_index_does_not_resend_permanent_item_errors(mocker) -> None:
+    calls: list[list[str]] = []
+    mocker.patch.object(
+        opensearch_mod,
+        "streaming_bulk",
+        side_effect=_status_by_id({"a": [400], "b": []}, calls),
+    )
+    mocker.patch.object(opensearch_mod, "_sleep")
+
+    out = _client().bulk_index("idx", [{"id": "a"}, {"id": "b"}])
+
+    assert calls == [["a", "b"]]
+    assert [item["index"]["_id"] for item in out["items"]] == ["a"]
+
+
+def test_bulk_index_reports_items_still_rejected_after_the_retries(mocker) -> None:
+    calls: list[list[str]] = []
+    retries = OpenSearchClient.BULK_ITEM_MAX_RETRIES
+    mocker.patch.object(
+        opensearch_mod,
+        "streaming_bulk",
+        side_effect=_status_by_id({"a": [429] * (retries + 1), "b": []}, calls),
+    )
+    mocker.patch.object(opensearch_mod, "_sleep")
+
+    out = _client().bulk_index("idx", [{"id": "a"}, {"id": "b"}])
+
+    assert len(calls) == retries + 1
+    assert out["errors"] is True
+    assert [item["index"]["_id"] for item in out["items"]] == ["a"]
+    assert out["items"][0]["index"]["status"] == 429

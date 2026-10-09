@@ -464,6 +464,25 @@ def test_execute_batch_records_individual_failures(indexer, mocker) -> None:
     assert stats.errors  # error messages captured
 
 
+def test_execute_batch_reports_the_ids_of_failed_items(indexer, mocker) -> None:
+    from unified_kg_rag.domain.models import Entity
+
+    mocker.patch.object(indexer.neptune_config, "batch_size", 2)
+    mocker.patch.object(indexer.neptune_config, "index_concurrency", 1)
+    entities = [Entity(id="e1", name="Vendor"), Entity(id="e2", name="Buyer")]
+
+    def fail_e2(traversal, op):
+        if traversal == ["e2"] or len(traversal) == 2:
+            raise RuntimeError("rejected")
+
+    mocker.patch.object(indexer, "_execute_with_retries", side_effect=fail_e2)
+    builder = lambda g, batch: [entity.id for entity in batch]  # noqa: E731
+    stats = indexer._execute_batch_traversal(entities, builder, "op")
+
+    assert (stats.successful_items, stats.failed_items) == (1, 1)
+    assert stats.failed_ids == ["e2"]
+
+
 # --------------------------------------------------------------------------- #
 # find_incident_relationship_ids (orphan-edge cleanup support)
 # --------------------------------------------------------------------------- #

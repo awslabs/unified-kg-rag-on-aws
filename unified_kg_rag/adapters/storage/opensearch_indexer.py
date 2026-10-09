@@ -587,6 +587,7 @@ class OpenSearchIndexer(VectorIndexer):
                     total_stats.add_error(
                         f"Failed to prepare {len(failed_ids)} documents",
                         len(failed_ids),
+                        ids=failed_ids,
                     )
                 if docs:
                     total_stats.merge(self._perform_indexing(index_name, docs))
@@ -594,7 +595,9 @@ class OpenSearchIndexer(VectorIndexer):
                 logger.error(
                     "Failed to upsert %s (suffix=%s): %s", item_type_name, suffix, e
                 )
-                total_stats.add_error(str(e), len(chunk_items))
+                total_stats.add_error(
+                    str(e), len(chunk_items), ids=[item.id for item in chunk_items]
+                )
 
         self._flush_embedding_cache()
         return total_stats
@@ -645,6 +648,7 @@ class OpenSearchIndexer(VectorIndexer):
                     total_stats.add_error(
                         f"Failed to prepare {len(failed_ids)} documents",
                         len(failed_ids),
+                        ids=failed_ids,
                     )
 
                 swapped = False
@@ -669,7 +673,9 @@ class OpenSearchIndexer(VectorIndexer):
                 logger.error(
                     "Failed to index %s (suffix=%s): %s", item_type_name, suffix, e
                 )
-                total_stats.add_error(str(e), len(chunk_items))
+                total_stats.add_error(
+                    str(e), len(chunk_items), ids=[item.id for item in chunk_items]
+                )
                 self._drop_unswapped_index(alias_name, index_name)
 
         if total_stats.failed_items > 0:
@@ -921,15 +927,23 @@ class OpenSearchIndexer(VectorIndexer):
             if not response.get("errors"):
                 stats.add_success(len(documents))
             else:
-                failed_count = sum(
-                    1
+                failed = [
+                    next(iter(item.values()))
                     for item in response.get("items", [])
                     if "error" in next(iter(item.values()))
+                ]
+                stats.add_error(
+                    f"Bulk API errors: {len(failed)}",
+                    len(failed),
+                    ids=[str(item["_id"]) for item in failed if "_id" in item],
                 )
-                stats.add_error(f"Bulk API errors: {failed_count}", failed_count)
-                stats.add_success(len(documents) - failed_count)
+                stats.add_success(len(documents) - len(failed))
         except Exception as e:
-            stats.add_error(f"Bulk indexing failed: {e}", len(documents))
+            stats.add_error(
+                f"Bulk indexing failed: {e}",
+                len(documents),
+                ids=[str(doc["id"]) for doc in documents if "id" in doc],
+            )
 
         stats.processing_time = time.time() - start_time
         return stats

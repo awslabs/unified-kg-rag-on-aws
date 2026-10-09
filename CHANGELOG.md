@@ -472,6 +472,19 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   leaked by earlier runs are deleted on the next successful full run of the
   same alias; those of a suffix that is never rebuilt must be deleted by
   hand (#185).
+- Incremental runs no longer record a document `PROCESSED` when some of its
+  artifacts failed to write. OpenSearch bulk calls resent nothing
+  (`streaming_bulk` defaults to no item retries, and the client's
+  request-level retries never see per-item 429 rejections inside a 200
+  response), and a commit within `indexing.max_failure_rate` recorded every
+  document `PROCESSED`, so dropped entities or relationships were never
+  rewritten: their documents read as unchanged on every later run. Bulk items
+  rejected with 429/502/503/504 are now resent up to four times with backoff,
+  the OpenSearch and Neptune indexers report the ids of items that still
+  failed (`IndexingStats.failed_ids`), and the commit records the documents
+  owning them `FAILED` (counted against `indexing.max_document_failures`) so
+  the next run rewrites them. A failure reported without an id marks every
+  document of the commit `FAILED` (#PR).
 - The interactive graph HTML (`graph.html`, the community hierarchy) escapes
   node tooltips when pyvis renders them as HTML. Once any node title contained
   `href`, pyvis replaced the plain-text tooltip with a popup that sets

@@ -158,6 +158,8 @@ def test_write_relationships_isolates_a_failing_edge(indexer, mocker) -> None:
     assert stats.total_items == 3
     assert stats.successful_items == 2
     assert stats.failed_items == 1
+    # The failed edge's id lets an incremental commit retry its documents.
+    assert stats.failed_ids == ["r2"]
 
 
 def test_write_relationships_counts_an_edge_without_source_as_failed(
@@ -184,6 +186,7 @@ def test_write_relationships_counts_an_edge_without_source_as_failed(
     assert stats.total_items == 3
     assert stats.successful_items == 2
     assert stats.failed_items == 1
+    assert stats.failed_ids == ["r2"]
 
 
 def test_add_edge_traversal_returns_the_edge_id(indexer) -> None:

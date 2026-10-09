@@ -82,9 +82,10 @@ incremental indexing.
 ## Failed documents
 
 A document is recorded `FAILED` when translation, graph extraction, gleaning
-or claim extraction failed on any of its text units. The next run
-treats it as changed: it removes what the failed run wrote and processes the
-document again.
+or claim extraction failed on any of its text units, or when the write of one
+of its artifacts (text unit, entity, relationship, claim, community, report)
+to OpenSearch or Neptune failed. The next run treats it as changed: it removes
+what the failed run wrote and processes the document again.
 
 - After `indexing.max_document_failures` (default `3`) consecutive failures
   with unchanged content, the document is no longer retried. It stays
@@ -95,10 +96,15 @@ document again.
   10,000 ids) fails the indexing stage with an error naming the file. Split
   the file.
 
-Write failures are gated separately. If more than `indexing.max_failure_rate`
-(default `0.2`) of one artifact type's writes fail, the indexing stage fails
-and the documents are not recorded, so the next run retries them. On the CDK
-stack, three alarms report problems to the SNS topic:
+Write failures are gated separately. OpenSearch bulk items rejected with a
+retryable status (429, 502, 503, 504) are resent up to four times with
+backoff first. If more than `indexing.max_failure_rate` (default `0.2`) of one
+artifact type's writes still fail, the indexing stage fails and the documents
+are not recorded, so the next run retries them. Below that rate the run
+succeeds and only the documents that own a failed artifact are recorded
+`FAILED`; a failure the backend reports without an item id marks every
+document of the run `FAILED`. On the CDK stack, three alarms report problems
+to the SNS topic:
 
 | Alarm | Fires when |
 |---|---|

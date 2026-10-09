@@ -146,7 +146,10 @@ class _SuffixRemoval(BaseModel):
     removed_text_unit_ids: list[str] = Field(default_factory=list)
 
 
-def _artifact_ids(record: DocStatusRecord) -> list[str]:
+_EXTRACTION_FAILED = "extraction failed on some text units"
+
+
+def _artifact_ids(record: DocStatusRecord | DocumentLineage) -> list[str]:
     return (
         record.entity_ids
         + record.relationship_ids
@@ -329,9 +332,14 @@ class IncrementalIndexer:
         the doc would then be classified `unchanged` on the next run and its
         missing artifacts never re-indexed. Returns whether the docs were
         recorded.
+
+        Under the tolerated failure rate the docs are recorded, but a doc that
+        owns an artifact whose write failed is recorded FAILED (see
+        :meth:`_documents_with_failed_writes`), so the next run rewrites it.
         """
         if self._delta_writes_succeeded(results):
-            self._record_processed(lineages, fingerprints, failed_doc_ids)
+            write_failed = self._documents_with_failed_writes(lineages, results)
+            self._record_processed(lineages, fingerprints, failed_doc_ids, write_failed)
             return True
         logger.error(
             "Indexing failed for at least one artifact type (complete failure "
@@ -372,6 +380,49 @@ class IncrementalIndexer:
                 if failure_rate > max_failure_rate:
                     return False
         return True
+
+    @staticmethod
+    def _documents_with_failed_writes(
+        lineages: list[DocumentLineage], results: dict[str, IndexingStats]
+    ) -> set[str]:
+        """Registry ids of the documents owning an artifact whose write failed.
+
+        The failed artifact ids come from the indexers' stats. A failure the
+        indexer reported without an id cannot be attributed, so every document
+        of the commit is returned: retrying them all re-extracts more than
+        needed, while recording them PROCESSED would leave the artifact missing
+        with the documents classified unchanged on every later run.
+        """
+        failed_ids: set[str] = set()
+        unattributed = 0
+        for stats in results.values():
+            if not stats:
+                continue
+            ids = set(stats.failed_ids)
+            failed_ids |= ids
+            unattributed += max(0, stats.failed_items - len(ids))
+        if unattributed:
+            logger.warning(
+                "%d write failures carry no artifact id; recording all %d "
+                "documents of this run FAILED so the next run rewrites them",
+                unattributed,
+                len(lineages),
+            )
+            return {lineage.doc_id for lineage in lineages}
+        if not failed_ids:
+            return set()
+        owners = {
+            lineage.doc_id
+            for lineage in lineages
+            if failed_ids.intersection(_artifact_ids(lineage))
+        }
+        logger.warning(
+            "%d artifact writes failed; recording the %d documents that own "
+            "them FAILED so the next run rewrites them",
+            len(failed_ids),
+            len(owners),
+        )
+        return owners
 
     def remove_deleted(self, delta: DocumentDelta) -> bool:
         """Remove artifacts and registry records for deleted documents.
@@ -457,6 +508,7 @@ class IncrementalIndexer:
         lineages: list[DocumentLineage],
         fingerprints: dict[str, str],
         failed_doc_ids: Collection[str] = (),
+        write_failed_doc_ids: Collection[str] = (),
     ) -> None:
         if failed_doc_ids:
             logger.warning(
@@ -465,7 +517,12 @@ class IncrementalIndexer:
                 len(failed_doc_ids),
             )
         for lineage in lineages:
-            failed = lineage.doc_id in failed_doc_ids
+            error_info = None
+            if lineage.doc_id in failed_doc_ids:
+                error_info = _EXTRACTION_FAILED
+            elif lineage.doc_id in write_failed_doc_ids:
+                error_info = "writing some of its artifacts to the stores failed"
+            failed = error_info is not None
             existing = self.doc_status.get(lineage.doc_id)
             content_hash = fingerprints.get(
                 lineage.doc_id, existing.content_hash if existing else ""
@@ -484,7 +541,7 @@ class IncrementalIndexer:
                 doc_id=lineage.doc_id,
                 content_hash=content_hash,
                 status=DocStatus.FAILED if failed else DocStatus.PROCESSED,
-                error_info=("extraction failed on some text units" if failed else None),
+                error_info=error_info,
                 failure_count=failure_count,
                 suffix=lineage.suffix,
                 scope=(
