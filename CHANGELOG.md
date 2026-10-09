@@ -82,6 +82,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   override must accept `config=None` (and should pass it to its own LLM
   calls). Every `setup_chain` chain is named
   after its prompt (e.g. `AnswerGenerationPrompt`) in traces (#156).
+- `iac/`: `opensearch_master_instance` (default `m6g.large.search`) sizes the
+  dedicated master nodes of a multi-node OpenSearch domain separately from
+  the data nodes, which they used to share; and `flow_log_retention_days`
+  (default `731`, unchanged) sets the VPC flow-log retention. The flow-log
+  group is now created by the stack and follows `removal_destroy`, so
+  enabling flow logs on an existing deployment replaces the implicit group
+  (#157).
 
 ### Changed
 - MinHash entity resolution shares one set of seeded permutations instead of
@@ -471,6 +478,32 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   pipeline cache directory; entries written before hold an absolute path and
   are re-rooted by stage and file name under the current directory.
   `CacheEntry.exists_locally` is replaced by `resolve_local_path(dir)` (#181).
+- `iac/`: CloudWatch alarms deliver notifications. The alarm topic was
+  encrypted with the AWS-managed `alias/aws/sns` key (or the shared data CMK
+  with `use_cmk=true`), neither of which lets CloudWatch publish; the topic
+  now has its own rotated customer-managed key that allows CloudWatch in the
+  same account and is granted to the state machine role (#157).
+- `iac/`: the cache bucket's 30-day expiry applies only to the prefixes the
+  app writes (`pipeline-runs/` and `embedding-cache/`). It covered the whole
+  bucket, so a corpus uploaded there expired after 30 days and the next
+  incremental run treated its files as deleted (#157).
+- `iac/`: interface VPC endpoints are created only in `private` mode and only
+  for the services the data plane calls (`bedrock`, `bedrock-runtime`,
+  `bedrock-agent-runtime`, `ecr.api`, `ecr.dkr`, CloudWatch Logs, STS); the
+  S3 and DynamoDB gateway endpoints stay in both modes. With `vpc_id`, synth
+  warns which subnets and endpoints the reused VPC must provide (#157).
+- `iac/`: the ECR repository (emptied first) and the `/<prefix>/tasks` and
+  `/<prefix>/pipeline` log groups follow `removal_destroy`, so a dev
+  `cdk destroy --all` no longer leaves fixed-name resources that make the
+  next deploy fail (#157).
+- `iac/`: the `OpenSearchEndpoint` stack output is a bare host, the form
+  `aws.opensearch.endpoint` expects; it carried an `https://` prefix (#157).
+- `iac/`: the baseline guardrail no longer anonymizes `NAME`, which replaced
+  person names in answers with `{NAME}` and removed entity-search seeds;
+  email, phone and card numbers stay anonymized (#157).
+- `iac/`: `cdk synth` works from `iac/` without `PYTHONPATH`, and the cdk-nag
+  IAM5 suppression matches a concrete account id, so a synth with
+  `CDK_DEFAULT_ACCOUNT` set no longer fails (#157).
 - `run-prompt-tuning` doubles the braces in every corpus- or model-derived
   field (persona, domain, language, entity types, few-shot examples) before
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`
@@ -1028,7 +1061,6 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   plain text with terminal control characters (other than newline and tab)
   removed. Model output was rendered as rich markup, so `[link=...]` became a
   terminal hyperlink, and escape sequences in it reached the terminal (#173).
-  terminal hyperlink, and escape sequences in it reached the terminal (#179).
 - Ingestion prompts (graph extraction, gleaning, claim extraction, description
   summarization, community reports) wrap corpus text and corpus-derived inputs
   in named tags (`<input_text>`, `<current_entities>`, `<entity_data>`, ...)
