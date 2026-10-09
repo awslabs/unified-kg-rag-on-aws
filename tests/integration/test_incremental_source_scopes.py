@@ -437,3 +437,20 @@ def test_a_fixed_source_scope_never_adopts_a_vanished_directory(
 
     assert len(context.incremental_delta.new) == 1
     assert registry.get(old_record.doc_id) == old_record
+
+
+def test_a_delta_of_one_entity_without_relationships_completes(
+    registry, tmp_path
+) -> None:
+    # The delta graph holds one entity and no edge, so community detection
+    # runs on an edgeless graph (modularity divided by zero).
+    stack = ScopeStack(registry, tmp_path)
+    source = write_corpus(tmp_path / "src-a", {"contract.txt": A_TEXT})
+    stack.run(source)
+    (source / "depot.txt").write_text(DEPOT_TEXT, encoding="utf-8")
+
+    context = stack.run(source)
+
+    assert len(context.incremental_delta.new) == 1
+    assert stack.entity_names() == {"Vendor", "Buyer", "Depot"}
+    assert stack.texts() == {A_TEXT, DEPOT_TEXT}

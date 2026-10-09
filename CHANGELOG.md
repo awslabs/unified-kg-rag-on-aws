@@ -470,6 +470,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (`merge.merger.merge_descriptions`); the resolver also compares lines
   rather than whole descriptions. Descriptions written before stay as they
   are until the item is re-extracted or the index is rebuilt (#190).
+- Community detection no longer fails with `ZeroDivisionError` on a graph
+  that has entities but no relationships, such as an incremental delta of a
+  document that yields one entity. Each entity becomes its own community and
+  the modularity, undefined without edges, is recorded as `0.0` (#PR).
 - Moving a local corpus to another directory no longer leaves its old content
   indexed. Without a fixed `document_parsing.source_scope` the scope is the
   source directory, so every document read as new under the new directory
