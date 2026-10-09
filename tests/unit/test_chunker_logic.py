@@ -101,9 +101,10 @@ class TestMergeSmallChunks:
 
     def test_small_chunks_merged_when_within_max(self) -> None:
         proc = self._proc(min_size=10, max_size=100)
-        # Two 5-char chunks (< min 10) merge into one 10-char chunk.
+        # Two 5-char chunks (< min 10) merge; without a source they are joined
+        # with a separator so the words at the seam are not fused.
         out = proc.merge_small_chunks(["aaaaa", "bbbbb"])
-        assert out == ["aaaaabbbbb"]
+        assert out == ["aaaaa\nbbbbb"]
 
     def test_large_chunks_left_alone(self) -> None:
         proc = self._proc(min_size=10, max_size=100)
@@ -112,21 +113,104 @@ class TestMergeSmallChunks:
 
     def test_merge_stops_at_max_size(self) -> None:
         proc = self._proc(min_size=10, max_size=12)
-        # "aaaaa"(5) is small; adding "bbbbb"(5)=10 ok; adding next 5 -> 15 > 12 stop.
+        # "aaaaa"(5) is small; joined with "bbbbb" = 11 ok and no longer small;
+        # folding "ccccc" back in would give 17 > 12, so it stays separate.
         out = proc.merge_small_chunks(["aaaaa", "bbbbb", "ccccc"])
-        assert out == ["aaaaabbbbb", "ccccc"]
+        assert out == ["aaaaa\nbbbbb", "ccccc"]
 
     def test_trailing_small_chunk_merged_into_previous(self) -> None:
         proc = self._proc(min_size=10, max_size=100)
         # last chunk (3 chars) is undersized -> merged into the previous.
         out = proc.merge_small_chunks(["a" * 20, "bbb"])
-        assert out == ["a" * 20 + "bbb"]
+        assert out == ["a" * 20 + "\nbbb"]
 
     def test_trailing_small_chunk_kept_when_merge_overflows(self) -> None:
         proc = self._proc(min_size=10, max_size=22)
         out = proc.merge_small_chunks(["a" * 20, "bbb"])
-        # 20 + 3 = 23 > max 22 -> last chunk stays separate.
+        # 20 + 1 + 3 = 24 > max 22 -> last chunk stays separate.
         assert out == ["a" * 20, "bbb"]
+
+
+def _words(n: int) -> str:
+    """A single paragraph of distinct synthetic words (``w0000 w0001 ...``)."""
+    return " ".join(f"w{i:04d}" for i in range(n))
+
+
+class TestMergeOverlappingChunks:
+    """Merging splitter chunks that overlap must not duplicate or fuse text."""
+
+    def _split(self, text: str, size: int, overlap: int) -> list[str]:
+        from unified_kg_rag.adapters.ingestion.chunker import BaseChunker
+
+        return BaseChunker._create_splitter(size, overlap).split_text(text)
+
+    def test_trailing_chunk_merge_with_source_is_the_original_span(self) -> None:
+        # One ~5,100-char paragraph with the default sizes: the splitter yields
+        # a full chunk plus a small tail that overlaps it by ~500 characters.
+        text = _words(850)
+        chunks = self._split(text, 4800, 500)
+        assert len(chunks) == 2 and len(chunks[1]) < 1000
+        proc = ChunkProcessor(1000, 8000, chunk_overlap=500)
+        out = proc.merge_small_chunks(chunks, source=text)
+        assert out == [text]
+
+    def test_trailing_chunk_merge_without_source_drops_the_overlap(self) -> None:
+        text = _words(850)
+        chunks = self._split(text, 4800, 500)
+        proc = ChunkProcessor(1000, 8000, chunk_overlap=500)
+        (merged,) = proc.merge_small_chunks(chunks)
+        words = merged.split()
+        # No duplicated overlap and no fused tokens such as "w0799w0717".
+        assert len(words) == len(set(words)) == 850
+        assert all(len(w) == 5 for w in words)
+        assert words == text.split()
+
+    @staticmethod
+    def _assert_contiguous_run(chunk: str, text: str) -> None:
+        """``chunk`` is one span of ``text``: each word once, in order, unfused."""
+        words, all_words = chunk.split(), text.split()
+        start = all_words.index(words[0])
+        assert words == all_words[start : start + len(words)]
+
+    def test_forward_merge_of_small_chunks_keeps_text_once(self) -> None:
+        text = _words(60)  # 299 chars
+        chunks = self._split(text, 60, 20)
+        assert len(chunks) > 2
+        proc = ChunkProcessor(150, 400, chunk_overlap=20)
+        with_source = proc.merge_small_chunks(chunks, source=text)
+        without_source = proc.merge_small_chunks(chunks)
+        assert len(with_source) < len(chunks)
+        assert with_source == without_source
+        for chunk in with_source:
+            assert chunk in text
+            self._assert_contiguous_run(chunk, text)
+
+    def test_merged_length_respects_max_after_overlap_removal(self) -> None:
+        text = _words(60)
+        chunks = self._split(text, 60, 20)
+        proc = ChunkProcessor(150, 160, chunk_overlap=20)
+        out = proc.merge_small_chunks(chunks, source=text)
+        assert all(len(c) <= 160 for c in out)
+        for chunk in out:
+            self._assert_contiguous_run(chunk, text)
+
+    def test_coincidental_seam_match_inside_a_word_is_not_trimmed(self) -> None:
+        # "...cat" / "tame" share "t" but not at a word boundary: keep both.
+        proc = ChunkProcessor(10, 100, chunk_overlap=5)
+        assert proc.merge_small_chunks(["a cat", "tame"]) == ["a cat\ntame"]
+
+    def test_unlocatable_chunk_falls_back_to_separator_join(self) -> None:
+        proc = ChunkProcessor(10, 100, chunk_overlap=5)
+        out = proc.merge_small_chunks(["alpha", "beta"], source="something else")
+        assert out == ["alpha\nbeta"]
+
+    def test_non_overlapping_pieces_keep_source_whitespace(self) -> None:
+        # Stripped line pieces (as the LLM boundary path produces) are joined
+        # by their source span, so the line break between them survives.
+        text = "first line\nsecond line"
+        proc = ChunkProcessor(30, 100)
+        out = proc.merge_small_chunks(["first line", "second line"], source=text)
+        assert out == [text]
 
 
 # --------------------------------------------------------------------------- #
@@ -256,6 +340,16 @@ class TestSimpleTextChunker:
         for u in units:
             assert u.attributes["chunking_method"] == "simple"
             assert u.document_ids == ["doc1"]
+
+    def test_overlapping_tail_is_not_duplicated(self, simple_chunker) -> None:
+        # Splitter overlap + a small tail chunk: the merged chunk must contain
+        # every word exactly once (regression: overlap duplicated, words fused).
+        simple_chunker.chunk_processor.chunk_overlap = 15
+        simple_chunker.chunk_processor.min_chunk_size = 40
+        simple_chunker.fallback_splitter = simple_chunker._create_splitter(60, 15)
+        text = _words(13)  # 64 chars -> one full chunk + a tiny overlapping tail
+        units = simple_chunker._chunk_single_document(_doc(text))
+        assert [u.text for u in units] == [text]
 
     def test_empty_content_returns_no_units(self, simple_chunker) -> None:
         assert simple_chunker._chunk_single_document(_doc("")) == []
@@ -484,6 +578,16 @@ class TestIntelligentChunkerHelpers:
         assert len(out) == 2
         assert out[0] == "first line here"
         assert out[1].startswith("second chunk")
+
+    def test_merged_line_pieces_are_not_fused(self, intelligent_chunker) -> None:
+        # A small piece merged across an LLM boundary keeps its line break
+        # (regression: stripped pieces were concatenated with no separator).
+        intelligent_chunker.chunk_processor.min_chunk_size = 30
+        text = "short head\nthe body of the chunk follows here"
+        out = intelligent_chunker._chunk_with_llm_boundaries(
+            text, {"chunk_boundaries": [2]}
+        )
+        assert out == [text]
 
     def test_high_miss_rate_returns_none(self, intelligent_chunker) -> None:
         intelligent_chunker.line_boundary_processor.max_line_miss_rate = 0.0

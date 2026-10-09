@@ -418,6 +418,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- Merging an undersized chunk into its neighbour no longer duplicates the
+  splitter's `chunk_overlap` or fuses words at the seam. Adjacent chunks were
+  concatenated as strings, so a single-paragraph document of ~5,100
+  characters got its last ~500 characters twice and tokens like
+  `w0799w0717`; the intelligent chunker's LLM-boundary pieces were likewise
+  joined without their line break. Merged chunks are now the source text's
+  span (overlap dropped and a separator used if a chunk cannot be located)
+  (#PR).
 - `run-prompt-tuning` doubles the braces in every corpus- or model-derived
   field (persona, domain, language, entity types, few-shot examples) before
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`

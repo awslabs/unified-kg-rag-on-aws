@@ -320,47 +320,122 @@ _SPLITTER_SEPARATORS = ["\n\n", "\n", "(?<=[。．｡！？；])", " ", ""]
 
 
 class ChunkProcessor:
+    """Folds undersized chunks into their neighbours.
+
+    Adjacent chunks are joined by their span in the source text when it is
+    given (exact: the splitter's overlap appears once and the original
+    whitespace between chunks is kept). Without a source, or when a chunk
+    cannot be located in it, the overlap of the next chunk with the previous
+    one (at most ``chunk_overlap`` characters) is dropped and the pieces are
+    joined with a separator, so words at the seam are never fused.
+    """
+
+    _JOIN_SEPARATOR = "\n"
+
     def __init__(
         self,
         min_chunk_size: int,
         max_chunk_size: int,
         fallback_splitter: RecursiveCharacterTextSplitter | None = None,
+        chunk_overlap: int = 0,
     ):
         self.min_chunk_size = min_chunk_size
         self.max_chunk_size = max_chunk_size
         self.fallback_splitter = fallback_splitter
+        self.chunk_overlap = chunk_overlap
 
-    def merge_small_chunks(self, chunks: list[str]) -> list[str]:
+    def merge_small_chunks(
+        self, chunks: list[str], source: str | None = None
+    ) -> list[str]:
         if not chunks:
             return []
 
         try:
-            merged_chunks = []
+            spans = self._locate_spans(chunks, source) if source else None
+
+            def joined(first: int, last: int) -> str:
+                if spans is not None and source is not None:
+                    return source[spans[first][0] : spans[last][1]]
+                text = chunks[first]
+                for k in range(first + 1, last + 1):
+                    text = self._join_pair(text, chunks[k])
+                return text
+
+            groups: list[tuple[int, int]] = []
             i = 0
             while i < len(chunks):
-                current_chunk = chunks[i]
-                j = i + 1
-                while j < len(chunks) and len(current_chunk) < self.min_chunk_size:
-                    if len(current_chunk) + len(chunks[j]) <= self.max_chunk_size:
-                        current_chunk += chunks[j]
-                        j += 1
-                    else:
+                last = i
+                current = chunks[i]
+                while last + 1 < len(chunks) and len(current) < self.min_chunk_size:
+                    candidate = joined(i, last + 1)
+                    if len(candidate) > self.max_chunk_size:
                         break
-                merged_chunks.append(current_chunk)
-                i = j
-            return self._merge_final_small_chunk_if_needed(merged_chunks)
+                    current = candidate
+                    last += 1
+                groups.append((i, last))
+                i = last + 1
+
+            if len(groups) > 1:
+                tail_first, tail_last = groups[-1]
+                if len(joined(tail_first, tail_last)) < self.min_chunk_size:
+                    prev_first = groups[-2][0]
+                    if len(joined(prev_first, tail_last)) <= self.max_chunk_size:
+                        groups[-2:] = [(prev_first, tail_last)]
+
+            return [joined(first, last) for first, last in groups]
         except Exception as e:
             logger.debug("Failed to merge small chunks: %s", e)
             return chunks
 
-    def _merge_final_small_chunk_if_needed(self, chunks: list[str]) -> list[str]:
-        if len(chunks) > 1 and len(chunks[-1]) < self.min_chunk_size:
-            last_chunk = chunks.pop()
-            if len(chunks[-1]) + len(last_chunk) <= self.max_chunk_size:
-                chunks[-1] += last_chunk
+    def _locate_spans(
+        self, chunks: list[str], source: str
+    ) -> list[tuple[int, int]] | None:
+        """Find each chunk's (start, end) in ``source``, in order.
+
+        A chunk starts after the previous one and overlaps it by at most
+        ``chunk_overlap`` characters, which bounds the search so repeated text
+        earlier in the source cannot be matched. Returns None if any chunk is
+        not found, so the caller falls back to joining the chunk strings.
+        """
+        spans: list[tuple[int, int]] = []
+        for chunk in chunks:
+            if spans:
+                prev_start, prev_end = spans[-1]
+                search_from = max(prev_start + 1, prev_end - self.chunk_overlap)
             else:
-                chunks.append(last_chunk)
-        return chunks
+                search_from = 0
+            start = source.find(chunk, search_from)
+            if start < 0:
+                return None
+            end = start + len(chunk)
+            if spans and end < spans[-1][1]:
+                return None
+            spans.append((start, end))
+        return spans
+
+    def _join_pair(self, left: str, right: str) -> str:
+        overlap = self._seam_overlap(left, right)
+        if overlap:
+            # The remainder starts at whitespace (or is empty): no fused words.
+            return left + right[overlap:]
+        return left + self._JOIN_SEPARATOR + right
+
+    def _seam_overlap(self, left: str, right: str) -> int:
+        """Length of the longest suffix of ``left`` that prefixes ``right``.
+
+        Bounded by ``chunk_overlap`` and accepted only at whitespace (or chunk)
+        boundaries on both sides, so a coincidental match of a few characters
+        inside a word is not mistaken for the splitter's overlap.
+        """
+        limit = min(self.chunk_overlap, len(left), len(right))
+        for size in range(limit, 0, -1):
+            if not left.endswith(right[:size]):
+                continue
+            left_ok = size == len(left) or left[-size - 1].isspace()
+            right_ok = size == len(right) or right[size].isspace()
+            if left_ok and right_ok:
+                return size
+        return 0
 
 
 class BaseChunker(ABC):
@@ -377,6 +452,7 @@ class BaseChunker(ABC):
             self.chunking_config.min_chunk_size,
             self.chunking_config.max_chunk_size,
             fallback_splitter=self.fallback_splitter,
+            chunk_overlap=self.chunking_config.chunk_overlap,
         )
         self.quality_validator = ChunkQualityValidator(
             min_chunk_size=self.chunking_config.min_chunk_size,
@@ -573,7 +649,7 @@ class SimpleTextChunker(BaseChunker):
                 return []
 
             chunks = self.fallback_splitter.split_text(content)
-            chunks = self.chunk_processor.merge_small_chunks(chunks)
+            chunks = self.chunk_processor.merge_small_chunks(chunks, source=content)
 
             validation = self.quality_validator.validate_chunks(chunks)
             if not validation["is_valid"]:
@@ -851,7 +927,7 @@ class IntelligentTextChunker(BaseChunker):
                 if final_chunk:
                     chunks.append(final_chunk)
 
-            merged_chunks = self.chunk_processor.merge_small_chunks(chunks)
+            merged_chunks = self.chunk_processor.merge_small_chunks(chunks, source=text)
 
             return self._split_large_line_chunks(merged_chunks)
 
@@ -928,7 +1004,7 @@ class IntelligentTextChunker(BaseChunker):
                 if self.fallback_splitter
                 else [pre_chunk]
             )
-            return self.chunk_processor.merge_small_chunks(chunks)
+            return self.chunk_processor.merge_small_chunks(chunks, source=pre_chunk)
         except Exception as e:
             logger.debug("Failed to create fallback chunks: %s", e)
             return [pre_chunk]
