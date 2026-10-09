@@ -76,3 +76,38 @@ def test_reused_vpc_public_mode_warns_about_egress_subnets() -> None:
 
 def test_created_vpc_does_not_warn() -> None:
     assert _reuse_warnings(_network({})) == []
+
+
+def _ingress_rules(template: Template) -> list[dict[str, Any]]:
+    rules = [
+        r["Properties"]
+        for r in template.find_resources("AWS::EC2::SecurityGroupIngress").values()
+    ]
+    for sg in template.find_resources("AWS::EC2::SecurityGroup").values():
+        rules += sg["Properties"].get("SecurityGroupIngress", [])
+    return rules
+
+
+def test_interface_endpoints_use_their_own_security_group() -> None:
+    stack = _network({})
+    template = Template.from_stack(stack)
+    service_sg = stack.resolve(stack.service_sg.security_group_id)
+    assert stack.endpoint_sg is not None
+    endpoint_sg = stack.resolve(stack.endpoint_sg.security_group_id)
+    for resource in template.find_resources(
+        "AWS::EC2::VPCEndpoint", {"Properties": {"VpcEndpointType": "Interface"}}
+    ).values():
+        assert resource["Properties"]["SecurityGroupIds"] == [endpoint_sg]
+    rules = _ingress_rules(template)
+    # No CIDR ingress anywhere: OpenSearch (ServiceSg) and the endpoints are
+    # reachable from the data-plane security group only.
+    assert not [r for r in rules if "CidrIp" in r]
+    (endpoint_rule,) = [r for r in rules if r.get("GroupId") == endpoint_sg]
+    assert endpoint_rule["SourceSecurityGroupId"] == service_sg
+    assert endpoint_rule["FromPort"] == endpoint_rule["ToPort"] == 443
+
+
+def test_public_mode_creates_no_endpoint_security_group() -> None:
+    stack = _network({"network_mode": "public"})
+    assert stack.endpoint_sg is None
+    Template.from_stack(stack).resource_count_is("AWS::EC2::SecurityGroup", 1)

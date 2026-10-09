@@ -63,6 +63,7 @@ class NetworkingStack(Stack):
 
         self.vpc = self._resolve_vpc()
         self.service_sg = self._build_service_security_group()
+        self.endpoint_sg: ec2.SecurityGroup | None = None
         if config.create_vpc:
             self._add_vpc_endpoints()
             if config.vpc_flow_logs:
@@ -152,12 +153,27 @@ class NetworkingStack(Stack):
         if not self.config.is_private:
             # Public mode reaches every other service through the NAT gateways.
             return
+        # The endpoints get their own group, reachable on 443 from the data
+        # plane SG only. Sharing ServiceSg (which OpenSearch also uses) with
+        # CDK's default `open=True` would add 443-from-VPC-CIDR to it and open
+        # OpenSearch to the whole VPC.
+        self.endpoint_sg = ec2.SecurityGroup(
+            self,
+            "EndpointSg",
+            vpc=vpc,
+            description="unified-kg-rag-on-aws interface VPC endpoints",
+            allow_all_outbound=False,
+        )
+        self.endpoint_sg.add_ingress_rule(
+            self.service_sg, ec2.Port.tcp(443), "HTTPS from the data plane"
+        )
         for name, service in INTERFACE_ENDPOINTS.items():
             vpc.add_interface_endpoint(
                 f"{name}Endpoint",
                 service=service,
                 subnets=self.app_subnets,
-                security_groups=[self.service_sg],
+                security_groups=[self.endpoint_sg],
+                open=False,
                 private_dns_enabled=True,
             )
 

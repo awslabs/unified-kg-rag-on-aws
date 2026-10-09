@@ -14,7 +14,7 @@ can coexist in one account/region. Every resource also carries an `env` tag.
 
 | Stack | Resources |
 |---|---|
-| `GraphRagNetwork` | VPC (reuse or create), subnets, security group, VPC endpoints for a created VPC: S3/DynamoDB gateways always; in `private` mode also interface endpoints for Bedrock (`bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`), ECR (`ecr.api`, `ecr.dkr`), CloudWatch Logs and STS |
+| `GraphRagNetwork` | VPC (reuse or create), subnets, data-plane security group, VPC endpoints for a created VPC: S3/DynamoDB gateways always; in `private` mode also interface endpoints (own security group, 443 from the data plane only) for Bedrock (`bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`), ECR (`ecr.api`, `ecr.dkr`), CloudWatch Logs and STS |
 | `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (VPC, encrypted), DynamoDB doc-status table, S3 cache bucket |
 | `GraphRagCompute` | ECR repo, ECS cluster, Fargate task definition + least-privilege task role |
 | `GraphRagOrchestration` | Step Functions state machine — 4 resumable phases on Fargate + retries + SNS alarm topic. The topic is encrypted with its own customer-managed key whose policy lets CloudWatch alarms publish (the AWS-managed `alias/aws/sns` key cannot, so alarm notifications would be dropped) |
