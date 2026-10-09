@@ -17,11 +17,13 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.incremental_runs import (
     POINTS,
     Corpus,
     IncrementalRun,
     expected_state,
+    largest_lineage,
 )
 
 pytestmark = pytest.mark.property
@@ -60,14 +62,23 @@ def _follow_up(kind: str, before: Corpus, interrupted: Corpus) -> Corpus:
     point=st.sampled_from(POINTS),
     k=st.integers(1, 3),
     follow=st.sampled_from(["same", "reverted", "new_docs_removed"]),
+    tight=st.booleans(),
 )
 def test_follow_up_run_after_an_interruption_matches_a_full_build(
-    before: Corpus, interrupted: Corpus, point: str, k: int, follow: str
+    before: Corpus,
+    interrupted: Corpus,
+    point: str,
+    k: int,
+    follow: str,
+    tight: bool,
 ) -> None:
-    harness = IncrementalRun()
+    corpus = _follow_up(follow, before, interrupted)
+    # A tight registry item limit: every record a commit writes fits, but a
+    # write-ahead record (stored + planned ids) may spill into overflow.
+    limit = largest_lineage(before, interrupted, corpus) if tight else None
+    harness = IncrementalRun(FakeDocStatusStore(max_record_ids=limit))
     harness.run(before)
     harness.run(interrupted, interrupt=point, k=k)
-    corpus = _follow_up(follow, before, interrupted)
 
     harness.run(corpus)
 

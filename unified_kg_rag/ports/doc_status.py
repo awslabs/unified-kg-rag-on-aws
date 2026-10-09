@@ -19,7 +19,11 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from unified_kg_rag.domain.models.document import DocStatusRecord, DocumentDelta
+    from unified_kg_rag.domain.models.document import (
+        DocStatusRecord,
+        DocumentDelta,
+        DocumentLineage,
+    )
 
 
 @runtime_checkable
@@ -60,6 +64,43 @@ class DocStatusPort(Protocol):
         """
         for record in {record.doc_id: record for record in records}.values():
             self.put(record)
+
+    def record_fits(self, record: DocStatusRecord) -> bool:
+        """Whether :meth:`put` can store ``record`` (the backend's item limit).
+
+        An incremental run's write-ahead record lists a document's stored and
+        planned artifact ids, which can outgrow a limit the stored and the
+        committed record each fit; the run then moves the planned ids into
+        lineage overflow (:meth:`add_lineage_overflow`). The default (no
+        limit) never needs overflow.
+        """
+        return True
+
+    def add_lineage_overflow(self, lineages: Iterable[DocumentLineage]) -> None:
+        """Add each lineage's artifact ids to its ``doc_id``'s overflow.
+
+        Lineage overflow holds the artifact ids of a write-ahead record that
+        do not fit in the record itself (see :meth:`record_fits`). It is never
+        part of :meth:`get`, :meth:`get_many`, :meth:`list_all` or
+        :meth:`diff`; the incremental run reads it with
+        :meth:`get_lineage_overflow` and deletes it with
+        :meth:`delete_lineage_overflow`. Only called when :meth:`record_fits`
+        rejected a record, so a store without an item limit needs no
+        implementation.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__}.record_fits rejected a write-ahead record "
+            "but the store implements no lineage overflow"
+        )
+
+    def get_lineage_overflow(
+        self, doc_ids: Iterable[str]
+    ) -> dict[str, DocumentLineage]:
+        """Return ``{doc_id: overflow}`` for the ``doc_ids`` that have any."""
+        return {}
+
+    def delete_lineage_overflow(self, doc_ids: Iterable[str]) -> None:
+        """Remove the overflow of every ``doc_id`` (no-op where there is none)."""
 
     def delete(self, doc_id: str) -> None:
         """Remove the record for ``doc_id`` (no-op if absent)."""

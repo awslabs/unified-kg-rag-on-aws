@@ -111,11 +111,17 @@ artifacts it had and the ones the run is about to write; the records become
 - removes everything the interrupted run may have written for a `PENDING`
   document that is no longer in the corpus.
 
-An interruption does not count toward `indexing.max_document_failures`.
-`PENDING` records (`status` `pending`, `content_hash` `pending`, `error_info`
-naming the write-ahead record) are expected after a failed run. Do not delete
-them by hand: their lineage is what lets the next run find the interrupted
-run's writes. The stage writes the registry in batches, so a role with a
+An interruption is not counted as a failure, but it resets the document's
+consecutive-failure count for `indexing.max_document_failures`: the `PENDING`
+record has `failure_count` 0, so a document that had failed before starts
+counting again from its next failure. `PENDING` records (`status` `pending`,
+`content_hash` `pending`, `error_info` naming the write-ahead record) are
+expected after a failed run. Do not delete them by hand: their lineage is what
+lets the next run find the interrupted run's writes. When a large document's
+old and new artifact ids do not fit one DynamoDB item together, the ids the
+record lacks are kept in overflow items of the same table, keyed
+`<doc_id>#pending#<n>` with `record_kind` `lineage_overflow`; leave them too.
+The run deletes them when it commits or removes the document. The stage writes the registry in batches, so a role with a
 custom policy needs `dynamodb:BatchWriteItem` as well as `BatchGetItem`
 (the CDK stack's `grant_read_write_data` covers both).
 
@@ -133,8 +139,8 @@ what the failed run wrote and processes the document again.
 - To retry it, fix the cause (often an oversized or malformed file), edit the
   file so its content hash changes, or raise `indexing.max_document_failures`.
 - A document whose artifact ids exceed one DynamoDB item (400 KB, roughly
-  10,000 ids) fails the indexing stage with an error naming the file. Split
-  the file.
+  10,000 ids) fails the indexing stage, before anything is written for the
+  delta, with an error naming the file and its id count. Split the file.
 
 Write failures are gated separately. OpenSearch bulk items rejected with a
 retryable status (429, 502, 503, 504) are resent up to four times with

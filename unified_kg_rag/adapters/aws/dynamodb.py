@@ -27,6 +27,7 @@ from unified_kg_rag.domain.models import (
     DocStatus,
     DocStatusRecord,
     DocumentDelta,
+    DocumentLineage,
 )
 from unified_kg_rag.shared import (
     DataProcessingError,
@@ -45,6 +46,27 @@ _PARTITION_KEY = "doc_id"
 _SCOPE_ATTRIBUTE = "registry_scope"
 # DynamoDB rejects an item over 400 KB (attribute names plus values).
 _MAX_ITEM_BYTES = 400 * 1024
+# Lineage overflow (see add_lineage_overflow) lives in the same table, one
+# item per part under the key "<doc_id>#pending#<n>", n = 0, 1, ... with no
+# gap. The record-kind attribute tells a part from a registry record: every
+# read of records (get, get_many, list_all, diff) skips the parts.
+_RECORD_KIND_ATTRIBUTE = "record_kind"
+_OVERFLOW_KIND = "lineage_overflow"
+_OVERFLOW_OWNER_ATTRIBUTE = "owner_doc_id"
+# Ids per part, well under the item limit: room for the key, kind and owner
+# attributes, and for a size count slightly off DynamoDB's (parts are cheap).
+_OVERFLOW_PART_BYTES = 380 * 1024
+# Parts probed per document in each BatchGetItem round after the first, which
+# probes part 0 only (most documents have no overflow).
+_OVERFLOW_PROBE = 8
+_LINEAGE_FIELDS = (
+    "entity_ids",
+    "relationship_ids",
+    "text_unit_ids",
+    "community_ids",
+    "claim_ids",
+    "community_report_ids",
+)
 # botocore's standard retry mode backs off and retries throttling
 # (ThrottlingException, ProvisionedThroughputExceededException,
 # RequestLimitExceeded) and transient 5xx/connection errors. Ten attempts ride
@@ -175,7 +197,7 @@ class DynamoDBDocStatusStore:
                 TableName=self.table_name, Key={_PARTITION_KEY: {"S": doc_id}}
             )
         item = response.get("Item")
-        if not item:
+        if not item or _is_overflow(item):
             return None
         return self._deserialize(item)
 
@@ -193,16 +215,19 @@ class DynamoDBDocStatusStore:
         for start in range(0, len(unique), _BATCH_GET_SIZE):
             batch = unique[start : start + _BATCH_GET_SIZE]
             for item in self._batch_get(batch):
+                if _is_overflow(item):
+                    continue
                 record = self._deserialize(item)
                 records[record.doc_id] = record
         return records
 
-    def _batch_get(self, doc_ids: list[str]) -> list[dict[str, Any]]:
-        request: dict[str, Any] = {
-            self.table_name: {
-                "Keys": [{_PARTITION_KEY: {"S": doc_id}} for doc_id in doc_ids]
-            }
-        }
+    def _batch_get(
+        self, keys: list[str], consistent: bool = False
+    ) -> list[dict[str, Any]]:
+        table: dict[str, Any] = {"Keys": [{_PARTITION_KEY: {"S": k}} for k in keys]}
+        if consistent:
+            table["ConsistentRead"] = True
+        request: dict[str, Any] = {self.table_name: table}
         items: list[dict[str, Any]] = []
         for attempt in range(_BATCH_GET_MAX_ATTEMPTS):
             if attempt:
@@ -218,7 +243,7 @@ class DynamoDBDocStatusStore:
         remaining = len(request[self.table_name]["Keys"])
         raise DocStatusRegistryError(
             f"Doc-status registry: DynamoDB table '{self.table_name}' left "
-            f"{remaining} of {len(doc_ids)} keys unprocessed after "
+            f"{remaining} of {len(keys)} keys unprocessed after "
             f"{_BATCH_GET_MAX_ATTEMPTS} BatchGetItem requests. Raise the table's "
             "capacity or switch it to on-demand billing, then re-run."
         )
@@ -228,7 +253,9 @@ class DynamoDBDocStatusStore:
 
         The record holds every artifact id of the document (~36 bytes each),
         so one item fits roughly 10,000 ids; a larger document must be split
-        into smaller files.
+        into smaller files. (A write-ahead record that does not fit keeps its
+        extra ids in lineage overflow instead, see
+        :meth:`add_lineage_overflow`.)
         """
         item = self._sized_item(record)
         with self._registry_errors("write a record"):
@@ -276,11 +303,107 @@ class DynamoDBDocStatusStore:
         size = self._item_size(item)
         if size > _MAX_ITEM_BYTES:
             raise DataProcessingError(
-                f"Doc-status record for '{record.file_path or record.doc_id}' is "
-                f"{size} bytes, over the DynamoDB 400 KB item limit; split the "
-                "document into smaller files"
+                f"Doc-status record for '{record.file_path or record.doc_id}' "
+                f"lists {_lineage_size(record)} artifact ids ({size} bytes), "
+                "over the DynamoDB 400 KB item limit: the document produces "
+                "more artifacts than one registry item holds (roughly 10,000 "
+                "ids). Split the document into smaller files"
             )
         return item
+
+    def record_fits(self, record: DocStatusRecord) -> bool:
+        """Whether ``record`` is within the DynamoDB 400 KB item limit."""
+        return self._item_size(self._serialize(record)) <= _MAX_ITEM_BYTES
+
+    def add_lineage_overflow(self, lineages: Iterable[DocumentLineage]) -> None:
+        """Append each lineage's ids not yet in its overflow, as new parts.
+
+        Parts are only appended (from the first free index) until
+        :meth:`delete_lineage_overflow` removes them all, so an interrupted
+        append can lose only the ids it was adding, never earlier ones.
+        """
+        wanted: dict[str, dict[str, set[str]]] = {}
+        for lineage in lineages:
+            fields = wanted.setdefault(lineage.doc_id, {})
+            for name in _LINEAGE_FIELDS:
+                fields.setdefault(name, set()).update(getattr(lineage, name))
+        if not wanted:
+            return
+        existing = self._read_overflow(list(wanted))
+        items: list[dict[str, Any]] = []
+        for doc_id, fields in wanted.items():
+            parts = existing.get(doc_id, [])
+            stored = _merge_parts(parts)
+            new = {
+                name: sorted(fields[name] - set(stored[name]))
+                for name in _LINEAGE_FIELDS
+            }
+            for offset, chunk in enumerate(_chunk_lineage(new)):
+                items.append(_overflow_item(doc_id, len(parts) + offset, chunk))
+        for start in range(0, len(items), _BATCH_WRITE_SIZE):
+            self._batch_write(items[start : start + _BATCH_WRITE_SIZE])
+
+    def get_lineage_overflow(
+        self, doc_ids: Iterable[str]
+    ) -> dict[str, DocumentLineage]:
+        """Read the overflow of ``doc_ids`` (batched; documents without any
+        cost one key each)."""
+        return {
+            doc_id: DocumentLineage.model_validate(
+                {"doc_id": doc_id, **_merge_parts(parts)}
+            )
+            for doc_id, parts in self._read_overflow(list(doc_ids)).items()
+        }
+
+    def delete_lineage_overflow(self, doc_ids: Iterable[str]) -> None:
+        """Delete every overflow part of ``doc_ids``, the last part first, so
+        an interrupted delete leaves a gap-free prefix that still reads back."""
+        keys = [
+            _overflow_key(doc_id, n)
+            for doc_id, parts in self._read_overflow(list(doc_ids)).items()
+            for n in reversed(range(len(parts)))
+        ]
+        with self._registry_errors("delete lineage overflow"):
+            for key in keys:
+                self.client.delete_item(
+                    TableName=self.table_name, Key={_PARTITION_KEY: {"S": key}}
+                )
+
+    def _read_overflow(self, doc_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """``{doc_id: [part 0, part 1, ...]}`` for the doc_ids with overflow.
+
+        Reads up to the first missing part: part 0 of every document first,
+        then ``_OVERFLOW_PROBE`` parts per round for the documents whose parts
+        have not ended yet.
+        """
+        found: dict[str, list[dict[str, Any]]] = {}
+        probe = dict.fromkeys(doc_ids, 0)
+        window = 1
+        while probe:
+            keys = [
+                _overflow_key(doc_id, n)
+                for doc_id, start in probe.items()
+                for n in range(start, start + window)
+            ]
+            items: dict[str, dict[str, Any]] = {}
+            for start in range(0, len(keys), _BATCH_GET_SIZE):
+                # Strongly consistent: an append numbers its parts after the
+                # ones read, so it must see every part written so far.
+                batch = keys[start : start + _BATCH_GET_SIZE]
+                for item in self._batch_get(batch, consistent=True):
+                    if _is_overflow(item):
+                        items[item[_PARTITION_KEY]["S"]] = item
+            following: dict[str, int] = {}
+            for doc_id, start in probe.items():
+                n = start
+                while n < start + window and _overflow_key(doc_id, n) in items:
+                    found.setdefault(doc_id, []).append(items[_overflow_key(doc_id, n)])
+                    n += 1
+                if n == start + window:
+                    following[doc_id] = n
+            probe = following
+            window = _OVERFLOW_PROBE
+        return found
 
     @staticmethod
     def _item_size(item: dict[str, Any]) -> int:
@@ -310,7 +433,8 @@ class DynamoDBDocStatusStore:
             paginator = self.client.get_paginator("scan")
             for page in paginator.paginate(TableName=self.table_name):
                 for item in page.get("Items", []):
-                    records.append(self._deserialize(item))
+                    if not _is_overflow(item):
+                        records.append(self._deserialize(item))
         return records
 
     def _scan_fingerprints(self) -> dict[str, tuple[str, str | None, bool]]:
@@ -329,15 +453,20 @@ class DynamoDBDocStatusStore:
             TableName=self.table_name,
             # Attribute-name placeholders keep the projection clear of
             # DynamoDB reserved words.
-            ProjectionExpression="#pk, #hash, #scope, #status",
+            ProjectionExpression="#pk, #hash, #scope, #status, #kind",
             ExpressionAttributeNames={
                 "#pk": _PARTITION_KEY,
                 "#hash": "content_hash",
                 "#scope": _SCOPE_ATTRIBUTE,
                 "#status": "status",
+                "#kind": _RECORD_KIND_ATTRIBUTE,
             },
         ):
             for item in page.get("Items", []):
+                if _is_overflow(item):
+                    # Lineage overflow is no document: never new, changed,
+                    # deleted or a stored scope.
+                    continue
                 doc_id = item.get(_PARTITION_KEY, {}).get("S")
                 content_hash = item.get("content_hash", {}).get("S", "")
                 scope = item.get(_SCOPE_ATTRIBUTE, {}).get("S")
@@ -469,3 +598,59 @@ class DynamoDBDocStatusStore:
             created_at=_str("created_at"),
             updated_at=_str("updated_at"),
         )
+
+
+def _is_overflow(item: dict[str, Any]) -> bool:
+    """Whether ``item`` is a lineage-overflow part, not a registry record."""
+    return bool(item.get(_RECORD_KIND_ATTRIBUTE, {}).get("S") == _OVERFLOW_KIND)
+
+
+def _overflow_key(doc_id: str, part: int) -> str:
+    return f"{doc_id}#pending#{part}"
+
+
+def _lineage_size(record: DocStatusRecord) -> int:
+    return sum(len(getattr(record, name)) for name in _LINEAGE_FIELDS)
+
+
+def _merge_parts(parts: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """``{lineage field: sorted ids}`` over overflow ``parts``."""
+    return {
+        name: sorted(
+            {value for part in parts for value in part.get(name, {}).get("SS", [])}
+        )
+        for name in _LINEAGE_FIELDS
+    }
+
+
+def _chunk_lineage(lineage: dict[str, list[str]]) -> list[dict[str, list[str]]]:
+    """Split ``{lineage field: ids}`` into parts that each fit one item."""
+    parts: list[dict[str, list[str]]] = []
+    current: dict[str, list[str]] = {}
+    size = 0
+    for name in _LINEAGE_FIELDS:
+        for value in lineage.get(name, []):
+            cost = len(value.encode()) + (0 if name in current else len(name))
+            if current and size + cost > _OVERFLOW_PART_BYTES:
+                parts.append(current)
+                current, size = {}, 0
+                cost = len(value.encode()) + len(name)
+            current.setdefault(name, []).append(value)
+            size += cost
+    if current:
+        parts.append(current)
+    return parts
+
+
+def _overflow_item(
+    doc_id: str, part: int, lineage: dict[str, list[str]]
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        _PARTITION_KEY: {"S": _overflow_key(doc_id, part)},
+        _RECORD_KIND_ATTRIBUTE: {"S": _OVERFLOW_KIND},
+        _OVERFLOW_OWNER_ATTRIBUTE: {"S": doc_id},
+    }
+    for name, ids in lineage.items():
+        if ids:
+            item[name] = {"SS": ids}
+    return item

@@ -41,6 +41,7 @@ from unified_kg_rag.domain.models import (
     Relationship,
     TextUnit,
 )
+from unified_kg_rag.ports import DocStatusPort
 
 Content = list[list[tuple[str, str, int]]]
 Corpus = dict[str, Content]
@@ -121,6 +122,31 @@ def extract(
     return units, entities, edges
 
 
+def largest_lineage(*corpora: Corpus) -> int:
+    """The most artifact ids one document of ``corpora`` produces: a registry
+    limit of that many ids fits every committed record, while a changed
+    document's write-ahead record (old + new ids) may not."""
+    largest = 1
+    for corpus in corpora:
+        units, entities, edges = extract(corpus)
+        documents = [document(path, content) for path, content in corpus.items()]
+        for lineage in build_document_lineage(
+            documents=documents,
+            text_units=units,
+            entities=entities,
+            relationships=edges,
+            communities=[],
+            claims=[],
+        ):
+            largest = max(
+                largest,
+                len(lineage.text_unit_ids)
+                + len(lineage.entity_ids)
+                + len(lineage.relationship_ids),
+            )
+    return largest
+
+
 def expected_state(corpus: Corpus) -> dict[str, Any]:
     """What a fresh full build of ``corpus`` stores (see :meth:`state`)."""
     units, entities, edges = extract(corpus)
@@ -140,14 +166,14 @@ def expected_state(corpus: Corpus) -> dict[str, Any]:
 class IncrementalRun:
     """One registry + graph + vector store, indexed by successive runs."""
 
-    def __init__(self) -> None:
+    def __init__(self, store: DocStatusPort | None = None) -> None:
         self.config = Config()
         self.graph = FakeGraphStore()
         self.vector = FakeVectorStore(opensearch_config=self.config.indexing.opensearch)
         self.manager = IndexingManager(
             config=self.config, vector_indexer=self.vector, graph_indexer=self.graph
         )
-        self.store = FakeDocStatusStore()
+        self.store: DocStatusPort = store or FakeDocStatusStore()
         self.extracted: list[str] = []
 
     def run(self, corpus: Corpus, interrupt: str | None = None, k: int = 1) -> bool:
@@ -292,6 +318,14 @@ class IncrementalRun:
         lineage pointing at missing artifacts, artifacts no lineage lists."""
         records = self.store.list_all()
         problems = []
+        # Write-ahead lineage overflow never outlives its document's record.
+        # (Overflow next to a committed record, left when a commit died
+        # before deleting it, is ignored and dropped with the next write-ahead
+        # or removal of the document.)
+        overflow = set(getattr(self.store, "overflow", {}))
+        orphans = overflow - {r.doc_id for r in records}
+        if orphans:
+            problems.append(f"lineage overflow without a record: {sorted(orphans)}")
         paths = sorted(r.file_path or r.doc_id for r in records)
         if paths != sorted(corpus):
             problems.append(f"registry rows {paths} != corpus {sorted(corpus)}")
