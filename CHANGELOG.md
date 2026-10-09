@@ -423,15 +423,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `href`, pyvis replaced the plain-text tooltip with a popup that sets
   `innerHTML` to the title, so markup in an attribute such as an LLM-written
   description (`<img src=x onerror=...>`) ran as script when the page was
-  opened. Plain-text tooltips are unchanged (#PR).
+  opened. Plain-text tooltips are unchanged (#180).
 - The centrality comparison plot gives repeated node names a ` (2)`, ` (3)`
   suffix on its x axis. Two claims with the same subject, type and object
   (or two same-named entities) made Bokeh reject the axis with
-  `DUPLICATE_FACTORS` and draw their bars on one factor (#PR).
+  `DUPLICATE_FACTORS` and draw their bars on one factor (#180).
 - `run-eval` sends each item's `question` to the RAG chain even when its
   `metadata` has a `query` key. The metadata key overrode the question at
   answer time, while `load_data` validated the item with the question
-  winning (#PR).
+  winning (#180).
 - Merging an undersized chunk into its neighbour no longer duplicates the
   splitter's `chunk_overlap` or fuses words at the seam. Adjacent chunks were
   concatenated as strings, so a single-paragraph document of ~5,100
@@ -439,7 +439,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `w0799w0717`; the intelligent chunker's LLM-boundary pieces were likewise
   joined without their line break. Merged chunks are now the source text's
   span (overlap dropped and a separator used if a chunk cannot be located)
-  (#PR).
+  (#180).
 - `run-prompt-tuning` doubles the braces in every corpus- or model-derived
   field (persona, domain, language, entity types, few-shot examples) before
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`
