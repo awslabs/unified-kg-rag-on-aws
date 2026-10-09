@@ -383,6 +383,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   timeout ends such a call and the item is retried under the batch policy
   (backoff, `max_attempts`, logged). An ingestion generation still has to
   finish within the 300 s call timeout (#PR).
+- Claude requests no longer send the `"\n\nHuman:"` stop sequence. It is a
+  marker of the legacy text-completion format; Converse and the InvokeModel
+  Messages body are turn-structured, so it only ended translation,
+  extraction or answers early, without an error, on text that contains it
+  (chat transcripts, quoted dialogue) (#PR).
 - `cdk destroy` with `removal_destroy=true` (dev default) deletes the
   OpenSearch domain's app, slow-index and slow-search log groups. The domain
   created them with CDK's default `Retain`, so every dev teardown left three

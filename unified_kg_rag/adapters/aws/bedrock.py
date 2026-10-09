@@ -642,23 +642,16 @@ class BedrockLanguageModelFactory(
             and self.boto_session.profile_name != "default"
         ):
             config["credentials_profile_name"] = self.boto_session.profile_name
-        # "\n\nHuman:" is an Anthropic text-completion turn marker; it means
-        # nothing to other providers, so they get no stop sequence at all.
-        common_params: dict[str, Any] = (
-            {"stop_sequences": ["\n\nHuman:"]}
-            if model_info.provider == "anthropic"
-            else {}
-        )
-        if is_cross_region:
-            config.update(common_params)
-        elif model_info.supports_sampling_params:
-            config["model_kwargs"] = {
-                "top_k": kwargs.get("top_k", self.DEFAULT_TOP_K),
-                **common_params,
-            }
-        else:
+        # No stop sequence: both Converse and the InvokeModel Messages body are
+        # turn-structured, so the legacy "\n\nHuman:" text-completion marker
+        # only cut off answers whose text contains it (chat transcripts).
+        if not is_cross_region:
             # top_k is a sampling parameter; Claude 4.7+ rejects it.
-            config["model_kwargs"] = dict(common_params)
+            config["model_kwargs"] = (
+                {"top_k": kwargs.get("top_k", self.DEFAULT_TOP_K)}
+                if model_info.supports_sampling_params
+                else {}
+            )
         return config
 
     def _apply_model_features(
