@@ -32,7 +32,9 @@ from unified_kg_rag.domain.models import (
     Document,
     DocumentContent,
 )
+from unified_kg_rag.domain.prompts.data_processing import TextChunkingPrompt
 from unified_kg_rag.shared import DataProcessingError
+from unified_kg_rag.shared.utils.langchain import RobustXMLOutputParser
 
 pytestmark = pytest.mark.unit
 
@@ -153,6 +155,27 @@ class TestLineBoundaryProcessor:
             {"chunk_boundaries": [{"#text": "7"}, {"#text": "3"}]}
         )
         assert nums == [3, 7]
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            '<?xml version="1.0" encoding="UTF-8"?>\n<chunk_boundaries>\n'
+            "<line_number>4</line_number>\n<line_number>7</line_number>\n"
+            "</chunk_boundaries>",
+            # The root element left out: every boundary still counts.
+            "<line_number>4</line_number>\n<line_number>7</line_number>\n"
+            "</chunk_boundaries>",
+        ],
+    )
+    def test_parsed_response_yields_every_boundary(self, response) -> None:
+        parsed = RobustXMLOutputParser().parse(response)
+        assert self._p().extract_line_numbers(parsed) == [4, 7]
+
+    def test_prompt_does_not_leave_an_open_root_element(self) -> None:
+        # The prompt asks the model to emit the whole XML document, so its
+        # human turn must not end inside an opened <chunk_boundaries>.
+        template = TextChunkingPrompt.human_prompt_template.rstrip()
+        assert not template.endswith(("<chunk_boundaries>", "?>"))
 
     def test_convert_line_numbers_to_indices(self) -> None:
         lines = ["abc", "de", "fghi"]  # lengths 3,2,4 (+ newline between)

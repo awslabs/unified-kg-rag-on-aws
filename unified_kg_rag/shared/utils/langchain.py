@@ -595,6 +595,10 @@ class BatchProcessor(BaseModel):
         return results
 
 
+# Synthetic root the response is wrapped in before lxml recovery.
+_RESPONSE_ROOT = b"llm_response"
+# Only valid at the very start of a document, so not inside the wrapper.
+_XML_DECLARATION = re.compile(r"<\?xml[^>]*\?>")
 # `&` not starting one of the XML predefined or numeric character references.
 _BARE_AMPERSAND = re.compile(r"&(?!(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+);)")
 # `<` not followed by what can start a tag, end tag, comment or declaration.
@@ -616,8 +620,7 @@ class RobustXMLOutputParser(XMLOutputParser):
         original_sections = self._detect_xml_sections(text)
 
         try:
-            cleaned_text = self._clean_xml_for_lxml(text)
-            result = self._try_lxml_recover_parse(cleaned_text)
+            result = self._parse_top_level_elements(self._clean_xml_for_lxml(text))
             if self._sections_preserved(original_sections, result):
                 return result
             raise ValueError("Missing sections in lxml result")
@@ -788,16 +791,35 @@ class RobustXMLOutputParser(XMLOutputParser):
 
     @staticmethod
     def _clean_xml_for_lxml(text: str) -> bytes:
-        """Strip control characters and escape markup characters used as text.
+        """Strip control characters and the XML declaration, escape text markup.
 
         A bare ``&`` (not starting an XML entity) and a ``<`` that cannot start
         a tag are text in LLM output ("AT&T", "budget < 5M"); lxml recovery
         would drop them and the word after them.
         """
         text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+        text = _XML_DECLARATION.sub("", text)
         text = _BARE_AMPERSAND.sub("&amp;", text)
         text = _TEXT_LESS_THAN.sub("&lt;", text)
         return text.strip().encode("utf-8")
+
+    @classmethod
+    def _parse_top_level_elements(cls, xml_bytes: bytes) -> dict[str, Any]:
+        """Parse every top-level element of the response, keyed by tag.
+
+        The response is wrapped in one synthetic root, so a multi-section
+        answer (``<entities>`` then ``<relationships>``) and a run of repeated
+        siblings (``<line_number>`` without its ``<chunk_boundaries>``) parse
+        like a single-root one instead of keeping only the first element.
+        Prose around the elements is ignored.
+        """
+        wrapped = b"<%s>%s</%s>" % (_RESPONSE_ROOT, xml_bytes, _RESPONSE_ROOT)
+        elements = cls._try_lxml_recover_parse(wrapped)[_RESPONSE_ROOT.decode()]
+        if isinstance(elements, dict):
+            elements.pop("#text", None)
+        if not elements or not isinstance(elements, dict):
+            raise ValueError("No XML element in the response")
+        return elements
 
     @staticmethod
     def _try_lxml_recover_parse(xml_bytes: bytes) -> dict[str, Any]:

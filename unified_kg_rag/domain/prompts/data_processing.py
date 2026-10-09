@@ -118,10 +118,7 @@ OUTPUT REQUIREMENTS:
 5. **ASCENDING ORDER**: Line numbers in ascending order
 6. **VALID LINES**: Only reference existing line numbers
 
-Provide ONLY the XML output with no additional text or explanations.
-
-<?xml version="1.0" encoding="UTF-8"?>
-<chunk_boundaries>"""
+Provide ONLY the XML output with no additional text or explanations."""
 
 
 @dataclass(frozen=True)

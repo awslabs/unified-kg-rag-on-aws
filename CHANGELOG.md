@@ -336,6 +336,16 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   refinement plans): `A&B Corp` parsed as `A Corp` and `R&D budget < 5M` as
   `R budget  5M`. The escaping attempts removed in #165 never reached such a
   response, since lxml recovery came first and returned the cut text (#PR).
+- The LLM XML parser keeps every top-level element. lxml recovery kept only
+  the first one, so a response of repeated siblings (`<line_number>4</...>`
+  `<line_number>7</...>`, from a model continuing the chunking prompt's
+  trailing open `<chunk_boundaries>`) parsed as `{"line_number": "4"}` and
+  passed the section check, losing every later boundary. The response is now
+  parsed under one synthetic root, so repeated siblings become a list and
+  multi-section answers decode `&amp;` and `&lt;` like single-root ones.
+  The chunking prompt no longer ends with `<?xml ...?>` and an open
+  `<chunk_boundaries>`: it already asks the model to emit the whole document
+  (#PR).
 - `cdk destroy` with `removal_destroy=true` (dev default) deletes the
   OpenSearch domain's app, slow-index and slow-search log groups. The domain
   created them with CDK's default `Retain`, so every dev teardown left three

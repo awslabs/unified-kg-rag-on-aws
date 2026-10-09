@@ -647,6 +647,35 @@ class TestRobustXMLOutputParser:
             },
         }
 
+    def test_repeated_top_level_tag_keeps_every_sibling(self) -> None:
+        # A response without a root element (the model continued an open
+        # <chunk_boundaries>) is a run of sibling elements; every one is kept,
+        # not only the first.
+        text = (
+            "<line_number>4</line_number>\n<line_number>7</line_number>\n"
+            "<line_number>10</line_number>\n</chunk_boundaries>"
+        )
+        assert RobustXMLOutputParser().parse(text) == {"line_number": ["4", "7", "10"]}
+
+    def test_sections_decode_character_references(self) -> None:
+        # Multi-section responses go through the same lxml pass as
+        # single-root ones, so their text is decoded the same way.
+        text = "<entities>x &amp; y</entities><relationships>a &lt; b</relationships>"
+        assert RobustXMLOutputParser().parse(text) == {
+            "entities": "x & y",
+            "relationships": "a < b",
+        }
+
+    def test_xml_declaration_and_surrounding_prose_are_ignored(self) -> None:
+        text = (
+            'Here is the output:\n<?xml version="1.0" encoding="UTF-8"?>\n'
+            "<chunk_boundaries>\n<line_number>4</line_number>\n"
+            "<line_number>7</line_number>\n</chunk_boundaries>\nDone."
+        )
+        assert RobustXMLOutputParser().parse(text) == {
+            "chunk_boundaries": {"line_number": ["4", "7"]}
+        }
+
     def test_single_root_parses_to_children_by_tag(self) -> None:
         # A well-formed single-root response (claims, refinement plan) parses
         # into children keyed by tag, the shape the extractors read, not
