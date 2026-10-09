@@ -454,6 +454,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   but the window search used case-insensitive regex matching, which does not
   equate `ß` with `ss`, so the relationship was left out. Both now match on
   casefolded text (#PR).
+- Deleting OpenSearch indices no longer fails once many have accumulated.
+  All names were joined into one request path, so reaping the ~80 stale
+  indices that earlier full reindexes leaked exceeded OpenSearch's 4 KB
+  request-line limit and the cleanup failed on every run. Indices are now
+  deleted in batches of at most 20 names and 3,000 characters; a failed batch
+  does not stop the others, and the error names the indices left behind
+  (#PR).
 - Merging small chunks no longer drops text when a chunk repeats the previous
   chunk's last lines verbatim, such as a document ending in two identical
   `Signed: ____` lines with an LLM line boundary between them. The repeated
