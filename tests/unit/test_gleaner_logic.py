@@ -3,8 +3,8 @@
 """Unit tests for GraphGleaner pure logic (AWS-free).
 
 Covers the post-merge relationship reconciliation (orphan/self-loop drop
-counting, weight summing), the entities/relationships clamp >= 0, the quality
-and convergence math, and the module-level format_entities_with_limit_task. The
+counting, weight summing), the duplicate-entity merge, gleaner grounding, and
+the module-level format_entities_with_limit_task. The
 static methods are called directly; instance methods are exercised on a real
 GraphGleaner whose Bedrock/boto wiring is patched out.
 """
@@ -118,120 +118,6 @@ class TestMergeDuplicateEntities:
         unique, _ = GraphGleaner._merge_duplicate_entities(ents)
         assert len(unique) == 1
         assert unique[0].type == "person"  # lowercased, most frequent
-
-
-# --------------------------------------------------------------------------- #
-# clamp >= 0 (via _calculate_convergence_score behavior under clamping)
-# --------------------------------------------------------------------------- #
-class TestCounterClamp:
-    def test_convergence_one_when_no_change(self, gleaner) -> None:
-        assert gleaner._calculate_convergence_score(0, 0, 0.0) == 1.0
-
-    def test_negative_added_clamped_at_call_site_semantics(self, gleaner) -> None:
-        # The convergence math is only ever fed clamped (>=0) counts. Confirm a
-        # zero/zero feed converges fully and a large change feed does not.
-        big = gleaner._calculate_convergence_score(100, 100, 0.0)
-        assert 0.0 <= big < 1.0
-
-
-# --------------------------------------------------------------------------- #
-# _calculate_initial_quality
-# --------------------------------------------------------------------------- #
-class TestInitialQuality:
-    def test_empty_graph_is_zero(self, gleaner) -> None:
-        assert gleaner._calculate_initial_quality([], []) == 0.0
-
-    def test_completeness_capped_at_half_each(self, gleaner) -> None:
-        # Far above both scales -> each completeness saturates at 0.5,
-        # blended = (0.5 + 0.5) / 2 = 0.5.
-        ents = [Entity(id=f"e{i}", name=f"n{i}") for i in range(500)]
-        rels = [
-            Relationship(id=f"r{i}", source_id="e0", target_id="e1") for i in range(500)
-        ]
-        assert gleaner._calculate_initial_quality(ents, rels) == 0.5
-
-    def test_partial_completeness(self, gleaner) -> None:
-        # entity_scale=50, rel_scale=100 by default.
-        # 25 entities -> min(0.5, 25/50)=0.5; 0 rels -> 0.0 -> (0.5+0)/2 = 0.25
-        ents = [Entity(id=f"e{i}", name=f"n{i}") for i in range(25)]
-        assert gleaner._calculate_initial_quality(ents, []) == pytest.approx(0.25)
-
-
-# --------------------------------------------------------------------------- #
-# _calculate_graph_quality (completeness/accuracy blend)
-# --------------------------------------------------------------------------- #
-class TestGraphQuality:
-    def test_weighted_blend(self, gleaner) -> None:
-        # default completeness_weight = 0.6
-        q = gleaner._calculate_graph_quality({"completeness": 1.0, "accuracy": 0.0})
-        assert q == pytest.approx(0.6)
-
-    def test_defaults_when_missing(self, gleaner) -> None:
-        # both default to 0.5 -> 0.5*0.6 + 0.5*0.4 = 0.5
-        assert gleaner._calculate_graph_quality({}) == pytest.approx(0.5)
-
-
-# --------------------------------------------------------------------------- #
-# _calculate_convergence_score
-# --------------------------------------------------------------------------- #
-class TestConvergenceScore:
-    def test_no_change_is_full_convergence(self, gleaner) -> None:
-        assert gleaner._calculate_convergence_score(0, 0, 0.0) == 1.0
-
-    def test_change_rate_reduces_convergence(self, gleaner) -> None:
-        # change_scale=20: (10+0)/20 = 0.5 change_rate, no quality change
-        # convergence = 1 - min(1, 0.5 + 0) = 0.5
-        assert gleaner._calculate_convergence_score(10, 0, 0.0) == pytest.approx(0.5)
-
-    def test_quality_swing_lowers_convergence(self, gleaner) -> None:
-        # (2+0)/20 = 0.1 + |0.3| = 0.4 -> convergence 0.6
-        assert gleaner._calculate_convergence_score(2, 0, 0.3) == pytest.approx(0.6)
-
-    def test_floored_at_zero(self, gleaner) -> None:
-        assert gleaner._calculate_convergence_score(1000, 1000, 5.0) == 0.0
-
-    def test_change_is_measured_per_gleaned_unit(self, gleaner) -> None:
-        # 10 items over 10 units is 1 item per unit: (10)/(20*10) = 0.05 change.
-        # As an absolute count it was 0.5, so large rounds never converged.
-        score = gleaner._calculate_convergence_score(10, 0, 0.0, units_processed=10)
-        assert score == pytest.approx(0.95)
-
-
-# --------------------------------------------------------------------------- #
-# _should_stop_gleaning
-# --------------------------------------------------------------------------- #
-class TestShouldStop:
-    def test_stops_on_convergence_threshold(self, gleaner) -> None:
-        # Primary MEASURED signal: convergence_score >= 0.8 (default) -> stop,
-        # at any round.
-        assert gleaner._should_stop_gleaning(0.9, 0.5, 0.1, round_num=1) is True
-
-    def test_stops_on_low_improvement_only_from_round_2(self, gleaner) -> None:
-        # min_improvement_threshold = 0.05; improvement 0.01 < that.
-        # Round 1: the LLM-quality delta is on a different scale than the
-        # count-based seed, so the check is suppressed -> does NOT stop.
-        assert gleaner._should_stop_gleaning(0.1, 0.01, 0.1, round_num=1) is False
-        # Round 2+: the advisory quality-improvement check applies -> stop.
-        assert gleaner._should_stop_gleaning(0.1, 0.01, 0.1, round_num=2) is True
-
-    def test_quality_regression_does_not_trigger_improvement_stop(
-        self, gleaner
-    ) -> None:
-        # A quality DROP (negative improvement) is below the threshold but must
-        # not be treated as "converged" via abs(); it is one-sided now. With a
-        # mid convergence score and sub-threshold quality, round 2 stops because
-        # improvement < threshold (a drop is still "not improving") — but the
-        # point is abs() no longer flips a large positive regression magnitude.
-        # Big negative improvement at round 2 -> stop (not improving).
-        assert gleaner._should_stop_gleaning(0.1, -0.5, 0.1, round_num=2) is True
-
-    def test_stops_on_quality_target(self, gleaner) -> None:
-        # quality_threshold = 0.9, applies at any round.
-        assert gleaner._should_stop_gleaning(0.1, 0.5, 0.95, round_num=1) is True
-
-    def test_continues_otherwise(self, gleaner) -> None:
-        # Low convergence, healthy improvement, below quality target -> continue.
-        assert gleaner._should_stop_gleaning(0.1, 0.5, 0.1, round_num=2) is False
 
 
 # --------------------------------------------------------------------------- #

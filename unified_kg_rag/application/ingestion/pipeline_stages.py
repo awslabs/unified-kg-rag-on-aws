@@ -840,12 +840,14 @@ class GleaningStage(PipelineStage):
         final_entities_count = len(context.entities)
         final_relationships_count = len(context.relationships)
 
+        # Graph growth from gleaning: items it added per extracted item.
+        initial_items = len(initial_entities) + len(initial_relationships)
         improvement_rate = 0.0
-        if gleaning_stats and gleaning_stats.initial_quality_score > 0:
+        if gleaning_stats and initial_items > 0:
             improvement_rate = (
-                gleaning_stats.final_quality_score
-                - gleaning_stats.initial_quality_score
-            ) / gleaning_stats.initial_quality_score
+                gleaning_stats.total_entities_added
+                + gleaning_stats.total_relationships_added
+            ) / initial_items
 
         metrics = {
             "text_units_processed": len(text_units),
@@ -856,9 +858,12 @@ class GleaningStage(PipelineStage):
             "entity_improvement": final_entities_count - len(initial_entities),
             "relationship_improvement": final_relationships_count
             - len(initial_relationships),
-            "quality_improvement_rate": improvement_rate,
+            "improvement_rate": improvement_rate,
             "iterations_completed": (
                 gleaning_stats.total_rounds if gleaning_stats else 0
+            ),
+            "refinement_calls": (
+                gleaning_stats.total_refinement_calls if gleaning_stats else 0
             ),
             "failed_units": gleaning_stats.num_failed_units if gleaning_stats else 0,
             "gleaning_stats": self._stats_to_dict(gleaning_stats),

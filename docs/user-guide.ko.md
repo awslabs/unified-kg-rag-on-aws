@@ -431,7 +431,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `processing.graph_extraction.description_summarization.enabled` | `true` | 병합된 설명이 `force_summary_threshold_tokens`(`600`)를 넘으면 LLM으로 다시 요약합니다. |
 | `processing.graph_extraction.entity_grounding.enabled` | `false` | 환각 방지 장치입니다. 원문 `source_text` 구간이 청크에 없는 엔터티와 관계를 버리거나, `action: "penalize"`이면 가중치를 낮춥니다. gleaning이 추가한 항목에도 적용됩니다. |
 | `processing.gleaning.enabled` | `true` | 첫 추출에서 놓친 엔터티와 관계를 찾는 추가 추출 단계입니다. |
-| `processing.gleaning.max_rounds` | `3` | gleaning 횟수입니다. 이후 단계는 직전 단계에서 항목이 늘어난 단위만 다시 처리합니다. `1`이 MS GraphRAG 기본값과 같습니다. |
+| `processing.gleaning.max_rounds` | `3` | 텍스트 단위당 최대 gleaning 횟수입니다. 다음 회차에는 직전 응답에서 새 엔터티나 관계가 추가된 단위만 다시 보내므로, 응답에 새 항목이 없으면 그 단위는 바로 멈춥니다. `1`이 MS GraphRAG 기본값과 같습니다. |
 | `processing.claim_extraction.enabled` | `false` | claim을 추출합니다(텍스트 단위마다 LLM 호출 1회 추가). 켜면 `local` 검색이 관련 claim을 컨텍스트에 넣고 `simple` 검색이 claim 인덱스도 함께 찾습니다. |
 
 ### 2.4 `graph` — 분석, 커뮤니티 탐지, 시각화
@@ -1302,7 +1302,7 @@ DynamoDB(증분 인덱싱이 켜진 경우).
 ### 비용 참고
 
 LLM 호출이 비용을 좌우합니다. 가장 큰 요인: `graph_extraction`(청크당 1회
-이상), `gleaning`(`max_rounds`만큼의 추가 패스), `community_detection` 리포트
+이상), `gleaning`(청크당 최대 `max_rounds`회 호출), `community_detection` 리포트
 생성, `claim_extraction`(텍스트 유닛당 1회 호출 — 기본 OFF), 질의당 답변 생성.
 레버: 기계적인 스테이지에 더 저렴한 모델 사용(청킹 / 번역 / map-reduce /
 description 요약은 이미 Haiku급 모델이 기본값), `gleaning.max_rounds` 제한,

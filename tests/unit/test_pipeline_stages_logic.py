@@ -431,3 +431,26 @@ def test_extraction_stage_records_failed_units_and_rerun_replaces_them(
     extractor.extract_from_text_units.return_value = ([], [], ExtractionStats())
     stage._execute_core(ctx)
     assert ctx.failed_text_unit_ids == {"graph_extraction": []}
+
+
+def test_gleaning_stage_improvement_rate_is_graph_growth(mocker) -> None:
+    from unified_kg_rag.adapters.ingestion.gleaner import GleaningStats
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.models import Entity, Relationship
+
+    gleaner = mocker.MagicMock()
+    mocker.patch.object(ps, "GraphGleaner", return_value=gleaner)
+    stage = ps.GleaningStage(config=Config(), boto_session=mocker.MagicMock())
+    ctx = _context()
+    ctx.entities = [Entity(id=f"e{i}", name=f"n{i}") for i in range(3)]
+    ctx.relationships = [Relationship(id="r1", source_id="e0", target_id="e1")]
+    gleaner.glean_graph.return_value = (
+        ctx.entities,
+        ctx.relationships,
+        GleaningStats(total_entities_added=1, total_relationships_added=1),
+    )
+
+    _in, _out, metrics = stage._execute_core(ctx)
+
+    # 2 items added on top of the 4 extracted.
+    assert metrics["improvement_rate"] == pytest.approx(0.5)

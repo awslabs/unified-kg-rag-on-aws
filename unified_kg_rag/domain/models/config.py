@@ -920,11 +920,11 @@ class GleaningConfig(BaseModel):
         default=3,
         ge=1,
         description=(
-            "Maximum gleaning rounds. Each round after the first re-sends only "
-            "the text units that gained entities or relationships in the "
-            "previous round, so later rounds cost less than the first. Set 1 "
-            "for MS GraphRAG's single-gleaning default when ingestion cost "
-            "matters more than graph recall."
+            "Maximum gleaning rounds per text unit. Each round after the first "
+            "re-sends only the text units whose previous answer added a new "
+            "entity or relationship; a unit stops once an answer adds nothing "
+            "new. Set 1 for MS GraphRAG's single-gleaning default when "
+            "ingestion cost matters more than graph recall."
         ),
     )
     max_entities_per_prompt: int = Field(
@@ -935,50 +935,6 @@ class GleaningConfig(BaseModel):
         ge=1,
         description="Maximum relationships per gleaning prompt",
     )
-    convergence_threshold: float = Field(
-        default=0.8,
-        ge=0.0,
-        le=1.0,
-        description="Convergence threshold for early stopping",
-    )
-    quality_threshold: float = Field(
-        default=0.9, ge=0.0, le=1.0, description="Quality threshold for completion"
-    )
-    min_improvement_threshold: float = Field(
-        default=0.05,
-        ge=0.0,
-        le=1.0,
-        description="Minimum improvement required between rounds",
-    )
-    quality_completeness_weight: float = Field(
-        default=0.6,
-        ge=0.0,
-        le=1.0,
-        description="Weight of the LLM completeness score in the blended graph-quality score (accuracy gets the remainder)",
-    )
-    initial_quality_entity_scale: int = Field(
-        default=50,
-        ge=1,
-        description="Entity count at which initial completeness saturates (scales the count-based seed quality estimate)",
-    )
-    initial_quality_relationship_scale: int = Field(
-        default=100,
-        ge=1,
-        description="Relationship count at which initial completeness saturates",
-    )
-    convergence_change_scale: int = Field(
-        default=20,
-        ge=1,
-        description="New entities+relationships per gleaned text unit treated as a full unit of change when scoring convergence",
-    )
-
-    @model_validator(mode="after")
-    def validate_thresholds(self) -> "GleaningConfig":
-        if self.convergence_threshold >= self.quality_threshold:
-            raise ValueError(
-                "convergence_threshold must be less than quality_threshold"
-            )
-        return self
 
 
 class ClaimExtractionConfig(BaseModel):

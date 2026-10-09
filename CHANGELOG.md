@@ -73,6 +73,21 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   from chunking on miss once after upgrading, since their default-config cache
   keys include the model id. Set `fast_model_id` back to
   `anthropic.claude-haiku-4-5-20251001-v1:0` to keep the previous model (#170).
+- Gleaning stops per text unit on what the model returned, not on scores: each
+  unit gets up to `max_rounds` refinement calls and is re-sent only while its
+  previous answer added an entity or relationship the graph did not have (an
+  empty answer, a re-proposed known item, or an ungrounded addition ends that
+  unit). The corpus-wide early stop on the model's self-reported
+  completeness/accuracy and a convergence score is gone, so units that keep
+  gaining now run the full `max_rounds`. The refinement prompt still asks the
+  model to score completeness and accuracy before listing issues: the scores
+  are no longer read, but dropping that self-check cut round-1 additions by
+  about half (+44 vs +89 entities) and final entities by about 5% in an E2E
+  A/B. `gleaning_improvement_rate` in the pipeline metrics is
+  now the gleaned entities plus relationships per extracted one (it was the
+  relative change of the self-reported quality score), and the gleaning stage
+  reports `refinement_calls`. Cached gleaning and later stage outputs miss
+  once after upgrading, since their default-config cache keys change (#171).
 - **Breaking:** `unified_kg_rag.shared.utils` no longer re-exports the
   LangChain-coupled and console helpers, so importing a `domain` module no
   longer loads LangChain, LangSmith, lxml, tenacity or tqdm. Import
@@ -245,6 +260,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   being reported as an unknown key that is ignored (#151).
 
 ### Removed
+- Gleaning config keys `convergence_threshold`, `quality_threshold`,
+  `min_improvement_threshold`, `quality_completeness_weight`,
+  `initial_quality_entity_scale`, `initial_quality_relationship_scale` and
+  `convergence_change_scale` under `processing.gleaning`, with the validator
+  that kept `convergence_threshold` below `quality_threshold`. They only tuned
+  the removed score-based stop rule and are now ignored with an unknown-key
+  warning; `GleaningStats` drops `initial_quality_score`,
+  `final_quality_score`, `convergence_achieved`, the per-round averages and
+  the per-round `quality_improvement`/`convergence_score` (#171).
 - `indexing.neptune.min_entity_importance`: it thresholded an `importance`
   property no vertex stores; the key is now ignored with an unknown-key
   warning (#155).

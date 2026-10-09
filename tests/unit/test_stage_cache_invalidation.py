@@ -272,14 +272,16 @@ class TestFingerprintScope:
         PipelineStageType.TEXT_CHUNKING: "7d24d450ee75",
         PipelineStageType.TRANSLATION: "5abcca511058",
         PipelineStageType.GRAPH_EXTRACTION: "5cecc719e0a7",
-        PipelineStageType.GLEANING: "7daa823fa004",
-        PipelineStageType.GRAPH_RESOLUTION: "5709e17d032a",
-        PipelineStageType.CLAIM_EXTRACTION: "99e66b287398",
-        PipelineStageType.CLAIM_RESOLUTION: "99e66b287398",
+        # The score-based gleaning knobs were removed, so gleaning and every
+        # later stage re-key once.
+        PipelineStageType.GLEANING: "143abce24b73",
+        PipelineStageType.GRAPH_RESOLUTION: "5490fd77687c",
+        PipelineStageType.CLAIM_EXTRACTION: "7dba3f43bab0",
+        PipelineStageType.CLAIM_RESOLUTION: "7dba3f43bab0",
         # graph.analysis is no longer an input (it shapes nothing a later
         # stage reads), so graph analysis shares claim resolution's inputs.
-        PipelineStageType.GRAPH_ANALYSIS: "99e66b287398",
-        PipelineStageType.COMMUNITY_DETECTION: "a35b6a8701d2",
+        PipelineStageType.GRAPH_ANALYSIS: "7dba3f43bab0",
+        PipelineStageType.COMMUNITY_DETECTION: "3ee224943382",
     }
 
     def test_default_config_fingerprints_are_unchanged(self) -> None:

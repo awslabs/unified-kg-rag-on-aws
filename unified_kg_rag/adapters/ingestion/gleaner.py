@@ -133,12 +133,15 @@ def prepare_input_task(
 
 class GleaningRound(BaseModel):
     round_number: int
+    # Text units sent to the model this round: one refinement call each.
+    units_gleaned: int
+    # Text units whose answer added a new entity or relationship; only these
+    # are gleaned again in the next round.
+    units_gained: int
     entities_before: int
     relationships_before: int
     entities_added: int
     relationships_added: int
-    quality_improvement: float
-    convergence_score: float
     processing_time: float
 
 
@@ -146,10 +149,7 @@ class GleaningStats(BaseModel):
     total_rounds: int = 0
     total_entities_added: int = 0
     total_relationships_added: int = 0
-    initial_quality_score: float = 0.0
-    final_quality_score: float = 0.0
     total_processing_time: float = 0.0
-    convergence_achieved: bool = False
     # Unit refinements that failed (input prep, LLM call, or whole batch),
     # summed over rounds; such units simply gain nothing from gleaning.
     num_failed_units: int = 0
@@ -158,32 +158,8 @@ class GleaningStats(BaseModel):
     rounds: list[GleaningRound] = Field(default_factory=list)
 
     @property
-    def quality_improvement(self) -> float:
-        return self.final_quality_score - self.initial_quality_score
-
-    @property
-    def average_round_time(self) -> float:
-        return (
-            self.total_processing_time / self.total_rounds
-            if self.total_rounds > 0
-            else 0.0
-        )
-
-    @property
-    def entities_per_round(self) -> float:
-        return (
-            self.total_entities_added / self.total_rounds
-            if self.total_rounds > 0
-            else 0.0
-        )
-
-    @property
-    def relationships_per_round(self) -> float:
-        return (
-            self.total_relationships_added / self.total_rounds
-            if self.total_rounds > 0
-            else 0.0
-        )
+    def total_refinement_calls(self) -> int:
+        return sum(r.units_gleaned for r in self.rounds)
 
 
 class GraphGleaner(BaseProcessor):
@@ -239,121 +215,76 @@ class GraphGleaner(BaseProcessor):
         initial_entities: list[Entity],
         initial_relationships: list[Relationship],
     ) -> tuple[list[Entity], list[Relationship], GleaningStats]:
+        """Glean each text unit for at most ``max_rounds`` rounds.
+
+        Round 1 sends every unit. Each later round re-sends only the units
+        whose previous answer added a new entity or relationship. A unit stops
+        once its answer adds nothing new: an empty ``<identified_issues>`` is
+        the model saying nothing more is missing (the answer MS GraphRAG gets
+        from its separate Y/N loop prompt), and items that merge into existing
+        ones or fail grounding are not new.
+        """
         start_time = time.time()
         current_entities = initial_entities.copy()
         current_relationships = initial_relationships.copy()
-
-        initial_quality = self._calculate_initial_quality(
-            current_entities, current_relationships
-        )
-        stats = GleaningStats(initial_quality_score=initial_quality)
+        stats = GleaningStats()
         self._failed_unit_ids = []
+        max_rounds = self.gleaning_config.max_rounds
 
         logger.info(
-            "Starting graph gleaning from %s text units, "
-            "%s entities, "
-            "%s relationships "
-            "(initial quality: %.3f)",
+            "Starting graph gleaning from %s text units, %s entities, "
+            "%s relationships",
             len(text_units),
             len(current_entities),
             len(current_relationships),
-            initial_quality,
         )
 
-        current_quality = initial_quality
-        previous_quality = initial_quality
-        # Each round after the first re-gleans only the units that yielded new
-        # items in the previous round: a unit that yielded nothing has nothing
-        # left the model will add, and re-sending it repeats the same call.
         units_to_glean = list(text_units)
-
-        for round_num in range(1, self.gleaning_config.max_rounds + 1):
+        for round_num in range(1, max_rounds + 1):
             if not units_to_glean:
-                logger.info(
-                    "No text unit gained items in round %s; gleaning converged",
-                    round_num - 1,
+                break
+            logger.info(
+                "Starting gleaning round %s/%s (%s text units)",
+                round_num,
+                max_rounds,
+                len(units_to_glean),
+            )
+
+            current_entities, current_relationships, round_info, gained = (
+                self._perform_gleaning_round(
+                    units_to_glean,
+                    current_entities,
+                    current_relationships,
+                    round_num,
                 )
-                stats.convergence_achieved = True
-                break
-            round_start_time = time.time()
-            logger.info(
-                "Starting gleaning round %s/%s",
-                round_num,
-                self.gleaning_config.max_rounds,
             )
-
-            entities_before = len(current_entities)
-            relationships_before = len(current_relationships)
-
-            round_stats = self._perform_gleaning_round(
-                text_units=units_to_glean,
-                current_entities=current_entities,
-                current_relationships=current_relationships,
-                round_num=round_num,
-                entities_before=entities_before,
-                relationships_before=relationships_before,
-                previous_quality=previous_quality,
-                round_start_time=round_start_time,
-            )
-
-            current_entities = round_stats["entities"]
-            current_relationships = round_stats["relationships"]
-            current_quality = round_stats["quality"]
-
-            stats.rounds = stats.rounds + [round_stats["round_info"]]
-            stats.total_entities_added += round_stats["round_info"].entities_added
-            stats.total_relationships_added += round_stats[
-                "round_info"
-            ].relationships_added
+            stats.rounds.append(round_info)
+            stats.total_entities_added += round_info.entities_added
+            stats.total_relationships_added += round_info.relationships_added
 
             logger.info(
-                "Round %s completed: "
-                "+%s entities, "
-                "+%s relationships, "
-                "quality: %.3f "
-                "(%+.3f), "
-                "convergence: %.3f",
+                "Round %s completed: +%s entities, +%s relationships, "
+                "%s/%s text units gained",
                 round_num,
-                round_stats["round_info"].entities_added,
-                round_stats["round_info"].relationships_added,
-                current_quality,
-                round_stats["round_info"].quality_improvement,
-                round_stats["round_info"].convergence_score,
+                round_info.entities_added,
+                round_info.relationships_added,
+                round_info.units_gained,
+                round_info.units_gleaned,
             )
-
-            if self._should_stop_gleaning(
-                round_stats["round_info"].convergence_score,
-                round_stats["round_info"].quality_improvement,
-                current_quality,
-                round_num,
-            ):
-                stats.convergence_achieved = True
-                break
-
-            previous_quality = current_quality
-            gained = round_stats["gained_unit_ids"]
             units_to_glean = [unit for unit in units_to_glean if unit.id in gained]
 
         stats.total_rounds = len(stats.rounds)
         stats.num_failed_units = len(self._failed_unit_ids)
         stats.failed_text_unit_ids = sorted(set(self._failed_unit_ids))
-        stats.final_quality_score = current_quality
         stats.total_processing_time = time.time() - start_time
 
-        self._log_completion_summary(stats)
+        self._log_completion_summary(stats, units_still_gaining=len(units_to_glean))
 
         return current_entities, current_relationships, stats
 
-    def _calculate_initial_quality(
-        self, entities: list[Entity], relationships: list[Relationship]
-    ) -> float:
-        if not entities and not relationships:
-            return 0.0
-        entity_scale = self.gleaning_config.initial_quality_entity_scale
-        rel_scale = self.gleaning_config.initial_quality_relationship_scale
-        entity_completeness = min(0.5, len(entities) / entity_scale)
-        relationship_completeness = min(0.5, len(relationships) / rel_scale)
-        return (entity_completeness + relationship_completeness) / 2.0
+    @staticmethod
+    def _relationship_key(rel: Relationship) -> tuple[str, str, str]:
+        return (rel.source_id, rel.target_id, rel.type.lower() if rel.type else "")
 
     def _perform_gleaning_round(
         self,
@@ -361,95 +292,89 @@ class GraphGleaner(BaseProcessor):
         current_entities: list[Entity],
         current_relationships: list[Relationship],
         round_num: int,
-        entities_before: int,
-        relationships_before: int,
-        previous_quality: float,
-        round_start_time: float,
-    ) -> dict[str, Any]:
-        logger.debug(
-            "Round %s: Starting LLM refinement for %s text units",
-            round_num,
-            len(text_units),
-        )
+    ) -> tuple[list[Entity], list[Relationship], GleaningRound, set[str]]:
+        """Send each unit to the model once and merge the answers into the graph.
 
-        newly_discovered_entities, newly_discovered_relationships, quality_scores = (
-            self._perform_llm_refinement(
-                text_units, current_entities, current_relationships
-            )
+        Returns:
+            The merged entities and relationships, the round's stats, and the
+            ids of the units whose answer added a new entity or relationship.
+        """
+        round_start_time = time.time()
+        entities_before = len(current_entities)
+        relationships_before = len(current_relationships)
+        # Taken before the model call, since a correction renames in place.
+        known_entity_keys = {entity_key(e.name) for e in current_entities}
+        known_relationship_keys = {
+            self._relationship_key(r) for r in current_relationships
+        }
+
+        new_entities, new_relationships = self._perform_llm_refinement(
+            text_units, current_entities, current_relationships
         )
 
         logger.debug(
             "Round %s: LLM refinement produced %s entities and %s relationships",
             round_num,
-            len(newly_discovered_entities),
-            len(newly_discovered_relationships),
+            len(new_entities),
+            len(new_relationships),
         )
-
-        combined_entities = current_entities + newly_discovered_entities
-        combined_relationships = current_relationships + newly_discovered_relationships
 
         merged_entities, entity_id_map = self._merge_duplicate_entities(
-            combined_entities
+            current_entities + new_entities
         )
         merged_relationships = self._update_relationships_after_merge(
-            combined_relationships, {e.id for e in merged_entities}, entity_id_map
+            current_relationships + new_relationships,
+            {e.id for e in merged_entities},
+            entity_id_map,
         )
         # Runs after every correction and the merge, so it sees the final id ->
         # name mapping for the round; an ENTITY_CORRECTION rename or a merge that
         # re-pointed an edge would otherwise leave the edge naming the old entity.
         self._sync_relationship_endpoint_names(merged_relationships, merged_entities)
 
-        # Clamp to >= 0: a round that only discovers entities/relationships which
-        # merge into existing ones (or whose edges are dropped as orphaned) can
-        # make the post-merge count <= the prior count. A negative "added" value
-        # would corrupt the convergence score (negative change_rate inflates
-        # convergence toward 1.0 -> premature stop).
-        entities_added = max(0, len(merged_entities) - entities_before)
-        relationships_added = max(0, len(merged_relationships) - relationships_before)
-        current_quality = self._calculate_graph_quality(quality_scores)
-        quality_improvement = current_quality - previous_quality
-        convergence_score = self._calculate_convergence_score(
-            entities_added,
-            relationships_added,
-            quality_improvement,
-            units_processed=len(text_units),
-        )
-        processed_ids = {unit.id for unit in text_units}
-        lineages = [e.text_unit_ids or [] for e in newly_discovered_entities] + [
-            r.text_unit_ids or [] for r in newly_discovered_relationships
+        # A unit gained when it proposed an entity the graph did not have, or a
+        # relationship that survived the merge (which re-points it in place)
+        # under a key the graph did not have. Re-proposing known items is not a
+        # gain; counting it would re-send the unit every round for nothing.
+        kept_relationships = {id(r) for r in merged_relationships}
+        new_items: list[Entity | Relationship] = [
+            e for e in new_entities if entity_key(e.name) not in known_entity_keys
         ]
+        new_items += [
+            r
+            for r in new_relationships
+            if id(r) in kept_relationships
+            and self._relationship_key(r) not in known_relationship_keys
+        ]
+        processed_ids = {unit.id for unit in text_units}
         gained_unit_ids = {
             unit_id
-            for lineage in lineages
-            for unit_id in lineage
+            for item in new_items
+            for unit_id in item.text_unit_ids or []
             if unit_id in processed_ids
         }
 
         round_info = GleaningRound(
             round_number=round_num,
+            units_gleaned=len(text_units),
+            units_gained=len(gained_unit_ids),
             entities_before=entities_before,
             relationships_before=relationships_before,
-            entities_added=entities_added,
-            relationships_added=relationships_added,
-            quality_improvement=quality_improvement,
-            convergence_score=convergence_score,
+            # Clamped: dropping an orphaned input edge can shrink the count.
+            entities_added=max(0, len(merged_entities) - entities_before),
+            relationships_added=max(
+                0, len(merged_relationships) - relationships_before
+            ),
             processing_time=time.time() - round_start_time,
         )
-
-        return {
-            "entities": merged_entities,
-            "relationships": merged_relationships,
-            "quality": current_quality,
-            "round_info": round_info,
-            "gained_unit_ids": gained_unit_ids,
-        }
+        return merged_entities, merged_relationships, round_info, gained_unit_ids
 
     def _perform_llm_refinement(
         self,
         text_units: list[TextUnit],
         current_entities: list[Entity],
         current_relationships: list[Relationship],
-    ) -> tuple[list[Entity], list[Relationship], dict[str, float]]:
+    ) -> tuple[list[Entity], list[Relationship]]:
         config_for_task = {
             "max_entities_per_prompt": self.max_entities_per_prompt,
             "max_relationships_per_prompt": self.max_relationships_per_prompt,
@@ -527,13 +452,10 @@ class GraphGleaner(BaseProcessor):
                 raise
             logger.error("Error during graph refinement: %s", e)
             self._failed_unit_ids.extend(u.id for u in prepared_units)
-            return [], [], {}
+            return [], []
 
-        all_new_entities, all_new_relationships = [], []
-        quality_scores_aggregator: dict[str, list[float]] = {
-            "completeness": [],
-            "accuracy": [],
-        }
+        all_new_entities: list[Entity] = []
+        all_new_relationships: list[Relationship] = []
 
         # This loop is serial, so a correction may mutate an entity or
         # relationship carried by the round in place without racing another chunk.
@@ -541,17 +463,14 @@ class GraphGleaner(BaseProcessor):
             if result_data is BATCH_ITEM_FAILED:
                 self._failed_unit_ids.append(item.id)
                 continue
-            new_entities, new_relationships, quality_scores = (
-                self._parse_refinement_output(
-                    result_data.get("refinement_plan", {}),
-                    item,
-                    current_entities,
-                    current_relationships,
-                )
+            new_entities, new_relationships = self._parse_refinement_output(
+                result_data.get("refinement_plan", {}),
+                item,
+                current_entities,
+                current_relationships,
             )
             all_new_entities.extend(new_entities)
             all_new_relationships.extend(new_relationships)
-            self._aggregate_quality_scores(quality_scores, quality_scores_aggregator)
 
         if all_new_entities:
             all_entity_details = [f"'{entity.name}'" for entity in all_new_entities]
@@ -563,34 +482,7 @@ class GraphGleaner(BaseProcessor):
             ]
             logger.debug("All new relationships: %s", all_relationship_details)
 
-        avg_quality_scores = {
-            "completeness": self._calculate_average(
-                quality_scores_aggregator["completeness"]
-            ),
-            "accuracy": self._calculate_average(quality_scores_aggregator["accuracy"]),
-        }
-        return all_new_entities, all_new_relationships, avg_quality_scores
-
-    def _calculate_graph_quality(self, quality_scores: dict[str, float]) -> float:
-        completeness = quality_scores.get("completeness", 0.5)
-        accuracy = quality_scores.get("accuracy", 0.5)
-        completeness_weight = self.gleaning_config.quality_completeness_weight
-        return (completeness * completeness_weight) + (
-            accuracy * (1.0 - completeness_weight)
-        )
-
-    @staticmethod
-    def _aggregate_quality_scores(
-        quality_scores: dict[str, float], aggregator: dict[str, list[float]]
-    ) -> None:
-        if quality_scores.get("completeness") is not None:
-            aggregator["completeness"].append(quality_scores["completeness"])
-        if quality_scores.get("accuracy") is not None:
-            aggregator["accuracy"].append(quality_scores["accuracy"])
-
-    @staticmethod
-    def _calculate_average(values: list[float]) -> float:
-        return sum(values) / len(values) if values else 0.0
+        return all_new_entities, all_new_relationships
 
     def _parse_refinement_output(
         self,
@@ -598,14 +490,13 @@ class GraphGleaner(BaseProcessor):
         unit: TextUnit,
         existing_entities: list[Entity],
         existing_relationships: list[Relationship] | None = None,
-    ) -> tuple[list[Entity], list[Relationship], dict[str, float]]:
+    ) -> tuple[list[Entity], list[Relationship]]:
         new_entities: list[Entity] = []
         new_relationships: list[Relationship] = []
-        quality_scores: dict[str, float] = {}
 
         if not result_data:
             logger.debug("No result data for text unit '%s'", unit.id)
-            return new_entities, new_relationships, quality_scores
+            return new_entities, new_relationships
 
         try:
             plan = None
@@ -622,9 +513,7 @@ class GraphGleaner(BaseProcessor):
                     type(result_data),
                     str(result_data)[:250],
                 )
-                return new_entities, new_relationships, quality_scores
-
-            quality_scores = self._extract_quality_scores(plan)
+                return new_entities, new_relationships
 
             issues_data = plan.get("identified_issues", {})
             if isinstance(issues_data, dict):
@@ -659,33 +548,7 @@ class GraphGleaner(BaseProcessor):
                 str(result_data)[:250],
             )
 
-        return new_entities, new_relationships, quality_scores
-
-    @staticmethod
-    def _extract_quality_scores(plan: dict[str, Any]) -> dict[str, float]:
-        scores_data = plan.get("quality_scores", {})
-
-        if isinstance(scores_data, list):
-            merged_scores = {}
-            for item in scores_data:
-                if isinstance(item, dict):
-                    merged_scores.update(item)
-            scores_data = merged_scores
-
-        if not isinstance(scores_data, dict):
-            return {"completeness": 0.0, "accuracy": 0.0}
-
-        try:
-            completeness = float(scores_data.get("completeness_score", 0.0))
-            accuracy = float(scores_data.get("accuracy_score", 0.0))
-        except (ValueError, TypeError):
-            completeness = 0.0
-            accuracy = 0.0
-
-        return {
-            "completeness": completeness,
-            "accuracy": accuracy,
-        }
+        return new_entities, new_relationships
 
     def _process_issue(
         self,
@@ -1024,7 +887,7 @@ class GraphGleaner(BaseProcessor):
             ):
                 rel.source_id = source_id
                 rel.target_id = target_id
-                key = (source_id, target_id, rel.type.lower() if rel.type else "")
+                key = GraphGleaner._relationship_key(rel)
 
                 if key not in relationships_map:
                     relationships_map[key] = rel
@@ -1098,112 +961,23 @@ class GraphGleaner(BaseProcessor):
                 resynced,
             )
 
-    def _calculate_convergence_score(
-        self,
-        entities_added: int,
-        relationships_added: int,
-        quality_improvement: float,
-        units_processed: int = 1,
-    ) -> float:
-        """1.0 when the round added nothing, falling as it adds more per unit.
-
-        The change is measured per gleaned text unit
-        (``convergence_change_scale`` items per unit = a full unit of change).
-        An absolute count made any round over more than a handful of units
-        look unconverged, however little each unit gained.
-        """
-        if entities_added == 0 and relationships_added == 0:
-            return 1.0
-        change_scale = self.gleaning_config.convergence_change_scale * max(
-            units_processed, 1
-        )
-        change_rate = (entities_added + relationships_added) / change_scale
-        convergence = 1.0 - min(1.0, change_rate + abs(quality_improvement))
-        return max(0.0, convergence)
-
-    def _should_stop_gleaning(
-        self,
-        convergence_score: float,
-        quality_improvement: float,
-        current_quality: float,
-        round_num: int,
-    ) -> bool:
-        # Primary signal is MEASURED: convergence_score is derived from how many
-        # entities/relationships the round actually added (see
-        # _calculate_convergence_score), so this is the reliable stop condition.
-        if convergence_score >= self.gleaning_config.convergence_threshold:
-            logger.info(
-                "Convergence achieved: score %.3f >= threshold %.3f",
-                convergence_score,
-                self.gleaning_config.convergence_threshold,
-            )
-            return True
-
-        # Secondary (advisory) signal from the LLM's self-reported quality.
-        # Only applied from round 2 onward: on round 1 previous_quality is the
-        # count-based initial seed while current_quality is the LLM 0-1 score —
-        # different scales, so their delta is meaningless and would trip a
-        # spurious early stop. Use a one-sided check (improvement BELOW the
-        # threshold), not abs(): a quality *drop* means the round didn't help, so
-        # stopping is fine; abs() previously also stopped on big regressions for
-        # the wrong reason.
-        if (
-            round_num >= 2
-            and quality_improvement < self.gleaning_config.min_improvement_threshold
-        ):
-            logger.info(
-                "Quality improvement below threshold: %.3f < %.3f",
-                quality_improvement,
-                self.gleaning_config.min_improvement_threshold,
-            )
-            return True
-
-        if current_quality >= self.gleaning_config.quality_threshold:
-            logger.info(
-                "Quality target reached: %.3f >= %.3f",
-                current_quality,
-                self.gleaning_config.quality_threshold,
-            )
-            return True
-
-        return False
-
     @staticmethod
-    def _log_completion_summary(stats: GleaningStats) -> None:
+    def _log_completion_summary(stats: GleaningStats, units_still_gaining: int) -> None:
         logger.info(
-            "Graph gleaning completed: %s rounds, "
-            "%s entities added, "
-            "%s relationships added, "
-            "quality improved from %.3f to "
-            "%.3f "
-            "(%+.3f) in %.2fs",
+            "Graph gleaning completed: %s rounds, %s refinement calls, "
+            "%s entities added, %s relationships added in %.2fs",
             stats.total_rounds,
+            stats.total_refinement_calls,
             stats.total_entities_added,
             stats.total_relationships_added,
-            stats.initial_quality_score,
-            stats.final_quality_score,
-            stats.quality_improvement,
             stats.total_processing_time,
         )
-
-        if stats.total_rounds > 0:
+        if units_still_gaining:
             logger.info(
-                "Average per round: %.1f entities, "
-                "%.1f relationships, "
-                "%.2fs processing time",
-                stats.entities_per_round,
-                stats.relationships_per_round,
-                stats.average_round_time,
+                "Stopped at max_rounds with %s text units still gaining items",
+                units_still_gaining,
             )
-
         if stats.num_failed_units > 0:
             logger.warning(
                 "Gleaning failed for %s text-unit refinements", stats.num_failed_units
-            )
-
-        if stats.convergence_achieved:
-            logger.info("Gleaning process converged successfully")
-        else:
-            logger.warning(
-                "Gleaning process did not converge after %s rounds", stats.total_rounds
             )
