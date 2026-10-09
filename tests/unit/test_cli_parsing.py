@@ -485,6 +485,31 @@ def test_ingestion_runner_valid_source_sets_cache_dir(config, mocker, tmp_path) 
     assert cache.is_dir()  # created by _validate_args
 
 
+def test_ingestion_retire_source_scope_is_repeatable_and_merged_into_config(
+    config, mocker, tmp_path
+) -> None:
+    config.indexing.retire_source_scopes = ["s3://bucket/old/"]
+    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    src = tmp_path / "src"
+    src.mkdir()
+    assert _ing_parser().parse_args([]).retire_source_scope == []
+    args = _ing_parser().parse_args(
+        [
+            "--source-directory",
+            str(src),
+            "--retire-source-scope",
+            "/corpora/old",
+            "--retire-source-scope",
+            "s3://bucket/old/",
+        ]
+    )
+    runner = run_ingestion_pipeline.IngestionPipelineRunner(args)
+    assert runner.config.indexing.retire_source_scopes == [
+        "s3://bucket/old/",
+        "/corpora/old",
+    ]
+
+
 def test_ingestion_create_pipeline_config_rejects_invalid_stage(
     config, mocker, tmp_path
 ) -> None:

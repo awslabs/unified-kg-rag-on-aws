@@ -439,6 +439,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.cross_run_fuzzy_merge` | `false` | Extend `cross_run_merge` with fuzzy entity-name matching. |
 | `indexing.max_failure_rate` | `0.2` | Per-index-type write failure rate above which the indexing stage fails, and share of communities without a report above which community detection fails. `1.0` disables the partial-failure gate. |
 | `indexing.max_document_failures` | `3` | Incremental runs: consecutive FAILED records of unchanged content after which a document is no longer retried (§5). |
+| `indexing.retire_source_scopes` | `[]` | Incremental runs: former source scopes (an old absolute source directory, or a former `source_scope` value) whose records in the run's index suffix are treated as deleted, so their exclusive content is removed. Never the run's own scope. `--retire-source-scope` adds to it. See §5 Deletion scope. |
 | `indexing.opensearch.embedding_model_id` | `"amazon.titan-embed-text-v2:0"` | Embedding model, one of a closed list (see Model selection notes). Changing it requires a reindex. |
 | `indexing.opensearch.build_relationship_vector_index` | `true` | Relationship vector index for LightRAG `mix`/`hybrid`. Set `false` for a GraphRAG-only deployment. |
 | `indexing.opensearch.persist_embedding_cache` | `false` | Persist the embedding cache to S3 so unchanged text is not re-embedded across runs. Requires `aws.s3.bucket_name`. |
@@ -621,6 +622,7 @@ OpenSearch + Neptune.
 | `--continue-on-error` | off | Keep going when a stage errors |
 | `--enabled-stages` | all | Comma-separated stage list to run |
 | `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout as dimensionless series; `pipeline_id` is recorded as a log property, not a dimension, so runs add no new metric series) |
+| `--retire-source-scope SCOPE` | — | Incremental runs: treat every registry record of the former source scope `SCOPE` (in this run's index suffix) as deleted, removing its exclusive content. Repeatable; added to `indexing.retire_source_scopes`. Fails when `SCOPE` is the run's own scope. See §5 Deletion scope. |
 | `--config-path` | — | Path to `config.yaml` |
 
 ### The 12 pipeline stages
@@ -955,21 +957,33 @@ scope. So:
 - a file that fails to parse or load is reported as `failed` and keeps its
   indexed content until a run reads it again.
 
-Moving a local corpus to another directory changes its default scope. When
-`source_scope` is unset, the first run from the new directory adopts the
-records of the old one: a document new to its scope whose namespace and
-relative path have exactly one record under another local source directory
-that no longer exists is treated as moved, and its record (content hash,
-status, lineage) is re-keyed to the new scope. Nothing is re-extracted, and a
-later edit or deletion prunes the old content as usual. A source directory
-that still exists is a separate corpus (a copy, not a move) and is left
-alone, with one INFO log line naming it; records under an `s3://` or other
-URI scope, under a fixed `source_scope` name, or of another index suffix are
-never adopted. A file recorded under two vanished directories is not adopted
-(WARNING) and is indexed as new. To move a corpus without relying on this,
-set `source_scope` to a stable name first, or rebuild. A fixed
-`source_scope` that looks like an absolute local path is treated as one, so
-use a name or URI instead.
+Moving a corpus changes its scope when the scope is the default (the source
+directory), and the records of the old scope stay in the registry: no run
+deletes another scope's documents, and the run cannot tell a moved corpus from
+a second corpus another host indexes into the same registry (a directory that
+is missing on this host may exist on that one). The old records keep their
+content indexed, including that of files removed or renamed during the move.
+To move a corpus, either:
+
+- set `document_parsing.source_scope` to a stable name before moving it, so
+  the scope does not change; or
+- run once from the new location with
+  `--retire-source-scope <old source directory>` (or
+  `indexing.retire_source_scopes`). That run treats every record of the old
+  scope in its index suffix as deleted: their exclusive text units, entities
+  and relationships are removed, content shared with surviving documents is
+  kept, and the records are deleted once the removal succeeded. The documents
+  at the new location are indexed as new in the same run. Give the scope as
+  the registry stores it: the absolute directory (a trailing slash is
+  ignored) or the former `source_scope` value, `s3://` URIs included. A run
+  that names its own scope fails before reading the registry, and a scope
+  without records is reported with a WARNING.
+
+A local run with the default scope that has new documents logs one WARNING
+naming the other local source directories with records in its index suffix
+(read from the registry scan the diff already makes), pointing to these two
+options. It deletes nothing. Set `source_scope` per corpus to silence it when
+the directories are separate corpora.
 
 Registries written before the source scope was part of the key are keyed by
 index suffix and relative path only. The first run after an upgrade adopts

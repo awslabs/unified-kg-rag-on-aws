@@ -22,6 +22,19 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   that failed deterministically was pruned and re-extracted on every run. The
   count is stored as `failure_count` on the doc-status record; records
   written before it existed read as `0` (#175).
+- `indexing.retire_source_scopes` and `run-ingestion --retire-source-scope
+  SCOPE` (repeatable, added to the list) retire the registry records of a
+  former source scope. An incremental run treats every record of the run's
+  index suffix stored under a retired scope as deleted: in its one removal
+  pass it removes their exclusive text units, entities and relationships,
+  keeps what surviving documents share, and deletes the records once the
+  removal succeeded. Use it once from a moved corpus's new location with the
+  old source directory (or a former `source_scope` value, `s3://` URIs
+  included). A local path is compared without trailing slashes; retiring the
+  run's own scope fails before the registry is read (new
+  `ConfigurationError`), as does a retire without the doc-status registry.
+  Each retired scope costs one more projected registry scan on the run that
+  names it (#PR).
 - `DataIngestionPipeline` accepts `doc_status`, `vector_indexer` and
   `graph_indexer`, threaded to the loading and indexing stages, so the whole
   pipeline runs on custom or in-memory backends through its public
@@ -475,18 +488,19 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   document that yields one entity. Each entity becomes its own community and
   the modularity, undefined without edges, is recorded as `0.0` (#191).
 - Moving a local corpus to another directory no longer leaves its old content
-  indexed. Without a fixed `document_parsing.source_scope` the scope is the
-  source directory, so every document read as new under the new directory
-  while the old directory's records stayed in the registry; pruning computes
-  exclusivity over all records, so after an edit or deletion those orphans
-  kept the previous version's text units, entities and relationships live.
-  A new document whose index suffix and relative path have exactly one
-  record under another local source directory that no longer exists is now
-  treated as moved: the record is re-keyed to the new scope (content hash,
-  status, lineage and failure count kept), so the document is not
-  re-extracted and later edits prune normally. A directory that still exists
-  is a separate corpus and is left alone (logged once at INFO); URI scopes,
-  fixed `source_scope` values and other suffixes are never adopted (#191).
+  indexed without notice. Without a fixed `document_parsing.source_scope` the
+  scope is the source directory, so every document read as new under the new
+  directory while the old directory's records stayed in the registry and kept
+  the previous content live, including that of files removed during the
+  move. The records are not adopted on a guess: a directory missing on the
+  host that runs can be another host's corpus sharing the registry and index
+  suffix, and adopting its records would delete that corpus's content on
+  every run. Instead, a local default-scope run with new documents logs one
+  WARNING naming the other local source directories with records in its
+  suffix, pointing to `--retire-source-scope` (see Added) and to a fixed
+  `source_scope`; it deletes nothing. The scopes come from the scan the diff
+  already makes: `DocumentDelta.stored_scopes`, which the DynamoDB and
+  in-memory stores fill and a custom store may leave empty (#191, #PR).
 - An interrupted adoption of a doc-status record written before scopes
   existed is now completed. When a run had written the record under its
   scoped key but stopped before deleting the old key, the old record (scope
@@ -495,6 +509,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   edit or deletion left that content indexed. Any such legacy key is now
   deleted once its current-key record exists. The diff now also reports
   which legacy keys are stored, so only those are read (#191).
+- Adopting a legacy-keyed doc-status record no longer diffs the registry a
+  second time. The delta is adjusted in memory instead: an adopted document
+  moves from new to unchanged or changed by the adopted record's content hash
+  and status, and a legacy key is never listed as deleted. The second diff
+  was a second full scan, and an eventually consistent DynamoDB `Scan` could
+  still return the legacy key (scope = the run's) and miss its new copy, so
+  the run read the legacy key as deleted and pruned the artifacts the adopted
+  document now owns (#PR).
 - `DynamoDBDocStatusStore` returns the artifact-id lists of a record sorted.
   They are stored as string sets, which have no order, so two reads of one
   record could compare unequal (#PR).

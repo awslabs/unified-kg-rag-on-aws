@@ -461,6 +461,14 @@ indexing:
   # stays FAILED and is skipped as unchanged (WARNING per run) until the file
   # changes or this value is raised.
   max_document_failures: 3
+  # Incremental runs only: former source scopes whose registry records in this
+  # run's index suffix are treated as deleted, so their exclusive graph and
+  # vector content is removed (shared content is kept). Use it once after
+  # moving a corpus whose source_scope was the default (the absolute source
+  # directory, e.g. "/data/corpus-old"), or after changing a fixed
+  # source_scope ("s3://bucket/old-prefix/"). Never the run's own scope (the
+  # run fails). run-ingestion --retire-source-scope SCOPE adds to this list.
+  retire_source_scopes: []
 
   # OpenSearch Indexing
   opensearch:

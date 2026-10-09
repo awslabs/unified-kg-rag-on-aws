@@ -178,6 +178,7 @@ def test_download_with_only_folder_marker_is_empty(s3_setup, tmp_path) -> None:
 
 def _pipeline_with_failing_sync(tmp_path: Path, mocker) -> DataIngestionPipeline:
     pipe = object.__new__(DataIngestionPipeline)
+    pipe.config = Config()
     pipe.pipeline_config = SimpleNamespace(
         s3_sync_enabled=True, pipeline_id=None, resume_from_stage=None
     )

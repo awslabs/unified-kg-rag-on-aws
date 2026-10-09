@@ -6,6 +6,7 @@ from .config import ConfigLoader, get_config
 from .exceptions import (
     AWSServiceError,
     CacheSyncError,
+    ConfigurationError,
     DataProcessingError,
     DocStatusRegistryError,
     EmbeddingModelError,
@@ -41,6 +42,7 @@ __all__ = [
     "CacheSyncError",
     "CloudWatchEMFSink",
     "ConfigLoader",
+    "ConfigurationError",
     "DataProcessingError",
     "DocStatusRegistryError",
     "EmbeddingModelError",

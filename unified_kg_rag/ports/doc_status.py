@@ -68,5 +68,10 @@ class DocStatusPort(Protocol):
         ``doc_id``), so an incoming id never matches another scope's record.
         ``scope=None`` considers every stored record. A stored ``FAILED``
         record is ``changed`` even when its hash matches, so it is retried.
+
+        An adapter should also report the distinct scopes of the records it
+        read in ``DocumentDelta.stored_scopes`` (the scan already reads them);
+        the pipeline uses them only to warn about other corpora sharing the
+        run's namespace, and leaving it empty just silences that warning.
         """
         ...

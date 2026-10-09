@@ -17,6 +17,14 @@ class CacheSyncError(AWSServiceError):
     """
 
 
+class ConfigurationError(GraphRAGException, ValueError):
+    """The configuration (or a CLI option merged into it) is invalid for the run.
+
+    Raised before any store is written, so a contradictory setting fails the
+    run instead of being acted on.
+    """
+
+
 class DataProcessingError(GraphRAGException):
     pass
 

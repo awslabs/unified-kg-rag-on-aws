@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import boto3
 import pytest
@@ -25,6 +26,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
     build_document_lineage,
 )
+from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.application.ingestion.pipeline_stages import (
     DocumentLoadingStage,
     DocumentParsingStage,
@@ -37,16 +39,20 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     detect_delta,
     document_doc_id,
     legacy_doc_id,
+    other_local_scopes,
+    validate_retired_scopes,
 )
 from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
     DocStatusRecord,
     Document,
+    DocumentDelta,
     PipelineContext,
     PipelineStageStatus,
 )
-from unified_kg_rag.shared.utils.document_identity import local_source_location
+from unified_kg_rag.shared import ConfigurationError
+from unified_kg_rag.shared.utils.document_identity import is_local_path_scope
 
 pytestmark = pytest.mark.unit
 
@@ -432,154 +438,234 @@ def test_without_a_scope_nothing_is_adopted(registry) -> None:
     assert registry.get(legacy_doc_id(document)) is not None
 
 
-# --- adopting the records of a moved local corpus ----------------------------
-
-_NEW_SOURCE = "/corpora/new"
-_NEW_SCOPE = f"default|{_NEW_SOURCE}"
-_LOCATIONS = {
-    "/corpora/old": "missing",
-    "/corpora/older": "missing",
-    "/corpora/other": "present",
-    "s3://bucket/corpus-1/": "other",
-}
+# --- legacy adoption adjusts the delta instead of diffing again --------------
 
 
-def _local_document(relative: str, text: str) -> Document:
-    document = Document(
-        page_content=text,
-        document_id=relative,
-        file_name=relative,
-        file_path=f"{_NEW_SOURCE}/{relative}",
-        file_type="txt",
-        total_pages=1,
+class _StaleDiffStore(FakeDocStatusStore):
+    """Registry whose scan lags its writes, like an eventually consistent
+    DynamoDB ``Scan``: every diff and listing answers from the records as
+    they were at the first diff. Counts the diffs."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.diffs = 0
+        self._snapshot: dict[str, DocStatusRecord] | None = None
+
+    def diff(self, incoming: dict[str, str], scope: str | None = None):
+        self.diffs += 1
+        if self._snapshot is None:
+            self._snapshot = dict(self._records)
+        current, self._records = self._records, self._snapshot
+        try:
+            return super().diff(incoming, scope=scope)
+        finally:
+            self._records = current
+
+    def list_all(self) -> list[DocStatusRecord]:
+        return list((self._snapshot or self._records).values())
+
+
+def _no_removal_manager() -> MagicMock:
+    """An indexing manager that fails the test if any artifact is touched."""
+    manager = MagicMock()
+    manager.delete_documents.side_effect = AssertionError("nothing to delete")
+    manager.remove_text_units_from_shared.side_effect = AssertionError(
+        "nothing to strip"
     )
-    assign_document_identity(document, _NEW_SOURCE)
-    assign_registry_source(document, _NEW_SOURCE)
-    return document
-
-
-def _record_under(
-    document: Document, source: str, namespace: str = "default", **update
-) -> DocStatusRecord:
-    return DocStatusRecord(
-        doc_id=compute_doc_id("a.txt", namespace, source),
-        content_hash=compute_content_hash(document),
-        status=DocStatus.PROCESSED,
-        scope=f"{namespace}|{source}",
-        file_path="a.txt",
-        entity_ids=["e1"],
-        failure_count=1,
-        **update,
-    )
-
-
-def _detect_local(registry, document: Document):
-    return detect_delta(
-        [document],
-        registry,
-        scope=_NEW_SCOPE,
-        legacy_doc_ids={document_doc_id(document): legacy_doc_id(document)},
-        locate_source=_LOCATIONS.__getitem__,
-    )[0]
-
-
-def test_a_record_under_a_vanished_local_source_is_adopted(registry) -> None:
-    document = _local_document("a.txt", "Vendor ships goods.")
-    old = _record_under(document, "/corpora/old")
-    registry.put(old)
-
-    delta = _detect_local(registry, document)
-
-    doc_id = document_doc_id(document)
-    assert delta.unchanged == [doc_id]
-    assert delta.new == delta.deleted == []
-    assert registry.get(old.doc_id) is None
-    adopted = registry.get(doc_id)
-    assert adopted.scope == _NEW_SCOPE
-    assert adopted.model_dump(exclude={"doc_id", "scope"}) == old.model_dump(
-        exclude={"doc_id", "scope"}
-    )
+    return manager
 
 
 @pytest.mark.parametrize(
-    ("source", "namespace"),
+    ("text", "status", "expected"),
     [
-        ("/corpora/other", "default"),  # still on disk: a separate corpus
-        ("s3://bucket/corpus-1/", "default"),  # a URI scope
-        ("/corpora/old", "tenant-b"),  # another index namespace
+        ("Vendor ships goods.", DocStatus.PROCESSED, "unchanged"),
+        ("Vendor ships other goods.", DocStatus.PROCESSED, "changed"),
+        ("Vendor ships goods.", DocStatus.FAILED, "changed"),
     ],
 )
-def test_a_record_that_is_not_a_moved_corpus_is_left_alone(
-    registry, source, namespace
+def test_legacy_adoption_diffs_once_and_classifies_in_memory(
+    text, status, expected
 ) -> None:
-    document = _local_document("a.txt", "Vendor ships goods.")
-    other = _record_under(document, source, namespace)
-    registry.put(other)
-
-    delta = _detect_local(registry, document)
-
-    assert delta.new == [document_doc_id(document)]
-    assert registry.list_all() == [other]
-
-
-def test_two_vanished_sources_for_one_path_are_not_adopted(registry) -> None:
-    document = _local_document("a.txt", "Vendor ships goods.")
-    records = [
-        _record_under(document, "/corpora/old"),
-        _record_under(document, "/corpora/older"),
-    ]
-    for record in records:
-        registry.put(record)
-
-    delta = _detect_local(registry, document)
-
-    assert delta.new == [document_doc_id(document)]
-    assert sorted(r.doc_id for r in registry.list_all()) == sorted(
-        r.doc_id for r in records
-    )
-
-
-@pytest.mark.parametrize("finished", [True, False])
-def test_an_interrupted_relocation_drops_only_an_exact_copy(registry, finished) -> None:
-    document = _local_document("a.txt", "Vendor ships goods.")
-    old = _record_under(document, "/corpora/old")
-    registry.put(old)
+    store = _StaleDiffStore()
+    stored = _scoped_document("a.txt", "Vendor ships goods.")
+    legacy = _legacy_record(stored, _SCOPE).model_copy(update={"status": status})
+    store.put(legacy)
+    document = _scoped_document("a.txt", text)
     doc_id = document_doc_id(document)
-    current = old.model_copy(update={"doc_id": doc_id, "scope": _NEW_SCOPE})
-    if not finished:
-        # Indexed under the new scope by a run without relocation: the old
-        # record holds lineage of its own and is not touched.
-        current = current.model_copy(update={"entity_ids": ["e2"]})
-    registry.put(current)
-    # A new file in the same run triggers the relocation check.
-    extra = _local_document("b.txt", "Buyer pays.")
 
     delta, _ = detect_delta(
-        [document, extra],
-        registry,
-        scope=_NEW_SCOPE,
-        locate_source=_LOCATIONS.__getitem__,
+        [document],
+        store,
+        scope=_SCOPE,
+        legacy_doc_ids={doc_id: legacy_doc_id(document)},
     )
 
-    assert delta.unchanged == [doc_id]
-    assert delta.new == [document_doc_id(extra)]
-    assert registry.get(doc_id) == current
-    assert (registry.get(old.doc_id) is None) is finished
+    assert store.diffs == 1
+    assert getattr(delta, expected) == [doc_id]
+    assert delta.new == delta.deleted == []
+    assert store.get(legacy.doc_id) is None
+    assert store.get(doc_id).text_unit_ids == ["t1"]
 
 
-def test_without_locate_source_nothing_is_relocated(registry) -> None:
-    document = _local_document("a.txt", "Vendor ships goods.")
-    old = _record_under(document, "/corpora/old")
-    registry.put(old)
+def test_a_stale_scan_after_adoption_deletes_nothing() -> None:
+    # Diffing again after the re-key, a scan that still returned the legacy
+    # key (scope = this run's) and not the new one read it as deleted and
+    # pruned the artifacts the adopted document now owns.
+    store = _StaleDiffStore()
+    document = _scoped_document("a.txt", "Vendor ships goods.")
+    store.put(_legacy_record(document, _SCOPE))
+    doc_id = document_doc_id(document)
 
-    delta, _ = detect_delta([document], registry, scope=_NEW_SCOPE)
+    delta, _ = detect_delta(
+        [document],
+        store,
+        scope=_SCOPE,
+        legacy_doc_ids={doc_id: legacy_doc_id(document)},
+    )
+
+    assert delta.deleted == [] and delta.unchanged == [doc_id]
+    indexer = IncrementalIndexer(store, _no_removal_manager(), scope=_SCOPE)
+    assert indexer.remove_changed_and_deleted(delta)
+    assert store.get(doc_id).entity_ids == ["e1"]
+
+
+def test_an_exhausted_adopted_document_is_not_read_back() -> None:
+    # The retry limit uses the adopted record as written: a store that does
+    # not return it yet would otherwise make it retry once more.
+    store = _StaleDiffStore()
+    document = _scoped_document("a.txt", "Vendor ships goods.")
+    store.put(
+        _legacy_record(document, _SCOPE).model_copy(
+            update={"status": DocStatus.FAILED, "failure_count": 3}
+        )
+    )
+    doc_id = document_doc_id(document)
+    store.get = MagicMock(side_effect=AssertionError("read back"))  # type: ignore[method-assign]
+
+    delta, _ = detect_delta(
+        [document],
+        store,
+        scope=_SCOPE,
+        max_failures=3,
+        legacy_doc_ids={doc_id: legacy_doc_id(document)},
+    )
+
+    assert delta.unchanged == [doc_id] and delta.changed == []
+
+
+# --- retiring source scopes ---------------------------------------------------
+
+_OLD_SCOPE = "default|/corpora/old"
+
+
+def _record(doc_id: str, scope: str | None) -> DocStatusRecord:
+    return DocStatusRecord(
+        doc_id=doc_id, content_hash="h", status=DocStatus.PROCESSED, scope=scope
+    )
+
+
+def test_diff_reports_the_stored_scopes(registry) -> None:
+    for doc_id, scope in (("a", _SCOPE), ("b", _OLD_SCOPE), ("c", None)):
+        registry.put(_record(doc_id, scope))
+
+    delta = registry.diff({"a": "h"}, scope=_SCOPE)
+
+    assert delta.stored_scopes == sorted([_SCOPE, _OLD_SCOPE])
+    assert delta.deleted == []
+
+
+def test_a_retired_scope_is_deleted_and_nothing_else(registry) -> None:
+    document = _scoped_document("a.txt", "Vendor ships goods.")
+    for doc_id, scope in (
+        ("old-1", _OLD_SCOPE),
+        ("old-2", _OLD_SCOPE),
+        ("other", "default|/corpora/other"),
+        ("tenant-b", "tenant-b|/corpora/old"),
+        ("legacy", None),
+    ):
+        registry.put(_record(doc_id, scope))
+
+    delta, _ = detect_delta(
+        [document], registry, scope=_SCOPE, retired_scopes=[_OLD_SCOPE]
+    )
 
     assert delta.new == [document_doc_id(document)]
-    assert registry.list_all() == [old]
+    assert sorted(delta.deleted) == ["old-1", "old-2"]
+    # Detection writes nothing: the records go when their removal succeeds.
+    assert len(registry.list_all()) == 5
 
 
-def test_local_source_location(tmp_path: Path) -> None:
-    assert local_source_location(tmp_path.as_posix()) == "present"
-    assert local_source_location((tmp_path / "gone").as_posix()) == "missing"
-    assert local_source_location("s3://bucket/prefix/") == "other"
-    assert local_source_location("corpus-a") == "other"
+@pytest.mark.parametrize(
+    ("scope", "retired"),
+    [(_SCOPE, [_SCOPE]), (_SCOPE, [_OLD_SCOPE, _SCOPE]), (None, [_OLD_SCOPE])],
+)
+def test_retiring_the_runs_own_scope_fails_before_any_read(scope, retired) -> None:
+    store = MagicMock()
+    store.diff.side_effect = AssertionError("the registry must not be read")
+
+    with pytest.raises(ConfigurationError, match="own registry scope"):
+        detect_delta([], store, scope=scope, retired_scopes=retired)
+
+
+@pytest.mark.parametrize(
+    "own", ["/corpora/new", "/corpora/new/", "/corpora//new", " /corpora/new "]
+)
+def test_validate_retired_scopes_rejects_the_own_source_scope(own) -> None:
+    with pytest.raises(ConfigurationError, match="own source scope"):
+        validate_retired_scopes(["/corpora/old", own], "/corpora/new", "default")
+
+
+def test_validate_retired_scopes_normalizes_paths_and_keeps_uris() -> None:
+    assert validate_retired_scopes(
+        ["/corpora/old/", "/corpora/old", "s3://bucket/old/", "corpus-a"],
+        "s3://bucket/new/",
+        "tenant-a",
+    ) == [
+        "tenant-a|/corpora/old",
+        "tenant-a|s3://bucket/old/",
+        "tenant-a|corpus-a",
+    ]
+    with pytest.raises(ConfigurationError, match="own source scope"):
+        validate_retired_scopes(["s3://bucket/new/"], "s3://bucket/new/", "t")
+    with pytest.raises(ConfigurationError, match="empty"):
+        validate_retired_scopes(["  "], "/corpora/new", "default")
+
+
+def test_other_local_scopes_names_only_local_directories_of_the_namespace() -> None:
+    delta = DocumentDelta(
+        stored_scopes=[
+            "default|/corpora/new",
+            "default|/corpora/old",
+            "default|/corpora/retired",
+            "default|s3://bucket/corpus/",
+            "default|corpus-a",
+            "tenant-b|/corpora/other",
+        ]
+    )
+
+    assert other_local_scopes(
+        delta, "default|/corpora/new", "default", ["default|/corpora/retired"]
+    ) == ["/corpora/old"]
+
+
+def test_is_local_path_scope_reads_only_the_string() -> None:
+    assert is_local_path_scope("/corpora/gone-on-this-host")
+    assert is_local_path_scope("C:/corpora/a")
+    assert not is_local_path_scope("s3://bucket/prefix/")
+    assert not is_local_path_scope("corpus-a")
+
+
+def test_a_pipeline_retiring_without_the_registry_fails_fast(tmp_path) -> None:
+    pipeline = object.__new__(DataIngestionPipeline)
+    pipeline.config = _config()
+    pipeline.config.aws.dynamodb.enabled = False
+    pipeline.config.indexing.retire_source_scopes = ["/corpora/old"]
+    pipeline._doc_status = None
+    with pytest.raises(ConfigurationError, match="needs incremental indexing"):
+        pipeline._validate_retired_scopes(tmp_path)
+
+    pipeline._doc_status = FakeDocStatusStore()
+    pipeline._validate_retired_scopes(tmp_path)
+    pipeline.config.indexing.retire_source_scopes = [f"{tmp_path.as_posix()}/"]
+    with pytest.raises(ConfigurationError, match="own source scope"):
+        pipeline._validate_retired_scopes(tmp_path)

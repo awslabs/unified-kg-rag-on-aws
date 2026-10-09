@@ -28,6 +28,7 @@ from unified_kg_rag.application.ingestion.pipeline_stages import (
     TextChunkingStage,
     TranslationStage,
 )
+from unified_kg_rag.domain.ingestion.delta_detector import validate_retired_scopes
 from unified_kg_rag.domain.models import (
     Config,
     PipelineConfig,
@@ -41,6 +42,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
 from unified_kg_rag.shared import (
     CacheSyncError,
+    ConfigurationError,
     PipelineExecutionError,
     PipelineResumeError,
     PipelineResumeManager,
@@ -58,6 +60,7 @@ from unified_kg_rag.shared.utils import (
     corpus_manifest_fingerprint,
     stage_cache_key,
 )
+from unified_kg_rag.shared.utils.document_identity import registry_namespace
 
 logger = get_logger(__name__)
 T = TypeVar("T", bound=BaseModel)
@@ -339,6 +342,7 @@ class DataIngestionPipeline:
             )
 
             self._validate_source_directory(source_path)
+            self._validate_retired_scopes(source_path)
 
             resolved_pipeline_id = self._resolve_pipeline_id(source_path, pipeline_id)
             # Every log line of the run, the S3 sync and the failure report
@@ -420,6 +424,29 @@ class DataIngestionPipeline:
             raise FileNotFoundError(
                 f"Source directory not found or not a directory: '{source_directory}'"
             )
+
+    def _validate_retired_scopes(self, source_directory: Path) -> None:
+        """Fail before any stage runs when ``indexing.retire_source_scopes``
+        cannot be applied: without the doc-status registry, or when it names
+        the run's own source scope (the loading stage checks again against
+        the scope it actually uses)."""
+        retired = self.config.indexing.retire_source_scopes
+        if not retired:
+            return
+        if self._doc_status is None and not self.config.aws.dynamodb.enabled:
+            raise ConfigurationError(
+                "indexing.retire_source_scopes / --retire-source-scope needs "
+                "incremental indexing (aws.dynamodb.enabled: true): the "
+                "retired records live in the doc-status registry"
+            )
+        parsing = self.config.processing.document_parsing
+        validate_retired_scopes(
+            retired,
+            parsing.source_scope or source_directory.as_posix(),
+            registry_namespace(
+                parsing.index_value, self.config.indexing.additional_suffix
+            ),
+        )
 
     def _resolve_pipeline_id(
         self, source_directory: Path, pipeline_id: str | None

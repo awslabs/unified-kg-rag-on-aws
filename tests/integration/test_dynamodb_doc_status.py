@@ -264,3 +264,15 @@ def test_string_sets_read_back_sorted(ddb_store: DynamoDBDocStatusStore) -> None
     assert read.text_unit_ids == ["t1", "t2"]
     assert ddb_store.list_all() == [read]
     assert ddb_store.get_many(["a"]) == {"a": read}
+
+
+def test_diff_reports_stored_scopes_like_the_fake(
+    ddb_store: DynamoDBDocStatusStore,
+) -> None:
+    fake = FakeDocStatusStore()
+    for store in (ddb_store, fake):
+        for doc_id, scope in (("a", "s1"), ("b", "s2"), ("c", None), ("d", "s1")):
+            store.put(DocStatusRecord(doc_id=doc_id, content_hash="h", scope=scope))
+
+    assert ddb_store.diff({"a": "h"}, scope="s1") == fake.diff({"a": "h"}, scope="s1")
+    assert ddb_store.diff({}, scope="s2").stored_scopes == ["s1", "s2"]

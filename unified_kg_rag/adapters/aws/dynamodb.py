@@ -325,6 +325,10 @@ class DynamoDBDocStatusStore:
             for doc_id, (_, stored_scope, _) in stored.items()
             if doc_id not in incoming_ids and (scope is None or stored_scope == scope)
         ]
+        # Already projected for the deletion filter: reporting it is free.
+        delta.stored_scopes = sorted(
+            {s for _, s, _ in stored.values() if s is not None}
+        )
         return delta
 
     @staticmethod
