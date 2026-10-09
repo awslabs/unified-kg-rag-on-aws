@@ -461,6 +461,19 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   deleted in batches of at most 20 names and 3,000 characters; a failed batch
   does not stop the others, and the error names the indices left behind
   (#187).
+- Two source scopes on one index suffix (different source directories or
+  `document_parsing.source_scope` values) no longer delete each other's
+  content when both hold a file at the same relative path. The registry key
+  was the index namespace and relative path only, so each scope's run read the
+  other's record as its own changed document, pruned its artifacts and
+  re-registered it under its own scope, on every run. The source scope is now
+  part of the key; text-unit and other artifact ids do not depend on it and
+  are unchanged. Existing registries are migrated in place: the first run of
+  a scope re-keys each legacy record of that scope (or with no scope) to the
+  new key with its content hash, status and lineage, so the upgrade neither
+  re-extracts nor deletes anything; another scope's legacy record is left for
+  that scope's run. Moving a local corpus to another directory without a
+  fixed `source_scope` now re-indexes it under the new scope (#PR).
 - Merging small chunks no longer drops text when a chunk repeats the previous
   chunk's last lines verbatim, such as a document ending in two identical
   `Signed: ____` lines with an LLM line boundary between them. The repeated

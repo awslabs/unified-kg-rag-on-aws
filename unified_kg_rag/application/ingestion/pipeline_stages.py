@@ -407,12 +407,16 @@ class DocumentLoadingStage(PipelineStage):
         Imported lazily to avoid a hard dependency when the feature is off.
         """
         from unified_kg_rag.domain.ingestion.delta_detector import (
+            assign_registry_source,
             detect_delta,
             filter_documents_to_process,
             fingerprint_documents,
+            legacy_doc_id,
         )
 
-        scope, failed_doc_ids = self._registry_scope(context)
+        scope, source_scope, failed_doc_ids = self._registry_scope(context)
+        for document in documents:
+            assign_registry_source(document, source_scope)
         if self.config.indexing.reset:
             # A reset clears the stores and the registry before indexing, so
             # every document is new: diffing against the registry here would
@@ -434,8 +438,15 @@ class DocumentLoadingStage(PipelineStage):
                 documents,
                 store,
                 scope=scope,
-                failed_doc_ids=failed_doc_ids,
+                failed_doc_ids=list(failed_doc_ids),
                 max_failures=self.config.indexing.max_document_failures,
+                legacy_doc_ids={
+                    **failed_doc_ids,
+                    **{
+                        document_doc_id(document): legacy_doc_id(document)
+                        for document in documents
+                    },
+                },
             )
         except DocStatusRegistryError:
             raise
@@ -461,15 +472,19 @@ class DocumentLoadingStage(PipelineStage):
         )
         return to_process, skipped
 
-    def _registry_scope(self, context: PipelineContext) -> tuple[str, list[str]]:
-        """The run's registry scope and the registry ids of its failed files.
+    def _registry_scope(
+        self, context: PipelineContext
+    ) -> tuple[str, str, dict[str, str]]:
+        """The run's registry scope, its source scope and its failed files.
 
         The scope is the index namespace the run writes (``index_value`` +
         ``indexing.additional_suffix``) and the corpus source
         (``document_parsing.source_scope``, else the resolved source
         directory), so a run never deletes another tenant's or another
-        corpus's documents. Failed files are keyed the same way their
-        documents would have been.
+        corpus's documents. The source scope is also part of every document's
+        registry key, so two corpora written to one namespace never share a
+        record. Failed files are keyed the same way their documents would have
+        been, mapped to their legacy key (see ``legacy_doc_id``).
         """
         from unified_kg_rag.domain.ingestion.delta_detector import registry_scope
         from unified_kg_rag.shared.utils.document_identity import (
@@ -485,14 +500,13 @@ class DocumentLoadingStage(PipelineStage):
         )
         root = self.loader.source_directory
         source_scope = parsing.source_scope or root.as_posix()
-        failed_doc_ids = [
-            compute_doc_id(
-                relative_source_path(path, root) or normalize_source_path(path),
-                namespace,
+        failed_doc_ids: dict[str, str] = {}
+        for path in context.failed_source_files:
+            relative = relative_source_path(path, root) or normalize_source_path(path)
+            failed_doc_ids[compute_doc_id(relative, namespace, source_scope)] = (
+                compute_doc_id(relative, namespace)
             )
-            for path in context.failed_source_files
-        ]
-        return registry_scope(namespace, source_scope), failed_doc_ids
+        return registry_scope(namespace, source_scope), source_scope, failed_doc_ids
 
     def _build_doc_status_store(self) -> "DocStatusPort":
         if self._doc_status is not None:

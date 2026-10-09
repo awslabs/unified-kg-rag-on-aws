@@ -12,7 +12,8 @@ unless ``LOCAL_STORES=1``::
     docker compose -f docker/compose.local.yaml down -v
 
 Every run writes under its own ``indexing.additional_suffix`` and clears it
-afterwards, so it does not touch other data in the containers.
+afterwards, so it does not touch other data in the containers. The incremental
+pipeline test keeps the doc-status registry in memory (no DynamoDB).
 """
 
 from __future__ import annotations
@@ -26,7 +27,15 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
+from tests.integration.test_incremental_source_scopes import (
+    A_TEXT,
+    B_TEXT,
+    ScopeStack,
+    scope_test_config,
+    write_corpus,
+)
 from unified_kg_rag.adapters.aws import NeptuneClient, OpenSearchClient
 from unified_kg_rag.adapters.retrievers import NeptuneRetriever, OpenSearchRetriever
 from unified_kg_rag.adapters.storage import NeptuneIndexer, OpenSearchIndexer
@@ -580,3 +589,58 @@ def test_full_reindex_keeps_one_index_per_alias(
     finally:
         indexer.clear([_SUFFIX])
         indexer.close()
+
+
+def _stored_texts(indexer: OpenSearchIndexer, config: Config) -> set[str]:
+    client = indexer.opensearch_client.client
+    alias = indexer._get_name(config.indexing.opensearch.text_units_index_prefix, None)
+    if not client.indices.exists_alias(name=alias):
+        return set()
+    client.indices.refresh(index=alias)
+    hits = client.search(
+        index=alias,
+        body={"size": 100, "query": {"match_all": {}}},
+        _source_excludes=["*_embedding"],
+    )["hits"]["hits"]
+    return {hit["_source"]["text"].strip() for hit in hits}
+
+
+def test_two_source_scopes_with_the_same_relative_path_keep_their_content(
+    local_config: Config, tmp_path: Path
+) -> None:
+    # Two corpora on one index suffix both hold contract.txt. Each run used to
+    # read the other's record as its own changed document and prune it.
+    config = scope_test_config(local_config)
+    config.indexing.additional_suffix = f"scope{uuid.uuid4().hex[:8]}"
+    graph = NeptuneIndexer(config)
+    vectors = OpenSearchIndexer(config, embedding_factory=HashingEmbeddingFactory())
+    stack = ScopeStack(
+        FakeDocStatusStore(), tmp_path, config=config, graph=graph, vectors=vectors
+    )
+    depot = "Depot stores widgets."
+    source_a = write_corpus(
+        tmp_path / "src-a", {"contract.txt": A_TEXT, "depot.txt": depot}
+    )
+    source_b = write_corpus(tmp_path / "src-b", {"contract.txt": B_TEXT})
+    try:
+        stack.run(source_a)
+        stack.run(source_b)
+        for source in (source_a, source_b, source_a):
+            delta = stack.run(source).incremental_delta
+            assert delta.unchanged
+            assert delta.new == delta.changed == delta.deleted == []
+            assert not stack.model.extractions
+            assert _stored_texts(vectors, config) == {A_TEXT, B_TEXT, depot}
+
+        (source_a / "contract.txt").unlink()
+        assert len(stack.run(source_a).incremental_delta.deleted) == 1
+        assert _stored_texts(vectors, config) == {B_TEXT, depot}
+        assert sorted(r.file_path for r in stack.registry.list_all()) == [
+            "contract.txt",
+            "depot.txt",
+        ]
+    finally:
+        graph.clear([_SUFFIX])
+        vectors.clear([_SUFFIX])
+        graph.close()
+        vectors.close()

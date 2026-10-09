@@ -7,10 +7,14 @@ corpus synced to ``/tmp/graphrag-source`` on one machine and checked out under
 ``~/corpus`` on another yields the same ids), and a document *version* by that
 path plus a hash of its full text:
 
-* ``compute_doc_id(relative_path, namespace)`` -- the registry key of a
-  document across runs: the index namespace (suffix, plus any additional
-  suffix) and the relative path. The namespace keeps two tenants' identically
-  named files apart even when both corpora are staged in the same directory.
+* ``compute_doc_id(relative_path, namespace, source_scope)`` -- the registry
+  key of a document across runs: the index namespace (suffix, plus any
+  additional suffix), the corpus source scope and the relative path. The
+  namespace keeps two tenants' identically named files apart even when both
+  corpora are staged in the same directory; the source scope keeps two
+  corpora written to one namespace apart when both contain the same relative
+  path. Without a source scope the key is the legacy one (namespace and path
+  only) that registries written before source scopes were keyed by.
 * ``compute_text_hash(text)`` -- content fingerprint (change detection).
 * ``compute_document_id(source_key, content_hash)`` -- the per-version
   ``Document.document_id`` that text-unit ids derive from. Hashing the full
@@ -32,6 +36,9 @@ from .common import compute_hash, generate_stable_id
 RELATIVE_PATH_KEY = "relative_path"
 # Document.metadata key holding the registry namespace the document belongs to.
 REGISTRY_NAMESPACE_KEY = "registry_namespace"
+# Document.metadata key holding the corpus source scope the document was read
+# from (``document_parsing.source_scope``, else the resolved source directory).
+REGISTRY_SOURCE_KEY = "registry_source"
 
 DEFAULT_NAMESPACE = "default"
 
@@ -77,8 +84,22 @@ def registry_namespace(suffix: str | None, additional_suffix: str | None = None)
 
 
 def compute_doc_id(
-    relative_path: str | Path, namespace: str = DEFAULT_NAMESPACE
+    relative_path: str | Path,
+    namespace: str = DEFAULT_NAMESPACE,
+    source_scope: str | None = None,
 ) -> str:
-    """Registry key of a document: its index namespace and relative path."""
-    key = f"{namespace}\x00{normalize_source_path(relative_path)}"
+    """Registry key of a document: its index namespace, corpus source scope
+    and relative path.
+
+    ``source_scope=None`` returns the legacy key (namespace and relative path
+    only), which two corpora written to one namespace share for files with
+    the same relative path; the pipeline always passes the run's source scope
+    and only uses the legacy key to adopt records written before it did.
+    """
+    path = normalize_source_path(relative_path)
+    key = (
+        f"{namespace}\x00{path}"
+        if source_scope is None
+        else f"{namespace}\x00{source_scope}\x00{path}"
+    )
     return compute_hash(key, algorithm="sha256", length=_ID_HASH_LENGTH)
