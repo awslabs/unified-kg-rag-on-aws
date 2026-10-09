@@ -525,6 +525,8 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   from document_loading (`--resume-from-stage document_loading`) to retire
   them. The applied scopes are recorded on the pipeline context
   (`incremental_retired_scopes`) (#PR).
+- The CI local-stores job no longer sleeps after its last failed attempt to
+  start the stores before failing (#PR).
 - An incremental run interrupted inside the indexing stage (a killed task, a
   store outage, the failure gate) is repaired by the next run. Before, a run
   that stopped after pruning a changed document left its old content hash in

@@ -110,7 +110,7 @@ jobs:
           for attempt in 1 2 3 4 5; do
             docker compose -f docker/compose.local.yaml up -d --wait && exit 0
             docker compose -f docker/compose.local.yaml down --remove-orphans || true
-            sleep $((attempt * 20))
+            if [ "$attempt" -lt 5 ]; then sleep $((attempt * 20)); fi
           done
           exit 1
 
