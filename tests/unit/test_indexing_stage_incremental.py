@@ -5,8 +5,9 @@
 Pins the contract between the stage and the incremental orchestrator, which is
 what keeps the live stores and the doc-status registry consistent:
 
-* stale artifacts of changed docs are pruned, then deleted docs' artifacts and
-  registry rows are removed, and only then is the delta upserted + recorded;
+* stale artifacts of changed and deleted docs are removed in one pass, the
+  deleted docs' registry rows dropped, and only then is the delta upserted +
+  recorded;
 * the run's index suffix comes from the first text unit (default otherwise);
 * a missing delta falls back to a full ``index_all_data`` without touching the
   registry.
@@ -166,7 +167,7 @@ def _full_delta() -> DocumentDelta:
     )
 
 
-def test_prunes_changed_then_removes_deleted_then_commits(mocker) -> None:
+def test_removes_changed_and_deleted_in_one_pass_then_commits(mocker) -> None:
     store = FakeDocStatusStore()
     _seed_registry(store)
     manager = _RecordingManager()
@@ -177,12 +178,10 @@ def test_prunes_changed_then_removes_deleted_then_commits(mocker) -> None:
     results = _run(stage, ctx, text_units, entities)
 
     assert [name for name, _ in manager.calls] == [
-        "delete_documents",  # prune the changed doc's stale artifacts
-        "delete_documents",  # remove the deleted doc's artifacts
+        "delete_documents",  # stale artifacts of the changed + deleted docs
         "index_delta",  # upsert the freshly extracted delta
     ]
-    assert manager.calls[0][1] == {"default": ["e-stale", "t-old"]}
-    assert manager.calls[1][1] == {"default": ["e-deleted"]}
+    assert manager.calls[0][1] == {"default": ["e-deleted", "e-stale", "t-old"]}
     assert results["entities"].successful_items == 1
 
     # Registry: changed doc re-recorded with the new hash and lineage; deleted
@@ -264,6 +263,25 @@ def test_failed_deleted_doc_removal_keeps_its_row_and_fails_the_stage(
     assert [name for name, _ in manager.calls][-1] == "index_delta"
     changed = store.get(compute_doc_id(_CHANGED))
     assert changed is not None and changed.content_hash == "hash-v2"
+
+
+def test_failed_joint_removal_commits_nothing_and_keeps_both_rows(mocker) -> None:
+    store = FakeDocStatusStore()
+    _seed_registry(store)
+    manager = _RecordingManager(delete_failures=1)
+    stage = _stage(mocker, store, manager)
+    text_units, entities = _delta_inputs()
+    ctx = _context(_full_delta(), [_document("run-changed", _CHANGED)])
+
+    with pytest.raises(PipelineStageError, match="not committing"):
+        _run(stage, ctx, text_units, entities)
+
+    # The changed doc keeps its old lineage and the deleted doc its row, so the
+    # next run retries the whole removal.
+    assert "index_delta" not in [name for name, _ in manager.calls]
+    changed = store.get(compute_doc_id(_CHANGED))
+    assert changed is not None and changed.content_hash == "hash-v1"
+    assert store.get(compute_doc_id(_DELETED)) is not None
 
 
 def test_failed_prune_does_not_record_changed_doc_as_processed(mocker) -> None:

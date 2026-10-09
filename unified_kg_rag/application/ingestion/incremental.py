@@ -437,7 +437,8 @@ class IncrementalIndexer:
 
         Returns True when every artifact was removed (or nothing was deleted).
         The caller must report False as a failed run: the stores still hold
-        the deleted documents' content.
+        the deleted documents' content. A delta that also changes documents
+        must use :meth:`remove_changed_and_deleted` instead.
         """
         if not delta.deleted:
             return True
@@ -468,10 +469,44 @@ class IncrementalIndexer:
         could never be cleaned up (permanent orphans). Not committing keeps the
         old lineage and content hash, so the next run re-detects the docs as
         changed and retries the prune.
+
+        A delta that also deletes documents must use
+        :meth:`remove_changed_and_deleted` instead: pruning and deleting in
+        separate passes keeps what only a changed and a deleted doc share.
         """
         if not delta.changed:
             return True
         return self.remove_obsolete_artifacts(delta.changed)
+
+    def remove_changed_and_deleted(self, delta: DocumentDelta) -> bool:
+        """Remove the stale artifacts of changed AND deleted docs in one pass.
+
+        The removal is planned once over changed + deleted, so an artifact only
+        those documents reference is removed even when it is referenced by one
+        changed and one deleted document. Planning the two sets separately
+        (:meth:`prune_changed` then :meth:`remove_deleted`) treats each set as
+        a survivor of the other and leaves such artifacts behind as orphans
+        with no text units.
+
+        The deleted documents' registry records are deleted only when the
+        removal fully succeeded (see :meth:`remove_deleted`). Returns False on
+        a partial failure; the caller MUST NOT :meth:`commit` changed
+        documents on False, for the reason given in :meth:`prune_changed`.
+        """
+        doc_ids = list(dict.fromkeys(delta.changed + delta.deleted))
+        if not doc_ids:
+            return True
+        if not self.remove_obsolete_artifacts(doc_ids):
+            if delta.deleted:
+                logger.warning(
+                    "Keeping %d deleted-doc registry records because artifact "
+                    "removal did not fully succeed; will retry next run.",
+                    len(delta.deleted),
+                )
+            return False
+        for doc_id in delta.deleted:
+            self.doc_status.delete(doc_id)
+        return True
 
     def _plan_removal(self, doc_ids: list[str]) -> dict[str, _SuffixRemoval]:
         target = set(doc_ids)

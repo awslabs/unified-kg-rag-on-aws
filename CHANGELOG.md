@@ -453,6 +453,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- An incremental run that both changes one document and deletes another no
+  longer leaves behind the entities and relationships only those two
+  documents shared. The stale artifacts of changed documents and of deleted
+  documents were removed in two passes, each treating the other set's
+  documents as survivors, so such an artifact was kept with no text units
+  and retrieval could still surface the deleted content. The removal is now
+  planned once over changed + deleted documents. If it fails, the deleted
+  documents' registry records are kept as before, and the run fails before
+  committing whenever the delta has changed documents (#PR).
 - An incremental commit no longer records every document FAILED when one
   community's `MemberOf` edges fail in more than one Neptune entity batch.
   Each failed batch carries the community id, and the commit deduplicated the
