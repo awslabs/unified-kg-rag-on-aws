@@ -9,6 +9,13 @@ from uuid import UUID
 import boto3
 from aws_assume_role_lib.aws_assume_role_lib import assume_role
 from botocore.config import Config as BotoConfig
+from botocore.exceptions import (
+    ClientError,
+    NoCredentialsError,
+    PartialCredentialsError,
+    ProfileNotFound,
+    TokenRetrievalError,
+)
 from langchain_aws import BedrockEmbeddings, ChatBedrock, ChatBedrockConverse
 from langchain_aws.document_compressors.rerank import BedrockRerank
 from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
@@ -210,6 +217,34 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
         raise NotImplementedError
 
 
+# Error codes for credentials that are missing, expired or invalid. Unlike a
+# missing ListInferenceProfiles grant, these fail every later Bedrock call, so
+# resolution must not hide them behind the bare-model-id fallback.
+_CREDENTIAL_ERROR_CODES = frozenset(
+    {
+        "ExpiredToken",
+        "ExpiredTokenException",
+        "InvalidClientTokenId",
+        "UnrecognizedClientException",
+    }
+)
+
+
+def _is_credential_error(exc: BaseException) -> bool:
+    if isinstance(
+        exc,
+        NoCredentialsError
+        | PartialCredentialsError
+        | ProfileNotFound
+        | TokenRetrievalError,
+    ):
+        return True
+    return (
+        isinstance(exc, ClientError)
+        and exc.response.get("Error", {}).get("Code") in _CREDENTIAL_ERROR_CODES
+    )
+
+
 class BedrockCrossRegionModelHelper:
     # Cache the system-defined inference-profile id set per region. Resolving a
     # model id used to call list_inference_profiles on EVERY get_model() (twice
@@ -266,6 +301,13 @@ class BedrockCrossRegionModelHelper:
             )
             return model_id
         except Exception as e:
+            cause = e.__cause__ if isinstance(e, AWSServiceError) else e
+            if cause is not None and _is_credential_error(cause):
+                raise AWSServiceError(
+                    f"No valid AWS credentials for Amazon Bedrock in region "
+                    f"'{region_name}': {cause}. Configure credentials (for "
+                    f"example AWS_PROFILE, `aws sso login`, or an instance role)."
+                ) from cause
             logger.warning(
                 "Failed to resolve cross-region model for '%s': %s. Falling back to standard model.",
                 model_id,

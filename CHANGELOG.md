@@ -437,6 +437,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (`。．｡！？；`) before falling back to spaces and characters, so Chinese and
   Japanese text is no longer cut mid-sentence. Text without these characters
   is chunked exactly as before (#177).
+- Missing, expired or invalid AWS credentials now fail model resolution with
+  "No valid AWS credentials for Amazon Bedrock ..." instead of falling back to
+  the bare model id, which for inference-profile-only models surfaced as a
+  misleading "Enable aws.bedrock.enable_global_profile" error. A missing
+  `bedrock:ListInferenceProfiles` grant still falls back (#PR).
 - An empty (or comment-only) `config.yaml` loads the defaults instead of
   raising a raw `TypeError`; a file whose top level is not a mapping is a
   clear `ValueError` (#PR).
