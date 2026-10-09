@@ -503,6 +503,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   re-extracts nor deletes anything; another scope's legacy record is left for
   that scope's run. Moving a local corpus to another directory without a
   fixed `source_scope` now re-indexes it under the new scope (#188).
+  Upgrade note: a legacy record is adopted only when its file is still in the
+  corpus, and a record without a scope is never listed as deleted. The record
+  of a file deleted before the upgrade therefore stays, and so do its
+  artifacts. Run once with `indexing.reset: true` to clear them; deleting
+  those registry items (no `registry_scope` attribute) only cleans the
+  registry and leaves the artifacts until a reset (#PR).
 - `run-prompt-tuning` few-shot examples show relationship strength on the
   1-10 scale the extraction prompt teaches. Relationship weight already holds
   the raw strength, but the example renderer multiplied it by 10 (so a
