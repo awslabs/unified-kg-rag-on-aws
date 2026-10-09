@@ -437,6 +437,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (`。．｡！？；`) before falling back to spaces and characters, so Chinese and
   Japanese text is no longer cut mid-sentence. Text without these characters
   is chunked exactly as before (#177).
+- `run-rag --help`, invalid arguments and a missing `--query`/`--interactive`
+  no longer print an asyncio "Task exception was never retrieved ...
+  SystemExit" traceback: arguments are parsed before the event loop starts,
+  and the missing-mode case is a usage error (exit code 2) (#PR).
 - Missing, expired or invalid AWS credentials now fail model resolution with
   "No valid AWS credentials for Amazon Bedrock ..." instead of falling back to
   the bare model id, which for inference-profile-only models surfaced as a

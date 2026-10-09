@@ -160,7 +160,10 @@ class CommandLineInterface:
         return parser
 
     def parse_args(self) -> argparse.Namespace:
-        return self.parser.parse_args()
+        args = self.parser.parse_args()
+        if not args.interactive and not args.query:
+            self.parser.error("either --query or --interactive is required")
+        return args
 
 
 class RAGChainRunner:
@@ -180,14 +183,6 @@ class RAGChainRunner:
             "clear-filters": self._handle_clear_filters,
             "show-config": self._handle_show_config,
         }
-        self._validate_args()
-
-    def _validate_args(self) -> None:
-        if not self.args.interactive and not self.args.query:
-            console.print(
-                "[red]Error: Either --query or --interactive option is required.[/red]"
-            )
-            sys.exit(1)
 
     def _get_suffix_display(self) -> str:
         if self.args.suffix:
@@ -564,23 +559,33 @@ class RAGChainRunner:
         console.print(Panel.fit("\n".join(config_lines), border_style="blue"))
 
 
-async def async_main() -> None:
+async def async_main(args: argparse.Namespace) -> int:
+    """Run the CLI and return its exit code.
+
+    Never lets ``SystemExit`` escape: raised inside the task that
+    ``asyncio.run`` drives (under nest_asyncio), it is reported as
+    "Task exception was never retrieved" with a traceback.
+    """
     try:
-        cli = CommandLineInterface()
-        args = cli.parse_args()
         runner = RAGChainRunner(args)
         await runner.run()
+        return 0
+    except SystemExit as e:
+        return e.code if isinstance(e.code, int) else 1
     except KeyboardInterrupt:
         console.print("\n[yellow]Execution interrupted by user.[/yellow]")
-        sys.exit(130)
+        return 130
     except Exception as e:
         console.print(f"\n[red]An unexpected error occurred: {_markup_safe(e)}[/red]")
         logger.exception("Unexpected error during execution")
-        sys.exit(1)
+        return 1
 
 
 def main() -> None:
-    asyncio.run(async_main())
+    # Parse (and let argparse exit on --help or bad arguments) before the event
+    # loop starts.
+    args = CommandLineInterface().parse_args()
+    sys.exit(asyncio.run(async_main(args)))
 
 
 if __name__ == "__main__":

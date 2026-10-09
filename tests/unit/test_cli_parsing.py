@@ -94,13 +94,34 @@ def test_rag_parser_filters_nargs() -> None:
 # --- run_rag_chain: RAGChainRunner validation ----------------------------
 
 
-def test_rag_runner_requires_query_or_interactive(config, mocker) -> None:
-    # No --query and not --interactive -> _validate_args exits.
-    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
-    args = _rag_parser().parse_args([])
+@pytest.mark.parametrize(
+    ("argv", "code"),
+    [(["--help"], 0), (["--top-k", "x"], 2), ([], 2)],
+    ids=["help", "bad-arg", "no-query-or-interactive"],
+)
+def test_rag_main_parses_args_before_the_event_loop(
+    mocker, monkeypatch: pytest.MonkeyPatch, argv: list[str], code: int
+) -> None:
+    # argparse's SystemExit raised inside asyncio.run (under nest_asyncio)
+    # printed "Task exception was never retrieved ... SystemExit" tracebacks.
+    monkeypatch.setattr(sys, "argv", ["run-rag", *argv])
+    loop_run = mocker.patch.object(run_rag_chain.asyncio, "run")
     with pytest.raises(SystemExit) as exc:
-        run_rag_chain.RAGChainRunner(args)
-    assert exc.value.code == 1
+        run_rag_chain.main()
+    assert exc.value.code == code
+    loop_run.assert_not_called()
+
+
+async def test_rag_async_main_turns_system_exit_into_a_return_code(
+    mocker,
+) -> None:
+    # A SystemExit escaping the task is what asyncio reports as "never
+    # retrieved"; the coroutine returns the code instead.
+    runner = mocker.MagicMock()
+    runner.run = mocker.AsyncMock(side_effect=SystemExit(1))
+    mocker.patch.object(run_rag_chain, "RAGChainRunner", return_value=runner)
+    args = _rag_parser().parse_args(["-q", "hi"])
+    assert await run_rag_chain.async_main(args) == 1
 
 
 def test_rag_runner_accepts_query(config, mocker) -> None:
