@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import html
 import json
 from typing import Any, ClassVar
 
@@ -65,6 +66,7 @@ class InteractiveRenderer:
 
         self._add_nodes(net, graph, layout)
         self._add_edges(net, graph)
+        self._escape_titles_for_html_popup(net)
 
         net.save_graph(outputs_path)
         logger.info("Interactive visualization saved to %s", outputs_path)
@@ -146,6 +148,29 @@ class InteractiveRenderer:
                 },
                 shadow=True,
             )
+
+    @staticmethod
+    def _escape_titles_for_html_popup(net: Network) -> None:
+        """HTML-escape node titles when pyvis will render them as HTML.
+
+        Titles carry graph attributes, including LLM-written descriptions.
+        vis-network shows a string title as plain text (``innerText``), but
+        when any node title contains ``href`` pyvis switches to a custom node
+        popup that assigns ``popup.innerHTML = title``, so an attribute such as
+        ``<img src=x onerror=...>`` would run as script. In that mode every
+        node title is escaped and its line breaks become ``<br>``; otherwise
+        titles stay plain text so the default tooltip shows them verbatim.
+        Edge titles always go through the plain-text tooltip.
+        """
+        titles = [node.get("title") for node in net.nodes]
+        if not any(isinstance(t, str) and "href" in t for t in titles):
+            return
+        for node in net.nodes:
+            title = node.get("title")
+            if isinstance(title, str):
+                node["title"] = "<br>".join(
+                    html.escape(line) for line in title.split("\n")
+                )
 
     @staticmethod
     def _generate_palette(num_colors: int) -> list[str]:
@@ -350,6 +375,7 @@ class InteractiveRenderer:
                     },
                 )
 
+        self._escape_titles_for_html_popup(net)
         net.save_graph(outputs_path)
         logger.info("Community hierarchy visualization saved to %s", outputs_path)
 

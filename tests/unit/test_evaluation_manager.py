@@ -537,6 +537,37 @@ class _FakeChain:
         return [self.outputs[i["query"]] for i in inputs]
 
 
+class TestAnswerGenerationInputs:
+    async def test_question_wins_over_query_metadata(self, config: Config) -> None:
+        # load_data validates {**rag_fields, "query": question}; the chain must
+        # receive the same precedence, not a stale metadata.query.
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        seen: list[dict] = []
+
+        class _RecordingChain:
+            async def abatch(self, inputs, config=None, return_exceptions=False):
+                seen.extend(inputs)
+                return [_rag_output("Vendor ships.", {}) for _ in inputs]
+
+            async def ainvoke(self, inputs, config=None):
+                seen.append(inputs)
+                return _rag_output("Vendor ships.", {})
+
+        manager = EvaluationManager(config, rag_chain=_RecordingChain())
+        query = EvaluationQuery(
+            query_id="q1",
+            question="Who ships?",
+            metadata={"query": "Who pays?", "search_strategy": "local"},
+        )
+        await manager.evaluate_dataset(
+            [query],
+            [EvaluationGroundTruth(query_id="q1", ground_truth="Vendor")],
+            show_progress=False,
+        )
+        assert [i["query"] for i in seen] == ["Who ships?"]
+        assert seen[0]["search_strategy"] == "local"
+
+
 class TestErroredQueries:
     async def test_batch_failure_is_not_retried_with_backoff(
         self, config: Config
