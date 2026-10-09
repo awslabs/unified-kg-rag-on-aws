@@ -603,10 +603,10 @@ class TestMergeLaws:
         assert set(twice[0].text_unit_ids) == {"t1", "t2"}
 
     def test_relationship_weight_idempotent_on_reapply(self) -> None:
-        # Regression: relationship weight is derived from the count of distinct
-        # supporting text units, NOT a running sum, so re-applying the same delta
-        # (e.g. a retried commit) leaves both the weight and the text-unit set
-        # stable. The prior summed-weight semantics double-counted on re-apply.
+        # Regression: relationship weight is the sum of the per-text-unit
+        # strengths and a re-applied delta replaces its text units' entries, so
+        # re-applying the same delta (e.g. a retried commit) leaves both the
+        # weight and the text-unit set stable instead of double-counting.
         old = [
             Relationship(
                 id="r1",
@@ -627,8 +627,8 @@ class TestMergeLaws:
         ]
         once = merge_relationships(old, delta)
         twice = merge_relationships(once, delta)
-        assert once[0].weight == 2.0  # two distinct supporting text units
-        assert twice[0].weight == 2.0  # re-apply does NOT inflate the weight
+        assert once[0].weight == 3.0  # t1 (1.0) + t2 (2.0)
+        assert twice[0].weight == 3.0  # re-apply does NOT inflate the weight
         assert set(twice[0].text_unit_ids) == {"t1", "t2"}  # tu set stays stable
 
     def test_merge_entities_order_independent_on_names(self) -> None:

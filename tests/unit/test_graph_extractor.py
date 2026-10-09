@@ -257,6 +257,8 @@ class TestMergeRelationships:
         assert len(merged) == 1
         assert merged[0].weight == 4.0
         assert set(merged[0].text_unit_ids) == {"t1", "t2"}
+        # Strength per text unit, kept for the incremental merge.
+        assert merged[0].attributes == {"text_unit_weights": [1.0, 3.0]}
 
     def test_distinct_relationship_ids_not_merged(self, extractor) -> None:
         r1 = Relationship(id="r1", source_id="e1", target_id="e2")

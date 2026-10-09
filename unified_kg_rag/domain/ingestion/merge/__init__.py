@@ -11,7 +11,8 @@ unified-kg-rag-on-aws's Pydantic domain models (no pandas):
   keep the max rank/confidence.
 - relationships merge by id, else by (source, target, type): union
   description lines,
-  ``text_unit_ids`` and attributes; weight = number of supporting text units.
+  ``text_unit_ids`` and attributes; weight = sum of the per-text-unit
+  extracted strengths (``relationship_weights``), as in a full build.
 - communities/reports: id-offset append (MS never re-clusters globally on an
   incremental run; new communities are appended, not merged into existing ones).
 

@@ -145,6 +145,7 @@ def _shared_vendor_corpus(inc):
         source_id="e-vendor",
         target_id="e-buyer",
         type="SUPPLIES",
+        weight=2.0,
         text_unit_ids=["tu-a", "tu-b"],
     )
     _commit(inc, [a, b], [tu_a, tu_b], [vendor, buyer], [supplies])
@@ -165,6 +166,7 @@ def test_deleting_a_doc_strips_its_text_units_from_shared_artifacts(harness) -> 
     assert vendor.description == "Vendor supplies parts."
     (edge,) = graph.read_relationships(["r-supplies"])
     assert edge.text_unit_ids == ["tu-a"]
+    # tu-b's share of the 2.0 is gone.
     assert edge.weight == 1.0
     assert vector.data["entities"]["e-vendor"].text_unit_ids == ["tu-a"]
     assert vector.data["relationships"]["r-supplies"].text_unit_ids == ["tu-a"]

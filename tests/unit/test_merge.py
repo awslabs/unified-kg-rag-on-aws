@@ -47,6 +47,15 @@ class TestMergeEntities:
         assert set(survivor.text_unit_ids) == {"t1", "t2"}
         assert "desc A" in survivor.description and "desc B" in survivor.description
 
+    def test_same_id_merge_is_not_reported_as_a_remap(self) -> None:
+        # Nothing to remap when the delta entity keeps its stored id; a remap
+        # entry would make the caller rewrite every edge of that entity.
+        old = [_entity("e1", "Alice", text_unit_ids=["t1"])]
+        delta = [_entity("e1", "Alice", text_unit_ids=["t2"])]
+        merged, remap = merge_entities(old, delta)
+        assert remap == {}
+        assert merged[0].text_unit_ids == ["t1", "t2"]
+
     def test_frequency_recomputed_from_text_units(self) -> None:
         old = [_entity("e1", "Alice", rank=5, text_unit_ids=["t1", "t2"])]
         delta = [_entity("e9", "Alice", text_unit_ids=["t2", "t3"])]
@@ -225,10 +234,9 @@ class TestMergeRelationships:
         merged = merge_relationships(old, delta)
         assert len(merged) == 2
 
-    def test_same_endpoints_merge_weight_is_supporting_text_unit_count(self) -> None:
-        # Weight tracks the count of distinct supporting text units (evidence
-        # count): idempotent and order-independent, and convergent with the
-        # full-build resolver. Two distinct supporting units -> weight 2.0.
+    def test_same_endpoints_merge_weight_sums_text_unit_strengths(self) -> None:
+        # Weight is the sum of the strengths per supporting text unit, the same
+        # rule as the full-build resolver: t1 (1.0) + t2 (3.0) -> 4.0.
         old = [
             Relationship(
                 id="r1",
@@ -249,8 +257,9 @@ class TestMergeRelationships:
         ]
         merged = merge_relationships(old, delta)
         assert len(merged) == 1
-        assert merged[0].weight == 2.0
+        assert merged[0].weight == 4.0
         assert set(merged[0].text_unit_ids) == {"t1", "t2"}
+        assert merged[0].attributes == {"text_unit_weights": [1.0, 3.0]}
 
     def test_relationship_merge_is_idempotent(self) -> None:
         # Re-applying the same delta must NOT inflate the weight (the prior

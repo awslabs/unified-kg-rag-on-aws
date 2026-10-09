@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
+from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
 
@@ -15,6 +16,11 @@ from unified_kg_rag.adapters.aws.chain_factory import (
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.entity_grounding import is_grounded
+from unified_kg_rag.domain.ingestion.relationship_weights import (
+    apply_text_unit_weights,
+    sum_weights,
+    text_unit_weights,
+)
 from unified_kg_rag.domain.models import (
     Config,
     Entity,
@@ -422,21 +428,23 @@ class GraphExtractor(BaseProcessor):
     def _merge_relationships(
         self, relationships: list[Relationship]
     ) -> list[Relationship]:
+        # Weight = sum of the instance strengths, kept per text unit so the
+        # incremental merge can reproduce it (see relationship_weights). The
+        # maps are taken before _merge_items mutates the first instance.
+        weight_maps: dict[str, list[dict[str, float]]] = defaultdict(list)
+        for rel in relationships:
+            weight_maps[rel.id].append(text_unit_weights(rel))
         field_mergers: dict[str, Callable[[Any, Any], Any]] = {
+            # Plain sum for instances without text-unit lineage; replaced by
+            # the per-text-unit sum below whenever lineage exists.
             "weight": lambda current, new: (
                 current if isinstance(current, (int | float)) else 0.0
             )
             + (new if isinstance(new, (int | float)) else 0.0),
             "description": self._merge_description,
-            "text_unit_ids": lambda current, new: list(
-                set(
-                    (current if isinstance(current, list) else [])
-                    + (new if isinstance(new, list) else [])
-                )
-            ),
         }
 
-        return self._merge_items(
+        merged = self._merge_items(
             items=relationships,
             item_name="Relationship",
             field_mergers=field_mergers,
@@ -445,6 +453,9 @@ class GraphExtractor(BaseProcessor):
                 f"(type: '{r.type}') merged {{count}} instances"
             ),
         )
+        for rel in merged:
+            apply_text_unit_weights(rel, sum_weights(weight_maps[rel.id]))
+        return merged
 
     def _filter_entities_by_confidence(
         self, entities: list[Entity]

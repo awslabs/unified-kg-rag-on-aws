@@ -91,6 +91,18 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#157).
 
 ### Changed
+- **Behaviour change:** relationship weight is the sum of the extracted
+  strengths per supporting text unit (MS GraphRAG sums instance strengths) in
+  every path: extraction, gleaning, the full-build resolver, the incremental
+  merge and text-unit removal. Each edge stores the per-text-unit strengths as
+  `attributes.text_unit_weights` (parallel to `text_unit_ids`), so an
+  incremental run gives the same weight as a full build of the same corpus.
+  Before, a single-chunk edge kept its 1-10 strength in a full build while
+  the incremental merge set the weight to the number of supporting text
+  units, so the same final corpus could store weight 8.0 or 1.0 depending on
+  how it was built. Existing graphs keep their current weights until
+  re-indexed: an edge without the stored strengths splits its weight evenly
+  over its text units, and only text units extracted again change it (#PR).
 - **Behaviour change:** with incremental indexing on (`aws.dynamodb.enabled`
   or an injected `doc_status`), a doc-status registry that cannot be read
   fails the `document_loading` stage with the new `DocStatusRegistryError`,
@@ -474,6 +486,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   re-extracts nor deletes anything; another scope's legacy record is left for
   that scope's run. Moving a local corpus to another directory without a
   fixed `source_scope` now re-indexes it under the new scope (#188).
+- An incremental run no longer rewrites the stored edges of every delta
+  entity that is already in the graph. The cross-run entity merge recorded an
+  id remap even when the delta entity kept its stored id, and a non-empty
+  remap made the indexing manager read back and upsert all edges incident to
+  those entities, so a hub entity's whole neighbourhood was rewritten on each
+  run. A remap is now recorded only when the id changes (#PR).
 - Merging small chunks no longer drops text when a chunk repeats the previous
   chunk's last lines verbatim, such as a document ending in two identical
   `Signed: ____` lines with an LLM line boundary between them. The repeated
