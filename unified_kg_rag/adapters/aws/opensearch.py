@@ -497,6 +497,25 @@ class OpenSearchClient:
             return []
 
     @_handle_opensearch_errors
+    def get_aliases_by_index(self, index_pattern: str) -> dict[str, list[str]]:
+        """Map every index whose *name* matches ``index_pattern`` to its aliases.
+
+        Unlike ``get_indices_by_alias`` (which matches alias names), this
+        matches index names, so it also returns indices that no alias points
+        at any more — the stale ones a blue/green swap leaves behind.
+        """
+        try:
+            response = self.client.indices.get_alias(
+                index=index_pattern, expand_wildcards="open,closed"
+            )
+        except NotFoundError:
+            return {}
+        return {
+            name: sorted((body or {}).get("aliases") or {})
+            for name, body in response.items()
+        }
+
+    @_handle_opensearch_errors
     def search(self, **kwargs: Any) -> dict[str, Any]:
         result = self.client.search(**kwargs)
         return dict(result)

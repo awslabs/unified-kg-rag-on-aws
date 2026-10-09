@@ -183,3 +183,31 @@ def test_delete_alias_propagates_not_found() -> None:
     )
     with pytest.raises(NotFoundError):
         os_client.delete_alias("docs-v1", "docs")
+
+
+# --- get_aliases_by_index (index-name lookup) --------------------------------
+
+
+def test_get_aliases_by_index_matches_index_names() -> None:
+    # Looks up by index name (``GET <pattern>/_alias``), not alias name, and
+    # also returns indices that carry no alias.
+    os_client = _client()
+    os_client.client.indices.get_alias.return_value = {
+        "docs-20260102000000": {"aliases": {"docs": {}}},
+        "docs-20260101000000": {"aliases": {}},
+    }
+
+    result = os_client.get_aliases_by_index("docs-*")
+
+    os_client.client.indices.get_alias.assert_called_once_with(
+        index="docs-*", expand_wildcards="open,closed"
+    )
+    assert result == {"docs-20260102000000": ["docs"], "docs-20260101000000": []}
+
+
+def test_get_aliases_by_index_returns_empty_on_not_found() -> None:
+    os_client = _client()
+    os_client.client.indices.get_alias.side_effect = NotFoundError(
+        404, "index_not_found_exception", {}
+    )
+    assert os_client.get_aliases_by_index("docs-v9") == {}
