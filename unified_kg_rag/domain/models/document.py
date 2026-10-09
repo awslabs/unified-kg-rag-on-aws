@@ -155,6 +155,15 @@ class DocStatus(str, Enum):
     FAILED = "failed"
 
 
+# Content hash of a write-ahead record (status PENDING): an incremental run
+# writes one for every document it is about to (re)index before it touches the
+# stores, and replaces it once the document's artifacts are written. No
+# document hashes to it, so a document whose run was interrupted is classified
+# changed on the next run (re-extracted, even if its content went back to the
+# last indexed version) or deleted if it is gone.
+PENDING_CONTENT_HASH = "pending"
+
+
 class DocStatusRecord(BaseModel):
     """Per-document state persisted across indexing runs (DocStatusPort).
 

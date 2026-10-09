@@ -466,6 +466,34 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- An incremental run interrupted inside the indexing stage (a killed task, a
+  store outage, the failure gate) is repaired by the next run. Before, a run
+  that stopped after pruning a changed document left its old content hash in
+  the registry: if the file was then reverted to that content, the document
+  read as unchanged and was never indexed again, with its artifacts gone. A
+  run that stopped after writing new documents but before recording them left
+  their artifacts with no registry record, so if those files were removed
+  before the next run, nothing ever deleted the artifacts. The indexing stage
+  now writes ahead: before it removes or writes anything, each new and
+  changed document is recorded `PENDING` with a content hash no document has
+  (`PENDING_CONTENT_HASH`) and the union of its stored and planned lineage,
+  and the commit replaces the record only after the writes. The next run
+  re-extracts a `PENDING` document that still exists and removes everything
+  the interrupted run may have written for one that is gone. An interruption
+  does not count toward `indexing.max_document_failures`. The write-ahead
+  and commit records are written in batches through the new
+  `DocStatusPort.put_many` (default: one `put` per record;
+  `DynamoDBDocStatusStore` uses `BatchWriteItem`, 25 items per request, with
+  unprocessed items retried), and the commit no longer reads the registry
+  once per document. A role with a custom IAM policy needs
+  `dynamodb:BatchWriteItem` (#PR).
+- Removing a changed or deleted document's text units from entities and
+  relationships shared with surviving documents rewrites every shared item it
+  reads back from Neptune. It rewrote only the items whose Neptune copy still
+  cited the removed text units, so after a removal whose Neptune write landed
+  but whose OpenSearch write was interrupted or failed, every retry found the
+  Neptune copy already stripped and left the OpenSearch copy citing text units
+  that no longer exist (#PR).
 - An incremental run that both changes one document and deletes another no
   longer leaves behind the entities and relationships only those two
   documents shared. The stale artifacts of changed documents and of deleted

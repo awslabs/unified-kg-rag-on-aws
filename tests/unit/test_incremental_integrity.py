@@ -14,6 +14,7 @@ import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.domain.models import (
+    PENDING_CONTENT_HASH,
     Config,
     DocStatus,
     DocStatusRecord,
@@ -123,10 +124,16 @@ def test_prune_failure_blocks_commit_and_keeps_old_lineage(mocker) -> None:
     with pytest.raises(PipelineStageError, match="stale artifacts"):
         stage._execute_core(context)
 
-    # Nothing was upserted and the registry still points at the old lineage,
-    # so the next run re-detects the doc as changed and retries the prune.
+    # Nothing was upserted and the registry still points at the old lineage
+    # (in the write-ahead PENDING record), so the next run re-detects the doc
+    # as changed, even with its old content, and retries the prune.
     manager.index_delta.assert_not_called()
-    assert store.get("doc-a") == old
+    record = store.get("doc-a")
+    assert record is not None
+    assert record.status is DocStatus.PENDING
+    assert record.content_hash == PENDING_CONTENT_HASH
+    assert record.entity_ids == old.entity_ids
+    assert store.diff({"doc-a": "old-hash"}).changed == ["doc-a"]
 
 
 def test_prune_changed_reports_success_and_failure() -> None:

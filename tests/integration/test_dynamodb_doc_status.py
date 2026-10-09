@@ -16,7 +16,12 @@ from moto import mock_aws
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
 from unified_kg_rag.adapters.aws import dynamodb as dynamodb_module
-from unified_kg_rag.domain.models import Config, DocStatus, DocStatusRecord
+from unified_kg_rag.domain.models import (
+    PENDING_CONTENT_HASH,
+    Config,
+    DocStatus,
+    DocStatusRecord,
+)
 from unified_kg_rag.ports import DocStatusPort
 from unified_kg_rag.shared import DataProcessingError, DocStatusRegistryError
 
@@ -357,3 +362,20 @@ def test_put_many_rejects_an_oversized_record_before_writing_any(
         ddb_store.put_many([DocStatusRecord(doc_id="small", content_hash="h"), huge])
 
     assert ddb_store.list_all() == []
+
+
+def test_write_ahead_record_round_trips_and_diffs_as_changed(
+    ddb_store: DynamoDBDocStatusStore,
+) -> None:
+    pending = DocStatusRecord(
+        doc_id="d",
+        content_hash=PENDING_CONTENT_HASH,
+        status=DocStatus.PENDING,
+        scope="ns|src",
+        entity_ids=["e1"],
+    )
+    ddb_store.put_many([pending])
+
+    assert ddb_store.get("d") == pending
+    assert ddb_store.diff({"d": "any-hash"}, scope="ns|src").changed == ["d"]
+    assert ddb_store.diff({}, scope="ns|src").deleted == ["d"]

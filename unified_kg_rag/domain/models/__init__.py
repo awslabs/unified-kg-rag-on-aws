@@ -23,6 +23,7 @@ from .config import (
 from .conversation import ConversationContext, MessageRole
 from .covariate import Claim, Covariate
 from .document import (
+    PENDING_CONTENT_HASH,
     DocStatus,
     DocStatusRecord,
     Document,
@@ -106,6 +107,7 @@ __all__ = [
     "ModelPurpose",
     "MessageRole",
     "Named",
+    "PENDING_CONTENT_HASH",
     "Page",
     "PipelineConfig",
     "PipelineContext",

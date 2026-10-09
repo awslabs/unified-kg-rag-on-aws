@@ -1537,6 +1537,25 @@ class IndexingStage(PipelineStage):
                 claims,
             )
         else:
+            rebuild = None
+            if context.incremental_delta is not None:
+                # Reset with the registry enabled: the registry was cleared with
+                # the stores, so record the rebuilt corpus for the next delta
+                # run, PENDING first (see IncrementalIndexer.write_ahead) so an
+                # interrupted rebuild leaves nothing unreferenced.
+                incremental = self._incremental_indexer(context, text_units)
+                lineages = self._document_lineages(
+                    context,
+                    incremental.suffix,
+                    text_units,
+                    entities,
+                    relationships,
+                    communities,
+                    community_reports,
+                    claims,
+                )
+                incremental.write_ahead(context.incremental_delta, lineages)
+                rebuild = (incremental, lineages)
             indexing_results = self.indexing_manager.index_all_data(
                 text_units=text_units,
                 entities=entities,
@@ -1545,21 +1564,10 @@ class IndexingStage(PipelineStage):
                 community_reports=community_reports,
                 claims=claims,
             )
-            if context.incremental_delta is not None:
-                # Reset with the registry enabled: the registry was cleared with
-                # the stores, so record the rebuilt corpus for the next delta run.
-                incremental = self._incremental_indexer(context, text_units)
+            if rebuild is not None:
+                incremental, lineages = rebuild
                 incremental.record(
-                    self._document_lineages(
-                        context,
-                        incremental.suffix,
-                        text_units,
-                        entities,
-                        relationships,
-                        communities,
-                        community_reports,
-                        claims,
-                    ),
+                    lineages,
                     context.incremental_fingerprints,
                     indexing_results,
                     self._documents_with_failed_units(context, text_units),
@@ -1615,10 +1623,11 @@ class IndexingStage(PipelineStage):
     ) -> dict[str, Any]:
         """Idempotent delta indexing + stale-artifact pruning + registry write-back.
 
-        Routed to when a doc-status delta is present (incremental mode). Stale
-        artifacts of changed/deleted documents are removed first, then the freshly
-        extracted delta is upserted and the registry updated with per-document
-        lineage so subsequent runs diff correctly.
+        Routed to when a doc-status delta is present (incremental mode). The new
+        and changed documents are first recorded PENDING (write-ahead), then
+        the stale artifacts of changed/deleted documents are removed, the
+        freshly extracted delta is upserted and the PENDING records replaced
+        with per-document lineage so subsequent runs diff correctly.
         """
         delta = context.incremental_delta
         if delta is None:  # defensive; caller already guards
@@ -1631,6 +1640,22 @@ class IndexingStage(PipelineStage):
                 claims=claims,
             )
         incremental = self._incremental_indexer(context, text_units)
+        lineages = self._document_lineages(
+            context,
+            incremental.suffix,
+            text_units,
+            entities,
+            relationships,
+            communities,
+            community_reports,
+            claims,
+        )
+        # Write ahead before any store write: the new and changed docs are
+        # recorded PENDING with their stored + planned lineage, so a run
+        # interrupted from here on is repaired by the next one (the docs
+        # read as changed, or as deleted when gone, and every artifact this
+        # run may write is found by their lineage).
+        incremental.write_ahead(delta, lineages)
 
         # Drop the stale artifacts of changed and deleted docs in ONE removal
         # plan (before re-upsert): planning them separately keeps whatever a
@@ -1645,19 +1670,10 @@ class IndexingStage(PipelineStage):
             raise PipelineStageError(
                 "Removing stale artifacts of changed or deleted documents "
                 "failed; not committing the delta so the registry keeps their "
-                "old lineage and the next run retries the removal"
+                "PENDING records (old + planned lineage) and the next run "
+                "retries the removal"
             )
 
-        lineages = self._document_lineages(
-            context,
-            incremental.suffix,
-            text_units,
-            entities,
-            relationships,
-            communities,
-            community_reports,
-            claims,
-        )
         results = incremental.commit(
             lineages=lineages,
             fingerprints=context.incremental_fingerprints,
