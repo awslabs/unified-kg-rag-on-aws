@@ -406,6 +406,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   lineage to retry; it now counts as a failed removal and keeps the row. A
   failed read during the cross-run merge fails the indexing stage before any
   write instead of overwriting the stored lineage (#PR).
+- The translation stage honours `processing.ignore_errors`: a failed call for
+  a whole target language now fails the stage when it is `false` (the
+  translator swallowed every error, so the graph silently mixed languages).
+  Text units left untranslated, in any target language, are reported in the
+  stage's `failed_units` and through the per-stage failed text units, so an
+  incremental run records their documents FAILED and retries them instead of
+  recording them PROCESSED (#PR).
 - `indexing.reset` with the doc-status registry enabled rebuilds from the
   whole corpus and records every document again. The loading stage used to
   diff against the registry first, so the reset cleared the stores but

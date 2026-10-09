@@ -737,6 +737,12 @@ OpenSearch analyzers are configured under
 `indexing.opensearch.language_analyzers` (e.g. `ko: nori`); unlisted languages
 fall back to `default_analyzer`.
 
+A text unit whose translation fails keeps its original text and is extracted
+in the source language. A failed call for a whole target language fails the
+stage unless `processing.ignore_errors` is `true`. Either way the stage reports
+the failed units (`failed_units`), and an incremental run records their
+documents as failed so the next run translates them again (§5).
+
 ---
 
 ## 4. Querying (`run-rag`)

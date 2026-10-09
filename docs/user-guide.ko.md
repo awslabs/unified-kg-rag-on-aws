@@ -722,6 +722,11 @@ processing:
 OpenSearch analyzer는 `indexing.opensearch.language_analyzers`(예: `ko: nori`)
 아래에서 설정합니다. 목록에 없는 언어는 `default_analyzer`로 폴백됩니다.
 
+번역에 실패한 텍스트 단위는 원문을 유지한 채 원래 언어로 추출됩니다. 대상 언어
+하나의 번역 호출 전체가 실패하면 `processing.ignore_errors`가 `true`가 아닌 한
+스테이지가 실패합니다. 어느 경우든 스테이지는 실패한 단위 수(`failed_units`)를
+보고하고, 증분 실행은 해당 문서를 실패로 기록해 다음 실행에서 다시 번역합니다(§5).
+
 ---
 
 ## 4. 질의 (`run-rag`)
