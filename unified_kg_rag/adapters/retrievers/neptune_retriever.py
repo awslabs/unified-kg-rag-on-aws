@@ -419,21 +419,42 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             hops,
         )
 
+        # Same budget shape as _traverse_from_entities: a limit() inside
+        # repeat() is global, so the fetch width is split across the seed
+        # communities and spent inside a per-seed local(), once on members and
+        # once on their neighbourhood. _process_traversal_results ranks the
+        # result and cuts it to top_k * retrieval_multiplier.
+        fetch_limit = (
+            query.top_k
+            * query.retrieval_multiplier
+            * self._neptune_config.traversal_fetch_multiplier
+        )
+        per_seed_limit = math.ceil(fetch_limit / len(seed_ids))
         traversal = (
             g.V()
             .hasLabel(community_label)
             .has("id", P.within(seed_ids))
             .union(
                 __.identity(),
-                __.in_("MemberOf").hasLabel(entity_label),
-                __.in_("MemberOf")
-                .hasLabel(entity_label)
-                .repeat(__.both().dedup().limit(self._max_results_per_hop))
-                .times(hops)
-                .emit(),
+                __.local(
+                    __.in_("MemberOf").hasLabel(entity_label).limit(per_seed_limit)
+                ),
+                __.local(
+                    __.in_("MemberOf")
+                    .hasLabel(entity_label)
+                    .repeat(
+                        __.local(
+                            __.both()
+                            .hasLabel(entity_label)
+                            .limit(self._max_results_per_hop)
+                        )
+                        .dedup()
+                        .limit(per_seed_limit)
+                    )
+                    .times(hops)
+                    .emit()
+                ),
             )
-            .dedup()
-            .limit(query.top_k * query.retrieval_multiplier)
         )
         filters, exempt = self._scope_filters_to_labels(
             {community_label: "community", entity_label: "entity"}, query.filters

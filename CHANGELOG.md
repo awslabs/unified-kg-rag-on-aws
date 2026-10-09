@@ -420,6 +420,17 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   stage's `failed_units` and through the per-stage failed text units, so an
   incremental run records their documents FAILED and retries them instead of
   recording them PROCESSED (#PR).
+- Neptune expansion from seed communities (`NeptuneRetriever` queried with
+  the community label, e.g. through its LangChain retriever interface) gets
+  the entity expansion's per-seed budget from #161. A `limit()` inside
+  `repeat()` counted every traverser of the traversal and a final
+  `limit(top_k * retrieval_multiplier)` followed, so the seeds filled the
+  result: against Gremlin Server, 10 seed communities with 3 members each
+  returned only the 10 seeds at `top_k` 10 and the neighbourhoods of 5 of
+  them at `top_k` 100. Each seed now gets its members and their
+  neighbourhood within its own share of the fetch width, ranked and cut like
+  the entity expansion; the same probe returns all 10 seeds, 30 members and
+  neighbours of all 10 (#PR).
 - `indexing.reset` with the doc-status registry enabled rebuilds from the
   whole corpus and records every document again. The loading stage used to
   diff against the registry first, so the reset cleared the stores but
