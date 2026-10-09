@@ -92,10 +92,10 @@ class TestPrompt:
 
         resolved = DescriptionSummarizationPrompt.resolve(
             custom_prompts=CustomPromptConfig(
-                description_summarization_human="custom {entity_name}"
+                description_summarization_human="custom {entity_name}: {descriptions}"
             )
         )
-        assert resolved.human_prompt_template == "custom {entity_name}"
+        assert resolved.human_prompt_template == "custom {entity_name}: {descriptions}"
 
 
 # --------------------------------------------------------------------------- #

@@ -502,6 +502,11 @@ class OpenSearchClient:
         return dict(result)
 
     @_handle_async_opensearch_errors
+    async def aindex_exists(self, index: str) -> bool:
+        """Whether an index or alias named ``index`` exists."""
+        return bool(await self.async_client.indices.exists(index=index))
+
+    @_handle_async_opensearch_errors
     async def asearch(self, **kwargs: Any) -> dict[str, Any]:
         result = await self.async_client.search(**kwargs)
         return dict(result)

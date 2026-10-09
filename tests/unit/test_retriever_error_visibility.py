@@ -21,8 +21,8 @@ from opensearchpy.exceptions import NotFoundError
 from unified_kg_rag.adapters.retrieval.base import is_fatal_retrieval_error
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
-from unified_kg_rag.domain.models import Config, SearchQuery
-from unified_kg_rag.shared import AWSServiceError
+from unified_kg_rag.domain.models import Config, Constants, SearchQuery
+from unified_kg_rag.shared import AWSServiceError, IndexNotFoundError
 
 pytestmark = pytest.mark.unit
 
@@ -106,7 +106,9 @@ async def test_opensearch_retriever_degrades_on_transient(config: Config) -> Non
     assert results == []
 
 
-def _set_asearch_raising(retriever: OpenSearchRetriever, exc: Exception) -> None:
+def _set_asearch_raising(
+    retriever: OpenSearchRetriever, exc: Exception, existing: set[str] | None = None
+) -> None:
     # Let the query-vector step succeed, then make the actual search execution
     # (``_opensearch_client.asearch``) raise — this is the path that previously
     # swallowed fatal errors inside ``_execute_search`` and returned [].
@@ -117,12 +119,20 @@ def _set_asearch_raising(retriever: OpenSearchRetriever, exc: Exception) -> None
         raise exc
 
     object.__setattr__(retriever, "_get_query_vector", _vec)
-    object.__setattr__(retriever, "_opensearch_client", _MockSearchClient(_asearch))
+    object.__setattr__(
+        retriever, "_opensearch_client", _MockSearchClient(_asearch, existing)
+    )
 
 
 class _MockSearchClient:
-    def __init__(self, asearch) -> None:
+    def __init__(self, asearch, existing: set[str] | None = None) -> None:
         self.asearch = asearch
+        self.existing = existing  # None = every index exists
+        self.exists_calls: list[str] = []
+
+    async def aindex_exists(self, index: str) -> bool:
+        self.exists_calls.append(index)
+        return self.existing is None or index in self.existing
 
 
 async def test_opensearch_execute_search_reraises_fatal(config: Config) -> None:
@@ -316,3 +326,46 @@ async def test_other_not_found_still_logs_error(
     assert results == []
     assert recording_logger.warnings == []
     assert len(recording_logger.errors) == 1
+
+
+_INDEX_NOT_FOUND = NotFoundError(
+    404, "index_not_found_exception", {"error": "no such index"}
+)
+
+
+@pytest.mark.parametrize("suffix", [None, "tenant-a"])
+async def test_query_against_a_never_ingested_suffix_is_fatal(
+    config: Config, suffix: str | None
+) -> None:
+    # Before ingestion, or with a typo'd --suffix, every index is missing: that
+    # must not look like a successful search with 0 results.
+    retriever = _opensearch_retriever(config)
+    _set_asearch_raising(retriever, _INDEX_NOT_FOUND, existing=set())
+    prefix = config.indexing.opensearch.entities_index_prefix
+    query = SearchQuery(query="hello", index_prefixes=[prefix], suffix=suffix)
+
+    with pytest.raises(IndexNotFoundError) as exc:
+        await retriever.aretrieve(query)
+
+    shown = suffix or Constants.DEFAULT_SUFFIX.value
+    assert f"suffix '{shown}'" in str(exc.value)
+    assert "index_value" in str(exc.value)
+    assert is_fatal_retrieval_error(exc.value)
+
+
+async def test_missing_optional_index_of_an_ingested_corpus_degrades(
+    config: Config,
+) -> None:
+    # A corpus with no claims never creates its claims index; the text-units
+    # index exists, so the missing index is skipped, not fatal.
+    retriever = _opensearch_retriever(config)
+    opensearch = config.indexing.opensearch
+    text_units = retriever._get_name(opensearch.text_units_index_prefix, None)
+    _set_asearch_raising(retriever, _INDEX_NOT_FOUND, existing={text_units})
+
+    results = await retriever.aretrieve(
+        SearchQuery(query="hello", index_prefixes=[opensearch.claims_index_prefix])
+    )
+
+    assert results == []
+    assert retriever._opensearch_client.exists_calls == [text_units]

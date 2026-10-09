@@ -75,7 +75,12 @@ class ConfigLoader:
 
         try:
             with open(self.config_path, encoding="utf-8") as file:
-                config_data = yaml.safe_load(file)
+                config_data = yaml.safe_load(file) or {}
+            if not isinstance(config_data, dict):
+                raise ValueError(
+                    f"Configuration file '{self.config_path}' must be a YAML "
+                    f"mapping, got {type(config_data).__name__}"
+                )
 
             warn_unknown_keys(config_data, Config)
             self._config = Config(**config_data)

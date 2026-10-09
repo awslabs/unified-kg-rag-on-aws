@@ -160,6 +160,16 @@ single-node domain.
 > mutating/data path (`InvokeModel`) stays ARN-scoped. Each is documented inline
 > in `compute_stack.py` and in the cdk-nag suppressions.
 
+## Prerequisites
+
+- Python 3.10+ (CI synthesizes with 3.12).
+- Node.js 20+ and the AWS CDK CLI v2, 2.1143.0 or later
+  (`npm install -g aws-cdk@2.1143.0` is the version CI pins). An older CLI
+  can reject the cloud assembly that the `aws-cdk-lib` release in
+  `requirements.txt` produces; check with `cdk --version`.
+- For `cdk bootstrap`/`cdk deploy`: AWS credentials for the target account
+  and region. To push the app image after deploy: Docker.
+
 ## Usage
 
 Prerequisites: Python 3.10+ (CI uses 3.12), Node.js 20+ with the AWS CDK CLI

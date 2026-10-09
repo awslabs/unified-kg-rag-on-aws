@@ -5,6 +5,7 @@ import math
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
+from string import Formatter
 from typing import Annotated, Any, Literal, get_args
 
 from pydantic import (
@@ -651,7 +652,12 @@ class DocumentParsingConfig(BaseModel):
         ),
     )
     index_value: str | None = Field(
-        default=None, description="Value to index the parsed documents with"
+        default=None,
+        description=(
+            "Index suffix the run writes to (OpenSearch index and Neptune label "
+            "names); query with the same value as run-rag/run-eval --suffix. "
+            "None = 'default'."
+        ),
     )
     source_scope: str | None = Field(
         default=None,
@@ -2418,6 +2424,92 @@ class CustomPromptConfig(BaseModel):
         description="Custom human prompt for the global-search map step "
         "(rate community-report key points 0-100 for relevance)",
     )
+
+    @model_validator(mode="after")
+    def _check_override_variables(self) -> "CustomPromptConfig":
+        """Reject overrides that would fail or run on missing data at call time.
+
+        A placeholder the prompt is not called with raises ``KeyError`` on every
+        call (often a literal JSON brace), and an override without a data
+        variable such as ``{input_text}`` runs with no document text. Other
+        declared variables are tuning knobs an override may leave out.
+        """
+        # Lazy: the prompt modules reference this config type.
+        from unified_kg_rag.domain import prompts
+
+        errors: list[str] = []
+        brace_hint = False
+        for name in prompts.__all__:
+            prompt = getattr(prompts, name)
+            key = getattr(prompt, "prompt_key", None)
+            if not key:
+                continue
+            system = getattr(self, f"{key}_system")
+            human = getattr(self, f"{key}_human")
+            if system is None and human is None:
+                continue
+            used: set[str] = set()
+            for part, override, default in (
+                ("system", system, prompt.system_prompt_template),
+                ("human", human, prompt.human_prompt_template),
+            ):
+                try:
+                    used |= _template_variables(override or default)
+                except ValueError as e:
+                    errors.append(f"custom_prompts.{key}_{part}: {e}")
+                    brace_hint = True
+            unknown = used - set(prompt.input_variables)
+            if unknown:
+                brace_hint = True
+                errors.append(
+                    f"custom_prompts.{key}_*: unknown variable(s) "
+                    f"{', '.join('{' + v + '}' for v in sorted(unknown))}; "
+                    f"available: "
+                    f"{', '.join('{' + v + '}' for v in prompt.input_variables)}"
+                )
+            missing = _REQUIRED_PROMPT_VARIABLES.get(key, frozenset()) - used
+            if missing:
+                errors.append(
+                    f"custom_prompts.{key}_*: the system or human template must "
+                    f"contain {', '.join('{' + v + '}' for v in sorted(missing))}"
+                )
+        if errors:
+            hint = " Write a literal brace as '{{' or '}}'." if brace_hint else ""
+            raise ValueError("; ".join(errors) + "." + hint)
+        return self
+
+
+# The variables that carry each prompt's data: an override must keep them.
+_REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
+    "answer_generation": frozenset({"query", "context"}),
+    "claim_extraction": frozenset({"input_text"}),
+    "community_report": frozenset({"entities", "relationships"}),
+    "context_building": frozenset({"query", "search_results"}),
+    "corpus_profile": frozenset({"corpus_sample"}),
+    "description_summarization": frozenset({"descriptions"}),
+    "drift_primer": frozenset({"query", "community_reports"}),
+    "entity_extraction": frozenset({"query"}),
+    "global_map": frozenset({"query", "reports"}),
+    "graph_extraction": frozenset({"input_text"}),
+    "graph_refinement": frozenset({"text", "entities", "relationships"}),
+    "keyword_expansion": frozenset({"query"}),
+    "keywords_extraction": frozenset({"query"}),
+    "query_refinement": frozenset({"original_query", "results_summary"}),
+    "strategy_selection": frozenset({"query", "strategies"}),
+}
+
+
+def _template_variables(template: str) -> set[str]:
+    """Placeholder names in an f-string style template (``{{``/``}}`` are literal).
+
+    Raises:
+        ValueError: On an unmatched ``{`` or ``}``.
+    """
+    return {
+        field.split(".")[0].split("[")[0]
+        for _, field, _, _ in Formatter().parse(template)
+        if field is not None
+    }
 
 
 class EvaluationConfig(BaseModel):

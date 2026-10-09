@@ -25,7 +25,7 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import IndexNotFoundError, get_logger
 from unified_kg_rag.shared.utils.store_names import graph_label, store_name
 
 logger = get_logger(__name__)
@@ -64,7 +64,7 @@ def is_fatal_retrieval_error(exc: BaseException) -> bool:
     The repo's adapters wrap backend failures in ``AWSServiceError`` carrying the
     original message, so the markers are matched against the message text.
     """
-    if isinstance(exc, ConnectionError):
+    if isinstance(exc, ConnectionError | IndexNotFoundError):
         return True
     message = str(exc).lower()
     return any(marker in message for marker in _FATAL_ERROR_MARKERS)

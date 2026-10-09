@@ -28,6 +28,13 @@ logger = get_logger(__name__)
 # supported when they can actually be parsed — instead of failing mid-ingestion
 # with "No module named 'unstructured'".
 _UNSTRUCTURED_AVAILABLE = importlib.util.find_spec("unstructured") is not None
+# The formats the optional extra adds, and how to install it.
+UNSTRUCTURED_EXTENSIONS = frozenset({".htm", ".html", ".markdown", ".md"})
+UNSTRUCTURED_INSTALL_HINT = (
+    "install the optional 'unstructured' extra (Python 3.11+): "
+    "`uv sync --extra unstructured` or "
+    "`pip install 'unified-kg-rag-on-aws[unstructured]'`"
+)
 
 
 class ParsingStats(BaseModel):
@@ -245,11 +252,8 @@ class ParserFactory:
 
         if extension not in cls._loader_configs:
             hint = ""
-            if extension in {".md", ".markdown", ".htm", ".html"}:
-                hint = (
-                    " (.md/.html require the optional 'unstructured' package, which "
-                    "is not installed)"
-                )
+            if extension in UNSTRUCTURED_EXTENSIONS:
+                hint = f"; to parse it, {UNSTRUCTURED_INSTALL_HINT}"
             raise DataProcessingError(f"Unsupported file type: '{extension}'{hint}")
 
         loader_class, loader_kwargs, file_type_name = cls._loader_configs[extension]

@@ -66,21 +66,23 @@ OpenSearch가 IAM 대신 사용자 이름/비밀번호 인증을 쓴다면(`aws.
 
 ### 인덱싱, 질의, 평가
 
+`uv run`은 프로젝트 환경에서 CLI를 실행합니다. `pip`으로 설치했다면 가상 환경을 활성화하고 `uv run` 없이 실행하세요.
+
 ```bash
 # 코퍼스 인덱싱 (aws.dynamodb를 켜면 증분 인덱싱)
-run-ingestion --source-directory ./source --config-path config.yaml
+uv run run-ingestion --source-directory ./source --config-path config.yaml
 
 # 두 방법론 중 하나로 질의하거나 대화 메모리를 켜고 대화형으로 실행
-run-rag --query "문서의 주요 주제는?" --search-strategy global --config-path config.yaml
-run-rag --query "Alice와 Acme는 어떤 관계인가?" --search-strategy mix --config-path config.yaml
-run-rag --interactive --use-memory --conversation-id my-session --config-path config.yaml
+uv run run-rag --query "문서의 주요 주제는?" --search-strategy global --config-path config.yaml
+uv run run-rag --query "Alice와 Acme는 어떤 관계인가?" --search-strategy mix --config-path config.yaml
+uv run run-rag --interactive --use-memory --conversation-id my-session --config-path config.yaml
 
 # 평가 (LangChain + RAGAS + 그래프 인식 커버리지, 검색·답변 일치 지표)
-run-eval --eval-data-path eval_data.json --config-path config.yaml
+uv run run-eval --eval-data-path eval_data.json --config-path config.yaml
 
 # 선택: 내보낸 그래프 시각화, 도메인 맞춤 프롬프트 튜닝
-run-visualization --data-path visualization_data.json --output-dir ./viz --config-path config.yaml
-run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
+uv run run-visualization --data-path visualization_data.json --output-dir ./viz --config-path config.yaml
+uv run run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
 ```
 
 그래프 인식 평가기는 LLM 없이 `expected_entities` / `expected_relationships` 대비 엔티티·관계 커버리지(재현율)를 계산합니다. 띄어쓰기로 단어를 구분하는 문자는 단어 경계로 매칭하고, CJK 텍스트는 부분 문자열 매칭으로 대신합니다. LLM을 쓰지 않는 평가기가 두 가지 더 있어 실행 간 비교가 쉽습니다. `retrieval`은 보고된 출처를 `reference_sources`와 비교해 hit@k, recall@k, MRR을 계산하고, `answer_match`는 `answer`(선택 항목 `metadata.answer_aliases` 포함)와 비교해 exact match와 token F1을 계산합니다. 모든 설정 항목, CLI 플래그, 평가 데이터 형식은 [사용자 가이드](./docs/user-guide.ko.md)에 정리되어 있습니다.

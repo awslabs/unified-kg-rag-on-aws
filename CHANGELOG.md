@@ -20,6 +20,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   that failed deterministically was pruned and re-extracted on every run. The
   count is stored as `failure_count` on the doc-status record; records
   written before it existed read as `0` (#175).
+- `DataIngestionPipeline` accepts `doc_status`, `vector_indexer` and
+  `graph_indexer`, threaded to the loading and indexing stages, so the whole
+  pipeline runs on custom or in-memory backends through its public
+  constructor as `docs/design.md` §15 described. An injected `doc_status`
+  turns incremental indexing on without `aws.dynamodb.enabled` (#178).
 - Claude Haiku 5.5 (`anthropic.claude-haiku-5-5`) in the model catalog: 1M
   context, 128K output, adaptive thinking with `effort` low–max, 512-token
   cache minimum, served through inference profiles only (#162).
@@ -95,6 +100,27 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   API, `count_tokens_many` counts inline instead of starting an 8-thread pool
   per call. Budgeting 300 sections of 1.5 KB takes 24 ms instead of 476 ms,
   and 32 concurrent queries 0.8 s instead of 16 s (#176).
+- `processing.document_parsing.index_value` is documented in the user guide
+  §2.3 table and `config-template.yaml` as the ingestion-side suffix that
+  `run-rag`/`run-eval --suffix` must match; the multi-tenant guidance no
+  longer suggests a `--suffix` flag for `run-ingestion`, which has none (#178).
+- `iac/README.md` lists the prerequisites: Python 3.10+, Node.js 20+ and
+  AWS CDK CLI 2.1143.0 or later, AWS credentials and Docker (#178).
+- The README quickstart runs the CLIs with `uv run`, which a `uv sync`
+  install needs unless the virtual environment is activated (#178).
+- The `docs/design.md` §15 "run without AWS" example passes a
+  `rerank_factory` (reranking is on by default and called Bedrock) and notes
+  that the retrievers and indexers must be injected too (#178).
+- `CONTRIBUTING.md` and `docs/design.md` §15 describe the real extension
+  mechanisms: a new strategy also needs a `SearchStrategy` enum member,
+  backends are passed to constructors (there is no backend registry), and
+  `run-visualization` only sees renderers imported by
+  `adapters/renderers/__init__.py` (#178).
+- `GraphRAGChain`, `RAGInput` and `RAGOutput` document the library contract:
+  `close()`/`aclose()` when done, which event loop the sync and async
+  methods run on, `RAGOutput` in RAG mode versus a dict in SEARCH mode, and
+  that `stream`/`astream` yield answer text only (use `ainvoke` for the
+  sources) (#178).
 - The fast tier (`aws.bedrock.fast_model_id`) defaults to Claude Haiku 5.5
   (`anthropic.claude-haiku-5-5`) instead of Haiku 4.5. In a real-AWS A/B (79
   documents, 20 questions, 5 strategies, 2 ingests per arm) it matched Haiku
@@ -437,6 +463,43 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (`。．｡！？；`) before falling back to spaces and characters, so Chinese and
   Japanese text is no longer cut mid-sentence. Text without these characters
   is chunked exactly as before (#177).
+- Querying a suffix nothing was ingested under (before the first ingestion,
+  or a typo in `--suffix`) fails with `IndexNotFoundError`: "No indices found
+  for suffix '<suffix>' ... Did you run ingestion with
+  processing.document_parsing.index_value '<suffix>'?". It used to return a
+  successful answer over 0 results while logging `index_not_found` warnings.
+  A single missing optional index of an ingested corpus (no claims, no
+  community reports) is still skipped (#178).
+- `custom_prompts` overrides are checked when the config loads. An unknown
+  `{variable}` (often a literal JSON brace, which raised `KeyError` on every
+  call) or a missing data variable such as `{input_text}` (which ran the
+  prompt on no document text) now fails the load with the offending key;
+  literal braces are written `{{`/`}}`. `run-prompt-tuning` escapes braces
+  in the overrides it writes (#178).
+- Ingestion warns once per skipped file extension with the remedy (for
+  `.md`/`.html`, the `uv sync --extra unstructured` install command) instead
+  of skipping unparseable files silently, and an empty first stage reports
+  "No supported source files found in <dir>" rather than telling the user to
+  check a previous stage that does not exist (#178).
+- `run-ingestion` (when the `indexing` stage is enabled), `run-rag` and
+  `run-eval` check the Neptune and OpenSearch endpoints the run needs at
+  start-up and exit with an error naming the config key and environment
+  variable (`aws.neptune.endpoint`/`NEPTUNE_ENDPOINT`,
+  `aws.opensearch.endpoint`/`OPENSEARCH_ENDPOINT`). A missing endpoint used
+  to surface only at the indexing stage, after every paid LLM stage, or at
+  query time (#178).
+- `run-rag --help`, invalid arguments and a missing `--query`/`--interactive`
+  no longer print an asyncio "Task exception was never retrieved ...
+  SystemExit" traceback: arguments are parsed before the event loop starts,
+  and the missing-mode case is a usage error (exit code 2) (#178).
+- Missing, expired or invalid AWS credentials now fail model resolution with
+  "No valid AWS credentials for Amazon Bedrock ..." instead of falling back to
+  the bare model id, which for inference-profile-only models surfaced as a
+  misleading "Enable aws.bedrock.enable_global_profile" error. A missing
+  `bedrock:ListInferenceProfiles` grant still falls back (#178).
+- An empty (or comment-only) `config.yaml` loads the defaults instead of
+  raising a raw `TypeError`; a file whose top level is not a mapping is a
+  clear `ValueError` (#178).
 - The LLM XML parser no longer tries LangChain's `XMLOutputParser.parse`
   first. Without `defusedxml` (not a dependency) that call raised
   `ImportError` on every response, so the strict and the two re-escaping

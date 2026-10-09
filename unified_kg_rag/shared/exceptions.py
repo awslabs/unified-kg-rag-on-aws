@@ -37,6 +37,10 @@ class EmbeddingModelError(ModelError):
     pass
 
 
+class IndexNotFoundError(GraphRAGException):
+    """No store index exists for the queried suffix (not ingested, or a typo)."""
+
+
 class InvalidFilterError(GraphRAGException, ValueError):
     """A caller search filter names a key no target index or label declares."""
 

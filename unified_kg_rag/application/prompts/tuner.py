@@ -296,6 +296,8 @@ class PromptTuner:
             f"{domain} documents and write reports in {language}. "
             "Follow the output format exactly as specified in the human message."
         )
+        # The corpus- and model-derived fields were brace-escaped above, so the
+        # templates are returned as built.
         return {
             "graph_extraction_system": graph_extraction_system,
             "community_report_system": community_report_system,

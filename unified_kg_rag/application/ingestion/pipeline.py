@@ -38,6 +38,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
     validate_path_segment,
 )
+from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
 from unified_kg_rag.shared import (
     CacheSyncError,
     PipelineExecutionError,
@@ -132,8 +133,25 @@ class DataIngestionPipeline:
         metrics_sink: MetricsSink | None = None,
         *,
         providers: Providers | None = None,
+        doc_status: DocStatusPort | None = None,
+        vector_indexer: VectorIndexer | None = None,
+        graph_indexer: GraphIndexer | None = None,
     ) -> None:
+        """Build the stages; every backend may be injected.
+
+        Args:
+            providers: LLM/embedding/rerank/token-counter bundle (Bedrock
+                defaults when omitted).
+            doc_status: Document-status registry for incremental indexing.
+                Passing one turns incremental indexing on; otherwise it follows
+                ``aws.dynamodb.enabled`` with the DynamoDB store.
+            vector_indexer: Document-index writer (default OpenSearch).
+            graph_indexer: Graph writer (default Neptune).
+        """
         self.config = config
+        self._doc_status = doc_status
+        self._vector_indexer = vector_indexer
+        self._graph_indexer = graph_indexer
         self.pipeline_config = pipeline_config
         # Where pipeline metrics are forwarded (CloudWatch EMF, etc.). Defaults
         # to a no-op so the library assumes no monitoring backend.
@@ -203,9 +221,12 @@ class DataIngestionPipeline:
     def _build_doc_status_store(self) -> Any:
         """Build the document-status registry adapter once (incremental mode).
 
-        Returns None when the registry is disabled or unreachable, so stages
-        fall back to processing everything rather than failing the build.
+        Returns the injected store when given, and None when the registry is
+        disabled or unreachable, so stages fall back to processing everything
+        rather than failing the build.
         """
+        if self._doc_status is not None:
+            return self._doc_status
         if not self.config.aws.dynamodb.enabled:
             return None
         try:
@@ -273,6 +294,9 @@ class DataIngestionPipeline:
                     )
                 if stage_type in self.DOC_STATUS_STAGES and doc_status is not None:
                     kwargs["doc_status"] = doc_status
+                if stage_type == PipelineStageType.INDEXING:
+                    kwargs["vector_indexer"] = self._vector_indexer
+                    kwargs["graph_indexer"] = self._graph_indexer
 
                 kwargs["config"] = self.config
 

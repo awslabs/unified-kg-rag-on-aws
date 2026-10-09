@@ -131,6 +131,15 @@ class ProcessedQuery(BaseModel):
 
 
 class RAGInput(BaseModel):
+    """One query to :class:`GraphRAGChain` (a dict with these keys also works).
+
+    ``suffix`` selects the index namespace to search: it must match the
+    ``processing.document_parsing.index_value`` the corpus was ingested with
+    (both default to ``default``). Set ``conversation_id`` and ``use_memory``
+    to continue a conversation; with ``use_memory`` and no id, a new id is
+    generated and returned on :class:`RAGOutput`.
+    """
+
     query: str = Field(description="The user's search query")
     suffix: str | None = Field(
         default=None, description="Suffix for multi-tenant or versioned indices"
@@ -187,6 +196,14 @@ class RAGInput(BaseModel):
 
 
 class RAGOutput(BaseModel):
+    """The answer of a RAG-mode ``invoke``/``ainvoke``.
+
+    ``sources`` lists the documents and graph elements the answer's context
+    was built from; ``search_results`` holds the raw retrieval results.
+    ``metadata["error"]`` is ``True`` on the degraded answer returned for a
+    failed query when ``processing.ignore_errors`` is set.
+    """
+
     answer: str = Field(description="The generated answer to the user's query")
     sources: list[dict[str, Any]] = Field(
         description="List of source documents used to generate the answer"
@@ -206,6 +223,35 @@ class RAGOutput(BaseModel):
 
 
 class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
+    """Query a knowledge graph built by the ingestion pipeline.
+
+    One chain serves many queries, including concurrent ones. Results depend
+    on ``mode``:
+
+    - ``ChainMode.RAG`` (default): ``invoke``/``ainvoke`` return a
+      :class:`RAGOutput` with the generated answer and its sources.
+    - ``ChainMode.SEARCH``: retrieval only. ``invoke``/``ainvoke`` return a
+      dict with ``search_results``, ``processed_query`` (both dumped models)
+      and ``metadata``; ``stream``/``astream`` yield nothing.
+
+    Lifecycle: the chain opens Neptune and OpenSearch connections on first use
+    and keeps them for later queries. Call :meth:`close` (sync code) or
+    ``await`` :meth:`aclose` (async code) when done; otherwise the connections
+    stay open until garbage collection. A closed chain reconnects if used
+    again.
+
+    Threads and event loops: the async methods run on the caller's event
+    loop, with retrievers built once per loop. The sync methods (``invoke``,
+    ``batch``, ``stream``) run on one event loop the chain owns on a daemon
+    thread, so they also work from a thread that already runs an event loop;
+    they must not be called from a coroutine running on that chain-owned
+    loop (for example a callback), which raises ``RuntimeError``.
+
+    Backends are injectable: ``providers`` (or the ``model_factory``
+    shorthand) for models, ``retriever_builders`` for the graph and document
+    stores, and ``memory_manager`` for conversation memory.
+    """
+
     def __init__(
         self,
         config: Config,
@@ -1172,6 +1218,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> RAGOutput | dict[str, Any]:
+        """Answer one query; the sync form of :meth:`ainvoke`.
+
+        Returns a :class:`RAGOutput` in RAG mode and a dict
+        (``search_results``, ``processed_query``, ``metadata``) in SEARCH
+        mode. Runs on the chain's own event loop (see the class docstring).
+        """
         # Runs on the chain's long-lived loop (not asyncio.run per call), so it
         # also works from a thread that already runs an event loop and reuses
         # the loop-bound retrievers across calls (batch() fans out to here).
@@ -1186,6 +1238,22 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> RAGOutput | dict[str, Any]:
+        """Answer one query.
+
+        Args:
+            input: A :class:`RAGInput` or a dict of its fields.
+            config: LangChain run config; its callbacks, tags and metadata
+                reach every nested LLM call.
+
+        Returns:
+            A :class:`RAGOutput` in RAG mode; a dict with ``search_results``,
+            ``processed_query`` and ``metadata`` in SEARCH mode.
+
+        Raises:
+            Exception: Any query failure, unless ``processing.ignore_errors``
+                is set, in which case a degraded result with
+                ``metadata["error"] = True`` is returned instead.
+        """
         rag_input, input_dict = self._prepare_invoke(input)
         tokens = bind_contextvars(
             query_id=uuid.uuid4().hex[:12], conversation_id=rag_input.conversation_id
@@ -1308,6 +1376,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     ) -> Iterator[str]:
         """Synchronously stream answer chunks.
 
+        Yields the answer as ``str`` chunks only, never a :class:`RAGOutput`:
+        to get the sources and metadata as well, call :meth:`invoke` or
+        :meth:`ainvoke` instead. Yields nothing in SEARCH mode.
+
         Drives :meth:`astream` on the chain's long-lived event loop (the one
         ``invoke`` uses), pulling one chunk at a time. This works both from
         plain sync code and from a thread that already runs an event loop
@@ -1329,6 +1401,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         **kwargs: Any,
     ) -> AsyncIterator[str]:
         """Asynchronously stream answer chunks.
+
+        Yields the answer as ``str`` chunks only, never a :class:`RAGOutput`:
+        to get the sources and metadata as well, call :meth:`ainvoke` instead.
+        Yields nothing in SEARCH mode. With ``processing.ignore_errors`` set, a
+        failure yields the standard error message as a final chunk instead of
+        raising.
 
         Retrieval, query processing and context building run once (the same
         steps ``ainvoke`` uses); only the answer-generation LLM is streamed.

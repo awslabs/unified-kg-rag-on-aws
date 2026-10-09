@@ -94,13 +94,34 @@ def test_rag_parser_filters_nargs() -> None:
 # --- run_rag_chain: RAGChainRunner validation ----------------------------
 
 
-def test_rag_runner_requires_query_or_interactive(config, mocker) -> None:
-    # No --query and not --interactive -> _validate_args exits.
-    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
-    args = _rag_parser().parse_args([])
+@pytest.mark.parametrize(
+    ("argv", "code"),
+    [(["--help"], 0), (["--top-k", "x"], 2), ([], 2)],
+    ids=["help", "bad-arg", "no-query-or-interactive"],
+)
+def test_rag_main_parses_args_before_the_event_loop(
+    mocker, monkeypatch: pytest.MonkeyPatch, argv: list[str], code: int
+) -> None:
+    # argparse's SystemExit raised inside asyncio.run (under nest_asyncio)
+    # printed "Task exception was never retrieved ... SystemExit" tracebacks.
+    monkeypatch.setattr(sys, "argv", ["run-rag", *argv])
+    loop_run = mocker.patch.object(run_rag_chain.asyncio, "run")
     with pytest.raises(SystemExit) as exc:
-        run_rag_chain.RAGChainRunner(args)
-    assert exc.value.code == 1
+        run_rag_chain.main()
+    assert exc.value.code == code
+    loop_run.assert_not_called()
+
+
+async def test_rag_async_main_turns_system_exit_into_a_return_code(
+    mocker,
+) -> None:
+    # A SystemExit escaping the task is what asyncio reports as "never
+    # retrieved"; the coroutine returns the code instead.
+    runner = mocker.MagicMock()
+    runner.run = mocker.AsyncMock(side_effect=SystemExit(1))
+    mocker.patch.object(run_rag_chain, "RAGChainRunner", return_value=runner)
+    args = _rag_parser().parse_args(["-q", "hi"])
+    assert await run_rag_chain.async_main(args) == 1
 
 
 def test_rag_runner_accepts_query(config, mocker) -> None:
@@ -132,12 +153,20 @@ def test_rag_runner_accepts_interactive(config, mocker) -> None:
     assert runner.args.interactive is True
 
 
+@pytest.fixture
+def store_config(config):
+    """Default config with store endpoints, so run() passes the preflight."""
+    config.aws.neptune.endpoint = "neptune.local"
+    config.aws.opensearch.endpoint = "opensearch.local"
+    return config
+
+
 async def test_rag_runner_leaves_the_target_language_to_the_chain(
-    config, mocker
+    store_config, mocker
 ) -> None:
     # An explicit target_language disables the chain's same-language skip, so
     # every CLI query paid a translation call even for a single-language corpus.
-    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    mocker.patch.object(run_rag_chain, "get_config", return_value=store_config)
     mocker.patch.object(run_rag_chain, "display_ascii_art")
     chain = mocker.AsyncMock()
     mocker.patch.object(run_rag_chain, "create_rag_chain", return_value=chain)
@@ -186,8 +215,10 @@ async def test_rag_runner_error_fallback_is_not_success(config, mocker) -> None:
     assert result["error"] == "Neptune down"
 
 
-async def test_rag_runner_exits_non_zero_on_error_fallback(config, mocker) -> None:
-    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+async def test_rag_runner_exits_non_zero_on_error_fallback(
+    store_config, mocker
+) -> None:
+    mocker.patch.object(run_rag_chain, "get_config", return_value=store_config)
     mocker.patch.object(run_rag_chain, "display_ascii_art")
     mocker.patch.object(
         run_rag_chain, "create_rag_chain", return_value=mocker.AsyncMock()
@@ -199,10 +230,11 @@ async def test_rag_runner_exits_non_zero_on_error_fallback(config, mocker) -> No
         "_run_query",
         return_value={"success": False, "error": "x", "metadata": {"error": True}},
     )
-    mocker.patch.object(runner, "_print_result")
+    print_result = mocker.patch.object(runner, "_print_result")
     with pytest.raises(SystemExit) as exc:
         await runner.run()
     assert exc.value.code == 1
+    print_result.assert_called_once()  # exited on the result, not earlier
 
 
 # --- run_rag_chain: _parse_filters --------------------------------------
@@ -786,6 +818,9 @@ def test_eval_main_closes_the_chain(config, mocker, fails) -> None:
     mocker.patch.object(run_evaluation, "GraphRAGChain", return_value=chain)
     mocker.patch.object(run_evaluation, "get_config", return_value=config)
     mocker.patch.object(run_evaluation, "setup_logging")
+    # The endpoint preflight runs before the chain is built; this test is
+    # about closing the chain, so let the preflight pass.
+    mocker.patch.object(run_evaluation, "missing_endpoints_error", return_value=None)
     runner = MagicMock()
     runner.run = AsyncMock(side_effect=RuntimeError("boom") if fails else None)
     runner.run.return_value = 0

@@ -12,12 +12,14 @@ from dotenv import load_dotenv
 from rich.panel import Panel
 from rich.prompt import Confirm
 
+from unified_kg_rag.application.cli.preflight import missing_endpoints_error
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import (
     PipelineConfig,
     PipelineContext,
     PipelineStageStatus,
     PipelineStageType,
+    RetrieverRole,
     validate_path_segment,
 )
 from unified_kg_rag.shared import (
@@ -380,6 +382,21 @@ class IngestionPipelineRunner:
                     return False
         return True
 
+    def _require_indexing_endpoints(self, pipeline_config: PipelineConfig) -> None:
+        # Fail before the paid LLM stages rather than at the indexing stage.
+        if self.args.verify_metadata or self.args.repair_metadata:
+            return
+        if not pipeline_config.stages_enabled.get(PipelineStageType.INDEXING):
+            return
+        error = missing_endpoints_error(
+            self.config,
+            {RetrieverRole.GRAPH, RetrieverRole.DOCUMENT},
+            "the indexing stage",
+        )
+        if error:
+            console.print(f"[red]Error: {error}[/red]")
+            sys.exit(1)
+
     def run(self) -> None:
         display_ascii_art(__version__)
         self._display_run_info()
@@ -387,6 +404,7 @@ class IngestionPipelineRunner:
         console.print("\n[bold]Initializing pipeline...[/bold]")
         boto_session = boto3.Session(profile_name=self.config.aws.profile_name)
         pipeline_config = self._create_pipeline_config()
+        self._require_indexing_endpoints(pipeline_config)
         self.pipeline = DataIngestionPipeline(
             config=self.config,
             pipeline_config=pipeline_config,

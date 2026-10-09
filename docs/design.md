@@ -392,12 +392,12 @@ Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 
 ## 15. Extension Guide
 
-Most extensions are possible with registry registration alone and require no changes to dispatch code (details in `CONTRIBUTING.md`/`CLAUDE.md`).
+Strategies, renderers, parsers and evaluators extend through registries (an evaluator still adds one branch to its type map), and backends through constructor injection; none needs a change to dispatch code (details in `CONTRIBUTING.md`/`CLAUDE.md`).
 
-- **New search strategy**: Subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py`. `query_inputs` declares the query-side LLM extractions the strategy reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest.
-- **New storage/LLM backend**: Implement the relevant port and inject it (see "Custom backends" below). Do not hardcode it into a manager's `__init__`.
+- **New search strategy**: Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; strategies are keyed by this closed enum, and the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py`. `query_inputs` declares the query-side LLM extractions the strategy reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest.
+- **New storage/LLM backend**: Implement the relevant port and pass it to the constructor that uses it (see "Custom backends" below); there is no backend registry. Do not hardcode it into a manager's `__init__`.
 - **New evaluator**: Subclass `BaseGraphRAGEvaluator` + add a branch in `EvaluationManager._resolve_evaluator_class` + an `EvaluatorType` enum.
-- **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`.
+- **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`. Registration happens on import: `GraphVisualizationManager` sees any renderer imported in the process, `run-visualization` only those that `adapters/renderers/__init__.py` imports.
 - **New parser / file format**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — any LangChain `BaseLoader` subclass; no edit to the factory, and the extension is then auto-discovered + parseable. Override a built-in by registering its extension.
 
 ### Custom backends (run without AWS)
@@ -411,9 +411,9 @@ without subclassing or editing dispatch code. The ports and their default
 |---|---|---|---|
 | `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | `get_model()` / `get_model_info()` returning a LangChain-compatible model | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory` | a `Providers` bundle (see below): `GraphRAGChain(providers=...)`, `DataIngestionPipeline(..., providers=...)`, `EvaluationManager(..., providers=...)`; `GraphRAGChain(model_factory=...)` is shorthand for an LLM-only bundle |
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` | `Providers(token_counter_factory=...)` |
-| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` | `IndexingManager(vector_indexer=..., graph_indexer=...)` |
+| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` | `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` or `IndexingManager(vector_indexer=..., graph_indexer=...)` |
 | retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
-| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `list_all` / `diff` | `DynamoDBDocStatusStore` | pipeline accepts the store; conform structurally |
+| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `list_all` / `diff` | `DynamoDBDocStatusStore` | `DataIngestionPipeline(..., doc_status=...)` (turns incremental indexing on); conform structurally |
 | `CachePort` (`ports/cache.py`, `Protocol`) | get/set pipeline state | filesystem `CacheManager` | structural — no AWS needed by default |
 
 Because the model-factory and doc-status/cache ports are `runtime_checkable`
@@ -454,11 +454,18 @@ providers = Providers(
     cfg,
     llm_factory=OllamaModelFactory(),
     embedding_factory=MyEmbeddingFactory(),
+    # Reranking is on by default (search.reranking.enabled) and would otherwise
+    # call Bedrock; pass a factory or set search.reranking.enabled: false.
+    rerank_factory=MyRerankFactory(),
     token_counter_factory=lambda model_id, **_: MyTokenCounter(model_id),
 )
 chain = GraphRAGChain(config=cfg, providers=providers)
 pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
 ```
+
+Models are only half of it: without `retriever_builders` the chain still reads
+Neptune and OpenSearch, and without `doc_status`/`vector_indexer`/
+`graph_indexer` the pipeline still writes to them (see the table above).
 
 Anything not supplied is built lazily with the Bedrock default, and at most once
 per bundle, so a chain constructs its Bedrock clients once rather than per
@@ -479,7 +486,10 @@ container: the bundle covers exactly the providers the framework consumes.
 
 The in-memory fakes in `tests/fixtures/fakes/` (e.g. `FakeGraphStore`,
 `FakeVectorStore`) are working reference implementations of the indexer ports —
-the whole ingestion+indexing pipeline runs against them with no AWS. They are
+the whole ingestion+indexing pipeline runs against them with no AWS
+(`DataIngestionPipeline(cfg, pipeline_config, providers=..., doc_status=...,
+vector_indexer=..., graph_indexer=...)`, exercised in
+`tests/integration/test_ingestion_stages.py`). They are
 the recommended starting point for a custom store. This framework ships only the
 AWS adapters; community/local adapters (e.g. NetworkX graph, a local vector DB,
 Ollama) are intended as add-on packages that implement these ports.

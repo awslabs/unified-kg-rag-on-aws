@@ -231,3 +231,56 @@ def test_stages_run_end_to_end_and_report_a_failed_extraction() -> None:
     delta = store.diff(context.incremental_fingerprints)
     assert delta.unchanged == [document_doc_id(contract)]
     assert delta.changed == [document_doc_id(logistics)]
+
+
+def test_whole_pipeline_runs_without_aws_through_the_public_constructor(
+    tmp_path: Path,
+) -> None:
+    # The documented "run without AWS" path: inject the providers, the
+    # doc-status registry and both indexers into DataIngestionPipeline; no
+    # stage builds a DynamoDB, OpenSearch or Neptune client.
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.domain.models import PipelineConfig, PipelineStageType
+
+    config = _config()
+    config.processing.gleaning.enabled = False
+    config.processing.claim_extraction.enabled = False
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
+    (source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
+    providers = Providers(
+        config,
+        boto_session=MagicMock(),
+        llm_factory=ScriptedLLMFactory(_respond),
+        embedding_factory=HashingEmbeddingFactory(),
+    )
+    store = FakeDocStatusStore()
+    graph, vectors = FakeGraphStore(), FakeVectorStore(config.indexing.opensearch)
+
+    pipeline = DataIngestionPipeline(
+        config,
+        PipelineConfig(
+            stages_enabled=dict.fromkeys(PipelineStageType, True),
+            local_directory=tmp_path / "cache",
+        ),
+        source_directory=source,
+        providers=providers,
+        doc_status=store,
+        vector_indexer=vectors,
+        graph_indexer=graph,
+    )
+    for stage in pipeline.stages:
+        if isinstance(stage, ps.GraphResolutionStage):
+            stage.resolver.entity_resolver.use_process_pool = False
+            stage.resolver.relationship_resolver.use_process_pool = False
+    context = pipeline.run(source, pipeline_id="no-aws")
+
+    assert context.status is PipelineStageStatus.COMPLETED
+    assert vectors.ids("text_units") == {u.id for u in context.text_units}
+    assert graph.ids("entities") and len(graph.ids("entities")) == 3
+    # Passing a registry turns on incremental indexing: both documents are
+    # recorded, so an unchanged re-run would skip them.
+    records = store.list_all()
+    assert len(records) == 2
+    assert {r.status for r in records} == {DocStatus.PROCESSED}

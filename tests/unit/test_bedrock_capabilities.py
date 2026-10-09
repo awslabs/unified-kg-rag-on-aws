@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from botocore.exceptions import ClientError, NoCredentialsError
 
 from unified_kg_rag.adapters.aws import bedrock as bedrock_mod
 from unified_kg_rag.adapters.aws.bedrock import (
@@ -31,7 +32,11 @@ from unified_kg_rag.domain.models import (
     LanguageModelId,
     RerankModelId,
 )
-from unified_kg_rag.shared import EmbeddingModelError, LanguageModelError
+from unified_kg_rag.shared import (
+    AWSServiceError,
+    EmbeddingModelError,
+    LanguageModelError,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -497,6 +502,62 @@ def test_get_cross_region_model_id_falls_back_on_error(mocker) -> None:
     )
     out = BedrockCrossRegionModelHelper.get_cross_region_model_id(
         session, LanguageModelId.CLAUDE_V4_SONNET, "us-east-1"
+    )
+    assert out == LanguageModelId.CLAUDE_V4_SONNET.value
+
+
+class _RaisingBedrockSession(_FakeSession):
+    """Session whose bedrock client fails list_inference_profiles with ``exc``."""
+
+    def __init__(self, exc: Exception) -> None:
+        super().__init__()
+        self._exc = exc
+
+    def client(self, service_name: str, **kwargs: Any) -> Any:
+        exc = self._exc
+
+        class _Client:
+            def list_inference_profiles(self, **_: Any) -> Any:
+                raise exc
+
+        return _Client()
+
+
+def _client_error(code: str) -> ClientError:
+    return ClientError({"Error": {"Code": code, "Message": code}}, "ListProfiles")
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        pytest.param(NoCredentialsError(), id="no-credentials"),
+        pytest.param(_client_error("ExpiredTokenException"), id="expired-token"),
+        pytest.param(_client_error("UnrecognizedClientException"), id="bad-token"),
+    ],
+)
+def test_get_cross_region_model_id_surfaces_credential_errors(
+    exc: Exception,
+) -> None:
+    # A credential problem fails every later Bedrock call too; falling back to
+    # the bare id surfaced it as a misleading "enable the global inference
+    # profile" error for profile-only models.
+    BedrockCrossRegionModelHelper._profiles_by_region.clear()
+    with pytest.raises(AWSServiceError, match="AWS credentials"):
+        BedrockCrossRegionModelHelper.get_cross_region_model_id(
+            _RaisingBedrockSession(exc),
+            LanguageModelId.CLAUDE_V4_SONNET,
+            "us-east-1",
+        )
+
+
+def test_get_cross_region_model_id_falls_back_on_access_denied() -> None:
+    # A missing bedrock:ListInferenceProfiles grant is not fatal: an on-demand
+    # model still works with its bare id.
+    BedrockCrossRegionModelHelper._profiles_by_region.clear()
+    out = BedrockCrossRegionModelHelper.get_cross_region_model_id(
+        _RaisingBedrockSession(_client_error("AccessDeniedException")),
+        LanguageModelId.CLAUDE_V4_SONNET,
+        "us-east-1",
     )
     assert out == LanguageModelId.CLAUDE_V4_SONNET.value
 

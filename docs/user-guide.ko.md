@@ -90,8 +90,9 @@ pip install -e .
 
 선택적 추가 패키지: **Markdown(.md)** 및 **HTML(.html)** 파싱에는
 `unstructured` 패키지가 필요합니다. 이 패키지가 없으면 `.pdf`, `.txt`, `.csv`,
-`.json`만 파싱됩니다(파서는 `.md`/`.html`에 대해 누락된 패키지 이름을 명시하는
-명확한 에러를 발생시킵니다). Python 3.11 또는 3.12에서
+`.json`만 파싱됩니다. 인제스천은 `.md`/`.html` 파일을 건너뛰고 확장자마다 설치
+명령이 담긴 경고를 한 번 남깁니다(`Skipping 2 '.md' file(s) ... install the
+optional 'unstructured' extra`). Python 3.11 또는 3.12에서
 `uv sync --extra unstructured` 또는 `pip install -e '.[unstructured]'`로
 설치하세요. 이 추가 패키지는 URL 파싱의 SSRF 취약점을 수정하고 NLTK 의존성을
 제거한 `unstructured>=0.24.0`을 사용합니다. Python 3.10에서는 이 추가 패키지를
@@ -415,6 +416,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `processing.similarity_threshold` | `0.6` | 엔터티 해소의 유사도 임계값입니다. 서로 다른 엔터티가 합쳐지면 올립니다. |
 | `processing.document_parsing.source_directory` | `"source"` | 라이브러리 호출용 기본값입니다. `run-ingestion`은 `--source-directory`(또는 `GRAPHRAG_SOURCE_DIRECTORY`)가 반드시 필요합니다. |
 | `processing.document_parsing.target_directory` | `null` | 파싱한 문서를 `<stem>.json`으로 내보내 확인할 디렉터리입니다(`--target-directory`와 같음). 소스 디렉터리로는 지정할 수 없습니다. |
+| `processing.document_parsing.index_value` | `null` | 실행이 쓰는 인덱스 접미사입니다. 모든 OpenSearch 인덱스와 Neptune 레이블 이름이 `<prefix>-<index_value>`가 됩니다(`null`이면 `default`). 질의할 때는 같은 값을 `run-rag`/`run-eval --suffix`로 넘깁니다. `run-ingestion`에는 이 값을 지정하는 플래그가 없으므로 테넌트나 버전마다 설정 파일을 따로 둡니다. |
 | `processing.document_parsing.source_scope` | `null` | 증분 삭제에 쓰는 코퍼스 식별자입니다. 실행은 자기 인덱스 접미사와 소스 범위에 속한 레지스트리 문서만 삭제합니다. `null`이면 소스 디렉터리의 절대 경로이며, 컨테이너 엔트리포인트는 S3 URI로 설정합니다(`GRAPHRAG_SOURCE_SCOPE`). §5 참고. |
 | `processing.chunking.chunker_type` | `"intelligent"` | `intelligent`는 LLM이 의미 경계를 고르고, `simple`은 크기로 나눕니다. |
 | `processing.chunking.min_chunk_size` | `1000` | 최소 청크 크기(문자)입니다. 이보다 짧은 조각은 이웃 청크에 합칩니다. |
@@ -456,7 +458,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | 키 | 기본값 | 역할 / 바꿀 때 |
 |---|---|---|
 | `indexing.reset` | `false` | 인덱싱 전에 기존 데이터를 지웁니다. |
-| `indexing.additional_suffix` | `null` | 모든 OpenSearch 인덱스 이름과 Neptune 레이블에서 실행 접미사 뒤에 붙습니다(`<prefix>-<suffix>-<additional_suffix>`, `<suffix>`는 `--suffix` 값 또는 `default`). 버전별·테넌트별로 분리할 때 씁니다. |
+| `indexing.additional_suffix` | `null` | 모든 OpenSearch 인덱스 이름과 Neptune 레이블에서 실행 접미사 뒤에 붙습니다(`<prefix>-<suffix>-<additional_suffix>`). `<suffix>`는 인제스천에서는 `processing.document_parsing.index_value`, 질의에서는 `--suffix`이며 지정하지 않으면 둘 다 `default`입니다. 인제스천과 질의에 같은 값을 설정하세요. 버전별·테넌트별로 분리할 때 씁니다. |
 | `indexing.cross_run_merge` | `true` | 증분 실행에서 기존 그래프를 덮어쓰지 않고 새 데이터와 합쳐, 변경되지 않은 문서와 공유되는 엔터티의 계보를 유지합니다(§5). `false`면 덮어씁니다. |
 | `indexing.cross_run_fuzzy_merge` | `false` | `cross_run_merge`에 엔터티 이름 유사도 매칭을 더합니다. |
 | `indexing.max_failure_rate` | `0.2` | 인덱스 유형별 쓰기 실패율이 이 값을 넘으면 인덱싱 스테이지를 실패로 처리합니다. `1.0`이면 부분 실패 검사를 끕니다. |
@@ -559,7 +561,9 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 
 모든 프롬프트에는 `*_system` / `*_human` 오버라이드가 있습니다(기본값 `null` =
 `unified_kg_rag/domain/prompts/`의 내장 프롬프트 사용). §9를 참고하세요. 필요한
-것만 오버라이드하고 나머지는 `null`로 두세요.
+것만 오버라이드하고 나머지는 `null`로 두세요. 오버라이드는 로드할 때 검사합니다.
+알 수 없는 `{변수}`와 빠진 데이터 변수(`{input_text}` 등)는 오류이며, 중괄호를
+글자 그대로 쓰려면 `{{` / `}}`로 씁니다(§9.B).
 
 ### 2.10 환경 변수로 덮어쓰기
 
@@ -1289,6 +1293,18 @@ custom_prompts:
 `global_map`(글로벌 검색 map-reduce), 그리고 프롬프트 튜닝
 프롬프트(`corpus_profile`).
 
+오버라이드는 설정을 불러올 때 검사하며, 잘못된 오버라이드가 있으면 해당 키를
+알려 주고 로드에 실패합니다.
+
+- 프롬프트가 받지 않는 `{name}` 변수는 오류입니다(그대로 두면 호출마다
+  `KeyError`가 발생합니다). JSON 예시처럼 중괄호를 글자 그대로 쓰려면 `{{`와
+  `}}`로 씁니다. 예: `{{"name": "Vendor"}}`.
+- 프롬프트의 데이터 변수는 system 또는 human 템플릿에 있어야 합니다.
+  `graph_extraction`과 `claim_extraction`은 `{input_text}`,
+  `answer_generation`은 `{query}`와 `{context}`가 필요합니다. 나머지
+  변수(`{max_entities_per_chunk}` 같은 한도, `{entity_types}`)는 빼도 됩니다.
+- `run-prompt-tuning` 출력은 이미 이스케이프되어 있습니다.
+
 **권장 흐름:** `run-prompt-tuning`을 실행해 시작점 생성 → 검토 → 유용한
 프롬프트 병합 + `entity_types`를 직접 튜닝 → 재인제스천.
 
@@ -1322,9 +1338,14 @@ DynamoDB(증분 인덱싱이 켜진 경우).
   실행의 파이프라인 ID가 필요합니다.
 - **`Invalid stage names provided`** — §3의 정확한 스테이지 이름을 사용하세요
   (CLI가 유효한 집합을 출력합니다).
-- **`No module named 'unstructured'`** — `.md`/`.html`을 파싱하려면
-  `unstructured` 추가 패키지를 설치하거나, 해당 문서를 지원 포맷으로
-  변환하세요.
+- **`Skipping N '.md' file(s) ... unsupported file type`**(남는 파일이 없으면
+  `No supported source files found in '<dir>'`) — `.md`/`.html`을 파싱하려면
+  `unstructured` 추가 패키지를 설치하거나(`uv sync --extra unstructured`,
+  Python 3.11 이상), 해당 문서를 지원 포맷으로 변환하세요.
+- **`No indices found for suffix '<suffix>'`** — `run-rag`/`run-eval`이
+  인제스천된 적 없는 접미사를 조회했습니다. 아직 인제스천을 실행하지 않았거나,
+  `--suffix`가 코퍼스를 인제스천할 때 쓴 `processing.document_parsing.index_value`와
+  다릅니다(둘 다 기본값은 `default`).
 - **`use_iam: false`에서 OpenSearch 인증 실패** — `.env`에
   `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD`가 있는지 확인하세요.
 - **LightRAG `mix`/`hybrid`가 아무것도 반환하지 않음** — 인제스천 중 관계
@@ -1346,9 +1367,11 @@ DynamoDB(증분 인덱싱이 켜진 경우).
   (+ `additional_target_languages`)를 설정하고
   `indexing.opensearch.language_analyzers` 아래에 언어 analyzer를 추가하세요.
   번역 스테이지는 단일 언어 코퍼스에서 no-op됩니다.
-- **이종 도메인:** `entity_types`를 도메인들의 합집합에 맞게 튜닝하세요(또는
-  멀티테넌트 분리를 위해 `--suffix` / `indexing.additional_suffix`로 도메인별
-  별도 인덱스를 운영).
+- **이종 도메인:** `entity_types`를 도메인들의 합집합에 맞게 튜닝하거나,
+  도메인이나 테넌트마다 인덱스를 분리하세요. 각각 고유한
+  `processing.document_parsing.index_value`로 인제스천하고 같은 값을 `--suffix`로
+  넘겨 질의합니다(`indexing.additional_suffix`는 두 번째 구분자를 붙이며
+  인제스천과 질의 양쪽에서 같아야 합니다).
 - **증분:** DynamoDB를 활성화하여 대규모 코퍼스가 후속 실행에서 변경된 델타에
   대해서만 비용을 내도록 하세요.
 

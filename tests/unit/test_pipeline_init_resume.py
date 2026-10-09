@@ -78,6 +78,9 @@ def _pipeline_for_init(config: Config) -> DataIngestionPipeline:
     pipe.target_directory = Path("/tmp/out")
     pipe.boto_session = None
     pipe.providers = None
+    pipe._doc_status = None
+    pipe._vector_indexer = None
+    pipe._graph_indexer = None
     pipe.STAGE_CLASSES = _stub_stage_classes()
     return pipe
 
@@ -186,6 +189,20 @@ def test_initialize_stages_doc_status_not_injected_when_dynamodb_disabled() -> N
     by_name = {s.name: s for s in stages}
     assert "doc_status" not in by_name["indexing"].kwargs
     assert "doc_status" not in by_name["document_loading"].kwargs
+
+
+def test_initialize_stages_threads_injected_backends() -> None:
+    _StubStage.instances = []
+    pipe = _pipeline_for_init(Config())  # DynamoDB disabled
+    store, vectors, graph = object(), object(), object()
+    pipe._doc_status = store
+    pipe._vector_indexer, pipe._graph_indexer = vectors, graph
+    stages, _ = pipe._initialize_stages()
+    by_name = {s.name: s for s in stages}
+    assert by_name["document_loading"].kwargs["doc_status"] is store
+    assert by_name["indexing"].kwargs["doc_status"] is store
+    assert by_name["indexing"].kwargs["vector_indexer"] is vectors
+    assert by_name["indexing"].kwargs["graph_indexer"] is graph
 
 
 # --- _resolve_pipeline_id / _generate_pipeline_id ------------------------
