@@ -335,6 +335,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`
   made graph extraction fail to format, and `{input_text}` in a sample was
   substituted with the chunk being extracted (#173).
+- Global search runs `processing.max_concurrency` map calls at once, as
+  documented; each map call was its own BatchProcessor chunk, so the default
+  chunk concurrency of 4 capped it (40 map calls of 0.5 s: 5.0 s, now
+  1.0 s at the default 20) (#PR).
 - Neptune traversals beyond `aws.neptune.pool_size` wait on the event loop
   instead of in gremlinpython's blocking pool checkout, where each held a
   default-executor thread and the Bedrock calls LangChain runs on that

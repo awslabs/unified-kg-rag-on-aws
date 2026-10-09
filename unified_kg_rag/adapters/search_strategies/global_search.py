@@ -96,13 +96,15 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             custom_prompts=config.custom_prompts,
         )
         # One prepared input per map LLM call (each input already packs
-        # ``map_batch_size`` reports), so BatchProcessor's own batch_size is 1;
-        # max_concurrency fans the map calls out over the report batches. The
-        # map chain already retries transient Bedrock errors as a query chain,
-        # so BatchProcessor adds no retry of its own (max_attempts=1).
+        # ``map_batch_size`` reports), so BatchProcessor's own batch_size is 1
+        # and every map call is its own chunk: chunk_concurrency is what runs
+        # max_concurrency map calls at once. The map chain already retries
+        # transient Bedrock errors as a query chain, so BatchProcessor adds no
+        # retry of its own (max_attempts=1).
         self.batch_processor = BatchProcessor(
             batch_size=1,
             max_concurrency=config.processing.max_concurrency,
+            chunk_concurrency=config.processing.max_concurrency,
             max_attempts=1,
         )
 
