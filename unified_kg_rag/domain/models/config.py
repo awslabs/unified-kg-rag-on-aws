@@ -368,18 +368,18 @@ class BedrockConfig(BaseModel):
         default=DEFAULT_MODEL_ID,
         description=(
             "Model for every role on the 'default' tier (extraction, gleaning, "
-            "claims, community reports, query entity/keyword extraction, "
-            "context building, answer generation, evaluation). Any Bedrock "
-            "model id; a role's own *_model_id overrides it."
+            "claims, community reports, output fixing, query entity/keyword "
+            "extraction, context building, answer generation, evaluation). Any "
+            "Bedrock model id; a role's own *_model_id overrides it."
         ),
     )
     fast_model_id: BedrockModelId = Field(
         default=FAST_MODEL_ID,
         description=(
             "Model for every role on the 'fast' tier (chunking, translation, "
-            "description summarization, output fixing, global/DRIFT search "
-            "steps, query translation, strategy routing). Any Bedrock model id; "
-            "a role's own *_model_id overrides it."
+            "description summarization, global/DRIFT search steps, query "
+            "translation, strategy routing). Any Bedrock model id; a role's own "
+            "*_model_id overrides it."
         ),
     )
     default_max_output_tokens: int | None = Field(
@@ -630,7 +630,7 @@ class FixingConfig(BaseModel):
         default=True, description="Enable automatic fixing of malformed model responses"
     )
     fixing_model_id: BedrockModelId = role_model_field(
-        "fast",
+        "default",
         description="Language model for output correction",
     )
 

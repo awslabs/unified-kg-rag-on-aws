@@ -88,13 +88,6 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   relative change of the self-reported quality score), and the gleaning stage
   reports `refinement_calls`. Cached gleaning and later stage outputs miss
   once after upgrading, since their default-config cache keys change (#171).
-- The output fixer (`fixing.fixing_model_id`) is on the fast tier
-  (`aws.bedrock.fast_model_id`, Claude Haiku 5.5 at `fast_effort` `low`)
-  instead of the default tier at `high` effort: it only re-emits a
-  completion as well-formed XML. `fixing` is an input of every stage cache
-  key, so every cached stage output misses once after upgrading. Set
-  `fixing.fixing_model_id` to `anthropic.claude-sonnet-5-5` to keep the
-  previous model (#PR).
 - **Breaking:** `unified_kg_rag.shared.utils` no longer re-exports the
   LangChain-coupled and console helpers, so importing a `domain` module no
   longer loads LangChain, LangSmith, lxml, tenacity or tqdm. Import

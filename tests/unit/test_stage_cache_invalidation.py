@@ -265,22 +265,23 @@ class TestFingerprintScope:
     # per-tier effort split (#128) and before the fields added since. They must
     # not move, or every existing stage cache turns into a miss on upgrade.
     _RELEASED_DEFAULT_FINGERPRINTS = {
-        # The output fixer's default model moved to the fast tier, and
-        # `fixing` is an input of document parsing, so every stage re-keys
-        # once.
-        PipelineStageType.DOCUMENT_PARSING: "e8da0561713d",
-        PipelineStageType.DOCUMENT_LOADING: "057b2d361798",
-        PipelineStageType.TEXT_CHUNKING: "6bda24dedb50",
-        PipelineStageType.TRANSLATION: "a071ba7b4b35",
-        PipelineStageType.GRAPH_EXTRACTION: "c50b426876f2",
-        PipelineStageType.GLEANING: "4f268770423a",
-        PipelineStageType.GRAPH_RESOLUTION: "30f8cedb505c",
-        PipelineStageType.CLAIM_EXTRACTION: "ad60bcef4323",
-        PipelineStageType.CLAIM_RESOLUTION: "ad60bcef4323",
+        PipelineStageType.DOCUMENT_PARSING: "1035b7a62512",
+        PipelineStageType.DOCUMENT_LOADING: "ac616352a4e7",
+        # The fast tier's default model moved to Claude Haiku 5.5, so every
+        # stage from chunking on (each has a fast-tier role upstream) re-keys.
+        PipelineStageType.TEXT_CHUNKING: "7d24d450ee75",
+        PipelineStageType.TRANSLATION: "5abcca511058",
+        PipelineStageType.GRAPH_EXTRACTION: "5cecc719e0a7",
+        # The score-based gleaning knobs were removed, so gleaning and every
+        # later stage re-key once.
+        PipelineStageType.GLEANING: "143abce24b73",
+        PipelineStageType.GRAPH_RESOLUTION: "5490fd77687c",
+        PipelineStageType.CLAIM_EXTRACTION: "7dba3f43bab0",
+        PipelineStageType.CLAIM_RESOLUTION: "7dba3f43bab0",
         # graph.analysis is no longer an input (it shapes nothing a later
         # stage reads), so graph analysis shares claim resolution's inputs.
-        PipelineStageType.GRAPH_ANALYSIS: "ad60bcef4323",
-        PipelineStageType.COMMUNITY_DETECTION: "a8e77d5f328e",
+        PipelineStageType.GRAPH_ANALYSIS: "7dba3f43bab0",
+        PipelineStageType.COMMUNITY_DETECTION: "3ee224943382",
     }
 
     def test_default_config_fingerprints_are_unchanged(self) -> None:
