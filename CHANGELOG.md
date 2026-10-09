@@ -346,6 +346,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   The chunking prompt no longer ends with `<?xml ...?>` and an open
   `<chunk_boundaries>`: it already asks the model to emit the whole document
   (#PR).
+- A model response that stopped at its output-token limit (`stopReason`
+  or `stop_reason` `max_tokens`) fails with `LLMOutputTruncatedError`
+  instead of being parsed. The XML parser recovered the sections before the
+  cut, so an extraction cut inside `<relationships>` counted as a success
+  with its relationships missing. The chain now logs a WARNING with the
+  prompt, model purpose and model id, and ingestion counts the item as
+  failed; the error is not retried, since the same input hits the same
+  limit. Streamed output is passed through and only logged (#PR).
 - `cdk destroy` with `removal_destroy=true` (dev default) deletes the
   OpenSearch domain's app, slow-index and slow-search log groups. The domain
   created them with CDK's default `Retain`, so every dev teardown left three
