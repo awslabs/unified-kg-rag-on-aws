@@ -59,6 +59,7 @@ from .retrieval import (
     SearchResult,
     SearchStrategy,
     SearchType,
+    validate_safe_name,
 )
 from .text_unit import TextUnit
 
@@ -122,6 +123,7 @@ __all__ = [
     "SearchStrategy",
     "SearchType",
     "TextUnit",
+    "validate_safe_name",
 ]
 
 PipelineContext.model_rebuild()

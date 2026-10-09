@@ -631,7 +631,7 @@ CDK compute 스택은 `AWS_REGION`, `BEDROCK_REGION`, `NEPTUNE_ENDPOINT`,
 | `--s3-sync` | off | 캐시를 S3에 동기화 (`--s3-bucket-name` 필요) |
 | `--s3-bucket-name` | — | 캐시 동기화용 S3 버킷 |
 | `--s3-prefix` | `pipeline-runs` | 캐시 파일의 S3 키 프리픽스 |
-| `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | 재개/검사할 기존 실행. 플래그를 생략하면 `GRAPHRAG_PIPELINE_ID` 환경 변수로 대체됩니다. |
+| `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | 재개/검사할 기존 실행. 플래그를 생략하면 `GRAPHRAG_PIPELINE_ID` 환경 변수로 대체됩니다. ID가 실행의 캐시 디렉터리와 S3 접두사 이름이 되므로 영문 소문자, 숫자, 하이픈, 밑줄만 허용합니다. |
 | `--resume-from-stage` | — | 재개할 스테이지 (`--pipeline-id` 필요) |
 | `--verify-metadata` | off | 파이프라인 메타데이터 무결성 검증 (`--pipeline-id` 필요). 손상되었으면 0이 아닌 코드로 종료 |
 | `--repair-metadata` | off | 메타데이터 복구 시도 (`--pipeline-id` 필요). 복구에 실패하면 0이 아닌 코드로 종료 |

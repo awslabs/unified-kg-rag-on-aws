@@ -613,6 +613,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#160).
 
 ### Security
+- **Breaking** `pipeline_id` (`--pipeline-id`, `GRAPHRAG_PIPELINE_ID`, which
+  the Step Functions task sets, `PipelineConfig` and
+  `DataIngestionPipeline.run`) must match the `suffix` charset: lowercase
+  letters, digits, hyphens and underscores. The id names the local cache
+  directory and the S3 prefix, so `../x` or `a/b` reached paths outside the
+  cache directory. Generated ids already match (#PR).
 - The persisted embedding cache (`persist_embedding_cache`) uploads with the
   `aws.s3.encryption` settings the stage-cache sync already used. It sent no
   SSE header, so `AES256` or `aws:kms` with a specific key were ignored for

@@ -18,6 +18,7 @@ from unified_kg_rag.domain.models import (
     PipelineContext,
     PipelineStageStatus,
     PipelineStageType,
+    validate_safe_name,
 )
 from unified_kg_rag.shared import (
     CloudWatchEMFSink,
@@ -36,6 +37,16 @@ from unified_kg_rag.shared.utils.display import (
 
 load_dotenv()
 logger = get_logger(__name__)
+
+
+def _pipeline_id_arg(value: str) -> str | None:
+    if not value:  # an empty GRAPHRAG_PIPELINE_ID means "unset"
+        return None
+    try:
+        return validate_safe_name(value, "pipeline_id")
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
+
 
 try:
     __version__ = version("unified-kg-rag-on-aws")
@@ -96,7 +107,9 @@ class CommandLineInterface:
         )
         parser.add_argument(
             "--pipeline-id",
-            type=str,
+            # argparse applies ``type`` to a string default too, so the env
+            # var (set by the Step Functions task) is validated as well.
+            type=_pipeline_id_arg,
             default=os.getenv("GRAPHRAG_PIPELINE_ID"),
             help="Unique identifier of an existing pipeline run to resume or inspect "
             "(falls back to the GRAPHRAG_PIPELINE_ID env var)",
