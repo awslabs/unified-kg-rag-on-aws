@@ -608,6 +608,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `<target>B</source>` no longer nests the record's remaining fields inside
   `target`. Tag-like text inside a field (`Optional<User>`, `<br>`, `<T>`) is
   kept verbatim instead of being parsed into a nested element (#PR).
+- `BatchProcessor` no longer calls an item again when its first error is not
+  retryable. The retry pass's first attempt was a new call, so a response
+  truncated at the output-token limit (`LLMOutputTruncatedError`, documented
+  as not retried) cost a second call, and up to `max_attempts` more where
+  every error is retried (`is_transient_error` unset); an error the
+  classifier marks permanent also cost a second call. Truncated responses
+  are now never retried, and other non-retryable items fail after one call
+  (#PR).
 - A model response that stopped at its output-token limit (`stopReason`
   or `stop_reason` `max_tokens`) fails with `LLMOutputTruncatedError`
   instead of being parsed. The XML parser recovered the sections before the

@@ -20,6 +20,7 @@ from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
 
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 from unified_kg_rag.shared.utils.common import text_digest
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
@@ -110,8 +111,9 @@ class BatchProcessor(BaseModel):
     max_attempts: int = Field(
         default=5,
         ge=1,
-        description="Calls an item gets after its first call fails: at least "
-        "one, and up to this many while its error is retryable",
+        description="Calls an item gets after its first call fails with a "
+        "retryable error: up to this many while its error stays retryable. An "
+        "item whose first error is not retryable is not called again",
     )
     batch_size: int = Field(
         default=10,
@@ -265,6 +267,9 @@ class BatchProcessor(BaseModel):
                 logger.debug("Chunk %s processed successfully", chunk_num)
                 return results
             self._log_partial_failure(task_name, chunk_num, results, failed)
+            failed = self._settle_permanent_failures(task_name, results, failed)
+            if not failed:
+                return results
             retried = self._process_sequentially_with_fallback(
                 [chunk_inputs[i] for i in failed],
                 retrying_sequential_func,
@@ -346,13 +351,36 @@ class BatchProcessor(BaseModel):
     ) -> None:
         logger.warning(
             "Batch chunk %s of '%s': %s/%s items failed (first error: %s). "
-            "Retrying only the failed items",
+            "Retrying only the failed items whose error is retryable",
             chunk_num,
             task_name,
             len(failed),
             len(results),
             results[failed[0]],
         )
+
+    def _settle_permanent_failures(
+        self, task_name: str, results: list[Any], failed: list[int]
+    ) -> list[int]:
+        """Mark items whose error is not retryable as failed; return the rest.
+
+        The retry pass runs through the retry decorator, whose first attempt
+        is a new call: a permanent error (a truncated response, access denied)
+        would otherwise cost a second call that fails the same way.
+        """
+        retryable = []
+        for idx in failed:
+            error = results[idx]
+            if self._is_retryable(error):
+                retryable.append(idx)
+                continue
+            logger.error(
+                "Item failed in '%s' with a non-retryable error: %s",
+                task_name,
+                error,
+            )
+            results[idx] = BATCH_ITEM_FAILED
+        return retryable
 
     @staticmethod
     def _splice_retried(
@@ -364,6 +392,9 @@ class BatchProcessor(BaseModel):
         return merged
 
     def _is_retryable(self, exc: BaseException) -> bool:
+        # The same input hits the same output-token limit again.
+        if isinstance(exc, LLMOutputTruncatedError):
+            return False
         # A malformed LLM response or a hung call can succeed on a new attempt.
         if isinstance(exc, OutputParserException | TimeoutError):
             return True
@@ -517,6 +548,10 @@ class BatchProcessor(BaseModel):
             failed = self._failed_indices(chunk_results)
             if failed:
                 self._log_partial_failure(task_name, chunk_num, chunk_results, failed)
+                failed = self._settle_permanent_failures(
+                    task_name, chunk_results, failed
+                )
+            if failed:
                 retried = await self._aprocess_sequentially_with_fallback(
                     [chunk_inputs[idx] for idx in failed],
                     retrying_sequential_func,
