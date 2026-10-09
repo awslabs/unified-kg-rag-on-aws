@@ -16,9 +16,14 @@ from moto import mock_aws
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
 from unified_kg_rag.adapters.aws import dynamodb as dynamodb_module
-from unified_kg_rag.domain.models import Config, DocStatus, DocStatusRecord
+from unified_kg_rag.domain.models import (
+    PENDING_CONTENT_HASH,
+    Config,
+    DocStatus,
+    DocStatusRecord,
+)
 from unified_kg_rag.ports import DocStatusPort
-from unified_kg_rag.shared import DocStatusRegistryError
+from unified_kg_rag.shared import DataProcessingError, DocStatusRegistryError
 
 pytestmark = pytest.mark.integration
 
@@ -276,3 +281,101 @@ def test_diff_reports_stored_scopes_like_the_fake(
 
     assert ddb_store.diff({"a": "h"}, scope="s1") == fake.diff({"a": "h"}, scope="s1")
     assert ddb_store.diff({}, scope="s2").stored_scopes == ["s1", "s2"]
+
+
+def test_put_many_writes_in_batches_of_25_and_last_record_wins(
+    ddb_store: DynamoDBDocStatusStore,
+) -> None:
+    records = [DocStatusRecord(doc_id=f"d{i}", content_hash="h") for i in range(60)]
+    records.append(DocStatusRecord(doc_id="d0", content_hash="h-last"))
+    calls: list[int] = []
+    batch_write = ddb_store.client.batch_write_item
+
+    def counting(**kwargs):
+        calls.append(len(kwargs["RequestItems"]["test-doc-status"]))
+        return batch_write(**kwargs)
+
+    ddb_store.client.batch_write_item = counting  # type: ignore[method-assign]
+
+    # A repeated key is written once (BatchWriteItem rejects repeated keys).
+    ddb_store.put_many(records)
+    ddb_store.put_many([])
+
+    assert calls == [25, 25, 10]
+    assert len(ddb_store.list_all()) == 60
+    stored = ddb_store.get("d0")
+    assert stored is not None and stored.content_hash == "h-last"
+
+
+def test_put_many_retries_unprocessed_items(
+    ddb_store: DynamoDBDocStatusStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(dynamodb_module.time, "sleep", lambda _: None)
+    batch_write = ddb_store.client.batch_write_item
+    requests: list[list[str]] = []
+
+    def throttled(**kwargs):
+        items = kwargs["RequestItems"]["test-doc-status"]
+        requests.append([i["PutRequest"]["Item"]["doc_id"]["S"] for i in items])
+        if len(requests) > 1:
+            return batch_write(**kwargs)
+        # First request: only the first item is written, the rest come back
+        # unprocessed, as under throttling.
+        served = batch_write(RequestItems={"test-doc-status": items[:1]})
+        served["UnprocessedItems"] = {"test-doc-status": items[1:]}
+        return served
+
+    ddb_store.client.batch_write_item = throttled  # type: ignore[method-assign]
+
+    ddb_store.put_many(
+        [DocStatusRecord(doc_id=doc_id, content_hash="h") for doc_id in "abc"]
+    )
+
+    assert requests == [["a", "b", "c"], ["b", "c"]]
+    assert sorted(r.doc_id for r in ddb_store.list_all()) == ["a", "b", "c"]
+
+
+def test_put_many_fails_when_items_stay_unprocessed(
+    ddb_store: DynamoDBDocStatusStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(dynamodb_module.time, "sleep", lambda _: None)
+
+    def never(**kwargs):
+        return {"UnprocessedItems": kwargs["RequestItems"]}
+
+    ddb_store.client.batch_write_item = never  # type: ignore[method-assign]
+
+    with pytest.raises(DocStatusRegistryError, match="unprocessed"):
+        ddb_store.put_many([DocStatusRecord(doc_id="a", content_hash="h")])
+
+
+def test_put_many_rejects_an_oversized_record_before_writing_any(
+    ddb_store: DynamoDBDocStatusStore,
+) -> None:
+    huge = DocStatusRecord(
+        doc_id="huge",
+        content_hash="h",
+        entity_ids=[f"entity-{i:08d}-{'x' * 40}" for i in range(9000)],
+    )
+
+    with pytest.raises(DataProcessingError, match="400 KB"):
+        ddb_store.put_many([DocStatusRecord(doc_id="small", content_hash="h"), huge])
+
+    assert ddb_store.list_all() == []
+
+
+def test_write_ahead_record_round_trips_and_diffs_as_changed(
+    ddb_store: DynamoDBDocStatusStore,
+) -> None:
+    pending = DocStatusRecord(
+        doc_id="d",
+        content_hash=PENDING_CONTENT_HASH,
+        status=DocStatus.PENDING,
+        scope="ns|src",
+        entity_ids=["e1"],
+    )
+    ddb_store.put_many([pending])
+
+    assert ddb_store.get("d") == pending
+    assert ddb_store.diff({"d": "any-hash"}, scope="ns|src").changed == ["d"]
+    assert ddb_store.diff({}, scope="ns|src").deleted == ["d"]

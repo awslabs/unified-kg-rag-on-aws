@@ -232,29 +232,42 @@ flowchart LR
     diff --> work["new, changed or FAILED: stages 3-11 on these documents"]
     diff --> deleted["deleted"]
     subgraph indexing["indexing stage"]
+        wal["write_ahead: new + changed docs PENDING, stored + planned lineage"]
         remove["remove_changed_and_deleted: one plan over both; exclusive artifacts removed, shared ones stripped, then deleted docs' registry rows"]
         commit["commit: merge_with_existing_graph, then index_delta upserts"]
-        record["record: DocStatusRecord + DocumentLineage, PROCESSED or FAILED"]
-        remove --> commit --> record
+        record["record: PENDING replaced by DocStatusRecord + DocumentLineage, PROCESSED or FAILED"]
+        wal --> remove --> commit --> record
     end
-    work --> remove
+    work --> wal
     deleted --> remove
+    wal -.-> registry
     remove --> stores[("Neptune + OpenSearch")]
     commit --> stores
     record -.-> registry
 ```
 
-따로 표시하지 않은 이름은 `IncrementalIndexer` 메서드(`application/ingestion/incremental.py`)입니다. `FAILED`로 기록된 문서는 `indexing.max_document_failures`에 이를 때까지 다음 실행에서 changed로 분류됩니다. 레지스트리 레코드는 델타 쓰기가 인덱싱 실패 기준을 통과할 때만 기록합니다.
+따로 표시하지 않은 이름은 `IncrementalIndexer` 메서드(`application/ingestion/incremental.py`)입니다. `FAILED`로 기록된 문서는 `indexing.max_document_failures`에 이를 때까지 다음 실행에서 changed로 분류됩니다. 최종 레지스트리 레코드는 델타 쓰기가 인덱싱 실패 기준을 통과할 때만 기록하며, 그 전까지 델타의 문서는 `PENDING` 선기록 레코드(2단계)를 유지합니다.
 
 1. **델타 감지**(`domain/ingestion/delta_detector.py`): 안정적인 `doc_id`와 콘텐츠 SHA-256 해시로 `{doc_id: content_hash}`를 만들고, `DocStatusPort.diff(incoming, scope)`가 new/changed/unchanged/deleted로 분류합니다. `doc_id`는 문서의 인덱스 접미사(`index_value` + `indexing.additional_suffix`), 코퍼스 소스 범위, 코퍼스 루트 기준 상대 경로를 해시하므로, 두 테넌트의 같은 이름 파일을 한 디렉터리에 두거나 한 접미사를 쓰는 두 코퍼스에 같은 상대 경로가 있어도 서로 구분됩니다. 이전 방식(접미사 + 경로)으로 키가 만들어진 레코드는 그 범위의 첫 실행이 새 키로 옮기고, diff를 다시 하지 않고 델타를 메모리에서 고칩니다(옮긴 문서는 옮긴 레코드의 해시와 상태에 따라 new에서 unchanged나 changed로 바뀝니다). 두 번째 diff의 스캔은 최종 일관성이라 이전 키를 아직 돌려줄 수 있고, 그러면 그 키를 삭제된 문서로 읽기 때문입니다. 범위가 바뀐 코퍼스(옮긴 로컬 디렉터리)의 레코드는 넘겨받지 않습니다. 레지스트리로는 이동과 같은 경로를 쓰는 다른 호스트의 코퍼스를 구분할 수 없으므로, 이전 범위의 레코드는 어떤 실행이 그 범위를 `indexing.retire_source_scopes`(`--retire-source-scope`)에 지정할 때까지 남습니다. 지정하면 그 실행은 자기 접미사에서 그 범위의 레코드를 모두 삭제된 문서로 분류합니다(지정한 범위마다 프로젝션 스캔이 한 번 더 들고, 실행 자신의 범위는 거부합니다). 범위가 기본값인 로컬 실행에 새 문서가 있으면 diff 스캔이 이미 돌려준 범위(`DocumentDelta.stored_scopes`)에서 같은 접미사의 다른 로컬 소스 디렉터리를 찾아 경고합니다. 삭제는 **범위를 한정**합니다. 실행 범위(인덱스 접미사 + 코퍼스 소스, 즉 `document_parsing.source_scope` 또는 해석된 소스 디렉터리)에 속한 레지스트리 레코드만 삭제 후보가 되며, 범위 개념이 생기기 전에 기록된 레코드는 삭제 후보가 되지 않습니다. 이번 실행에서 파싱이나 로딩에 실패한 파일은 `failed`로 보고하고 `deleted`에서 뺍니다.
-2. **오래된 산출물 정리**(`IncrementalIndexer.remove_changed_and_deleted`): 델타를 쓰기 전에 변경된 문서(다시 추출한 뒤 사라진 엔티티가 그래프에 남지 않도록)와 삭제된 문서(4단계)의 기존 산출물 중 *남는* 문서가 참조하지 않는 것을 지웁니다. 제거 계획은 변경 문서와 삭제 문서를 합쳐 한 번에 세우므로, 변경된 문서와 삭제된 문서만 참조하는 산출물도 지워집니다. 두 집합을 따로 계획하면 서로를 남는 문서로 보아 그런 산출물이 텍스트 단위 없이 남습니다.
-3. **델타 upsert**(`IncrementalIndexer.commit`): `indexing.cross_run_merge`(기본값 켜짐)이면 먼저 `IndexingManager.merge_with_existing_graph`가 델타가 건드리는 기존 엔티티와 관계를 인덱스 접미사별로 읽어 와서 델타를 병합합니다(아래 병합 규칙 참고). 그래서 변경되지 않은 문서와 공유하는 엔티티도 그 문서들의 설명과 `text_unit_ids`를 유지합니다. 델타 항목이 다른 id의 저장된 항목에 병합되면(퍼지 엔티티 매칭, 또는 끝점이 remap된 엣지) 계보에는 저장된 id를 기록합니다. 이어서 `IndexingManager.index_delta`가 결과를 그대로 씁니다. Neptune은 Gremlin `coalesce(unfold, addV)` 멱등 upsert를 쓰고, OpenSearch는 운영 중인 alias 인덱스에 id 기준으로 upsert합니다. 관계 벡터 인덱스도 같은 방식으로 갱신합니다.
-4. **삭제 전파**(2단계의 제거에 포함): 삭제된 문서의 *독점* 산출물만 `delete_by_id`로 지우고(공유 엔티티는 보존) 그 레지스트리 레코드를 지웁니다. 텍스트 단위, 엔티티, 관계 인덱스가 모두 대상입니다. 남은 문서(같은 접미사)와 공유하는 엔티티와 관계는 남기되, 제거되는 문서의 텍스트 단위를 빼고 `frequency`와 weight를 다시 계산해 Neptune과 OpenSearch에 똑같이 반영합니다(`IndexingManager.remove_text_units_from_shared`). 변경된 문서도 재추출 결과를 병합하기 전에 같은 처리를 합니다. 제거가 하나라도 실패하면 재시도할 수 있도록 삭제된 문서의 레지스트리 레코드를 남기고, 인덱싱 단계를 실패 처리해 실행 결과와 `IndexingFailures` 알람에 드러나게 합니다. 델타에 변경된 문서가 있으면 커밋 전에 실패 처리하고(커밋하면 그 문서들의 계보가 바뀌어 오래된 산출물이 고아로 남습니다), 없으면 커밋한 뒤 실패 처리합니다.
+2. **선기록**(`IncrementalIndexer.write_ahead`): 저장소에 무엇이든 쓰기 전에 새 문서와 변경된 문서를 현재 키와 실행 범위로 `PENDING` 기록합니다. 콘텐츠 해시는 어떤 문서의 해시와도 같을 수 없는 `"pending"`(`PENDING_CONTENT_HASH`)이고, 계보는 저장된 계보와 이번 실행이 쓸 계보의 합집합입니다. 저장된 레코드를 한 번에 일괄로 읽고(`get_many`, 커밋이 실패 횟수 계산에 재사용) 선기록 레코드를 한 번에 일괄로 씁니다(`DocStatusPort.put_many`, DynamoDB `BatchWriteItem`). 아래 *중단 복구*를 참고하세요.
+3. **오래된 산출물 정리**(`IncrementalIndexer.remove_changed_and_deleted`): 델타를 쓰기 전에 변경된 문서(다시 추출한 뒤 사라진 엔티티가 그래프에 남지 않도록)와 삭제된 문서(5단계)의 기존 산출물 중 *남는* 문서가 참조하지 않는 것을 지웁니다. 제거 계획은 변경 문서와 삭제 문서를 합쳐 한 번에 세우므로, 변경된 문서와 삭제된 문서만 참조하는 산출물도 지워집니다. 두 집합을 따로 계획하면 서로를 남는 문서로 보아 그런 산출물이 텍스트 단위 없이 남습니다.
+4. **델타 upsert**(`IncrementalIndexer.commit`): `indexing.cross_run_merge`(기본값 켜짐)이면 먼저 `IndexingManager.merge_with_existing_graph`가 델타가 건드리는 기존 엔티티와 관계를 인덱스 접미사별로 읽어 와서 델타를 병합합니다(아래 병합 규칙 참고). 그래서 변경되지 않은 문서와 공유하는 엔티티도 그 문서들의 설명과 `text_unit_ids`를 유지합니다. 델타 항목이 다른 id의 저장된 항목에 병합되면(퍼지 엔티티 매칭, 또는 끝점이 remap된 엣지) 계보에는 저장된 id를 기록하고, 쓰기 전에 `PENDING` 레코드에도 추가합니다. 이어서 `IndexingManager.index_delta`가 결과를 그대로 씁니다. Neptune은 Gremlin `coalesce(unfold, addV)` 멱등 upsert를 쓰고, OpenSearch는 운영 중인 alias 인덱스에 id 기준으로 upsert합니다. 관계 벡터 인덱스도 같은 방식으로 갱신합니다.
+5. **삭제 전파**(3단계의 제거에 포함): 삭제된 문서의 *독점* 산출물만 `delete_by_id`로 지우고(공유 엔티티는 보존) 그 레지스트리 레코드를 지웁니다. 텍스트 단위, 엔티티, 관계 인덱스가 모두 대상입니다. 남은 문서(같은 접미사)와 공유하는 엔티티와 관계는 남기되, 제거되는 문서의 텍스트 단위를 빼고 `frequency`와 weight를 다시 계산해 Neptune과 OpenSearch에 똑같이 반영합니다(`IndexingManager.remove_text_units_from_shared`). 이때 Neptune에서 읽어 온 공유 항목을 변경 여부와 관계없이 모두 다시 쓰므로, 중단되거나 실패한 정리가 OpenSearch에 반영하지 못한 부분도 재시도에서 복구됩니다. 변경된 문서도 재추출 결과를 병합하기 전에 같은 처리를 합니다. 제거가 하나라도 실패하면 재시도할 수 있도록 삭제된 문서의 레지스트리 레코드를 남기고, 인덱싱 단계를 실패 처리해 실행 결과와 `IndexingFailures` 알람에 드러나게 합니다. 델타에 변경된 문서가 있으면 커밋 전에 실패 처리하고(커밋하면 그 문서들의 계보가 바뀌어 오래된 산출물이 고아로 남습니다), 없으면 커밋한 뒤 실패 처리합니다.
 
    **한계**: 공유 산출물의 설명에는 변경되거나 삭제된 문서가 기여한 문장이 남습니다. 이를 지우려면 남은 출처로 설명을 다시 요약해야 하고, 영향받는 산출물마다 LLM을 호출해야 하므로 전체 재구축(`indexing.reset`) 전까지 그대로 둡니다. 공유 커뮤니티와 그 리포트도 마찬가지입니다(아래 참고).
-5. **레지스트리 갱신**: 처리한 문서를 `DocumentLineage`(문서별 산출물 id + 접미사)로 `DocStatusRecord`에 기록하고, 실행 범위와 상대 경로도 함께 저장합니다. 번역, 그래프 추출, 추가 추출, 주장 추출 중 어느 것이든 텍스트 단위 하나에서라도 실패한 문서는 (기록된 산출물의 계보와 함께) `FAILED`로 기록합니다. `diff`는 해시가 같아도 `FAILED` 레코드를 changed로 분류하므로, 다음 실행이 그 문서를 정리하고 다시 추출합니다. 레코드는 같은 내용의 연속 실패 횟수(`failure_count`)를 세며, `indexing.max_document_failures`에 이르면 `detect_delta`가 그 문서를 unchanged로 분류합니다. 그래서 매번 같은 이유로 실패하는 문서를 실행마다 다시 추출하지 않습니다.
+6. **레지스트리 갱신**(커밋): `PENDING` 레코드를 한 번의 일괄 쓰기로 `DocStatusRecord`로 바꿉니다. 각 레코드에는 문서의 `DocumentLineage`(문서별 산출물 id + 접미사), 실행 범위, 상대 경로가 들어갑니다. 번역, 그래프 추출, 추가 추출, 주장 추출 중 어느 것이든 텍스트 단위 하나에서라도 실패한 문서는 (기록된 산출물의 계보와 함께) `FAILED`로 기록합니다. `diff`는 해시가 같아도 `FAILED` 레코드를 changed로 분류하므로, 다음 실행이 그 문서를 정리하고 다시 추출합니다. 레코드는 같은 내용의 연속 실패 횟수(`failure_count`)를 세며, `indexing.max_document_failures`에 이르면 `detect_delta`가 그 문서를 unchanged로 분류합니다. 그래서 매번 같은 이유로 실패하는 문서를 실행마다 다시 추출하지 않습니다.
 
-`indexing.reset`이면 diff를 건너뜁니다. 저장소와 레지스트리를 비우고 전체 인덱싱 경로로 코퍼스 전체를 다시 구축한 뒤 모든 문서를 다시 기록합니다(재구축의 쓰기가 델타 커밋과 같은 실패 기준을 통과할 때만).
+`indexing.reset`이면 diff를 건너뜁니다. 저장소와 레지스트리를 비우고 모든 문서를 `PENDING`으로 선기록(2단계)한 뒤 전체 인덱싱 경로로 코퍼스 전체를 다시 구축하고, 모든 문서를 다시 기록합니다(재구축의 쓰기가 델타 커밋과 같은 실패 기준을 통과할 때만).
+
+**중단 복구(선기록 프로토콜)**: 레지스트리는 저장소와 원자적으로 갱신되지 않으므로, 실행은 두 쓰기 사이 어디에서든 멈출 수 있습니다(태스크 강제 종료, 저장소 장애, 실패 기준 미달). 프로토콜이 지키는 불변식은 하나입니다. 레지스트리가 설명할 수 없는 것이 저장소에 생기기 전에, 레지스트리가 먼저 그것을 기록합니다. 선기록 레코드(2단계)는 제거와 upsert보다 먼저 쓰고, 삭제된 문서의 행은 산출물을 지운 뒤에만 지우며, 커밋은 문서의 쓰기가 끝난 뒤에만 `PENDING` 레코드를 바꿉니다. 2단계 이후 어디에서 멈추든 끝나지 않은 문서는 `PENDING`으로 남고, 다음 실행이 이를 복구합니다.
+
+- `PENDING_CONTENT_HASH`는 어떤 콘텐츠 해시와도 같지 않으므로, 아직 있는 문서는 changed로 분류됩니다. 중단된 실행 전에 인덱싱한 내용으로 되돌아가도 마찬가지입니다(선기록 레코드가 없으면 레지스트리에 그 버전의 해시가 남아 있어, 산출물은 이미 정리됐는데 문서는 unchanged로 읽혔습니다).
+- 사라진 `PENDING` 문서는 deleted로 분류되고(레코드가 범위를 유지합니다), 그 계보가 중단된 실행이 썼을 수 있는 모든 것을 포함하므로 그 실행이 추가한 것이 레코드 없이 남지 않습니다.
+- 제거 계획은 이번 실행의 문서에 대해 자기 `PENDING` 레코드 이전에 저장돼 있던 레코드(중단 뒤라면 중단된 실행의 `PENDING` 레코드)를 씁니다. 그래서 정상 실행은 이전과 똑같이 정리하고, 복구 실행은 다시 쓰기 전에 중단된 실행이 일부 쓴 것을 지웁니다. 새 문서의 `PENDING` 레코드는 제거 중에 아무것도 남기지 않습니다.
+- `PENDING` 레코드는 `failure_count`가 0이고 `FAILED`가 아니므로 중단은 `indexing.max_document_failures`에 포함되지 않습니다. 실제 실패는 커밋이 선기록 이전에 저장된 레코드를 기준으로 셉니다. 재시도 한도에 이른 문서를 처리하던 중 실행이 중단되면 횟수가 초기화되고, 그 문서는 다시 그만큼 실패할 때까지 재시도됩니다.
+- 계보가 만들어지지 않은 델타 문서는 `PENDING`으로 남고(로그 기록), 다음 실행이 다시 추출합니다.
+
+비용은 실행마다 일괄 레지스트리 쓰기 한 번(실행 간 병합이 id를 remap하면 두 번)이 늘고, 커밋 때 문서마다 하던 `GetItem`이 일괄 읽기 한 번으로 바뀌는 정도입니다. `tests/unit/test_incremental_write_ahead.py`와 `tests/property/test_incremental_interruption_properties.py`는 모든 쓰기 단계에서 실행을 중단하고, 다음 실행이 같은 코퍼스, 변경 문서를 되돌린 코퍼스, 추가 문서를 뺀 코퍼스 각각의 새 전체 구축 결과로 수렴하는지 확인합니다.
 
 **문서 식별**(`shared/utils/document_identity.py`): 문서 버전의 `document_id`(텍스트 단위 id가 여기서 파생됩니다)는 코퍼스 루트 기준 상대 경로와 전체 텍스트를 해시한 값입니다. 파싱과 로딩 단계가 루트를 기준으로 이 값을 다시 계산하므로(`delta_detector.assign_document_identity`), 같은 코퍼스는 어디에 체크아웃하거나 동기화해도 같은 id를 얻고, 다른 폴더의 같은 이름 파일은 충돌하지 않습니다. 레지스트리 `doc_id`(1단계)도 같은 상대 경로 규칙을 따릅니다. 어느 규칙이든 바꾸면 id가 바뀌므로 다시 인덱싱해야 합니다.
 
@@ -471,7 +484,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` | `Providers(token_counter_factory=...)` |
 | `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` | `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` 또는 `IndexingManager(vector_indexer=..., graph_indexer=...)` |
 | 리트리버(역할별 빌더) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
-| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `list_all` / `diff` | `DynamoDBDocStatusStore` | `DataIngestionPipeline(..., doc_status=...)`(증분 인덱싱이 켜짐). 구조만 맞으면 됨 |
+| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `delete` / `list_all` / `diff` (`get_many` / `put_many`는 선택. 없으면 레코드를 하나씩 읽고 씀) | `DynamoDBDocStatusStore` | `DataIngestionPipeline(..., doc_status=...)`(증분 인덱싱이 켜짐). 구조만 맞으면 됨 |
 | `CachePort` (`ports/cache.py`, `Protocol`) | 파이프라인 상태 get/set | 파일 시스템 `CacheManager` | 구조만 맞으면 됨. 기본적으로 AWS가 필요 없음 |
 
 모델 팩토리, 문서 상태, 캐시 포트는 `runtime_checkable` `Protocol`이므로 커스텀

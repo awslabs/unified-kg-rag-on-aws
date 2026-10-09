@@ -27,6 +27,7 @@ from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.storage.indexing_manager import CrossRunMergeResult
 from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
 from unified_kg_rag.domain.models import (
+    PENDING_CONTENT_HASH,
     Config,
     DocStatus,
     DocStatusRecord,
@@ -276,11 +277,11 @@ def test_failed_joint_removal_commits_nothing_and_keeps_both_rows(mocker) -> Non
     with pytest.raises(PipelineStageError, match="not committing"):
         _run(stage, ctx, text_units, entities)
 
-    # The changed doc keeps its old lineage and the deleted doc its row, so the
-    # next run retries the whole removal.
+    # The changed doc keeps its old lineage (in its write-ahead PENDING
+    # record) and the deleted doc its row, so the next run retries the whole
+    # removal.
     assert "index_delta" not in [name for name, _ in manager.calls]
-    changed = store.get(compute_doc_id(_CHANGED))
-    assert changed is not None and changed.content_hash == "hash-v1"
+    _assert_pending_with_old_lineage(store)
     assert store.get(compute_doc_id(_DELETED)) is not None
 
 
@@ -301,8 +302,22 @@ def test_failed_prune_does_not_record_changed_doc_as_processed(mocker) -> None:
 
     # Stale artifacts may still be live, so the old lineage must be kept (or
     # the doc retried) rather than overwritten with the new hash.
+    _assert_pending_with_old_lineage(store)
+
+
+def _assert_pending_with_old_lineage(store: FakeDocStatusStore) -> None:
+    """The changed doc's record is the write-ahead one: PENDING, keeping its
+    old lineage (plus the planned one), and read as changed even if its
+    content reverts to the indexed version."""
     record = store.get(compute_doc_id(_CHANGED))
-    assert record is not None and record.content_hash == "hash-v1"
+    assert record is not None
+    assert record.status is DocStatus.PENDING
+    assert record.content_hash == PENDING_CONTENT_HASH
+    assert {"e-stale", "e-new"} <= set(record.entity_ids)
+    assert {"t-old", "t-new"} <= set(record.text_unit_ids)
+    assert store.diff({compute_doc_id(_CHANGED): "hash-v1"}).changed == [
+        compute_doc_id(_CHANGED)
+    ]
 
 
 def test_doc_with_failed_extraction_is_recorded_failed_and_retried(mocker) -> None:

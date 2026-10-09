@@ -495,8 +495,9 @@ class IndexingManager:
 
         Reads the stored items back, removes ``text_unit_ids`` from their
         lineage (recomputing frequency/weight, see ``remove_text_units``) and
-        upserts the changed ones to both stores. A graph adapter without
-        read-back leaves them unchanged.
+        upserts every item read back to both stores, so a retry also repairs
+        a store an earlier, interrupted strip did not reach. A graph adapter
+        without read-back leaves them unchanged.
 
         A failed read is reported as failed items, so the caller keeps the
         documents' registry rows and retries the removal.
@@ -517,9 +518,18 @@ class IndexingManager:
             stats = IndexingStats(total_items=len(entity_ids) + len(relationship_ids))
             stats.add_error(str(e), count=stats.total_items)
             return {f"neptune_read_{suffix}": stats}
-        entities, relationships = remove_text_units(
+        stripped_entities, stripped_relationships = remove_text_units(
             entities, relationships, text_unit_ids
         )
+        # Every item read back is rewritten, stripped or not: the graph copy
+        # is the reference, and after a strip that was interrupted or partly
+        # failed between the stores it no longer cites the removed text units
+        # while the vector copy still does. Rewriting only the items still
+        # citing them would leave that copy stale on every retry.
+        stripped = {item.id: item for item in stripped_entities}
+        entities = [stripped.get(e.id, e) for e in entities]
+        stripped_rels = {item.id: item for item in stripped_relationships}
+        relationships = [stripped_rels.get(r.id, r) for r in relationships]
         if not entities and not relationships:
             return {}
         logger.info(

@@ -49,6 +49,18 @@ class DocStatusPort(Protocol):
         """Insert or overwrite the record for ``record.doc_id``."""
         ...
 
+    def put_many(self, records: Iterable[DocStatusRecord]) -> None:
+        """Insert or overwrite every record; the last one per ``doc_id`` wins.
+
+        Not atomic: an interruption can leave some records written. The
+        default writes each record with :meth:`put`; an adapter whose backend
+        writes many items per request (DynamoDB ``BatchWriteItem``) overrides
+        it, so an incremental run's write-ahead and commit records are not
+        one round trip per document.
+        """
+        for record in {record.doc_id: record for record in records}.values():
+            self.put(record)
+
     def delete(self, doc_id: str) -> None:
         """Remove the record for ``doc_id`` (no-op if absent)."""
         ...

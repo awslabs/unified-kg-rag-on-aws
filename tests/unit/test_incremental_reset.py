@@ -171,4 +171,11 @@ def test_failed_reset_rebuild_does_not_record_documents(mocker) -> None:
     with pytest.raises(PipelineStageError):
         stage._execute_core(context)
 
-    assert store.list_all() == []
+    # Only the write-ahead record is left: PENDING, so the next run indexes
+    # the document again (or removes what the rebuild wrote if it is gone).
+    records = store.list_all()
+    assert [r.doc_id for r in records] == [document_doc_id(a)]
+    assert records[0].status is DocStatus.PENDING
+    assert store.diff({document_doc_id(a): compute_content_hash(a)}).changed == [
+        document_doc_id(a)
+    ]

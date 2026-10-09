@@ -97,6 +97,28 @@ with this run's documents only. Fix the registry and re-run with the same
 `--pipeline-id`, or set `aws.dynamodb.enabled: false` to run without
 incremental indexing.
 
+### Interrupted runs
+
+An incremental run that stops inside the indexing stage (the task is killed,
+a store or the registry becomes unreachable, the failure gate trips) needs no
+manual repair: re-run. Before it removes or writes anything, the indexing
+stage records every new and changed document `PENDING`, listing both the
+artifacts it had and the ones the run is about to write; the records become
+`PROCESSED` (or `FAILED`) only after the writes. The next run therefore:
+
+- re-extracts each `PENDING` document still in the corpus, even if its file
+  was reverted to the version indexed before;
+- removes everything the interrupted run may have written for a `PENDING`
+  document that is no longer in the corpus.
+
+An interruption does not count toward `indexing.max_document_failures`.
+`PENDING` records (`status` `pending`, `content_hash` `pending`, `error_info`
+naming the write-ahead record) are expected after a failed run. Do not delete
+them by hand: their lineage is what lets the next run find the interrupted
+run's writes. The stage writes the registry in batches, so a role with a
+custom policy needs `dynamodb:BatchWriteItem` as well as `BatchGetItem`
+(the CDK stack's `grant_read_write_data` covers both).
+
 ## Failed documents
 
 A document is recorded `FAILED` when translation, graph extraction, gleaning
