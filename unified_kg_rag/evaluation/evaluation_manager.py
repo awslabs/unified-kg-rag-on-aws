@@ -355,7 +355,8 @@ class EvaluationManager:
         self, queries: list[EvaluationQuery], show_progress: bool
     ) -> list[EvaluationResult]:
         def prepare_inputs(query_batch: list[EvaluationQuery]) -> list[dict[str, Any]]:
-            return [{"query": q.question, **q.metadata} for q in query_batch]
+            # The question wins over a ``query`` metadata key, as in load_data.
+            return [{**q.metadata, "query": q.question} for q in query_batch]
 
         raw_results = await self.batch_processor.aexecute_with_fallback(
             items_to_process=queries,

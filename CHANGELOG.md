@@ -428,6 +428,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   suffix on its x axis. Two claims with the same subject, type and object
   (or two same-named entities) made Bokeh reject the axis with
   `DUPLICATE_FACTORS` and draw their bars on one factor (#PR).
+- `run-eval` sends each item's `question` to the RAG chain even when its
+  `metadata` has a `query` key. The metadata key overrode the question at
+  answer time, while `load_data` validated the item with the question
+  winning (#PR).
 - Merging an undersized chunk into its neighbour no longer duplicates the
   splitter's `chunk_overlap` or fuses words at the seam. Adjacent chunks were
   concatenated as strings, so a single-paragraph document of ~5,100
