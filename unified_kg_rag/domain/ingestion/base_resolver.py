@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Sequence
 from difflib import SequenceMatcher
+from functools import lru_cache
 from typing import Any, ClassVar, TypeAlias
 
 from datasketch import MinHash, MinHashLSH
@@ -20,6 +21,22 @@ from unified_kg_rag.shared.utils import (
 logger = get_logger(__name__)
 
 MatchResult: TypeAlias = tuple[str, float] | None
+
+# datasketch's default scheme, named explicitly because it must be passed
+# alongside precomputed permutations.
+_MINHASH_SCHEME = MinHash().scheme
+
+
+@lru_cache(maxsize=8)
+def _minhash_permutations(num_perm: int) -> Any:
+    """The seeded permutations ``MinHash(num_perm)`` would generate.
+
+    Generating them takes most of a MinHash's construction time and they are
+    the same for every name, so they are built once per ``num_perm`` and
+    shared (MinHash only reads them). Signatures are unchanged.
+    """
+    return MinHash(num_perm=num_perm).permutations
+
 
 # Multi-letter Roman numerals ("ii", "iv", "xii"); single letters ("i", "v",
 # "x") are already covered by the single-character rule below. This also matches
@@ -182,11 +199,23 @@ class FuzzyMatcher:
 
         logger.debug("Built MinHash LSH with %s candidates", len(self.minhashes))
 
+    def _query_minhash(self, query: str) -> MinHash:
+        # Entity grouping queries every candidate against the index; those
+        # signatures already exist.
+        cached = self.minhashes.get(query)
+        if cached is not None:
+            return cached
+        return self._create_minhash(query, self.minhash_permutations)
+
     @classmethod
     def _create_minhash(
         cls, text: str, minhash_permutations: int = 128, n_grams: int = 3
     ) -> MinHash:
-        minhash = MinHash(num_perm=minhash_permutations)
+        minhash = MinHash(
+            num_perm=minhash_permutations,
+            permutations=_minhash_permutations(minhash_permutations),
+            scheme=_MINHASH_SCHEME,
+        )
         normalized_text = entity_key(text)
 
         if len(normalized_text) < n_grams:
@@ -197,8 +226,7 @@ class FuzzyMatcher:
                 for i in range(len(normalized_text) - n_grams + 1)
             }
 
-        for shingle in shingles:
-            minhash.update(shingle.encode("utf8"))
+        minhash.update_batch([shingle.encode("utf8") for shingle in shingles])
         return minhash
 
     @classmethod
@@ -262,7 +290,7 @@ class FuzzyMatcher:
         if self.resolution_method != ResolutionMethod.MINHASH:
             return []
 
-        query_minhash = self._create_minhash(query, self.minhash_permutations)
+        query_minhash = self._query_minhash(query)
         similar_candidates = self.lsh.query(query_minhash)
         if not similar_candidates:
             return []
@@ -420,7 +448,7 @@ class FuzzyMatcher:
         return (best_match, best_score) if best_match and best_score > 0 else None
 
     def _find_minhash_match(self, query: str) -> MatchResult:
-        query_minhash = self._create_minhash(query, self.minhash_permutations)
+        query_minhash = self._query_minhash(query)
         similar_candidates = self.lsh.query(query_minhash)
         if not similar_candidates:
             return None

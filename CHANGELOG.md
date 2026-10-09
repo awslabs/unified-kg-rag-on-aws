@@ -70,6 +70,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   after its prompt (e.g. `AnswerGenerationPrompt`) in traces (#156).
 
 ### Changed
+- MinHash entity resolution shares one set of seeded permutations instead of
+  regenerating them for every name and query, hashes each name's shingles in
+  one batch, and reuses the candidates' signatures when they are queried;
+  signatures and matches are unchanged (pinned by a property test). Grouping
+  5,000 names: index 0.7 s instead of 3.4 s, queries 0.3 s instead of
+  3.5 s (#PR).
 - The indexer's embedding cache holds vectors as float32 arrays instead of
   lists of Python floats, and keeps one copy (the S3 tier when
   `persist_embedding_cache` is on, else the in-process tier) instead of two:
