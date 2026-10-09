@@ -70,4 +70,4 @@ def test_default_routable_set_and_fast_router_model() -> None:
         SearchStrategy.GLOBAL,
         SearchStrategy.DRIFT,
     ]
-    assert search.strategy_selection_model_id == LanguageModelId.CLAUDE_V4_5_HAIKU
+    assert search.strategy_selection_model_id == LanguageModelId.CLAUDE_V5_5_HAIKU

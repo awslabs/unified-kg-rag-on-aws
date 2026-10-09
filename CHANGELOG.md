@@ -63,6 +63,16 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   after its prompt (e.g. `AnswerGenerationPrompt`) in traces (#156).
 
 ### Changed
+- The fast tier (`aws.bedrock.fast_model_id`) defaults to Claude Haiku 5.5
+  (`anthropic.claude-haiku-5-5`) instead of Haiku 4.5. In a real-AWS A/B (79
+  documents, 20 questions, 5 strategies, 2 ingests per arm) it matched Haiku
+  4.5 on accuracy (151 vs 150 answers containing the gold) and ingestion time,
+  at roughly 1/10 the per-token price; its tokenizer counts ~30% more tokens
+  for the same text. It thinks adaptively, so `aws.bedrock.fast_effort`
+  (default `low`) now takes effect on fast-tier calls. Cached stage outputs
+  from chunking on miss once after upgrading, since their default-config cache
+  keys include the model id. Set `fast_model_id` back to
+  `anthropic.claude-haiku-4-5-20251001-v1:0` to keep the previous model (#PR).
 - **Breaking:** `unified_kg_rag.shared.utils` no longer re-exports the
   LangChain-coupled and console helpers, so importing a `domain` module no
   longer loads LangChain, LangSmith, lxml, tenacity or tqdm. Import

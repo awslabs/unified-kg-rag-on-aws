@@ -222,10 +222,10 @@ the same values.
 | `aws.bedrock.region_name` | `null` | Region for Bedrock model, embedding, and rerank calls, and where the guardrail must exist. `null` uses `aws.region_name`. Set it only when your models are enabled in another region; in a private VPC whose only Bedrock route is a VPC endpoint, leave it `null` or set the VPC's region. |
 | `aws.bedrock.enable_global_profile` | `true` | Resolve cross-region (global) inference profiles. Keep it on: Claude 4.7+ and GPT models are invocable only through a profile. |
 | `aws.bedrock.default_model_id` | `"anthropic.claude-sonnet-5-5"` | Model for every default-tier role (see Model selection notes). |
-| `aws.bedrock.fast_model_id` | `"anthropic.claude-haiku-4-5-20251001-v1:0"` | Model for every fast-tier role. |
+| `aws.bedrock.fast_model_id` | `"anthropic.claude-haiku-5-5"` | Model for every fast-tier role. |
 | `aws.bedrock.default_max_output_tokens` | `16384` | `max_tokens` per request, clamped to the model maximum. Raise it if answers are cut off (`stopReason: max_tokens`); `null` sends the model maximum. |
 | `aws.bedrock.default_effort` | `"high"` | Reasoning depth for calls on `default_model_id` (adaptive-thinking Claude and GPT models): `low`, `medium`, `high`, `xhigh`, `max`. Lower it to cut cost and latency. |
-| `aws.bedrock.fast_effort` | `"low"` | Reasoning depth for calls on `fast_model_id` when it differs from `default_model_id`. No effect with the shipped Claude Haiku 4.5; matters once the fast tier runs a thinking model. |
+| `aws.bedrock.fast_effort` | `"low"` | Reasoning depth for calls on `fast_model_id` when it differs from `default_model_id`. The shipped Claude Haiku 5.5 thinks adaptively, so this sets its reasoning depth; no effect on a fast model that does not reason. |
 | `aws.bedrock.enable_1m_context` | `false` | Opt into the 1M window on models where it is a beta (premium billing). Claude 5 has a native 1M window. |
 | `aws.bedrock.model_overrides` | `{}` | Capability records for a language model the package does not know (see Model selection notes). Embedding and rerank models are a closed list. |
 | `aws.bedrock.guardrail.identifier` | `null` | Bedrock guardrail ID or ARN; setting it enables the guardrail. |
@@ -377,8 +377,8 @@ Three things differ for Claude 4.7-and-later models:
   with a 400); set `bedrock.default_effort` / `bedrock.fast_effort` instead.
   A call uses `fast_effort` when its model is `fast_model_id` (and that differs
   from `default_model_id`), otherwise `default_effort`; the shipped fast model,
-  Claude Haiku 4.5, does not reason on these calls, so `fast_effort` only
-  matters once the fast tier runs a thinking model. Claude Sonnet 5.5 always thinks, so `--enable-thinking` is a
+  Claude Haiku 5.5, thinks adaptively, so `fast_effort` (default `low`) sets
+  how much it reasons on fast-tier calls. Claude Sonnet 5.5 always thinks, so `--enable-thinking` is a
   no-op for it — depth is `effort` only. A level the model does not accept
   (e.g. `xhigh` on Opus or Sonnet 4.6) fails fast.
 - **Sampling parameters are dropped.** `temperature`/`top_k` are not accepted

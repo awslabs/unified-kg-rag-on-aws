@@ -218,10 +218,10 @@ ignored` WARNING 로그를 남긴 뒤 버려집니다. 파일을 고치거나 �
 | `aws.bedrock.region_name` | `null` | Bedrock 모델·임베딩·리랭크 호출을 보내는 리전이며, Guardrail도 이 리전에 있어야 합니다. `null`이면 `aws.region_name`을 씁니다. 모델 액세스를 다른 리전에서 활성화한 경우에만 지정하세요. Bedrock으로 가는 경로가 VPC 엔드포인트뿐인 프라이빗 VPC에서는 `null`로 두거나 VPC와 같은 리전을 지정하세요. |
 | `aws.bedrock.enable_global_profile` | `true` | 크로스 리전(global) 추론 프로파일을 사용합니다. Claude 4.7 이후 모델과 GPT 모델은 프로파일로만 호출할 수 있으므로 켜 두세요. |
 | `aws.bedrock.default_model_id` | `"anthropic.claude-sonnet-5-5"` | default 등급 역할 전체가 쓰는 모델입니다(모델 선택 주의사항 참고). |
-| `aws.bedrock.fast_model_id` | `"anthropic.claude-haiku-4-5-20251001-v1:0"` | fast 등급 역할 전체가 쓰는 모델입니다. |
+| `aws.bedrock.fast_model_id` | `"anthropic.claude-haiku-5-5"` | fast 등급 역할 전체가 쓰는 모델입니다. |
 | `aws.bedrock.default_max_output_tokens` | `16384` | 요청마다 보내는 `max_tokens`이며 모델 최대값을 넘지 않게 맞춥니다. 답변이 잘리면(`stopReason: max_tokens`) 올리고, `null`이면 모델 최대값을 보냅니다. |
 | `aws.bedrock.default_effort` | `"high"` | `default_model_id` 호출의 추론 깊이입니다(adaptive thinking Claude와 GPT 모델). `low`, `medium`, `high`, `xhigh`, `max` 중 하나이며, 낮추면 비용과 지연 시간이 줄어듭니다. |
-| `aws.bedrock.fast_effort` | `"low"` | `fast_model_id`가 `default_model_id`와 다를 때 fast 모델 호출의 추론 깊이입니다. 기본 fast 모델인 Claude Haiku 4.5에서는 효과가 없고, fast 등급에 사고 모델을 지정했을 때 의미가 있습니다. |
+| `aws.bedrock.fast_effort` | `"low"` | `fast_model_id`가 `default_model_id`와 다를 때 fast 모델 호출의 추론 깊이입니다. 기본 fast 모델인 Claude Haiku 5.5는 adaptive 사고를 하므로 이 값이 추론 깊이를 정합니다. 추론하지 않는 fast 모델에는 효과가 없습니다. |
 | `aws.bedrock.enable_1m_context` | `false` | 1M 컨텍스트가 베타인 모델에서 이를 사용합니다(추가 요금). Claude 5는 기본으로 1M입니다. |
 | `aws.bedrock.model_overrides` | `{}` | 패키지가 모르는 언어 모델의 기능 정보를 지정합니다(모델 선택 주의사항 참고). 임베딩·리랭킹 모델은 정해진 목록에서만 고릅니다. |
 | `aws.bedrock.guardrail.identifier` | `null` | Bedrock Guardrail ID 또는 ARN입니다. 지정하면 Guardrail이 켜집니다. |
@@ -366,9 +366,9 @@ Claude 4.7 이후 모델은 세 가지가 다릅니다.
   `thinking_budget_tokens`가 무시됩니다(기존 `budget_tokens` 형식은 400으로
   거부됨). 대신 `bedrock.default_effort` / `bedrock.fast_effort`를 설정하세요.
   호출 모델이 `fast_model_id`이고 `default_model_id`와 다르면 `fast_effort`를,
-  그 밖에는 `default_effort`를 씁니다. 기본 fast 모델인 Claude Haiku 4.5는 이
-  호출에서 추론하지 않으므로, `fast_effort`는 fast 등급에 사고 모델을 지정했을
-  때만 의미가 있습니다. Claude Sonnet 5.5는 사고를 끌 수
+  그 밖에는 `default_effort`를 씁니다. 기본 fast 모델인 Claude Haiku 5.5는
+  adaptive 사고를 하므로, `fast_effort`(기본값 `low`)가 fast 등급 호출의 추론
+  깊이를 정합니다. Claude Sonnet 5.5는 사고를 끌 수
   없어 `--enable-thinking`이 무의미하며, 깊이는 `effort`로만 조절합니다.
   모델이 받지 않는 수준(예: Opus·Sonnet 4.6의 `xhigh`)은 즉시 실패합니다.
 - **샘플링 파라미터가 제거됩니다.** `temperature`/`top_k`는 수용되지 않으므로

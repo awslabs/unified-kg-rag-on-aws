@@ -420,7 +420,7 @@ def test_defaults_use_sonnet_5_5_and_keep_haiku() -> None:
     assert LanguageModelId.CLAUDE_V5_SONNET not in values
     assert values <= {
         LanguageModelId.CLAUDE_V5_5_SONNET,
-        LanguageModelId.CLAUDE_V4_5_HAIKU,
+        LanguageModelId.CLAUDE_V5_5_HAIKU,
     }
     for key in (
         "search.answer_generation_model_id",

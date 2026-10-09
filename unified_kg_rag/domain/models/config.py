@@ -176,7 +176,7 @@ EFFORT_LEVELS: frozenset[str] = frozenset(get_args(EffortLevel))
 # and inherits aws.bedrock.default_model_id / aws.bedrock.fast_model_id unless
 # set explicitly, so changing a tier default is a one-line edit here.
 DEFAULT_MODEL_ID: str = LanguageModelId.CLAUDE_V5_5_SONNET.value
-FAST_MODEL_ID: str = LanguageModelId.CLAUDE_V4_5_HAIKU.value
+FAST_MODEL_ID: str = LanguageModelId.CLAUDE_V5_5_HAIKU.value
 _TIER_DEFAULT_MODEL_IDS: dict[str, str] = {
     "default": DEFAULT_MODEL_ID,
     "fast": FAST_MODEL_ID,
@@ -433,9 +433,9 @@ class BedrockConfig(BaseModel):
         default="low",
         description=(
             "Reasoning effort for calls on the fast_model_id (when it differs "
-            "from default_model_id). The shipped fast model (Claude Haiku 4.5) "
-            "does not reason on these calls, so this only takes effect when "
-            "fast_model_id is an adaptive-thinking or GPT model."
+            "from default_model_id). The shipped fast model, Claude Haiku 5.5, "
+            "thinks adaptively, so this sets how much it reasons on fast-tier "
+            "calls; it has no effect on a fast model that does not reason."
         ),
     )
     guardrail: GuardrailConfig = Field(
