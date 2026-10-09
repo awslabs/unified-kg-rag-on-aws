@@ -245,3 +245,22 @@ def test_get_many_fails_when_keys_stay_unprocessed(
     # A key that could not be read must not read as absent (a new document).
     with pytest.raises(DocStatusRegistryError, match="unprocessed"):
         ddb_store.get_many(["a"])
+
+
+def test_string_sets_read_back_sorted(ddb_store: DynamoDBDocStatusStore) -> None:
+    # String sets have no order: read back sorted, a record compares equal on
+    # every read whatever order DynamoDB returns the members in.
+    ddb_store.put(
+        DocStatusRecord(
+            doc_id="a",
+            content_hash="h",
+            entity_ids=["e3", "e1", "e2"],
+            text_unit_ids=["t2", "t1"],
+        )
+    )
+
+    read = ddb_store.get("a")
+    assert read.entity_ids == ["e1", "e2", "e3"]
+    assert read.text_unit_ids == ["t1", "t2"]
+    assert ddb_store.list_all() == [read]
+    assert ddb_store.get_many(["a"]) == {"a": read}

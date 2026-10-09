@@ -495,6 +495,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   edit or deletion left that content indexed. Any such legacy key is now
   deleted once its current-key record exists. The diff now also reports
   which legacy keys are stored, so only those are read (#191).
+- `DynamoDBDocStatusStore` returns the artifact-id lists of a record sorted.
+  They are stored as string sets, which have no order, so two reads of one
+  record could compare unequal (#PR).
 - Delta detection looks up the pre-scope registry keys of new documents in
   batches instead of one DynamoDB `GetItem` per document on every run (1,000
   new documents were 1,000 sequential reads, repeated until they were
