@@ -165,6 +165,73 @@ def test_truncated_item_is_a_batch_failure() -> None:
     assert results == [BATCH_ITEM_FAILED]
 
 
+class _CountingModel(_StopReasonModel):
+    calls: int = 0
+
+    def _generate(self, *args: Any, **kwargs: Any) -> ChatResult:
+        type(self).calls += 1
+        return super()._generate(*args, **kwargs)
+
+
+class _CountingFactory(_Factory):
+    def get_model(self, model_id: Any, **kwargs: Any) -> _CountingModel:
+        return _CountingModel(text=self.text, metadata=self.metadata)
+
+
+def _counting_chain() -> Any:
+    _CountingModel.calls = 0
+    return setup_chain(
+        factory=_CountingFactory(_PARTIAL, {"stopReason": "max_tokens"}),
+        model_id="fake-model",
+        prompt_class=GraphExtractionPrompt,
+        parser=RobustXMLOutputParser(),
+        model_purpose=ModelPurpose.INGESTION,
+    )
+
+
+def test_truncated_item_is_called_once() -> None:
+    # The same input hits the same output limit, so the retry pass skips it
+    # even though every other error is retried (is_transient_error=None).
+    chain = _counting_chain()
+    good = {**_INPUT, "input_text": "Buyer pays Vendor."}
+    calls: list[str] = []
+
+    def call(single: dict[str, Any]) -> Any:
+        calls.append(single["input_text"])
+        if single is good:
+            return "ok"
+        return chain.invoke(single)
+
+    results = BatchProcessor(
+        retry_multiplier=1.0, retry_max_wait=0
+    ).execute_with_fallback(
+        items_to_process=[_INPUT, good],
+        prepare_inputs_func=lambda items: list(items),
+        sequential_func=call,
+        task_name="extraction",
+        show_progress=False,
+    )
+    assert results == [BATCH_ITEM_FAILED, "ok"]
+    assert _CountingModel.calls == 1
+    assert len(calls) == 2
+
+
+async def test_truncated_item_is_called_once_async() -> None:
+    chain = _counting_chain()
+    results = await BatchProcessor(
+        retry_multiplier=1.0, retry_max_wait=0
+    ).aexecute_with_fallback(
+        items_to_process=[_INPUT],
+        prepare_inputs_func=lambda items: list(items),
+        batch_func=chain.abatch,
+        sequential_func=chain.ainvoke,
+        task_name="extraction",
+        show_progress=False,
+    )
+    assert results == [BATCH_ITEM_FAILED]
+    assert _CountingModel.calls == 1
+
+
 def test_streaming_passes_chunks_through_and_warns(caplog) -> None:
     # Streamed output has already reached the caller when the stop reason
     # arrives, so it is logged instead of raised.

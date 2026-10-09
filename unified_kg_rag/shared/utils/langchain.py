@@ -6,7 +6,7 @@ import math
 import re
 import time
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, Final
 
 import tenacity
@@ -20,6 +20,7 @@ from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
 
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 from unified_kg_rag.shared.utils.common import text_digest
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
@@ -110,8 +111,9 @@ class BatchProcessor(BaseModel):
     max_attempts: int = Field(
         default=5,
         ge=1,
-        description="Calls an item gets after its first call fails: at least "
-        "one, and up to this many while its error is retryable",
+        description="Calls an item gets after its first call fails with a "
+        "retryable error: up to this many while its error stays retryable. An "
+        "item whose first error is not retryable is not called again",
     )
     batch_size: int = Field(
         default=10,
@@ -265,6 +267,9 @@ class BatchProcessor(BaseModel):
                 logger.debug("Chunk %s processed successfully", chunk_num)
                 return results
             self._log_partial_failure(task_name, chunk_num, results, failed)
+            failed = self._settle_permanent_failures(task_name, results, failed)
+            if not failed:
+                return results
             retried = self._process_sequentially_with_fallback(
                 [chunk_inputs[i] for i in failed],
                 retrying_sequential_func,
@@ -346,13 +351,36 @@ class BatchProcessor(BaseModel):
     ) -> None:
         logger.warning(
             "Batch chunk %s of '%s': %s/%s items failed (first error: %s). "
-            "Retrying only the failed items",
+            "Retrying only the failed items whose error is retryable",
             chunk_num,
             task_name,
             len(failed),
             len(results),
             results[failed[0]],
         )
+
+    def _settle_permanent_failures(
+        self, task_name: str, results: list[Any], failed: list[int]
+    ) -> list[int]:
+        """Mark items whose error is not retryable as failed; return the rest.
+
+        The retry pass runs through the retry decorator, whose first attempt
+        is a new call: a permanent error (a truncated response, access denied)
+        would otherwise cost a second call that fails the same way.
+        """
+        retryable = []
+        for idx in failed:
+            error = results[idx]
+            if self._is_retryable(error):
+                retryable.append(idx)
+                continue
+            logger.error(
+                "Item failed in '%s' with a non-retryable error: %s",
+                task_name,
+                error,
+            )
+            results[idx] = BATCH_ITEM_FAILED
+        return retryable
 
     @staticmethod
     def _splice_retried(
@@ -364,6 +392,9 @@ class BatchProcessor(BaseModel):
         return merged
 
     def _is_retryable(self, exc: BaseException) -> bool:
+        # The same input hits the same output-token limit again.
+        if isinstance(exc, LLMOutputTruncatedError):
+            return False
         # A malformed LLM response or a hung call can succeed on a new attempt.
         if isinstance(exc, OutputParserException | TimeoutError):
             return True
@@ -517,6 +548,10 @@ class BatchProcessor(BaseModel):
             failed = self._failed_indices(chunk_results)
             if failed:
                 self._log_partial_failure(task_name, chunk_num, chunk_results, failed)
+                failed = self._settle_permanent_failures(
+                    task_name, chunk_results, failed
+                )
+            if failed:
                 retried = await self._aprocess_sequentially_with_fallback(
                     [chunk_inputs[idx] for idx in failed],
                     retrying_sequential_func,
@@ -597,6 +632,11 @@ _TEXT_LESS_THAN = re.compile(r"<(?![A-Za-z_/!?])")
 _TAG = re.compile(r"<(/?)([A-Za-z_][\w.\-:]*)([^<>]*)>")
 
 
+def _escape_markup(tag: str) -> str:
+    """Return a tag as XML text (its ``<`` escaped)."""
+    return tag.replace("<", "&lt;")
+
+
 class RobustXMLOutputParser(XMLOutputParser):
     """Parse LLM XML into nested dicts, recovering from malformed output.
 
@@ -628,7 +668,9 @@ class RobustXMLOutputParser(XMLOutputParser):
         original_sections = self._detect_xml_sections(text)
 
         try:
-            result = self._parse_top_level_elements(self._clean_xml_for_lxml(text))
+            result = self._parse_top_level_elements(
+                self._clean_xml_for_lxml(text, self.tags or ())
+            )
             if self._sections_preserved(original_sections, result):
                 return result
             raise ValueError("Missing sections in lxml result")
@@ -798,22 +840,48 @@ class RobustXMLOutputParser(XMLOutputParser):
         return result
 
     @staticmethod
-    def _clean_xml_for_lxml(text: str) -> bytes:
+    def _clean_xml_for_lxml(text: str, known_tags: Iterable[str] = ()) -> bytes:
         """Strip control characters and the XML declaration, escape text markup.
 
         A bare ``&`` (not starting an XML entity) and a ``<`` that cannot start
         a tag are text in LLM output ("AT&T", "budget < 5M"); lxml recovery
-        would drop them and the word after them.
+        would drop them and the word after them. ``known_tags`` are element
+        names the caller expects, which are never escaped as text.
         """
         text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
         text = _XML_DECLARATION.sub("", text)
         text = _BARE_AMPERSAND.sub("&amp;", text)
         text = _TEXT_LESS_THAN.sub("&lt;", text)
-        text = RobustXMLOutputParser._drop_unmatched_closing_tags(text)
+        text = RobustXMLOutputParser._drop_unmatched_closing_tags(text, known_tags)
         return text.strip().encode("utf-8")
 
     @staticmethod
-    def _drop_unmatched_closing_tags(text: str) -> str:
+    def _structural_tag_names(text: str) -> set[str]:
+        """Names of the opening tags that sit in element structure, not in text.
+
+        A tag is structural when only whitespace separates it from the
+        previous end tag or structural opening tag (or the start of the
+        text): ``<entity>\\n<name>`` is markup, ``Optional<User>`` and
+        ``uses <br> tag`` are not. The names found this way are the response's
+        element vocabulary.
+        """
+        names: set[str] = set()
+        prev_end = 0
+        prev_structural = True
+        for match in _TAG.finditer(text):
+            is_close, name = match.group(1), match.group(2)
+            gap_is_blank = not text[prev_end : match.start()].strip()
+            if is_close:
+                prev_structural = True
+            else:
+                prev_structural = gap_is_blank and prev_structural
+                if prev_structural:
+                    names.add(name)
+            prev_end = match.end()
+        return names
+
+    @staticmethod
+    def _drop_unmatched_closing_tags(text: str, known_tags: Iterable[str] = ()) -> str:
         """Make the element nesting well formed before lxml recovery.
 
         Models sometimes emit an end tag whose name matches nothing open: a
@@ -821,42 +889,97 @@ class RobustXMLOutputParser(XMLOutputParser):
         misnamed close such as ``<strength>7</strong>`` or ``</entity>`` for
         ``</relationship>``. lxml recovery neither drops such a tag nor closes
         the elements it skips, so every later sibling ends up nested inside
-        the open element and is lost. Here:
+        the open element and is lost. Field text can also hold tag-like
+        sequences (``Optional<User>``, ``<br>``) that are not markup. Here:
 
-        - an end tag naming an element further up the stack closes the
-          elements above it explicitly, as XML nesting implies;
-        - an unmatched end tag repeating the element just closed is dropped
-          (a duplicate close);
-        - any other unmatched end tag closes the innermost open element (the
-          one the model was closing), or is dropped when nothing is open.
+        - an end tag naming an open element closes the elements above it
+          explicitly, as XML nesting implies;
+        - an unmatched end tag repeating the element just closed (nothing
+          opened since) is dropped as a duplicate close;
+        - any other unmatched end tag closes the innermost open element only
+          when that element is a leaf field (no child elements) and the
+          field's own end tag does not follow it (the misnamed close
+          ``<strength>7</strong>``); in a record (an element with children)
+          or with nothing open it is dropped, so a stray tag between two
+          fields does not end the record early;
+        - an opening tag naming an open record (an element with children)
+          closes that record first: records never nest in one with their own
+          name, so ``</entity>`` written for ``</relationship>`` followed by
+          the next ``<relationship>`` still yields two records;
+        - inside a field that already has text, an opening tag that is
+          neither in ``known_tags`` nor in the response's structural
+          vocabulary (see ``_structural_tag_names``) is text, escaped along
+          with its matching end tag, so ``Optional<User>``, ``<br>`` and
+          ``<T>`` stay in the field verbatim.
+
+        Any other ``<`` left in text is escaped too.
         """
-        stack: list[str] = []
+        vocabulary = RobustXMLOutputParser._structural_tag_names(text) | set(known_tags)
+        # Per open element: [name, has_child, has_text, escaped tag names].
+        stack: list[list[Any]] = []
         last_closed = ""
         out: list[str] = []
         pos = 0
-        for match in _TAG.finditer(text):
+        matches = list(_TAG.finditer(text))
+
+        def close_through(index: int) -> str:
+            nonlocal last_closed
+            closes = []
+            while len(stack) > index:
+                last_closed = stack.pop()[0]
+                closes.append(f"</{last_closed}>")
+            if stack:
+                stack[-1][1] = True
+            return "".join(closes)
+
+        def next_tag_closes_innermost(i: int) -> bool:
+            if i + 1 >= len(matches):
+                return False
+            following = matches[i + 1]
+            return bool(following.group(1)) and following.group(2) == stack[-1][0]
+
+        for i, match in enumerate(matches):
             is_close, name, rest = match.group(1), match.group(2), match.group(3)
             tag = match.group(0)
+            segment = text[pos : match.start()]
+            segment = re.sub(r"<(?![!?])", "&lt;", segment)
+            if stack and segment.strip():
+                stack[-1][2] = True
+            top = stack[-1] if stack else None
+            names = [frame[0] for frame in stack]
             if is_close:
-                if name in stack:
-                    closes = []
-                    while stack:
-                        last_closed = stack.pop()
-                        closes.append(f"</{last_closed}>")
-                        if last_closed == name:
-                            break
-                    tag = "".join(closes)
-                elif name == last_closed or not stack:
+                if top is not None and name in top[3]:
+                    top[3].remove(name)
+                    tag = _escape_markup(tag)
+                elif name in names:
+                    index = len(names) - 1 - names[::-1].index(name)
+                    tag = close_through(index)
+                elif top is None or name == last_closed or top[1]:
+                    tag = ""
+                elif next_tag_closes_innermost(i):
                     tag = ""
                 else:
-                    last_closed = stack.pop()
-                    tag = f"</{last_closed}>"
-            elif not rest.rstrip().endswith("/"):
-                stack.append(name)
-            out.append(text[pos : match.start()])
+                    tag = close_through(len(stack) - 1)
+            elif top is not None and top[2] and not top[1] and name not in vocabulary:
+                if not rest.rstrip().endswith("/"):
+                    top[3].append(name)
+                tag = _escape_markup(tag)
+            else:
+                prefix = ""
+                for index in range(len(stack) - 1, -1, -1):
+                    if stack[index][0] == name and stack[index][1]:
+                        prefix = close_through(index)
+                        break
+                if stack:
+                    stack[-1][1] = True
+                last_closed = ""
+                if not rest.rstrip().endswith("/"):
+                    stack.append([name, False, False, []])
+                tag = prefix + tag
+            out.append(segment)
             out.append(tag)
             pos = match.end()
-        out.append(text[pos:])
+        out.append(re.sub(r"<(?![!?])", "&lt;", text[pos:]))
         return "".join(out)
 
     @classmethod

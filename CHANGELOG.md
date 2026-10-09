@@ -627,6 +627,31 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   The chunking prompt no longer ends with `<?xml ...?>` and an open
   `<chunk_boundaries>`: it already asks the model to emit the whole document
   (#174).
+- The LLM XML parser repairs stray and misnamed end tags more
+  conservatively. A stray end tag between two fields of a record (e.g.
+  `</entity_placeholder>` after `<source>`) closed the record, so its later
+  fields and every later record were lost; it is now dropped, and an
+  unmatched end tag only closes the innermost element when that is a field
+  (`<strength>7</strong>`). An opening tag naming an open record closes it,
+  so `</entity>` written for `</relationship>` still yields two records, and
+  `<target>B</source>` no longer nests the record's remaining fields inside
+  `target`. Tag-like text inside a field (`Optional<User>`, `<br>`, `<T>`) is
+  kept verbatim instead of being parsed into a nested element (#182).
+- `BatchProcessor` no longer calls an item again when its first error is not
+  retryable. The retry pass's first attempt was a new call, so a response
+  truncated at the output-token limit (`LLMOutputTruncatedError`, documented
+  as not retried) cost a second call, and up to `max_attempts` more where
+  every error is retried (`is_transient_error` unset); an error the
+  classifier marks permanent also cost a second call. Truncated responses
+  are now never retried, and other non-retryable items fail after one call
+  (#182).
+- The persisted embedding cache (`persist_embedding_cache`) is safe to share
+  across the indexing threads. A flush iterated the vectors while other
+  threads added to them, failed with `dictionary changed size during
+  iteration` (logged as a WARNING) and left the cache unpersisted, and a
+  flush that succeeded forgot the vectors added during its upload, so they
+  were never written. A flush now uploads a snapshot and keeps the vectors
+  added meanwhile pending for the next one (#182).
 - A model response that stopped at its output-token limit (`stopReason`
   or `stop_reason` `max_tokens`) fails with `LLMOutputTruncatedError`
   instead of being parsed. The XML parser recovered the sections before the
@@ -1013,6 +1038,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (`<context>`), context building, community relevance, global map/reduce
   (`<community_reports>`, `<summaries>`) and the DRIFT primer and query
   refinement prompts (#179).
+- Input values can no longer close the tag block that delimits them. A corpus
+  chunk or retrieved context containing `</context>` (or `</input_text>`)
+  ended the data block, so the text after it read as instructions. Every
+  chain now escapes the opening and closing forms of its prompt's delimiter
+  tags (the tags around a `{placeholder}`, read from the resolved template,
+  so `custom_prompts` delimiters are covered) in every string input,
+  case-insensitively and allowing whitespace: `</context>` reaches the model
+  as `&lt;/context>` (#182).
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or
   `LANGCHAIN_TRACING_V2` enables LangSmith tracing, which uploads prompts,
   retrieved context and model outputs. Tracing is not turned off (#156).

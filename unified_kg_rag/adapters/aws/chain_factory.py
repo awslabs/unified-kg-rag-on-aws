@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from langchain_aws import ChatBedrockConverse
 from langchain_classic.output_parsers import OutputFixingParser
+from langchain_core.messages import BaseMessage
 from langchain_core.output_parsers import BaseOutputParser
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -34,6 +35,10 @@ from unified_kg_rag.adapters.aws.bedrock_retry import (
 from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
 from unified_kg_rag.domain.models import ModelPurpose
 from unified_kg_rag.domain.prompts import BasePrompt, ResolvedPrompt
+from unified_kg_rag.domain.prompts.delimiters import (
+    delimiter_tags,
+    neutralise_delimiters,
+)
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import (
     GraphRAGException,
@@ -111,7 +116,42 @@ def _build_chat_prompt(
         SystemMessagePromptTemplate.from_template(system_template),
         HumanMessagePromptTemplate.from_template(resolved.human_prompt_template),
     ]
-    return ChatPromptTemplate.from_messages(messages)
+    tags = delimiter_tags(
+        resolved.system_prompt_template, resolved.human_prompt_template
+    )
+    if not tags:
+        return ChatPromptTemplate.from_messages(messages)
+    prompt = DelimitedChatPromptTemplate.from_messages(messages)
+    return prompt.model_copy(update={"delimiter_tags": tags})
+
+
+class DelimitedChatPromptTemplate(ChatPromptTemplate):
+    """Chat prompt that escapes its delimiter tags in every string input.
+
+    Corpus text, retrieved context and reports are bound inside tag pairs the
+    prompt calls data (``<context>{context}</context>``); a value containing
+    ``</context>`` would close the block and turn the text after it into
+    instructions. ``delimiter_tags`` are read from the resolved templates
+    (``delimiter_tags()``), so a custom prompt's own delimiters are covered.
+    """
+
+    delimiter_tags: frozenset[str] = frozenset()
+
+    def _neutralised(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: (
+                neutralise_delimiters(value, self.delimiter_tags)
+                if isinstance(value, str)
+                else value
+            )
+            for key, value in kwargs.items()
+        }
+
+    def format_messages(self, **kwargs: Any) -> list[BaseMessage]:
+        return super().format_messages(**self._neutralised(kwargs))
+
+    async def aformat_messages(self, **kwargs: Any) -> list[BaseMessage]:
+        return await super().aformat_messages(**self._neutralised(kwargs))
 
 
 # Stop reason of a response cut at its output-token limit, under the key
