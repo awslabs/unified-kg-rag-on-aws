@@ -293,6 +293,25 @@ class TestEndToEndDetection:
         cd(nx.Graph())
         assert cd.all_communities == {}
 
+    @pytest.mark.parametrize("nodes", [1, 3])
+    def test_a_graph_without_edges_yields_singleton_communities(
+        self, nodes: int
+    ) -> None:
+        # Entities but no relationships, e.g. an incremental delta of a
+        # one-entity document: modularity is undefined (zero total weight).
+        g = nx.Graph()
+        for i in range(nodes):
+            g.add_node(f"n{i}", name=f"N{i}", text_unit_ids=[f"t{i}"])
+        cd = _detector(min_community_size=1)
+
+        cd(g)
+
+        assert cd.base_modularity == 0.0
+        members = sorted(
+            sorted(c.nodes) for c in cd.all_communities.values() if c.level == 0
+        )
+        assert members == [[f"n{i}"] for i in range(nodes)]
+
 
 class TestMetricsAndExport:
     def test_get_community_metrics_summarizes_l0(self) -> None:

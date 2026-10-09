@@ -46,6 +46,7 @@ from unified_kg_rag.domain.models import (
     PipelineContext,
     PipelineStageStatus,
 )
+from unified_kg_rag.shared.utils.document_identity import local_source_location
 
 pytestmark = pytest.mark.unit
 
@@ -345,6 +346,60 @@ def test_an_interrupted_adoption_only_drops_the_stale_legacy_key(registry) -> No
     assert [r.doc_id for r in registry.list_all()] == [doc_id]
 
 
+@pytest.mark.parametrize("edited", [False, True])
+def test_an_interrupted_adoption_of_a_scopeless_record_drops_it(
+    registry, edited
+) -> None:
+    # Written before scopes existed (scope None), adopted under the current
+    # key, then interrupted before the legacy key was deleted. A scope-None
+    # record is never a deletion candidate, so only the adoption cleanup can
+    # remove it; left behind, it keeps the old version's artifacts referenced.
+    document = _scoped_document("a.txt", "Vendor ships goods.")
+    legacy = _legacy_record(document, None)
+    doc_id = document_doc_id(document)
+    registry.put(legacy)
+    registry.put(legacy.model_copy(update={"doc_id": doc_id, "scope": _SCOPE}))
+    if edited:
+        document = _scoped_document("a.txt", "Vendor ships other goods.")
+
+    delta, _ = detect_delta(
+        [document],
+        registry,
+        scope=_SCOPE,
+        legacy_doc_ids={doc_id: legacy_doc_id(document)},
+    )
+
+    assert (delta.changed if edited else delta.unchanged) == [doc_id]
+    assert delta.new == delta.deleted == []
+    assert [r.doc_id for r in registry.list_all()] == [doc_id]
+    assert registry.get(doc_id).entity_ids == ["e1"]
+
+
+def test_an_interrupted_adoption_of_a_failed_file_drops_the_legacy_key(
+    registry,
+) -> None:
+    document = _scoped_document("a.txt", "Vendor ships goods.")
+    legacy = _legacy_record(document, None)
+    doc_id = document_doc_id(document)
+    registry.put(legacy)
+    current = legacy.model_copy(
+        update={"doc_id": doc_id, "scope": _SCOPE, "entity_ids": ["e2"]}
+    )
+    registry.put(current)
+
+    delta, _ = detect_delta(
+        [],
+        registry,
+        scope=_SCOPE,
+        failed_doc_ids=[doc_id],
+        legacy_doc_ids={doc_id: legacy_doc_id(document)},
+    )
+
+    # The current record is kept as is (not overwritten by the legacy copy).
+    assert delta.failed == [doc_id] and delta.deleted == []
+    assert registry.list_all() == [current]
+
+
 def test_a_legacy_record_of_another_scope_is_not_adopted(registry) -> None:
     document = _scoped_document("a.txt", "Vendor ships goods.")
     other = _legacy_record(document, "default|s3://bucket/corpus-2/")
@@ -375,3 +430,156 @@ def test_without_a_scope_nothing_is_adopted(registry) -> None:
 
     assert delta.new == [doc_id]
     assert registry.get(legacy_doc_id(document)) is not None
+
+
+# --- adopting the records of a moved local corpus ----------------------------
+
+_NEW_SOURCE = "/corpora/new"
+_NEW_SCOPE = f"default|{_NEW_SOURCE}"
+_LOCATIONS = {
+    "/corpora/old": "missing",
+    "/corpora/older": "missing",
+    "/corpora/other": "present",
+    "s3://bucket/corpus-1/": "other",
+}
+
+
+def _local_document(relative: str, text: str) -> Document:
+    document = Document(
+        page_content=text,
+        document_id=relative,
+        file_name=relative,
+        file_path=f"{_NEW_SOURCE}/{relative}",
+        file_type="txt",
+        total_pages=1,
+    )
+    assign_document_identity(document, _NEW_SOURCE)
+    assign_registry_source(document, _NEW_SOURCE)
+    return document
+
+
+def _record_under(
+    document: Document, source: str, namespace: str = "default", **update
+) -> DocStatusRecord:
+    return DocStatusRecord(
+        doc_id=compute_doc_id("a.txt", namespace, source),
+        content_hash=compute_content_hash(document),
+        status=DocStatus.PROCESSED,
+        scope=f"{namespace}|{source}",
+        file_path="a.txt",
+        entity_ids=["e1"],
+        failure_count=1,
+        **update,
+    )
+
+
+def _detect_local(registry, document: Document):
+    return detect_delta(
+        [document],
+        registry,
+        scope=_NEW_SCOPE,
+        legacy_doc_ids={document_doc_id(document): legacy_doc_id(document)},
+        locate_source=_LOCATIONS.__getitem__,
+    )[0]
+
+
+def test_a_record_under_a_vanished_local_source_is_adopted(registry) -> None:
+    document = _local_document("a.txt", "Vendor ships goods.")
+    old = _record_under(document, "/corpora/old")
+    registry.put(old)
+
+    delta = _detect_local(registry, document)
+
+    doc_id = document_doc_id(document)
+    assert delta.unchanged == [doc_id]
+    assert delta.new == delta.deleted == []
+    assert registry.get(old.doc_id) is None
+    adopted = registry.get(doc_id)
+    assert adopted.scope == _NEW_SCOPE
+    assert adopted.model_dump(exclude={"doc_id", "scope"}) == old.model_dump(
+        exclude={"doc_id", "scope"}
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "namespace"),
+    [
+        ("/corpora/other", "default"),  # still on disk: a separate corpus
+        ("s3://bucket/corpus-1/", "default"),  # a URI scope
+        ("/corpora/old", "tenant-b"),  # another index namespace
+    ],
+)
+def test_a_record_that_is_not_a_moved_corpus_is_left_alone(
+    registry, source, namespace
+) -> None:
+    document = _local_document("a.txt", "Vendor ships goods.")
+    other = _record_under(document, source, namespace)
+    registry.put(other)
+
+    delta = _detect_local(registry, document)
+
+    assert delta.new == [document_doc_id(document)]
+    assert registry.list_all() == [other]
+
+
+def test_two_vanished_sources_for_one_path_are_not_adopted(registry) -> None:
+    document = _local_document("a.txt", "Vendor ships goods.")
+    records = [
+        _record_under(document, "/corpora/old"),
+        _record_under(document, "/corpora/older"),
+    ]
+    for record in records:
+        registry.put(record)
+
+    delta = _detect_local(registry, document)
+
+    assert delta.new == [document_doc_id(document)]
+    assert sorted(r.doc_id for r in registry.list_all()) == sorted(
+        r.doc_id for r in records
+    )
+
+
+@pytest.mark.parametrize("finished", [True, False])
+def test_an_interrupted_relocation_drops_only_an_exact_copy(registry, finished) -> None:
+    document = _local_document("a.txt", "Vendor ships goods.")
+    old = _record_under(document, "/corpora/old")
+    registry.put(old)
+    doc_id = document_doc_id(document)
+    current = old.model_copy(update={"doc_id": doc_id, "scope": _NEW_SCOPE})
+    if not finished:
+        # Indexed under the new scope by a run without relocation: the old
+        # record holds lineage of its own and is not touched.
+        current = current.model_copy(update={"entity_ids": ["e2"]})
+    registry.put(current)
+    # A new file in the same run triggers the relocation check.
+    extra = _local_document("b.txt", "Buyer pays.")
+
+    delta, _ = detect_delta(
+        [document, extra],
+        registry,
+        scope=_NEW_SCOPE,
+        locate_source=_LOCATIONS.__getitem__,
+    )
+
+    assert delta.unchanged == [doc_id]
+    assert delta.new == [document_doc_id(extra)]
+    assert registry.get(doc_id) == current
+    assert (registry.get(old.doc_id) is None) is finished
+
+
+def test_without_locate_source_nothing_is_relocated(registry) -> None:
+    document = _local_document("a.txt", "Vendor ships goods.")
+    old = _record_under(document, "/corpora/old")
+    registry.put(old)
+
+    delta, _ = detect_delta([document], registry, scope=_NEW_SCOPE)
+
+    assert delta.new == [document_doc_id(document)]
+    assert registry.list_all() == [old]
+
+
+def test_local_source_location(tmp_path: Path) -> None:
+    assert local_source_location(tmp_path.as_posix()) == "present"
+    assert local_source_location((tmp_path / "gone").as_posix()) == "missing"
+    assert local_source_location("s3://bucket/prefix/") == "other"
+    assert local_source_location("corpus-a") == "other"

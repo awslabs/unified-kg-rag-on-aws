@@ -97,6 +97,18 @@ def _canonical_graph(graph: nx.Graph) -> nx.Graph:
     return canonical
 
 
+def _modularity(graph: nx.Graph, partition: list[set[str]]) -> float:
+    """Modularity of ``partition``; ``0.0`` for a graph without edges.
+
+    NetworkX divides by the total edge weight, so an edgeless graph (entities
+    but no relationships, such as an incremental delta of a one-entity
+    document) would raise ``ZeroDivisionError``.
+    """
+    if graph.number_of_edges() == 0 or graph.size(weight="weight") == 0:
+        return 0.0
+    return float(nx.community.modularity(graph, partition))
+
+
 class CommunityDetector(BaseProcessor):
     def __init__(
         self,
@@ -208,7 +220,7 @@ class CommunityDetector(BaseProcessor):
             )
             return
 
-        self.base_modularity = nx.community.modularity(self.graph, base_partition)
+        self.base_modularity = _modularity(self.graph, base_partition)
 
         logger.info(
             "Base partition found with %s communities and modularity %.4f",
@@ -397,7 +409,7 @@ class CommunityDetector(BaseProcessor):
                 if len(partition) < 2:
                     continue
 
-                modularity = nx.community.modularity(graph, partition)
+                modularity = _modularity(graph, partition)
 
                 if modularity > best_modularity:
                     best_modularity = modularity

@@ -413,6 +413,9 @@ class DocumentLoadingStage(PipelineStage):
             fingerprint_documents,
             legacy_doc_id,
         )
+        from unified_kg_rag.shared.utils.document_identity import (
+            local_source_location,
+        )
 
         scope, source_scope, failed_doc_ids = self._registry_scope(context)
         for document in documents:
@@ -447,6 +450,14 @@ class DocumentLoadingStage(PipelineStage):
                         for document in documents
                     },
                 },
+                # A scope derived from the source directory changes when the
+                # corpus moves: adopt the records of a vanished local source.
+                # A fixed source_scope never moves.
+                locate_source=(
+                    None
+                    if self.config.processing.document_parsing.source_scope
+                    else local_source_location
+                ),
             )
         except DocStatusRegistryError:
             raise

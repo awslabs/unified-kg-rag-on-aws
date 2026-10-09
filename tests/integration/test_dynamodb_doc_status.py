@@ -15,8 +15,10 @@ from moto import mock_aws
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
+from unified_kg_rag.adapters.aws import dynamodb as dynamodb_module
 from unified_kg_rag.domain.models import Config, DocStatus, DocStatusRecord
 from unified_kg_rag.ports import DocStatusPort
+from unified_kg_rag.shared import DocStatusRegistryError
 
 pytestmark = pytest.mark.integration
 
@@ -176,3 +178,70 @@ def test_diff_after_projection_optimization_on_empty_table(
     delta = ddb_store.diff({"a": "h1", "b": "h2"})
     assert sorted(delta.new) == ["a", "b"]
     assert delta.changed == [] and delta.unchanged == [] and delta.deleted == []
+
+
+def test_get_many_reads_more_than_one_batch_and_skips_unknown_ids(
+    ddb_store: DynamoDBDocStatusStore,
+) -> None:
+    ids = [f"d{i}" for i in range(230)]
+    for doc_id in ids[:150]:
+        ddb_store.put(DocStatusRecord(doc_id=doc_id, content_hash=f"h-{doc_id}"))
+    calls: list[int] = []
+    batch_get = ddb_store.client.batch_get_item
+
+    def counting(**kwargs):
+        calls.append(len(kwargs["RequestItems"]["test-doc-status"]["Keys"]))
+        return batch_get(**kwargs)
+
+    ddb_store.client.batch_get_item = counting  # type: ignore[method-assign]
+
+    # Duplicates are requested once (BatchGetItem rejects repeated keys).
+    records = ddb_store.get_many([*ids, "d0", "d1"])
+
+    assert calls == [100, 100, 30]
+    assert sorted(records) == sorted(ids[:150])
+    assert records["d7"] == ddb_store.get("d7")
+    assert ddb_store.get_many([]) == {}
+    assert calls == [100, 100, 30]
+
+
+def test_get_many_retries_unprocessed_keys(
+    ddb_store: DynamoDBDocStatusStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for doc_id in ("a", "b", "c"):
+        ddb_store.put(DocStatusRecord(doc_id=doc_id, content_hash="h"))
+    monkeypatch.setattr(dynamodb_module.time, "sleep", lambda _: None)
+    batch_get = ddb_store.client.batch_get_item
+    requests: list[list[str]] = []
+
+    def throttled(**kwargs):
+        keys = kwargs["RequestItems"]["test-doc-status"]["Keys"]
+        requests.append([key["doc_id"]["S"] for key in keys])
+        if len(requests) > 1:
+            return batch_get(**kwargs)
+        # First request: only the first key is served, the rest come back
+        # unprocessed, as under throttling.
+        served = batch_get(RequestItems={"test-doc-status": {"Keys": keys[:1]}})
+        served["UnprocessedKeys"] = {"test-doc-status": {"Keys": keys[1:]}}
+        return served
+
+    ddb_store.client.batch_get_item = throttled  # type: ignore[method-assign]
+
+    assert sorted(ddb_store.get_many(["a", "b", "c"])) == ["a", "b", "c"]
+    assert requests == [["a", "b", "c"], ["b", "c"]]
+
+
+def test_get_many_fails_when_keys_stay_unprocessed(
+    ddb_store: DynamoDBDocStatusStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ddb_store.put(DocStatusRecord(doc_id="a", content_hash="h"))
+    monkeypatch.setattr(dynamodb_module.time, "sleep", lambda _: None)
+
+    def never(**kwargs):
+        return {"Responses": {}, "UnprocessedKeys": kwargs["RequestItems"]}
+
+    ddb_store.client.batch_get_item = never  # type: ignore[method-assign]
+
+    # A key that could not be read must not read as absent (a new document).
+    with pytest.raises(DocStatusRegistryError, match="unprocessed"):
+        ddb_store.get_many(["a"])

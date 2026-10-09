@@ -17,6 +17,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from unified_kg_rag.domain.models.document import DocStatusRecord, DocumentDelta
 
 
@@ -27,6 +29,21 @@ class DocStatusPort(Protocol):
     def get(self, doc_id: str) -> DocStatusRecord | None:
         """Return the stored record for ``doc_id``, or ``None`` if unknown."""
         ...
+
+    def get_many(self, doc_ids: Iterable[str]) -> dict[str, DocStatusRecord]:
+        """Return ``{doc_id: record}`` for the ``doc_ids`` that are stored.
+
+        Unknown ids are left out. The default looks each id up with
+        :meth:`get`; an adapter whose backend reads many keys per request
+        (DynamoDB ``BatchGetItem``) overrides it, so looking up a whole corpus
+        is not one round trip per document.
+        """
+        records: dict[str, DocStatusRecord] = {}
+        for doc_id in dict.fromkeys(doc_ids):
+            record = self.get(doc_id)
+            if record is not None:
+                records[doc_id] = record
+        return records
 
     def put(self, record: DocStatusRecord) -> None:
         """Insert or overwrite the record for ``record.doc_id``."""

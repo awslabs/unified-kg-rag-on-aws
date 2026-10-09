@@ -2,10 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """One identity rule for source documents.
 
-A document is identified by its path *relative to the corpus root* (so the same
-corpus synced to ``/tmp/graphrag-source`` on one machine and checked out under
-``~/corpus`` on another yields the same ids), and a document *version* by that
-path plus a hash of its full text:
+A document is identified by its path *relative to the corpus root*, and a
+document *version* by that path plus a hash of its full text. The version id
+does not depend on where the corpus sits (the same corpus synced to
+``/tmp/graphrag-source`` on one machine and checked out under ``~/corpus`` on
+another yields the same ``document_id`` and text-unit ids). The registry key
+does: it also holds the corpus source scope, which defaults to the resolved
+source directory, so a corpus keeps its registry records across runs only
+from the same directory or with a fixed ``document_parsing.source_scope``
+(a local corpus that moved is re-keyed by the delta detector, see
+``adopt_relocated_records``):
 
 * ``compute_doc_id(relative_path, namespace, source_scope)`` -- the registry
   key of a document across runs: the index namespace (suffix, plus any
@@ -27,7 +33,9 @@ outside the pipeline); the pipeline stages re-derive the id against the root.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path, PurePosixPath
+from typing import Literal
 
 from .common import compute_hash, generate_stable_id
 
@@ -43,6 +51,9 @@ REGISTRY_SOURCE_KEY = "registry_source"
 DEFAULT_NAMESPACE = "default"
 
 _ID_HASH_LENGTH = 32
+
+# ``scheme://`` at the start of a source scope (``s3://bucket/prefix/``).
+_URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 
 
 def normalize_source_path(file_path: str | Path) -> str:
@@ -103,3 +114,16 @@ def compute_doc_id(
         else f"{namespace}\x00{source_scope}\x00{path}"
     )
     return compute_hash(key, algorithm="sha256", length=_ID_HASH_LENGTH)
+
+
+def local_source_location(source_scope: str) -> Literal["missing", "present", "other"]:
+    """Where a source scope that defaulted to the source directory points.
+
+    ``"present"``/``"missing"`` for an absolute local path whose directory
+    does or does not exist; ``"other"`` for a URI (``s3://...``) or any other
+    value (a fixed ``document_parsing.source_scope`` name), which never reads
+    as a moved local corpus.
+    """
+    if _URI_SCHEME.match(source_scope) or not Path(source_scope).is_absolute():
+        return "other"
+    return "present" if Path(source_scope).exists() else "missing"

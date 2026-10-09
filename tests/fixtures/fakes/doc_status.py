@@ -9,6 +9,8 @@ match; both are exercised by the same test suite.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from unified_kg_rag.domain.models import DocStatus, DocStatusRecord, DocumentDelta
 
 
@@ -20,6 +22,13 @@ class FakeDocStatusStore:
 
     def get(self, doc_id: str) -> DocStatusRecord | None:
         return self._records.get(doc_id)
+
+    def get_many(self, doc_ids: Iterable[str]) -> dict[str, DocStatusRecord]:
+        return {
+            doc_id: self._records[doc_id]
+            for doc_id in doc_ids
+            if doc_id in self._records
+        }
 
     def put(self, record: DocStatusRecord) -> None:
         self._records[record.doc_id] = record
