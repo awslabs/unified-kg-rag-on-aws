@@ -100,6 +100,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   API, `count_tokens_many` counts inline instead of starting an 8-thread pool
   per call. Budgeting 300 sections of 1.5 KB takes 24 ms instead of 476 ms,
   and 32 concurrent queries 0.8 s instead of 16 s (#176).
+- `GraphRAGChain`, `RAGInput` and `RAGOutput` document the library contract:
+  `close()`/`aclose()` when done, which event loop the sync and async
+  methods run on, `RAGOutput` in RAG mode versus a dict in SEARCH mode, and
+  that `stream`/`astream` yield answer text only (use `ainvoke` for the
+  sources) (#PR).
 - The fast tier (`aws.bedrock.fast_model_id`) defaults to Claude Haiku 5.5
   (`anthropic.claude-haiku-5-5`) instead of Haiku 4.5. In a real-AWS A/B (79
   documents, 20 questions, 5 strategies, 2 ingests per arm) it matched Haiku
