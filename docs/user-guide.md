@@ -394,8 +394,7 @@ OpenAI GPT models differ from Claude in these ways:
   GPT-5.6 and GPT-6.x answered a trivial prompt in roughly 10-25 s even at
   `effort: low`, so size timeouts and concurrency accordingly.
 - No Anthropic-only fields are sent (`thinking`, `output_config`,
-  `anthropic_beta`, the `\n\nHuman:` stop sequence), and sampling parameters
-  are omitted.
+  `anthropic_beta`), and sampling parameters are omitted.
 - Explicit prompt-cache markers are not sent: Converse supports only implicit
   caching for these models. Bedrock CountTokens does not support them, so the
   retrieval context budget uses the local token estimate.

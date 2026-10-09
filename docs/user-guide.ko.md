@@ -382,8 +382,8 @@ OpenAI GPT 모델은 Claude와 다음이 다릅니다.
   `reasoning: {effort: ...}`로 전달됩니다(평면 필드 `reasoning_effort`는 거부됨).
   GPT-5.6과 GPT-6.x는 `effort: low`에서도 짧은 프롬프트 응답에 약 10~25초가
   걸렸으므로 타임아웃과 동시성을 이에 맞춰 설정하세요.
-- Anthropic 전용 필드(`thinking`, `output_config`, `anthropic_beta`, `\n\nHuman:`
-  중지 시퀀스)를 보내지 않으며 샘플링 파라미터도 생략합니다.
+- Anthropic 전용 필드(`thinking`, `output_config`, `anthropic_beta`)를 보내지
+  않으며 샘플링 파라미터도 생략합니다.
 - 명시적 프롬프트 캐시 마커를 보내지 않습니다. 이 모델들은 Converse에서 암묵적
   캐싱만 지원합니다. Bedrock CountTokens도 지원하지 않으므로 검색 컨텍스트 예산은
   로컬 토큰 추정치를 사용합니다.

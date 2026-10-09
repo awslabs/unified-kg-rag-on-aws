@@ -138,6 +138,7 @@ class ClaimExtractor(BaseProcessor):
             enable_output_fixing=self.config.fixing.enabled,
             output_fixing_model_id=self.config.fixing.fixing_model_id,
             min_output_tokens=ClaimExtractionPrompt.min_output_tokens,
+            output_tags=["claims"],
         )
         self.claim_extractor = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
@@ -193,7 +194,6 @@ class ClaimExtractor(BaseProcessor):
             extraction_results = self.batch_processor.execute_with_fallback(
                 items_to_process=units_to_process,
                 prepare_inputs_func=prepare_inputs_for_chunk,
-                batch_func=self.claim_extractor.batch,
                 sequential_func=self.claim_extractor.invoke,
                 task_name="Claim Extraction",
                 run_config=self.config.processing.model_dump(),

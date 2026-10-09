@@ -128,6 +128,7 @@ class GraphExtractor(BaseProcessor):
             output_fixing_model_id=self.config.fixing.fixing_model_id,
             factory=self.factory,
             min_output_tokens=GraphExtractionPrompt.min_output_tokens,
+            output_tags=["entities", "relationships"],
         )
         self.graph_extractor = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
@@ -156,7 +157,6 @@ class GraphExtractor(BaseProcessor):
             extraction_results = self.batch_processor.execute_with_fallback(
                 items_to_process=text_units,
                 prepare_inputs_func=self._prepare_extraction_inputs,
-                batch_func=self.graph_extractor.batch,
                 sequential_func=self.graph_extractor.invoke,
                 task_name="Graph Extraction",
                 run_config=self.config.processing.model_dump(),

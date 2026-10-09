@@ -606,6 +606,7 @@ class IntelligentTextChunker(BaseChunker):
             factory=self.factory,
             enable_output_fixing=self.config.fixing.enabled,
             output_fixing_model_id=self.config.fixing.fixing_model_id,
+            output_tags=["chunk_boundaries"],
         )
         self.chunker = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
@@ -712,7 +713,6 @@ class IntelligentTextChunker(BaseChunker):
             results = self.batch_processor.execute_with_fallback(
                 items_to_process=pre_chunks,
                 prepare_inputs_func=self._create_chain_inputs,
-                batch_func=self.chunker.batch,
                 sequential_func=self.chunker.invoke,
                 task_name=f"Processing boundaries for '{doc_name}'",
                 run_config=self.config.processing.model_dump(),

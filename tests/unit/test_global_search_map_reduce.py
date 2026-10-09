@@ -45,24 +45,17 @@ def _communities(n: int) -> list[RetrievalResult]:
     return [_community(i) for i in range(n)]
 
 
-class _SyncBatchChain:
-    """Stub map chain exposing .batch / .invoke (used by BatchProcessor)."""
+class _SyncMapChain:
+    """Stub map chain exposing .invoke (called per item by BatchProcessor)."""
 
     def __init__(self, outputs: list[str]) -> None:
         # outputs are returned in call order, one per input dict.
         self._outputs = list(outputs)
         self.batch_inputs: list[dict] = []
 
-    def batch(
-        self, inputs: list[dict], config: Any = None, return_exceptions: bool = False
-    ) -> list[str]:
-        self.batch_inputs.extend(inputs)
-        out = self._outputs[: len(inputs)]
-        self._outputs = self._outputs[len(inputs) :]
-        return out
-
-    def invoke(self, single_input: dict) -> str:
-        return self.batch([single_input])[0]
+    def invoke(self, single_input: dict, config: Any = None) -> str:
+        self.batch_inputs.append(single_input)
+        return self._outputs.pop(0) if self._outputs else ""
 
 
 def _reducer(return_value: str) -> Any:
@@ -115,7 +108,7 @@ def _strategy(
     )
     strat.ignore_errors = ignore_errors
     strat.target_language = "English"
-    strat.map_rater = _SyncBatchChain(map_outputs or [])
+    strat.map_rater = _SyncMapChain(map_outputs or [])
     strat.map_reducer = (
         reducer if reducer is not None else _reducer("SYNTHESIZED ANSWER")
     )
@@ -490,13 +483,6 @@ class _DeniedMapChain:
 
     def __init__(self, error: Exception) -> None:
         self.error = error
-
-    def batch(
-        self, inputs: list[dict], config: Any = None, return_exceptions: bool = False
-    ) -> list[Any]:
-        if return_exceptions:
-            return [self.error for _ in inputs]
-        raise self.error
 
     def invoke(self, single_input: dict, config: Any = None) -> str:
         raise self.error

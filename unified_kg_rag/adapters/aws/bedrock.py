@@ -118,7 +118,13 @@ class BaseBedrockModelFactory(Generic[ModelIdT, ModelInfoT, WrapperT], ABC):
     # for many minutes. Kept generous enough for long generations (community
     # reports, extended thinking) but short enough that a hung socket doesn't
     # freeze a whole ProcessPool-parallel stage (e.g. claim extraction).
-    BOTO_READ_TIMEOUT: ClassVar[int] = 300
+    # A non-streaming call sends no bytes until the whole answer is ready, so
+    # this also caps generation time. It sits above BatchProcessor's default
+    # 300 s call timeout so that wall-clock limit, not a race with this one,
+    # ends a long ingestion call: botocore retries a read timeout itself, and
+    # at equal values that silent re-send started inside the call timeout's
+    # window, only to be abandoned when it fired.
+    BOTO_READ_TIMEOUT: ClassVar[int] = 330
     # TCP connect timeout. Without this, a client whose endpoint is unreachable
     # (e.g. a private/no-NAT VPC missing the relevant Bedrock interface endpoint,
     # such as bedrock-agent-runtime for the Rerank API) blocks at the socket
@@ -636,23 +642,16 @@ class BedrockLanguageModelFactory(
             and self.boto_session.profile_name != "default"
         ):
             config["credentials_profile_name"] = self.boto_session.profile_name
-        # "\n\nHuman:" is an Anthropic text-completion turn marker; it means
-        # nothing to other providers, so they get no stop sequence at all.
-        common_params: dict[str, Any] = (
-            {"stop_sequences": ["\n\nHuman:"]}
-            if model_info.provider == "anthropic"
-            else {}
-        )
-        if is_cross_region:
-            config.update(common_params)
-        elif model_info.supports_sampling_params:
-            config["model_kwargs"] = {
-                "top_k": kwargs.get("top_k", self.DEFAULT_TOP_K),
-                **common_params,
-            }
-        else:
+        # No stop sequence: both Converse and the InvokeModel Messages body are
+        # turn-structured, so the legacy "\n\nHuman:" text-completion marker
+        # only cut off answers whose text contains it (chat transcripts).
+        if not is_cross_region:
             # top_k is a sampling parameter; Claude 4.7+ rejects it.
-            config["model_kwargs"] = dict(common_params)
+            config["model_kwargs"] = (
+                {"top_k": kwargs.get("top_k", self.DEFAULT_TOP_K)}
+                if model_info.supports_sampling_params
+                else {}
+            )
         return config
 
     def _apply_model_features(

@@ -35,7 +35,11 @@ from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
 from unified_kg_rag.domain.models import ModelPurpose
 from unified_kg_rag.domain.prompts import BasePrompt, ResolvedPrompt
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
-from unified_kg_rag.shared import GraphRAGException, get_logger
+from unified_kg_rag.shared import (
+    GraphRAGException,
+    LLMOutputTruncatedError,
+    get_logger,
+)
 from unified_kg_rag.shared.utils.langchain import RobustXMLOutputParser
 
 if TYPE_CHECKING:
@@ -108,6 +112,92 @@ def _build_chat_prompt(
         HumanMessagePromptTemplate.from_template(resolved.human_prompt_template),
     ]
     return ChatPromptTemplate.from_messages(messages)
+
+
+# Stop reason of a response cut at its output-token limit, under the key
+# langchain-aws reports it: Converse ``stopReason``, InvokeModel ``stop_reason``.
+_TRUNCATED_STOP_REASON = "max_tokens"
+
+
+def _stop_reason(message: Any) -> str | None:
+    metadata = getattr(message, "response_metadata", None) or {}
+    reason = metadata.get("stopReason") or metadata.get("stop_reason")
+    return str(reason) if reason else None
+
+
+class TruncationGuard(Runnable[Any, Any]):
+    """Fail a model response that stopped at its output-token limit.
+
+    A response cut at ``max_tokens`` still parses: the XML parser recovers the
+    sections before the cut (entities without relationships, half a report),
+    so the item would count as a success with data missing. Sits between the
+    model and the parser and raises :class:`LLMOutputTruncatedError` instead,
+    which callers count as a failed item; the error is not transient, so a
+    retry does not re-pay a generation that would hit the same limit.
+
+    Streaming passes every chunk through: the stop reason arrives with the
+    last chunk, after the output reached the caller, so it is logged only.
+    """
+
+    def __init__(self, prompt_name: str, model_id: str, purpose: ModelPurpose) -> None:
+        self.prompt_name = prompt_name
+        self.model_id = model_id
+        self.purpose = purpose
+
+    def _warn(self) -> None:
+        logger.warning(
+            "'%s' response (%s, model '%s') stopped at the output token limit "
+            "(stop reason %s)",
+            self.prompt_name,
+            self.purpose.value,
+            self.model_id,
+            _TRUNCATED_STOP_REASON,
+        )
+
+    def _check(self, message: Any) -> Any:
+        if _stop_reason(message) == _TRUNCATED_STOP_REASON:
+            self._warn()
+            raise LLMOutputTruncatedError(
+                f"'{self.prompt_name}' response from model '{self.model_id}' "
+                f"was cut at the output token limit"
+            )
+        return message
+
+    def invoke(
+        self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
+    ) -> Any:
+        return self._check(input)
+
+    async def ainvoke(
+        self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
+    ) -> Any:
+        return self._check(input)
+
+    def transform(
+        self,
+        input: Iterator[Any],
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> Iterator[Any]:
+        truncated = False
+        for chunk in input:
+            truncated = truncated or _stop_reason(chunk) == _TRUNCATED_STOP_REASON
+            yield chunk
+        if truncated:
+            self._warn()
+
+    async def atransform(
+        self,
+        input: AsyncIterator[Any],
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Any]:
+        truncated = False
+        async for chunk in input:
+            truncated = truncated or _stop_reason(chunk) == _TRUNCATED_STOP_REASON
+            yield chunk
+        if truncated:
+            self._warn()
 
 
 class TransientRetryRunnable(Runnable[Any, Any]):
@@ -227,21 +317,44 @@ def with_transient_retry(
     return TransientRetryRunnable(runnable, operation=operation, retry=retry)
 
 
+class XMLOutputFixingParser(OutputFixingParser[dict[str, Any]]):
+    """``OutputFixingParser`` that never asks the fixer to repair a blank answer.
+
+    An empty or whitespace-only completion (e.g. a thinking-only response)
+    carries nothing to repair, so a fixer could only invent the structure;
+    it fails with the parser's own ``OutputParserException`` instead, which
+    the batch retry treats as retryable.
+    """
+
+    def parse(self, completion: str) -> dict[str, Any]:
+        if not completion.strip():
+            return dict(self.parser.parse(completion))
+        return super().parse(completion)
+
+    async def aparse(self, completion: str) -> dict[str, Any]:
+        if not completion.strip():
+            return dict(await self.parser.aparse(completion))
+        return await super().aparse(completion)
+
+
 def create_robust_xml_output_parser(
     factory: LLMFactoryPort,
     enable_output_fixing: bool,
     output_fixing_model_id: str,
+    *,
+    output_tags: list[str],
     model_purpose: ModelPurpose = ModelPurpose.QUERY,
     min_output_tokens: int = 0,
 ) -> BaseOutputParser:
     """Build the XML parser, optionally wrapped in an LLM output fixer.
 
-    ``model_purpose`` is forwarded to the fixing LLM so it gets the same
-    per-path policy (e.g. guardrail scope) as the chain it repairs, and
-    ``min_output_tokens`` (the repaired prompt's output floor) so a long
-    output can be re-emitted in full.
+    ``output_tags`` are the top-level elements the prompt asks for; the fixer
+    is told them, so it repairs toward the prompt's structure. ``model_purpose``
+    is forwarded to the fixing LLM so it gets the same per-path policy (e.g.
+    guardrail scope) as the chain it repairs, and ``min_output_tokens`` (the
+    repaired prompt's output floor) so a long output can be re-emitted in full.
     """
-    base_parser = RobustXMLOutputParser()
+    base_parser = RobustXMLOutputParser(tags=output_tags)
     if not enable_output_fixing:
         return base_parser
 
@@ -254,7 +367,7 @@ def create_robust_xml_output_parser(
         logger.info(
             "Created OutputFixingParser with model: '%s'", output_fixing_model_id
         )
-        return OutputFixingParser.from_llm(parser=base_parser, llm=fixing_llm)
+        return XMLOutputFixingParser.from_llm(parser=base_parser, llm=fixing_llm)
     except Exception as e:
         logger.error(
             "Failed to create OutputFixingParser with model %s: %s",
@@ -298,7 +411,8 @@ def setup_chain(
         )
         # Named after the prompt, so a trace shows "AnswerGenerationPrompt"
         # instead of an anonymous "RunnableSequence".
-        chain: Runnable = (prompt | llm | parser).with_config(
+        guard = TruncationGuard(prompt_class.__name__, model_id, model_purpose)
+        chain: Runnable = (prompt | llm | guard | parser).with_config(
             run_name=prompt_class.__name__
         )
         logger.debug("Successfully created LLM chain with model: '%s'", model_id)

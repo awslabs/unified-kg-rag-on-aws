@@ -6,7 +6,7 @@ These exercise the pure orchestration / parsing surface of
 ``unified_kg_rag.shared.utils.langchain`` with plain fake callables (no real LLM,
 no boto3). The wall-clock timeout / chunk-ordering / concurrency cases already
 live in ``test_batch_processor_timeout.py``; this module covers the
-complementary branches: the batch-success happy path, run_config overrides,
+complementary branches: the per-item happy path, run_config overrides,
 empty input, the ``BATCH_ITEM_FAILED`` filler on per-item failure, the retry
 decorator, the async ``aexecute_with_fallback`` path, and the multi-stage
 ``RobustXMLOutputParser`` recovery ladder.
@@ -50,77 +50,78 @@ class TestExecuteWithFallback:
         bp = BatchProcessor()
         called = []
 
-        def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
-            called.append(inputs)
-            return []
-
         out = bp.execute_with_fallback(
             items_to_process=[],
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=batch,
-            sequential_func=lambda item: item,
+            sequential_func=called.append,
             task_name="empty",
             show_progress=False,
         )
         assert out == []
-        assert called == []  # short-circuit before any batch call
+        assert called == []  # short-circuit before any call
 
-    def test_batch_happy_path_single_chunk(self) -> None:
-        # All items fit one chunk; batch succeeds -> sequential never invoked.
+    def test_happy_path_calls_each_item_once(self) -> None:
         bp = BatchProcessor(batch_size=10, chunk_concurrency=1, call_timeout_seconds=0)
-        seq_calls = []
-
-        def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
-            return [{"echo": i["v"]} for i in inputs]
+        calls: list[int] = []
+        lock = threading.Lock()
 
         def sequential(item):  # noqa: ANN001
-            seq_calls.append(item)
+            with lock:
+                calls.append(item["v"])
             return {"echo": item["v"]}
 
         out = bp.execute_with_fallback(
             items_to_process=[1, 2, 3],
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=batch,
             sequential_func=sequential,
             task_name="t",
             show_progress=False,
         )
         assert out == [{"echo": 1}, {"echo": 2}, {"echo": 3}]
-        assert seq_calls == []
+        assert sorted(calls) == [1, 2, 3]
 
-    def test_batch_passes_max_concurrency_config(self) -> None:
-        # _create_batch_func injects a RunnableConfig(max_concurrency=...).
-        bp = BatchProcessor(max_concurrency=7, batch_size=10, call_timeout_seconds=0)
-        seen = {}
+    def test_max_concurrency_bounds_items_in_flight(self) -> None:
+        bp = BatchProcessor(max_concurrency=2, batch_size=6, call_timeout_seconds=0)
+        lock = threading.Lock()
+        in_flight = 0
+        max_in_flight = 0
+        two_running = threading.Barrier(2, timeout=10)
 
-        def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001
-            seen["config"] = config
-            return [{"ok": 1} for _ in inputs]
+        def sequential(item):  # noqa: ANN001
+            nonlocal in_flight, max_in_flight
+            with lock:
+                in_flight += 1
+                max_in_flight = max(max_in_flight, in_flight)
+            try:
+                two_running.wait()  # needs two items running at once
+            finally:
+                with lock:
+                    in_flight -= 1
+            return item["v"]
 
-        bp.execute_with_fallback(
-            items_to_process=[1],
+        out = bp.execute_with_fallback(
+            items_to_process=list(range(6)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=batch,
-            sequential_func=lambda item: {},
+            sequential_func=sequential,
             task_name="t",
             show_progress=False,
         )
-        assert seen["config"]["max_concurrency"] == 7
+        assert out == list(range(6))
+        assert max_in_flight == 2
 
     def test_run_config_overrides_fields(self) -> None:
         bp = BatchProcessor(max_concurrency=1, batch_size=99, chunk_concurrency=1)
         # batch_size override to 1 -> two chunks for two items.
         chunk_sizes = []
 
-        def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
-            chunk_sizes.append(len(inputs))
-            return [{"echo": i["v"]} for i in inputs]
+        def prepare(items):  # noqa: ANN001
+            chunk_sizes.append(len(items))
+            return [{"v": i} for i in items]
 
         out = bp.execute_with_fallback(
             items_to_process=[1, 2],
-            prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=batch,
-            sequential_func=lambda item: {},
+            prepare_inputs_func=prepare,
+            sequential_func=lambda item: {"echo": item["v"]},
             task_name="t",
             run_config={"max_concurrency": 3, "batch_size": 1, "chunk_concurrency": 1},
             show_progress=False,
@@ -138,22 +139,18 @@ class TestExecuteWithFallback:
         out = bp.execute_with_fallback(
             items_to_process=[1, 2],
             prepare_inputs_func=lambda items: [],
-            batch_func=lambda inputs, **_: [{"x": 1}],  # noqa: ARG005
             sequential_func=lambda item: {},
             task_name="t",
             show_progress=False,
         )
         assert out == []
 
-    def test_sequential_fallback_marks_item_failure_in_place(self) -> None:
-        # Batch fails -> sequential path; one item raises and is back-filled with
+    def test_item_failure_is_marked_in_place(self) -> None:
+        # One item raises on every attempt and is back-filled with
         # BATCH_ITEM_FAILED so positional zip alignment downstream is preserved.
         bp = BatchProcessor(
             batch_size=10, chunk_concurrency=1, call_timeout_seconds=0, **_NO_BACKOFF
         )
-
-        def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
-            raise RuntimeError("batch boom")
 
         def sequential(item):  # noqa: ANN001
             if item["v"] == 2:
@@ -163,12 +160,10 @@ class TestExecuteWithFallback:
         out = bp.execute_with_fallback(
             items_to_process=[1, 2, 3],
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=batch,
             sequential_func=sequential,
             task_name="t",
             show_progress=False,
         )
-        # item 2 failed all retries -> back-filled with the failure marker.
         assert out == [{"echo": 1}, BATCH_ITEM_FAILED, {"echo": 3}]
 
     def test_concurrent_chunks_use_distinct_threads(self) -> None:
@@ -178,17 +173,16 @@ class TestExecuteWithFallback:
         lock = threading.Lock()
         barrier = threading.Barrier(3)
 
-        def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
+        def sequential(item):  # noqa: ANN001
             barrier.wait(timeout=5)  # force genuine overlap across 3 chunks
             with lock:
                 thread_ids.add(threading.get_ident())
-            return [{"echo": inputs[0]["v"]}]
+            return {"echo": item["v"]}
 
         out = bp.execute_with_fallback(
             items_to_process=[1, 2, 3],
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=batch,
-            sequential_func=lambda item: {},
+            sequential_func=sequential,
             task_name="t",
             show_progress=False,
         )
@@ -427,14 +421,13 @@ class TestRetryFailedItemsOnly:
         out = bp.execute_with_fallback(
             items_to_process=list(range(10)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=fake.runnable.batch,
             sequential_func=fake.runnable.invoke,
             task_name="t",
             show_progress=False,
         )
         assert out == [{"echo": i} for i in range(10)]
         assert all(fake.calls[i] == 1 for i in range(10) if i != 4)
-        assert fake.calls[4] == 2  # batch attempt + one retry
+        assert fake.calls[4] == 2  # first call + one retry
 
     def test_permanently_failing_item_gets_sentinel_in_place(self) -> None:
         fake = _CountingRunnable(fail_first={0: None, 7: None})
@@ -442,7 +435,6 @@ class TestRetryFailedItemsOnly:
         out = bp.execute_with_fallback(
             items_to_process=list(range(10)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=fake.runnable.batch,
             sequential_func=fake.runnable.invoke,
             task_name="t",
             show_progress=False,
@@ -451,7 +443,7 @@ class TestRetryFailedItemsOnly:
         expected[0] = BATCH_ITEM_FAILED
         expected[7] = BATCH_ITEM_FAILED
         assert out == expected
-        assert fake.calls[0] == 3  # batch attempt + max_attempts
+        assert fake.calls[0] == 3  # first call + max_attempts
         assert fake.calls[7] == 3
         assert all(fake.calls[i] == 1 for i in range(1, 10) if i != 7)
 
@@ -463,13 +455,12 @@ class TestRetryFailedItemsOnly:
         bp.execute_with_fallback(
             items_to_process=list(range(3)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=fake.runnable.batch,
             sequential_func=fake.runnable.invoke,
             task_name="t",
             run_config={"max_attempts": 1},
             show_progress=False,
         )
-        assert fake.calls[0] == 2  # batch attempt + one per-item attempt
+        assert fake.calls[0] == 2  # first call + one retry
 
     def test_order_preserved_across_concurrent_chunks(self) -> None:
         fake = _CountingRunnable(fail_first={2: 1, 9: 1, 13: 1})
@@ -484,7 +475,6 @@ class TestRetryFailedItemsOnly:
         out = bp.execute_with_fallback(
             items_to_process=list(range(15)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=fake.runnable.batch,
             sequential_func=fake.runnable.invoke,
             task_name="t",
             show_progress=False,
@@ -498,7 +488,6 @@ class TestRetryFailedItemsOnly:
         out = bp.execute_with_fallback(
             items_to_process=list(range(4)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=fake.runnable.batch,
             sequential_func=fake.runnable.invoke,
             task_name="t",
             show_progress=False,
@@ -506,42 +495,22 @@ class TestRetryFailedItemsOnly:
         assert out == [BATCH_ITEM_FAILED] * 4
         assert all(fake.calls[i] == 3 for i in range(4))
 
-    def test_whole_batch_exception_still_reruns_every_item(self) -> None:
-        # A batch_func that raises outright (no per-item results) keeps the
-        # legacy full sequential fallback.
-        seq_calls: list[int] = []
-
-        def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
-            raise RuntimeError("batch boom")
-
-        def sequential(item):  # noqa: ANN001
-            seq_calls.append(item["v"])
-            return {"echo": item["v"]}
-
-        out = _fast_bp(batch_size=10).execute_with_fallback(
-            items_to_process=[1, 2, 3],
-            prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=batch,
-            sequential_func=sequential,
-            task_name="t",
-            show_progress=False,
-        )
-        assert out == [{"echo": 1}, {"echo": 2}, {"echo": 3}]
-        assert seq_calls == [1, 2, 3]
-
-    def test_batch_func_always_gets_return_exceptions(self) -> None:
+    async def test_async_batch_func_always_gets_return_exceptions(self) -> None:
         seen: dict[str, Any] = {}
 
-        def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001
+        async def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001
             seen["config"] = config
             seen["return_exceptions"] = return_exceptions
             return [{"ok": 1} for _ in inputs]
 
-        _fast_bp().execute_with_fallback(
+        async def sequential(item):  # noqa: ANN001
+            return {}
+
+        await _fast_bp().aexecute_with_fallback(
             items_to_process=[1],
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
             batch_func=batch,
-            sequential_func=lambda item: {},
+            sequential_func=sequential,
             task_name="t",
             show_progress=False,
         )
@@ -610,12 +579,71 @@ class TestRobustXMLOutputParser:
         assert isinstance(out, dict)
         assert "plan" in out
 
-    def test_unescaped_ampersand_keeps_section(self) -> None:
-        parser = RobustXMLOutputParser()
-        # A bare & in text content still yields a dict with the section.
-        out = parser.parse("<note>Tom & Jerry</note>")
-        assert isinstance(out, dict)
-        assert "note" in out
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("<name>A&B Corp</name>", {"name": "A&B Corp"}),
+            ("<note>Tom & Jerry</note>", {"note": "Tom & Jerry"}),
+            (
+                "<plan><item>R&D budget < 5M</item></plan>",
+                {"plan": {"item": "R&D budget < 5M"}},
+            ),
+            ("<note>x&lt;y &amp; z &#38; w</note>", {"note": "x<y & z & w"}),
+        ],
+    )
+    def test_bare_ampersand_and_less_than_keep_text(self, text, expected) -> None:
+        # A bare & or a < that does not start a tag is text, not markup:
+        # recovery must not drop it (or the word after it).
+        assert RobustXMLOutputParser().parse(text) == expected
+
+    def test_bare_ampersand_and_less_than_keep_text_across_sections(self) -> None:
+        text = (
+            "<entities>\n<entity><name>A&B Corp</name><description>R&D spend < 5M"
+            "</description></entity>\n</entities>\n<relationships>\n"
+            "<relationship><source>A&B Corp</source><target>Smith & Sons</target>"
+            "<description>x < y</description></relationship>\n</relationships>"
+        )
+        assert RobustXMLOutputParser().parse(text) == {
+            "entities": {
+                "entity": {"name": "A&B Corp", "description": "R&D spend < 5M"}
+            },
+            "relationships": {
+                "relationship": {
+                    "source": "A&B Corp",
+                    "target": "Smith & Sons",
+                    "description": "x < y",
+                }
+            },
+        }
+
+    def test_repeated_top_level_tag_keeps_every_sibling(self) -> None:
+        # A response without a root element (the model continued an open
+        # <chunk_boundaries>) is a run of sibling elements; every one is kept,
+        # not only the first.
+        text = (
+            "<line_number>4</line_number>\n<line_number>7</line_number>\n"
+            "<line_number>10</line_number>\n</chunk_boundaries>"
+        )
+        assert RobustXMLOutputParser().parse(text) == {"line_number": ["4", "7", "10"]}
+
+    def test_sections_decode_character_references(self) -> None:
+        # Multi-section responses go through the same lxml pass as
+        # single-root ones, so their text is decoded the same way.
+        text = "<entities>x &amp; y</entities><relationships>a &lt; b</relationships>"
+        assert RobustXMLOutputParser().parse(text) == {
+            "entities": "x & y",
+            "relationships": "a < b",
+        }
+
+    def test_xml_declaration_and_surrounding_prose_are_ignored(self) -> None:
+        text = (
+            'Here is the output:\n<?xml version="1.0" encoding="UTF-8"?>\n'
+            "<chunk_boundaries>\n<line_number>4</line_number>\n"
+            "<line_number>7</line_number>\n</chunk_boundaries>\nDone."
+        )
+        assert RobustXMLOutputParser().parse(text) == {
+            "chunk_boundaries": {"line_number": ["4", "7"]}
+        }
 
     def test_single_root_parses_to_children_by_tag(self) -> None:
         # A well-formed single-root response (claims, refinement plan) parses
@@ -811,9 +839,53 @@ def test_execute_with_fallback_reports_progress(mocker) -> None:
     processor.execute_with_fallback(
         items_to_process=list(range(4)),
         prepare_inputs_func=lambda chunk: [{"x": x} for x in chunk],
-        batch_func=lambda inputs, **_: [i["x"] for i in inputs],  # noqa: ARG005
         sequential_func=lambda i: i["x"],
         task_name="T",
         show_progress=False,
     )
     assert [args[2] for args in _progress_lines(log)][-1] == 4
+
+
+def test_stray_closing_tag_keeps_later_relationships() -> None:
+    # Models occasionally emit an end tag that closes nothing (seen in real
+    # extraction output inside the first <relationship>). It must not cut the
+    # section short: every relationship after it is kept.
+    raw = (
+        "<entities>\n"
+        "<entity><name>Vendor A</name><type>ORGANIZATION</type></entity>\n"
+        "<entity><name>Buyer B</name><type>ORGANIZATION</type></entity>\n"
+        "</entities>\n<relationships>\n"
+        "<relationship><source>Vendor A</source><target>Buyer B</target>"
+        "<type>SUPPLIES</type><source_text>Vendor A supplies Buyer B</source_text>\n"
+        "</entity_placeholder>\n</relationship>\n"
+        "<relationship><source>Buyer B</source><target>Vendor A</target>"
+        "<type>PAYS</type></relationship>\n"
+        "<relationship><source>Vendor A</source><target>Vendor A</target>"
+        "<type>SELF</type></relationship>\n"
+        "</relationships>"
+    )
+    parsed = RobustXMLOutputParser(tags=["entities", "relationships"]).parse(raw)
+    rels = parsed["relationships"]["relationship"]
+    assert isinstance(rels, list)
+    assert [r["type"] for r in rels] == ["SUPPLIES", "PAYS", "SELF"]
+    assert len(parsed["entities"]["entity"]) == 2
+
+
+def test_matched_closing_tags_are_untouched() -> None:
+    text = "<a><b>x</b><c/></a>"
+    assert RobustXMLOutputParser._drop_unmatched_closing_tags(text) == text
+    assert (
+        RobustXMLOutputParser._drop_unmatched_closing_tags("<a>x</z></a>") == "<a>x</a>"
+    )
+
+
+def test_wrong_record_end_tag_closes_the_open_record() -> None:
+    raw = (
+        "<relationships>"
+        "<relationship><source>A</source><target>B</target></entity>"
+        "<relationship><source>B</source><target>C</target></relationship>"
+        "</relationships>"
+    )
+    parsed = RobustXMLOutputParser(tags=["relationships"]).parse(raw)
+    rels = parsed["relationships"]["relationship"]
+    assert [(r["source"], r["target"]) for r in rels] == [("A", "B"), ("B", "C")]

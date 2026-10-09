@@ -130,6 +130,13 @@ class CommunityDetector(BaseProcessor):
                 enable_output_fixing=self.config.fixing.enabled,
                 output_fixing_model_id=self.config.fixing.fixing_model_id,
                 min_output_tokens=CommunityReportPrompt.min_output_tokens,
+                output_tags=[
+                    "community_name",
+                    "summary",
+                    "rating",
+                    "rating_explanation",
+                    "findings",
+                ],
             )
             self.report_generator = setup_chain(
                 model_purpose=ModelPurpose.INGESTION,
@@ -831,7 +838,6 @@ class CommunityDetector(BaseProcessor):
         report_results = self.batch_processor.execute_with_fallback(
             items_to_process=report_inputs,
             prepare_inputs_func=self._create_report_chain_inputs,
-            batch_func=self.report_generator.batch,
             sequential_func=self.report_generator.invoke,
             task_name="Community report generation",
             run_config=self.config.processing.model_dump(),

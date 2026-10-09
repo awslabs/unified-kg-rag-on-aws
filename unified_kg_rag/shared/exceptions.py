@@ -45,6 +45,10 @@ class LanguageModelError(ModelError):
     pass
 
 
+class LLMOutputTruncatedError(LanguageModelError):
+    """A model response stopped at its output-token limit, cut mid-answer."""
+
+
 class PipelineExecutionError(GraphRAGException):
     pass
 

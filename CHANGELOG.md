@@ -330,6 +330,57 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   into lists of one-key dicts that the extractors cannot read. Every response
   now goes through the lxml recovery path, which produced all results before,
   so parsed output does not change (#165).
+- The LLM XML parser keeps a bare `&` and a `<` that does not start a tag
+  as text. lxml recovery ran on the unescaped response and cut them, with
+  the characters after them, from single-root responses (claims, gleaning
+  refinement plans): `A&B Corp` parsed as `A Corp` and `R&D budget < 5M` as
+  `R budget  5M`. The escaping attempts removed in #165 never reached such a
+  response, since lxml recovery came first and returned the cut text (#174).
+- The LLM XML parser keeps every top-level element. lxml recovery kept only
+  the first one, so a response of repeated siblings (`<line_number>4</...>`
+  `<line_number>7</...>`, from a model continuing the chunking prompt's
+  trailing open `<chunk_boundaries>`) parsed as `{"line_number": "4"}` and
+  passed the section check, losing every later boundary. The response is now
+  parsed under one synthetic root, so repeated siblings become a list and
+  multi-section answers decode `&amp;` and `&lt;` like single-root ones.
+  The chunking prompt no longer ends with `<?xml ...?>` and an open
+  `<chunk_boundaries>`: it already asks the model to emit the whole document
+  (#174).
+- A model response that stopped at its output-token limit (`stopReason`
+  or `stop_reason` `max_tokens`) fails with `LLMOutputTruncatedError`
+  instead of being parsed. The XML parser recovered the sections before the
+  cut, so an extraction cut inside `<relationships>` counted as a success
+  with its relationships missing. The chain now logs a WARNING with the
+  prompt, model purpose and model id, and ingestion counts the item as
+  failed; the error is not retried, since the same input hits the same
+  limit. Streamed output is passed through and only logged (#174).
+- The output-fixing LLM is told the top-level elements its prompt asks for
+  (e.g. `<entities>`, `<relationships>`) instead of "Here are the output
+  tags: None" with an example that nests the tags, and an empty or
+  whitespace-only answer (e.g. thinking only) fails the parse without
+  calling it, since it could only invent the structure; the batch retry
+  re-asks the original model. `create_robust_xml_output_parser` takes a
+  required keyword `output_tags` (**Breaking** for direct callers) (#174).
+- `BatchProcessor.execute_with_fallback` runs every item as its own call
+  under its own `call_timeout_seconds`. The timeout wrapped a chunk's whole
+  `batch()` call, so one slow item discarded the chunk's finished results
+  and re-ran every item (10 items with one slow: 20 model calls instead of
+  11), while the abandoned calls kept running and billing. Now only the
+  timed-out or failed item is retried, with the same `max_attempts`.
+  **Breaking** for direct callers: the synchronous method no longer takes
+  `batch_func` (the async one still does) (#174).
+- The Bedrock client's socket read timeout is 330 s, above
+  `BatchProcessor`'s 300 s call timeout. Both were 300 s, so a long
+  ingestion call raced them: when the socket timeout won, botocore silently
+  re-sent the call, which the call timeout then abandoned. Now the call
+  timeout ends such a call and the item is retried under the batch policy
+  (backoff, `max_attempts`, logged). An ingestion generation still has to
+  finish within the 300 s call timeout (#174).
+- Claude requests no longer send the `"\n\nHuman:"` stop sequence. It is a
+  marker of the legacy text-completion format; Converse and the InvokeModel
+  Messages body are turn-structured, so it only ended translation,
+  extraction or answers early, without an error, on text that contains it
+  (chat transcripts, quoted dialogue) (#174).
 - `cdk destroy` with `removal_destroy=true` (dev default) deletes the
   OpenSearch domain's app, slow-index and slow-search log groups. The domain
   created them with CDK's default `Retain`, so every dev teardown left three

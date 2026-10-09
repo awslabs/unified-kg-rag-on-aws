@@ -32,7 +32,9 @@ from unified_kg_rag.domain.models import (
     Document,
     DocumentContent,
 )
+from unified_kg_rag.domain.prompts.data_processing import TextChunkingPrompt
 from unified_kg_rag.shared import DataProcessingError
+from unified_kg_rag.shared.utils.langchain import RobustXMLOutputParser
 
 pytestmark = pytest.mark.unit
 
@@ -153,6 +155,27 @@ class TestLineBoundaryProcessor:
             {"chunk_boundaries": [{"#text": "7"}, {"#text": "3"}]}
         )
         assert nums == [3, 7]
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            '<?xml version="1.0" encoding="UTF-8"?>\n<chunk_boundaries>\n'
+            "<line_number>4</line_number>\n<line_number>7</line_number>\n"
+            "</chunk_boundaries>",
+            # The root element left out: every boundary still counts.
+            "<line_number>4</line_number>\n<line_number>7</line_number>\n"
+            "</chunk_boundaries>",
+        ],
+    )
+    def test_parsed_response_yields_every_boundary(self, response) -> None:
+        parsed = RobustXMLOutputParser().parse(response)
+        assert self._p().extract_line_numbers(parsed) == [4, 7]
+
+    def test_prompt_does_not_leave_an_open_root_element(self) -> None:
+        # The prompt asks the model to emit the whole XML document, so its
+        # human turn must not end inside an opened <chunk_boundaries>.
+        template = TextChunkingPrompt.human_prompt_template.rstrip()
+        assert not template.endswith(("<chunk_boundaries>", "?>"))
 
     def test_convert_line_numbers_to_indices(self) -> None:
         lines = ["abc", "de", "fghi"]  # lengths 3,2,4 (+ newline between)
@@ -404,7 +427,7 @@ class TestChunkerFactory:
 
 
 # --------------------------------------------------------------------------- #
-# IntelligentTextChunker — LLM boundary pipeline (chain.batch mocked)
+# IntelligentTextChunker — LLM boundary pipeline (chain.invoke mocked)
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def intelligent_chunker(config: Config, _patch_bedrock) -> IntelligentTextChunker:
@@ -508,8 +531,8 @@ class TestIntelligentChunkerHelpers:
 class TestIntelligentChunkerPipeline:
     def test_chunk_single_document_llm_path(self, intelligent_chunker, mocker) -> None:
         # The chain returns a boundary at line 2 for the single pre-chunk.
-        intelligent_chunker.chunker.batch = mocker.Mock(
-            return_value=[{"chunk_boundaries": [2]}]
+        intelligent_chunker.chunker.invoke = mocker.Mock(
+            return_value={"chunk_boundaries": [2]}
         )
         text = "alpha beta gamma delta\nepsilon zeta eta theta iota kappa lambda"
         units = intelligent_chunker._chunk_single_document(_doc(text))
@@ -521,7 +544,7 @@ class TestIntelligentChunkerPipeline:
         self, intelligent_chunker, mocker
     ) -> None:
         # LLM returns None -> fallback chunks are used.
-        intelligent_chunker.chunker.batch = mocker.Mock(return_value=[None])
+        intelligent_chunker.chunker.invoke = mocker.Mock(return_value=None)
         text = "alpha beta gamma delta epsilon zeta eta theta"
         units = intelligent_chunker._chunk_single_document(_doc(text))
         assert len(units) >= 1
@@ -548,7 +571,7 @@ class TestIntelligentChunkerPipeline:
     def test_short_pre_chunk_skips_the_llm(self, intelligent_chunker, mocker) -> None:
         # Under 2 * min_chunk_size any split would be merged back into one
         # chunk, so the pre-chunk is kept whole without an LLM call.
-        intelligent_chunker.chunker.batch = mocker.Mock(
+        intelligent_chunker.chunker.invoke = mocker.Mock(
             side_effect=AssertionError("LLM must not be called")
         )
         out = intelligent_chunker._process_pre_chunks(["short text"], "f.txt")
@@ -558,11 +581,11 @@ class TestIntelligentChunkerPipeline:
         self, intelligent_chunker, mocker
     ) -> None:
         long_text = "alpha beta gamma delta\nepsilon zeta eta theta iota kappa"
-        intelligent_chunker.chunker.batch = mocker.Mock(
-            return_value=[{"chunk_boundaries": [2]}]
+        intelligent_chunker.chunker.invoke = mocker.Mock(
+            return_value={"chunk_boundaries": [2]}
         )
         out = intelligent_chunker._process_pre_chunks(["tiny", long_text], "f.txt")
-        sent = intelligent_chunker.chunker.batch.call_args.args[0]
+        sent = [c.args[0] for c in intelligent_chunker.chunker.invoke.call_args_list]
         assert len(sent) == 1 and "alpha beta" in sent[0]["numbered_text"]
         assert out[0] == ("unsplit", "tiny", 1)
         assert all(method == "llm" and src == 2 for method, _, src in out[1:])

@@ -556,8 +556,8 @@ class TestExtractFromTextUnits:
     def test_end_to_end_with_mocked_chain(self, extractor, mocker) -> None:
         extractor.extraction_config.entity_confidence_threshold = 0.0
         units = [TextUnit(id="t1", text="Alice works at Acme.")]
-        extractor.graph_extractor.batch = mocker.Mock(
-            return_value=[
+        extractor.graph_extractor.invoke = mocker.Mock(
+            side_effect=[
                 {
                     "entities": {
                         "entity": [

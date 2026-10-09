@@ -8,7 +8,6 @@ from typing import Any
 import boto3
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
-from langchain_core.runnables.config import merge_configs
 
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
@@ -472,8 +471,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         rated (the call failed, or its output was not parseable map JSON), so
         the caller can tell "rated irrelevant" apart from "never rated".
         """
-        # BatchProcessor passes its own config (max_concurrency) to batch_func.
-        caller_config = config
         batch_size = self.global_search_config.map_batch_size
         report_batches = [
             results[i : i + batch_size] for i in range(0, len(results), batch_size)
@@ -491,31 +488,16 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 for batch in batches
             ]
 
-        def batch_func(
-            inputs: list[dict[str, Any]],
-            config: RunnableConfig | None = None,
-            return_exceptions: bool = False,
-        ) -> list[Any]:
-            # Forward return_exceptions so one failed map call is retried alone
-            # instead of re-running every map call in its chunk.
-            return list(
-                self.map_rater.batch(
-                    inputs,
-                    config=merge_configs(caller_config, config),
-                    return_exceptions=return_exceptions,
-                )
-            )
-
         # BatchProcessor turns an item that failed every attempt into
-        # BATCH_ITEM_FAILED, and every final attempt runs through
-        # sequential_func, so fatal errors are recorded there: a model the
+        # BATCH_ITEM_FAILED, and every attempt runs through sequential_func,
+        # so fatal errors are recorded there: a model the
         # caller cannot access must fail the query, not degrade it to
         # "unrated" and an answer from the raw reports.
         fatal_errors: list[Exception] = []
 
         def sequential_func(single_input: dict[str, Any]) -> str:
             try:
-                return str(self.map_rater.invoke(single_input, caller_config))
+                return str(self.map_rater.invoke(single_input, config))
             except Exception as e:
                 if is_fatal_retrieval_error(e):
                     fatal_errors.append(e)
@@ -525,7 +507,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             self.batch_processor.execute_with_fallback,
             items_to_process=report_batches,
             prepare_inputs_func=prepare_inputs,
-            batch_func=batch_func,
             sequential_func=sequential_func,
             task_name="global_search_map",
             show_progress=False,

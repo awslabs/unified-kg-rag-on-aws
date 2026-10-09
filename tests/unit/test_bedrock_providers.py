@@ -260,11 +260,18 @@ def test_gpt_reasoning_effort_per_call_override() -> None:
     }
 
 
-def test_claude_request_keeps_anthropic_stop_sequence() -> None:
+def test_claude_request_sends_no_stop_sequence() -> None:
+    # Converse and the InvokeModel Messages body are turn-structured: the
+    # legacy "\n\nHuman:" text-completion marker only cut off answers whose
+    # text contains it (chat transcripts, quoted dialogue).
     factory = _factory()
     info = _info(LanguageModelId.CLAUDE_V5_5_SONNET)
-    cfg = factory._build_model_config(info, "us.anthropic.claude-sonnet-5-5", True)
-    assert cfg["stop_sequences"] == ["\n\nHuman:"]
+    converse = factory._build_model_config(info, "us.anthropic.claude-sonnet-5-5", True)
+    assert "stop_sequences" not in converse
+    model = LanguageModelId.CLAUDE_V3_7_SONNET
+    invoke = factory._build_model_config(_info(model), model.value, False)
+    assert "stop_sequences" not in invoke
+    assert "stop_sequences" not in invoke["model_kwargs"]
 
 
 def test_claude_5_5_gets_adaptive_thinking_by_default() -> None:

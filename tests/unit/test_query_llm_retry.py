@@ -333,25 +333,22 @@ async def test_rag_query_non_transient_error_fails_after_one_call() -> None:
 
 def test_batch_processor_chain_is_not_double_retried() -> None:
     # Ingestion chains get no chain-level retry; BatchProcessor's tenacity
-    # retry is the only one, so N attempts => N model calls (not N * 3).
+    # retry is the only one, so the first call plus N retries => 1 + N model
+    # calls (not 3 per attempt).
     model = _ScriptedModel([_model_error() for _ in range(10)])
     chain = _query_chain(model, purpose=ModelPurpose.INGESTION)
     processor = BatchProcessor(
         batch_size=1, max_attempts=2, retry_multiplier=1.0, retry_max_wait=0
     )
 
-    def batch_func(inputs: list[dict[str, Any]], **_: Any) -> list[Any]:
-        raise RuntimeError("force the per-item sequential path")
-
     results = processor.execute_with_fallback(
         items_to_process=["item"],
         prepare_inputs_func=lambda items: [_QUERY for _ in items],
-        batch_func=batch_func,
         sequential_func=chain.invoke,
         task_name="synthetic_ingestion",
         show_progress=False,
     )
-    assert model.calls == 2
+    assert model.calls == 3
     assert results == [BATCH_ITEM_FAILED]
 
 

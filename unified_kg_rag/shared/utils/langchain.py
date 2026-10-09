@@ -110,8 +110,8 @@ class BatchProcessor(BaseModel):
     max_attempts: int = Field(
         default=5,
         ge=1,
-        description="Total attempts for an item called on its own after its "
-        "batch call fails, including the first (1 disables the retry)",
+        description="Calls an item gets after its first call fails: at least "
+        "one, and up to this many while its error is retryable",
     )
     batch_size: int = Field(
         default=10,
@@ -128,10 +128,12 @@ class BatchProcessor(BaseModel):
     call_timeout_seconds: int = Field(
         default=300,
         ge=0,
-        description="Wall-clock timeout for a single batch/sequential LLM call. "
-        "botocore's read_timeout only measures the gap between bytes, so a server "
-        "that dribbles keep-alive data can hang a call indefinitely; this hard "
-        "ceiling forces such a call to abort (and fall back / retry). 0 disables.",
+        description="Wall-clock timeout for one item's LLM call. botocore's "
+        "read_timeout only measures the gap between bytes, so a server that "
+        "dribbles keep-alive data can hang a call indefinitely; this hard "
+        "ceiling aborts such a call and retries that item alone. Keep it below "
+        "the Bedrock client's read timeout so it is the limit that fires. "
+        "0 disables.",
     )
     is_transient_error: Callable[[BaseException], bool] | None = Field(
         default=None,
@@ -148,16 +150,14 @@ class BatchProcessor(BaseModel):
         """Run ``func`` under a wall-clock timeout.
 
         A hung Bedrock call (no completion despite an open socket) would otherwise
-        block the only worker for the full mini-batch; this bounds it so the
-        caller can fall back to per-item retries. ``timeout_seconds <= 0`` runs
-        ``func`` directly with no timeout.
+        block its worker indefinitely; this bounds it so the item can be retried.
+        ``timeout_seconds <= 0`` runs ``func`` directly with no timeout.
 
         Python cannot kill a thread, so a timed-out call is abandoned, not
-        cancelled: its in-flight Bedrock request(s) keep running (and billing)
-        until botocore's own read timeout or completion, while the caller's
-        fallback re-issues the same work. Keep ``call_timeout_seconds`` well
-        above normal call latency so this path stays reserved for genuinely hung
-        calls; the cost of a timeout is roughly one extra copy of the call.
+        cancelled: its in-flight Bedrock request keeps running (and billing)
+        until botocore's own read timeout or completion, while the retry
+        re-issues that one item. Keep ``call_timeout_seconds`` well above normal
+        call latency so this path stays reserved for genuinely hung calls.
         """
         if timeout_seconds <= 0:
             return func()
@@ -166,7 +166,7 @@ class BatchProcessor(BaseModel):
         # would block until the hung call actually returns (up to the full
         # BOTO_READ_TIMEOUT), defeating the whole point of the timeout. Instead
         # abandon the doomed thread with shutdown(wait=False, cancel_futures=True)
-        # so control returns to the caller immediately for the per-item fallback.
+        # so control returns to the caller immediately for the item's retry.
         pool = ContextThreadPoolExecutor(max_workers=1)
         future = pool.submit(func)
         try:
@@ -193,12 +193,20 @@ class BatchProcessor(BaseModel):
         self,
         items_to_process: list[Any],
         prepare_inputs_func: Callable[[list[Any]], list[dict[str, Any]]],
-        batch_func: Callable[..., list[Any]],
-        sequential_func: Callable[..., Any],
+        sequential_func: Callable[[dict[str, Any]], Any],
         task_name: str,
         run_config: dict[str, Any] | None = None,
         show_progress: bool = True,
     ) -> list[Any]:
+        """Call ``sequential_func`` once per item, in chunks, and retry failures.
+
+        Each item is its own call under its own ``call_timeout_seconds``, run
+        ``max_concurrency`` at a time within a chunk, so a slow or failed item
+        neither discards the finished results of its chunk nor makes them run
+        again: only the failed items are retried (``max_attempts``). Results
+        are 1:1 with the prepared inputs; an item that failed every attempt is
+        :data:`BATCH_ITEM_FAILED`.
+        """
         if not items_to_process:
             return []
 
@@ -212,10 +220,8 @@ class BatchProcessor(BaseModel):
             )
             self.max_attempts = run_config.get("max_attempts", self.max_attempts)
 
-        prepared_batch_func = self._create_batch_func(batch_func)
-
-        # Bound each single-item call by the same wall-clock ceiling so a hung
-        # item aborts and is retried by the decorator instead of blocking.
+        # Bound every item call by the wall-clock ceiling so a hung item
+        # aborts and is retried instead of blocking.
         def timed_sequential_func(single_input: dict[str, Any]) -> Any:
             return self._run_with_timeout(
                 lambda: sequential_func(single_input),
@@ -252,38 +258,11 @@ class BatchProcessor(BaseModel):
                     "No valid inputs prepared for chunk %s, skipping", chunk_num
                 )
                 return []
-            try:
-
-                def run_batch(inputs: list[dict[str, Any]] = chunk_inputs) -> Any:
-                    return prepared_batch_func(inputs)
-
-                results: list[Any] = list(
-                    self._run_with_timeout(
-                        run_batch,
-                        self.call_timeout_seconds,
-                        f"{task_name} batch chunk {chunk_num}",
-                    )
-                )
-            except Exception as e:
-                logger.warning(
-                    "Batch processing failed for chunk %s: %s. Falling back to "
-                    "sequential processing",
-                    chunk_num,
-                    e,
-                )
-                return self._process_sequentially_with_fallback(
-                    chunk_inputs,
-                    retrying_sequential_func,
-                    f"{task_name} (chunk {chunk_num})",
-                    show_progress=show_progress,
-                )
-
-            # The batch ran with return_exceptions=True: keep the successful
-            # results and retry ONLY the failed positions, so one bad item no
-            # longer re-pays every successful LLM call in its chunk.
+            results = self._call_each(timed_sequential_func, chunk_inputs)
+            # Keep the successful results and retry ONLY the failed positions.
             failed = self._failed_indices(results)
             if not failed:
-                logger.debug("Chunk %s processed successfully in batch mode", chunk_num)
+                logger.debug("Chunk %s processed successfully", chunk_num)
                 return results
             self._log_partial_failure(task_name, chunk_num, results, failed)
             retried = self._process_sequentially_with_fallback(
@@ -334,6 +313,21 @@ class BatchProcessor(BaseModel):
         logger.info("Completed '%s': processed %s results", task_name, len(all_results))
         return all_results
 
+    def _call_each(
+        self, func: Callable[[dict[str, Any]], Any], inputs: list[dict[str, Any]]
+    ) -> list[Any]:
+        """``func`` per input, ``max_concurrency`` at a time; errors in place."""
+        workers = min(self.max_concurrency, len(inputs))
+        with ContextThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(func, single_input) for single_input in inputs]
+            results: list[Any] = []
+            for future in futures:
+                try:
+                    results.append(future.result())
+                except Exception as e:
+                    results.append(e)
+        return results
+
     def _batch_kwargs(self) -> dict[str, Any]:
         # batch_func follows the Runnable.batch/abatch signature; per-item
         # exceptions come back in place so only the failed items are retried.
@@ -368,14 +362,6 @@ class BatchProcessor(BaseModel):
         for idx, res in zip(failed, retried, strict=True):
             merged[idx] = res
         return merged
-
-    def _create_batch_func(self, batch_func: Callable[..., list[Any]]) -> Callable:
-        batch_kwargs = self._batch_kwargs()
-
-        def _batch_func(inputs: list[dict[str, Any]]) -> list[Any]:
-            return batch_func(inputs, **batch_kwargs)
-
-        return _batch_func
 
     def _is_retryable(self, exc: BaseException) -> bool:
         # A malformed LLM response or a hung call can succeed on a new attempt.
@@ -595,6 +581,22 @@ class BatchProcessor(BaseModel):
         return results
 
 
+_FORMAT_INSTRUCTIONS = (
+    "Return the completion as well-formed XML made of {sections}. Keep every "
+    "element and all of its text, add nothing that is not in the completion, "
+    "and open and close every tag. Return only the XML."
+)
+# Synthetic root the response is wrapped in before lxml recovery.
+_RESPONSE_ROOT = b"llm_response"
+# Only valid at the very start of a document, so not inside the wrapper.
+_XML_DECLARATION = re.compile(r"<\?xml[^>]*\?>")
+# `&` not starting one of the XML predefined or numeric character references.
+_BARE_AMPERSAND = re.compile(r"&(?!(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+);)")
+# `<` not followed by what can start a tag, end tag, comment or declaration.
+_TEXT_LESS_THAN = re.compile(r"<(?![A-Za-z_/!?])")
+_TAG = re.compile(r"<(/?)([A-Za-z_][\w.\-:]*)([^<>]*)>")
+
+
 class RobustXMLOutputParser(XMLOutputParser):
     """Parse LLM XML into nested dicts, recovering from malformed output.
 
@@ -606,12 +608,27 @@ class RobustXMLOutputParser(XMLOutputParser):
     into a different shape than a recovered one.
     """
 
+    def get_format_instructions(self) -> str:
+        """Instructions for the output fixer, naming the expected sections.
+
+        ``XMLOutputParser``'s own text describes ``tags`` as one nesting path
+        and prints "None" without them, which misleads a repair of a
+        multi-section answer such as ``<entities>`` + ``<relationships>``.
+        """
+        tags = ", ".join(f"<{tag}>" for tag in self.tags or [])
+        return _FORMAT_INSTRUCTIONS.format(
+            sections=f"the top-level elements {tags}" if tags else "XML elements"
+        )
+
     def parse(self, text: str) -> dict[str, Any]:
+        if not text.strip():
+            # Nothing to recover (e.g. a thinking-only answer); the output
+            # fixer skips it too, since it could only invent the structure.
+            raise OutputParserException("The model returned no output", llm_output=text)
         original_sections = self._detect_xml_sections(text)
 
         try:
-            cleaned_text = self._clean_xml_for_lxml(text)
-            result = self._try_lxml_recover_parse(cleaned_text)
+            result = self._parse_top_level_elements(self._clean_xml_for_lxml(text))
             if self._sections_preserved(original_sections, result):
                 return result
             raise ValueError("Missing sections in lxml result")
@@ -782,8 +799,83 @@ class RobustXMLOutputParser(XMLOutputParser):
 
     @staticmethod
     def _clean_xml_for_lxml(text: str) -> bytes:
+        """Strip control characters and the XML declaration, escape text markup.
+
+        A bare ``&`` (not starting an XML entity) and a ``<`` that cannot start
+        a tag are text in LLM output ("AT&T", "budget < 5M"); lxml recovery
+        would drop them and the word after them.
+        """
         text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+        text = _XML_DECLARATION.sub("", text)
+        text = _BARE_AMPERSAND.sub("&amp;", text)
+        text = _TEXT_LESS_THAN.sub("&lt;", text)
+        text = RobustXMLOutputParser._drop_unmatched_closing_tags(text)
         return text.strip().encode("utf-8")
+
+    @staticmethod
+    def _drop_unmatched_closing_tags(text: str) -> str:
+        """Make the element nesting well formed before lxml recovery.
+
+        Models sometimes emit an end tag whose name matches nothing open: a
+        stray ``</entity_placeholder>`` inside a ``<relationship>``, or a
+        misnamed close such as ``<strength>7</strong>`` or ``</entity>`` for
+        ``</relationship>``. lxml recovery neither drops such a tag nor closes
+        the elements it skips, so every later sibling ends up nested inside
+        the open element and is lost. Here:
+
+        - an end tag naming an element further up the stack closes the
+          elements above it explicitly, as XML nesting implies;
+        - an unmatched end tag repeating the element just closed is dropped
+          (a duplicate close);
+        - any other unmatched end tag closes the innermost open element (the
+          one the model was closing), or is dropped when nothing is open.
+        """
+        stack: list[str] = []
+        last_closed = ""
+        out: list[str] = []
+        pos = 0
+        for match in _TAG.finditer(text):
+            is_close, name, rest = match.group(1), match.group(2), match.group(3)
+            tag = match.group(0)
+            if is_close:
+                if name in stack:
+                    closes = []
+                    while stack:
+                        last_closed = stack.pop()
+                        closes.append(f"</{last_closed}>")
+                        if last_closed == name:
+                            break
+                    tag = "".join(closes)
+                elif name == last_closed or not stack:
+                    tag = ""
+                else:
+                    last_closed = stack.pop()
+                    tag = f"</{last_closed}>"
+            elif not rest.rstrip().endswith("/"):
+                stack.append(name)
+            out.append(text[pos : match.start()])
+            out.append(tag)
+            pos = match.end()
+        out.append(text[pos:])
+        return "".join(out)
+
+    @classmethod
+    def _parse_top_level_elements(cls, xml_bytes: bytes) -> dict[str, Any]:
+        """Parse every top-level element of the response, keyed by tag.
+
+        The response is wrapped in one synthetic root, so a multi-section
+        answer (``<entities>`` then ``<relationships>``) and a run of repeated
+        siblings (``<line_number>`` without its ``<chunk_boundaries>``) parse
+        like a single-root one instead of keeping only the first element.
+        Prose around the elements is ignored.
+        """
+        wrapped = b"<%s>%s</%s>" % (_RESPONSE_ROOT, xml_bytes, _RESPONSE_ROOT)
+        elements = cls._try_lxml_recover_parse(wrapped)[_RESPONSE_ROOT.decode()]
+        if isinstance(elements, dict):
+            elements.pop("#text", None)
+        if not elements or not isinstance(elements, dict):
+            raise ValueError("No XML element in the response")
+        return elements
 
     @staticmethod
     def _try_lxml_recover_parse(xml_bytes: bytes) -> dict[str, Any]:

@@ -4,7 +4,7 @@
 
 The translator builds a Bedrock LCEL chain via ``setup_chain`` in its
 constructor. That factory (and the underlying boto/Bedrock factory) is patched
-out and replaced with a deterministic fake chain whose ``.batch`` returns canned
+out and replaced with a deterministic fake chain whose ``.invoke`` returns canned
 strings. The real per-language fan-out loop, batch input preparation, result
 mapping back onto ``TextUnit.translated_texts`` and stat accounting are
 exercised. The real ``BatchProcessor`` is used end-to-end (it is pure Python).
@@ -26,20 +26,17 @@ pytestmark = pytest.mark.unit
 
 
 class _FakeChain:
-    """Fake LCEL chain: ``batch`` echoes a per-input translation."""
+    """Fake LCEL chain: ``invoke`` echoes a per-input translation."""
 
     def __init__(self, transform=None) -> None:
         # transform maps an input dict -> output string.
         self.transform = transform or (
             lambda inp: f"[{inp['target_language'].value}] {inp['text']}"
         )
-        self.batch_calls: list[list[dict]] = []
-
-    def batch(self, inputs, *args, **kwargs):
-        self.batch_calls.append(inputs)
-        return [self.transform(inp) for inp in inputs]
+        self.calls: list[dict] = []
 
     def invoke(self, inp, *args, **kwargs):
+        self.calls.append(inp)
         return self.transform(inp)
 
 
@@ -117,7 +114,7 @@ class TestTranslateTextUnits:
         tr, fake = _make_translator(mocker)
         out = tr.translate_text_units([])
         assert out == []
-        assert fake.batch_calls == []  # nothing dispatched
+        assert fake.calls == []  # nothing dispatched
 
     def test_whole_batch_failure_counts_all_units_as_failed(self, mocker) -> None:
         # A whole-language batch error must NOT read as a quiet success: every
@@ -145,12 +142,8 @@ class TestTranslateTextUnits:
         assert out is units
         assert units[0].translated_texts == {"ko": "[ko] Hello world"}
         assert units[1].translated_texts == {"ko": "[ko] Goodbye world"}
-        # One language -> one batch dispatch with both texts.
-        assert len(fake.batch_calls) == 1
-        assert [i["text"] for i in fake.batch_calls[0]] == [
-            "Hello world",
-            "Goodbye world",
-        ]
+        # One language -> one call per text.
+        assert sorted(i["text"] for i in fake.calls) == ["Goodbye world", "Hello world"]
 
     def test_multi_language_fan_out(self, mocker) -> None:
         tr, fake = _make_translator(
@@ -163,8 +156,8 @@ class TestTranslateTextUnits:
         # All three languages applied to each unit.
         assert set(units[0].translated_texts) == {"en", "ko", "ja"}
         assert units[0].translated_texts["ja"] == "[ja] Hello world"
-        # One batch dispatch per language.
-        assert len(fake.batch_calls) == 3
+        # One call per unit and language.
+        assert len(fake.calls) == 6
 
     def test_stats_total_counts_units_times_languages(self, mocker) -> None:
         tr, _ = _make_translator(

@@ -15,6 +15,7 @@ in the ``gleaner`` fixture exactly as in the logic suite.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 
 import pytest
 
@@ -443,17 +444,15 @@ class TestCorrectionIssues:
         seed = _ent("e1", "acme corp")
         seed.type = "PERSON"
         gleaner.graph_refiner = mocker.Mock()
-        gleaner.graph_refiner.batch.return_value = [
-            {
-                "refinement_plan": {
-                    "identified_issues": {
-                        "issue": self._entity_correction(
-                            name="acme corp", corrected_type="ORGANIZATION"
-                        )
-                    },
-                }
+        gleaner.graph_refiner.invoke.return_value = {
+            "refinement_plan": {
+                "identified_issues": {
+                    "issue": self._entity_correction(
+                        name="acme corp", corrected_type="ORGANIZATION"
+                    )
+                },
             }
-        ]
+        }
 
         entities, _, _ = gleaner.glean_graph(
             text_units=[self.UNIT],
@@ -480,13 +479,11 @@ class TestCorrectionIssues:
         *issues: dict,
     ) -> tuple[list[Entity], list[Relationship]]:
         gleaner.graph_refiner = mocker.Mock()
-        gleaner.graph_refiner.batch.return_value = [
-            {
-                "refinement_plan": {
-                    "identified_issues": {"issue": list(issues)},
-                }
+        gleaner.graph_refiner.invoke.return_value = {
+            "refinement_plan": {
+                "identified_issues": {"issue": list(issues)},
             }
-        ]
+        }
         entities, relationships, _ = gleaner.glean_graph(
             text_units=[self.UNIT],
             initial_entities=entities,
@@ -681,12 +678,10 @@ class TestGleanGraphOrchestration:
         self, gleaner, mocker
     ) -> None:
         units = [TextUnit(id="t1", text="a"), TextUnit(id="t2", text="b")]
-        # batch returns one refinement plan per input, in order.
+        # One refinement plan per unit, keyed by the unit's text.
+        plans = {"a": _missing_entity_plan("Alpha"), "b": _missing_entity_plan("Beta")}
         gleaner.graph_refiner = mocker.Mock()
-        gleaner.graph_refiner.batch.return_value = [
-            _missing_entity_plan("Alpha"),
-            _missing_entity_plan("Beta"),
-        ]
+        gleaner.graph_refiner.invoke.side_effect = lambda inp: plans[inp["text"]]
         new_e, new_r = gleaner._perform_llm_refinement(units, [], [])
         assert {e.name.lower() for e in new_e} == {"alpha", "beta"}
         assert new_r == []
@@ -768,16 +763,24 @@ class TestGleanGraphOrchestration:
 class TestStopRule:
     @staticmethod
     def _run(gleaner, mocker, answer, units, entities=(), relationships=()):
-        """Run glean_graph with ``answer(round, unit_index)`` as the model."""
-        sent: list[int] = []
+        """Run glean_graph with ``answer(round, unit_index)`` as the model.
 
-        def _batch(inputs, *args, **kwargs):
-            sent.append(len(inputs))
-            return [answer(len(sent), i) for i in range(len(inputs))]
+        Returns how many units each round sent. A unit is re-sent only in
+        consecutive rounds, so its call count is the round number.
+        """
+        index_of = {unit.text: i for i, unit in enumerate(units)}
+        calls: Counter[int] = Counter()
+
+        def _invoke(single_input, *args, **kwargs):
+            i = index_of[single_input["text"]]
+            calls[i] += 1
+            return answer(calls[i], i)
 
         gleaner.graph_refiner = mocker.Mock()
-        gleaner.graph_refiner.batch.side_effect = _batch
+        gleaner.graph_refiner.invoke.side_effect = _invoke
         _, _, stats = gleaner.glean_graph(units, list(entities), list(relationships))
+        rounds = max(calls.values(), default=0)
+        sent = [sum(n >= r for n in calls.values()) for r in range(1, rounds + 1)]
         return sent, stats
 
     def test_stops_at_max_rounds_while_units_keep_gaining(

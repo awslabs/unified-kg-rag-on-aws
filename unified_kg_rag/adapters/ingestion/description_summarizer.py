@@ -156,7 +156,6 @@ class DescriptionSummarizer:
             results = self.batch_processor.execute_with_fallback(
                 items_to_process=inputs,
                 prepare_inputs_func=lambda chunk: chunk,
-                batch_func=self.summarizer.batch,
                 sequential_func=self.summarizer.invoke,
                 task_name="Description Summarization",
                 run_config=self.config.processing.model_dump(),
