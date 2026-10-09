@@ -11,6 +11,7 @@ from typing import Any, ClassVar, TypeAlias
 
 from datasketch import MinHash, MinHashLSH
 
+from unified_kg_rag.domain.ingestion.merge.merger import merge_descriptions
 from unified_kg_rag.domain.models import Config, ResolutionMethod
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
@@ -626,21 +627,13 @@ class BaseResolver(ABC):
 
     @staticmethod
     def _merge_descriptions(descriptions: list[str]) -> str:
-        """Combine descriptions, dropping empties and duplicates.
+        """Combine descriptions, dropping blank and duplicate lines.
 
-        Uses the same newline join + order-preserving dedup as the incremental
-        ``merge._merge_descriptions`` so the full-build and incremental paths
-        produce an identical merged description for the same inputs (a divergent
-        separator previously made a rebuild differ from an incremental update).
+        Delegates to :func:`merge.merge_descriptions` so the full-build and
+        incremental paths produce an identical merged description for the
+        same inputs.
         """
-        valid_descriptions = [desc for desc in descriptions if desc and desc.strip()]
-        seen: set[str] = set()
-        deduped: list[str] = []
-        for desc in valid_descriptions:
-            if desc not in seen:
-                seen.add(desc)
-                deduped.append(desc)
-        return "\n".join(deduped)
+        return merge_descriptions(descriptions) or ""
 
     @staticmethod
     def _merge_lists(lists: list[list[str]]) -> list[str]:

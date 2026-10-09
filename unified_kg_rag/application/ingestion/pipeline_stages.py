@@ -1581,18 +1581,21 @@ class IndexingStage(PipelineStage):
             )
         incremental = self._incremental_indexer(context, text_units)
 
-        # Drop stale artifacts of changed docs (before re-upsert) and of deleted
-        # docs. A failed prune must stop the run before commit: committing would
-        # overwrite the changed docs' lineage and orphan the stale artifacts. A
-        # failed deletion keeps its registry rows for a retry and need not hold
-        # back the delta, so it fails the stage only after the commit.
-        if not incremental.prune_changed(delta):
+        # Drop the stale artifacts of changed and deleted docs in ONE removal
+        # plan (before re-upsert): planning them separately keeps whatever a
+        # changed and a deleted doc share, orphaning it. A failed removal must
+        # stop the run before commit when docs changed: committing would
+        # overwrite their lineage and orphan the stale artifacts. A failure
+        # that only concerns deleted docs keeps their registry rows for a
+        # retry and need not hold back the delta, so it fails the stage only
+        # after the commit.
+        removed = incremental.remove_changed_and_deleted(delta)
+        if not removed and delta.changed:
             raise PipelineStageError(
-                "Removing stale artifacts of changed documents failed; not "
-                "committing the delta so the registry keeps their old lineage "
-                "and the next run retries the removal"
+                "Removing stale artifacts of changed or deleted documents "
+                "failed; not committing the delta so the registry keeps their "
+                "old lineage and the next run retries the removal"
             )
-        deleted_removed = incremental.remove_deleted(delta)
 
         lineages = self._document_lineages(
             context,
@@ -1615,7 +1618,7 @@ class IndexingStage(PipelineStage):
             community_reports=community_reports,
             claims=claims,
         )
-        if not deleted_removed:
+        if not removed:
             raise PipelineStageError(
                 "Removing the artifacts of deleted documents failed; their "
                 "registry records are kept so the next run retries the removal"

@@ -68,6 +68,15 @@ removed. Therefore:
 - index each tenant or corpus version under its own index suffix, with its own
   config file.
 
+Upgrading a registry written before source scopes existed: the first run of a
+scope adopts each legacy record whose file is still in the corpus, without
+re-extracting it. A record without a scope is never treated as deleted,
+though, so the record of a file removed from the corpus before the upgrade is
+never adopted or deleted, and its artifacts stay in the stores. To clear them,
+run once with `indexing.reset: true`. Deleting those registry items (they have
+no `registry_scope` attribute and their file is gone) only cleans the
+registry; their artifacts stay until a reset.
+
 What incremental runs do not refresh: a shared entity or relationship keeps
 the description text a changed or deleted document contributed, and delta
 runs append communities rather than re-clustering. A periodic full rebuild

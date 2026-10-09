@@ -5,6 +5,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any, TypeVar
 
+from unified_kg_rag.domain.ingestion.merge.merger import merge_descriptions
 from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
@@ -288,12 +289,9 @@ class BaseProcessor:
 
     @staticmethod
     def _merge_description(current: str | None, new: str | None) -> str | None:
-        if current is None or new is None:
-            return current or new
-
-        if current and current.strip():
-            return f"{current}; {new}"
-        return new
+        # Same rule as the resolver and the cross-run merge, so the extraction
+        # merge does not make a full build differ from an incremental one.
+        return merge_descriptions((current, new))
 
     @staticmethod
     def _merge_items(

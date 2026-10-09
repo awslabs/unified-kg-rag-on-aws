@@ -453,6 +453,23 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- An incremental run that both changes one document and deletes another no
+  longer leaves behind the entities and relationships only those two
+  documents shared. The stale artifacts of changed documents and of deleted
+  documents were removed in two passes, each treating the other set's
+  documents as survivors, so such an artifact was kept with no text units
+  and retrieval could still surface the deleted content. The removal is now
+  planned once over changed + deleted documents. If it fails, the deleted
+  documents' registry records are kept as before, and the run fails before
+  committing whenever the delta has changed documents (#190).
+- A full build and an incremental build of the same corpus store the same
+  entity and relationship descriptions. Graph and claim extraction merged
+  the descriptions of one item found in several text units with `"; "` and
+  kept repeats, while the resolver and the cross-run merge join with a
+  newline and drop duplicate lines. All three now use the newline rule
+  (`merge.merger.merge_descriptions`); the resolver also compares lines
+  rather than whole descriptions. Descriptions written before stay as they
+  are until the item is re-extracted or the index is rebuilt (#190).
 - An incremental commit no longer records every document FAILED when one
   community's `MemberOf` edges fail in more than one Neptune entity batch.
   Each failed batch carries the community id, and the commit deduplicated the
@@ -486,6 +503,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   re-extracts nor deletes anything; another scope's legacy record is left for
   that scope's run. Moving a local corpus to another directory without a
   fixed `source_scope` now re-indexes it under the new scope (#188).
+  Upgrade note: a legacy record is adopted only when its file is still in the
+  corpus, and a record without a scope is never listed as deleted. The record
+  of a file deleted before the upgrade therefore stays, and so do its
+  artifacts. Run once with `indexing.reset: true` to clear them; deleting
+  those registry items (no `registry_scope` attribute) only cleans the
+  registry and leaves the artifacts until a reset (#190).
 - `run-prompt-tuning` few-shot examples show relationship strength on the
   1-10 scale the extraction prompt teaches. Relationship weight already holds
   the raw strength, but the example renderer multiplied it by 10 (so a
