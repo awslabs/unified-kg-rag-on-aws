@@ -835,6 +835,17 @@ Neptune entity만 좁히고 text unit에는 적용되지 않습니다. 두 저�
   속성 필터는 그래프 확장을 비우지 않고, `attr_role:buyer` 같은 entity 속성 필터는
   역할이 다른 entity를 제외합니다. 그 밖의 키는 두 저장소 모두 엄격하게 적용합니다.
 
+**필터는 접근 제어 경계가 아닙니다.** 필터는 검색이 순위를 매길 대상을 좁힐 뿐
+데이터를 숨기지 않습니다. 키를 선언하지 않은 저장소는 필터 없이 내용을 반환합니다.
+relationship과 claim에는 `attr_<key>`와 `document_ids`가 없고, Neptune community
+정점은 자체 필드만 선언하며, Neptune은 `attr_<key>` 속성이 없는 entity 정점을
+그대로 둡니다. 그래프 확장과 community report도 필터가 제외할 문서의 내용을 가져올
+수 있습니다. 권한이 다른 테넌트나 사용자를 필터로 구분하지 마십시오. 대신 각각에
+별도 네임스페이스를 주십시오. 서로 다른 `--suffix`(와 `document_parsing.index_value`,
+사용한다면 `indexing.additional_suffix`)를 쓰면 OpenSearch 인덱스와 Neptune 레이블이
+분리되고, 질의 suffix는 검증되므로 인덱스 대상을 넓힐 수 없습니다. 호출자가 어떤
+suffix를 질의할 수 있는지는 호출하는 애플리케이션에서 결정하십시오.
+
 선택한 전략이 읽는 어떤 저장소도 선언하지 않은 필터 키(예: 이전 예시의 `category`,
 `entity_type`)는 `InvalidFilterError`를 발생시키며, 오류 메시지에 필터 가능 키
 목록이 포함됩니다. 이전 릴리스는 이런 키를 조용히 무시하고 필터링되지 않은 결과를

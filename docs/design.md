@@ -521,7 +521,13 @@ intentional decisions rather than oversights:
   the cluster-state overhead. The scale-out fix is a single index per artifact
   type with a `tenant` filter field + routing (delete-by-query instead of index
   drop) — a behavior-affecting change across the index/search/delete paths,
-  deferred as a dedicated migration rather than bundled here.
+  deferred as a dedicated migration rather than bundled here. That design would
+  need the tenant filter enforced on every index and Neptune label, unlike
+  today's metadata filters: those apply only to the stores that declare a key
+  (relationships, claims and community vertices pass unfiltered) and graph
+  expansion and community reports cross documents, so they are relevance
+  filters, not access control. Until then, isolation comes from the separate
+  `suffix` namespaces (user guide §4, attribute filters).
 
 ---
 

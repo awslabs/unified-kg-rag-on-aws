@@ -856,6 +856,19 @@ units unfiltered. The two stores treat `attr_<key>` differently:
   removes entities whose role differs. Every other key is strict on both
   stores.
 
+**Filters are not an access-control boundary.** A filter narrows what
+retrieval ranks; it does not hide data. A store that does not declare a key
+returns its content unfiltered: relationships and claims have no `attr_<key>`
+or `document_ids`, Neptune community vertices declare only their own fields,
+and Neptune keeps entity vertices that lack an `attr_<key>` property. Graph
+expansion and community reports can also bring in content from documents the
+filter would exclude. Do not use filters to separate tenants or users with
+different permissions. Give each one its own namespace instead: a distinct
+`--suffix` (with `document_parsing.index_value` and, if used,
+`indexing.additional_suffix`) gives it separate OpenSearch indices and Neptune
+labels, and the query suffix is validated so it cannot widen the index target.
+Decide in the calling application which suffix a caller may query.
+
 A filter key that no store the selected strategy reads declares (for example
 the earlier `category` or `entity_type`) raises `InvalidFilterError`, whose
 message lists the filterable keys. Earlier releases ignored such keys silently

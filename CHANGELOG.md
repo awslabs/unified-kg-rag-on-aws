@@ -613,6 +613,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#160).
 
 ### Security
+- The user guide and design doc state that metadata filters are relevance
+  filters, not an access-control boundary: stores that do not declare a key
+  (relationships, claims, Neptune community vertices) return unfiltered
+  content. Isolate tenants with separate `suffix` namespaces (#PR).
 - **Breaking** `pipeline_id` (`--pipeline-id`, `GRAPHRAG_PIPELINE_ID`, which
   the Step Functions task sets, `PipelineConfig` and
   `DataIngestionPipeline.run`) must match the `suffix` charset: lowercase
