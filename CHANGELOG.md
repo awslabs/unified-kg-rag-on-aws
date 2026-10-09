@@ -486,6 +486,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   re-extracts nor deletes anything; another scope's legacy record is left for
   that scope's run. Moving a local corpus to another directory without a
   fixed `source_scope` now re-indexes it under the new scope (#188).
+- `run-prompt-tuning` few-shot examples show relationship strength on the
+  1-10 scale the extraction prompt teaches. Relationship weight already holds
+  the raw strength, but the example renderer multiplied it by 10 (so a
+  strength of 8 was shown as 80); it is now rounded and clamped to 1-10,
+  which also covers weights summed over several extractions (#PR).
 - Community reports that fail are no longer dropped silently. Report
   generation returns the ids of the communities that got no report, and the
   community detection stage records their text units as failed, so an

@@ -316,8 +316,9 @@ class PromptTuner:
     ) -> str:
         """Render one (text → extraction) pair in the GraphExtractionPrompt shape.
 
-        Confidence/weight are stored normalized (0.0-1.0) but the extraction
-        prompt teaches a 1-10 scale, so scale back up for the demonstration.
+        Confidence is stored normalized (0.0-1.0) and weight as the summed
+        1-10 strength, while the extraction prompt teaches a 1-10 scale for
+        both, so both are mapped back onto it for the demonstration.
         Every record carries a verbatim ``<source_text>`` span from the example
         text, as the extraction rules require; a record no sentence of the text
         supports is left out rather than shown without evidence.
@@ -354,7 +355,9 @@ class PromptTuner:
             )
             if span is None:
                 continue
-            strength_1_10 = round((rel.weight if rel.weight else 1.0) * 10)
+            # Weight is the summed 1-10 strength of the relationship's
+            # extractions; clamp it back to the scale the prompt teaches.
+            strength_1_10 = min(10, max(1, round(rel.weight or 1.0)))
             lines.extend(
                 [
                     "<relationship>",

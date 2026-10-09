@@ -436,6 +436,25 @@ class TestRenderExample:
         rendered = PromptTuner._render_example(text, [], [rel])
         assert "SUPPLIES" not in rendered
 
+    @pytest.mark.parametrize(("weight", "expected"), [(8.0, 8), (16.0, 10), (0.2, 1)])
+    def test_example_strength_stays_on_the_prompt_scale(
+        self, weight: float, expected: int
+    ) -> None:
+        from unified_kg_rag.domain.models import Relationship
+
+        rel = Relationship(
+            id="r1",
+            source_id="e1",
+            target_id="e2",
+            source_name="Vendor",
+            target_name="Buyer",
+            type="SUPPLIES",
+            description="Supplies.",
+            weight=weight,
+        )
+        rendered = PromptTuner._render_example("Vendor supplies Buyer.", [], [rel])
+        assert f"<strength>{expected}</strength>" in rendered
+
     def test_cjk_terminators_split_sentences_without_whitespace(self) -> None:
         text = (
             "アクメ社はグローベックス社と契約を締結した。"
