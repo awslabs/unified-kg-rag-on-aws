@@ -244,6 +244,29 @@ def test_get_or_create_memory_evicts_oldest_at_capacity(patched_history) -> None
     assert keys == {"b", "c"}
 
 
+async def test_get_or_create_memory_expires_idle_conversations(
+    patched_history,
+) -> None:
+    # memory.max_conversation_age_hours: a conversation idle for longer starts
+    # over, and other expired conversations are dropped rather than kept until
+    # the capacity limit evicts them.
+    cfg = Config()
+    cfg.memory.max_conversation_age_hours = 2
+    manager = mm.MemoryManager(config=cfg)
+    stale = await manager.get_or_create_memory("stale")
+    stale.add_message(HumanMessage(content="old question"))
+    idle = await manager.get_or_create_memory("idle")
+    fresh = await manager.get_or_create_memory("fresh")
+    expired_at = datetime.now() - timedelta(hours=3)
+    stale.updated_at = idle.updated_at = expired_at
+
+    again = await manager.get_or_create_memory("stale")
+
+    assert again is not stale and again.messages == []
+    assert set(manager._memories) == {"stale", "fresh"}
+    assert manager._memories["fresh"] is fresh
+
+
 def test_add_message_maps_roles(patched_history) -> None:
     import asyncio
 

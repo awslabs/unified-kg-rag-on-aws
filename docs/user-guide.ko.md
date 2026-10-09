@@ -522,7 +522,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 |---|---|---|
 | `memory.max_conversations` | `100` | 대화 메모리에 유지하는 대화 수입니다(§4 인터랙티브 모드). |
 | `memory.max_messages_per_conversation` | `20` | 대화당 유지하는 메시지 수입니다. |
-| `memory.max_conversation_age_hours` | `168` | 이 시간이 지난 대화는 정리 대상이 됩니다. |
+| `memory.max_conversation_age_hours` | `168` | 대화가 이 시간 넘게 쓰이지 않으면 삭제되고 다음 질문부터 새로 시작합니다. |
 | `cache.ttl_seconds` | `86400` | 캐시 항목 TTL입니다. `null`이면 만료하지 않습니다. |
 | `logging.level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` 중 하나입니다. |
 | `logging.log_format` | `"structured"` | `structured` 또는 `plain`입니다. |

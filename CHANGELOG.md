@@ -335,6 +335,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`
   made graph extraction fail to format, and `{input_text}` in a sample was
   substituted with the chunk being extracted (#173).
+- `memory.max_conversation_age_hours` is enforced: a conversation idle for
+  longer is dropped on the next memory lookup (a returning one starts over).
+  The TTL was stored and never read, so conversations lived until the
+  `max_conversations` limit evicted them (#PR).
 - The CountTokens `bedrock-runtime` client sizes its connection pool like the
   model clients instead of botocore's default 10, which concurrent queries'
   batched counts (8 at a time each) overran (#PR).

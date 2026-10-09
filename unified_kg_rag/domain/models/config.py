@@ -2222,7 +2222,8 @@ class MemoryConfig(BaseModel):
     max_conversation_age_hours: int = Field(
         default=168,
         ge=1,
-        description="Maximum age of a conversation in hours before being eligible for cleanup",
+        description="Hours a conversation may stay idle (since its last message); "
+        "an older one is dropped on the next memory lookup and starts over",
     )
 
 
