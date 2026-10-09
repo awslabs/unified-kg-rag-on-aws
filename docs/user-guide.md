@@ -1283,7 +1283,12 @@ run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --conf
 ```
 
 The output YAML contains a `custom_prompts` block (and a `profile` with the
-detected domain). **Review it**, then copy the prompts you want into your
+detected domain and entity types). The tuned `graph_extraction_system` and
+`community_report_system` are a domain-adapted preamble followed by the built-in
+rules and output format, verbatim; few-shot examples, when generated, come last.
+The entity categories still come from `processing.graph_extraction.entity_types`
+(the `{entity_types}` variable), so copy the profile's `entity_types` there if
+you want the model held to them. **Review it**, then copy the prompts you want into your
 `config.yaml` under `custom_prompts:`. Plain-text files are read as-is; other
 formats (PDF, CSV, JSON, custom `ParserFactory.register_loader` formats) go
 through the same loaders as ingestion. Files that fail to parse are skipped
@@ -1320,19 +1325,13 @@ them. Common overrides:
 
 ```yaml
 custom_prompts:
-  graph_extraction_system: |
-    You are a medical knowledge extractor. Extract diseases, symptoms, treatments,
-    and medications and their relationships. Prioritize clinical accuracy.
+  # A human-only override keeps the built-in system prompt and its output format.
   graph_extraction_human: |
     Extract medical entities and relationships from this clinical text:
     {input_text}
     Extraction Limits:
     - Maximum Entities: {max_entities_per_chunk}
     - Maximum Relationships: {max_relationships_per_chunk}
-
-  community_report_system: |
-    You are a legal analyst. Report on case law, regulatory frameworks, and
-    legal precedents within each topic cluster.
 
   entity_extraction_system: |
     You are a financial expert. Extract companies, instruments, markets, and metrics
@@ -1359,6 +1358,18 @@ with the offending key:
   `{context}` for `answer_generation`, and so on. The other variables (limits
   such as `{max_entities_per_chunk}`, `{entity_types}`) may be left out.
 - `run-prompt-tuning` output is already escaped.
+
+A `*_system` override replaces the whole built-in system prompt, including its
+output instructions. For `graph_extraction` and `community_report` that is the
+XML format the parser reads (and, for extraction, the verbatim `<source_text>`
+rule the hallucination guard checks), so a replacement must keep it. Start from
+`run-prompt-tuning` output, which puts a domain preamble in front of the
+built-in rules and format, or copy the format section from
+`unified_kg_rag/domain/prompts/graph_extraction.py`. When an override of these
+two prompts no longer mentions a tag the parser reads (`<entities>`,
+`<relationships>`, `<source_text>`; `<community_name>`, `<summary>`, `<rating>`,
+`<rating_explanation>`, `<findings>`), loading logs a warning naming the missing
+tags.
 
 **Recommended flow:** run `run-prompt-tuning` to generate a starting point →
 review → merge the useful prompts + tune `entity_types` by hand → re-ingest.

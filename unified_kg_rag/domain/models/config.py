@@ -2502,6 +2502,12 @@ class CustomPromptConfig(BaseModel):
                     f"custom_prompts.{key}_*: the system or human template must "
                     f"contain {', '.join('{' + v + '}' for v in sorted(missing))}"
                 )
+            _warn_missing_output_tags(
+                key,
+                f"{system or prompt.system_prompt_template}\n"
+                f"{human or prompt.human_prompt_template}",
+                getattr(prompt, "required_output_tags", ()),
+            )
         if errors:
             hint = " Write a literal brace as '{{' or '}}'." if brace_hint else ""
             raise ValueError("; ".join(errors) + "." + hint)
@@ -2526,6 +2532,28 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "query_refinement": frozenset({"original_query", "results_summary"}),
     "strategy_selection": frozenset({"query", "strategies"}),
 }
+
+
+def _warn_missing_output_tags(
+    key: str, templates: str, required_tags: tuple[str, ...]
+) -> None:
+    """Warn when an override no longer teaches the XML tags its parser reads.
+
+    A ``*_system`` override replaces the whole built-in system prompt, which is
+    where the output schema lives for the XML-parsed prompts; without it the
+    model answers in a free format the parser drops. Some users teach the
+    format in prose or a human override, so this warns rather than fails.
+    """
+    missing = [tag for tag in required_tags if tag not in templates]
+    if missing:
+        _logger.warning(
+            "custom_prompts.%s_*: the system and human templates do not "
+            "mention the output tag(s) %s that the response parser reads; "
+            "keep the built-in output format (run-prompt-tuning output does) "
+            "or results may be empty or ungrounded",
+            key,
+            ", ".join(missing),
+        )
 
 
 def _template_variables(template: str) -> set[str]:

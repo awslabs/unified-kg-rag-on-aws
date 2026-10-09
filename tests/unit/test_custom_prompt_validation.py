@@ -21,6 +21,8 @@ from unified_kg_rag.shared.config import ConfigLoader
 
 pytestmark = pytest.mark.unit
 
+_CONFIG_LOGGER = "unified_kg_rag.domain.models.config"
+
 
 def test_override_missing_a_required_variable_is_rejected() -> None:
     with pytest.raises(ValidationError, match=r"graph_extraction.*\{input_text\}"):
@@ -65,19 +67,62 @@ def test_config_file_error_names_the_override(tmp_path: Path) -> None:
         ConfigLoader(path).load_config()
 
 
-def test_documented_user_guide_example_is_valid() -> None:
-    # The custom_prompts example in docs/user-guide.md §9.B.
-    Config(
-        custom_prompts=CustomPromptConfig(
-            graph_extraction_system="You are a medical knowledge extractor.",
-            graph_extraction_human=(
-                "Extract medical entities and relationships from this clinical "
-                "text:\n{input_text}\nExtraction Limits:\n"
-                "- Maximum Entities: {max_entities_per_chunk}\n"
-                "- Maximum Relationships: {max_relationships_per_chunk}\n"
-            ),
+def test_documented_user_guide_example_is_valid(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The custom_prompts example in docs/user-guide.md §9.B: a human-only
+    # override keeps the built-in system prompt, so no output tag is lost.
+    with caplog.at_level("WARNING", logger=_CONFIG_LOGGER):
+        Config(
+            custom_prompts=CustomPromptConfig(
+                graph_extraction_human=(
+                    "Extract medical entities and relationships from this "
+                    "clinical text:\n{input_text}\nExtraction Limits:\n"
+                    "- Maximum Entities: {max_entities_per_chunk}\n"
+                    "- Maximum Relationships: {max_relationships_per_chunk}\n"
+                ),
+                entity_extraction_system=(
+                    "You are a financial expert. Extract companies, instruments, "
+                    "markets, and metrics from user queries."
+                ),
+            )
         )
-    )
+    assert "output tag" not in caplog.text
+
+
+def test_system_override_without_the_output_format_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Valid (loads), but the parser would find none of its tags: warn by name.
+    with caplog.at_level("WARNING", logger=_CONFIG_LOGGER):
+        CustomPromptConfig(
+            graph_extraction_system="You are a medical knowledge extractor.",
+            community_report_system="You are a legal analyst.",
+        )
+    records = [r.getMessage() for r in caplog.records if "output tag" in r.getMessage()]
+    assert len(records) == 2
+    extraction = next(m for m in records if "graph_extraction" in m)
+    assert "<entities>" in extraction and "<relationships>" in extraction
+    # The built-in human template mentions <source_text>, so only the schema
+    # tags the system prompt carried are reported missing.
+    report = next(m for m in records if "community_report" in m)
+    for tag in ("<community_name>", "<rating>", "<findings>"):
+        assert tag in report
+
+
+def test_override_that_keeps_the_format_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from unified_kg_rag.domain.prompts import GraphExtractionPrompt
+
+    with caplog.at_level("WARNING", logger=_CONFIG_LOGGER):
+        CustomPromptConfig(
+            graph_extraction_system=(
+                "You extract entities from contracts.\n\n"
+                + GraphExtractionPrompt.output_rules
+            )
+        )
+    assert "output tag" not in caplog.text
 
 
 def test_tuned_prompts_escape_literal_braces() -> None:

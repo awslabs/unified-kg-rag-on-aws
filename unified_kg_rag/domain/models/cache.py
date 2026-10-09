@@ -25,7 +25,12 @@ class CacheEntry(BaseModel):
         description="When the cache entry expires (None if never expires)",
     )
     local_path: Path | None = Field(
-        None, description="Local filesystem path where cached data is stored"
+        None,
+        description=(
+            "Where the cached data is stored, relative to the pipeline cache "
+            "directory that holds the index (absolute in entries written by "
+            "earlier versions; see resolve_local_path)"
+        ),
     )
     file_size: int = Field(0, description="Size of cached file in bytes")
     content_hash: str = Field(
@@ -45,13 +50,24 @@ class CacheEntry(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
-    @property
-    def exists_locally(self) -> bool:
-        if "is_chunked" in self.metadata and self.metadata["is_chunked"]:
-            return True
+    def resolve_local_path(self, pipeline_cache_dir: Path) -> Path | None:
+        """Locate the entry's data under ``pipeline_cache_dir``.
+
+        ``local_path`` is stored relative to the pipeline cache directory, so a
+        cache directory that is moved or restored elsewhere still resolves.
+        Entries written before that hold the absolute path at write time; they
+        are re-rooted by stage and file name under the current directory
+        rather than trusted, so a stale copy at the old location is not read.
+        """
         if self.local_path is None:
-            return False
-        return Path(self.local_path).exists()
+            return None
+        path = Path(self.local_path)
+        if not path.is_absolute():
+            return pipeline_cache_dir / path
+        stage_dir = pipeline_cache_dir / self.stage_name
+        if self.metadata.get("is_chunked", False):
+            return stage_dir
+        return stage_dir / path.name
 
     @property
     def is_expired(self) -> bool:

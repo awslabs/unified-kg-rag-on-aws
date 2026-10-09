@@ -11,6 +11,8 @@ expensive pipeline stages, so each assertion guards real resume behavior.
 
 from __future__ import annotations
 
+import json
+import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -63,8 +65,9 @@ class TestSingleFileRoundTrip:
         entry = mgr.save_stage_result({"x": 1}, "k1", STAGE, PIPELINE)
         assert entry is not None
         assert entry.metadata["is_chunked"] is False
-        assert entry.local_path == tmp_path / PIPELINE / STAGE / "k1.json"
-        assert entry.local_path.exists()
+        # Stored relative to the pipeline cache directory.
+        assert entry.local_path == Path(STAGE) / "k1.json"
+        assert (tmp_path / PIPELINE / entry.local_path).exists()
 
     def test_round_trip_with_pydantic_data_type(self, tmp_path: Path) -> None:
         mgr = _manager(tmp_path)
@@ -244,3 +247,138 @@ class TestStats:
         # No pipeline_id -> returns the live, mutated stats object.
         assert mgr.get_cache_stats() is mgr.stats
         assert mgr.stats.total_entries == 1
+
+
+class TestIntegrity:
+    """A damaged entry is a miss (recompute), never a partial hit."""
+
+    def _chunked(self, tmp_path: Path) -> CacheManager:
+        mgr = _manager(tmp_path, chunk_size=3)
+        mgr.save_stage_result(list(range(10)), "big", STAGE, PIPELINE)
+        return mgr
+
+    def test_intact_chunked_entry_is_a_hit(self, tmp_path: Path) -> None:
+        mgr = self._chunked(tmp_path)
+        assert mgr.cache_exists("big", PIPELINE) is True
+        assert mgr.load_stage_result("big", PIPELINE) == list(range(10))
+        assert mgr.stats.hit_count == 1
+
+    def test_truncated_chunk_is_a_miss(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mgr = self._chunked(tmp_path)
+        chunk = tmp_path / PIPELINE / STAGE / "big_chunk_0001.json"
+        chunk.write_text(chunk.read_text(encoding="utf-8")[:5], encoding="utf-8")
+        with caplog.at_level("WARNING"):
+            assert mgr.cache_exists("big", PIPELINE) is False
+            assert mgr.load_stage_result("big", PIPELINE) is None
+        assert "big_chunk_0001.json" in caplog.text
+        assert mgr.stats.miss_count == 1 and mgr.stats.hit_count == 0
+
+    def test_valid_json_with_other_content_is_a_miss(self, tmp_path: Path) -> None:
+        # Parses, but is not what was written: only the hash catches it.
+        mgr = self._chunked(tmp_path)
+        chunk = tmp_path / PIPELINE / STAGE / "big_chunk_0000.json"
+        chunk.write_text(json.dumps([0, 1]), encoding="utf-8")
+        assert mgr.cache_exists("big", PIPELINE) is False
+        assert mgr.load_stage_result("big", PIPELINE) is None
+
+    def test_missing_chunk_is_a_miss(self, tmp_path: Path) -> None:
+        mgr = self._chunked(tmp_path)
+        (tmp_path / PIPELINE / STAGE / "big_chunk_0003.json").unlink()
+        assert mgr.cache_exists("big", PIPELINE) is False
+        assert mgr.load_stage_result("big", PIPELINE) is None
+        # Even a load that would stop before the missing chunk.
+        assert mgr.load_stage_result("big", PIPELINE, max_items=2) is None
+
+    def test_chunk_count_disagreeing_with_hashes_is_a_miss(
+        self, tmp_path: Path
+    ) -> None:
+        mgr = self._chunked(tmp_path)
+        index = mgr.load_cache_index(PIPELINE)
+        index.entries["big"].metadata["chunk_count"] = 2
+        mgr._save_cache_index(index)
+        assert mgr.cache_exists("big", PIPELINE) is False
+
+    def test_chunks_that_fail_validation_are_a_miss(self, tmp_path: Path) -> None:
+        mgr = _manager(tmp_path, chunk_size=1)
+        mgr.save_stage_result(
+            [{"name": "a", "value": 1}, {"x": 2}], "c", STAGE, PIPELINE
+        )
+        assert mgr.load_stage_result("c", PIPELINE, data_type=_Item) is None
+
+    def test_entry_without_hashes_still_detects_a_truncated_chunk(
+        self, tmp_path: Path
+    ) -> None:
+        # Entries written before hashes were checked may lack them.
+        mgr = self._chunked(tmp_path)
+        index = mgr.load_cache_index(PIPELINE)
+        del index.entries["big"].metadata["chunk_hashes"]
+        mgr._save_cache_index(index)
+        assert mgr.load_stage_result("big", PIPELINE) == list(range(10))
+        chunk = tmp_path / PIPELINE / STAGE / "big_chunk_0002.json"
+        chunk.write_text("[6, 7", encoding="utf-8")
+        assert mgr.cache_exists("big", PIPELINE) is False
+        assert mgr.load_stage_result("big", PIPELINE) is None
+
+    def test_truncated_single_file_is_a_miss(self, tmp_path: Path) -> None:
+        mgr = _manager(tmp_path)
+        mgr.save_stage_result({"alpha": [1, 2, 3]}, "k", STAGE, PIPELINE)
+        path = tmp_path / PIPELINE / STAGE / "k.json"
+        path.write_text(path.read_text(encoding="utf-8")[:4], encoding="utf-8")
+        assert mgr.cache_exists("k", PIPELINE) is False
+        assert mgr.load_stage_result("k", PIPELINE) is None
+
+    def test_writes_leave_no_temp_files(self, tmp_path: Path) -> None:
+        mgr = self._chunked(tmp_path)
+        mgr.save_stage_result({"x": 1}, "k", STAGE, PIPELINE)
+        # Rewriting an entry replaces its files in one step each.
+        mgr.save_stage_result(list(range(20)), "big", STAGE, PIPELINE)
+        assert not list(tmp_path.rglob("*.tmp"))
+        assert mgr.load_stage_result("big", PIPELINE) == list(range(20))
+
+
+class TestRelocation:
+    """A cache directory moved or restored elsewhere keeps its hits."""
+
+    def test_copied_cache_directory_still_hits(self, tmp_path: Path) -> None:
+        original = tmp_path / "original"
+        mgr = _manager(original, chunk_size=3)
+        mgr.save_stage_result({"x": 1}, "single", STAGE, PIPELINE)
+        mgr.save_stage_result(list(range(10)), "big", STAGE, PIPELINE)
+
+        moved = tmp_path / "moved"
+        shutil.copytree(original, moved)
+        shutil.rmtree(original)
+
+        restored = _manager(moved, chunk_size=3)
+        assert restored.cache_exists("single", PIPELINE) is True
+        assert restored.cache_exists("big", PIPELINE) is True
+        assert restored.load_stage_result("single", PIPELINE) == {"x": 1}
+        assert restored.load_stage_result("big", PIPELINE) == list(range(10))
+        assert restored.get_cache_stats(PIPELINE).local_entries == 2
+
+    def test_legacy_absolute_paths_resolve_under_the_new_root(
+        self, tmp_path: Path
+    ) -> None:
+        # Entries written by earlier versions hold the absolute path at write
+        # time; after a move they are re-rooted by stage and file name.
+        original = tmp_path / "original"
+        mgr = _manager(original, chunk_size=3)
+        mgr.save_stage_result({"x": 1}, "single", STAGE, PIPELINE)
+        mgr.save_stage_result(list(range(10)), "big", STAGE, PIPELINE)
+        index = mgr.load_cache_index(PIPELINE)
+        pipeline_dir = original / PIPELINE
+        for entry in index.entries.values():
+            entry.local_path = pipeline_dir / entry.local_path
+        mgr._save_cache_index(index)
+        stored = json.loads((pipeline_dir / "cache_index.json").read_text())
+        assert Path(stored["entries"]["single"]["local_path"]).is_absolute()
+
+        moved = tmp_path / "moved"
+        shutil.copytree(original, moved)
+        shutil.rmtree(original)
+
+        restored = _manager(moved, chunk_size=3)
+        assert restored.load_stage_result("single", PIPELINE) == {"x": 1}
+        assert restored.load_stage_result("big", PIPELINE) == list(range(10))

@@ -31,11 +31,20 @@ from unified_kg_rag.domain.models import (
     Relationship,
     TextUnit,
 )
-from unified_kg_rag.domain.prompts import CorpusProfilePrompt
+from unified_kg_rag.domain.prompts import (
+    CommunityReportPrompt,
+    CorpusProfilePrompt,
+    GraphExtractionPrompt,
+)
 from unified_kg_rag.shared import LanguageModelError, get_logger
 from unified_kg_rag.shared.utils import generate_stable_id, parse_llm_json
 
 logger = get_logger(__name__)
+
+# Sentence or line boundaries for picking a verbatim evidence span (Latin and
+# CJK sentence-final punctuation).
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?\u3002\uff01\uff1f])\s+|\n+")
+_MAX_EVIDENCE_CHARS = 200
 
 
 def _escape_braces(text: str) -> str:
@@ -212,13 +221,40 @@ class PromptTuner:
         return "\n\n".join(rendered).strip()
 
     @staticmethod
+    def _evidence_span(text: str, *names: str) -> str | None:
+        """Return a short verbatim span of ``text`` that mentions every name.
+
+        The extractor strips the model's ``source_text`` once grounding has
+        checked it, so the example re-derives one: the first sentence (or line)
+        that contains all ``names``, cut to a window around the first name when
+        long. ``None`` when no sentence mentions them all.
+        """
+        wanted = [n.strip().casefold() for n in names if n and n.strip()]
+        if not wanted:
+            return None
+        for sentence in _SENTENCE_SPLIT.split(text):
+            span = sentence.strip()
+            folded = span.casefold()
+            if not span or not all(n in folded for n in wanted):
+                continue
+            if len(span) > _MAX_EVIDENCE_CHARS:
+                at = folded.index(wanted[0])
+                lo = max(0, at - _MAX_EVIDENCE_CHARS // 2)
+                span = span[lo : lo + _MAX_EVIDENCE_CHARS].strip()
+            return span
+        return None
+
+    @classmethod
     def _render_example(
-        text: str, entities: list[Entity], relationships: list[Relationship]
+        cls, text: str, entities: list[Entity], relationships: list[Relationship]
     ) -> str:
         """Render one (text → extraction) pair in the GraphExtractionPrompt shape.
 
         Confidence/weight are stored normalized (0.0-1.0) but the extraction
         prompt teaches a 1-10 scale, so scale back up for the demonstration.
+        Every record carries a verbatim ``<source_text>`` span from the example
+        text, as the extraction rules require; a record no sentence of the text
+        supports is left out rather than shown without evidence.
         """
 
         def _esc(value: str | None) -> str:
@@ -226,6 +262,9 @@ class PromptTuner:
 
         lines = [f"EXAMPLE TEXT:\n{text.strip()}", "", "<entities>"]
         for entity in entities:
+            span = cls._evidence_span(text, entity.name or "")
+            if span is None:
+                continue
             confidence_1_10 = round(
                 (entity.confidence if entity.confidence else 1.0) * 10
             )
@@ -236,6 +275,7 @@ class PromptTuner:
                     f"<type>{_esc(entity.type) or 'ENTITY'}</type>",
                     f"<description>{_esc(entity.description)}</description>",
                     f"<confidence>{confidence_1_10}</confidence>",
+                    f"<source_text>{span}</source_text>",
                     "</entity>",
                 ]
             )
@@ -243,6 +283,11 @@ class PromptTuner:
         lines.append("")
         lines.append("<relationships>")
         for rel in relationships:
+            span = cls._evidence_span(
+                text, rel.source_name or "", rel.target_name or ""
+            )
+            if span is None:
+                continue
             strength_1_10 = round((rel.weight if rel.weight else 1.0) * 10)
             lines.extend(
                 [
@@ -252,6 +297,7 @@ class PromptTuner:
                     f"<type>{_esc(rel.type) or 'RELATED_TO'}</type>",
                     f"<description>{_esc(rel.description)}</description>",
                     f"<strength>{strength_1_10}</strength>",
+                    f"<source_text>{span}</source_text>",
                     "</relationship>",
                 ]
             )
@@ -267,10 +313,18 @@ class PromptTuner:
         community-report persona, so the whole indexing pipeline speaks the
         corpus's domain — not just entity extraction.
 
-        The overrides are LangChain f-string templates, so every corpus- or
-        model-derived field has its braces doubled: a JSON sample would
-        otherwise break formatting and a ``{input_text}`` in it would be
-        substituted.
+        A ``*_system`` override replaces the whole system prompt, and the
+        built-in one is where the XML output schema and the extraction rules
+        (verbatim ``source_text`` grounding, no invented entities) live. So each
+        tuned system prompt is a domain-adapted preamble followed by the
+        prompt's built-in ``output_rules`` verbatim, then any examples. The
+        result is a complete, self-contained override.
+
+        The overrides are LangChain f-string templates. Every corpus- or
+        model-derived field has its braces doubled (a JSON sample would
+        otherwise break formatting and an ``{input_text}`` in it would be
+        substituted); the built-in rules are appended unescaped, so their
+        variables (``{entity_types}``) are still filled at call time.
         """
         persona = _escape_braces(profile.persona)
         domain = _escape_braces(profile.domain)
@@ -278,26 +332,33 @@ class PromptTuner:
         entity_types = _escape_braces(", ".join(profile.entity_types))
         examples = _escape_braces(profile.few_shot_examples)
         entity_guidance = (
-            f"Focus on these domain entity types: {entity_types}."
+            f" Entity types common in this corpus: {entity_types}."
             if profile.entity_types
             else ""
         )
-        examples_block = f"\n\n# DOMAIN EXAMPLE\n{examples}" if examples else ""
+        examples_block = (
+            "\n\n# DOMAIN EXAMPLES\n"
+            "Worked examples from this corpus. They illustrate the format; the "
+            "rules above take precedence.\n\n"
+            f"{examples}"
+            if examples
+            else ""
+        )
         graph_extraction_system = (
             f"{persona}\n\n"
             f"You extract entities and relationships from {domain} documents "
-            f"written in {language}. {entity_guidance}\n\n"
-            "Follow the output format exactly as specified in the human message."
+            f"written in {language}.{entity_guidance} Follow the extraction "
+            "rules and the output format below exactly.\n\n"
+            f"{GraphExtractionPrompt.output_rules}"
             f"{examples_block}"
         )
         community_report_system = (
             f"{persona}\n\n"
             f"You analyze communities of entities and relationships extracted from "
-            f"{domain} documents and write reports in {language}. "
-            "Follow the output format exactly as specified in the human message."
+            f"{domain} documents and write reports in {language}. Follow the "
+            "report requirements and the output format below exactly.\n\n"
+            f"{CommunityReportPrompt.output_rules}"
         )
-        # The corpus- and model-derived fields were brace-escaped above, so the
-        # templates are returned as built.
         return {
             "graph_extraction_system": graph_extraction_system,
             "community_report_system": community_report_system,
