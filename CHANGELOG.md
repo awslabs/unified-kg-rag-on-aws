@@ -102,7 +102,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   units, so the same final corpus could store weight 8.0 or 1.0 depending on
   how it was built. Existing graphs keep their current weights until
   re-indexed: an edge without the stored strengths splits its weight evenly
-  over its text units, and only text units extracted again change it (#PR).
+  over its text units, and only text units extracted again change it (#189).
 - **Behaviour change:** with incremental indexing on (`aws.dynamodb.enabled`
   or an injected `doc_status`), a doc-status registry that cannot be read
   fails the `document_loading` stage with the new `DocStatusRegistryError`,
@@ -490,7 +490,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   1-10 scale the extraction prompt teaches. Relationship weight already holds
   the raw strength, but the example renderer multiplied it by 10 (so a
   strength of 8 was shown as 80); it is now rounded and clamped to 1-10,
-  which also covers weights summed over several extractions (#PR).
+  which also covers weights summed over several extractions (#189).
 - Community reports that fail are no longer dropped silently. Report
   generation returns the ids of the communities that got no report, and the
   community detection stage records their text units as failed, so an
@@ -499,13 +499,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `indexing.max_document_failures`). Before, the failures were only logged,
   the documents were recorded `PROCESSED` and the reports stayed missing
   until a full rebuild. More than `indexing.max_failure_rate` of the
-  communities without a report now fails the stage (#PR).
+  communities without a report now fails the stage (#189).
 - An incremental run no longer rewrites the stored edges of every delta
   entity that is already in the graph. The cross-run entity merge recorded an
   id remap even when the delta entity kept its stored id, and a non-empty
   remap made the indexing manager read back and upsert all edges incident to
   those entities, so a hub entity's whole neighbourhood was rewritten on each
-  run. A remap is now recorded only when the id changes (#PR).
+  run. A remap is now recorded only when the id changes (#189).
 - Merging small chunks no longer drops text when a chunk repeats the previous
   chunk's last lines verbatim, such as a document ending in two identical
   `Signed: ____` lines with an LLM line boundary between them. The repeated
