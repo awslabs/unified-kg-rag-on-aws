@@ -33,6 +33,10 @@ class FakeDocStatusStore:
     def put(self, record: DocStatusRecord) -> None:
         self._records[record.doc_id] = record
 
+    def put_many(self, records: Iterable[DocStatusRecord]) -> None:
+        for record in records:
+            self.put(record)
+
     def delete(self, doc_id: str) -> None:
         self._records.pop(doc_id, None)
 

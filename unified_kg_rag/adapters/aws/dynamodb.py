@@ -57,6 +57,9 @@ _BATCH_GET_SIZE = 100
 _BATCH_GET_MAX_ATTEMPTS = 8
 _BATCH_GET_BASE_DELAY = 0.05
 _BATCH_GET_MAX_DELAY = 2.0
+# BatchWriteItem writes at most 25 items per request; unprocessed items are
+# re-sent with the same backoff and attempt limit as BatchGetItem.
+_BATCH_WRITE_SIZE = 25
 
 _MISSING_TABLE_CODES = frozenset({"ResourceNotFoundException"})
 _ACCESS_CODES = frozenset(
@@ -125,7 +128,8 @@ class DynamoDBDocStatusStore:
         elif code in _ACCESS_CODES:
             hint = (
                 "Refresh the credentials, or grant the caller dynamodb:Scan, "
-                "GetItem, BatchGetItem, PutItem, DeleteItem and DescribeTable on "
+                "GetItem, BatchGetItem, PutItem, BatchWriteItem, DeleteItem and "
+                "DescribeTable on "
                 "the table "
                 "(and the use of the table's KMS key, if it has one)."
             )
@@ -226,6 +230,48 @@ class DynamoDBDocStatusStore:
         so one item fits roughly 10,000 ids; a larger document must be split
         into smaller files.
         """
+        item = self._sized_item(record)
+        with self._registry_errors("write a record"):
+            self.client.put_item(TableName=self.table_name, Item=item)
+
+    def put_many(self, records: Iterable[DocStatusRecord]) -> None:
+        """Write ``records`` with ``BatchWriteItem``, 25 items per call.
+
+        The last record per ``doc_id`` wins (a batch must not repeat a key).
+        Every record is size-checked before the first request, so an
+        oversized one (see :meth:`put`) fails the call without writing any.
+        Items returned as ``UnprocessedItems`` are re-sent with exponential
+        backoff; items still unprocessed after ``_BATCH_GET_MAX_ATTEMPTS``
+        requests raise :class:`DocStatusRegistryError`.
+        """
+        unique = {record.doc_id: record for record in records}
+        items = [self._sized_item(record) for record in unique.values()]
+        for start in range(0, len(items), _BATCH_WRITE_SIZE):
+            self._batch_write(items[start : start + _BATCH_WRITE_SIZE])
+
+    def _batch_write(self, items: list[dict[str, Any]]) -> None:
+        request: dict[str, Any] = {
+            self.table_name: [{"PutRequest": {"Item": item}} for item in items]
+        }
+        for attempt in range(_BATCH_GET_MAX_ATTEMPTS):
+            if attempt:
+                time.sleep(
+                    min(_BATCH_GET_MAX_DELAY, _BATCH_GET_BASE_DELAY * 2**attempt)
+                )
+            with self._registry_errors("write records"):
+                response = self.client.batch_write_item(RequestItems=request)
+            request = dict(response.get("UnprocessedItems") or {})
+            if not request.get(self.table_name):
+                return
+        remaining = len(request[self.table_name])
+        raise DocStatusRegistryError(
+            f"Doc-status registry: DynamoDB table '{self.table_name}' left "
+            f"{remaining} of {len(items)} items unprocessed after "
+            f"{_BATCH_GET_MAX_ATTEMPTS} BatchWriteItem requests. Raise the "
+            "table's capacity or switch it to on-demand billing, then re-run."
+        )
+
+    def _sized_item(self, record: DocStatusRecord) -> dict[str, Any]:
         item = self._serialize(record)
         size = self._item_size(item)
         if size > _MAX_ITEM_BYTES:
@@ -234,8 +280,7 @@ class DynamoDBDocStatusStore:
                 f"{size} bytes, over the DynamoDB 400 KB item limit; split the "
                 "document into smaller files"
             )
-        with self._registry_errors("write a record"):
-            self.client.put_item(TableName=self.table_name, Item=item)
+        return item
 
     @staticmethod
     def _item_size(item: dict[str, Any]) -> int:
