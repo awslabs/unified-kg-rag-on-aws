@@ -398,6 +398,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   its old form, so a later document naming the old form produced a second
   item with the same id: the stored entity's text units and description were
   overwritten, and Neptune got two edges with one id (#PR).
+- `NeptuneIndexer.read_entities` and `read_relationships` raise
+  `AWSServiceError` when the read fails instead of returning `[]`. Removing a
+  deleted or changed document's chunks from shared artifacts then counted a
+  transient read error as "nothing to update" and dropped the document's
+  registry row, leaving the shared artifacts citing removed chunks with no
+  lineage to retry; it now counts as a failed removal and keeps the row. A
+  failed read during the cross-run merge fails the indexing stage before any
+  write instead of overwriting the stored lineage (#PR).
 - `indexing.reset` with the doc-status registry enabled rebuilds from the
   whole corpus and records every document again. The loading stage used to
   diff against the registry first, so the reset cleared the stores but

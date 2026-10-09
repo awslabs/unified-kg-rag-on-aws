@@ -975,6 +975,10 @@ graph adapter that supports read-back (one without it degrades to overwrite).
 When a document changes or is deleted, entities and relationships it shares
 with other documents lose its chunks from `text_unit_ids` (frequency and
 weight follow), but keep the description it contributed until a full rebuild.
+If reading the stored items back fails, nothing is overwritten: a failed read
+during the merge fails the indexing stage before any write (the documents stay
+unrecorded and are retried), and a failed read while removing a document's
+chunks counts as a failed removal (its registry row is kept for a retry).
 
 ---
 

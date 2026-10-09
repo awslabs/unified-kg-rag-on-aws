@@ -23,6 +23,7 @@ from gremlin_python.structure.graph import Graph
 from unified_kg_rag.domain.ingestion.merge import merge_relationships
 from unified_kg_rag.domain.models import Config, Entity, Relationship
 from unified_kg_rag.ports.indexer import BaseIndexer, IndexingStats
+from unified_kg_rag.shared import AWSServiceError
 
 pytestmark = pytest.mark.unit
 
@@ -286,3 +287,20 @@ def test_upsert_of_a_merged_entity_replaces_its_lists(indexer) -> None:
 
     assert read.text_unit_ids == ["t2", "t3"]
     assert read.community_ids == ["c2"]
+
+
+class _FailingChain(_ReadChain):
+    def __getattr__(self, name: str):
+        if name == "toList":
+            raise ConnectionError("connection reset")
+        return super().__getattr__(name)
+
+
+@pytest.mark.parametrize("read", ["read_entities", "read_relationships"])
+def test_a_failed_read_raises_instead_of_reading_as_not_stored(indexer, read) -> None:
+    # An empty result means "not stored": the merge would overwrite the stored
+    # lineage and the text-unit removal would report success without a write.
+    indexer.neptune_client.g = _FailingChain([], [])
+
+    with pytest.raises(AWSServiceError, match="connection reset"):
+        getattr(indexer, read)(["x"])

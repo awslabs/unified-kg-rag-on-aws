@@ -341,6 +341,8 @@ class IndexingManager:
         recompute) via the pure merge functions, so a cross-run upsert accumulates
         rather than overwriting. If the adapter does not support read-back it
         returns ``[]`` and this degenerates to the existing overwrite behaviour.
+        A failed read raises: overwriting would drop the stored lineage, and
+        raising before any write leaves the docs unrecorded for a retry.
         With ``indexing.cross_run_merge`` off the delta is returned unchanged.
 
         Merges one index suffix at a time: entity and relationship ids are
@@ -495,17 +497,26 @@ class IndexingManager:
         lineage (recomputing frequency/weight, see ``remove_text_units``) and
         upserts the changed ones to both stores. A graph adapter without
         read-back leaves them unchanged.
+
+        A failed read is reported as failed items, so the caller keeps the
+        documents' registry rows and retries the removal.
         """
-        entities = (
-            self.neptune_indexer.read_entities(entity_ids, suffix=suffix)
-            if entity_ids
-            else []
-        )
-        relationships = (
-            self.neptune_indexer.read_relationships(relationship_ids, suffix=suffix)
-            if relationship_ids
-            else []
-        )
+        try:
+            entities = (
+                self.neptune_indexer.read_entities(entity_ids, suffix=suffix)
+                if entity_ids
+                else []
+            )
+            relationships = (
+                self.neptune_indexer.read_relationships(relationship_ids, suffix=suffix)
+                if relationship_ids
+                else []
+            )
+        except Exception as e:  # noqa: BLE001 - reported as failed items
+            logger.error("Reading shared artifacts in '%s' failed: %s", suffix, e)
+            stats = IndexingStats(total_items=len(entity_ids) + len(relationship_ids))
+            stats.add_error(str(e), count=stats.total_items)
+            return {f"neptune_read_{suffix}": stats}
         entities, relationships = remove_text_units(
             entities, relationships, text_unit_ids
         )

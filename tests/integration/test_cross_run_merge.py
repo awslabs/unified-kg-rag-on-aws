@@ -19,6 +19,7 @@ from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.models import (
     Config,
+    DocumentDelta,
     DocumentLineage,
     Entity,
     Relationship,
@@ -212,3 +213,41 @@ def test_delta_relationship_merges_into_a_corrected_edge_with_its_id() -> None:
     assert (edge.id, edge.source_id, edge.target_id) == ("r1", "e-b", "e-v")
     assert edge.type == "PAYS"
     assert set(edge.text_unit_ids or []) == {"t1", "t2"}
+
+
+def test_failed_read_back_keeps_a_deleted_docs_registry_row(mocker) -> None:
+    # Deleting doc-b strips its text unit from the entity it shares with doc-a.
+    # If reading that entity back fails, the strip did not happen: the removal
+    # must count as failed so doc-b's row (its lineage) is kept for a retry.
+    incremental, graph, store = _harness(cross_run_merge=True)
+    for doc_id, unit in (("doc-a", "t1"), ("doc-b", "t2")):
+        incremental.commit(
+            lineages=[
+                DocumentLineage(doc_id=doc_id, entity_ids=["e1"], text_unit_ids=[unit])
+            ],
+            fingerprints={doc_id: f"h-{doc_id}"},
+            entities=[Entity(id="e1", name="Vendor", text_unit_ids=[unit])],
+        )
+    mocker.patch.object(
+        graph, "read_entities", side_effect=RuntimeError("connection reset")
+    )
+
+    removed = incremental.remove_deleted(DocumentDelta(deleted=["doc-b"]))
+
+    assert removed is False
+    assert store.get("doc-b") is not None
+
+
+def test_failed_read_back_fails_the_commit_before_any_write(mocker) -> None:
+    # Overwriting on a failed read would drop the stored entity's lineage;
+    # failing first leaves the doc unrecorded, so the next run retries it.
+    incremental, graph, store = _harness(cross_run_merge=True)
+    _commit_entity(incremental, "doc-a", Entity(id="e1", name="Vendor"))
+    mocker.patch.object(
+        graph, "read_entities", side_effect=RuntimeError("connection reset")
+    )
+
+    with pytest.raises(RuntimeError):
+        _commit_entity(incremental, "doc-b", Entity(id="e1", name="Vendor"))
+
+    assert store.get("doc-b") is None

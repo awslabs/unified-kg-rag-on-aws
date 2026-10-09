@@ -30,7 +30,7 @@ from unified_kg_rag.domain.models import (
     Relationship,
 )
 from unified_kg_rag.ports.indexer import GraphIndexer, IndexingStats
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import AWSServiceError, get_logger
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
@@ -82,13 +82,17 @@ class NeptuneIndexer(GraphIndexer):
             return False
 
     def read_entities(self, ids: list[str], suffix: str | None = None) -> list[Entity]:
-        """Read existing entities by id for cross-run merge (best-effort).
+        """Read existing entities by id (cross-run merge, text-unit removal).
 
         Scoped to this suffix's entity label: entity ids are suffix-independent,
         so an unscoped read could return another tenant's vertex. Inverts the
         vertex encoding (``neptune_codec``), attributes included, so a merged
-        entity is written back under its own suffix. Returns ``[]`` on any
-        error so cross-run merge degrades to overwrite.
+        entity is written back under its own suffix.
+
+        Raises:
+            AWSServiceError: The read failed. An empty result would read as "not
+                stored", so the caller would overwrite stored lineage or report
+                a text-unit removal that never happened.
         """
         if not ids:
             return []
@@ -109,19 +113,20 @@ class NeptuneIndexer(GraphIndexer):
                     if entity is not None:
                         entities.append(entity)
             return entities
-        except Exception as e:  # noqa: BLE001 - degrade to overwrite
-            logger.warning("read_entities failed (%s); cross-run merge disabled", e)
-            return []
+        except Exception as e:
+            raise AWSServiceError(f"Neptune read_entities failed: {e}") from e
 
     def read_relationships(
         self, ids: list[str], suffix: str | None = None
     ) -> list[Relationship]:
-        """Read existing relationships by id for cross-run merge (best-effort).
+        """Read existing relationships by id (see :meth:`read_entities`).
 
         Scoped to edges leaving this suffix's entity label (relationship ids are
         suffix-independent). Inverts the edge encoding (``neptune_codec``): the
-        type is the edge label and list properties are JSON strings. Returns
-        ``[]`` on any error so cross-run merge degrades to overwrite.
+        type is the edge label and list properties are JSON strings.
+
+        Raises:
+            AWSServiceError: The read failed (see :meth:`read_entities`).
         """
         if not ids:
             return []
@@ -153,11 +158,8 @@ class NeptuneIndexer(GraphIndexer):
                     if rel is not None:
                         rels.append(rel)
             return rels
-        except Exception as e:  # noqa: BLE001 - degrade to overwrite
-            logger.warning(
-                "read_relationships failed (%s); cross-run merge disabled", e
-            )
-            return []
+        except Exception as e:
+            raise AWSServiceError(f"Neptune read_relationships failed: {e}") from e
 
     def read_entity_names(self, suffix: str | None = None) -> list[tuple[str, str]]:
         """Project ``(id, name)`` for all existing entities in the suffix's label.
