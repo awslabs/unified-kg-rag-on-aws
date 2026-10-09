@@ -43,7 +43,7 @@ Every strategy runs through the same hybrid scorer and token budget. Pick one wi
 
 | Strategy | Methodology | Use when |
 |---|---|---|
-| `auto` (default) | GraphRAG | You are not sure; an LLM router picks `simple`, `local`, `global`, or `drift` per query |
+| `auto` (default) | GraphRAG | You are not sure; an LLM router picks one of `search.auto_routable_strategies` per query (default `local`, `mix`, `global`, `drift`) |
 | `simple` | GraphRAG | Fast factual lookups; vector + keyword search without graph traversal |
 | `local` | GraphRAG | Questions about specific entities and their relationships |
 | `global` | GraphRAG | Broad or thematic questions, answered by map-reduce over community reports |

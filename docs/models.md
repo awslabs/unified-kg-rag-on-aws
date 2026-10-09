@@ -80,7 +80,7 @@ Four things differ for Claude 4.7-and-later models:
   how much it reasons on fast-tier calls. A default-tier ingestion call uses
   `ingestion_effort` instead when it is set. Claude Sonnet 5.5 always thinks, so `--enable-thinking` is a
   no-op for it — depth is `effort` only. A level the model does not accept
-  (e.g. `xhigh` on Opus or Sonnet 4.6) fails fast.
+  (e.g. `xhigh` on Opus 4.6 or Sonnet 4.6) fails fast.
 - **Sampling parameters are dropped.** `temperature`/`top_k` are not accepted
   and are omitted from requests automatically; steer behaviour by prompting.
 - **Token estimates are scaled.** Their tokenizer counts roughly 1x-1.35x the
