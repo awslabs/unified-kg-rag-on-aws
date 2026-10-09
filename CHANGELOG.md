@@ -462,6 +462,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   planned once over changed + deleted documents. If it fails, the deleted
   documents' registry records are kept as before, and the run fails before
   committing whenever the delta has changed documents (#PR).
+- A full build and an incremental build of the same corpus store the same
+  entity and relationship descriptions. Graph and claim extraction merged
+  the descriptions of one item found in several text units with `"; "` and
+  kept repeats, while the resolver and the cross-run merge join with a
+  newline and drop duplicate lines. All three now use the newline rule
+  (`merge.merger.merge_descriptions`); the resolver also compares lines
+  rather than whole descriptions. Descriptions written before stay as they
+  are until the item is re-extracted or the index is rebuilt (#PR).
 - An incremental commit no longer records every document FAILED when one
   community's `MemberOf` edges fail in more than one Neptune entity batch.
   Each failed batch carries the community id, and the commit deduplicated the

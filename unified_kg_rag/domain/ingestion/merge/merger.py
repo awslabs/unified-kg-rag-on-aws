@@ -10,7 +10,7 @@ graph references stay stable.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -58,15 +58,23 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
     return result
 
 
-def _merge_descriptions(old: str | None, new: str | None) -> str | None:
-    """Combine two descriptions, dropping duplicate and blank lines.
+def merge_descriptions(descriptions: Iterable[str | None]) -> str | None:
+    """Combine descriptions, dropping duplicate and blank lines (order kept).
+
+    The one description-merge rule of every build path (extraction,
+    full-build resolution, cross-run merge), so a full build and an
+    incremental build of the same corpus converge on the same text.
 
     A stored description is the newline join of earlier merges, so the dedupe
     compares lines: comparing whole strings would append a re-applied delta's
     description again on every run.
     """
     lines = [
-        line for part in (old, new) if part for line in part.split("\n") if line.strip()
+        line
+        for part in descriptions
+        if part
+        for line in part.split("\n")
+        if line.strip()
     ]
     if not lines:
         return None
@@ -95,8 +103,8 @@ def _merge_entity_fields(surviving: Entity, incoming: Entity) -> None:
     description union, text-unit/community-id union, frequency = #text-units,
     max confidence/rank, first-known type, attribute union.
     """
-    surviving.description = _merge_descriptions(
-        surviving.description, incoming.description
+    surviving.description = merge_descriptions(
+        (surviving.description, incoming.description)
     )
     surviving.attributes = _merge_attributes(surviving.attributes, incoming.attributes)
     surviving.text_unit_ids = _dedupe_preserve_order(
@@ -306,7 +314,7 @@ def merge_relationships(
             continue
 
         weights = overlay_weights(text_unit_weights(match), text_unit_weights(rel))
-        match.description = _merge_descriptions(match.description, rel.description)
+        match.description = merge_descriptions((match.description, rel.description))
         match.attributes = _merge_attributes(match.attributes, rel.attributes)
         match.text_unit_ids = _dedupe_preserve_order(
             (match.text_unit_ids or []) + (rel.text_unit_ids or [])
