@@ -152,6 +152,16 @@ class LanguageModelInfo(BaseModel):
             "the levels are not documented and the value is passed through."
         ),
     )
+    supports_streaming: bool | None = Field(
+        default=None,
+        description=(
+            "Whether the model streams through ConverseStream. None leaves it "
+            "to langchain-aws, which streams only model ids on its own "
+            "allowlist; set it for a model the allowlist does not know yet "
+            "(otherwise it falls back to non-streaming Converse with a "
+            "warning on every model construction)."
+        ),
+    )
     supports_count_tokens: bool = Field(
         default=True,
         description=(
@@ -283,8 +293,11 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
     ),
     # Haiku 5.5 also thinks by default but, unlike Sonnet/Opus 5.5, accepts
     # thinking disabled; it takes no budget_tokens and its tokenizer counts
-    # ~30% more tokens than Haiku 4.5 for the same text.
+    # ~30% more tokens than Haiku 4.5 for the same text. It supports Converse
+    # (so ConverseStream), but langchain-aws 1.8.0's streaming allowlist lacks
+    # "claude-haiku-5", hence the explicit supports_streaming.
     LanguageModelId.CLAUDE_V5_5_HAIKU: LanguageModelInfo(
+        supports_streaming=True,
         context_window_size=1000000,
         max_output_tokens=128000,
         supports_prompt_caching=True,

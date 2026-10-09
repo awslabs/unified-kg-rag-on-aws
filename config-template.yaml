@@ -47,7 +47,7 @@ aws:
     # reasoning/sampling params, 32K window, 4K output) with one warning.
     # Keys: context_window_size, max_output_tokens, supports_thinking,
     # supports_sampling_params, supports_prompt_caching, supports_count_tokens,
-    # adaptive_thinking_only, requires_inference_profile, ...
+    # supports_streaming, adaptive_thinking_only, requires_inference_profile, ...
     model_overrides: {}
     #   "amazon.nova-pro-v1:0":
     #     context_window_size: 300000

@@ -647,6 +647,8 @@ class BedrockLanguageModelFactory(
         # No stop sequence: both Converse and the InvokeModel Messages body are
         # turn-structured, so the legacy "\n\nHuman:" text-completion marker
         # only cut off answers whose text contains it (chat transcripts).
+        if is_cross_region and model_info.supports_streaming is not None:
+            config["disable_streaming"] = not model_info.supports_streaming
         if not is_cross_region:
             # top_k is a sampling parameter; Claude 4.7+ rejects it.
             config["model_kwargs"] = (

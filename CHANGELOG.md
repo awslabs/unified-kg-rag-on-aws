@@ -340,6 +340,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`
   made graph extraction fail to format, and `{input_text}` in a sample was
   substituted with the chunk being extracted (#173).
+- Claude Haiku 5.5 (the default fast tier) streams. langchain-aws 1.8.0
+  streams only model ids on its allowlist, which lacks Haiku 5.5, so every
+  model construction fell back to non-streaming Converse and logged a
+  warning. A `supports_streaming` capability (also a `model_overrides` key)
+  now sets it per model (#PR).
 - A Neptune connection whose probe query fails is closed before the error is
   raised, instead of leaving its websocket and thread pool open (#PR).
 - `memory.max_conversation_age_hours` is enforced: a conversation idle for

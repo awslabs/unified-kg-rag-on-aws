@@ -349,6 +349,31 @@ def test_get_model_allows_on_demand_model_without_profile(mocker) -> None:
     assert factory.get_model(LanguageModelId.CLAUDE_V3_HAIKU) is sentinel
 
 
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        LanguageModelId.CLAUDE_V5_5_HAIKU,
+        LanguageModelId.CLAUDE_V5_5_SONNET,
+        LanguageModelId.CLAUDE_V4_5_HAIKU,
+    ],
+)
+def test_converse_models_stream(mocker, caplog, model_id: LanguageModelId) -> None:
+    # langchain-aws only streams model ids on its allowlist; Claude Haiku 5.5
+    # is not on it (1.8.0), so it fell back to non-streaming Converse and
+    # logged a warning on every model construction. The capability record
+    # says whether the model streams.
+    factory = _lang_factory()
+    mocker.patch.object(
+        bedrock_mod.BedrockCrossRegionModelHelper,
+        "get_cross_region_model_id",
+        return_value=f"global.{model_id.value}",
+    )
+    with caplog.at_level("WARNING"):
+        model = factory.get_model(model_id)
+    assert model.disable_streaming is False
+    assert "Streaming disabled" not in caplog.text
+
+
 # --- _apply_guardrail -----------------------------------------------------
 
 
