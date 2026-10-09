@@ -58,6 +58,13 @@ class ComputeStack(Stack):
             "Repo",
             repository_name=f"{config.prefix}-app",
             image_scan_on_push=True,
+            # With use_cmk, image layers are encrypted with the shared CMK. ECR
+            # adds its own KMS grant on the key, so pulls need no task-side KMS
+            # permission. ECR cannot change a repository's encryption in place,
+            # so without a CMK the property stays unset (default AES-256) to
+            # keep existing repositories from being replaced.
+            encryption=(ecr.RepositoryEncryption.KMS if self.kms_key else None),
+            encryption_key=self.kms_key,
             image_tag_mutability=(
                 ecr.TagMutability.IMMUTABLE
                 if pinned_image

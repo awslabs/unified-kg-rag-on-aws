@@ -3,8 +3,8 @@
 """Security: shared CMK (optional).
 
 KMS: when config.use_cmk, a single customer-managed key encrypts at-rest data
-across the deployment (S3 cache, Neptune, OpenSearch, DynamoDB). The SNS alarm
-topic has its own key in the orchestration stack, because CloudWatch must be
+across the deployment (S3 cache, Neptune, OpenSearch, DynamoDB, ECR). The SNS
+alarm topic has its own key in the orchestration stack, because CloudWatch must be
 allowed to use it. Key rotation is enabled. When use_cmk is False, services use
 AWS-managed keys (cheaper; fine for dev). Exposed as ``self.kms_key`` (None if disabled).
 

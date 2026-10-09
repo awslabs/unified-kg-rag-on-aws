@@ -113,7 +113,7 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `image_tag` | `latest` | container image tag the task pulls; pin a version tag to make ECR tags immutable |
 | `create_guardrail` | `true` | `GraphRagGuardrail` creates and keeps a baseline PII/prompt-attack guardrail in `bedrock_region` (retained on stack deletion unless `removal_destroy`). `false` = bring your own guardrail; nothing is created |
 | `guardrail_identifier` | _(none)_ | guardrail id the compute task **uses**, injected as `BEDROCK_GUARDRAIL_IDENTIFIER`. The created guardrail's id is **not** injected automatically: pass the `GuardrailIdentifier` output of `GraphRagGuardrail` here (two-step flow above), or an external id with `create_guardrail=false`. Unset = no guardrail on the task |
-| `use_cmk` | `false` | customer-managed KMS key for at-rest encryption (S3/Neptune/OpenSearch/DDB). The SNS alarm topic always uses its own customer-managed key (see below) |
+| `use_cmk` | `false` | customer-managed KMS key for at-rest encryption (S3/Neptune/OpenSearch/DDB/ECR). Choose it before the first deploy: ECR sets a repository's encryption only at creation, and CloudFormation cannot replace the fixed-name repository, so turning `use_cmk` on (or off) for a deployed environment fails until the compute stack is destroyed and redeployed. The SNS alarm topic always uses its own customer-managed key (see below) |
 | `vpc_flow_logs` | `false` (dev) / `true` (non-dev) | enable VPC flow logs (created VPC only) |
 | `flow_log_retention_days` | `731` | flow-log log group retention; must be a CloudWatch Logs retention value (e.g. `30`, `90`, `365`, `731`) |
 | `deletion_protection` | `false` (dev) / `true` (non-dev) | deletion protection on the Neptune cluster and the DynamoDB doc-status table (blocks a direct delete API/console call). OpenSearch domains have no deletion-protection setting; outside dev the domain is only kept by `removal_destroy=false` (CloudFormation `Retain`), which does not stop a direct `DeleteDomain` call |
@@ -189,7 +189,10 @@ cdk deploy --all
 ## After deploy
 
 1. Build & push the app image (`docker/Dockerfile`, build context = repo root)
-   to the created ECR repo (tag `latest`). The image bakes in the tracked,
+   to the created ECR repo (tag `latest`). Outside dev, push a unique version
+   tag instead and deploy with `-c image_tag=<tag>`: any tag other than
+   `latest` makes the repository's tags immutable, so a pushed image cannot be
+   swapped under the running task definition. The image bakes in the tracked,
    endpoint-free `docker/config.yaml` as `/app/config.yaml`; the deployed
    endpoints come from the injected `NEPTUNE_ENDPOINT` / `OPENSEARCH_ENDPOINT` /
    `S3_BUCKET_NAME` / `BEDROCK_REGION` env vars the app reads. The task also injects
