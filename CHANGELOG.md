@@ -474,13 +474,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   retired scope now also matches every stored scope of the run's namespace
   whose source scope normalizes to the same value (read from the scopes the
   diff's scan already returns; the run's own scope is never retired). Stored
-  scopes are not re-keyed (#PR).
+  scopes are not re-keyed (#195).
 - The delta detection reads the records of changed documents in one batch
   (`DocStatusPort.get_many`, `BatchGetItem` on DynamoDB) to check
   `indexing.max_document_failures`, instead of one `GetItem` per changed
   document: editing 300 documents, or the recovery run after an interrupted
   run left 300 `PENDING` records, cost 300 sequential reads. A custom store
-  without `get_many` still gets one `get` per document (#PR).
+  without `get_many` still gets one `get` per document (#195).
 - Deleting or changing a document no longer leaves its entities and
   relationships in the stores because a document of another index namespace
   sharing the registry table references the same ids. The removal plan
@@ -490,7 +490,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   survivors and the artifacts stayed, stripped of their text units. Survivors
   are now grouped by the namespace read from each record's scope; a record
   written before scopes existed still counts as a survivor for every
-  namespace of its suffix (#PR).
+  namespace of its suffix (#195).
 - `indexing.reset` on one index namespace (`index_value` +
   `indexing.additional_suffix`) no longer deletes the doc-status records of
   every namespace sharing the registry table. Every config uses the same
@@ -499,7 +499,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   re-extracted the whole corpus, and a file removed from them before that run
   was never removed from their stores. The reset now deletes only the records
   whose scope belongs to the cleared namespaces, and a record written before
-  scopes existed only when its key is such a namespace's legacy key (#PR).
+  scopes existed only when its key is such a namespace's legacy key (#195).
 - An incremental run interrupted inside the indexing stage (a killed task, a
   store outage, the failure gate) is repaired by the next run. Before, a run
   that stopped after pruning a changed document left its old content hash in
