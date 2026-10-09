@@ -518,15 +518,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   interrupted run may have written; the commit and the removal of the
   document delete it. A document whose own lineage cannot fit one record now
   fails before anything is written, with an error naming the file and its
-  artifact id count (#PR).
+  artifact id count (#196).
 - An incremental run resumed after the document_loading stage logs a WARNING
   naming the `indexing.retire_source_scopes` it does not apply: the resumed
   delta was computed without them, so they were ignored silently. Re-run
   from document_loading (`--resume-from-stage document_loading`) to retire
   them. The applied scopes are recorded on the pipeline context
-  (`incremental_retired_scopes`) (#PR).
+  (`incremental_retired_scopes`) (#196).
 - The CI local-stores job no longer sleeps after its last failed attempt to
-  start the stores before failing (#PR).
+  start the stores before failing (#196).
 - An incremental run interrupted inside the indexing stage (a killed task, a
   store outage, the failure gate) is repaired by the next run. Before, a run
   that stopped after pruning a changed document left its old content hash in
