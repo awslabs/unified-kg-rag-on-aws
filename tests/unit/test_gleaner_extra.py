@@ -5,8 +5,8 @@
 
 Covers the branches the logic suite leaves uncovered: the module-level
 ``prepare_input_task`` / ``format_relationships_with_limit_task`` pure helpers,
-quality-score extraction and aggregation, refinement-output parsing and
-issue dispatch, the ``GleaningStats`` derived properties, and the end-to-end
+refinement-output parsing and issue dispatch, the completion summary, the
+stop rule, and the end-to-end
 ``glean_graph`` / ``_perform_llm_refinement`` orchestration driven by a mocked
 LangChain chain (no Bedrock, no boto3). The Bedrock/boto wiring is patched out
 in the ``gleaner`` fixture exactly as in the logic suite.
@@ -152,69 +152,22 @@ class TestPrepareInputTask:
 
 
 # --------------------------------------------------------------------------- #
-# _extract_quality_scores
-# --------------------------------------------------------------------------- #
-class TestExtractQualityScores:
-    def test_dict_scores(self) -> None:
-        plan = {"quality_scores": {"completeness_score": "0.8", "accuracy_score": 0.6}}
-        out = GraphGleaner._extract_quality_scores(plan)
-        assert out == {"completeness": 0.8, "accuracy": 0.6}
-
-    def test_list_of_dicts_merged(self) -> None:
-        plan = {
-            "quality_scores": [
-                {"completeness_score": 0.4},
-                {"accuracy_score": 0.9},
-            ]
-        }
-        out = GraphGleaner._extract_quality_scores(plan)
-        assert out == {"completeness": 0.4, "accuracy": 0.9}
-
-    def test_non_dict_non_list_returns_zeroes(self) -> None:
-        out = GraphGleaner._extract_quality_scores({"quality_scores": "bad"})
-        assert out == {"completeness": 0.0, "accuracy": 0.0}
-
-    def test_unparseable_values_coerce_to_zero(self) -> None:
-        plan = {"quality_scores": {"completeness_score": "abc", "accuracy_score": None}}
-        out = GraphGleaner._extract_quality_scores(plan)
-        assert out == {"completeness": 0.0, "accuracy": 0.0}
-
-
-# --------------------------------------------------------------------------- #
-# _aggregate_quality_scores / _calculate_average
-# --------------------------------------------------------------------------- #
-class TestQualityAggregation:
-    def test_aggregate_skips_none(self) -> None:
-        agg = {"completeness": [], "accuracy": []}
-        GraphGleaner._aggregate_quality_scores(
-            {"completeness": 0.5, "accuracy": None}, agg
-        )
-        assert agg["completeness"] == [0.5]
-        assert agg["accuracy"] == []
-
-    def test_calculate_average(self) -> None:
-        assert GraphGleaner._calculate_average([1.0, 3.0]) == 2.0
-        assert GraphGleaner._calculate_average([]) == 0.0
-
-
-# --------------------------------------------------------------------------- #
 # _parse_refinement_output + _process_issue
 # --------------------------------------------------------------------------- #
 class TestParseRefinementOutput:
     def test_empty_plan_returns_empties(self, gleaner) -> None:
         unit = TextUnit(id="t1", text="x")
-        ents, rels, scores = gleaner._parse_refinement_output({}, unit, [])
-        assert ents == [] and rels == [] and scores == {}
+        ents, rels = gleaner._parse_refinement_output({}, unit, [])
+        assert ents == [] and rels == []
 
     def test_non_dict_plan_returns_empties(self, gleaner) -> None:
         unit = TextUnit(id="t1", text="x")
-        ents, rels, scores = gleaner._parse_refinement_output("not a dict", unit, [])
+        ents, rels = gleaner._parse_refinement_output("not a dict", unit, [])
         assert ents == [] and rels == []
 
     def test_list_plan_first_element_used(self, gleaner) -> None:
         unit = TextUnit(id="t1", text="x")
         plan = {
-            "quality_scores": {"completeness_score": 0.5, "accuracy_score": 0.5},
             "identified_issues": {
                 "issue": {
                     "issue_type": "MISSING_ENTITY",
@@ -222,10 +175,9 @@ class TestParseRefinementOutput:
                 }
             },
         }
-        ents, rels, scores = gleaner._parse_refinement_output([plan], unit, [])
+        ents, rels = gleaner._parse_refinement_output([plan], unit, [])
         assert len(ents) == 1
         assert ents[0].name.lower().startswith("neo")
-        assert scores["completeness"] == 0.5
 
     def test_missing_entity_and_relationship_issues(self, gleaner) -> None:
         unit = TextUnit(id="t1", text="x")
@@ -251,7 +203,7 @@ class TestParseRefinementOutput:
                 ]
             }
         }
-        ents, rels, _ = gleaner._parse_refinement_output(plan, unit, [])
+        ents, rels = gleaner._parse_refinement_output(plan, unit, [])
         assert len(ents) == 2
         assert len(rels) == 1
         # The relationship resolves its endpoints against the just-discovered
@@ -266,7 +218,7 @@ class TestParseRefinementOutput:
                 "issue": {"issue_type": "SOMETHING_ELSE", "details": {}}
             }
         }
-        ents, rels, _ = gleaner._parse_refinement_output(plan, unit, [])
+        ents, rels = gleaner._parse_refinement_output(plan, unit, [])
         assert ents == [] and rels == []
 
     def test_issues_as_bare_list_not_dict(self, gleaner) -> None:
@@ -277,7 +229,7 @@ class TestParseRefinementOutput:
                 {"issue_type": "MISSING_ENTITY", "details": {"name": "Zed"}}
             ]
         }
-        ents, _, _ = gleaner._parse_refinement_output(plan, unit, [])
+        ents, _ = gleaner._parse_refinement_output(plan, unit, [])
         assert len(ents) == 1
 
 
@@ -311,7 +263,7 @@ class TestCorrectionIssues:
     def test_entity_type_correction_applied(self, gleaner) -> None:
         entity = _ent("e1", "acme corp")
         entity.type = "PERSON"
-        ents, rels, _ = gleaner._parse_refinement_output(
+        ents, rels = gleaner._parse_refinement_output(
             self._plan(
                 self._entity_correction(name="acme corp", corrected_type="ORGANIZATION")
             ),
@@ -494,10 +446,6 @@ class TestCorrectionIssues:
         gleaner.graph_refiner.batch.return_value = [
             {
                 "refinement_plan": {
-                    "quality_scores": {
-                        "completeness_score": 0.9,
-                        "accuracy_score": 0.9,
-                    },
                     "identified_issues": {
                         "issue": self._entity_correction(
                             name="acme corp", corrected_type="ORGANIZATION"
@@ -535,10 +483,6 @@ class TestCorrectionIssues:
         gleaner.graph_refiner.batch.return_value = [
             {
                 "refinement_plan": {
-                    "quality_scores": {
-                        "completeness_score": 0.9,
-                        "accuracy_score": 0.9,
-                    },
                     "identified_issues": {"issue": list(issues)},
                 }
             }
@@ -679,89 +623,60 @@ class TestCorrectionIssues:
 
 
 # --------------------------------------------------------------------------- #
-# GleaningStats derived properties
-# --------------------------------------------------------------------------- #
-class TestGleaningStats:
-    def test_properties_with_rounds(self) -> None:
-        stats = GleaningStats(
-            total_rounds=2,
-            total_entities_added=10,
-            total_relationships_added=6,
-            total_processing_time=4.0,
-            initial_quality_score=0.2,
-            final_quality_score=0.7,
-        )
-        assert stats.quality_improvement == pytest.approx(0.5)
-        assert stats.average_round_time == pytest.approx(2.0)
-        assert stats.entities_per_round == pytest.approx(5.0)
-        assert stats.relationships_per_round == pytest.approx(3.0)
-
-    def test_properties_zero_rounds_guard(self) -> None:
-        stats = GleaningStats()
-        assert stats.average_round_time == 0.0
-        assert stats.entities_per_round == 0.0
-        assert stats.relationships_per_round == 0.0
-
-
-# --------------------------------------------------------------------------- #
-# _log_completion_summary (both convergence branches)
+# _log_completion_summary
 # --------------------------------------------------------------------------- #
 class TestLogCompletionSummary:
-    def test_converged_summary(self, caplog) -> None:
-        stats = GleaningStats(
-            total_rounds=1,
-            rounds=[
-                GleaningRound(
-                    round_number=1,
-                    entities_before=0,
-                    relationships_before=0,
-                    entities_added=1,
-                    relationships_added=1,
-                    quality_improvement=0.1,
-                    convergence_score=0.9,
-                    processing_time=0.5,
-                )
-            ],
-            convergence_achieved=True,
+    @staticmethod
+    def _round(units_gleaned: int) -> GleaningRound:
+        return GleaningRound(
+            round_number=1,
+            units_gleaned=units_gleaned,
+            units_gained=0,
+            entities_before=0,
+            relationships_before=0,
+            entities_added=1,
+            relationships_added=1,
+            processing_time=0.5,
         )
+
+    def test_summary_reports_refinement_calls(self, caplog) -> None:
+        stats = GleaningStats(total_rounds=2, rounds=[self._round(4), self._round(1)])
         with caplog.at_level(logging.INFO):
-            GraphGleaner._log_completion_summary(stats)
-        assert "Gleaning process converged successfully" in caplog.text
-        assert "Average per round" in caplog.text
+            GraphGleaner._log_completion_summary(stats, units_still_gaining=0)
+        assert stats.total_refinement_calls == 5
+        assert "2 rounds, 5 refinement calls" in caplog.text
+        assert "still gaining" not in caplog.text
         assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
-    def test_non_converged_summary(self, caplog) -> None:
+    def test_summary_notes_units_cut_off_by_max_rounds(self, caplog) -> None:
         with caplog.at_level(logging.INFO):
             GraphGleaner._log_completion_summary(
-                GleaningStats(convergence_achieved=False)
+                GleaningStats(num_failed_units=1), units_still_gaining=3
             )
+        assert "3 text units still gaining" in caplog.text
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warnings) == 1
-        assert "Gleaning process did not converge after 0 rounds" in caplog.text
-        # Zero rounds skips the per-round averages.
-        assert "Average per round" not in caplog.text
 
 
 # --------------------------------------------------------------------------- #
 # _perform_llm_refinement + glean_graph (mocked chain, no Bedrock)
 # --------------------------------------------------------------------------- #
-class TestGleanGraphOrchestration:
-    def _plan_for(self, name: str) -> dict:
-        return {
-            "refinement_plan": {
-                "quality_scores": {
-                    "completeness_score": 0.9,
-                    "accuracy_score": 0.9,
-                },
-                "identified_issues": {
-                    "issue": {
-                        "issue_type": "MISSING_ENTITY",
-                        "details": {"name": name, "type": "PERSON"},
-                    }
-                },
+def _missing_entity_plan(name: str | None) -> dict:
+    """A refinement answer adding entity ``name``, or an empty answer for None."""
+    issues = (
+        {
+            "issue": {
+                "issue_type": "MISSING_ENTITY",
+                "details": {"name": name, "type": "PERSON"},
             }
         }
+        if name
+        else {}
+    )
+    return {"refinement_plan": {"identified_issues": issues}}
 
+
+class TestGleanGraphOrchestration:
     def test_perform_llm_refinement_collects_new_entities(
         self, gleaner, mocker
     ) -> None:
@@ -769,12 +684,12 @@ class TestGleanGraphOrchestration:
         # batch returns one refinement plan per input, in order.
         gleaner.graph_refiner = mocker.Mock()
         gleaner.graph_refiner.batch.return_value = [
-            self._plan_for("Alpha"),
-            self._plan_for("Beta"),
+            _missing_entity_plan("Alpha"),
+            _missing_entity_plan("Beta"),
         ]
-        new_e, new_r, scores = gleaner._perform_llm_refinement(units, [], [])
+        new_e, new_r = gleaner._perform_llm_refinement(units, [], [])
         assert {e.name.lower() for e in new_e} == {"alpha", "beta"}
-        assert scores["completeness"] == pytest.approx(0.9)
+        assert new_r == []
 
     def test_perform_llm_refinement_ignore_errors_returns_empty(
         self, gleaner, mocker
@@ -788,10 +703,10 @@ class TestGleanGraphOrchestration:
         gleaner.batch_processor.execute_with_fallback.side_effect = RuntimeError(
             "hard failure"
         )
-        new_e, new_r, scores = gleaner._perform_llm_refinement(
+        new_e, new_r = gleaner._perform_llm_refinement(
             [TextUnit(id="t1", text="a")], [], []
         )
-        assert new_e == [] and new_r == [] and scores == {}
+        assert new_e == [] and new_r == []
         assert gleaner._failed_unit_ids == ["t1"]
 
     def test_glean_graph_counts_failed_unit_refinements(self, gleaner, mocker) -> None:
@@ -801,7 +716,7 @@ class TestGleanGraphOrchestration:
         gleaner.batch_processor = mocker.Mock()
         # execute_with_fallback marks an item that failed every retry.
         gleaner.batch_processor.execute_with_fallback.return_value = [
-            self._plan_for("Alpha"),
+            _missing_entity_plan("Alpha"),
             BATCH_ITEM_FAILED,
         ]
 
@@ -809,6 +724,30 @@ class TestGleanGraphOrchestration:
 
         assert stats.num_failed_units == 1
         assert stats.failed_text_unit_ids == ["t2"]
+
+    def test_failed_unit_is_not_regleaned_and_failures_sum_over_rounds(
+        self, gleaner, mocker
+    ) -> None:
+        gleaner.gleaning_config.max_rounds = 3
+        units = [TextUnit(id="t1", text="a"), TextUnit(id="t2", text="b")]
+        answers = iter(
+            [
+                [_missing_entity_plan("Alpha"), BATCH_ITEM_FAILED],
+                [BATCH_ITEM_FAILED],
+            ]
+        )
+        gleaner.graph_refiner = mocker.Mock()
+        gleaner.batch_processor = mocker.Mock()
+        gleaner.batch_processor.execute_with_fallback.side_effect = (
+            lambda **kwargs: next(answers)
+        )
+
+        _, _, stats = gleaner.glean_graph(units, [], [])
+
+        # Round 1: t2 fails, t1 gains. Round 2: only t1, which fails -> stop.
+        assert [r.units_gleaned for r in stats.rounds] == [2, 1]
+        assert stats.num_failed_units == 2
+        assert stats.failed_text_unit_ids == ["t1", "t2"]
 
     def test_perform_llm_refinement_reraises_when_not_ignoring(
         self, gleaner, mocker
@@ -822,82 +761,118 @@ class TestGleanGraphOrchestration:
         with pytest.raises(RuntimeError, match="hard failure"):
             gleaner._perform_llm_refinement([TextUnit(id="t1", text="a")], [], [])
 
-    def test_glean_graph_runs_rounds_and_converges(self, gleaner, mocker) -> None:
-        units = [TextUnit(id="t1", text="a")]
-        gleaner.graph_refiner = mocker.Mock()
-        # Each round discovers the SAME entity name -> merges into existing,
-        # entities_added clamps to 0 after round 1 -> convergence -> stop.
-        gleaner.graph_refiner.batch.return_value = [self._plan_for("Stable")]
 
-        ents, rels, stats = gleaner.glean_graph(
-            text_units=units,
-            initial_entities=[_ent("e0", "Seed")],
-            initial_relationships=[],
-        )
-        assert isinstance(stats, GleaningStats)
-        assert stats.total_rounds >= 1
-        assert stats.total_rounds <= gleaner.gleaning_config.max_rounds
-        # Seed entity survives.
-        assert any(e.name.lower() == "seed" for e in ents)
-        # convergence_achieved set when a stop condition fired.
-        assert stats.final_quality_score >= 0.0
-
-
-class TestRegleanOnlyUnitsThatGained:
+# --------------------------------------------------------------------------- #
+# Stop rule: at most max_rounds per unit, re-glean only units that gained
+# --------------------------------------------------------------------------- #
+class TestStopRule:
     @staticmethod
-    def _plan(name: str | None) -> dict:
-        issues = (
-            {
-                "issue": {
-                    "issue_type": "MISSING_ENTITY",
-                    "details": {"name": name, "type": "PERSON"},
-                }
-            }
-            if name
-            else {}
-        )
-        return {
-            "refinement_plan": {
-                "quality_scores": {"completeness_score": 0.5, "accuracy_score": 0.5},
-                "identified_issues": issues,
-            }
-        }
-
-    def test_second_round_sends_only_units_with_new_items(
-        self, gleaner, mocker
-    ) -> None:
-        gleaner.gleaning_config.max_rounds = 2
-        gleaner.gleaning_config.convergence_threshold = 0.0001
-        gleaner.gleaning_config.min_improvement_threshold = 0.0
-        units = [TextUnit(id="t1", text="a"), TextUnit(id="t2", text="b")]
+    def _run(gleaner, mocker, answer, units, entities=(), relationships=()):
+        """Run glean_graph with ``answer(round, unit_index)`` as the model."""
         sent: list[int] = []
 
         def _batch(inputs, *args, **kwargs):
             sent.append(len(inputs))
-            if len(sent) == 1:
-                # Round 1: only t1 yields a new entity.
-                return [self._plan("Alpha"), self._plan(None)]
-            return [self._plan(None)] * len(inputs)
+            return [answer(len(sent), i) for i in range(len(inputs))]
 
         gleaner.graph_refiner = mocker.Mock()
         gleaner.graph_refiner.batch.side_effect = _batch
-        gleaner._should_stop_gleaning = lambda *a, **k: False  # type: ignore[method-assign]
+        _, _, stats = gleaner.glean_graph(units, list(entities), list(relationships))
+        return sent, stats
 
-        _, _, stats = gleaner.glean_graph(units, [], [])
+    def test_stops_at_max_rounds_while_units_keep_gaining(
+        self, gleaner, mocker
+    ) -> None:
+        gleaner.gleaning_config.max_rounds = 3
+        sent, stats = self._run(
+            gleaner,
+            mocker,
+            lambda round_num, _: _missing_entity_plan(f"New{round_num}"),
+            [TextUnit(id="t1", text="a")],
+        )
+        assert sent == [1, 1, 1]
+        assert stats.total_rounds == 3
+        assert stats.total_entities_added == 3
+        assert stats.total_refinement_calls == 3
+
+    def test_second_round_sends_only_units_with_new_items(
+        self, gleaner, mocker
+    ) -> None:
+        gleaner.gleaning_config.max_rounds = 3
+        units = [TextUnit(id="t1", text="a"), TextUnit(id="t2", text="b")]
+
+        def _answer(round_num: int, index: int) -> dict:
+            # Round 1: only t1 adds an entity; nobody adds anything afterwards.
+            return _missing_entity_plan(
+                "Alpha" if round_num == 1 and index == 0 else None
+            )
+
+        sent, stats = self._run(gleaner, mocker, _answer, units)
 
         assert sent == [2, 1]
+        assert [r.units_gained for r in stats.rounds] == [1, 0]
         assert stats.total_rounds == 2
 
-    def test_stops_when_no_unit_gained(self, gleaner, mocker) -> None:
+    def test_empty_answer_stops_the_unit(self, gleaner, mocker) -> None:
+        # An empty <identified_issues> is the model saying nothing is missing.
         gleaner.gleaning_config.max_rounds = 3
-        gleaner.graph_refiner = mocker.Mock()
-        gleaner.graph_refiner.batch.return_value = [self._plan(None)]
-        gleaner._should_stop_gleaning = lambda *a, **k: False  # type: ignore[method-assign]
+        sent, stats = self._run(
+            gleaner,
+            mocker,
+            lambda *_: _missing_entity_plan(None),
+            [TextUnit(id="t1", text="a")],
+        )
+        assert sent == [1]
+        assert stats.total_rounds == 1
+        assert stats.total_entities_added == 0
 
-        _, _, stats = gleaner.glean_graph([TextUnit(id="t1", text="a")], [], [])
+    def test_reproposing_a_known_entity_is_not_a_gain(self, gleaner, mocker) -> None:
+        # The answer names an entity the graph already has (it merges away), so
+        # the unit gained nothing and is not re-sent.
+        gleaner.gleaning_config.max_rounds = 3
+        seed = _ent("e0", "Stable", text_unit_ids=["t1"])
+        sent, stats = self._run(
+            gleaner,
+            mocker,
+            lambda *_: _missing_entity_plan("stable"),
+            [TextUnit(id="t1", text="a")],
+            entities=[seed],
+        )
+        assert sent == [1]
+        assert stats.total_entities_added == 0
 
-        assert gleaner.graph_refiner.batch.call_count == 1
-        assert stats.convergence_achieved is True
+    def test_new_relationship_alone_is_a_gain(self, gleaner, mocker) -> None:
+        gleaner.gleaning_config.max_rounds = 2
+        alice = _ent("e-alice", "Alice", text_unit_ids=["t1"])
+        acme = _ent("e-acme", "Acme", text_unit_ids=["t1"])
+
+        def _answer(round_num: int, _: int) -> dict:
+            if round_num > 1:
+                return _missing_entity_plan(None)
+            return {
+                "refinement_plan": {
+                    "identified_issues": {
+                        "issue": {
+                            "issue_type": "MISSING_RELATIONSHIP",
+                            "details": {
+                                "source": "Alice",
+                                "target": "Acme",
+                                "type": "WORKS_AT",
+                            },
+                        }
+                    }
+                }
+            }
+
+        sent, stats = self._run(
+            gleaner,
+            mocker,
+            _answer,
+            [TextUnit(id="t1", text="a")],
+            entities=[alice, acme],
+        )
+        assert sent == [1, 1]
+        assert stats.total_relationships_added == 1
 
 
 def test_default_gleaning_keeps_three_rounds() -> None:

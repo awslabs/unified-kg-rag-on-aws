@@ -284,22 +284,12 @@ processing:
   # Gleaning (Iterative Information Extraction)
   gleaning:
     enabled: true
-    # 1 = MS GraphRAG's default max_gleanings. Later rounds re-glean only the
-    # text units that yielded new items in the previous round.
+    # Rounds per text unit; 1 = MS GraphRAG's default max_gleanings. Later
+    # rounds re-glean only the units whose previous answer added a new entity
+    # or relationship, so a unit stops once an answer adds nothing new.
     max_rounds: 3
-    convergence_threshold: 0.8
-    quality_threshold: 0.9
-    min_improvement_threshold: 0.05
     max_entities_per_prompt: 100
     max_relationships_per_prompt: 100
-    # Scaling constants for the count-based quality/convergence estimates
-    # (defaults shown; tune per corpus scale rather than hardcoding).
-    quality_completeness_weight: 0.6
-    initial_quality_entity_scale: 50
-    initial_quality_relationship_scale: 100
-    # New entities+relationships per gleaned text unit counted as a full
-    # unit of change in the convergence score.
-    convergence_change_scale: 20
 
   # Claim Extraction
   claim_extraction:

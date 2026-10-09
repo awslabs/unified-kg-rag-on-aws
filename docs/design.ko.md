@@ -178,7 +178,7 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 | 3 | 청킹 | `chunker.py` (`ChunkerFactory`) | simple / intelligent(LLM 시맨틱) |
 | 4 | 번역 (선택) | `translator.py` | 다국어 → 대상 언어 |
 | 5 | 그래프 추출 | `graph_extractor.py` | LLM 엔티티/관계 추출 |
-| 6 | Gleaning (선택) | `gleaner.py` | 반복 정제(수렴/품질 임계값은 설정) |
+| 6 | Gleaning (선택) | `gleaner.py` | 반복 정제: 텍스트 단위당 최대 `max_rounds`회, 직전 응답에서 새 항목이 나온 단위만 다시 처리 |
 | 7 | 그래프 해석 | `graph_resolver.py` + `description_summarizer.py` | 퍼지 매칭 병합, `text_unit_ids` union, **병합 설명 LLM 재요약** |
 | 8 | Claim 추출 (선택) | `claim_extractor.py` | 사실 주장(covariate) |
 | 9 | Claim 해석 (선택) | `claim_resolver.py` | |
@@ -204,7 +204,7 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 
 **일반화 적용 사례**:
 - 관련성 게이트(claim/gleaning에서 어떤 엔티티를 프롬프트에 넣을지)는 토큰-Jaccard 정규표현식 휴리스틱이 아니라 `text_unit_ids` 계보 멤버십으로 판정 → 정확·언어 무관.
-- gleaning 품질/수렴 공식의 스케일 상수(엔티티 50, 관계 100, completeness 가중치 0.6, 변화 스케일 20)는 모두 `GleaningConfig`로 노출.
+- gleaning은 점수가 아니라 실제 결과로 텍스트 단위마다 멈춤 여부를 정합니다. 직전 응답이 그래프에 없던 엔티티나 관계를 추가한 단위만 `max_rounds`까지 다시 보냅니다. 빈 응답은 더 놓친 것이 없다는 모델의 답이며, MS GraphRAG가 별도 Y/N 루프 프롬프트로 묻는 신호와 같으므로 이를 위한 호출을 따로 쓰지 않습니다.
 
 ---
 
@@ -361,7 +361,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 `domain/models/config.py`의 중첩 Pydantic 트리(루트 `Config`), 로딩은 `shared/config.py`(`get_config`), 스키마 예시는 `config-template.yaml`.
 
 - 섹션: `aws`(bedrock/neptune/opensearch/s3/dynamodb), `fixing`, `processing`(chunking/translation/graph_extraction/gleaning/claim_extraction), `graph`(analysis/community_detection/visualization), `indexing`(opensearch/neptune), `search`(hybrid/fusion/reranking/global_search/drift_search/lightrag_search/token_manager), `memory`, `cache`, `logging`, `evaluation`, `custom_prompts`.
-- **설정 기반 일반화**: 언어→분석기 매핑(`language_analyzers`), OpenSearch clause budget(`max_total_clauses` 등), LightRAG 폴백 길이, gleaning 스케일 상수, eigenvector 수렴 파라미터 모두 설정 노출.
+- **설정 기반 일반화**: 언어→분석기 매핑(`language_analyzers`), OpenSearch clause budget(`max_total_clauses` 등), LightRAG 폴백 길이, eigenvector 수렴 파라미터 모두 설정 노출.
 - 새 설정 섹션 추가: Pydantic `BaseModel` 정의 → 부모에 `Field(default_factory=...)` 연결 → `config-template.yaml` 문서화.
 
 ---

@@ -809,7 +809,7 @@ class DataIngestionPipeline:
             "total_communities_detected": len(context.communities or []),
             "total_community_reports_generated": len(context.community_reports or []),
             "gleaning_improvement_rate": self._get_stage_metric(
-                context, "gleaning", "quality_improvement_rate"
+                context, "gleaning", "improvement_rate"
             ),
             "entity_resolution_merge_rate": self._get_stage_metric(
                 context, "graph_resolution", "entity_merge_rate"

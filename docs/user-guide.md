@@ -443,7 +443,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `processing.graph_extraction.description_summarization.enabled` | `true` | Re-summarize merged descriptions longer than `force_summary_threshold_tokens` (`600`) with an LLM. |
 | `processing.graph_extraction.entity_grounding.enabled` | `false` | Hallucination guard: drop (or, with `action: "penalize"`, down-weight) entities and relationships whose verbatim `source_text` span is absent from the chunk. Also gates gleaning additions. |
 | `processing.gleaning.enabled` | `true` | Extra extraction passes that catch missed entities and relationships. |
-| `processing.gleaning.max_rounds` | `3` | Gleaning rounds; later rounds re-glean only units that gained items. `1` matches MS GraphRAG's default. |
+| `processing.gleaning.max_rounds` | `3` | Gleaning rounds per text unit. A later round re-sends only the units whose previous answer added a new entity or relationship, so a unit stops as soon as an answer adds nothing new. `1` matches MS GraphRAG's default. |
 | `processing.claim_extraction.enabled` | `false` | Extract claims (one extra LLM call per text unit). When on, `local` search injects matching claims and `simple` search sweeps the claims index. |
 
 ### 2.4 `graph` — analysis, community detection, visualization
@@ -1337,7 +1337,7 @@ on).
 ### Cost notes
 
 LLM calls dominate cost. The biggest drivers: `graph_extraction` (one+ call per
-chunk), `gleaning` (`max_rounds` extra passes), `community_detection` report
+chunk), `gleaning` (up to `max_rounds` calls per chunk), `community_detection` report
 generation, `claim_extraction` (one call per text unit — off by default), and
 answer generation per query. Levers: use cheaper models for mechanical stages
 (chunking / translation / map-reduce / description summarization already default

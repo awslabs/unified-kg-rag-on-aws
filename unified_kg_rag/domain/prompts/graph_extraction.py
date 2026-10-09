@@ -282,24 +282,7 @@ class GraphRefinementPrompt(BasePrompt):
     system_prompt_template = """You are an expert knowledge graph refinement specialist. Analyze existing extractions
 against source text and identify specific, high-impact improvements.
 
-MISSION: Provide precise quality assessment and actionable improvement recommendations using the exact XML format
-specified.
-
-# QUALITY ASSESSMENT FRAMEWORK
-
-## Completeness Score (0.0-1.0):
-- **0.9-1.0**: All significant entities and relationships captured
-- **0.7-0.8**: Most important elements present, minor gaps
-- **0.5-0.6**: Key elements captured but notable omissions
-- **0.3-0.4**: Significant gaps in coverage
-- **0.0-0.2**: Major content not represented
-
-## Accuracy Score (0.0-1.0):
-- **0.9-1.0**: All entities and relationships match source perfectly
-- **0.7-0.8**: Minor naming or classification issues
-- **0.5-0.6**: Some factual errors present
-- **0.3-0.4**: Multiple accuracy problems
-- **0.0-0.2**: Significant misrepresentation
+MISSION: Provide actionable improvement recommendations using the exact XML format specified.
 
 # IMPROVEMENT TYPES
 
@@ -326,10 +309,6 @@ specified.
 # OUTPUT FORMAT (MANDATORY - use exact structure for EACH issue type)
 
 <refinement_plan>
-    <quality_scores>
-        <completeness_score>[0.0-1.0]</completeness_score>
-        <accuracy_score>[0.0-1.0]</accuracy_score>
-    </quality_scores>
     <identified_issues>
         <issue>
             <issue_type>MISSING_ENTITY</issue_type>
@@ -405,27 +384,24 @@ improvement recommendations.
 {relationships}
 
 ## ANALYSIS REQUIREMENTS:
-1. **Quality Assessment**: Provide completeness and accuracy scores (0.0-1.0)
-2. **Gap Analysis**: Identify missing entities and relationships with evidence, plus
+1. **Gap Analysis**: Identify missing entities and relationships with evidence, plus
    corrections for entities or relationships whose name, type or direction is wrong
-3. **Name Consistency**: Use entity names that exactly match current or new extractions
-4. **Evidence-Based**: Include exact quotes from source text
-5. **High-Impact Focus**: Prioritize improvements that significantly enhance understanding
+2. **Name Consistency**: Use entity names that exactly match current or new extractions
+3. **Evidence-Based**: Include exact quotes from source text
+4. **High-Impact Focus**: Prioritize improvements that significantly enhance understanding
 
 ## STEP-BY-STEP PROCESS:
 1. Compare source text comprehensively against current extractions
-2. Assess completeness and accuracy using the scoring framework
-3. Identify specific missing entities and relationships
-4. Verify all recommendations have clear textual evidence
-5. Ensure entity name consistency for relationships
-6. Format recommendations using the exact XML structure
+2. Identify specific missing entities and relationships
+3. Verify all recommendations have clear textual evidence
+4. Ensure entity name consistency for relationships
+5. Format recommendations using the exact XML structure
 
 ## CRITICAL REMINDERS:
 - All recommendations must be supported by exact text quotes
 - Entity names in relationships must match existing or newly proposed entities
 - Focus on meaningful improvements, not trivial additions
 - Use the mandatory XML format exactly as specified
-- Provide objective assessment scores with justification
 
 Begin analysis:"""
 

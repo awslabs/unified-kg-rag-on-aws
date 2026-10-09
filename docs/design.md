@@ -180,7 +180,7 @@ The `DataIngestionPipeline` in `application/ingestion/pipeline.py` runs 12 stage
 | 3 | Chunking | `chunker.py` (`ChunkerFactory`) | simple / intelligent (LLM semantic) |
 | 4 | Translation (optional) | `translator.py` | multilingual → target language |
 | 5 | Graph extraction | `graph_extractor.py` | LLM entity/relationship extraction |
-| 6 | Gleaning (optional) | `gleaner.py` | iterative refinement (convergence/quality thresholds are config) |
+| 6 | Gleaning (optional) | `gleaner.py` | iterative refinement: up to `max_rounds` per text unit, re-gleaning only units whose last answer added something new |
 | 7 | Graph resolution | `graph_resolver.py` + `description_summarizer.py` | fuzzy-matching merge, `text_unit_ids` union, **LLM re-summarization of merged descriptions** |
 | 8 | Claim extraction (optional) | `claim_extractor.py` | factual assertions (covariate) |
 | 9 | Claim resolution (optional) | `claim_resolver.py` | |
@@ -206,7 +206,7 @@ The `DataIngestionPipeline` in `application/ingestion/pipeline.py` runs 12 stage
 
 **Generalization in practice**:
 - The relevance gate (which entities to include in the prompt for claim/gleaning) is decided by `text_unit_ids` lineage membership rather than a token-Jaccard regex heuristic → accurate and language-independent.
-- The scale constants in the gleaning quality/convergence formula (entities 50, relationships 100, completeness weight 0.6, change scale 20) are all exposed via `GleaningConfig`.
+- Gleaning stops per text unit on observed output, not on scores: a unit is re-sent (up to `max_rounds`) only while its previous answer added an entity or relationship the graph did not have. An empty answer is the model saying nothing more is missing, the signal MS GraphRAG asks for with a separate Y/N loop prompt, so no extra call is spent on it.
 
 ---
 
@@ -363,7 +363,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 The nested Pydantic tree in `domain/models/config.py` (root `Config`), loaded by `shared/config.py` (`get_config`); the schema example is `config-template.yaml`.
 
 - Sections: `aws` (bedrock/neptune/opensearch/s3/dynamodb), `fixing`, `processing` (chunking/translation/graph_extraction/gleaning/claim_extraction), `graph` (analysis/community_detection/visualization), `indexing` (opensearch/neptune), `search` (hybrid/fusion/reranking/global_search/drift_search/lightrag_search/token_manager), `memory`, `cache`, `logging`, `evaluation`, `custom_prompts`.
-- **Config-based generalization**: The language→analyzer mapping (`language_analyzers`), OpenSearch clause budget (`max_total_clauses`, etc.), LightRAG fallback length, gleaning scale constants, and eigenvector convergence parameters are all exposed via config.
+- **Config-based generalization**: The language→analyzer mapping (`language_analyzers`), OpenSearch clause budget (`max_total_clauses`, etc.), LightRAG fallback length, and eigenvector convergence parameters are all exposed via config.
 - Adding a new config section: Define a Pydantic `BaseModel` → attach to its parent via `Field(default_factory=...)` → document in `config-template.yaml`.
 
 ---

@@ -80,7 +80,9 @@ class PipelineMetrics(BaseModel):
         default=0, description="Text units whose claim extraction failed"
     )
     gleaning_improvement_rate: float = Field(
-        default=0.0, description="Improvement rate from gleaning process"
+        default=0.0,
+        description="Entities plus relationships gleaning added, per entity "
+        "and relationship extracted before it",
     )
     entity_resolution_merge_rate: float = Field(
         default=0.0, description="Rate of entity merging during resolution"

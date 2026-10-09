@@ -79,9 +79,7 @@ def _extraction(text: str) -> str:
 
 
 _REFINEMENT = (
-    "<refinement_plan><quality_scores><completeness_score>0.9</completeness_score>"
-    "<accuracy_score>0.9</accuracy_score></quality_scores>"
-    "<identified_issues></identified_issues></refinement_plan>"
+    "<refinement_plan><identified_issues></identified_issues></refinement_plan>"
 )
 _REPORT = (
     "<community_name>Widget supply chain partners</community_name>"
@@ -186,6 +184,9 @@ def test_stages_run_end_to_end_and_report_a_failed_extraction() -> None:
     gleaning.gleaner.use_process_pool = False
     metrics = _run(gleaning, context)
     assert metrics["failed_units"] == 0
+    # The empty answer adds nothing, so every unit is gleaned exactly once.
+    assert metrics["improvement_rate"] == 0.0
+    assert metrics["refinement_calls"] == metrics["text_units_processed"]
     assert len(context.entities) == 3 and len(context.relationships) == 2
 
     resolution = ps.GraphResolutionStage(config, providers=providers)
