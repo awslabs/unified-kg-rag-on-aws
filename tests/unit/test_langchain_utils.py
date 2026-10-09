@@ -877,3 +877,15 @@ def test_matched_closing_tags_are_untouched() -> None:
     assert (
         RobustXMLOutputParser._drop_unmatched_closing_tags("<a>x</z></a>") == "<a>x</a>"
     )
+
+
+def test_wrong_record_end_tag_closes_the_open_record() -> None:
+    raw = (
+        "<relationships>"
+        "<relationship><source>A</source><target>B</target></entity>"
+        "<relationship><source>B</source><target>C</target></relationship>"
+        "</relationships>"
+    )
+    parsed = RobustXMLOutputParser(tags=["relationships"]).parse(raw)
+    rels = parsed["relationships"]["relationship"]
+    assert [(r["source"], r["target"]) for r in rels] == [("A", "B"), ("B", "C")]
