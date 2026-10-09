@@ -130,7 +130,7 @@ class TestLegacyLookups:
             assign_registry_source(document, "/corpus")
         return docs
 
-    def test_new_documents_are_looked_up_in_one_batch(self) -> None:
+    def test_absent_legacy_keys_are_not_read(self) -> None:
         store = _CountingStore()
         docs = self._docs(250)
         legacy = {document_doc_id(d): legacy_doc_id(d) for d in docs}
@@ -140,8 +140,9 @@ class TestLegacyLookups:
         )
 
         assert len(delta.new) == 250
+        # The diff already shows that no legacy key is stored: nothing is read.
         assert store.gets == 0
-        assert store.batches == [250]
+        assert store.batches == []
 
     def test_a_legacy_record_is_adopted_through_the_batch(self) -> None:
         store = _CountingStore()
@@ -164,6 +165,7 @@ class TestLegacyLookups:
         assert delta.unchanged == [document_doc_id(first)]
         assert len(delta.new) == 2 and delta.deleted == []
         assert store.gets == 0
+        assert store.batches == [1]
         assert store.get(legacy_doc_id(first)) is None
         assert store.get(document_doc_id(first)).entity_ids == ["e1"]
 

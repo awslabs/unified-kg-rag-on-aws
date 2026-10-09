@@ -470,6 +470,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (`merge.merger.merge_descriptions`); the resolver also compares lines
   rather than whole descriptions. Descriptions written before stay as they
   are until the item is re-extracted or the index is rebuilt (#190).
+- An interrupted adoption of a doc-status record written before scopes
+  existed is now completed. When a run had written the record under its
+  scoped key but stopped before deleting the old key, the old record (scope
+  unset, so never a deletion candidate) stayed forever and kept the previous
+  version's text units, entities and relationships referenced, so a later
+  edit or deletion left that content indexed. Any such legacy key is now
+  deleted once its current-key record exists. The diff now also reports
+  which legacy keys are stored, so only those are read (#PR).
 - Delta detection looks up the pre-scope registry keys of new documents in
   batches instead of one DynamoDB `GetItem` per document on every run (1,000
   new documents were 1,000 sequential reads, repeated until they were

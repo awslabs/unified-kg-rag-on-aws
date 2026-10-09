@@ -213,21 +213,25 @@ def detect_delta(
         recomputing hashes).
     """
     fingerprints = fingerprint_documents(documents)
-    delta = (
-        doc_status.diff(fingerprints)
-        if scope is None
-        else doc_status.diff(fingerprints, scope=scope)
-    )
-    if (
-        scope is not None
-        and legacy_doc_ids
-        and adopt_legacy_records(doc_status, delta, legacy_doc_ids, scope)
-    ):
-        # The legacy keys are looked up on every run (batched, see
-        # adopt_legacy_records); only when a record was re-keyed or a stale
-        # legacy key deleted is the corpus diffed again, so the adopted
-        # records classify like any other stored document.
+    if scope is None:
+        delta = doc_status.diff(fingerprints)
+    elif not legacy_doc_ids:
         delta = doc_status.diff(fingerprints, scope=scope)
+    else:
+        # The legacy keys and the failed files' keys ride along in the diff,
+        # so its one scan also tells which of them are stored: only those are
+        # read (batched) by adopt_legacy_records.
+        delta, stored = _diff_with_probes(
+            doc_status,
+            fingerprints,
+            scope,
+            [*legacy_doc_ids.values(), *failed_doc_ids],
+        )
+        if adopt_legacy_records(doc_status, delta, legacy_doc_ids, scope, stored):
+            # The adopted records now sit under this run's keys: diff again
+            # so they classify like any other stored document (only on a run
+            # that re-keyed or deleted a legacy record).
+            delta = doc_status.diff(fingerprints, scope=scope)
     if max_failures is not None and delta.changed:
         _stop_retrying_exhausted(delta, doc_status, fingerprints, max_failures)
     failed = set(failed_doc_ids) - set(fingerprints)
@@ -250,36 +254,65 @@ def detect_delta(
     return delta, fingerprints
 
 
+# Content hash of a probe in ``_diff_with_probes``: no stored record has it.
+_PROBE_HASH = ""
+
+
+def _diff_with_probes(
+    doc_status: DocStatusPort,
+    fingerprints: dict[str, str],
+    scope: str,
+    probe_ids: Iterable[str],
+) -> tuple[DocumentDelta, set[str]]:
+    """Diff ``fingerprints`` and report which ``probe_ids`` are stored.
+
+    The probes are diffed with a hash no record has, so a stored probe reads
+    as changed and an absent one as new; both are then removed from the
+    delta. A probe is never a deletion candidate, which is what the probed
+    keys need: a legacy key or a failed file of this run is not deleted.
+    """
+    probes = {doc_id: _PROBE_HASH for doc_id in probe_ids if doc_id not in fingerprints}
+    delta = doc_status.diff({**probes, **fingerprints}, scope=scope)
+    stored = (set(delta.changed) | set(delta.unchanged)) & probes.keys()
+    delta.new = [doc_id for doc_id in delta.new if doc_id not in probes]
+    delta.changed = [doc_id for doc_id in delta.changed if doc_id not in probes]
+    delta.unchanged = [doc_id for doc_id in delta.unchanged if doc_id not in probes]
+    return delta, stored
+
+
 def adopt_legacy_records(
     doc_status: DocStatusPort,
     delta: DocumentDelta,
     legacy_doc_ids: Mapping[str, str],
     scope: str,
+    stored_ids: set[str] | None = None,
 ) -> int:
     """Re-key this scope's legacy-keyed records to the current ``doc_id``.
 
     A record stored under the legacy key is adopted when its scope is
     ``scope``, or ``None`` (written before scopes existed, which the legacy key
     matched for any run): it is written under the current key with its content
-    hash, status and lineage, then the legacy key is deleted. Only ids
-    without a current record (``delta.new`` and the failed files) are looked
-    up, plus those whose legacy key ``delta`` lists as deleted: those already
-    have a current record (an adoption interrupted between the write and the
-    delete), so only the stale legacy key is deleted. A legacy record of
-    another scope is left untouched, so that scope adopts it on its own run.
-    The lookups run on every run and are batched
-    (:meth:`DocStatusPort.get_many`), so a corpus of new documents costs a
-    few batch reads rather than one read per document.
+    hash, status and lineage, then the legacy key is deleted. When the current
+    key already has a record (an adoption interrupted between the write and
+    the delete), only the stale legacy key is deleted, whatever its scope
+    (``scope`` or ``None``), so it does not keep the previous version's
+    artifacts referenced. A legacy record of another scope is left untouched,
+    so that scope adopts it on its own run.
+
+    Args:
+        stored_ids: The legacy keys, and the current keys of the failed files,
+            known to be stored (see :func:`_diff_with_probes`). Only those are
+            read, in one batch (:meth:`DocStatusPort.get_many`). ``None``
+            reads every legacy key and every failed file's current key.
 
     Returns:
         The number of legacy keys adopted or deleted.
     """
     current = set(delta.changed) | set(delta.unchanged)
-    deleted = set(delta.deleted)
     lookups = {
         doc_id: legacy_id
         for doc_id, legacy_id in sorted(legacy_doc_ids.items())
-        if legacy_id != doc_id and (doc_id not in current or legacy_id in deleted)
+        if legacy_id != doc_id and (stored_ids is None or legacy_id in stored_ids)
     }
     legacy_records = _get_many(doc_status, lookups.values())
     candidates = {
@@ -288,10 +321,13 @@ def adopt_legacy_records(
         if legacy_id in legacy_records
         and legacy_records[legacy_id].scope in (scope, None)
     }
-    # A failed file is in neither ``delta.new`` nor ``current``: look its
-    # current key up before writing over it.
+    # A failed file is in neither ``delta.new`` nor ``current``.
     known = current | set(delta.new)
-    stored = _get_many(doc_status, [d for d in candidates if d not in known])
+    failed = [doc_id for doc_id in candidates if doc_id not in known]
+    if stored_ids is None:
+        stored = set(_get_many(doc_status, failed))
+    else:
+        stored = set(failed) & stored_ids
     adopted: list[str] = []
     for doc_id, legacy in candidates.items():
         if doc_id not in current and doc_id not in stored:

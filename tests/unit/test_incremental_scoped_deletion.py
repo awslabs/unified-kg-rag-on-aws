@@ -345,6 +345,60 @@ def test_an_interrupted_adoption_only_drops_the_stale_legacy_key(registry) -> No
     assert [r.doc_id for r in registry.list_all()] == [doc_id]
 
 
+@pytest.mark.parametrize("edited", [False, True])
+def test_an_interrupted_adoption_of_a_scopeless_record_drops_it(
+    registry, edited
+) -> None:
+    # Written before scopes existed (scope None), adopted under the current
+    # key, then interrupted before the legacy key was deleted. A scope-None
+    # record is never a deletion candidate, so only the adoption cleanup can
+    # remove it; left behind, it keeps the old version's artifacts referenced.
+    document = _scoped_document("a.txt", "Vendor ships goods.")
+    legacy = _legacy_record(document, None)
+    doc_id = document_doc_id(document)
+    registry.put(legacy)
+    registry.put(legacy.model_copy(update={"doc_id": doc_id, "scope": _SCOPE}))
+    if edited:
+        document = _scoped_document("a.txt", "Vendor ships other goods.")
+
+    delta, _ = detect_delta(
+        [document],
+        registry,
+        scope=_SCOPE,
+        legacy_doc_ids={doc_id: legacy_doc_id(document)},
+    )
+
+    assert (delta.changed if edited else delta.unchanged) == [doc_id]
+    assert delta.new == delta.deleted == []
+    assert [r.doc_id for r in registry.list_all()] == [doc_id]
+    assert registry.get(doc_id).entity_ids == ["e1"]
+
+
+def test_an_interrupted_adoption_of_a_failed_file_drops_the_legacy_key(
+    registry,
+) -> None:
+    document = _scoped_document("a.txt", "Vendor ships goods.")
+    legacy = _legacy_record(document, None)
+    doc_id = document_doc_id(document)
+    registry.put(legacy)
+    current = legacy.model_copy(
+        update={"doc_id": doc_id, "scope": _SCOPE, "entity_ids": ["e2"]}
+    )
+    registry.put(current)
+
+    delta, _ = detect_delta(
+        [],
+        registry,
+        scope=_SCOPE,
+        failed_doc_ids=[doc_id],
+        legacy_doc_ids={doc_id: legacy_doc_id(document)},
+    )
+
+    # The current record is kept as is (not overwritten by the legacy copy).
+    assert delta.failed == [doc_id] and delta.deleted == []
+    assert registry.list_all() == [current]
+
+
 def test_a_legacy_record_of_another_scope_is_not_adopted(registry) -> None:
     document = _scoped_document("a.txt", "Vendor ships goods.")
     other = _legacy_record(document, "default|s3://bucket/corpus-2/")

@@ -342,3 +342,27 @@ def test_a_legacy_record_of_another_scope_is_left_alone(registry, tmp_path) -> N
     assert not stack.model.extractions
     assert registry.get(legacy_id) is None
     assert len(registry.list_all()) == 2
+
+
+def test_an_interrupted_scopeless_adoption_does_not_keep_old_content(
+    registry, tmp_path
+) -> None:
+    stack = ScopeStack(registry, tmp_path)
+    source = write_corpus(tmp_path / "src-a", {"contract.txt": A_TEXT})
+    stack.run(source)
+    (current,) = registry.list_all()
+    # A record written before scopes existed, adopted under the current key
+    # by a run that stopped before deleting the legacy key.
+    registry.put(
+        current.model_copy(
+            update={"doc_id": compute_doc_id("contract.txt", "default"), "scope": None}
+        )
+    )
+
+    write_corpus(source, {"contract.txt": "Vendor supplies Depot."})
+    context = stack.run(source)
+
+    assert context.incremental_delta.changed == [current.doc_id]
+    assert stack.texts() == {"Vendor supplies Depot."}
+    assert stack.entity_names() == {"Vendor", "Depot"}
+    assert [r.doc_id for r in registry.list_all()] == [current.doc_id]
