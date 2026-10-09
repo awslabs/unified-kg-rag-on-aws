@@ -432,19 +432,19 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `Signed: ____` lines with an LLM line boundary between them. The repeated
   chunk matched the earlier copy inside the previous chunk and vanished from
   the merged span. Line-boundary slices are now located with no overlap
-  allowance, and any located chunk must end after the previous one (#PR).
+  allowance, and any located chunk must end after the previous one (#184).
 - `run-prompt-tuning` examples give each relationship an evidence span that
   mentions both its source and target. A sentence over 200 characters was cut
   to a window around the first name only, so the target could be missing; the
   window now covers every name (up to 400 characters, otherwise the record is
   left out). Japanese and Chinese sentence terminators (`。！？`) now end a
   sentence without needing a following space, so CJK spans are one sentence
-  rather than a whole paragraph (#PR).
+  rather than a whole paragraph (#184).
 - A resume reads and hash-checks each cached stage file once. Before, it
   read and hashed every file to verify the resume point, then read and hashed
   it all again to restore the context. The data loaded during verification
   is now reused for the restore, and an entry that fails its hash is still a
-  miss, so its stage is recomputed (#PR).
+  miss, so its stage is recomputed (#184).
 - The interactive graph HTML (`graph.html`, the community hierarchy) escapes
   node tooltips when pyvis renders them as HTML. Once any node title contained
   `href`, pyvis replaced the plain-text tooltip with a popup that sets
