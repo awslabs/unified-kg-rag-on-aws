@@ -101,6 +101,7 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `vpc_id` | _(none)_ | **reuse** an existing VPC instead of creating one. The stack adds **no** VPC endpoints or subnets to it (synth warns with the list): in `private` mode it needs `PRIVATE_ISOLATED` subnets (no NAT or internet gateway route), S3/DynamoDB gateway endpoints, and private-DNS interface endpoints for `bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`, `ecr.api`, `ecr.dkr`, `logs` and `sts`; in `public` mode it needs `PRIVATE_WITH_EGRESS` subnets (NAT route) |
 | `max_azs` | `2` | AZs for a newly-created VPC |
 | `cache_bucket_name` | _(none)_ | **reuse** an existing S3 cache bucket instead of creating one |
+| `corpus_bucket_name` | _(none)_ | S3 bucket the corpus is read from when it is not in the cache bucket: the task role gets read-only access and, in `private` mode, the S3 gateway endpoint policy allows it |
 | `neptune_instance` | `db.r6g.large` | Neptune instance class (Graviton) |
 | `neptune_instances` | `1` (dev) / `2` (non-dev) | Neptune instances; `>=2` ⇒ Multi-AZ HA (reader in another AZ). dev defaults to 1 (no failover) for cost |
 | `opensearch_instance` | `r6g.large.search` | OpenSearch data node type (Graviton) |
@@ -213,7 +214,11 @@ cdk deploy --all
    container entrypoint (`docker/entrypoint.sh`) syncs it to local scratch
    before running the CLI. The config file is fixed at `/app/config.yaml` in
    the image. The task role is granted read/write on the cache bucket only;
-   to read a corpus from another bucket, grant the role access to it.
+   to read a corpus from another bucket, deploy with
+   `-c corpus_bucket_name=<bucket>`. In `private` mode the S3 and DynamoDB
+   gateway endpoints only allow this deployment's cache/corpus buckets, its
+   doc-status table and the ECR image-layer bucket, so a bucket granted to the
+   role by hand is still unreachable from the tasks.
 
    The bucket's 30-day expiry applies only to the prefixes the app writes,
    `pipeline-runs/` (stage checkpoints) and `embedding-cache/`; any other

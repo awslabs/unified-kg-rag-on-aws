@@ -16,6 +16,7 @@ from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_logs as logs
+from aws_cdk import aws_s3 as s3
 from constructs import Construct
 
 from iac.config import DeploymentConfig
@@ -189,6 +190,12 @@ class ComputeStack(Stack):
         # DynamoDB doc-status registry + S3 cache (scoped to our resources).
         storage.doc_status_table.grant_read_write_data(role)
         storage.cache_bucket.grant_read_write(role)
+        if self.config.corpus_bucket_name:
+            # A corpus kept outside the cache bucket is only read (entrypoint
+            # `aws s3 sync`); the S3 endpoint policy allows it too.
+            s3.Bucket.from_bucket_name(
+                self, "CorpusBucket", self.config.corpus_bucket_name
+            ).grant_read(role)
         return role
 
     # ----------------------------------------------------- task definition

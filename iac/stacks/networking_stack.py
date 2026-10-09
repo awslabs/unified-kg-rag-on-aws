@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from aws_cdk import Annotations, RemovalPolicy, Stack
 from aws_cdk import aws_ec2 as ec2
+from aws_cdk import aws_iam as iam
 from aws_cdk import aws_logs as logs
 from constructs import Construct
 
@@ -148,11 +149,15 @@ class NetworkingStack(Stack):
     def _add_vpc_endpoints(self) -> None:
         vpc = self.vpc
         # Gateway endpoints are free; they also keep S3/DynamoDB off the NAT.
-        for name, gateway in GATEWAY_ENDPOINTS.items():
-            vpc.add_gateway_endpoint(f"{name}Endpoint", service=gateway)
+        gateways = {
+            name: vpc.add_gateway_endpoint(f"{name}Endpoint", service=gateway)
+            for name, gateway in GATEWAY_ENDPOINTS.items()
+        }
         if not self.config.is_private:
-            # Public mode reaches every other service through the NAT gateways.
+            # Public mode reaches every other service through the NAT gateways,
+            # so an endpoint policy would not bound where data can go.
             return
+        self._restrict_gateway_endpoints(gateways["S3"], gateways["DynamoDb"])
         # The endpoints get their own group, reachable on 443 from the data
         # plane SG only. Sharing ServiceSg (which OpenSearch also uses) with
         # CDK's default `open=True` would add 443-from-VPC-CIDR to it and open
@@ -176,6 +181,60 @@ class NetworkingStack(Stack):
                 open=False,
                 private_dns_enabled=True,
             )
+
+    def _restrict_gateway_endpoints(
+        self, s3: ec2.GatewayVpcEndpoint, dynamodb: ec2.GatewayVpcEndpoint
+    ) -> None:
+        """Limit the gateway endpoints to this deployment's buckets and table.
+
+        In private mode the gateways are the data plane's only route to S3 and
+        DynamoDB, so these policies stop a compromised task from reaching any
+        other bucket or table. They bound *where* requests go; the task role
+        still bounds *what* it may do, so actions are not repeated here.
+        """
+        partition, region, account = self.partition, self.region, self.account
+        buckets = [self.config.cache_bucket(account, region)]
+        if self.config.corpus_bucket_name:
+            buckets.append(self.config.corpus_bucket_name)
+        s3.add_to_policy(
+            iam.PolicyStatement(
+                sid="DeploymentBuckets",
+                principals=[iam.AnyPrincipal()],
+                actions=["s3:*"],
+                resources=[
+                    arn
+                    for b in buckets
+                    for arn in (
+                        f"arn:{partition}:s3:::{b}",
+                        f"arn:{partition}:s3:::{b}/*",
+                    )
+                ],
+            )
+        )
+        # Fargate pulls image layers from the ECR-owned layer bucket through
+        # this gateway (ECR user guide, "Minimum Amazon S3 Bucket Permissions
+        # for Amazon ECR").
+        s3.add_to_policy(
+            iam.PolicyStatement(
+                sid="EcrImageLayers",
+                principals=[iam.AnyPrincipal()],
+                actions=["s3:GetObject"],
+                resources=[
+                    f"arn:{partition}:s3:::prod-{region}-starport-layer-bucket/*"
+                ],
+            )
+        )
+        dynamodb.add_to_policy(
+            iam.PolicyStatement(
+                sid="DocStatusTable",
+                principals=[iam.AnyPrincipal()],
+                actions=["dynamodb:*"],
+                resources=[
+                    f"arn:{partition}:dynamodb:{region}:{account}:table/"
+                    f"{self.config.doc_status_table}"
+                ],
+            )
+        )
 
     def _warn_reused_vpc_requirements(self) -> None:
         # A reused VPC is imported as-is: nothing here adds endpoints or subnets,

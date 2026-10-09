@@ -113,7 +113,7 @@ class StorageStack(Stack):
         return s3.Bucket(
             self,
             "CacheBucket",
-            bucket_name=f"{self.config.prefix}-cache-{self.account}-{self.region}",
+            bucket_name=self.config.cache_bucket(self.account, self.region),
             encryption=(
                 s3.BucketEncryption.KMS
                 if self.kms_key
