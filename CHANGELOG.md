@@ -376,6 +376,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   timed-out or failed item is retried, with the same `max_attempts`.
   **Breaking** for direct callers: the synchronous method no longer takes
   `batch_func` (the async one still does) (#PR).
+- The Bedrock client's socket read timeout is 330 s, above
+  `BatchProcessor`'s 300 s call timeout. Both were 300 s, so a long
+  ingestion call raced them: when the socket timeout won, botocore silently
+  re-sent the call, which the call timeout then abandoned. Now the call
+  timeout ends such a call and the item is retried under the batch policy
+  (backoff, `max_attempts`, logged). An ingestion generation still has to
+  finish within the 300 s call timeout (#PR).
 - `cdk destroy` with `removal_destroy=true` (dev default) deletes the
   OpenSearch domain's app, slow-index and slow-search log groups. The domain
   created them with CDK's default `Retain`, so every dev teardown left three

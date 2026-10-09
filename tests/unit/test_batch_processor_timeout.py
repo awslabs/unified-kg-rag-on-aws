@@ -20,6 +20,7 @@ from collections.abc import Iterator
 
 import pytest
 
+from unified_kg_rag.adapters.aws.bedrock import BaseBedrockModelFactory
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 pytestmark = pytest.mark.unit
@@ -207,3 +208,11 @@ def test_chunk_concurrency_one_is_serial() -> None:
         show_progress=False,
     )
     assert results == [{"echo": 1}, {"echo": 2}, {"echo": 3}]
+
+
+def test_bedrock_read_timeout_outlasts_the_call_timeout() -> None:
+    # The wall-clock call timeout is the limit meant to end a long call: with
+    # an equal socket read timeout the two raced, and botocore's silent
+    # re-send on a read timeout was then abandoned by the call timeout.
+    call_timeout = BatchProcessor.model_fields["call_timeout_seconds"].default
+    assert BaseBedrockModelFactory.BOTO_READ_TIMEOUT > call_timeout
