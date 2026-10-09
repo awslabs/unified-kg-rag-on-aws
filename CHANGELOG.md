@@ -100,6 +100,8 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   API, `count_tokens_many` counts inline instead of starting an 8-thread pool
   per call. Budgeting 300 sections of 1.5 KB takes 24 ms instead of 476 ms,
   and 32 concurrent queries 0.8 s instead of 16 s (#176).
+- `iac/README.md` lists the prerequisites: Python 3.10+, Node.js 20+ and
+  AWS CDK CLI 2.1143.0 or later, AWS credentials and Docker (#PR).
 - The README quickstart runs the CLIs with `uv run`, which a `uv sync`
   install needs unless the virtual environment is activated (#PR).
 - The `docs/design.md` §15 "run without AWS" example passes a
