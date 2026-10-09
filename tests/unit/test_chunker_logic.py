@@ -212,6 +212,41 @@ class TestMergeOverlappingChunks:
         out = proc.merge_small_chunks(["first line", "second line"], source=text)
         assert out == [text]
 
+    @staticmethod
+    def _signed_text() -> tuple[str, str]:
+        body = "\n".join(
+            f"Clause {i}. The parties agree to the terms in schedule {i}."
+            for i in range(30)
+        )
+        signature = "Signed: ____________________"
+        return body + "\n" + signature + "\n\n" + signature, signature
+
+    def test_chunk_repeating_previous_tail_is_kept(self) -> None:
+        # The second chunk equals the first chunk's last line verbatim; it must
+        # not match that earlier copy and vanish from the merged span.
+        text, signature = self._signed_text()
+        cut = text.rindex(signature)
+        chunks = [text[:cut].strip(), text[cut:].strip()]
+        proc = ChunkProcessor(1000, 8000, chunk_overlap=500)
+        assert proc.merge_small_chunks(chunks, source=text) == [text]
+        assert proc.merge_small_chunks(chunks, source=text, overlap=0) == [text]
+
+    def test_disjoint_pieces_without_source_keep_repeated_seam(self) -> None:
+        text, signature = self._signed_text()
+        cut = text.rindex(signature)
+        chunks = [text[:cut].strip(), text[cut:].strip()]
+        proc = ChunkProcessor(1000, 8000, chunk_overlap=500)
+        (merged,) = proc.merge_small_chunks(chunks, overlap=0)
+        assert merged.count(signature) == 2
+
+    def test_overlapped_chunks_with_repeated_tail_merge_once(self) -> None:
+        # Overlapped splitter chunks still merge without duplicating overlap.
+        text = _words(200)
+        chunks = self._split(text, 600, 100)
+        assert len(chunks) > 1
+        proc = ChunkProcessor(2000, 8000, chunk_overlap=100)
+        assert proc.merge_small_chunks(chunks, source=text) == [text]
+
 
 # --------------------------------------------------------------------------- #
 # LineBasedBoundaryProcessor
@@ -602,6 +637,26 @@ class TestIntelligentChunkerHelpers:
 
     def test_extract_chunks_blank_text_empty_indices(self, intelligent_chunker) -> None:
         assert intelligent_chunker._extract_chunks_from_line_indices("   ", []) == []
+
+    def test_line_slices_keep_duplicate_trailing_lines(
+        self, intelligent_chunker
+    ) -> None:
+        # An LLM boundary between two identical closing lines: the merged
+        # chunk must keep both copies even with a splitter overlap configured.
+        intelligent_chunker.config.processing.chunking.max_chunk_size = 8000
+        intelligent_chunker.chunk_processor = ChunkProcessor(
+            1000, 8000, chunk_overlap=500
+        )
+        body = "\n".join(
+            f"Clause {i}. The parties agree to the terms in schedule {i}."
+            for i in range(30)
+        )
+        signature = "Signed: ____________________"
+        text = body + "\n" + signature + "\n\n" + signature
+        out = intelligent_chunker._extract_chunks_from_line_indices(
+            text, [text.rindex(signature)]
+        )
+        assert out == [text]
 
     def test_split_large_line_chunks_splits_oversized(
         self, intelligent_chunker

@@ -345,20 +345,32 @@ class ChunkProcessor:
         self.chunk_overlap = chunk_overlap
 
     def merge_small_chunks(
-        self, chunks: list[str], source: str | None = None
+        self,
+        chunks: list[str],
+        source: str | None = None,
+        *,
+        overlap: int | None = None,
     ) -> list[str]:
+        """Merge undersized chunks into their neighbours.
+
+        ``overlap`` is the most text consecutive chunks may share (defaults to
+        ``chunk_overlap``, the splitter's overlap). Pass ``0`` for disjoint
+        pieces, e.g. slices cut at line boundaries, so text that legitimately
+        repeats across a seam is never mistaken for overlap and dropped.
+        """
         if not chunks:
             return []
 
+        max_overlap = self.chunk_overlap if overlap is None else overlap
         try:
-            spans = self._locate_spans(chunks, source) if source else None
+            spans = self._locate_spans(chunks, source, max_overlap) if source else None
 
             def joined(first: int, last: int) -> str:
                 if spans is not None and source is not None:
                     return source[spans[first][0] : spans[last][1]]
                 text = chunks[first]
                 for k in range(first + 1, last + 1):
-                    text = self._join_pair(text, chunks[k])
+                    text = self._join_pair(text, chunks[k], max_overlap)
                 return text
 
             groups: list[tuple[int, int]] = []
@@ -388,46 +400,52 @@ class ChunkProcessor:
             return chunks
 
     def _locate_spans(
-        self, chunks: list[str], source: str
+        self, chunks: list[str], source: str, max_overlap: int
     ) -> list[tuple[int, int]] | None:
         """Find each chunk's (start, end) in ``source``, in order.
 
         A chunk starts after the previous one and overlaps it by at most
-        ``chunk_overlap`` characters, which bounds the search so repeated text
-        earlier in the source cannot be matched. Returns None if any chunk is
-        not found, so the caller falls back to joining the chunk strings.
+        ``max_overlap`` characters, which bounds the search so repeated text
+        earlier in the source cannot be matched. Each chunk must also end
+        strictly after the previous one: a chunk that repeats the previous
+        chunk's tail verbatim would otherwise match that tail and be dropped
+        from the merged span, so the search is retried past the previous chunk.
+        Returns None if any chunk is not found, so the caller falls back to
+        joining the chunk strings.
         """
         spans: list[tuple[int, int]] = []
         for chunk in chunks:
-            if spans:
-                prev_start, prev_end = spans[-1]
-                search_from = max(prev_start + 1, prev_end - self.chunk_overlap)
-            else:
-                search_from = 0
+            if not spans:
+                start = source.find(chunk)
+                if start < 0:
+                    return None
+                spans.append((start, start + len(chunk)))
+                continue
+            prev_start, prev_end = spans[-1]
+            search_from = max(prev_start + 1, prev_end - max_overlap)
             start = source.find(chunk, search_from)
+            if 0 <= start and start + len(chunk) <= prev_end:
+                start = source.find(chunk, prev_end)
             if start < 0:
                 return None
-            end = start + len(chunk)
-            if spans and end < spans[-1][1]:
-                return None
-            spans.append((start, end))
+            spans.append((start, start + len(chunk)))
         return spans
 
-    def _join_pair(self, left: str, right: str) -> str:
-        overlap = self._seam_overlap(left, right)
+    def _join_pair(self, left: str, right: str, max_overlap: int) -> str:
+        overlap = self._seam_overlap(left, right, max_overlap)
         if overlap:
             # The remainder starts at whitespace (or is empty): no fused words.
             return left + right[overlap:]
         return left + self._JOIN_SEPARATOR + right
 
-    def _seam_overlap(self, left: str, right: str) -> int:
+    def _seam_overlap(self, left: str, right: str, max_overlap: int) -> int:
         """Length of the longest suffix of ``left`` that prefixes ``right``.
 
-        Bounded by ``chunk_overlap`` and accepted only at whitespace (or chunk)
+        Bounded by ``max_overlap`` and accepted only at whitespace (or chunk)
         boundaries on both sides, so a coincidental match of a few characters
         inside a word is not mistaken for the splitter's overlap.
         """
-        limit = min(self.chunk_overlap, len(left), len(right))
+        limit = min(max_overlap, len(left), len(right))
         for size in range(limit, 0, -1):
             if not left.endswith(right[:size]):
                 continue
@@ -927,7 +945,10 @@ class IntelligentTextChunker(BaseChunker):
                 if final_chunk:
                     chunks.append(final_chunk)
 
-            merged_chunks = self.chunk_processor.merge_small_chunks(chunks, source=text)
+            # Line-boundary slices are disjoint: allow no overlap between them.
+            merged_chunks = self.chunk_processor.merge_small_chunks(
+                chunks, source=text, overlap=0
+            )
 
             return self._split_large_line_chunks(merged_chunks)
 

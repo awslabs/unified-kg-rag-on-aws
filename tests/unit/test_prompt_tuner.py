@@ -374,3 +374,66 @@ class TestRenderExample:
         assert span is not None
         assert "Vendor" in span and span in text
         assert len(span) <= 200
+
+    def test_long_sentence_span_covers_every_name(self) -> None:
+        # 295-char sentence: the target sits ~280 chars after the source, so a
+        # 200-char window around the source alone would omit it.
+        text = (
+            "Acme Corp signed a supply agreement covering "
+            + "multiple product lines, regional logistics, and quarterly "
+            "volume commitments, " * 3 + "with Globex Inc."
+        )
+        assert len(text) == 295
+        span = PromptTuner._evidence_span(text, "Acme Corp", "Globex Inc")
+        assert span is not None and span in text
+        assert "Acme Corp" in span and "Globex Inc" in span
+
+    def test_close_names_in_long_sentence_get_a_bounded_window(self) -> None:
+        text = "x " * 300 + "Vendor pays Buyer " + "y " * 300
+        span = PromptTuner._evidence_span(text, "Buyer", "Vendor")
+        assert span is not None and span in text
+        assert "Vendor" in span and "Buyer" in span
+        assert len(span) <= 200
+
+    def test_names_too_far_apart_give_no_span(self) -> None:
+        text = "Vendor " + "z " * 400 + "Buyer"
+        assert PromptTuner._evidence_span(text, "Vendor", "Buyer") is None
+
+    def test_relationship_without_bounded_span_is_left_out(self) -> None:
+        from unified_kg_rag.domain.models import Relationship
+
+        text = "Vendor " + "z " * 400 + "Buyer"
+        rel = Relationship(
+            id="r1",
+            source_id="e1",
+            target_id="e2",
+            source_name="Vendor",
+            target_name="Buyer",
+            type="SUPPLIES",
+            description="Supplies.",
+        )
+        rendered = PromptTuner._render_example(text, [], [rel])
+        assert "SUPPLIES" not in rendered
+
+    def test_cjk_terminators_split_sentences_without_whitespace(self) -> None:
+        text = (
+            "アクメ社はグローベックス社と契約を締結した。"
+            + "契約には複数の製品ラインと物流と数量の約束が含まれる。" * 10
+            + "グローベックス社は東京に本社を置く！本当ですか？はい。"
+        )
+        assert (
+            PromptTuner._evidence_span(text, "グローベックス社")
+            == "アクメ社はグローベックス社と契約を締結した。"
+        )
+        assert (
+            PromptTuner._evidence_span(text, "東京")
+            == "グローベックス社は東京に本社を置く！"
+        )
+        assert PromptTuner._evidence_span(text, "本当") == "本当ですか？"
+
+    def test_latin_period_inside_a_token_is_not_a_boundary(self) -> None:
+        text = "Version 3.5 of the Vendor contract applies. Buyer agrees."
+        assert (
+            PromptTuner._evidence_span(text, "Vendor")
+            == "Version 3.5 of the Vendor contract applies."
+        )

@@ -308,3 +308,53 @@ class TestEmptyOutputIsStillOutput:
 
         assert start == EXTRACTION
         assert executed[0] == EXTRACTION
+
+
+def _record_chunked_run(pipeline: DataIngestionPipeline) -> None:
+    """Like ``_record_run``, but entities span several chunk files."""
+    context = _context()
+    context.entities = [Entity(id=f"e{i}", name=f"Vendor {i}") for i in range(5)]
+    pipeline.state_manager.save_pipeline_metadata(context)
+    pipeline.cache_manager.chunk_size = 2
+    pipeline._save_stage_outputs_to_cache(context, EXTRACTION)
+
+
+def _cached_files(root: Path) -> list[Path]:
+    return sorted((root / PIPELINE_ID / EXTRACTION).glob("*.json"))
+
+
+class TestResumeReadsCacheOnce:
+    @pytest.mark.parametrize("record", [_record_run, _record_chunked_run])
+    def test_each_cached_file_is_read_once(self, tmp_path, mocker, record) -> None:
+        record(_pipeline(Config(), tmp_path))
+        files = _cached_files(tmp_path)
+        assert files
+
+        reads: dict[Path, int] = {}
+        original = Path.read_text
+
+        def counting_read_text(path: Path, *args, **kwargs) -> str:
+            reads[path] = reads.get(path, 0) + 1
+            return original(path, *args, **kwargs)
+
+        mocker.patch.object(Path, "read_text", counting_read_text)
+        start, context, _ = _resume(_pipeline(Config(), tmp_path), mocker)
+
+        assert start == GLEANING
+        assert context.entities
+        assert {path: reads.get(path, 0) for path in files} == dict.fromkeys(files, 1)
+
+    @pytest.mark.parametrize("record", [_record_run, _record_chunked_run])
+    def test_corrupt_entry_is_recomputed(self, tmp_path, mocker, record) -> None:
+        # Same size, different bytes: only the content hash can catch it.
+        record(_pipeline(Config(), tmp_path))
+        target = next(f for f in _cached_files(tmp_path) if "entities" in f.name)
+        text = target.read_text(encoding="utf-8")
+        target.write_text(text.replace("Vendor", "Vendex", 1), encoding="utf-8")
+        assert len(target.read_text(encoding="utf-8")) == len(text)
+
+        start, context, executed = _resume(_pipeline(Config(), tmp_path), mocker)
+
+        assert start == EXTRACTION
+        assert [r.stage_name for r in context.stage_results] == []
+        assert executed[0] == EXTRACTION

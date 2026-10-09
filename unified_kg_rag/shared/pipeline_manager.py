@@ -381,6 +381,10 @@ class PipelineResumeManager:
         # Set by the pipeline once the run's corpus is known; folded into the
         # cache keys exactly as the save path folds it.
         self.corpus_fingerprint: str | None = None
+        # Stage outputs read while verifying the resume point, handed to
+        # restore_pipeline_context so a resume reads (and hash-checks) each
+        # cache file once rather than once to verify and again to restore.
+        self._verified_outputs: dict[tuple[str, str], Any] = {}
 
     def determine_resume_strategy(
         self, pipeline_id: str, explicit_stage: str | None = None
@@ -391,6 +395,7 @@ class PipelineResumeManager:
             f" from stage: {explicit_stage}" if explicit_stage else "",
         )
 
+        self._verified_outputs.clear()
         try:
             metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
             stage_results = metadata.get("stage_results", [])
@@ -422,8 +427,10 @@ class PipelineResumeManager:
             return result
 
         except PipelineResumeError:
+            self._verified_outputs.clear()
             raise
         except Exception as e:
+            self._verified_outputs.clear()
             logger.error(
                 "Failed to determine resume strategy for pipeline '%s': %s",
                 pipeline_id,
@@ -502,7 +509,7 @@ class PipelineResumeManager:
         fails here instead of running downstream stages on an empty context.
         """
         for stage_name in sorted(completed_stages, key=_canonical_index):
-            missing = self._missing_cache_keys(pipeline_id, stage_name)
+            missing = self._missing_cache_keys(pipeline_id, stage_name, load=True)
             if not missing:
                 continue
 
@@ -536,13 +543,16 @@ class PipelineResumeManager:
         return start_stage, completed_stages
 
     def _missing_cache_keys(
-        self, pipeline_id: str, stage_name: str
+        self, pipeline_id: str, stage_name: str, *, load: bool = False
     ) -> list[tuple[str, str]]:
         """List ``(context_attr, cache_key)`` for each output of ``stage_name``
         the cache does not hold under the current inputs.
 
         A stage with no cache mapping (document_parsing, indexing) produces
-        nothing the resume reads back, so there is nothing to verify.
+        nothing the resume reads back, so there is nothing to verify. With
+        ``load`` each output is loaded rather than only checked, and kept for
+        ``restore_pipeline_context``: the restore needs the data anyway, and
+        loading verifies the same hashes, so a corrupt entry is still a miss.
         """
         try:
             stage_type = PipelineStageType(stage_name)
@@ -554,9 +564,23 @@ class PipelineResumeManager:
             cache_key = stage_cache_key(
                 self.config, stage_type, context_attr, self.corpus_fingerprint
             )
-            if not self.cache_manager.cache_exists(cache_key, pipeline_id):
+            if load:
+                data = self._load_output(pipeline_id, context_attr, cache_key)
+                if data is None:
+                    missing.append((context_attr, cache_key))
+                else:
+                    self._verified_outputs[(pipeline_id, cache_key)] = data
+            elif not self.cache_manager.cache_exists(cache_key, pipeline_id):
                 missing.append((context_attr, cache_key))
         return missing
+
+    def _load_output(self, pipeline_id: str, context_attr: str, cache_key: str) -> Any:
+        model_class = self.CONTEXT_ATTR_TO_MODEL.get(context_attr)
+        return self.cache_manager.load_stage_result(
+            cache_key=cache_key,
+            pipeline_id=pipeline_id,
+            data_type=model_class if model_class else None,
+        )
 
     def _log_unbacked_stage(
         self, pipeline_id: str, stage_name: str, missing: list[tuple[str, str]]
@@ -624,6 +648,8 @@ class PipelineResumeManager:
             raise PipelineResumeError(
                 f"Failed to restore pipeline context for '{pipeline_id}': {e}"
             ) from e
+        finally:
+            self._verified_outputs.clear()
 
     def _load_stage_cache_data(
         self, pipeline_id: str, stage_name: str, context: PipelineContext
@@ -641,14 +667,12 @@ class PipelineResumeManager:
 
         for context_attr, _ in cache_mapping.items():
             try:
-                model_class = self.CONTEXT_ATTR_TO_MODEL.get(context_attr)
-                data: Any = self.cache_manager.load_stage_result(
-                    cache_key=stage_cache_key(
-                        self.config, stage_type, context_attr, self.corpus_fingerprint
-                    ),
-                    pipeline_id=pipeline_id,
-                    data_type=model_class if model_class else None,
+                cache_key = stage_cache_key(
+                    self.config, stage_type, context_attr, self.corpus_fingerprint
                 )
+                data: Any = self._verified_outputs.pop((pipeline_id, cache_key), None)
+                if data is None:
+                    data = self._load_output(pipeline_id, context_attr, cache_key)
 
                 if data is not None:
                     setattr(context, context_attr, data)
