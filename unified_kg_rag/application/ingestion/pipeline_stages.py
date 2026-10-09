@@ -58,7 +58,7 @@ from unified_kg_rag.shared import PipelineStageError, get_logger
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
-    from unified_kg_rag.ports import DocStatusPort
+    from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
 
 logger = get_logger(__name__)
 
@@ -326,11 +326,11 @@ class DocumentLoadingStage(PipelineStage):
             failed_files = self.loader.failed_files
             context.failed_source_files = list(failed_files)
 
-        # Incremental indexing: when the DynamoDB doc-status registry is enabled,
-        # diff against it, stash the delta/fingerprints for the IndexingStage, and
-        # process only new/changed documents.
+        # Incremental indexing: when a doc-status registry is injected or the
+        # DynamoDB one is enabled, diff against it, stash the delta/fingerprints
+        # for the IndexingStage, and process only new/changed documents.
         delta_skipped = 0
-        if self.config.aws.dynamodb.enabled:
+        if self._doc_status is not None or self.config.aws.dynamodb.enabled:
             documents, delta_skipped = self._apply_incremental_filter(
                 documents, context
             )
@@ -1287,10 +1287,15 @@ class IndexingStage(PipelineStage):
         boto_session: boto3.Session | None = None,
         doc_status: "DocStatusPort | None" = None,
         providers: Providers | None = None,
+        vector_indexer: "VectorIndexer | None" = None,
+        graph_indexer: "GraphIndexer | None" = None,
     ):
         super().__init__(PipelineStageType.INDEXING, config, boto_session, providers)
         self.indexing_manager = IndexingManager(
-            config=self.config, providers=self.providers
+            config=self.config,
+            providers=self.providers,
+            vector_indexer=vector_indexer,
+            graph_indexer=graph_indexer,
         )
         # Injected by the pipeline for the incremental commit/registry write-back.
         self._doc_status = doc_status
@@ -1339,8 +1344,8 @@ class IndexingStage(PipelineStage):
             # make the NEXT incremental run classify re-ingested docs as
             # "unchanged" (skipping them despite the graph having been wiped) and
             # leave rows for docs no longer in the corpus. Only relevant when the
-            # registry is enabled (incremental mode).
-            if self.config.aws.dynamodb.enabled:
+            # registry is in use (incremental mode).
+            if self._doc_status is not None or self.config.aws.dynamodb.enabled:
                 self._clear_doc_status_registry()
 
         if not self.indexing_manager.initialize():

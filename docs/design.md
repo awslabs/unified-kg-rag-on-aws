@@ -411,9 +411,9 @@ without subclassing or editing dispatch code. The ports and their default
 |---|---|---|---|
 | `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | `get_model()` / `get_model_info()` returning a LangChain-compatible model | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory` | a `Providers` bundle (see below): `GraphRAGChain(providers=...)`, `DataIngestionPipeline(..., providers=...)`, `EvaluationManager(..., providers=...)`; `GraphRAGChain(model_factory=...)` is shorthand for an LLM-only bundle |
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` | `Providers(token_counter_factory=...)` |
-| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` | `IndexingManager(vector_indexer=..., graph_indexer=...)` |
+| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` | `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` or `IndexingManager(vector_indexer=..., graph_indexer=...)` |
 | retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
-| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `list_all` / `diff` | `DynamoDBDocStatusStore` | pipeline accepts the store; conform structurally |
+| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `list_all` / `diff` | `DynamoDBDocStatusStore` | `DataIngestionPipeline(..., doc_status=...)` (turns incremental indexing on); conform structurally |
 | `CachePort` (`ports/cache.py`, `Protocol`) | get/set pipeline state | filesystem `CacheManager` | structural — no AWS needed by default |
 
 Because the model-factory and doc-status/cache ports are `runtime_checkable`
@@ -479,7 +479,10 @@ container: the bundle covers exactly the providers the framework consumes.
 
 The in-memory fakes in `tests/fixtures/fakes/` (e.g. `FakeGraphStore`,
 `FakeVectorStore`) are working reference implementations of the indexer ports —
-the whole ingestion+indexing pipeline runs against them with no AWS. They are
+the whole ingestion+indexing pipeline runs against them with no AWS
+(`DataIngestionPipeline(cfg, pipeline_config, providers=..., doc_status=...,
+vector_indexer=..., graph_indexer=...)`, exercised in
+`tests/integration/test_ingestion_stages.py`). They are
 the recommended starting point for a custom store. This framework ships only the
 AWS adapters; community/local adapters (e.g. NetworkX graph, a local vector DB,
 Ollama) are intended as add-on packages that implement these ports.

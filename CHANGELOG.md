@@ -20,6 +20,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   that failed deterministically was pruned and re-extracted on every run. The
   count is stored as `failure_count` on the doc-status record; records
   written before it existed read as `0` (#175).
+- `DataIngestionPipeline` accepts `doc_status`, `vector_indexer` and
+  `graph_indexer`, threaded to the loading and indexing stages, so the whole
+  pipeline runs on custom or in-memory backends through its public
+  constructor as `docs/design.md` §15 described. An injected `doc_status`
+  turns incremental indexing on without `aws.dynamodb.enabled` (#PR).
 - Claude Haiku 5.5 (`anthropic.claude-haiku-5-5`) in the model catalog: 1M
   context, 128K output, adaptive thinking with `effort` low–max, 512-token
   cache minimum, served through inference profiles only (#162).
