@@ -15,27 +15,35 @@
 
 ## 이 프레임워크를 쓰는 이유
 
-- **하나의 AWS 스택에서 두 방법론 사용.** GraphRAG(커뮤니티 요약)와 LightRAG(이중 수준 키워드)가 인제스천, 인덱싱, 캐싱, 검색 인프라를 공유하고 검색 알고리즘만 다릅니다. 방법론은 질의마다 선택합니다. 모든 답변에는 실제로 모델 컨텍스트에 들어간 출처가 함께 반환됩니다.
-- **3중 하이브리드 검색.** BM25 어휘 검색, 벡터 의미 검색, Neptune 그래프 순회 결과를 RRF(Reciprocal Rank Fusion)로 합치고 Bedrock 재순위 모델로 다시 정렬합니다.
+- **하나의 AWS 스택에서 두 방법론 사용.** GraphRAG(커뮤니티 요약)와 LightRAG(이중 레벨 키워드)가 수집, 인덱싱, 캐싱, 검색 인프라를 공유하고 검색 알고리즘만 다릅니다. 방법론은 질의마다 선택합니다. 모든 답변에는 실제로 모델 컨텍스트에 들어간 출처가 함께 반환됩니다.
+- **3중 하이브리드 검색.** BM25 어휘 검색, 벡터 의미 검색, Neptune 그래프 순회 결과를 RRF(Reciprocal Rank Fusion)로 합치고 Bedrock rerank 모델로 재순위화합니다.
 - **증분 인덱싱.** `aws.dynamodb`를 켜면 콘텐츠 해시 레지스트리가 새 문서와 변경된 문서만 다시 인덱싱해 운영 중인 그래프에 병합합니다. 문서를 삭제하면 다른 문서와 공유하지 않는 산출물만 제거합니다.
 - **다국어 지원.** 인덱싱과 질의 시점의 선택적 번역, 언어별 OpenSearch 분석기(예: 한국어 `nori`), 다국어 키워드 추출을 두 방법론 모두에 적용합니다.
 - **프롬프트 튜닝.** `run-prompt-tuning`이 코퍼스 표본을 분석(도메인, 언어, 페르소나, 엔티티 유형)해 도메인에 맞춘 `custom_prompts`를 생성합니다.
-- **그래프 인식 평가와 독립 시각화.** `run-eval`은 LangChain·RAGAS 지표에 결정적인 엔티티·관계 커버리지, 검색 hit@k/recall@k/MRR, 답변 exact match/token F1 지표를 더하고, `run-visualization`은 다시 인제스천하지 않고 내보낸 그래프를 렌더링합니다.
+- **그래프 인식 평가와 독립 시각화.** `run-eval`은 LangChain·RAGAS 지표에 결정적인 엔티티·관계 커버리지, 검색 hit@k/recall@k/MRR, 답변 exact match/token F1 지표를 더하고, `run-visualization`은 다시 수집하지 않고 내보낸 그래프를 렌더링합니다.
 - **교체 가능한 헥사고날 설계.** 스토리지와 모델 백엔드는 포트 뒤에 두고, 검색 전략·렌더러는 데코레이터 레지스트리로 등록하므로 디스패치 코드를 고치지 않고 추가할 수 있습니다. 새 평가기는 하위 클래스를 만들고 `EvaluationManager._resolve_evaluator_class`에 분기 하나를 추가합니다.
 
 ## 아키텍처
 
-![인제스천 파이프라인](./assets/ingestion_pipeline.png)
+![수집 파이프라인](./assets/ingestion_pipeline.png)
 
-인제스천은 중단 후 재개할 수 있는 12단계 파이프라인입니다. 파싱, 로딩, 청킹, (선택) 번역, LLM 기반 엔티티·관계 추출, (선택) gleaning, 중복 해소, (선택) claim 추출, 그래프 지표 계산, Leiden 커뮤니티 탐지와 LLM 커뮤니티 리포트 작성을 거쳐 OpenSearch와 Neptune에 인덱싱합니다. 단계별 체크포인트는 로컬에 캐시되며 S3와 동기화할 수 있습니다.
+수집은 중단 후 재개할 수 있는 12단계 파이프라인입니다. 파싱, 로딩, 청킹, (선택) 번역, LLM 기반 엔티티·관계 추출, (선택) 추가 추출(gleaning), 중복 해소, (선택) 주장 추출, 그래프 지표 계산, Leiden 커뮤니티 탐지와 LLM 커뮤니티 리포트 작성을 거쳐 OpenSearch와 Neptune에 인덱싱합니다. 단계별 체크포인트는 로컬에 캐시되며 S3와 동기화할 수 있습니다.
 
-![검색 파이프라인](./assets/retrieval_pipeline.png)
+```mermaid
+flowchart LR
+    query["Query + strategy"] --> qp["Query processing<br/>translation, entities or keywords"]
+    qp --> graphrag["GraphRAG<br/>simple, local, global, drift"]
+    qp --> lightrag["LightRAG<br/>naive, hybrid, mix"]
+    graphrag --> fuse["Fusion (RRF) + Bedrock rerank"]
+    lightrag --> fuse
+    fuse --> budget["Token budget"] --> answer["Answer + sources"]
+```
 
 모든 전략은 같은 하이브리드 스코어러와 토큰 예산을 거칩니다. CLI에서는 `--search-strategy`, Python에서는 `RAGInput.search_strategy`로 전략을 고릅니다.
 
 | 전략 | 방법론 | 적합한 경우 |
 |---|---|---|
-| `auto`(기본값) | GraphRAG | 어떤 전략이 맞을지 모를 때. LLM 라우터가 질의마다 `simple`, `local`, `global`, `drift` 중 하나를 고릅니다 |
+| `auto`(기본값) | GraphRAG | 어떤 전략이 맞을지 모를 때. LLM 라우터가 질의마다 `search.auto_routable_strategies`(기본값 `local`, `mix`, `global`, `drift`) 중 하나를 고릅니다 |
 | `simple` | GraphRAG | 빠른 사실 조회. 그래프 순회 없이 벡터와 키워드로 검색합니다 |
 | `local` | GraphRAG | 특정 엔티티와 그 관계에 대한 질문 |
 | `global` | GraphRAG | 넓은 범위나 주제 중심 질문. 커뮤니티 리포트에 map-reduce를 적용해 답합니다 |
@@ -44,14 +52,26 @@
 | `hybrid` | LightRAG | 키워드 중심의 그래프 질문. 청크 검색은 더하지 않습니다 |
 | `naive` | LightRAG | 빠른 벡터 전용 기준선과 비교 실험 |
 
-전략별 동작은 [사용자 가이드 §4](./docs/user-guide.ko.md#4-질의-run-rag)를, 레이어 구조·알고리즘·데이터 모델은 [설계 문서](./docs/design.ko.md)를 참고하세요.
+전략별 동작은 [사용자 가이드](./docs/user-guide.ko.md) §4를, 레이어 구조·알고리즘·데이터 모델은 [설계 문서](./docs/design.ko.md)를 참고하세요.
 
 ## 빠른 시작
+
+### 실행 방법 선택
+
+| 방식 | 그래프·벡터 저장소 | 모델 | 시작 방법 |
+|---|---|---|---|
+| **로컬 저장소**(개발용) | 컨테이너로 띄운 Gremlin Server와 OpenSearch([`docker/compose.local.yaml`](./docker/compose.local.yaml)) | Amazon Bedrock | `docker compose -f docker/compose.local.yaml up -d --wait`를 실행한 뒤 `--config-path docker/config.local.yaml`을 넘깁니다 |
+| **기존 AWS 리소스** | 사용 중인 Neptune 클러스터와 OpenSearch 도메인(그리고 S3 버킷, 증분 인덱싱을 쓰면 DynamoDB) | Amazon Bedrock | `config-template.yaml`을 `config.yaml`로 복사하고 엔드포인트를 입력합니다 |
+| **번들 CDK 스택** | [`iac/`](./iac/README.md)가 Fargate 데이터 플레인, Step Functions 수집 파이프라인과 함께 생성 | Amazon Bedrock | [AWS에 배포](#aws에-배포선택)를 진행한 뒤 [`iac/README.md`의 After deploy](./iac/README.md#after-deploy)를 따릅니다 |
+
+어느 방식이든 Amazon Bedrock을 호출하므로 먼저 [필요한 모델](./docs/user-guide.ko.md)의
+액세스를 활성화하세요. 로컬 저장소는 개발 전용입니다. 보안 강화가 되어 있지 않고 그래프를
+메모리에만 보관합니다.
 
 ### 사전 요구사항
 
 - Python 3.10–3.12와 [uv](https://docs.astral.sh/uv/) (`pip`도 사용할 수 있습니다).
-- Amazon Bedrock(사용할 모델의 액세스 활성화), Amazon Neptune 클러스터, Amazon OpenSearch Service 도메인, S3 버킷, 그리고 증분 인덱싱을 쓸 경우 DynamoDB에 접근할 수 있는 AWS 자격 증명. 프레임워크는 이미 있는 서비스에 연결만 합니다. 서비스를 새로 만들려면 [AWS에 배포](#aws에-배포선택)를 참고하세요.
+- Amazon Bedrock([필요한 모델](./docs/user-guide.ko.md)의 액세스 활성화)에 접근할 수 있는 AWS 자격 증명. 로컬 저장소를 쓰지 않는다면 Amazon Neptune 클러스터, Amazon OpenSearch Service 도메인, S3 버킷, 그리고 증분 인덱싱을 쓸 때만 DynamoDB에도 접근할 수 있어야 합니다. 프레임워크는 이미 있는 서비스에 연결만 합니다. 서비스를 새로 만들려면 [AWS에 배포](#aws에-배포선택)를 참고하세요.
 
 ### 설치와 설정
 
@@ -64,12 +84,12 @@ cp config-template.yaml config.yaml     # Bedrock 리전과 서비스 엔드포�
 
 OpenSearch가 IAM 대신 사용자 이름/비밀번호 인증을 쓴다면(`aws.opensearch.use_iam: false`) `.env-template`을 `.env`로 복사하고 자격 증명을 입력하세요. Markdown과 HTML을 파싱하려면 선택 extra인 `unstructured`가 필요합니다(Python 3.11 이상: `uv sync --extra unstructured`). PDF, TXT, CSV, JSON은 별도 설치 없이 처리합니다.
 
-### 인덱싱, 질의, 평가
+### 수집, 질의, 평가
 
 `uv run`은 프로젝트 환경에서 CLI를 실행합니다. `pip`으로 설치했다면 가상 환경을 활성화하고 `uv run` 없이 실행하세요.
 
 ```bash
-# 코퍼스 인덱싱 (aws.dynamodb를 켜면 증분 인덱싱)
+# 코퍼스 수집과 인덱싱 (aws.dynamodb를 켜면 증분 인덱싱)
 uv run run-ingestion --source-directory ./source --config-path config.yaml
 
 # 두 방법론 중 하나로 질의하거나 대화 메모리를 켜고 대화형으로 실행
@@ -89,7 +109,7 @@ uv run run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml
 
 ## AWS에 배포(선택)
 
-[`iac/`](./iac/README.md)의 AWS CDK 앱이 스택 전체를 만듭니다. 엔드포인트를 갖춘 VPC, Neptune, OpenSearch, DynamoDB 문서 상태 테이블, S3 캐시 버킷, ECS Fargate 데이터 플레인, Step Functions 인제스천 파이프라인, CloudWatch 대시보드와 경보, 선택적 Bedrock Guardrail이 포함됩니다.
+[`iac/`](./iac/README.md)의 AWS CDK 앱이 스택 전체를 만듭니다. 엔드포인트를 갖춘 VPC, Neptune, OpenSearch, DynamoDB 문서 상태 테이블, S3 캐시 버킷, ECS Fargate 데이터 플레인, Step Functions 수집 파이프라인, CloudWatch 대시보드와 경보, 선택적 Bedrock Guardrail이 포함됩니다.
 
 ```bash
 cd iac && python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
@@ -98,7 +118,7 @@ cdk bootstrap      # 계정·리전마다 한 번
 cdk deploy --all   # 과금 리소스 생성
 ```
 
-스택 출력값에서 Neptune, OpenSearch, S3 값을 `config.yaml`에 옮겨 적으세요.
+저장소는 VPC 안에서만 접근할 수 있으므로 CLI는 배포된 Fargate 태스크에서 실행합니다. 태스크는 엔드포인트를 환경 변수로 받습니다. 이미지 푸시, 수집 시작, 질의 태스크 실행 명령은 [`iac/README.md`의 After deploy](./iac/README.md#after-deploy)에 있습니다.
 
 > **비용과 정리.** Neptune과 OpenSearch는 시간 단위로 과금되며, `public` 네트워크 모드에서는 NAT 게이트웨이 비용이 추가됩니다. 기본 `dev` 환경은 `cdk destroy --all`로 정리되지만, dev가 아닌 환경은 기본적으로 상태 저장소를 보존하고 삭제 방지를 켭니다. 프로덕션에 쓰기 전에 [`iac/README.md`](./iac/README.md)의 강화 옵션(`use_cmk`, `deletion_protection`, 다중 AZ 구성, `vpc_flow_logs`)을 검토하세요.
 
@@ -106,10 +126,13 @@ cdk deploy --all   # 과금 리소스 생성
 
 | 문서 | 내용 |
 |---|---|
-| [사용자 가이드](./docs/user-guide.ko.md) ([English](./docs/user-guide.md)) | 설정, CLI 플래그, 증분 인덱싱, 평가, 운영 |
+| [사용자 가이드](./docs/user-guide.ko.md) ([English](./docs/user-guide.md)) | 설정, CLI 플래그, 증분 인덱싱, 평가, 라이브러리 사용법, 제약 사항 |
+| [모델 카탈로그](./docs/models.ko.md) ([English](./docs/models.md)) | 지원하는 Bedrock 모델과 공급자별 요청 차이 |
+| [운영 런북](./docs/operations.ko.md) ([English](./docs/operations.md)) | 재수집, 증분 실행, 실패한 문서, 캐시, 자주 나는 오류 |
 | [설계 문서](./docs/design.ko.md) ([English](./docs/design.md)) | 헥사고날 아키텍처, 알고리즘, 데이터 모델, 확장 가이드, 참고 자료 |
-| [`iac/README.md`](./iac/README.md) | CDK 스택, `-c key=value` 옵션, Guardrail 배포, Step Functions 인제스천 실행 |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | 개발 환경, 테스트, 품질 게이트, 확장 방법 |
+| [용어집](./docs/glossary.ko.md) | 한국어 문서와 영문 문서·코드의 용어 대응 |
+| [`iac/README.md`](./iac/README.md) | CDK 스택, 배포 토폴로지, 비용 요인, `-c key=value` 옵션, Guardrail 배포, 배포 후 명령 |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | 개발 환경, 테스트, 품질 게이트, 브랜치와 커밋 규칙 |
 | [CHANGELOG.md](./CHANGELOG.md) | 릴리스 노트 |
 | [SECURITY.md](./SECURITY.md) | 보안 이슈 신고 |
 
@@ -124,7 +147,7 @@ cdk deploy --all   # 과금 리소스 생성
 
 ## 기여
 
-기여를 환영합니다. 개발 환경, 테스트, 확장 방법은 [CONTRIBUTING.md](./CONTRIBUTING.md)를 참고하세요. 대부분의 확장은 레지스트리 등록만으로 끝나며 디스패치 코드를 고칠 필요가 없습니다.
+기여를 환영합니다. 개발 환경, 테스트, PR 절차는 [CONTRIBUTING.md](./CONTRIBUTING.md)를, 확장 방법은 [설계 문서 §15](./docs/design.ko.md#15-확장-가이드)를 참고하세요. 대부분의 확장은 레지스트리 등록만으로 끝나며 디스패치 코드를 고칠 필요가 없습니다.
 
 ## 라이선스
 
