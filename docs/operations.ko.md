@@ -107,10 +107,15 @@
 - 코퍼스에서 사라진 `PENDING` 문서에 대해 중단된 실행이 썼을 수 있는 것을 모두
   지웁니다.
 
-중단은 `indexing.max_document_failures`에 포함되지 않습니다. 실패한 실행 뒤에
-`PENDING` 레코드(`status`와 `content_hash`가 `pending`이고 `error_info`가 선기록
-레코드임을 알림)가 남는 것은 정상입니다. 직접 지우지 마세요. 다음 실행은 이
-레코드의 계보로 중단된 실행이 쓴 것을 찾습니다. 인덱싱 단계는 레지스트리를 일괄로
+중단은 실패로 세지 않지만, `indexing.max_document_failures`에 쓰는 연속 실패
+횟수를 초기화합니다. `PENDING` 레코드의 `failure_count`는 0이므로, 이전에 실패한
+문서도 다음 실패부터 다시 셉니다. 실패한 실행 뒤에 `PENDING` 레코드(`status`와
+`content_hash`가 `pending`이고 `error_info`가 선기록 레코드임을 알림)가 남는 것은
+정상입니다. 직접 지우지 마세요. 다음 실행은 이 레코드의 계보로 중단된 실행이 쓴
+것을 찾습니다. 큰 문서의 이전 산출물 ID와 새 산출물 ID를 합치면 DynamoDB 항목
+하나에 들어가지 않을 때는, 레코드에 들어가지 않은 ID를 같은 테이블의 초과 항목
+(키 `<doc_id>#pending#<n>`, `record_kind`는 `lineage_overflow`)에 둡니다. 이
+항목도 그대로 두세요. 실행이 문서를 커밋하거나 제거할 때 지웁니다. 인덱싱 단계는 레지스트리를 일괄로
 쓰므로, 직접 작성한 정책을 쓰는 역할에는 `BatchGetItem`과 함께
 `dynamodb:BatchWriteItem` 권한이 필요합니다(CDK 스택의 `grant_read_write_data`는
 둘 다 포함합니다).
@@ -129,7 +134,8 @@ OpenSearch나 Neptune에 쓰는 데 실패하면 그 문서는 `FAILED`로 기�
 - 다시 시도하려면 원인(대개 너무 크거나 형식이 잘못된 파일)을 고치거나, 파일을
   수정해 콘텐츠 해시를 바꾸거나, `indexing.max_document_failures`를 올립니다.
 - 한 문서의 산출물 ID가 DynamoDB 항목 하나(400 KB, 약 10,000개 ID)를 넘으면
-  인덱싱 단계가 파일 이름을 담은 오류로 실패합니다. 파일을 나눕니다.
+  인덱싱 단계가 델타에 대해 아무것도 쓰기 전에, 파일 이름과 ID 개수를 담은
+  오류로 실패합니다. 파일을 나눕니다.
 
 쓰기 실패는 따로 판정합니다. 재시도할 수 있는 상태(429, 502, 503, 504)로
 거부된 OpenSearch bulk 항목은 먼저 백오프를 두고 최대 네 번 다시 보냅니다. 그래도

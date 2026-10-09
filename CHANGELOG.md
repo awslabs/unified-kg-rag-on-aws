@@ -500,6 +500,33 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   was never removed from their stores. The reset now deletes only the records
   whose scope belongs to the cleared namespaces, and a record written before
   scopes existed only when its key is such a namespace's legacy key (#195).
+- An incremental run no longer fails on a large document whose old and new
+  versions each fit one doc-status record but not together. The write-ahead
+  `PENDING` record lists both lineages; for such a document (each version
+  near 235 KB of artifact ids, the union over the DynamoDB 400 KB item
+  limit) the write-ahead raised `DataProcessingError` after extraction and
+  before any write, so no document of the delta got its `PENDING` record,
+  every later run re-extracted and failed the same way, and the error told
+  the user to split a file that fits. Such a record now keeps the stored
+  lineage and puts the other planned ids in lineage overflow: new
+  `DocStatusPort` methods `record_fits`, `add_lineage_overflow`,
+  `get_lineage_overflow` and `delete_lineage_overflow` (defaults: no limit,
+  no overflow). `DynamoDBDocStatusStore` stores it in the same table as
+  items `<doc_id>#pending#<n>` marked `record_kind` `lineage_overflow`, which
+  `get`, `get_many`, `list_all` and `diff` skip. A later run reads the
+  overflow with the record, so crash recovery still removes everything the
+  interrupted run may have written; the commit and the removal of the
+  document delete it. A document whose own lineage cannot fit one record now
+  fails before anything is written, with an error naming the file and its
+  artifact id count (#196).
+- An incremental run resumed after the document_loading stage logs a WARNING
+  naming the `indexing.retire_source_scopes` it does not apply: the resumed
+  delta was computed without them, so they were ignored silently. Re-run
+  from document_loading (`--resume-from-stage document_loading`) to retire
+  them. The applied scopes are recorded on the pipeline context
+  (`incremental_retired_scopes`) (#196).
+- The CI local-stores job no longer sleeps after its last failed attempt to
+  start the stores before failing (#196).
 - An incremental run interrupted inside the indexing stage (a killed task, a
   store outage, the failure gate) is repaired by the next run. Before, a run
   that stopped after pruning a changed document left its old content hash in
@@ -514,7 +541,8 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   and the commit replaces the record only after the writes. The next run
   re-extracts a `PENDING` document that still exists and removes everything
   the interrupted run may have written for one that is gone. An interruption
-  does not count toward `indexing.max_document_failures`. The write-ahead
+  is not counted as a failure toward `indexing.max_document_failures`, but
+  it resets the document's consecutive-failure count. The write-ahead
   and commit records are written in batches through the new
   `DocStatusPort.put_many` (default: one `put` per record;
   `DynamoDBDocStatusStore` uses `BatchWriteItem`, 25 items per request, with

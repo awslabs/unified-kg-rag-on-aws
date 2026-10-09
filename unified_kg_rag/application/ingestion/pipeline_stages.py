@@ -330,6 +330,7 @@ class DocumentLoadingStage(PipelineStage):
         context.incremental_delta = None
         context.incremental_fingerprints = {}
         context.incremental_scope = None
+        context.incremental_retired_scopes = []
 
         failed_files: list[str] = []
         if self._parsing_completed(context):
@@ -475,6 +476,9 @@ class DocumentLoadingStage(PipelineStage):
         context.incremental_delta = delta
         context.incremental_fingerprints = fingerprints
         context.incremental_scope = scope
+        context.incremental_retired_scopes = list(
+            self.config.indexing.retire_source_scopes
+        )
         if delta.new and not self.config.processing.document_parsing.source_scope:
             self._warn_about_other_local_scopes(delta, scope, namespace, retired)
         if delta.is_empty:
@@ -1509,6 +1513,10 @@ class IndexingStage(PipelineStage):
                 for record in store.list_all()
                 if self._record_in_namespaces(record, namespaces)
             ]
+            # Write-ahead lineage overflow is not listed as records.
+            delete_overflow = getattr(store, "delete_lineage_overflow", None)
+            if delete_overflow is not None and records:
+                delete_overflow([record.doc_id for record in records])
             for record in records:
                 store.delete(record.doc_id)
             logger.info(
@@ -1581,6 +1589,7 @@ class IndexingStage(PipelineStage):
             )
 
         if context.incremental_delta is not None and not self.config.indexing.reset:
+            self._warn_about_unapplied_retired_scopes(context)
             indexing_results = self._index_incremental(
                 context,
                 text_units,
@@ -1745,6 +1754,36 @@ class IndexingStage(PipelineStage):
                 "registry records are kept so the next run retries the removal"
             )
         return results
+
+    def _warn_about_unapplied_retired_scopes(self, context: PipelineContext) -> None:
+        """Warn about ``indexing.retire_source_scopes`` the delta did not apply.
+
+        Scopes are retired when the document_loading stage computes the
+        delta. A run resumed after it indexes the delta an earlier run
+        computed, so scopes added since then are not removed by this run.
+        """
+        from unified_kg_rag.shared.utils.document_identity import (
+            normalize_source_scope,
+        )
+
+        applied = {
+            normalize_source_scope(s) for s in context.incremental_retired_scopes
+        }
+        ignored = [
+            scope
+            for scope in self.config.indexing.retire_source_scopes
+            if normalize_source_scope(scope) not in applied
+        ]
+        if ignored:
+            logger.warning(
+                "indexing.retire_source_scopes / --retire-source-scope %s NOT "
+                "applied: this run resumed after the document_loading stage and "
+                "indexes the delta an earlier run computed without them, so "
+                "their records and exclusive artifacts are kept. Re-run from "
+                "document_loading (--resume-from-stage document_loading) to "
+                "retire them.",
+                ", ".join(repr(s) for s in ignored),
+            )
 
     @staticmethod
     def _documents_with_failed_units(
