@@ -448,6 +448,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   counted as failures without an id. Failed ids are now counted once per
   failed item (`IndexingStats.unattributed_failures`), and only the documents
   owning the failed community are recorded FAILED (#PR).
+- `run-prompt-tuning` finds an evidence span in a long sentence for a name
+  whose casefolded form has a different length, such as `Straße Holding`
+  written `STRASSE Holding`. The sentence filter compared casefolded text
+  but the window search used case-insensitive regex matching, which does not
+  equate `ß` with `ss`, so the relationship was left out. Both now match on
+  casefolded text (#PR).
 - Merging small chunks no longer drops text when a chunk repeats the previous
   chunk's last lines verbatim, such as a document ending in two identical
   `Signed: ____` lines with an LLM line boundary between them. The repeated

@@ -395,6 +395,27 @@ class TestRenderExample:
         assert "Vendor" in span and "Buyer" in span
         assert len(span) <= 200
 
+    def test_long_sentence_span_matches_names_that_casefold_longer(self) -> None:
+        # "ß" casefolds to "ss", so "Straße Holding" and "STRASSE Holding" are
+        # the same name under the casefold filter. The window must locate the
+        # mention the same way, and map it back to the original characters.
+        text = "x " * 150 + "STRASSE Holding pays Vendor " + "y " * 150
+        span = PromptTuner._evidence_span(text, "Straße Holding", "Vendor")
+        assert span is not None and span in text
+        assert "STRASSE Holding" in span and "Vendor" in span
+        assert len(span) <= 200
+
+    def test_window_maps_a_folded_mention_back_to_the_original(self) -> None:
+        text = "z " * 150 + "Straße Holding pays VENDOR " + "z " * 150
+        span = PromptTuner._evidence_span(text, "STRASSE HOLDING", "vendor")
+        assert span is not None and span in text
+        assert "Straße Holding" in span and "VENDOR" in span
+
+    def test_casefold_with_origin_maps_expanded_characters(self) -> None:
+        folded, origin = PromptTuner._casefold_with_origin("aßB")
+        assert folded == "assb"
+        assert origin == [0, 1, 1, 2]
+
     def test_names_too_far_apart_give_no_span(self) -> None:
         text = "Vendor " + "z " * 400 + "Buyer"
         assert PromptTuner._evidence_span(text, "Vendor", "Buyer") is None
