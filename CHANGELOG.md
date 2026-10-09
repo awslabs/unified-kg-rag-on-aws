@@ -473,7 +473,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - Community detection no longer fails with `ZeroDivisionError` on a graph
   that has entities but no relationships, such as an incremental delta of a
   document that yields one entity. Each entity becomes its own community and
-  the modularity, undefined without edges, is recorded as `0.0` (#PR).
+  the modularity, undefined without edges, is recorded as `0.0` (#191).
 - Moving a local corpus to another directory no longer leaves its old content
   indexed. Without a fixed `document_parsing.source_scope` the scope is the
   source directory, so every document read as new under the new directory
@@ -486,7 +486,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   status, lineage and failure count kept), so the document is not
   re-extracted and later edits prune normally. A directory that still exists
   is a separate corpus and is left alone (logged once at INFO); URI scopes,
-  fixed `source_scope` values and other suffixes are never adopted (#PR).
+  fixed `source_scope` values and other suffixes are never adopted (#191).
 - An interrupted adoption of a doc-status record written before scopes
   existed is now completed. When a run had written the record under its
   scoped key but stopped before deleting the old key, the old record (scope
@@ -494,7 +494,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   version's text units, entities and relationships referenced, so a later
   edit or deletion left that content indexed. Any such legacy key is now
   deleted once its current-key record exists. The diff now also reports
-  which legacy keys are stored, so only those are read (#PR).
+  which legacy keys are stored, so only those are read (#191).
 - Delta detection looks up the pre-scope registry keys of new documents in
   batches instead of one DynamoDB `GetItem` per document on every run (1,000
   new documents were 1,000 sequential reads, repeated until they were
@@ -503,7 +503,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   retries unprocessed keys with backoff, failing the run rather than reading
   a key it could not fetch as absent. The task role needs
   `dynamodb:BatchGetItem`, which the CDK stack's `grant_read_write_data`
-  already grants (#PR).
+  already grants (#191).
 - An incremental commit no longer records every document FAILED when one
   community's `MemberOf` edges fail in more than one Neptune entity batch.
   Each failed batch carries the community id, and the commit deduplicated the
