@@ -13,6 +13,7 @@ in-flight query on another loop is using.
 from __future__ import annotations
 
 import asyncio
+import gc
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -155,6 +156,27 @@ def test_close_stops_the_loop_thread_and_restarts_on_demand() -> None:
     chain.invoke({"query": "q"})  # type: ignore[arg-type]
     assert chain._loop_runner._thread is not thread
     chain.close()
+
+
+def test_dropped_chain_releases_its_retrievers_when_collected() -> None:
+    # A chain dropped without close()/aclose() must not leak its retrievers'
+    # sockets: the GC finalizer closes them (on their still-running loop) and
+    # then stops the sync-API loop.
+    chain, built = _chain()
+    chain.invoke({"query": "q"})  # type: ignore[arg-type]
+    _run_on_fresh_loop(chain.ainvoke({"query": "q"}))  # type: ignore[arg-type]
+    thread = chain._loop_runner._thread
+    assert thread is not None
+
+    del chain
+    gc.collect()
+
+    assert len(built) == 2
+    # The runner-bound retriever is closed on its own loop ...
+    assert built[0].aclosed == 1 and built[0].aclose_loop is built[0].loop
+    # ... the one whose loop is gone, synchronously.
+    assert built[1].closed == 1
+    assert not thread.is_alive()
 
 
 def test_runner_rejects_reentrant_sync_call() -> None:

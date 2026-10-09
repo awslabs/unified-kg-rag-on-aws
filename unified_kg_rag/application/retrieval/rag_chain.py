@@ -267,7 +267,19 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # long-lived loop instead of a fresh loop per call, so their
         # loop-bound retrievers are built once and reused.
         self._loop_runner = _LoopRunner(self.config.processing.io_workers)
-        weakref.finalize(self, self._loop_runner.stop)
+        # Safety net for a chain dropped without close()/aclose(): release the
+        # cached retrievers' sockets, then stop the loop. The finalizer holds
+        # the caches and runner, never the chain itself, so it does not keep
+        # the chain alive. Collection timing is up to the GC, so callers must
+        # still close the chain when done.
+        weakref.finalize(
+            self,
+            _release_cached_resources,
+            self._retriever_cache,
+            self._strategy_cache,
+            self._cache_lock,
+            self._loop_runner,
+        )
         self.chain = self._build_chain()
 
     def _build_chain(self) -> Runnable:
@@ -804,19 +816,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         self, loops: Collection[asyncio.AbstractEventLoop | None] | None = None
     ) -> dict[asyncio.AbstractEventLoop | None, list[BaseGraphRAGRetriever]]:
         """Remove cached entries (of ``loops``, or all) grouped by their loop."""
-        lock = getattr(self, "_cache_lock", None) or threading.RLock()
-        retriever_cache = getattr(self, "_retriever_cache", {})
-        strategy_cache = getattr(self, "_strategy_cache", {})
-        taken: dict[asyncio.AbstractEventLoop | None, list[BaseGraphRAGRetriever]] = {}
-        with lock:
-            for key in list(retriever_cache):
-                if loops is None or key[1] in loops:
-                    taken.setdefault(key[1], []).append(retriever_cache.pop(key))
-            # Strategies hold the retrievers, so they go with them.
-            for skey in list(strategy_cache):
-                if loops is None or skey[1] in loops:
-                    del strategy_cache[skey]
-        return taken
+        return _take_cached(
+            getattr(self, "_retriever_cache", {}),
+            getattr(self, "_strategy_cache", {}),
+            getattr(self, "_cache_lock", None) or threading.RLock(),
+            loops,
+        )
 
     @staticmethod
     def _release_retrievers(
@@ -866,7 +871,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         Each retriever build opens a Neptune websocket + thread pool and/or an
         OpenSearch (a)sync HTTP pool that otherwise survive until GC. Call this
         when the chain is done (e.g. from the CLI ``finally``) so a process that
-        finishes a query releases its sockets. Retrievers are closed on the
+        finishes a query releases its sockets; the GC finalizer only does so
+        whenever the garbage collector reaches a dropped chain. Retrievers are
+        closed on the
         loop they are bound to, then the chain's sync-API loop is stopped.
         Never raises.
         """
@@ -897,11 +904,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
     def close(self) -> None:
         """Synchronous teardown of cached retrievers and the sync-API loop."""
-        for loop, retrievers in self._take_cached_retrievers().items():
-            self._release_retrievers(retrievers, loop, wait=True)
-        runner = getattr(self, "_loop_runner", None)
-        if runner is not None:
-            runner.stop()
+        _release_cached_resources(
+            getattr(self, "_retriever_cache", {}),
+            getattr(self, "_strategy_cache", {}),
+            getattr(self, "_cache_lock", None) or threading.RLock(),
+            getattr(self, "_loop_runner", None),
+        )
 
     def _optimize_context(self, state: dict[str, Any]) -> OptimizedContext:
         query: ProcessedQuery = state["processed_query"]
@@ -1377,6 +1385,42 @@ async def _aclose_retrievers(retrievers: list[BaseGraphRAGRetriever]) -> None:
             await aclose()
         except Exception as e:  # noqa: BLE001 - teardown must never raise
             logger.debug("Error closing retriever %r: %s", retriever, e)
+
+
+def _take_cached(
+    retriever_cache: dict[Any, BaseGraphRAGRetriever],
+    strategy_cache: dict[Any, BaseSearchStrategy],
+    lock: threading.RLock,
+    loops: Collection[asyncio.AbstractEventLoop | None] | None = None,
+) -> dict[asyncio.AbstractEventLoop | None, list[BaseGraphRAGRetriever]]:
+    """Remove cached entries (of ``loops``, or all) grouped by their loop."""
+    taken: dict[asyncio.AbstractEventLoop | None, list[BaseGraphRAGRetriever]] = {}
+    with lock:
+        for key in list(retriever_cache):
+            if loops is None or key[1] in loops:
+                taken.setdefault(key[1], []).append(retriever_cache.pop(key))
+        # Strategies hold the retrievers, so they go with them.
+        for skey in list(strategy_cache):
+            if loops is None or skey[1] in loops:
+                del strategy_cache[skey]
+    return taken
+
+
+def _release_cached_resources(
+    retriever_cache: dict[Any, BaseGraphRAGRetriever],
+    strategy_cache: dict[Any, BaseSearchStrategy],
+    lock: threading.RLock,
+    runner: "_LoopRunner | None",
+) -> None:
+    """Close every cached retriever, then stop the sync-API loop (never raises).
+
+    Takes the chain's state rather than the chain, so it also serves as the
+    chain's GC finalizer.
+    """
+    for loop, retrievers in _take_cached(retriever_cache, strategy_cache, lock).items():
+        GraphRAGChain._release_retrievers(retrievers, loop, wait=True)
+    if runner is not None:
+        runner.stop()
 
 
 class _LoopRunner:

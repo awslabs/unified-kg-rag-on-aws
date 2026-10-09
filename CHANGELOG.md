@@ -329,6 +329,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`
   made graph extraction fail to format, and `{input_text}` in a sample was
   substituted with the chunk being extracted (#173).
+- A `GraphRAGChain` dropped without `close()`/`aclose()` now releases its
+  cached retrievers when it is garbage-collected; its finalizer only stopped
+  the sync-API loop, so the retrievers' sockets outlived the chain (20 dropped
+  chains against the local stores: +40 sockets and "Unclosed client
+  session" warnings after `gc.collect()`, now +0). Closing the chain
+  explicitly is still required for timely release (#PR).
 - `run-eval` closes its chain on exit, whether the run succeeds or fails, so
   the retrievers' Neptune/OpenSearch sockets are released instead of the
   process ending with "Unclosed client session / connector" warnings (#PR).
