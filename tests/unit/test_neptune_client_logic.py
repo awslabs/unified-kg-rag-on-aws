@@ -155,6 +155,34 @@ def test_create_connection_no_iam_empty_headers(mocker) -> None:
     assert captured["headers"] == {}
 
 
+def test_failed_connection_probe_closes_the_connection(mocker) -> None:
+    # The probe query runs after DriverRemoteConnection opened its websocket
+    # and thread pool; a failed probe must not leave them behind.
+    config = _config_with_neptune(endpoint="localhost", use_iam=False)
+    connection = mocker.patch.object(neptune_mod, "DriverRemoteConnection")
+    g = mocker.MagicMock()
+    g.V.return_value.limit.return_value.toList.side_effect = OSError("refused")
+    mocker.patch.object(
+        neptune_mod, "traversal", return_value=mocker.MagicMock(withRemote=lambda c: g)
+    )
+    with pytest.raises(AWSServiceError, match="refused"):
+        _client(config)._create_connection()
+    connection.return_value.close.assert_called_once()
+
+
+def test_failed_connection_close_error_keeps_the_original_error(mocker) -> None:
+    config = _config_with_neptune(endpoint="localhost", use_iam=False)
+    connection = mocker.patch.object(neptune_mod, "DriverRemoteConnection")
+    connection.return_value.close.side_effect = RuntimeError("close failed")
+    g = mocker.MagicMock()
+    g.V.return_value.limit.return_value.toList.side_effect = OSError("refused")
+    mocker.patch.object(
+        neptune_mod, "traversal", return_value=mocker.MagicMock(withRemote=lambda c: g)
+    )
+    with pytest.raises(AWSServiceError, match="refused"):
+        _client(config)._create_connection()
+
+
 def test_create_connection_without_ssl_uses_plain_websocket(mocker) -> None:
     # A local TinkerPop Gremlin Server listens on ws:// without TLS or IAM.
     config = _config_with_neptune(endpoint="localhost", use_iam=False)

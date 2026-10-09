@@ -335,6 +335,8 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`
   made graph extraction fail to format, and `{input_text}` in a sample was
   substituted with the chunk being extracted (#173).
+- A Neptune connection whose probe query fails is closed before the error is
+  raised, instead of leaving its websocket and thread pool open (#PR).
 - `memory.max_conversation_age_hours` is enforced: a conversation idle for
   longer is dropped on the next memory lookup (a returning one starts over).
   The TTL was stored and never read, so conversations lived until the

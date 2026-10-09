@@ -114,6 +114,7 @@ class NeptuneClient:
             else {}
         )
 
+        remote_connection: DriverRemoteConnection | None = None
         try:
             # pool_size bounds concurrent in-flight requests over the websocket.
             # Never below indexing.neptune.index_concurrency, so concurrent
@@ -135,6 +136,13 @@ class NeptuneClient:
             )
             return remote_connection
         except Exception as e:
+            # The probe failed after the websocket and its thread pool opened;
+            # nothing else holds the connection, so release it here.
+            if remote_connection is not None:
+                try:
+                    remote_connection.close()
+                except Exception as close_error:  # noqa: BLE001 - keep the cause
+                    logger.debug("Error closing failed connection: %s", close_error)
             error_message = f"Failed to establish connection to Neptune: {e}"
             logger.error(error_message)
             raise AWSServiceError(error_message) from e
