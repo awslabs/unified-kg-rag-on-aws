@@ -12,6 +12,7 @@ from unified_kg_rag.adapters.aws.bedrock_models import (
     effective_max_output_tokens,
     get_language_model_info,
 )
+from unified_kg_rag.adapters.aws.token_counter import is_count_tokens_known_unsupported
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, RetrievalResult
 from unified_kg_rag.domain.prompts import AnswerGenerationPrompt
@@ -113,6 +114,8 @@ class TokenManager(MetricsMixin):
             cache_maxsize=self.config.token_count_cache_size,
             api_supported=answer_model_info.supports_count_tokens,
         )
+        self._answer_model_id = answer_model_id
+        self._counts_via_api = answer_model_info.supports_count_tokens
         # Reserve what the answer request actually asks for (its max_tokens),
         # not the model maximum, so a capped output leaves room for context.
         answer_output_tokens = effective_max_output_tokens(
@@ -174,15 +177,22 @@ class TokenManager(MetricsMixin):
 
     def count_tokens_many(self, texts: Sequence[str]) -> list[int]:
         """Exact counts for ``texts``, in order, with distinct texts counted
-        concurrently (at most ``COUNT_CONCURRENCY`` at a time).
+        concurrently (at most ``COUNT_CONCURRENCY`` at a time) when each count
+        is a CountTokens round trip.
 
-        Each count can be a CountTokens round trip, and a mix/hybrid context
-        has hundreds of sections; counting them one after another dominated
-        query latency. Duplicates are counted once (and the counter's own cache
-        still applies). Blocking: run it off the event loop from async code.
+        A mix/hybrid context has hundreds of sections; counting them one round
+        trip after another dominated query latency. Without the API (the answer
+        model does not accept CountTokens, or rejected it at runtime) a count is
+        a local CPU-bound estimate, so they run inline: threads would only add
+        pool start-up and GIL contention. Duplicates are counted once (and the
+        counter's own cache still applies). Blocking: run it off the event loop
+        from async code.
         """
         unique = list(dict.fromkeys(t for t in texts if t))
-        if len(unique) <= 1:
+        via_api = self._counts_via_api and not is_count_tokens_known_unsupported(
+            self._answer_model_id
+        )
+        if len(unique) <= 1 or not via_api:
             counts = {t: self.count_tokens(t) for t in unique}
         else:
             workers = min(self.COUNT_CONCURRENCY, len(unique))

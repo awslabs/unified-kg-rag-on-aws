@@ -718,8 +718,15 @@ class _SlowCounter:
         return text, len(text.split())
 
 
-def _manager_with_counter(mocker, counter: _SlowCounter) -> TokenManager:
+def _manager_with_counter(
+    mocker,
+    counter: _SlowCounter,
+    answer_model_id: LanguageModelId = LanguageModelId.CLAUDE_V4_6_SONNET,
+) -> TokenManager:
+    # Default to an answer model that accepts CountTokens, where each count is
+    # a round trip worth overlapping.
     config = Config()
+    config.search.answer_generation_model_id = answer_model_id
     providers = Providers(
         config,
         boto_session=mocker.Mock(),
@@ -756,6 +763,26 @@ class TestConcurrentCounting:
         texts = [f"text {i}" for i in range(40)]
         assert mgr.count_tokens_many(texts) == [2] * 40
         assert 1 < counter.max_active <= TokenManager.COUNT_CONCURRENCY
+
+    def test_count_tokens_many_counts_inline_without_count_tokens_api(
+        self, mocker
+    ) -> None:
+        # The default answer model has no CountTokens: every count is a local
+        # CPU-bound estimate, so a thread pool only adds overhead.
+        counter = _SlowCounter(delay=0)
+        threads: set[str] = set()
+        count = counter.count_tokens
+
+        def recording_count(text: str) -> int:
+            threads.add(threading.current_thread().name)
+            return count(text)
+
+        counter.count_tokens = recording_count  # type: ignore[method-assign]
+        mgr = _manager_with_counter(
+            mocker, counter, answer_model_id=Config().search.answer_generation_model_id
+        )
+        assert mgr.count_tokens_many([f"text {i}" for i in range(20)]) == [2] * 20
+        assert threads == {threading.current_thread().name}
 
     def test_count_tokens_many_skips_empty_text(self, mocker) -> None:
         counter = _SlowCounter(delay=0)
