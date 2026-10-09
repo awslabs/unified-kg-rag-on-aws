@@ -335,6 +335,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`
   made graph extraction fail to format, and `{input_text}` in a sample was
   substituted with the chunk being extracted (#173).
+- Neptune traversals beyond `aws.neptune.pool_size` wait on the event loop
+  instead of in gremlinpython's blocking pool checkout, where each held a
+  default-executor thread and the Bedrock calls LangChain runs on that
+  executor queued behind them (64 concurrent traversals at pool size 4 delayed
+  a 0.2 s executor call to 3.0 s; now 0.2 s). The default pool size stays 4,
+  the query-thread count of the default `db.r6g.large` (#PR).
 - A `GraphRAGChain` dropped without `close()`/`aclose()` now releases its
   cached retrievers when it is garbage-collected; its finalizer only stopped
   the sync-API loop, so the retrievers' sockets outlived the chain (20 dropped

@@ -490,7 +490,11 @@ class NeptuneConfig(BaseModel):
             "Gremlin DriverRemoteConnection pool size (max concurrent in-flight "
             "requests over the websocket). The client raises it to indexing."
             "neptune.index_concurrency when that is larger, so concurrent write "
-            "batches are not serialized on fewer connections."
+            "batches are not serialized on fewer connections. Query traversals "
+            "beyond it wait on the event loop. The default matches the 4 query "
+            "threads (2 x vCPUs) of the default db.r6g.large instance; more "
+            "in-flight requests only queue on the server, so raise it with the "
+            "instance size."
         ),
     )
 

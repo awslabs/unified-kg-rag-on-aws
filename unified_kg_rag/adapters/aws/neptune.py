@@ -66,6 +66,11 @@ def _handle_neptune_errors(func: Callable) -> Callable:
     return wrapper
 
 
+def neptune_pool_size(config: Config) -> int:
+    """Connections in a NeptuneClient's pool: the most requests in flight."""
+    return max(config.aws.neptune.pool_size, config.indexing.neptune.index_concurrency)
+
+
 class NeptuneClient:
     def __init__(self, config: Config, boto_session: boto3.Session | None = None):
         self.config = config
@@ -114,10 +119,7 @@ class NeptuneClient:
             # Never below indexing.neptune.index_concurrency, so concurrent
             # write batches are multiplexed rather than serialized; max_workers
             # tracks it so result-handling threads are not the bottleneck.
-            pool_size = max(
-                self.neptune_config.pool_size,
-                self.config.indexing.neptune.index_concurrency,
-            )
+            pool_size = neptune_pool_size(self.config)
             remote_connection = DriverRemoteConnection(
                 url=connection_url,
                 traversal_source="g",

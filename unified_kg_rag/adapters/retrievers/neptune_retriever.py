@@ -4,6 +4,7 @@ import asyncio
 import math
 import re
 import time
+import weakref
 from collections.abc import Coroutine
 from typing import Any, ClassVar
 
@@ -16,6 +17,7 @@ from gremlin_python.process.graph_traversal import (
 from gremlin_python.process.traversal import Order, P, TextP, Traversal
 
 from unified_kg_rag.adapters.aws import NeptuneClient
+from unified_kg_rag.adapters.aws.neptune import neptune_pool_size
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     is_fatal_retrieval_error,
@@ -50,6 +52,15 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         self._neptune_config = config.indexing.neptune
         self._max_hops = self._neptune_config.max_hops
         self._max_results_per_hop = self._neptune_config.max_results_per_hop
+        # At most one traversal per pooled connection runs in a worker thread;
+        # the rest wait here, on the loop. Otherwise each waits inside
+        # gremlinpython's blocking pool.get() while holding a default-executor
+        # thread, and the Bedrock calls LangChain runs on that executor queue
+        # behind them. One semaphore per loop (a semaphore is loop-bound).
+        self._pool_size = neptune_pool_size(config)
+        self._traversal_slots: weakref.WeakKeyDictionary[
+            asyncio.AbstractEventLoop, asyncio.Semaphore
+        ] = weakref.WeakKeyDictionary()
 
     def close(self) -> None:
         """Close the underlying Neptune websocket + thread pool (best-effort)."""
@@ -484,14 +495,20 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             projected = projected.by(__.bothE().count())
         return projected
 
-    @staticmethod
-    async def _execute_traversal(traversal: Traversal) -> list[Any]:
+    async def _execute_traversal(self, traversal: Traversal) -> list[Any]:
+        loop = asyncio.get_running_loop()
+        slots = self._traversal_slots.get(loop)
+        if slots is None:
+            slots = self._traversal_slots.setdefault(
+                loop, asyncio.Semaphore(self._pool_size)
+            )
         try:
             # to_list() is a BLOCKING Gremlin round trip; running it directly in
             # this coroutine would block the event loop and serialize the seed
             # lookups that callers fan out via asyncio.gather. Offload it to a
             # worker thread so the gather actually overlaps.
-            result: list[Any] = await asyncio.to_thread(traversal.to_list)
+            async with slots:
+                result: list[Any] = await asyncio.to_thread(traversal.to_list)
             return result
         except Exception as e:
             # Fatal errors (auth/credentials/endpoint/connection) must reach

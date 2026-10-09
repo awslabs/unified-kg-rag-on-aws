@@ -120,7 +120,9 @@ aws:
     use_ssl: true
     # Gremlin connection pool size (max concurrent in-flight requests over the
     # websocket). Raised to indexing.neptune.index_concurrency when that is
-    # larger, so concurrent write batches are not serialized.
+    # larger, so concurrent write batches are not serialized. Query traversals
+    # beyond it wait on the event loop. 4 matches the query threads (2 x vCPUs)
+    # of the default db.r6g.large; raise it with the instance size.
     pool_size: 4
 
   # OpenSearch Configuration

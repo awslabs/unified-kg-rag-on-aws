@@ -11,6 +11,8 @@ empty list only on genuinely-transient failures.
 
 from __future__ import annotations
 
+import weakref
+
 import pytest
 from gremlin_python.process.graph_traversal import GraphTraversal
 from gremlin_python.structure.graph import Graph
@@ -153,6 +155,8 @@ def _neptune_retriever(config: Config, neptune_client) -> NeptuneRetriever:
     object.__setattr__(
         inst, "_max_results_per_hop", config.indexing.neptune.max_results_per_hop
     )
+    object.__setattr__(inst, "_pool_size", config.aws.neptune.pool_size)
+    object.__setattr__(inst, "_traversal_slots", weakref.WeakKeyDictionary())
     # Stub out the metrics recorders (pydantic model -> inject, don't patch).
     object.__setattr__(inst, "_record_metric", lambda *a, **k: None)
     object.__setattr__(inst, "_record_timing", lambda *a, **k: None)
@@ -202,15 +206,19 @@ class _RaisingTraversal:
         raise self._exc
 
 
-async def test_neptune_execute_traversal_reraises_fatal() -> None:
+async def test_neptune_execute_traversal_reraises_fatal(config: Config) -> None:
+    retriever = _neptune_retriever(config, None)
     with pytest.raises(AWSServiceError, match="AccessDenied"):
-        await NeptuneRetriever._execute_traversal(
+        await retriever._execute_traversal(
             _RaisingTraversal(AWSServiceError("AccessDeniedException"))  # type: ignore[arg-type]
         )
 
 
-async def test_neptune_execute_traversal_degrades_on_transient() -> None:
-    results = await NeptuneRetriever._execute_traversal(
+async def test_neptune_execute_traversal_degrades_on_transient(
+    config: Config,
+) -> None:
+    retriever = _neptune_retriever(config, None)
+    results = await retriever._execute_traversal(
         _RaisingTraversal(AWSServiceError("Read timed out"))  # type: ignore[arg-type]
     )
     assert results == []
