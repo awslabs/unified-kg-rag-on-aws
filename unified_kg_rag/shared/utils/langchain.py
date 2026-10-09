@@ -594,6 +594,7 @@ _XML_DECLARATION = re.compile(r"<\?xml[^>]*\?>")
 _BARE_AMPERSAND = re.compile(r"&(?!(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+);)")
 # `<` not followed by what can start a tag, end tag, comment or declaration.
 _TEXT_LESS_THAN = re.compile(r"<(?![A-Za-z_/!?])")
+_TAG = re.compile(r"<(/?)([A-Za-z_][\w.\-:]*)([^<>]*)>")
 
 
 class RobustXMLOutputParser(XMLOutputParser):
@@ -808,7 +809,39 @@ class RobustXMLOutputParser(XMLOutputParser):
         text = _XML_DECLARATION.sub("", text)
         text = _BARE_AMPERSAND.sub("&amp;", text)
         text = _TEXT_LESS_THAN.sub("&lt;", text)
+        text = RobustXMLOutputParser._drop_unmatched_closing_tags(text)
         return text.strip().encode("utf-8")
+
+    @staticmethod
+    def _drop_unmatched_closing_tags(text: str) -> str:
+        """Remove closing tags that close no open element.
+
+        Models sometimes emit a stray end tag (e.g. ``</entity_placeholder>``
+        inside a ``<relationship>``). lxml recovery treats it as closing the
+        enclosing elements, so every later sibling is lost; dropping it keeps
+        the rest of the section. A closing tag that matches an open element
+        further up the stack still closes everything above it, as in XML.
+        """
+        open_tags: list[str] = []
+        out: list[str] = []
+        pos = 0
+        for match in _TAG.finditer(text):
+            is_close, name, rest = match.group(1), match.group(2), match.group(3)
+            keep = True
+            if is_close:
+                if name in open_tags:
+                    while open_tags and open_tags.pop() != name:
+                        pass
+                else:
+                    keep = False
+            elif not rest.rstrip().endswith("/"):
+                open_tags.append(name)
+            out.append(text[pos : match.start()])
+            if keep:
+                out.append(match.group(0))
+            pos = match.end()
+        out.append(text[pos:])
+        return "".join(out)
 
     @classmethod
     def _parse_top_level_elements(cls, xml_bytes: bytes) -> dict[str, Any]:

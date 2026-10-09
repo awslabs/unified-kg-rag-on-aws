@@ -844,3 +844,36 @@ def test_execute_with_fallback_reports_progress(mocker) -> None:
         show_progress=False,
     )
     assert [args[2] for args in _progress_lines(log)][-1] == 4
+
+
+def test_stray_closing_tag_keeps_later_relationships() -> None:
+    # Models occasionally emit an end tag that closes nothing (seen in real
+    # extraction output inside the first <relationship>). It must not cut the
+    # section short: every relationship after it is kept.
+    raw = (
+        "<entities>\n"
+        "<entity><name>Vendor A</name><type>ORGANIZATION</type></entity>\n"
+        "<entity><name>Buyer B</name><type>ORGANIZATION</type></entity>\n"
+        "</entities>\n<relationships>\n"
+        "<relationship><source>Vendor A</source><target>Buyer B</target>"
+        "<type>SUPPLIES</type><source_text>Vendor A supplies Buyer B</source_text>\n"
+        "</entity_placeholder>\n</relationship>\n"
+        "<relationship><source>Buyer B</source><target>Vendor A</target>"
+        "<type>PAYS</type></relationship>\n"
+        "<relationship><source>Vendor A</source><target>Vendor A</target>"
+        "<type>SELF</type></relationship>\n"
+        "</relationships>"
+    )
+    parsed = RobustXMLOutputParser(tags=["entities", "relationships"]).parse(raw)
+    rels = parsed["relationships"]["relationship"]
+    assert isinstance(rels, list)
+    assert [r["type"] for r in rels] == ["SUPPLIES", "PAYS", "SELF"]
+    assert len(parsed["entities"]["entity"]) == 2
+
+
+def test_matched_closing_tags_are_untouched() -> None:
+    text = "<a><b>x</b><c/></a>"
+    assert RobustXMLOutputParser._drop_unmatched_closing_tags(text) == text
+    assert (
+        RobustXMLOutputParser._drop_unmatched_closing_tags("<a>x</z></a>") == "<a>x</a>"
+    )
