@@ -344,3 +344,44 @@ def test_doc_with_failed_extraction_is_recorded_failed_and_retried(mocker) -> No
     assert store.diff({compute_doc_id(_CHANGED): "hash-v2"}).changed == [
         compute_doc_id(_CHANGED)
     ]
+
+
+@pytest.mark.parametrize(
+    ("applied", "warned"),
+    [
+        ([], ["'/old/a/'", "'/old/b'"]),
+        (["/old/a"], ["'/old/b'"]),
+        (["/old/a/", "/old/b"], []),
+    ],
+)
+def test_resumed_delta_without_retired_scopes_warns(
+    mocker, caplog, applied: list[str], warned: list[str]
+) -> None:
+    """A run resumed after document_loading reuses the stored delta: retired
+    scopes configured since are not applied, which must not pass silently."""
+    manager = _RecordingManager()
+    manager.initialize = lambda: True  # type: ignore[attr-defined]
+    stage = _stage(mocker, FakeDocStatusStore(), manager)
+    stage.config.indexing.retire_source_scopes = ["/old/a/", "/old/b"]
+    index = mocker.patch.object(stage, "_index_incremental", return_value={})
+    ctx = _context(DocumentDelta(), [])
+    ctx.incremental_retired_scopes = applied
+
+    with caplog.at_level("WARNING"):
+        stage._execute_core(ctx)
+
+    index.assert_called_once()
+    messages = [
+        r.getMessage()
+        for r in caplog.records
+        if "retire_source_scopes" in r.getMessage()
+    ]
+    if not warned:
+        assert messages == []
+        return
+    assert len(messages) == 1
+    for scope in warned:
+        assert scope in messages[0]
+    assert "--resume-from-stage document_loading" in messages[0]
+    if applied:
+        assert "'/old/a" not in messages[0]

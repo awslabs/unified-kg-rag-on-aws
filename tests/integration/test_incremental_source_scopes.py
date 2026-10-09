@@ -457,6 +457,8 @@ def test_retiring_the_old_scope_of_a_moved_corpus_removes_its_content(
     retired = stack.run(new)
 
     delta = retired.incremental_delta
+    # Recorded with the delta, so a run resumed after loading can tell.
+    assert retired.incremental_retired_scopes == [f"{old.as_posix()}/"]
     assert len(delta.deleted) == 2  # both records of the old directory
     assert delta.new == delta.changed == []
     # Depot only came from the old depot.txt; Buyer and Bank are shared with

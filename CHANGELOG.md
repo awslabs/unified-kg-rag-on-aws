@@ -519,6 +519,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   document delete it. A document whose own lineage cannot fit one record now
   fails before anything is written, with an error naming the file and its
   artifact id count (#PR).
+- An incremental run resumed after the document_loading stage logs a WARNING
+  naming the `indexing.retire_source_scopes` it does not apply: the resumed
+  delta was computed without them, so they were ignored silently. Re-run
+  from document_loading (`--resume-from-stage document_loading`) to retire
+  them. The applied scopes are recorded on the pipeline context
+  (`incremental_retired_scopes`) (#PR).
 - An incremental run interrupted inside the indexing stage (a killed task, a
   store outage, the failure gate) is repaired by the next run. Before, a run
   that stopped after pruning a changed document left its old content hash in
