@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import json
+import re
 import sys
 import uuid
 from collections.abc import Callable
@@ -12,6 +13,7 @@ from typing import Any
 
 import nest_asyncio
 from dotenv import load_dotenv
+from rich.markup import escape
 from rich.panel import Panel
 
 from unified_kg_rag.application.retrieval.rag_chain import (
@@ -36,6 +38,23 @@ try:
     __version__ = version("unified-kg-rag-on-aws")
 except (FileNotFoundError, ImportError, ValueError):
     __version__ = "unknown"
+
+# C0 controls except tab/newline, DEL and C1 controls (incl. the 8-bit CSI).
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def terminal_safe(text: object) -> str:
+    """Drop terminal control characters from model output or an error string.
+
+    Keeps newline and tab. Without this an answer could carry escape
+    sequences (title changes, screen clears, hyperlinks) to the terminal.
+    """
+    return _CONTROL_CHARS.sub("", str(text))
+
+
+def _markup_safe(text: object) -> str:
+    """``terminal_safe`` text for interpolation into a rich markup string."""
+    return escape(terminal_safe(text))
 
 
 class CommandLineInterface:
@@ -238,7 +257,7 @@ class RAGChainRunner:
             console.print("[green]GraphRAG chain initialized successfully![/green]")
         except Exception as e:
             logger.exception("Failed to initialize RAG chain: %s", e)
-            console.print(f"[red]Error during initialization: {e}[/red]")
+            console.print(f"[red]Error during initialization: {_markup_safe(e)}[/red]")
             sys.exit(1)
 
     async def _interactive_mode(self) -> None:
@@ -305,7 +324,7 @@ class RAGChainRunner:
                 console.print("\n[yellow]Conversation interrupted.[/yellow]")
                 break
             except Exception as e:
-                console.print(f"[red]Unexpected error: {e}[/red]")
+                console.print(f"[red]Unexpected error: {_markup_safe(e)}[/red]")
                 logger.error(
                     "Unexpected error in interactive mode: %s", e, exc_info=True
                 )
@@ -325,14 +344,19 @@ class RAGChainRunner:
             if (output.get("metadata") or {}).get("error"):
                 detail = (output.get("search_results") or {}).get("metadata", {})
                 error = str(detail.get("error") or "RAG chain returned an error")
-                console.print(f"\n[bold red]Error executing query: {error}[/bold red]")
+                console.print(
+                    f"\n[bold red]Error executing query: {_markup_safe(error)}"
+                    "[/bold red]"
+                )
                 return {"success": False, "error": error, **output}
             console.print("\n[bold green]Query executed successfully![/bold green]")
             return {"success": True, **output}
 
         except Exception as e:
             logger.exception("Error during query execution: %s", e)
-            console.print(f"\n[bold red]Error executing query: {e}[/bold red]")
+            console.print(
+                f"\n[bold red]Error executing query: {_markup_safe(e)}[/bold red]"
+            )
             return {
                 "success": False,
                 "error": str(e),
@@ -385,13 +409,15 @@ class RAGChainRunner:
     @staticmethod
     def _print_result(result: dict[str, Any], verbose: bool = False) -> None:
         if not result.get("success", False):
-            console.print(f"\n[red]Error: {result.get('error', 'Unknown error')}[/red]")
+            error = _markup_safe(result.get("error", "Unknown error"))
+            console.print(f"\n[red]Error: {error}[/red]")
             return
 
         if answer := result.get("answer"):
             console.print("\n\n" + "=" * 50)
             console.print("[bold blue]Final Answer:[/bold blue]")
-            console.print(answer)
+            # Model output: never interpret it as markup.
+            console.print(terminal_safe(answer), markup=False, highlight=False)
             console.print("=" * 50)
         else:
             console.print("\n\n" + "=" * 50)
@@ -405,17 +431,22 @@ class RAGChainRunner:
                 pq_panel_content = ""
 
                 if original_query := pq.get("original_query"):
-                    pq_panel_content += f"  - Original Query: {original_query}\n"
+                    pq_panel_content += (
+                        f"  - Original Query: {_markup_safe(original_query)}\n"
+                    )
 
                 if translated_query := pq.get("translated_query"):
-                    pq_panel_content += f"  - Translated Query: {translated_query}\n"
+                    pq_panel_content += (
+                        f"  - Translated Query: {_markup_safe(translated_query)}\n"
+                    )
 
                 if entities := pq.get("entities"):
                     pq_panel_content += (
                         f"  - Extracted Entities: {len(entities)} found\n"
                     )
                     if entities and len(entities) <= 5:
-                        pq_panel_content += f"    {', '.join(entities)}\n"
+                        joined = _markup_safe(", ".join(map(str, entities)))
+                        pq_panel_content += f"    {joined}\n"
 
                 if pq_panel_content:
                     console.print(
@@ -434,7 +465,7 @@ class RAGChainRunner:
                 sources_content = ""
                 for i, source in enumerate(sources[:5], 1):
                     score = source.get("score", 0)
-                    source_id = source.get("source", "N/A")
+                    source_id = _markup_safe(source.get("source", "N/A"))
                     sources_content += f"  {i}. {source_id} (score: {score:.3f})\n"
 
                 if len(sources) > 5:
@@ -461,10 +492,11 @@ class RAGChainRunner:
                     metrics_content += f"  - Search Strategy: {value}\n"
                 elif key == "processing_time":
                     metrics_content += f"  - Processing Time: {value:.2f}s\n"
-                elif isinstance(value, int | float | str | bool):
-                    metrics_content += f"  - {key.replace('_', ' ').title()}: {value}\n"
-                elif isinstance(value, list | dict) and len(str(value)) < 100:
-                    metrics_content += f"  - {key.replace('_', ' ').title()}: {value}\n"
+                elif isinstance(value, int | float | str | bool) or (
+                    isinstance(value, list | dict) and len(str(value)) < 100
+                ):
+                    label = key.replace("_", " ").title()
+                    metrics_content += f"  - {label}: {_markup_safe(value)}\n"
 
             if metrics_content:
                 console.print(
@@ -542,7 +574,7 @@ async def async_main() -> None:
         console.print("\n[yellow]Execution interrupted by user.[/yellow]")
         sys.exit(130)
     except Exception as e:
-        console.print(f"\n[red]An unexpected error occurred: {e}[/red]")
+        console.print(f"\n[red]An unexpected error occurred: {_markup_safe(e)}[/red]")
         logger.exception("Unexpected error during execution")
         sys.exit(1)
 

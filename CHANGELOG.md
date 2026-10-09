@@ -613,6 +613,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#160).
 
 ### Security
+- `run-rag` prints answers, errors and the verbose query/source panels as
+  plain text with terminal control characters (other than newline and tab)
+  removed. Model output was rendered as rich markup, so `[link=...]` became a
+  terminal hyperlink, and escape sequences in it reached the terminal (#PR).
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or
   `LANGCHAIN_TRACING_V2` enables LangSmith tracing, which uploads prompts,
   retrieved context and model outputs. Tracing is not turned off (#156).
