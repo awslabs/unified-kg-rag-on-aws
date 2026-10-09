@@ -354,6 +354,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   prompt, model purpose and model id, and ingestion counts the item as
   failed; the error is not retried, since the same input hits the same
   limit. Streamed output is passed through and only logged (#PR).
+- The output-fixing LLM is told the top-level elements its prompt asks for
+  (e.g. `<entities>`, `<relationships>`) instead of "Here are the output
+  tags: None" with an example that nests the tags, and an empty or
+  whitespace-only answer (e.g. thinking only) fails the parse without
+  calling it, since it could only invent the structure; the batch retry
+  re-asks the original model. `create_robust_xml_output_parser` takes a
+  required keyword `output_tags` (**Breaking** for direct callers) (#PR).
 - `cdk destroy` with `removal_destroy=true` (dev default) deletes the
   OpenSearch domain's app, slow-index and slow-search log groups. The domain
   created them with CDK's default `Retain`, so every dev teardown left three

@@ -595,6 +595,11 @@ class BatchProcessor(BaseModel):
         return results
 
 
+_FORMAT_INSTRUCTIONS = (
+    "Return the completion as well-formed XML made of {sections}. Keep every "
+    "element and all of its text, add nothing that is not in the completion, "
+    "and open and close every tag. Return only the XML."
+)
 # Synthetic root the response is wrapped in before lxml recovery.
 _RESPONSE_ROOT = b"llm_response"
 # Only valid at the very start of a document, so not inside the wrapper.
@@ -616,7 +621,23 @@ class RobustXMLOutputParser(XMLOutputParser):
     into a different shape than a recovered one.
     """
 
+    def get_format_instructions(self) -> str:
+        """Instructions for the output fixer, naming the expected sections.
+
+        ``XMLOutputParser``'s own text describes ``tags`` as one nesting path
+        and prints "None" without them, which misleads a repair of a
+        multi-section answer such as ``<entities>`` + ``<relationships>``.
+        """
+        tags = ", ".join(f"<{tag}>" for tag in self.tags or [])
+        return _FORMAT_INSTRUCTIONS.format(
+            sections=f"the top-level elements {tags}" if tags else "XML elements"
+        )
+
     def parse(self, text: str) -> dict[str, Any]:
+        if not text.strip():
+            # Nothing to recover (e.g. a thinking-only answer); the output
+            # fixer skips it too, since it could only invent the structure.
+            raise OutputParserException("The model returned no output", llm_output=text)
         original_sections = self._detect_xml_sections(text)
 
         try:

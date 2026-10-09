@@ -144,6 +144,7 @@ def test_output_fixer_gets_the_repaired_prompts_floor() -> None:
         factory=factory,
         enable_output_fixing=True,
         output_fixing_model_id=SONNET,
+        output_tags=["entities", "relationships"],
         model_purpose=ModelPurpose.INGESTION,
         min_output_tokens=GraphExtractionPrompt.min_output_tokens,
     )

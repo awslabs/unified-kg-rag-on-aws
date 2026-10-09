@@ -128,6 +128,7 @@ class GraphExtractor(BaseProcessor):
             output_fixing_model_id=self.config.fixing.fixing_model_id,
             factory=self.factory,
             min_output_tokens=GraphExtractionPrompt.min_output_tokens,
+            output_tags=["entities", "relationships"],
         )
         self.graph_extractor = setup_chain(
             model_purpose=ModelPurpose.INGESTION,

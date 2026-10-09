@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Model-output guards in ``setup_chain`` (AWS-free).
+"""Model-output guards in ``setup_chain`` and the output fixer (AWS-free).
 
 A response that stopped at its output-token limit is cut mid-answer; parsing
 it would silently keep whatever came before the cut (e.g. entities without
@@ -8,6 +8,9 @@ the ``<relationships>`` section). The chain fails such a response before the
 parser runs. The fake model reports the stop reason the way langchain-aws
 does: ``response_metadata["stopReason"]`` (Converse) or ``["stop_reason"]``
 (InvokeModel).
+
+The output fixer repairs a malformed answer; it must know the expected
+top-level tags and must not be asked to repair an empty answer.
 """
 
 from __future__ import annotations
@@ -17,12 +20,17 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
+from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
-from unified_kg_rag.adapters.aws.chain_factory import setup_chain
+from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from unified_kg_rag.adapters.aws.chain_factory import (
+    create_robust_xml_output_parser,
+    setup_chain,
+)
 from unified_kg_rag.domain.models import ModelPurpose
 from unified_kg_rag.domain.prompts import GraphExtractionPrompt
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
@@ -172,3 +180,64 @@ def test_streaming_passes_chunks_through_and_warns(caplog) -> None:
     assert len(chunks) > 1
     assert "".join(chunks) == "Vendor ships parts "
     assert "max_tokens" in caplog.text
+
+
+# --------------------------------------------------------------------------- #
+# Output-fixing fallback
+# --------------------------------------------------------------------------- #
+class _RecordingFixer:
+    """Fixing-LLM factory that records every repair prompt it is sent."""
+
+    def __init__(self, reply: str) -> None:
+        self.prompts: list[str] = []
+        self.reply = reply
+
+    def respond(self, system: str, human: str) -> str:
+        self.prompts.append(human)
+        return self.reply
+
+
+def _fixing_parser(fixer: _RecordingFixer, tags: list[str]) -> Any:
+    return create_robust_xml_output_parser(
+        factory=ScriptedLLMFactory(fixer.respond),
+        enable_output_fixing=True,
+        output_fixing_model_id="fake-fixer",
+        output_tags=tags,
+    )
+
+
+@pytest.mark.parametrize("completion", ["", "  \n\t"])
+def test_blank_output_is_not_sent_to_the_fixer(completion) -> None:
+    # A blank answer (e.g. thinking only) has nothing to repair: the fixer
+    # could only invent the structure, so the parse fails instead.
+    fixer = _RecordingFixer(_COMPLETE)
+    parser = _fixing_parser(fixer, ["entities", "relationships"])
+    with pytest.raises(OutputParserException):
+        parser.parse(completion)
+    assert fixer.prompts == []
+
+
+async def test_blank_output_is_not_sent_to_the_fixer_async() -> None:
+    fixer = _RecordingFixer(_COMPLETE)
+    parser = _fixing_parser(fixer, ["entities", "relationships"])
+    with pytest.raises(OutputParserException):
+        await parser.aparse(" ")
+    assert fixer.prompts == []
+
+
+def test_fixer_is_told_the_expected_top_level_tags() -> None:
+    fixer = _RecordingFixer("<claims><claim><subject>Vendor</subject></claim></claims>")
+    parser = _fixing_parser(fixer, ["claims"])
+    out = parser.parse("Vendor supplies Buyer, but no XML here")
+    assert out == {"claims": {"claim": {"subject": "Vendor"}}}
+    (prompt,) = fixer.prompts
+    assert "<claims>" in prompt
+    assert "None" not in prompt
+
+
+def test_format_instructions_list_each_top_level_tag() -> None:
+    instructions = RobustXMLOutputParser(
+        tags=["entities", "relationships"]
+    ).get_format_instructions()
+    assert "<entities>" in instructions
+    assert "<relationships>" in instructions

@@ -338,6 +338,7 @@ def test_output_fixing_llm_inherits_purpose() -> None:
         factory=factory,
         enable_output_fixing=True,
         output_fixing_model_id=LanguageModelId.CLAUDE_V4_5_HAIKU,
+        output_tags=["entities", "relationships"],
         model_purpose=ModelPurpose.INGESTION,
     )
     assert [c["model_purpose"] for c in factory.calls] == [ModelPurpose.INGESTION]

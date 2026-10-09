@@ -317,21 +317,44 @@ def with_transient_retry(
     return TransientRetryRunnable(runnable, operation=operation, retry=retry)
 
 
+class XMLOutputFixingParser(OutputFixingParser[dict[str, Any]]):
+    """``OutputFixingParser`` that never asks the fixer to repair a blank answer.
+
+    An empty or whitespace-only completion (e.g. a thinking-only response)
+    carries nothing to repair, so a fixer could only invent the structure;
+    it fails with the parser's own ``OutputParserException`` instead, which
+    the batch retry treats as retryable.
+    """
+
+    def parse(self, completion: str) -> dict[str, Any]:
+        if not completion.strip():
+            return dict(self.parser.parse(completion))
+        return super().parse(completion)
+
+    async def aparse(self, completion: str) -> dict[str, Any]:
+        if not completion.strip():
+            return dict(await self.parser.aparse(completion))
+        return await super().aparse(completion)
+
+
 def create_robust_xml_output_parser(
     factory: LLMFactoryPort,
     enable_output_fixing: bool,
     output_fixing_model_id: str,
+    *,
+    output_tags: list[str],
     model_purpose: ModelPurpose = ModelPurpose.QUERY,
     min_output_tokens: int = 0,
 ) -> BaseOutputParser:
     """Build the XML parser, optionally wrapped in an LLM output fixer.
 
-    ``model_purpose`` is forwarded to the fixing LLM so it gets the same
-    per-path policy (e.g. guardrail scope) as the chain it repairs, and
-    ``min_output_tokens`` (the repaired prompt's output floor) so a long
-    output can be re-emitted in full.
+    ``output_tags`` are the top-level elements the prompt asks for; the fixer
+    is told them, so it repairs toward the prompt's structure. ``model_purpose``
+    is forwarded to the fixing LLM so it gets the same per-path policy (e.g.
+    guardrail scope) as the chain it repairs, and ``min_output_tokens`` (the
+    repaired prompt's output floor) so a long output can be re-emitted in full.
     """
-    base_parser = RobustXMLOutputParser()
+    base_parser = RobustXMLOutputParser(tags=output_tags)
     if not enable_output_fixing:
         return base_parser
 
@@ -344,7 +367,7 @@ def create_robust_xml_output_parser(
         logger.info(
             "Created OutputFixingParser with model: '%s'", output_fixing_model_id
         )
-        return OutputFixingParser.from_llm(parser=base_parser, llm=fixing_llm)
+        return XMLOutputFixingParser.from_llm(parser=base_parser, llm=fixing_llm)
     except Exception as e:
         logger.error(
             "Failed to create OutputFixingParser with model %s: %s",
