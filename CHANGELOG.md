@@ -70,6 +70,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   after its prompt (e.g. `AnswerGenerationPrompt`) in traces (#156).
 
 ### Changed
+- `GraphRAGChain` builds each query-step LLM chain (router, entity/keyword
+  extraction, translation, context building, answer) once per prompt, model
+  and thinking flag and reuses it; it was rebuilt per query, creating two
+  boto clients and fresh connection pools each time (~6 ms and new TLS
+  connections per step, now a dictionary lookup) (#PR).
 - The script-aware token estimate, the only counter for models without
   CountTokens (the default Claude 5.5 models), uses one compiled regex instead
   of a per-character Python loop, with identical results; with no CountTokens

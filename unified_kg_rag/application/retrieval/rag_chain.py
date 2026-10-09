@@ -263,6 +263,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             BaseSearchStrategy,
         ] = {}
         self._cache_lock = threading.RLock()
+        # Prompt chains (prompt | llm | parser) by prompt, model, parser type
+        # and model kwargs; not loop-bound, so shared by every loop.
+        self._prompt_chains: dict[tuple[Any, ...], Runnable] = {}
         # The sync entry points (invoke/batch/stream) run on this one
         # long-lived loop instead of a fresh loop per call, so their
         # loop-bound retrievers are built once and reused.
@@ -393,14 +396,21 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 f"No model id configured for prompt {prompt_class.__name__}; "
                 f"add it to _get_chain_for_prompt's model_id_map."
             )
-        return setup_chain(
-            factory=self.factory,
-            model_id=model_id,
-            prompt_class=prompt_class,
-            parser=parser,
-            custom_prompts=self.config.custom_prompts,
-            **kwargs,
-        )
+        # Built once per chain: setup_chain builds the model and its boto
+        # clients, so building per query paid that (and fresh connection
+        # pools) on every request. Parsers are stateless; one of each type.
+        key = (prompt_class, model_id, type(parser), tuple(sorted(kwargs.items())))
+        with self._cache_lock:
+            if (cached := self._prompt_chains.get(key)) is None:
+                cached = self._prompt_chains[key] = setup_chain(
+                    factory=self.factory,
+                    model_id=model_id,
+                    prompt_class=prompt_class,
+                    parser=parser,
+                    custom_prompts=self.config.custom_prompts,
+                    **kwargs,
+                )
+            return cached
 
     def _query_processing_branch(self) -> Runnable:
         def _simple_query(inputs: dict[str, Any]) -> ProcessedQuery:
