@@ -335,6 +335,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`
   made graph extraction fail to format, and `{input_text}` in a sample was
   substituted with the chunk being extracted (#173).
+- The CountTokens `bedrock-runtime` client sizes its connection pool like the
+  model clients instead of botocore's default 10, which concurrent queries'
+  batched counts (8 at a time each) overran (#PR).
 - Global search runs `processing.max_concurrency` map calls at once, as
   documented; each map call was its own BatchProcessor chunk, so the default
   chunk concurrency of 4 capped it (40 map calls of 0.5 s: 5.0 s, now
