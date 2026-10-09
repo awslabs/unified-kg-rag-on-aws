@@ -311,6 +311,14 @@ class LineBasedBoundaryProcessor:
         return (missed_count / total_line_numbers) <= self.max_line_miss_rate
 
 
+# LangChain's default separators (paragraph, line, word, character) plus a
+# split after CJK sentence terminators, so Chinese and Japanese text, which has
+# no spaces, is not cut mid-sentence at the character limit. The lookbehind is
+# zero-width, so the terminator stays at the end of its sentence; text without
+# these characters splits exactly as with the defaults.
+_SPLITTER_SEPARATORS = ["\n\n", "\n", "(?<=[。．｡！？；])", " ", ""]
+
+
 class ChunkProcessor:
     def __init__(
         self,
@@ -383,7 +391,11 @@ class BaseChunker(ABC):
     def _create_splitter(size: int, overlap: int) -> RecursiveCharacterTextSplitter:
         try:
             return RecursiveCharacterTextSplitter(
-                chunk_size=size, chunk_overlap=overlap, length_function=len
+                chunk_size=size,
+                chunk_overlap=overlap,
+                length_function=len,
+                separators=_SPLITTER_SEPARATORS,
+                is_separator_regex=True,
             )
         except Exception as e:
             raise DataProcessingError(f"Failed to create text splitter: {e}") from e

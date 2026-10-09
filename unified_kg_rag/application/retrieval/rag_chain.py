@@ -4,6 +4,7 @@ import asyncio
 import re
 import threading
 import time
+import unicodedata
 import uuid
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
@@ -23,7 +24,7 @@ from langchain_core.runnables import (
     RunnableLambda,
     RunnablePassthrough,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from unified_kg_rag.adapters.aws import NeptuneClient, OpenSearchClient
@@ -176,6 +177,13 @@ class RAGInput(BaseModel):
     filters: dict[str, Any] | None = Field(
         default=None, description="Additional filters to apply to the search"
     )
+
+    @field_validator("query")
+    @classmethod
+    def _compose_query(cls, query: str) -> str:
+        # Indexed text is NFC (see convert_langchain_to_document); a query typed
+        # or pasted as decomposed Hangul (NFD) must compose to match it.
+        return unicodedata.normalize("NFC", query)
 
 
 class RAGOutput(BaseModel):

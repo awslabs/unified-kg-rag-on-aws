@@ -58,9 +58,7 @@ class OpenSearchIndexer(VectorIndexer):
             dimensions=self._embedding_dimension,
         )
         self.target_language = self.config.processing.translation.target_language.value
-        self.analyzer = self.opensearch_config.language_analyzers.get(
-            self.target_language, self.opensearch_config.default_analyzer
-        )
+        self.analyzer = self._analyzer_for(self.target_language)
         # Per-process content-hash -> embedding cache (avoids re-embedding
         # duplicate/unchanged text within and across incremental runs). Held
         # as float32 (what the knn field stores), an eighth of a float list;
@@ -70,6 +68,11 @@ class OpenSearchIndexer(VectorIndexer):
         # separate runs/phases (each Fargate phase is a fresh process). Loaded
         # lazily on first embed; best-effort (S3 errors degrade to in-process).
         self._s3_embedding_cache = self._build_s3_embedding_cache()
+
+    def _analyzer_for(self, language: str) -> str:
+        return self.opensearch_config.language_analyzers.get(
+            language, self.opensearch_config.default_analyzer
+        )
 
     def _build_s3_embedding_cache(self) -> "S3EmbeddingCache | None":
         """Construct the optional S3-persisted embedding cache, if enabled."""
@@ -337,8 +340,9 @@ class OpenSearchIndexer(VectorIndexer):
                 else unit.community_ids
             )
         if hasattr(unit, "translated_texts") and unit.translated_texts:
-            if translated := unit.translated_texts.get(self.target_language):
-                doc[f"translated_text_{self.target_language}"] = translated
+            for language in self.config.processing.translation.translated_languages:
+                if translated := unit.translated_texts.get(language):
+                    doc[f"translated_text_{language}"] = translated
         return doc
 
     def _prepare_entity_doc(
@@ -935,13 +939,25 @@ class OpenSearchIndexer(VectorIndexer):
         }
 
     def _get_text_units_mapping(self) -> dict[str, Any]:
+        # ``text`` holds the original chunk, so it is analyzed for the source
+        # language. An untranslated corpus (source == target) is searchable
+        # only through this field: Korean text under the standard analyzer
+        # keeps "홍길동으로부터" as one token, which "홍길동" never matches.
+        # Each translated language gets its own field and analyzer.
+        translation = self.config.processing.translation
         return self._get_base_mapping(
             {
                 "id": {"type": "keyword"},
-                "text": {"type": "text"},
-                f"translated_text_{self.target_language}": {
+                "text": {
                     "type": "text",
-                    "analyzer": self.analyzer,
+                    "analyzer": self._analyzer_for(translation.source_language.value),
+                },
+                **{
+                    f"translated_text_{language}": {
+                        "type": "text",
+                        "analyzer": self._analyzer_for(language),
+                    }
+                    for language in translation.translated_languages
                 },
                 "text_embedding": self._get_knn_vector_mapping(),
                 "community_ids": {"type": "keyword"},

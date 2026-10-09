@@ -17,6 +17,7 @@ import pytest
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.domain.models import Config, SearchQuery, SearchType
+from unified_kg_rag.domain.models.config import LanguageCode
 
 pytestmark = pytest.mark.unit
 
@@ -61,6 +62,19 @@ def test_text_units_lexical_includes_translated_field(retriever, config) -> None
     lang = config.processing.translation.target_language.value
     m = retriever._field_mappings[o.text_units_index_prefix]
     assert m["lexical"] == ["text", f"translated_text_{lang}"]
+
+
+def test_text_units_lexical_includes_additional_languages(config) -> None:
+    translation = config.processing.translation
+    translation.target_language = LanguageCode.EN
+    translation.additional_target_languages = [LanguageCode.KO, LanguageCode.EN]
+    retriever = OpenSearchRetriever.__new__(OpenSearchRetriever)
+    object.__setattr__(retriever, "_config", config)
+    object.__setattr__(retriever, "_opensearch_config", config.indexing.opensearch)
+    m = retriever._initialize_field_mappings()[
+        config.indexing.opensearch.text_units_index_prefix
+    ]
+    assert m["lexical"] == ["text", "translated_text_en", "translated_text_ko"]
 
 
 # --------------------------------------------------------------------------- #
@@ -185,6 +199,15 @@ def test_build_lexical_query_multi_match_with_fuzziness(retriever) -> None:
     assert body["multi_match"]["query"] == "alice"
     assert body["multi_match"]["fields"] == ["name", "description"]
     assert body["multi_match"]["fuzziness"] == "AUTO"
+
+
+@pytest.mark.parametrize("text", ["가나다상사", "青空海運", "カタカナ", "가나다 Corp"])
+def test_build_lexical_query_no_fuzziness_for_dense_scripts(retriever, text) -> None:
+    # One Hangul/Han/Kana character is a whole syllable or morpheme, so the
+    # one edit AUTO allows on a 3-5 character term matches a different word
+    # ("가나라상사" for "가나다상사").
+    body = retriever._build_lexical_query(SearchQuery(query=text), ["name"])
+    assert "fuzziness" not in body["multi_match"]
 
 
 def test_build_lexical_query_optional_keywords_become_should(retriever) -> None:

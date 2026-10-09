@@ -37,6 +37,17 @@ class TestPhraseInText:
             ("서울 특별시", "본사는 서울 특별시에 있다"),  # particle on last word
             ("서울", "본사는 서울은 아니다"),  # single word: substring
             ("東京電力", "本契約は東京電力と締結された"),
+            # Latin/digit gold answers followed by an attached Korean particle
+            ("2024", "계약은 2024년에 체결되었다"),
+            ("AWS", "AWS는 클라우드 사업자이다"),
+            ("Acme Corp", "공급자는 Acme Corp입니다"),
+            # spacing variants of Korean phrases, in both directions
+            ("가나다 상사", "공급자는 가나다상사이다"),
+            ("가나다상사", "공급자는 가나다 상사이다"),
+            ("3억 원", "계약 금액은 3억원이다"),
+            ("3억원", "계약 금액은 3억 원이다"),
+            ("2년", "보증 기간은 2년이다"),
+            ("二年", "保証期間は二年である"),
         ],
     )
     def test_match(self, phrase: str, text: str) -> None:
@@ -51,6 +62,15 @@ class TestPhraseInText:
             ("서울 특별시", "서울 특별시청사관리본부"),  # suffix longer than a particle
             ("", "anything"),
             ("the", "the vendor"),  # normalizes to nothing
+            # a number inside a longer number is a different number
+            ("2년", "보증 기간은 12년이다"),
+            ("24개월", "보증 기간은 124개월이다"),
+            ("二年", "保証期間は十二年である"),
+            ("3억 원", "계약 금액은 13억 원이다"),
+            ("3억원", "계약 금액은 13억원이다"),
+            ("AWS", "XAWS는 별개 회사이다"),
+            ("2024", "20245년에"),  # digits continue the token
+            ("AWS", "AWS클라우드서비스는"),  # more than a particle
         ],
     )
     def test_no_match(self, phrase: str, text: str) -> None:

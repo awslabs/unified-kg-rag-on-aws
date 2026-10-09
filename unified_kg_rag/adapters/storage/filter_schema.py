@@ -63,19 +63,18 @@ _OPENSEARCH_ATTRIBUTE_PREFIXES = frozenset(
 )
 
 
-def opensearch_filter_fields(target_language: str) -> dict[str, FilterFields]:
-    """Index kind -> filterable fields (``translated_text_<language>`` varies)."""
+def opensearch_filter_fields(
+    target_language: str, *additional_languages: str
+) -> dict[str, FilterFields]:
+    """Index kind -> filterable fields (one ``translated_text_<language>`` per
+    translated language)."""
+    translated = {
+        f"translated_text_{language}"
+        for language in (target_language, *additional_languages)
+    }
     return {
         "text_units": FilterFields(
-            frozenset(
-                {
-                    "id",
-                    "text",
-                    f"translated_text_{target_language}",
-                    "community_ids",
-                    "n_tokens",
-                }
-            ),
+            frozenset({"id", "text", *translated, "community_ids", "n_tokens"}),
             _OPENSEARCH_ATTRIBUTE_PREFIXES,
         ),
         "entities": FilterFields(

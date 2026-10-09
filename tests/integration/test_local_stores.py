@@ -471,3 +471,73 @@ def test_vector_round_trip(local_config: Config, vector_indexer) -> None:
     stats = vector_indexer.delete_by_id(["e-depot"], entities_prefix, _SUFFIX)
     assert stats.failed_items == 0
     assert _vector_entity_count(vector_indexer) == 2
+
+
+def _korean_lexical_hits(config: Config, *texts: str) -> list[set[str]]:
+    prefix = config.indexing.opensearch.text_units_index_prefix
+    queries = [
+        SearchQuery(
+            query=text,
+            search_type=SearchType.LEXICAL,
+            suffix=_SUFFIX,
+            index_prefixes=prefix,
+        )
+        for text in texts
+    ]
+    hit_lists = asyncio.run(_vector_retrieve(config, *queries))
+    return [{r.source for r in hits} for hits in hit_lists]
+
+
+def test_untranslated_korean_corpus_has_lexical_recall(local_config: Config) -> None:
+    # A Korean corpus with a Korean target is never translated, so only the
+    # ``text`` field carries it. That field must use the source-language
+    # analyzer: the standard analyzer keeps "홍길동으로부터" and "보증기간은"
+    # as single tokens, so "홍길동" and "보증 기간" never matched them.
+    config = local_config.model_copy(deep=True)
+    config.indexing.additional_suffix = f"ko{uuid.uuid4().hex[:8]}"
+    config.processing.translation.source_language = LanguageCode.KO
+    config.processing.translation.target_language = LanguageCode.KO
+    indexer = OpenSearchIndexer(config, embedding_factory=HashingEmbeddingFactory())
+    try:
+        units = [
+            TextUnit(id="k1", text="가나다상사는 홍길동으로부터 공급계약서를 받았다."),
+            TextUnit(id="k2", text="보증기간은 납품일로부터 2년이다."),
+            TextUnit(id="k3", text="김철수는 가나다상사의 직원이다."),
+        ]
+        assert indexer.index_text_units(units).failed_items == 0
+        person, warranty, contract, other = _korean_lexical_hits(
+            config, "홍길동", "보증 기간", "공급 계약", "김철민"
+        )
+        assert "k1" in person
+        assert "k2" in warranty
+        assert "k1" in contract
+        # No fuzzy edit on Hangul: 김철민 is a different person from 김철수.
+        assert other == set()
+    finally:
+        indexer.clear([_SUFFIX])
+        indexer.close()
+
+
+def test_additional_target_language_is_searchable(local_config: Config) -> None:
+    # The pipeline translates into every additional target language; each
+    # translation is indexed with its own analyzer and searched lexically.
+    config = local_config.model_copy(deep=True)
+    config.indexing.additional_suffix = f"al{uuid.uuid4().hex[:8]}"
+    config.processing.translation.target_language = LanguageCode.EN
+    config.processing.translation.additional_target_languages = [LanguageCode.KO]
+    indexer = OpenSearchIndexer(config, embedding_factory=HashingEmbeddingFactory())
+    try:
+        unit = TextUnit(
+            id="a1",
+            text="The warranty period is two years.",
+            translated_texts={
+                "en": "The warranty period is two years.",
+                "ko": "보증기간은 2년이다.",
+            },
+        )
+        assert indexer.index_text_units([unit]).failed_items == 0
+        (hits,) = _korean_lexical_hits(config, "보증 기간")
+        assert hits == {"a1"}
+    finally:
+        indexer.clear([_SUFFIX])
+        indexer.close()

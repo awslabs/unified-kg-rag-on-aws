@@ -35,3 +35,27 @@ def test_bom_does_not_change_document_id() -> None:
 def test_non_bom_content_unchanged() -> None:
     doc = convert_langchain_to_document(_lc("Plain text"), "a.txt")
     assert doc.content.text == "Plain text"
+
+
+# "보증 기간" written with conjoining jamo (NFD), as macOS file systems and
+# many PDF text layers produce it.
+_NFD_KOREAN = "\u1107\u1169\u110c\u1173\u11bc \u1100\u1175\u1100\u1161\u11ab"
+
+
+def test_decomposed_hangul_is_composed() -> None:
+    doc = convert_langchain_to_document(_lc(_NFD_KOREAN), "a.txt")
+    assert doc.content.text == "보증 기간"
+    assert doc.page_content == "보증 기간"
+    assert doc.pages[0].text_content == "보증 기간"
+
+
+def test_nfd_and_nfc_text_share_a_document_id() -> None:
+    nfd = convert_langchain_to_document(_lc(_NFD_KOREAN), "a.txt")
+    nfc = convert_langchain_to_document(_lc("보증 기간"), "a.txt")
+    assert nfd.document_id == nfc.document_id
+
+
+def test_compatibility_characters_are_kept() -> None:
+    # NFC, not NFKC: full-width letters and circled designators stay as written.
+    doc = convert_langchain_to_document(_lc("ＡＢＣ ㈜"), "a.txt")
+    assert doc.content.text == "ＡＢＣ ㈜"
