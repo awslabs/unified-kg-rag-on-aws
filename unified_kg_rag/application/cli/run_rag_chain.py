@@ -16,6 +16,10 @@ from dotenv import load_dotenv
 from rich.markup import escape
 from rich.panel import Panel
 
+from unified_kg_rag.application.cli.preflight import (
+    missing_endpoints_error,
+    strategy_roles,
+)
 from unified_kg_rag.application.retrieval.rag_chain import (
     ChainMode,
     GraphRAGChain,
@@ -202,6 +206,14 @@ class RAGChainRunner:
             return f"[dim]Index/Label Suffix:[/dim] [gray]{Constants.DEFAULT_SUFFIX.value}[/gray]"
 
     async def run(self) -> None:
+        error = missing_endpoints_error(
+            self.config,
+            strategy_roles(self.config, SearchStrategy(self.args.search_strategy)),
+            f"search strategy '{self.args.search_strategy}'",
+        )
+        if error:
+            console.print(f"[red]Error: {error}[/red]")
+            sys.exit(1)
         event_loop.configure_event_loop(
             asyncio.get_running_loop(), self.config.processing.io_workers
         )

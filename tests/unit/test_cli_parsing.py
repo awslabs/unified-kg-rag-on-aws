@@ -153,12 +153,20 @@ def test_rag_runner_accepts_interactive(config, mocker) -> None:
     assert runner.args.interactive is True
 
 
+@pytest.fixture
+def store_config(config):
+    """Default config with store endpoints, so run() passes the preflight."""
+    config.aws.neptune.endpoint = "neptune.local"
+    config.aws.opensearch.endpoint = "opensearch.local"
+    return config
+
+
 async def test_rag_runner_leaves_the_target_language_to_the_chain(
-    config, mocker
+    store_config, mocker
 ) -> None:
     # An explicit target_language disables the chain's same-language skip, so
     # every CLI query paid a translation call even for a single-language corpus.
-    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+    mocker.patch.object(run_rag_chain, "get_config", return_value=store_config)
     mocker.patch.object(run_rag_chain, "display_ascii_art")
     chain = mocker.AsyncMock()
     mocker.patch.object(run_rag_chain, "create_rag_chain", return_value=chain)
@@ -207,8 +215,10 @@ async def test_rag_runner_error_fallback_is_not_success(config, mocker) -> None:
     assert result["error"] == "Neptune down"
 
 
-async def test_rag_runner_exits_non_zero_on_error_fallback(config, mocker) -> None:
-    mocker.patch.object(run_rag_chain, "get_config", return_value=config)
+async def test_rag_runner_exits_non_zero_on_error_fallback(
+    store_config, mocker
+) -> None:
+    mocker.patch.object(run_rag_chain, "get_config", return_value=store_config)
     mocker.patch.object(run_rag_chain, "display_ascii_art")
     mocker.patch.object(
         run_rag_chain, "create_rag_chain", return_value=mocker.AsyncMock()
@@ -220,10 +230,11 @@ async def test_rag_runner_exits_non_zero_on_error_fallback(config, mocker) -> No
         "_run_query",
         return_value={"success": False, "error": "x", "metadata": {"error": True}},
     )
-    mocker.patch.object(runner, "_print_result")
+    print_result = mocker.patch.object(runner, "_print_result")
     with pytest.raises(SystemExit) as exc:
         await runner.run()
     assert exc.value.code == 1
+    print_result.assert_called_once()  # exited on the result, not earlier
 
 
 # --- run_rag_chain: _parse_filters --------------------------------------

@@ -437,6 +437,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (`。．｡！？；`) before falling back to spaces and characters, so Chinese and
   Japanese text is no longer cut mid-sentence. Text without these characters
   is chunked exactly as before (#177).
+- `run-ingestion` (when the `indexing` stage is enabled), `run-rag` and
+  `run-eval` check the Neptune and OpenSearch endpoints the run needs at
+  start-up and exit with an error naming the config key and environment
+  variable (`aws.neptune.endpoint`/`NEPTUNE_ENDPOINT`,
+  `aws.opensearch.endpoint`/`OPENSEARCH_ENDPOINT`). A missing endpoint used
+  to surface only at the indexing stage, after every paid LLM stage, or at
+  query time (#PR).
 - `run-rag --help`, invalid arguments and a missing `--query`/`--interactive`
   no longer print an asyncio "Task exception was never retrieved ...
   SystemExit" traceback: arguments are parsed before the event loop starts,

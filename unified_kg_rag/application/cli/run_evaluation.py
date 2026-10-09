@@ -12,6 +12,10 @@ from langchain_core.runnables import Runnable
 from rich.panel import Panel
 from rich.table import Table
 
+from unified_kg_rag.application.cli.preflight import (
+    missing_endpoints_error,
+    strategy_roles,
+)
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
     EvaluationGroundTruth,
@@ -322,6 +326,15 @@ def main() -> None:
         setup_logging(config)
         if args.verbose:
             logging.getLogger("unified_kg_rag").setLevel(logging.DEBUG)
+
+        error = missing_endpoints_error(
+            config,
+            strategy_roles(config, SearchStrategy(args.search_strategy)),
+            f"search strategy '{args.search_strategy}'",
+        )
+        if error:
+            console.print(f"[red]Error: {error}[/red]")
+            sys.exit(1)
 
         rag_chain = GraphRAGChain(config)
 
