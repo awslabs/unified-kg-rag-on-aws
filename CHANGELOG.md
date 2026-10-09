@@ -340,6 +340,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`
   made graph extraction fail to format, and `{input_text}` in a sample was
   substituted with the chunk being extracted (#173).
+- LightRAG keyword extraction keeps numeric keywords (`[2024, "Acme"]`) as
+  text; it rejected the whole payload, which failed the query under the
+  default `processing.ignore_errors: false`. Null, boolean and nested items
+  are still rejected (#PR).
 - Claude Haiku 5.5 (the default fast tier) streams. langchain-aws 1.8.0
   streams only model ids on its allowlist, which lacks Haiku 5.5, so every
   model construction fell back to non-streaming Converse and logged a

@@ -631,11 +631,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     @classmethod
     def _keyword_lists(cls, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
         """Validate the keyword payload: an object whose keyword fields are
-        lists of strings (a missing level is empty).
+        lists of strings or numbers (a missing level is empty).
 
-        Anything else raises: iterating a bare string would yield one-character
-        keywords, and a non-object payload parses to ``{}``, which must not pass
-        for "no keywords".
+        Numbers are kept as text (a year or quantity is a real keyword). Anything
+        else raises: iterating a bare string would yield one-character keywords,
+        null/boolean/nested items are not keywords, and a non-object payload
+        parses to ``{}``, which must not pass for "no keywords".
         """
         if not any(level in payload for level in cls._KEYWORD_LEVELS):
             raise LanguageModelError(
@@ -646,13 +647,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         for level in cls._KEYWORD_LEVELS:
             value = payload.get(level, [])
             if not isinstance(value, list) or not all(
-                isinstance(k, str) for k in value
+                isinstance(k, str | int | float) and not isinstance(k, bool)
+                for k in value
             ):
                 raise LanguageModelError(
                     f"Keyword extraction returned {level} that is not a list of "
-                    f"strings: {value!r}"
+                    f"strings or numbers: {value!r}"
                 )
-            lists.append([k.strip() for k in value if k.strip()])
+            keywords = (str(k).strip() for k in value)
+            lists.append([k for k in keywords if k])
         return lists[0], lists[1]
 
     async def _load_memory_step(self, state: dict[str, Any]) -> dict[str, Any]:
