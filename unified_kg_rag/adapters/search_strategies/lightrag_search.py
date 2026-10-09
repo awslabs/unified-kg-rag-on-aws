@@ -51,6 +51,7 @@ from unified_kg_rag.domain.retrieval.strategy_registry import (
     register_strategy,
 )
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils import text_digest
 
 logger = get_logger(__name__)
 
@@ -207,9 +208,9 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         start_time = time.time()
         mode = self._mode(query)
         logger.info(
-            "LightRAG search started - mode: '%s', query: '%s...'",
+            "LightRAG search started - mode: '%s', query: %s",
             mode,
-            query.query[:50],
+            text_digest(query.query),
         )
 
         results_by_source: dict[str, list[RetrievalResult]] = {}

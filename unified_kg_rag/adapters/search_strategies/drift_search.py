@@ -40,6 +40,7 @@ from unified_kg_rag.shared.utils import (
     compute_hash,
     parse_llm_json,
     safe_float_parse,
+    text_digest,
 )
 
 logger = get_logger(__name__)
@@ -105,8 +106,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
     ) -> SearchResult:
         start_time = time.time()
         logger.info(
-            "Drift search started - query: '%s...' ('%s')",
-            query.query[:50],
+            "Drift search started - query: %s ('%s')",
+            text_digest(query.query),
             query.search_type.value,
         )
 
@@ -204,6 +205,12 @@ class DriftSearchStrategy(BaseSearchStrategy):
                     current_query, query.query, all_results, iteration, config=config
                 )
             logger.info(
+                "Iteration %s: query %s, %s optional keywords",
+                iteration,
+                text_digest(current_query.query),
+                len(current_query.optional_keywords),
+            )
+            logger.debug(
                 "Iteration %s: evolved query='%s', optional keywords='%s'",
                 iteration,
                 current_query.query,
@@ -283,7 +290,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
         ):
             follow_up_query = query.model_copy(deep=True)
             follow_up_query.query = follow_up
-            logger.info("Primer follow-up %s: '%s'", iteration, follow_up)
+            logger.info("Primer follow-up %s: %s", iteration, text_digest(follow_up))
+            logger.debug("Primer follow-up %s: '%s'", iteration, follow_up)
 
             iteration_results = await self._execute_search_iteration(follow_up_query)
             unique_new = self._filter_unique_results(iteration_results, seen_hashes)

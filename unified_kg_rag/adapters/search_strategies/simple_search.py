@@ -20,6 +20,7 @@ from unified_kg_rag.domain.retrieval.index_prefixes import (
 )
 from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils import text_digest
 
 logger = get_logger(__name__)
 
@@ -31,14 +32,14 @@ class SimpleSearchStrategy(BaseSearchStrategy):
     ) -> SearchResult:
         start_time = time.time()
         logger.info(
-            "Simple search started - query: '%s...' ('%s')",
-            query.query[:50],
+            "Simple search started - query: %s ('%s')",
+            text_digest(query.query),
             query.search_type.value,
         )
 
         all_results = await self._retrieve_documents(query)
         if not all_results:
-            logger.warning("No results found for query: '%s...'", query.query[:50])
+            logger.warning("No results found for query: %s", text_digest(query.query))
             return SearchResult(
                 query=query,
                 results=[],

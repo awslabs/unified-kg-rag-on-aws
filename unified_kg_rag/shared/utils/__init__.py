@@ -17,6 +17,7 @@ from .common import (
     parse_llm_json,
     safe_float_parse,
     strip_embedding_fields,
+    text_digest,
 )
 from .concurrency import ContextThreadPoolExecutor
 from .event_loop import configure_event_loop
@@ -49,4 +50,5 @@ __all__ = [
     "stage_cache_key",
     "stage_input_fingerprint",
     "strip_embedding_fields",
+    "text_digest",
 ]

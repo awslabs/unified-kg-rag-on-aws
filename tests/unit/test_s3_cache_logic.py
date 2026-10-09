@@ -15,7 +15,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager
+from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager, sse_extra_args
 from unified_kg_rag.domain.models import Config, S3EncryptionType
 
 pytestmark = pytest.mark.unit
@@ -218,7 +218,7 @@ def test_sse_extra_args_selection(
     config, session = s3_setup
     config.aws.s3.encryption.encryption_type = encryption_type
     config.aws.s3.encryption.kms_key_id = kms_key_id
-    assert _manager(config, session)._sse_extra_args() == expected
+    assert sse_extra_args(config.aws.s3.encryption) == expected
 
 
 def test_default_upload_sends_no_sse_header(s3_setup, tmp_path, mocker) -> None:

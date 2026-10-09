@@ -9,6 +9,15 @@ or directly via email to aws-security@amazon.com.
 
 **Please do _not_ create a public GitHub issue** for security vulnerabilities.
 
+## Logging policy
+
+Log records at `INFO` and above carry only lengths, counts, ids and a short
+stable hash for user queries, corpus text (including entity names) and model
+output; the text itself is logged only at `DEBUG`, and exception messages do
+not include model output. `DEBUG` logs therefore contain user and corpus data
+and must be handled with the same controls as that data. See the logging
+section of the [user guide](docs/user-guide.md#27-memory-cache-logging).
+
 ## Dependency advisories
 
 Use the committed lockfile for reproducible installations. The optional

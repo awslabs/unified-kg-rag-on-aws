@@ -175,10 +175,8 @@ class DescriptionSummarizer:
         for name, result in zip(names, results, strict=True):
             summary = self._coerce_summary(result)
             if not summary:
-                logger.warning(
-                    "Empty/failed summary for '%s'; keeping concatenated description",
-                    name,
-                )
+                logger.warning("Empty/failed summary; keeping concatenated description")
+                logger.debug("Empty/failed summary for '%s'", name)
             summaries.append(summary)
         return summaries
 

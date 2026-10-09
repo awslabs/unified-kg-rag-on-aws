@@ -652,11 +652,10 @@ class GraphGleaner(BaseProcessor):
         entity = next((e for e in entities if self._matches(e.name, name)), None)
         if entity is None:
             logger.info(
-                "Dropping ENTITY_CORRECTION in chunk '%s': no current entity named "
-                "'%s'",
+                "Dropping ENTITY_CORRECTION in chunk '%s': no matching current entity",
                 unit.short_id,
-                name,
             )
+            logger.debug("Unmatched ENTITY_CORRECTION name: '%s'", name)
             return False
 
         corrected: list[str] = []
@@ -692,8 +691,8 @@ class GraphGleaner(BaseProcessor):
 
         entity.updated_at = datetime.now()
         logger.info(
-            "Applied ENTITY_CORRECTION to '%s' in chunk '%s' (%s)",
-            entity.name,
+            "Applied ENTITY_CORRECTION to entity '%s' in chunk '%s' (%s)",
+            entity.short_id,
             unit.short_id,
             ", ".join(corrected),
         )

@@ -29,7 +29,11 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import EMBEDDING_FIELD_SUFFIX, strip_embedding_fields
+from unified_kg_rag.shared.utils import (
+    EMBEDDING_FIELD_SUFFIX,
+    strip_embedding_fields,
+    text_digest,
+)
 
 logger = get_logger(__name__)
 
@@ -169,9 +173,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         start_time = time.time()
-        query_preview = query.query[:50] if query.query else "(empty)"
+        query_preview = text_digest(query.query)
         logger.info(
-            "OpenSearch retrieval started - query: '%s...' ('%s')",
+            "OpenSearch retrieval started - query: %s ('%s')",
             query_preview,
             query.search_type.value,
         )

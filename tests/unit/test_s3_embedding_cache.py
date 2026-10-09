@@ -12,9 +12,15 @@ from __future__ import annotations
 
 import json
 
+import boto3
 import pytest
+from moto import mock_aws
 
 from unified_kg_rag.adapters.aws.embedding_cache import S3EmbeddingCache
+from unified_kg_rag.adapters.aws.s3_cache import sse_extra_args
+from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+from unified_kg_rag.domain.models import Config, S3EncryptionType
+from unified_kg_rag.domain.models.config import S3EncryptionConfig
 
 pytestmark = pytest.mark.unit
 
@@ -115,3 +121,50 @@ def test_load_is_idempotent() -> None:
     c.load()
     c.load()  # second load is a no-op, doesn't reset
     assert c.get("h") == [1.0]
+
+
+@pytest.mark.parametrize(
+    "encryption_type", [S3EncryptionType.AES256, S3EncryptionType.KMS]
+)
+def test_flush_applies_configured_sse(encryption_type: S3EncryptionType) -> None:
+    # The cache object holds corpus-derived vectors: its upload must honour
+    # aws.s3.encryption exactly like the stage-cache sync does.
+    with mock_aws():
+        session = boto3.Session(region_name="us-east-1")
+        s3 = session.client("s3")
+        s3.create_bucket(Bucket="bucket")
+        key = None
+        if encryption_type == S3EncryptionType.KMS:
+            key = session.client("kms").create_key()["KeyMetadata"]["KeyId"]
+        encryption = S3EncryptionConfig(encryption_type=encryption_type, kms_key_id=key)
+        c = S3EmbeddingCache(
+            "bucket",
+            "embedding-cache/cache.json",
+            "titan",
+            1024,
+            boto_session=session,
+            encryption=encryption,
+        )
+        c.load()
+        c.put("h", [0.1])
+        c.flush()
+
+        head = s3.head_object(Bucket="bucket", Key="embedding-cache/cache.json")
+        expected = sse_extra_args(encryption)
+        assert head["ServerSideEncryption"] == expected["ServerSideEncryption"]
+        if encryption.kms_key_id:
+            assert encryption.kms_key_id in head["SSEKMSKeyId"]
+
+
+def test_indexer_passes_s3_encryption_to_embedding_cache(config: Config) -> None:
+    config.aws.s3.bucket_name = "bucket"
+    config.aws.s3.encryption.encryption_type = S3EncryptionType.AES256
+    config.indexing.opensearch.persist_embedding_cache = True
+    indexer = OpenSearchIndexer.__new__(OpenSearchIndexer)
+    indexer.config = config
+    indexer.opensearch_config = config.indexing.opensearch
+    indexer._embedding_dimension = 1024
+    indexer.boto_session = None
+    cache = indexer._build_s3_embedding_cache()
+    assert cache is not None
+    assert cache._sse_args == {"ServerSideEncryption": "AES256"}

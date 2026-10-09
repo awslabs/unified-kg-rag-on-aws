@@ -241,7 +241,7 @@ the same values.
 | `aws.opensearch.allow_anonymous` | `false` | Connect with no auth, for a local OpenSearch with the security plugin disabled (§1 Local stores). Cannot be combined with `use_iam` or username/password. |
 | `aws.opensearch.sigv4_service_name` | `"es"` | `es` for a managed domain, `aoss` for OpenSearch Serverless. A wrong value often shows up as zero search hits. |
 | `aws.s3.bucket_name` | `null` | Bucket for cache sync and embedding-cache persistence. |
-| `aws.s3.encryption.encryption_type` | `"BUCKET_DEFAULT"` | `BUCKET_DEFAULT` lets the bucket's default encryption apply; `AES256` or `aws:kms` (with `kms_key_id`) force a per-object header. |
+| `aws.s3.encryption.encryption_type` | `"BUCKET_DEFAULT"` | `BUCKET_DEFAULT` lets the bucket's default encryption apply; `AES256` or `aws:kms` (with `kms_key_id`) force a per-object header. Applies to the stage-cache sync and the persisted embedding cache. |
 | `aws.dynamodb.enabled` | `false` | Turn on the doc-status registry for incremental indexing (§5). |
 | `aws.dynamodb.table_name` | `"unified-kg-rag-on-aws-doc-status"` | Doc-status table name. |
 | `aws.dynamodb.create_table_if_missing` | `true` | Create the table on first use. Set `false` when the table is managed by IaC. |
@@ -540,6 +540,17 @@ quotas (`search.local_search.type_quota`) are in the template.
 | `logging.log_to_file` | `true` | The CLIs also write logs to `log_file_path` (`logs/log.txt`, dated as `log_YYYYMMDD.txt`; a relative path is resolved against the working directory). Importing the package as a library configures no handler or file: the host application's logging setup applies. |
 | `logging.library_levels` | `{langchain_aws: WARNING, botocore: WARNING, urllib3: WARNING}` | Per-logger levels for chatty libraries. Setting the key replaces the whole map. |
 
+**What the logs contain.** At `INFO` and above the package logs only lengths,
+counts, ids and a short hash for user and corpus text, for example
+`query: len=42 sha=1a2b3c4d`. The hash is stable, so one query can be followed
+across records without revealing it. Query text, rewritten (DRIFT and
+translated) queries, entity names and raw model output are logged only at
+`DEBUG`, and exception messages never carry model output. Treat `DEBUG` logs
+(`logging.level: DEBUG`, `LOG_LEVEL=DEBUG` or `--verbose`) as containing user
+and corpus data: do not enable them where logs are shipped to shared storage.
+Libraries set to `DEBUG` in `logging.library_levels` (for example `botocore`)
+can log request bodies too.
+
 ### 2.8 `evaluation`
 
 | Key | Default | What it does / when to change |
@@ -634,7 +645,7 @@ OpenSearch + Neptune.
 | `--s3-sync` | off | Sync cache to S3 (requires `--s3-bucket-name`) |
 | `--s3-bucket-name` | — | S3 bucket for cache sync |
 | `--s3-prefix` | `pipeline-runs` | S3 key prefix for cache files |
-| `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | Existing run to resume/inspect. If the flag is omitted it falls back to the `GRAPHRAG_PIPELINE_ID` environment variable. |
+| `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | Existing run to resume/inspect. If the flag is omitted it falls back to the `GRAPHRAG_PIPELINE_ID` environment variable. The id names the run's cache directory and S3 prefix, so only lowercase letters, digits, hyphens and underscores are accepted. |
 | `--resume-from-stage` | — | Stage to resume from (requires `--pipeline-id`) |
 | `--verify-metadata` | off | Verify pipeline metadata integrity (needs `--pipeline-id`); exits non-zero when it is corrupt |
 | `--repair-metadata` | off | Attempt metadata repair (needs `--pipeline-id`); exits non-zero when the repair fails |
@@ -844,6 +855,19 @@ units unfiltered. The two stores treat `attr_<key>` differently:
   expansion intact, while an entity-attribute filter such as `attr_role:buyer`
   removes entities whose role differs. Every other key is strict on both
   stores.
+
+**Filters are not an access-control boundary.** A filter narrows what
+retrieval ranks; it does not hide data. A store that does not declare a key
+returns its content unfiltered: relationships and claims have no `attr_<key>`
+or `document_ids`, Neptune community vertices declare only their own fields,
+and Neptune keeps entity vertices that lack an `attr_<key>` property. Graph
+expansion and community reports can also bring in content from documents the
+filter would exclude. Do not use filters to separate tenants or users with
+different permissions. Give each one its own namespace instead: a distinct
+`--suffix` (with `document_parsing.index_value` and, if used,
+`indexing.additional_suffix`) gives it separate OpenSearch indices and Neptune
+labels, and the query suffix is validated so it cannot widen the index target.
+Decide in the calling application which suffix a caller may query.
 
 A filter key that no store the selected strategy reads declares (for example
 the earlier `category` or `entity_type`) raises `InvalidFilterError`, whose

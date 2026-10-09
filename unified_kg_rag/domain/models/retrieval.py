@@ -6,6 +6,41 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+_SAFE_NAME = re.compile(r"[a-z0-9_-]+")
+# One path segment: starts with a letter or digit, so "." and ".." (and hidden
+# names) cannot occur, and no separator can appear.
+_SAFE_SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
+
+def validate_safe_name(value: str, field: str) -> str:
+    """Return ``value`` if it is safe as an index suffix, path or key segment.
+
+    Lowercase letters, digits, hyphens and underscores only: no ``/``, ``.``,
+    wildcard or comma, so the value can neither leave its directory or S3
+    prefix nor widen an OpenSearch index target.
+    """
+    if not _SAFE_NAME.fullmatch(value):
+        raise ValueError(
+            f"Invalid {field} '{value}': only lowercase letters, digits, "
+            "hyphens, and underscores are allowed."
+        )
+    return value
+
+
+def validate_path_segment(value: str, field: str) -> str:
+    """Return ``value`` if it is safe as one directory name or S3 key segment.
+
+    Letters, digits, ``.``, ``_`` and ``-``, starting with a letter or digit
+    and containing no ``..``: it cannot contain a separator or climb out of
+    its parent directory or prefix.
+    """
+    if not _SAFE_SEGMENT.fullmatch(value) or ".." in value:
+        raise ValueError(
+            f"Invalid {field} '{value}': use letters, digits, '.', '_' or '-' "
+            "(starting with a letter or digit, no '..'), up to 128 characters."
+        )
+    return value
+
 
 class FusionMethod(str, Enum):
     RRF = "rrf"
@@ -120,12 +155,7 @@ class SearchQuery(BaseModel):
         """
         if value is None:
             return None
-        if not re.match(r"^[a-z0-9_-]+$", value):
-            raise ValueError(
-                f"Invalid suffix '{value}': only lowercase letters, digits, "
-                "hyphens, and underscores are allowed."
-            )
-        return value
+        return validate_safe_name(value, "suffix")
 
 
 class SearchResult(BaseModel):

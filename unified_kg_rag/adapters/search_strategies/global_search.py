@@ -32,7 +32,7 @@ from unified_kg_rag.domain.prompts import (
 )
 from unified_kg_rag.domain.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import parse_llm_json, safe_float_parse
+from unified_kg_rag.shared.utils import parse_llm_json, safe_float_parse, text_digest
 from unified_kg_rag.shared.utils.langchain import BatchProcessor
 
 logger = get_logger(__name__)
@@ -112,14 +112,14 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     ) -> SearchResult:
         start_time = time.time()
         logger.info(
-            "Global search started - query: '%s...' ('%s')",
-            query.query[:50],
+            "Global search started - query: %s ('%s')",
+            text_digest(query.query),
             query.search_type.value,
         )
 
         retrieved_communities = await self._retrieve_and_fuse_communities(query)
         if not retrieved_communities:
-            logger.warning("No results found for query: '%s...'", query.query[:50])
+            logger.warning("No results found for query: %s", text_digest(query.query))
             return SearchResult(
                 query=query,
                 results=[],

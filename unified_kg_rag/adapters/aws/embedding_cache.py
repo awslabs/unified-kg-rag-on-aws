@@ -17,14 +17,17 @@ empty, flush is skipped) rather than failing the run.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import boto3
 
+from unified_kg_rag.adapters.aws.s3_cache import sse_extra_args
 from unified_kg_rag.shared import get_logger
 
 if TYPE_CHECKING:
     from types_boto3_s3 import S3Client
+
+    from unified_kg_rag.domain.models.config import S3EncryptionConfig
 
 logger = get_logger(__name__)
 
@@ -39,9 +42,14 @@ class S3EmbeddingCache:
         model_id: str,
         dimension: int,
         boto_session: boto3.Session | None = None,
+        encryption: S3EncryptionConfig | None = None,
     ) -> None:
         self.bucket_name = bucket_name
         self.key = key
+        # Same per-object SSE as the stage-cache sync (aws.s3.encryption).
+        self._sse_args: dict[str, Any] = (
+            sse_extra_args(encryption) if encryption else {}
+        )
         # Namespace entries so a model/dimension change never returns a stale
         # vector of the wrong shape/semantics.
         self._namespace = f"{model_id}:{dimension}"
@@ -115,7 +123,9 @@ class S3EmbeddingCache:
             merged = self._read_remote()
             merged.update(self._pending)
             body = json.dumps(merged).encode("utf-8")
-            self.client.put_object(Bucket=self.bucket_name, Key=self.key, Body=body)
+            self.client.put_object(
+                Bucket=self.bucket_name, Key=self.key, Body=body, **self._sse_args
+            )
             flushed_count = len(self._pending)
             self._pending.clear()
             self._dirty = False

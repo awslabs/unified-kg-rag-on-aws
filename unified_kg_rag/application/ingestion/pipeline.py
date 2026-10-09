@@ -36,6 +36,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageResult,
     PipelineStageStatus,
     PipelineStageType,
+    validate_path_segment,
 )
 from unified_kg_rag.shared import (
     CacheSyncError,
@@ -402,10 +403,12 @@ class DataIngestionPipeline:
     def _resolve_pipeline_id(
         self, source_directory: Path, pipeline_id: str | None
     ) -> str:
-        return (
+        # The id becomes a cache directory and an S3 prefix: no "/" or "..".
+        return validate_path_segment(
             pipeline_id
             or self.pipeline_config.pipeline_id
-            or self._generate_pipeline_id(source_directory)
+            or self._generate_pipeline_id(source_directory),
+            "pipeline_id",
         )
 
     @staticmethod

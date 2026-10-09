@@ -38,6 +38,11 @@ from unified_kg_rag.shared.utils import generate_stable_id, parse_llm_json
 logger = get_logger(__name__)
 
 
+def _escape_braces(text: str) -> str:
+    """Make ``text`` literal inside a LangChain f-string prompt template."""
+    return text.replace("{", "{{").replace("}", "}}")
+
+
 @dataclass
 class CorpusProfile:
     """Structured corpus characterization produced during tuning."""
@@ -261,28 +266,34 @@ class PromptTuner:
         entity-type guidance, and any generated few-shot example) and the
         community-report persona, so the whole indexing pipeline speaks the
         corpus's domain — not just entity extraction.
+
+        The overrides are LangChain f-string templates, so every corpus- or
+        model-derived field has its braces doubled: a JSON sample would
+        otherwise break formatting and a ``{input_text}`` in it would be
+        substituted.
         """
+        persona = _escape_braces(profile.persona)
+        domain = _escape_braces(profile.domain)
+        language = _escape_braces(profile.language)
+        entity_types = _escape_braces(", ".join(profile.entity_types))
+        examples = _escape_braces(profile.few_shot_examples)
         entity_guidance = (
-            f"Focus on these domain entity types: {', '.join(profile.entity_types)}."
+            f"Focus on these domain entity types: {entity_types}."
             if profile.entity_types
             else ""
         )
-        examples_block = (
-            f"\n\n# DOMAIN EXAMPLE\n{profile.few_shot_examples}"
-            if profile.few_shot_examples
-            else ""
-        )
+        examples_block = f"\n\n# DOMAIN EXAMPLE\n{examples}" if examples else ""
         graph_extraction_system = (
-            f"{profile.persona}\n\n"
-            f"You extract entities and relationships from {profile.domain} documents "
-            f"written in {profile.language}. {entity_guidance}\n\n"
+            f"{persona}\n\n"
+            f"You extract entities and relationships from {domain} documents "
+            f"written in {language}. {entity_guidance}\n\n"
             "Follow the output format exactly as specified in the human message."
             f"{examples_block}"
         )
         community_report_system = (
-            f"{profile.persona}\n\n"
+            f"{persona}\n\n"
             f"You analyze communities of entities and relationships extracted from "
-            f"{profile.domain} documents and write reports in {profile.language}. "
+            f"{domain} documents and write reports in {language}. "
             "Follow the output format exactly as specified in the human message."
         )
         return {

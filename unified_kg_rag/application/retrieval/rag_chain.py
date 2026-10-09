@@ -85,6 +85,7 @@ from unified_kg_rag.shared.utils import (
     configure_event_loop,
     parse_llm_json,
     strip_embedding_fields,
+    text_digest,
 )
 
 logger = get_logger(__name__)
@@ -354,8 +355,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             if token in by_value:
                 return by_value[token]
         logger.warning(
-            "Router returned unrecognized strategy '%s'; defaulting to LOCAL", raw
+            "Router returned unrecognized strategy (%s); defaulting to LOCAL",
+            text_digest(raw),
         )
+        logger.debug("Unrecognized router output: '%s'", raw)
         return SearchStrategy.LOCAL
 
     def _get_chain_for_prompt(
@@ -1176,7 +1179,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 raise
 
             logger.error(
-                "RAG chain execution failed for query '%s': %s", rag_input.query, e
+                "RAG chain execution failed for query %s: %s",
+                text_digest(rag_input.query),
+                e,
             )
             processing_time = time.time() - input_dict["start_time"]
 
@@ -1332,11 +1337,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 yield text
         except Exception as e:
             if not self.ignore_errors:
-                logger.error("RAG stream failed for query '%s': %s", rag_input.query, e)
+                logger.error(
+                    "RAG stream failed for query %s: %s",
+                    text_digest(rag_input.query),
+                    e,
+                )
                 raise
             logger.error(
-                "RAG stream failed for query '%s' after %s chunk(s): %s",
-                rag_input.query,
+                "RAG stream failed for query %s after %s chunk(s): %s",
+                text_digest(rag_input.query),
                 len(chunks),
                 e,
             )

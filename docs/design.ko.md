@@ -505,7 +505,12 @@ pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
   테넌트가 소수면 무방하나 수만 개면 클러스터 인덱스/샤드 수와 cluster-state
   오버헤드가 급증합니다. 확장 해법은 아티팩트 타입당 단일 인덱스 + `tenant` 필터
   필드 + routing(인덱스 drop 대신 delete-by-query)이며 — 인덱스/검색/삭제 경로를
-  모두 건드리는 동작 변경이라 별도 마이그레이션으로 분리합니다.
+  모두 건드리는 동작 변경이라 별도 마이그레이션으로 분리합니다. 이 설계에서는
+  `tenant` 필터를 모든 인덱스와 Neptune 레이블에 강제해야 합니다. 현재의 메타데이터
+  필터는 키를 선언한 저장소에만 적용되고(relationship, claim, community 정점은
+  필터 없이 통과) 그래프 확장과 community report가 문서 경계를 넘으므로, 접근 제어가
+  아니라 관련성 필터입니다. 그때까지 격리는 별도 `suffix` 네임스페이스로 합니다
+  (사용자 가이드 §4, 속성 필터).
 
 ---
 

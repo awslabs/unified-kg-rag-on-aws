@@ -237,7 +237,7 @@ ignored` WARNING 로그를 남긴 뒤 버려집니다. 파일을 고치거나 �
 | `aws.opensearch.allow_anonymous` | `false` | 인증 없이 연결합니다. 보안 플러그인을 끈 로컬 OpenSearch용입니다(§1 로컬 저장소). `use_iam`이나 username/password와 함께 쓸 수 없습니다. |
 | `aws.opensearch.sigv4_service_name` | `"es"` | 관리형 도메인은 `es`, OpenSearch Serverless는 `aoss`입니다. 값이 틀리면 검색 결과가 0건으로 나오는 경우가 많습니다. |
 | `aws.s3.bucket_name` | `null` | 캐시 동기화와 임베딩 캐시 저장에 쓰는 버킷입니다. |
-| `aws.s3.encryption.encryption_type` | `"BUCKET_DEFAULT"` | `BUCKET_DEFAULT`는 버킷 기본 암호화를 따릅니다. `AES256`이나 `aws:kms`(`kms_key_id` 필요)는 객체별 헤더를 강제합니다. |
+| `aws.s3.encryption.encryption_type` | `"BUCKET_DEFAULT"` | `BUCKET_DEFAULT`는 버킷 기본 암호화를 따릅니다. `AES256`이나 `aws:kms`(`kms_key_id` 필요)는 객체별 헤더를 강제합니다. 단계 캐시 동기화와 영구 임베딩 캐시 업로드에 모두 적용됩니다. |
 | `aws.dynamodb.enabled` | `false` | 증분 인덱싱용 doc-status 레지스트리를 켭니다(§5). |
 | `aws.dynamodb.table_name` | `"unified-kg-rag-on-aws-doc-status"` | doc-status 테이블 이름입니다. |
 | `aws.dynamodb.create_table_if_missing` | `true` | 처음 사용할 때 테이블을 만듭니다. IaC로 관리하는 테이블이면 `false`로 두세요. |
@@ -528,6 +528,16 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `logging.log_to_file` | `true` | CLI가 로그를 `log_file_path`(`logs/log.txt`, 실제 파일명은 `log_YYYYMMDD.txt`)에도 기록합니다. 상대 경로는 작업 디렉터리 기준입니다. 패키지를 라이브러리로 import하면 핸들러나 파일을 설정하지 않고 호스트 애플리케이션의 로깅 설정을 따릅니다. |
 | `logging.library_levels` | `{langchain_aws: WARNING, botocore: WARNING, urllib3: WARNING}` | 로그가 많은 라이브러리의 로거별 수준입니다. 지정하면 기본 목록 전체가 대체됩니다. |
 
+**로그에 남는 내용.** `INFO` 이상 수준에서는 사용자·코퍼스 텍스트 대신 길이,
+개수, ID와 짧은 해시만 기록합니다(예: `query: len=42 sha=1a2b3c4d`). 해시는
+항상 같은 값이므로 내용을 드러내지 않고 같은 질의를 여러 로그 레코드에서 추적할
+수 있습니다. 질의 원문, 다시 쓴 질의(DRIFT·번역), 엔터티 이름과 모델 원본 출력은
+`DEBUG`에서만 기록하며 예외 메시지에는 모델 출력을 넣지 않습니다. `DEBUG`
+로그(`logging.level: DEBUG`, `LOG_LEVEL=DEBUG`, `--verbose`)에는 사용자·코퍼스
+데이터가 들어 있다고 보고, 로그를 공유 저장소로 보내는 환경에서는 켜지 마세요.
+`logging.library_levels`에서 `DEBUG`로 둔 라이브러리(예: `botocore`)는 요청
+본문까지 기록할 수 있습니다.
+
 ### 2.8 `evaluation`
 
 | 키 | 기본값 | 역할 / 바꿀 때 |
@@ -621,7 +631,7 @@ CDK compute 스택은 `AWS_REGION`, `BEDROCK_REGION`, `NEPTUNE_ENDPOINT`,
 | `--s3-sync` | off | 캐시를 S3에 동기화 (`--s3-bucket-name` 필요) |
 | `--s3-bucket-name` | — | 캐시 동기화용 S3 버킷 |
 | `--s3-prefix` | `pipeline-runs` | 캐시 파일의 S3 키 프리픽스 |
-| `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | 재개/검사할 기존 실행. 플래그를 생략하면 `GRAPHRAG_PIPELINE_ID` 환경 변수로 대체됩니다. |
+| `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | 재개/검사할 기존 실행. 플래그를 생략하면 `GRAPHRAG_PIPELINE_ID` 환경 변수로 대체됩니다. ID가 실행의 캐시 디렉터리와 S3 접두사 이름이 되므로 영문 소문자, 숫자, 하이픈, 밑줄만 허용합니다. |
 | `--resume-from-stage` | — | 재개할 스테이지 (`--pipeline-id` 필요) |
 | `--verify-metadata` | off | 파이프라인 메타데이터 무결성 검증 (`--pipeline-id` 필요). 손상되었으면 0이 아닌 코드로 종료 |
 | `--repair-metadata` | off | 메타데이터 복구 시도 (`--pipeline-id` 필요). 복구에 실패하면 0이 아닌 코드로 종료 |
@@ -824,6 +834,17 @@ Neptune entity만 좁히고 text unit에는 적용되지 않습니다. 두 저�
   일치하거나 해당 속성이 없는 정점은 통과합니다. 따라서 `attr_category` 같은 문서
   속성 필터는 그래프 확장을 비우지 않고, `attr_role:buyer` 같은 entity 속성 필터는
   역할이 다른 entity를 제외합니다. 그 밖의 키는 두 저장소 모두 엄격하게 적용합니다.
+
+**필터는 접근 제어 경계가 아닙니다.** 필터는 검색이 순위를 매길 대상을 좁힐 뿐
+데이터를 숨기지 않습니다. 키를 선언하지 않은 저장소는 필터 없이 내용을 반환합니다.
+relationship과 claim에는 `attr_<key>`와 `document_ids`가 없고, Neptune community
+정점은 자체 필드만 선언하며, Neptune은 `attr_<key>` 속성이 없는 entity 정점을
+그대로 둡니다. 그래프 확장과 community report도 필터가 제외할 문서의 내용을 가져올
+수 있습니다. 권한이 다른 테넌트나 사용자를 필터로 구분하지 마십시오. 대신 각각에
+별도 네임스페이스를 주십시오. 서로 다른 `--suffix`(와 `document_parsing.index_value`,
+사용한다면 `indexing.additional_suffix`)를 쓰면 OpenSearch 인덱스와 Neptune 레이블이
+분리되고, 질의 suffix는 검증되므로 인덱스 대상을 넓힐 수 없습니다. 호출자가 어떤
+suffix를 질의할 수 있는지는 호출하는 애플리케이션에서 결정하십시오.
 
 선택한 전략이 읽는 어떤 저장소도 선언하지 않은 필터 키(예: 이전 예시의 `category`,
 `entity_type`)는 `InvalidFilterError`를 발생시키며, 오류 메시지에 필터 가능 키

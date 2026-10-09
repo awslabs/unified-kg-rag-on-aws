@@ -18,7 +18,7 @@ from pydantic import (
 )
 
 from .evaluation import EvaluationMetricType, EvaluatorType
-from .retrieval import FusionMethod, SearchStrategy
+from .retrieval import FusionMethod, SearchStrategy, validate_path_segment
 
 # Stdlib logger: shared.logging imports this module, so get_logger would cycle.
 _logger = logging.getLogger(__name__)
@@ -2690,10 +2690,18 @@ class PipelineConfig(BaseModel):
         default=False,
         description="If true, ignores any existing cache and rebuilds all outputs.",
     )
-    pipeline_id: str | None = Field(
+    # The id names a local cache directory and an S3 prefix.
+    pipeline_id: (
+        Annotated[
+            str, AfterValidator(lambda v: validate_path_segment(v, "pipeline_id"))
+        ]
+        | None
+    ) = Field(
         default=None,
-        min_length=1,
-        description="The ID of a previous pipeline run to resume.",
+        description=(
+            "The ID of a previous pipeline run to resume (lowercase letters, "
+            "digits, hyphens and underscores)."
+        ),
     )
     resume_from_stage: str | None = Field(
         default=None,
