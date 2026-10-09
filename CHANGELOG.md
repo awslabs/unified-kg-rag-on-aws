@@ -437,6 +437,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (`。．｡！？；`) before falling back to spaces and characters, so Chinese and
   Japanese text is no longer cut mid-sentence. Text without these characters
   is chunked exactly as before (#177).
+- Ingestion warns once per skipped file extension with the remedy (for
+  `.md`/`.html`, the `uv sync --extra unstructured` install command) instead
+  of skipping unparseable files silently, and an empty first stage reports
+  "No supported source files found in <dir>" rather than telling the user to
+  check a previous stage that does not exist (#PR).
 - `run-ingestion` (when the `indexing` stage is enabled), `run-rag` and
   `run-eval` check the Neptune and OpenSearch endpoints the run needs at
   start-up and exit with an error naming the config key and environment

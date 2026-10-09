@@ -90,8 +90,10 @@ pip install -e .
 
 Optional extra: parsing **Markdown (.md)** and **HTML (.html)** requires the
 `unstructured` package. Without it, only `.pdf`, `.txt`, `.csv`, `.json` are
-parsed (the parser raises a clear error naming the missing package for
-`.md`/`.html`). On Python 3.11 or 3.12, install the patched parser with
+parsed: ingestion skips `.md`/`.html` files and logs one warning per
+extension with the install command (`Skipping 2 '.md' file(s) ... install the
+optional 'unstructured' extra`). On Python 3.11 or 3.12, install the patched
+parser with
 `uv sync --extra unstructured` or `pip install -e '.[unstructured]'`.
 The extra requires `unstructured>=0.24.0`, which fixes URL-partitioning SSRF
 and no longer depends on NLTK. On Python 3.10 the extra does not install a parser;
@@ -1364,8 +1366,10 @@ on).
   prior run's pipeline ID.
 - **`Invalid stage names provided`** — use the exact stage names from §3 (the
   CLI prints the valid set).
-- **`No module named 'unstructured'`** — install the `unstructured` extra to
-  parse `.md`/`.html`, or convert those documents to a supported format.
+- **`Skipping N '.md' file(s) ... unsupported file type`** (and, when no
+  file is left, `No supported source files found in '<dir>'`) — install the
+  `unstructured` extra (`uv sync --extra unstructured`, Python 3.11+) to parse
+  `.md`/`.html`, or convert those documents to a supported format.
 - **OpenSearch auth failures with `use_iam: false`** — ensure `.env` has
   `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD`.
 - **LightRAG `mix`/`hybrid` returns nothing** — confirm the relationships index

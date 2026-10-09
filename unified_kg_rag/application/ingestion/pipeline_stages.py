@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 from abc import ABC, abstractmethod
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -20,7 +21,11 @@ from unified_kg_rag.adapters.ingestion.description_summarizer import (
 from unified_kg_rag.adapters.ingestion.gleaner import GraphGleaner
 from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
 from unified_kg_rag.adapters.ingestion.loader import DirectoryLoader
-from unified_kg_rag.adapters.ingestion.parser import ParserFactory
+from unified_kg_rag.adapters.ingestion.parser import (
+    UNSTRUCTURED_EXTENSIONS,
+    UNSTRUCTURED_INSTALL_HINT,
+    ParserFactory,
+)
 from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
@@ -172,6 +177,9 @@ class PipelineStage(ABC):
         """
         return context.incremental_delta is not None and not context.documents
 
+    def _empty_input_hint(self) -> str:
+        return "Check that the previous stage completed successfully."
+
     def _validate_critical_stage_output(
         self, input_count: int, output_count: int
     ) -> None:
@@ -181,9 +189,8 @@ class PipelineStage(ABC):
         if input_count == 0:
             if must_have_input:
                 error_msg = (
-                    f"Stage '{self.name}' received 0 inputs "
-                    f"but requires input to function. Check that the previous stage "
-                    f"completed successfully."
+                    f"Stage '{self.name}' received 0 inputs but requires input "
+                    f"to function. {self._empty_input_hint()}"
                 )
                 logger.error(error_msg)
                 raise PipelineStageError(error_msg)
@@ -500,6 +507,13 @@ class DocumentParsingStage(PipelineStage):
             )
         self.supported_extensions = ParserFactory.get_supported_extensions()
 
+    def _empty_input_hint(self) -> str:
+        return (
+            f"No supported source files found in '{self.source_directory}' "
+            f"(supported: {', '.join(sorted(self.supported_extensions))}); see "
+            "the warnings above for skipped files."
+        )
+
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
@@ -579,15 +593,34 @@ class DocumentParsingStage(PipelineStage):
             d.resolve() for d in (self.target_directory, self.cache_directory) if d
         ]
         files = []
+        skipped: Counter[str] = Counter()
         for file_path in self.source_directory.rglob("*"):
             if (
-                file_path.is_file()
-                and file_path.suffix.lower() in self.supported_extensions
-                and not self._should_exclude_file(file_path)
-                and not any(file_path.resolve().is_relative_to(d) for d in owned_dirs)
+                not file_path.is_file()
+                or self._should_exclude_file(file_path)
+                or any(file_path.resolve().is_relative_to(d) for d in owned_dirs)
             ):
+                continue
+            suffix = file_path.suffix.lower()
+            if suffix in self.supported_extensions:
                 files.append(file_path)
+            elif suffix:
+                skipped[suffix] += 1
 
+        for suffix, count in sorted(skipped.items()):
+            remedy = (
+                UNSTRUCTURED_INSTALL_HINT
+                if suffix in UNSTRUCTURED_EXTENSIONS
+                else "convert them to a supported format"
+            )
+            logger.warning(
+                "Skipping %s '%s' file(s) in '%s': unsupported file type; to "
+                "ingest them, %s",
+                count,
+                suffix,
+                self.source_directory,
+                remedy,
+            )
         return sorted(files)
 
     @staticmethod

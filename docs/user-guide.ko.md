@@ -90,8 +90,9 @@ pip install -e .
 
 선택적 추가 패키지: **Markdown(.md)** 및 **HTML(.html)** 파싱에는
 `unstructured` 패키지가 필요합니다. 이 패키지가 없으면 `.pdf`, `.txt`, `.csv`,
-`.json`만 파싱됩니다(파서는 `.md`/`.html`에 대해 누락된 패키지 이름을 명시하는
-명확한 에러를 발생시킵니다). Python 3.11 또는 3.12에서
+`.json`만 파싱됩니다. 인제스천은 `.md`/`.html` 파일을 건너뛰고 확장자마다 설치
+명령이 담긴 경고를 한 번 남깁니다(`Skipping 2 '.md' file(s) ... install the
+optional 'unstructured' extra`). Python 3.11 또는 3.12에서
 `uv sync --extra unstructured` 또는 `pip install -e '.[unstructured]'`로
 설치하세요. 이 추가 패키지는 URL 파싱의 SSRF 취약점을 수정하고 NLTK 의존성을
 제거한 `unstructured>=0.24.0`을 사용합니다. Python 3.10에서는 이 추가 패키지를
@@ -1322,9 +1323,10 @@ DynamoDB(증분 인덱싱이 켜진 경우).
   실행의 파이프라인 ID가 필요합니다.
 - **`Invalid stage names provided`** — §3의 정확한 스테이지 이름을 사용하세요
   (CLI가 유효한 집합을 출력합니다).
-- **`No module named 'unstructured'`** — `.md`/`.html`을 파싱하려면
-  `unstructured` 추가 패키지를 설치하거나, 해당 문서를 지원 포맷으로
-  변환하세요.
+- **`Skipping N '.md' file(s) ... unsupported file type`**(남는 파일이 없으면
+  `No supported source files found in '<dir>'`) — `.md`/`.html`을 파싱하려면
+  `unstructured` 추가 패키지를 설치하거나(`uv sync --extra unstructured`,
+  Python 3.11 이상), 해당 문서를 지원 포맷으로 변환하세요.
 - **`use_iam: false`에서 OpenSearch 인증 실패** — `.env`에
   `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD`가 있는지 확인하세요.
 - **LightRAG `mix`/`hybrid`가 아무것도 반환하지 않음** — 인제스천 중 관계
