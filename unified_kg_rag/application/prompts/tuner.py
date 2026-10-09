@@ -41,10 +41,16 @@ from unified_kg_rag.shared.utils import generate_stable_id, parse_llm_json
 
 logger = get_logger(__name__)
 
-# Sentence or line boundaries for picking a verbatim evidence span (Latin and
-# CJK sentence-final punctuation).
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?\u3002\uff01\uff1f])\s+|\n+")
+# Sentence or line boundaries for picking a verbatim evidence span. Latin
+# sentence-final punctuation needs following whitespace (so "3.5" or "e.g."
+# mid-token is not a boundary); CJK terminators (。！？) end a sentence on
+# their own, since CJK text has no space between sentences.
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|(?<=[\u3002\uff01\uff1f])\s*|\n+")
+# Target length of an evidence span cut from a long sentence.
 _MAX_EVIDENCE_CHARS = 200
+# Hard cap when the names themselves lie further apart than the target; a
+# sentence whose names cannot fit in this many characters gives no span.
+_MAX_EVIDENCE_SPAN_CHARS = 400
 
 
 def _escape_braces(text: str) -> str:
@@ -226,23 +232,63 @@ class PromptTuner:
 
         The extractor strips the model's ``source_text`` once grounding has
         checked it, so the example re-derives one: the first sentence (or line)
-        that contains all ``names``, cut to a window around the first name when
-        long. ``None`` when no sentence mentions them all.
+        that contains all ``names``. A long sentence is cut to a window that
+        covers one mention of every name, padded to ``_MAX_EVIDENCE_CHARS``
+        and at most ``_MAX_EVIDENCE_SPAN_CHARS`` long. ``None`` when no
+        sentence mentions them all within that bound.
         """
-        wanted = [n.strip().casefold() for n in names if n and n.strip()]
+        wanted = [n.strip() for n in names if n and n.strip()]
         if not wanted:
             return None
+        folded_wanted = [n.casefold() for n in wanted]
         for sentence in _SENTENCE_SPLIT.split(text):
             span = sentence.strip()
             folded = span.casefold()
-            if not span or not all(n in folded for n in wanted):
+            if not span or not all(n in folded for n in folded_wanted):
                 continue
-            if len(span) > _MAX_EVIDENCE_CHARS:
-                at = folded.index(wanted[0])
-                lo = max(0, at - _MAX_EVIDENCE_CHARS // 2)
-                span = span[lo : lo + _MAX_EVIDENCE_CHARS].strip()
-            return span
+            if len(span) <= _MAX_EVIDENCE_CHARS:
+                return span
+            window = PromptTuner._covering_window(span, wanted)
+            if window is not None:
+                return window
         return None
+
+    @staticmethod
+    def _covering_window(span: str, names: list[str]) -> str | None:
+        """Shortest slice of ``span`` holding one mention of each of ``names``.
+
+        Padded with surrounding text up to ``_MAX_EVIDENCE_CHARS``; ``None``
+        when the mentions are more than ``_MAX_EVIDENCE_SPAN_CHARS`` apart.
+        """
+        mentions = [
+            [
+                (m.start(), m.end())
+                for m in re.finditer(re.escape(name), span, re.IGNORECASE)
+            ]
+            for name in names
+        ]
+        if not all(mentions):
+            return None
+        best: tuple[int, int] | None = None
+        # The shortest covering window starts at some mention; for each start,
+        # take every other name's first mention at or after it.
+        for start, _ in sorted({m for occ in mentions for m in occ}):
+            ends = [
+                min((e for s, e in occ if s >= start), default=-1) for occ in mentions
+            ]
+            if -1 in ends:
+                continue
+            end = max(ends)
+            if best is None or end - start < best[1] - best[0]:
+                best = (start, end)
+        if best is None or best[1] - best[0] > _MAX_EVIDENCE_SPAN_CHARS:
+            return None
+        lo, hi = best
+        pad = max(0, _MAX_EVIDENCE_CHARS - (hi - lo))
+        lo = max(0, lo - pad // 2)
+        hi = min(len(span), max(hi, lo + _MAX_EVIDENCE_CHARS))
+        lo = max(0, min(lo, hi - _MAX_EVIDENCE_CHARS))
+        return span[lo:hi].strip()
 
     @classmethod
     def _render_example(
