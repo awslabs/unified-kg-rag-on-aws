@@ -418,6 +418,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- The interactive graph HTML (`graph.html`, the community hierarchy) escapes
+  node tooltips when pyvis renders them as HTML. Once any node title contained
+  `href`, pyvis replaced the plain-text tooltip with a popup that sets
+  `innerHTML` to the title, so markup in an attribute such as an LLM-written
+  description (`<img src=x onerror=...>`) ran as script when the page was
+  opened. Plain-text tooltips are unchanged (#PR).
 - Merging an undersized chunk into its neighbour no longer duplicates the
   splitter's `chunk_overlap` or fuses words at the seam. Adjacent chunks were
   concatenated as strings, so a single-paragraph document of ~5,100

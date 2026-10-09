@@ -9,6 +9,8 @@ HTML to a ``tmp_path``. pyvis is a pure-Python dependency (no AWS).
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 
 import networkx as nx
@@ -120,6 +122,74 @@ class TestNetworkVisualization:
         out = tmp_path / "claim.html"
         InteractiveRenderer({}).create_network_visualization(g, {}, str(out))
         assert out.exists()
+
+
+_PAYLOAD = "<img src=x onerror=alert(1)>"
+
+
+class TestTitleEscaping:
+    """Node titles reach ``innerHTML`` once any title mentions ``href``."""
+
+    @staticmethod
+    def _graph_with(description: str) -> nx.Graph:
+        g = nx.Graph()
+        g.add_node("e1", name="Vendor", description=description)
+        g.add_node("e2", name="Buyer & Co")
+        g.add_edge("e1", "e2", weight=1.0, description=description)
+        return g
+
+    @staticmethod
+    def _rendered_titles(page: str) -> dict[str, str]:
+        # pyvis embeds the nodes as JSON with "<" and "&" as \u escapes; decode
+        # it to get the strings the page's JavaScript actually receives.
+        match = re.search(r"nodes = new vis\.DataSet\((\[.*?\])\);", page)
+        assert match is not None
+        return {n["id"]: n["title"] for n in json.loads(match.group(1))}
+
+    def test_html_popup_titles_are_escaped(self, tmp_path: Path) -> None:
+        out = tmp_path / "graph.html"
+        g = self._graph_with(f'see <a href="x">terms</a> {_PAYLOAD}')
+        InteractiveRenderer({}).create_network_visualization(g, {}, str(out))
+        page = out.read_text(encoding="utf-8")
+        # pyvis switched to its innerHTML popup, and no raw markup reaches it.
+        assert "popup.innerHTML" in page
+        titles = self._rendered_titles(page)
+        assert _PAYLOAD not in titles["e1"]
+        assert "&lt;img src=x onerror=alert(1)&gt;" in titles["e1"]
+        assert "Buyer &amp; Co" in titles["e2"]
+
+    def test_html_popup_title_keeps_line_breaks(self, mocker) -> None:
+        renderer = InteractiveRenderer({})
+        net = renderer._init_network()
+        renderer._add_nodes(net, self._graph_with('<a href="x">t</a>'), {})
+        renderer._escape_titles_for_html_popup(net)
+        title = next(n["title"] for n in net.nodes if n["id"] == "e1")
+        assert "\n" not in title
+        assert "<br>" in title
+        assert "&lt;a href=&quot;x&quot;&gt;t&lt;/a&gt;" in title
+
+    def test_plain_text_titles_left_verbatim(self, tmp_path: Path) -> None:
+        # Without "href" the default tooltip uses innerText: no escaping, so
+        # "&" is not shown as "&amp;".
+        renderer = InteractiveRenderer({})
+        net = renderer._init_network()
+        renderer._add_nodes(net, self._graph_with("R&D <b>plain</b>"), {})
+        renderer._escape_titles_for_html_popup(net)
+        title = next(n["title"] for n in net.nodes if n["id"] == "e1")
+        assert "Description: R&D <b>plain</b>" in title.split("\n")
+
+    def test_community_hierarchy_titles_escaped_in_popup_mode(self, mocker) -> None:
+        renderer = InteractiveRenderer({})
+        comm = HierarchicalCommunity(
+            community_id=f"href{_PAYLOAD}", level=0, nodes={"e1"}
+        )
+        save = mocker.patch(
+            "unified_kg_rag.adapters.renderers.interactive.Network.save_graph",
+            autospec=True,
+        )
+        renderer.create_community_hierarchy([comm], "unused.html")
+        net = save.call_args.args[0]
+        assert _PAYLOAD not in net.nodes[0]["title"]
 
 
 class TestNodeSize:
