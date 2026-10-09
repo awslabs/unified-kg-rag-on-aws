@@ -356,3 +356,30 @@ async def test_memory_save_reuses_query_step_entities(
     assert [(c["user"], c["assistant"]) for c in calls] == [("q", "a")] * 2
     assert calls[0]["entities"] == expected
     assert calls[1]["entities"] is None
+
+
+def test_default_token_counter_takes_the_models_estimate_multiplier(mocker) -> None:
+    from unified_kg_rag.domain.models import LanguageModelId
+
+    counter_cls = mocker.patch.object(providers_module, "BedrockTokenCounter")
+    config = Config(
+        aws={
+            "bedrock": {
+                "model_overrides": {
+                    "vendor.synthetic-model": {
+                        "context_window_size": 8000,
+                        "max_output_tokens": 1000,
+                        "token_estimate_multiplier": 1.5,
+                    }
+                }
+            }
+        }
+    )
+    providers = Providers(config, boto_session=MagicMock())
+
+    providers.token_counter(LanguageModelId.CLAUDE_V5_5_SONNET.value)
+    providers.token_counter(LanguageModelId.CLAUDE_V4_5_HAIKU.value)
+    providers.token_counter("vendor.synthetic-model")
+
+    multipliers = [c.kwargs["estimate_multiplier"] for c in counter_cls.call_args_list]
+    assert multipliers == [1.3, 1.0, 1.5]

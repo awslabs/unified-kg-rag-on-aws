@@ -54,6 +54,13 @@ _ANTHROPIC_EFFORTS_NO_XHIGH: frozenset[str] = EFFORT_LEVELS - {"xhigh"}
 # BedrockConfig effort fields (EffortLevel) only carry the shared levels.
 _OPENAI_EFFORTS: frozenset[str] = EFFORT_LEVELS
 
+# Claude models with the tokenizer introduced in Opus 4.7 (Opus 4.7/4.8/5/5.5,
+# Sonnet 5/5.5, Haiku 5.5) count more tokens for the same text than older
+# Claude: "roughly 1x-1.35x as many tokens" (Opus 4.7 migration notes) and
+# "~30% more tokens" (Sonnet 5 vs 4.6; Haiku 5.5 vs 4.5). CountTokens rejects
+# all of them on bedrock-runtime, so the local estimate is scaled by this.
+_CLAUDE_4_7_TOKENIZER_MULTIPLIER = 1.3
+
 
 class LanguageModelInfo(BaseModel):
     # Forbid unknown keys so a typo in aws.bedrock.model_overrides fails fast.
@@ -160,6 +167,18 @@ class LanguageModelInfo(BaseModel):
             "allowlist; set it for a model the allowlist does not know yet "
             "(otherwise it falls back to non-streaming Converse with a "
             "warning on every model construction)."
+        ),
+    )
+    token_estimate_multiplier: float = Field(
+        default=1.0,
+        gt=0,
+        description=(
+            "Factor applied to the local token estimate (~4 characters per "
+            "token for Latin text) when CountTokens is not used for this model. "
+            "The estimate is calibrated to the older Claude tokenizer; the "
+            "tokenizer introduced with Claude Opus 4.7 counts more tokens for "
+            "the same text, so those models set 1.3 and context budgets are not "
+            "overfilled. Has no effect on counts the API returns."
         ),
     )
     supports_count_tokens: bool = Field(
@@ -272,6 +291,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         supports_1m_context_window=True,
         native_1m_context_window=True,
         adaptive_thinking_only=True,
+        token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
         supported_efforts=_ANTHROPIC_EFFORTS_ALL,
         supports_sampling_params=False,
         requires_inference_profile=True,
@@ -286,6 +306,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         supports_1m_context_window=True,
         native_1m_context_window=True,
         adaptive_thinking_only=True,
+        token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
         supported_efforts=_ANTHROPIC_EFFORTS_ALL,
         supports_sampling_params=False,
         requires_inference_profile=True,
@@ -306,6 +327,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         supports_1m_context_window=True,
         native_1m_context_window=True,
         adaptive_thinking_only=True,
+        token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
         supported_efforts=_ANTHROPIC_EFFORTS_ALL,
         supports_sampling_params=False,
         requires_inference_profile=True,
@@ -322,6 +344,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         supports_1m_context_window=True,
         native_1m_context_window=True,
         adaptive_thinking_only=True,
+        token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
         supports_sampling_params=False,
         requires_inference_profile=True,
         supports_count_tokens=False,
@@ -335,6 +358,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         supports_1m_context_window=True,
         native_1m_context_window=True,
         adaptive_thinking_only=True,
+        token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
         # Opus 5 also accepts {'type': 'disabled'}, but only at effort <= high.
         # We always send adaptive, so that cap never applies.
         supports_sampling_params=False,
@@ -354,6 +378,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         supports_1m_context_window=True,
         native_1m_context_window=True,
         adaptive_thinking_only=True,
+        token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
         supported_efforts=_ANTHROPIC_EFFORTS_ALL,
         supports_sampling_params=False,
         requires_inference_profile=True,
@@ -368,6 +393,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         supports_1m_context_window=True,
         native_1m_context_window=True,
         adaptive_thinking_only=True,
+        token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
         supported_efforts=_ANTHROPIC_EFFORTS_ALL,
         supports_sampling_params=False,
         requires_inference_profile=True,
@@ -649,6 +675,7 @@ _CLAUDE_ADAPTIVE_ONLY_DEFAULT = LanguageModelInfo(
     supports_prompt_caching=True,
     supports_thinking=True,
     adaptive_thinking_only=True,
+    token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
     supports_sampling_params=False,
     supports_count_tokens=False,
 )

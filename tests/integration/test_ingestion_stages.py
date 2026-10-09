@@ -50,7 +50,7 @@ _UNREADABLE = "UNREADABLE"
 
 
 def _source_text(human: str) -> str:
-    match = re.search(r"## SOURCE TEXT:\n(.*?)\n\n##", human, re.DOTALL)
+    match = re.search(r"<input_text>\n(.*?)\n</input_text>", human, re.DOTALL)
     assert match, "prompt has no SOURCE TEXT section"
     return match.group(1)
 

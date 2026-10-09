@@ -127,7 +127,7 @@ class GraphExtractor(BaseProcessor):
             enable_output_fixing=self.config.fixing.enabled,
             output_fixing_model_id=self.config.fixing.fixing_model_id,
             factory=self.factory,
-            min_output_tokens=GraphExtractionPrompt.min_output_tokens,
+            min_output_tokens=GraphExtractionPrompt.output_floor(self.config),
             output_tags=["entities", "relationships"],
         )
         self.graph_extractor = setup_chain(
@@ -135,6 +135,7 @@ class GraphExtractor(BaseProcessor):
             factory=self.factory,
             model_id=self.extraction_config.extraction_model_id,
             prompt_class=GraphExtractionPrompt,
+            min_output_tokens=GraphExtractionPrompt.output_floor(self.config),
             parser=robust_xml_output_parser,
             custom_prompts=self.config.custom_prompts,
         )
@@ -210,6 +211,10 @@ class GraphExtractor(BaseProcessor):
         entity_types_block = self._format_entity_types(
             graph_extraction_config.entity_types
         )
+        # Descriptions are written in the graph's language: the language the
+        # text is translated to (equal to the source when translation is a
+        # no-op), which is also the language queries are translated to.
+        target_language = self.config.processing.translation.target_language.value
 
         for text_unit in text_units:
             try:
@@ -223,6 +228,7 @@ class GraphExtractor(BaseProcessor):
                             graph_extraction_config.max_relationships_per_chunk
                         ),
                         "entity_types": entity_types_block,
+                        "target_language": target_language,
                     }
                 )
             except Exception as e:
@@ -250,6 +256,7 @@ class GraphExtractor(BaseProcessor):
                             graph_extraction_config.max_relationships_per_chunk
                         ),
                         "entity_types": entity_types_block,
+                        "target_language": target_language,
                     }
                 )
 

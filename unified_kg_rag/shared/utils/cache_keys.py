@@ -75,6 +75,7 @@ _STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
         # routing are excluded: they change WHERE the call goes, not its output.
         "aws.bedrock.effort",
         "aws.bedrock.fast_effort",
+        "aws.bedrock.ingestion_effort",
         "aws.bedrock.enable_1m_context",
         "aws.bedrock.guardrail",
         # The per-request output cap truncates long generations, and per-model
@@ -157,6 +158,7 @@ _OMIT_WHEN_DEFAULT: dict[str, Any] = {
     )
     for path in (
         "aws.bedrock.fast_effort",
+        "aws.bedrock.ingestion_effort",
         "aws.bedrock.default_max_output_tokens",
         "aws.bedrock.model_overrides",
     )

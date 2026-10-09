@@ -222,6 +222,7 @@ ignored` WARNING 로그를 남긴 뒤 버려집니다. 파일을 고치거나 �
 | `aws.bedrock.fast_model_id` | `"anthropic.claude-haiku-5-5"` | fast 등급 역할 전체가 쓰는 모델입니다. |
 | `aws.bedrock.default_max_output_tokens` | `16384` | 요청마다 보내는 `max_tokens`이며 모델 최대값을 넘지 않게 맞춥니다. 답변이 잘리면(`stopReason: max_tokens`) 올리고, `null`이면 모델 최대값을 보냅니다. |
 | `aws.bedrock.default_effort` | `"high"` | `default_model_id` 호출의 추론 깊이입니다(adaptive thinking Claude와 GPT 모델). `low`, `medium`, `high`, `xhigh`, `max` 중 하나이며, 낮추면 비용과 지연 시간이 줄어듭니다. |
+| `aws.bedrock.ingestion_effort` | `null` | default 등급 인제스천 호출(그래프 추출, gleaning, 클레임 추출, 커뮤니티 보고서. 출력 수정기는 `fixing.fixing_model_id`가 default 등급 모델일 때만)의 추론 깊이입니다. `null`이면 `default_effort`를 따릅니다. 질의 시 effort는 그대로 두고 인제스천 비용만 줄이려면 낮추세요(예: `"medium"`). fast 등급 인제스천 호출은 `fast_effort`를 씁니다. |
 | `aws.bedrock.fast_effort` | `"low"` | `fast_model_id`가 `default_model_id`와 다를 때 fast 모델 호출의 추론 깊이입니다. 기본 fast 모델인 Claude Haiku 5.5는 adaptive 사고를 하므로 이 값이 추론 깊이를 정합니다. 추론하지 않는 fast 모델에는 효과가 없습니다. |
 | `aws.bedrock.enable_1m_context` | `false` | 1M 컨텍스트가 베타인 모델에서 이를 사용합니다(추가 요금). Claude 5는 기본으로 1M입니다. |
 | `aws.bedrock.model_overrides` | `{}` | 패키지가 모르는 언어 모델의 기능 정보를 지정합니다(모델 선택 주의사항 참고). 임베딩·리랭킹 모델은 정해진 목록에서만 고릅니다. |
@@ -325,9 +326,13 @@ aws:
 **출력 상한.** Bedrock은 요청 시작 시 입력 + `max_tokens`를 분당 토큰 할당량에서
 미리 차감하므로, 모델 최대값(Claude 5.x는 128K)을 요청하면 실제 사용량보다 훨씬
 먼저 동시 수집 호출이 스로틀링됩니다. 그래서 `default_max_output_tokens`가
-16384입니다. thinking 토큰도 여기에 포함되며, 출력이 긴 프롬프트는 더 높은 하한을
-선언해 그 값이 우선합니다(그래프·클레임 추출, gleaning, 커뮤니티 보고서와 그 출력
-수정기 32768, 문서 번역 65536).
+16384입니다. thinking 토큰도 여기에 포함되며, 출력이 긴 프롬프트는 자신의 한도로
+더 높은 하한을 계산해 그 값이 우선합니다. 하한은 그 한도에서 나올 수 있는 가장 긴
+응답에 추론 여유분 8192 토큰을 더한 값입니다. 그래프 추출과 gleaning(과 그 출력
+수정기)은 `max_entities_per_chunk` + `max_relationships_per_chunk` 개 레코드에
+레코드당 150 토큰(기본 23192), 문서 번역은 `max_chunk_size` 문자당 1.35 토큰(18992),
+클레임 추출은 그 두 배(29792)를 잡고, 커뮤니티 보고서는 기본 상한 안에 들어갑니다.
+이 한도를 올리면 하한도 함께 올라갑니다.
 
 **프롬프트 캐싱.** 명시적 프롬프트 캐싱을 지원하는 Claude 모델에서는 각 시스템
 프롬프트 끝을 캐시 지점으로 표시합니다. Converse API(모든 추론 프로파일)에서는
@@ -355,7 +360,7 @@ aws:
 모두 추론 프로파일 전용입니다. OpenAI는 독점 GPT 모델만 지원하며 오픈 웨이트
 `gpt-oss` 모델은 제외했습니다.
 
-Claude 4.7 이후 모델은 세 가지가 다릅니다.
+Claude 4.7 이후 모델은 네 가지가 다릅니다.
 
 - **추론 프로파일이 필수입니다.** `ON_DEMAND` 처리량 없이 출시되므로 순수 모델
   ID로는 호출할 수 없고 크로스 리전 프로파일이 반드시 해석돼야 합니다.
@@ -369,11 +374,17 @@ Claude 4.7 이후 모델은 세 가지가 다릅니다.
   호출 모델이 `fast_model_id`이고 `default_model_id`와 다르면 `fast_effort`를,
   그 밖에는 `default_effort`를 씁니다. 기본 fast 모델인 Claude Haiku 5.5는
   adaptive 사고를 하므로, `fast_effort`(기본값 `low`)가 fast 등급 호출의 추론
-  깊이를 정합니다. Claude Sonnet 5.5는 사고를 끌 수
+  깊이를 정합니다. default 등급 인제스천 호출은 `ingestion_effort`가 설정돼 있으면
+  그 값을 씁니다. Claude Sonnet 5.5는 사고를 끌 수
   없어 `--enable-thinking`이 무의미하며, 깊이는 `effort`로만 조절합니다.
   모델이 받지 않는 수준(예: Opus·Sonnet 4.6의 `xhigh`)은 즉시 실패합니다.
 - **샘플링 파라미터가 제거됩니다.** `temperature`/`top_k`는 수용되지 않으므로
   요청에서 자동 생략됩니다. 동작 제어는 프롬프트로 하세요.
+- **토큰 추정치를 보정합니다.** 이 모델들의 토크나이저는 같은 텍스트를 이전
+  Claude보다 약 1~1.35배 많은 토큰으로 세고 CountTokens도 지원하지 않으므로,
+  컨텍스트 예산을 잡을 때 로컬 추정치(라틴 문자 약 4자당 1토큰)에 모델 레코드의
+  `token_estimate_multiplier`(1.3)를 곱합니다. 모델별 값은
+  `aws.bedrock.model_overrides`로 바꿀 수 있습니다.
 
 OpenAI GPT 모델은 Claude와 다음이 다릅니다.
 
@@ -425,7 +436,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `processing.chunking.fallback_chunk_size` | `4800` | 크기 기반 분할(`simple`, 또는 intelligent 청킹이 실패할 때)의 목표 크기입니다. 문단, 줄, CJK 문장 끝 기호(`。．｡！？；`) 뒤, 공백 순으로 나눕니다. |
 | `processing.translation.enabled` | `true` | 번역 스테이지를 실행합니다. 원문과 대상 언어가 같고 추가 대상 언어가 없으면 아무것도 하지 않습니다(LLM 비용 0). |
 | `processing.translation.source_language` | `"en"` | 코퍼스의 주 언어입니다. 번역 생략 여부 판단에만 씁니다. |
-| `processing.translation.target_language` | `"en"` | 코퍼스를 번역할 언어입니다(§3 다국어 인제스천 참고). |
+| `processing.translation.target_language` | `"en"` | 코퍼스를 번역할 언어입니다(§3 다국어 인제스천 참고). 엔터티와 관계 설명도 이 언어로 작성합니다. |
 | `processing.translation.additional_target_languages` | `null` | 추가로 번역할 대상 언어 목록입니다. 언어마다 해당 언어 analyzer를 쓰는 `translated_text_<언어>` 필드에 인덱싱해 lexical 검색에 포함합니다(질의별 `RAGInput.target_language`와 함께 쓰면 유용). 추출, 임베딩, 답변 컨텍스트는 `target_language`만 씁니다. 언어 하나마다 청크당 LLM 호출이 하나씩 늘어납니다. |
 | `processing.graph_extraction.entity_types` | 범용 유형 7개 | 추출 프롬프트에 넣는 `"LABEL: 설명"` 목록입니다. 도메인 적응에 가장 효과가 큰 항목입니다(§9). 빈 목록이면 모델이 유형을 고릅니다. |
 | `processing.graph_extraction.max_entities_per_chunk` | `50` | 청크당 엔터티 상한입니다(관계는 `max_relationships_per_chunk`, 역시 `50`). |
@@ -481,7 +492,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 
 | 키 | 기본값 | 역할 / 바꿀 때 |
 |---|---|---|
-| `search.auto_routable_strategies` | `["local", "mix", "global", "drift"]` | `auto` 라우터가 고를 수 있는 전략입니다. 어떤 전략이든 직접 지정할 수는 있습니다. |
+| `search.auto_routable_strategies` | `["local", "mix", "global", "drift"]` | `auto` 라우터가 고를 수 있는 전략입니다. 라우터 프롬프트는 이 전략만 이 순서대로 설명하며, `auto` 자체는 넣을 수 없습니다. 어떤 전략이든 직접 지정할 수는 있습니다. |
 | `search.hybrid.lexical_weight` | `0.5` | OpenSearch 하이브리드 파이프라인의 어휘 검색 가중치입니다(벡터는 `vector_weight`, 역시 `0.5`). |
 | `search.fusion.method` | `"rrf"` | `rrf`(reciprocal rank fusion) 또는 `weighted`입니다. |
 | `search.fusion.rrf_k` | `60` | RRF 상수 `k`입니다. |

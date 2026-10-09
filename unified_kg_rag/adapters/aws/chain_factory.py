@@ -384,6 +384,7 @@ def setup_chain(
     parser: BaseOutputParser,
     custom_prompts: CustomPromptConfig | None = None,
     model_purpose: ModelPurpose = ModelPurpose.QUERY,
+    min_output_tokens: int | None = None,
     **kwargs: Any,
 ) -> Runnable:
     """Build ``prompt | llm | parser`` with the policies of ``model_purpose``.
@@ -395,13 +396,18 @@ def setup_chain(
     purpose explicitly: they run unguarded under ``apply_to: query`` and get no
     chain-level retry, because ``BatchProcessor`` already retries them and a
     second layer would multiply the attempts. A non-Bedrock factory owns its
-    own retry policy.
+    own retry policy. ``min_output_tokens`` overrides the prompt's static
+    floor with one derived from the config (``BasePrompt.output_floor``).
     """
     try:
         llm = factory.get_model(
             model_id=model_id,
             model_purpose=model_purpose,
-            min_output_tokens=prompt_class.min_output_tokens,
+            min_output_tokens=(
+                prompt_class.min_output_tokens
+                if min_output_tokens is None
+                else min_output_tokens
+            ),
             **kwargs,
         )
         model_info = factory.get_model_info(model_id)

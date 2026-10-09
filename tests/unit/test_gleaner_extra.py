@@ -151,6 +151,11 @@ class TestPrepareInputTask:
         out = prepare_input_task(unit, [], [], self._config())
         assert out["text"] == "orig"
 
+    def test_passes_target_language_for_descriptions(self) -> None:
+        unit = TextUnit(id="t1", text="orig")
+        config = {**self._config(), "target_language": "ko"}
+        assert prepare_input_task(unit, [], [], config)["target_language"] == "ko"
+
 
 # --------------------------------------------------------------------------- #
 # _parse_refinement_output + _process_issue

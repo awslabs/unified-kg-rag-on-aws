@@ -94,6 +94,7 @@ class TextUnitTranslator:
             factory=self.factory,
             model_id=self.translation_config.translation_model_id,
             prompt_class=TextTranslationPrompt,
+            min_output_tokens=TextTranslationPrompt.output_floor(config),
             parser=StrOutputParser(),
             custom_prompts=config.custom_prompts,
         )

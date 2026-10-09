@@ -30,6 +30,7 @@ from unified_kg_rag.domain.models import (
     Config,
     EmbeddingModelId,
     LanguageModelId,
+    ModelPurpose,
     RerankModelId,
 )
 from unified_kg_rag.shared import (
@@ -795,3 +796,36 @@ def test_explicit_model_tier_kwarg_wins(monkeypatch, recorded_chat) -> None:
         config.aws.bedrock.default_model_id, model_tier="fast"
     )
     assert _sent_effort(recorded_chat) == "medium"
+
+
+def test_ingestion_effort_defaults_to_the_default_tier_effort() -> None:
+    bedrock = Config().aws.bedrock
+    assert bedrock.ingestion_effort is None
+    assert bedrock.tier_effort("default", ModelPurpose.INGESTION) == "high"
+
+
+def test_ingestion_effort_applies_to_default_tier_ingestion_calls(
+    monkeypatch, recorded_chat
+) -> None:
+    _resolve_to(monkeypatch, f"global.{LanguageModelId.CLAUDE_V5_5_SONNET.value}")
+    config = _tiered_config(default_effort="high", ingestion_effort="medium")
+    factory = _lang_factory(config)
+    extraction_model = config.processing.graph_extraction.extraction_model_id
+    factory.get_model(extraction_model, model_purpose=ModelPurpose.INGESTION)
+    assert _sent_effort(recorded_chat) == "medium"
+    # Query-time calls on the same tier keep default_effort.
+    factory.get_model(config.search.answer_generation_model_id)
+    assert _sent_effort(recorded_chat) == "high"
+
+
+def test_ingestion_effort_leaves_fast_tier_ingestion_calls_alone(
+    monkeypatch, recorded_chat
+) -> None:
+    _resolve_to(monkeypatch, f"global.{_THINKING_FAST}")
+    config = _tiered_config(fast_effort="low", ingestion_effort="medium")
+    summary_model = (
+        config.processing.graph_extraction.description_summarization.summary_model_id
+    )
+    assert summary_model == _THINKING_FAST
+    _lang_factory(config).get_model(summary_model, model_purpose=ModelPurpose.INGESTION)
+    assert _sent_effort(recorded_chat) == "low"

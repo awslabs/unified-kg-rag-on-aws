@@ -370,3 +370,53 @@ def test_concurrent_callers_stop_calling_once_marked() -> None:
     before = client.calls
     counter.count_tokens("after")
     assert client.calls == before
+
+
+def test_estimate_multiplier_scales_only_the_local_estimate() -> None:
+    text = "a" * 400  # 100 tokens by the ~4 chars/token estimate
+    plain = BedrockTokenCounter("model", None, api_supported=False)
+    scaled = BedrockTokenCounter(
+        "model", None, api_supported=False, estimate_multiplier=1.3
+    )
+    assert plain.count_tokens(text) == 100
+    assert scaled.count_tokens(text) == 130
+    # An exact API count is never scaled.
+    api = BedrockTokenCounter(
+        "model", FakeBedrockClient(chars_per_token=4), estimate_multiplier=1.3
+    )
+    assert api.count_tokens(text) == 100
+
+
+def test_scaled_estimate_rounds_up() -> None:
+    counter = BedrockTokenCounter(
+        "model", None, api_supported=False, estimate_multiplier=1.3
+    )
+    assert counter.count_tokens("abcd") == 2  # ceil(1 x 1.3)
+
+
+def test_new_tokenizer_claude_models_scale_the_token_estimate() -> None:
+    from unified_kg_rag.adapters.aws.bedrock_models import get_language_model_info
+    from unified_kg_rag.domain.models import LanguageModelId
+
+    scaled = {
+        LanguageModelId.CLAUDE_V5_5_SONNET,
+        LanguageModelId.CLAUDE_V5_5_OPUS,
+        LanguageModelId.CLAUDE_V5_5_HAIKU,
+        LanguageModelId.CLAUDE_V5_SONNET,
+        LanguageModelId.CLAUDE_V5_OPUS,
+        LanguageModelId.CLAUDE_V4_8_OPUS,
+        LanguageModelId.CLAUDE_V4_7_OPUS,
+    }
+    for model_id in scaled:
+        assert get_language_model_info(model_id).token_estimate_multiplier == 1.3
+    for model_id in (
+        LanguageModelId.CLAUDE_V4_6_SONNET,
+        LanguageModelId.CLAUDE_V4_5_HAIKU,
+        LanguageModelId.GPT_V5_5,
+    ):
+        assert get_language_model_info(model_id).token_estimate_multiplier == 1.0
+    # An uncurated Claude 4.7+ id inherits the family default.
+    assert (
+        get_language_model_info("anthropic.claude-sonnet-5-7").token_estimate_multiplier
+        == 1.3
+    )

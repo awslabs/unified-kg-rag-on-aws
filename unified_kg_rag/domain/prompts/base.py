@@ -13,7 +13,45 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
-    from unified_kg_rag.domain.models.config import CustomPromptConfig
+    from unified_kg_rag.domain.models.config import Config, CustomPromptConfig
+
+# Output-floor arithmetic for the long-output ingestion prompts. Bedrock
+# reserves input + max_tokens against the tokens-per-minute quota when a request
+# starts, so a floor should cover the largest answer the prompt's own limits
+# allow plus the model's reasoning, and no more.
+#
+# Worst-case output tokens per character of chunk text: dense scripts (CJK,
+# kana, Hangul) run at ~1 token per character (the bound estimate_token_count
+# uses), and the Claude 4.7+ tokenizer counts up to 1.35x the tokens of older
+# Claude tokenizers. English runs at ~0.25-0.35, so this is 4-5x headroom there.
+WORST_CASE_TOKENS_PER_CHAR = 1.35
+# Adaptive-thinking models (Claude 4.7+) count their reasoning toward
+# max_tokens, so every floor adds this much on top of the answer itself.
+THINKING_HEADROOM_TOKENS = 8192
+# One extracted entity or relationship record in the XML answer: ~35 tokens of
+# tags, a name or source/target pair and a type (~15), a 1-2 sentence
+# description (~40), a score and a short verbatim evidence span (~20) is ~110
+# tokens; x1.35 for the newer tokenizer is ~150.
+TOKENS_PER_GRAPH_RECORD = 150
+
+
+def max_chunk_chars(config: "Config") -> int:
+    """Longest text unit the chunkers can emit, in characters."""
+    chunking = config.processing.chunking
+    return max(chunking.max_chunk_size, chunking.fallback_chunk_size)
+
+
+def chunk_output_floor(config: "Config", copies: int = 1) -> int:
+    """Floor for an answer up to ``copies`` x a chunk's text, plus reasoning."""
+    answer = copies * max_chunk_chars(config) * WORST_CASE_TOKENS_PER_CHAR
+    return int(answer) + THINKING_HEADROOM_TOKENS
+
+
+def graph_output_floor(config: "Config") -> int:
+    """Floor for a per-chunk graph answer at the configured record caps."""
+    extraction = config.processing.graph_extraction
+    records = extraction.max_entities_per_chunk + extraction.max_relationships_per_chunk
+    return records * TOKENS_PER_GRAPH_RECORD + THINKING_HEADROOM_TOKENS
 
 
 @dataclass(frozen=True)
@@ -46,6 +84,16 @@ class BasePrompt(ABC):
     # maximum), so a prompt with a long output is never truncated by a cap
     # sized for short answers. Thinking tokens count toward it.
     min_output_tokens: ClassVar[int] = 0
+
+    @classmethod
+    def output_floor(cls, config: "Config") -> int:
+        """Output-token floor for this prompt under ``config``.
+
+        Prompts whose longest answer depends on configured limits (chunk size,
+        per-chunk entity caps, report length) override this to derive it; the
+        rest return the static ``min_output_tokens``.
+        """
+        return cls.min_output_tokens
 
     def __post_init__(self) -> None:
         self._validate_prompt_variables()

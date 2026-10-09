@@ -486,3 +486,13 @@ class TestLogCompletionSummary:
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warnings) == 1
         assert "1 text units failed during extraction" in caplog.text
+
+
+def test_claim_prompt_defines_one_type_taxonomy() -> None:
+    # Only <claim_type> is output, so the prompt lists exactly one set of types.
+    from unified_kg_rag.domain.prompts.graph_extraction import ClaimExtractionPrompt
+
+    system = ClaimExtractionPrompt.resolve().system_prompt_template
+    assert "# CLAIM TYPES" in system
+    assert "Claim Categories" not in system
+    assert "FACTUAL_ASSERTION" not in system
