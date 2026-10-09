@@ -472,6 +472,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   leaked by earlier runs are deleted on the next successful full run of the
   same alias; those of a suffix that is never rebuilt must be deleted by
   hand (#185).
+- Re-running a failed `community_detection` with the same `--pipeline-id`
+  (the documented recovery) works: the stage rebuilds the knowledge graph from
+  the restored entities, relationships and claims. The graph is built by
+  `graph_analysis` but neither cached nor kept in the run metadata, so the
+  resumed stage always failed with "Knowledge graph is required for community
+  detection" (#PR).
 - Incremental runs no longer record a document `PROCESSED` when some of its
   artifacts failed to write. OpenSearch bulk calls resent nothing
   (`streaming_bulk` defaults to no item retries, and the client's

@@ -67,6 +67,19 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _build_knowledge_graph(context: PipelineContext) -> Any:
+    """Build the knowledge graph from the context's resolved graph outputs.
+
+    graph_analysis builds it; community_detection rebuilds it the same way when
+    a resumed run restored only the cached entities, relationships and claims
+    (the graph itself is neither cached nor kept in the run metadata).
+    """
+    claims = context.resolved_claims or context.claims
+    return GraphBuilder(
+        context.resolved_entities, context.resolved_relationships, claims
+    ).build()
+
+
 class PipelineStage(ABC):
     CRITICAL_STAGES = {
         PipelineStageType.COMMUNITY_DETECTION,
@@ -1140,8 +1153,7 @@ class GraphAnalysisStage(PipelineStage):
         relationships = context.resolved_relationships
         claims = context.resolved_claims or context.claims
 
-        graph_builder = GraphBuilder(entities, relationships, claims)
-        context.knowledge_graph = graph_builder.build()
+        context.knowledge_graph = _build_knowledge_graph(context)
         self.analyzer.graph = context.knowledge_graph
 
         centrality_data = self.analyzer.calculate_centrality()
@@ -1235,7 +1247,15 @@ class CommunityDetectionStage(PipelineStage):
         relationships = context.resolved_relationships
 
         if context.knowledge_graph is None:
-            raise ValueError("Knowledge graph is required for community detection")
+            # A run resumed at this stage restores graph_analysis's cached
+            # entities and relationships, not the graph built from them.
+            logger.info(
+                "Rebuilding the knowledge graph from %s resolved entities and %s "
+                "relationships (resumed run)",
+                len(entities),
+                len(relationships),
+            )
+            context.knowledge_graph = _build_knowledge_graph(context)
 
         self.detector(context.knowledge_graph)
         community_objects = self.detector.generate_community_objects()
