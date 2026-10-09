@@ -440,6 +440,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   left out). Japanese and Chinese sentence terminators (`。！？`) now end a
   sentence without needing a following space, so CJK spans are one sentence
   rather than a whole paragraph (#PR).
+- A resume reads and hash-checks each cached stage file once. Before, it
+  read and hashed every file to verify the resume point, then read and hashed
+  it all again to restore the context. The data loaded during verification
+  is now reused for the restore, and an entry that fails its hash is still a
+  miss, so its stage is recomputed (#PR).
 - The interactive graph HTML (`graph.html`, the community hierarchy) escapes
   node tooltips when pyvis renders them as HTML. Once any node title contained
   `href`, pyvis replaced the plain-text tooltip with a popup that sets
