@@ -431,6 +431,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   neighbourhood within its own share of the fetch width, ranked and cut like
   the entity expansion; the same probe returns all 10 seeds, 30 members and
   neighbours of all 10 (#PR).
+- The opt-in real-AWS ingest-then-search smoke test
+  (`GRAPHRAG_TEST_RUN_INGEST=1`) could not run: it built
+  `DataIngestionPipeline` without the required `pipeline_config`, called
+  `run()` without the source directory and never awaited the async
+  `create_rag_chain`. It now does all three, checks the pipeline did not
+  fail, and closes the chain (#PR).
 - `indexing.reset` with the doc-status registry enabled rebuilds from the
   whole corpus and records every document again. The loading stage used to
   diff against the registry first, so the reset cleared the stores but
