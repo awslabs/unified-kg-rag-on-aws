@@ -416,6 +416,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `processing.similarity_threshold` | `0.6` | 엔터티 해소의 유사도 임계값입니다. 서로 다른 엔터티가 합쳐지면 올립니다. |
 | `processing.document_parsing.source_directory` | `"source"` | 라이브러리 호출용 기본값입니다. `run-ingestion`은 `--source-directory`(또는 `GRAPHRAG_SOURCE_DIRECTORY`)가 반드시 필요합니다. |
 | `processing.document_parsing.target_directory` | `null` | 파싱한 문서를 `<stem>.json`으로 내보내 확인할 디렉터리입니다(`--target-directory`와 같음). 소스 디렉터리로는 지정할 수 없습니다. |
+| `processing.document_parsing.index_value` | `null` | 실행이 쓰는 인덱스 접미사입니다. 모든 OpenSearch 인덱스와 Neptune 레이블 이름이 `<prefix>-<index_value>`가 됩니다(`null`이면 `default`). 질의할 때는 같은 값을 `run-rag`/`run-eval --suffix`로 넘깁니다. `run-ingestion`에는 이 값을 지정하는 플래그가 없으므로 테넌트나 버전마다 설정 파일을 따로 둡니다. |
 | `processing.document_parsing.source_scope` | `null` | 증분 삭제에 쓰는 코퍼스 식별자입니다. 실행은 자기 인덱스 접미사와 소스 범위에 속한 레지스트리 문서만 삭제합니다. `null`이면 소스 디렉터리의 절대 경로이며, 컨테이너 엔트리포인트는 S3 URI로 설정합니다(`GRAPHRAG_SOURCE_SCOPE`). §5 참고. |
 | `processing.chunking.chunker_type` | `"intelligent"` | `intelligent`는 LLM이 의미 경계를 고르고, `simple`은 크기로 나눕니다. |
 | `processing.chunking.min_chunk_size` | `1000` | 최소 청크 크기(문자)입니다. 이보다 짧은 조각은 이웃 청크에 합칩니다. |
@@ -457,7 +458,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | 키 | 기본값 | 역할 / 바꿀 때 |
 |---|---|---|
 | `indexing.reset` | `false` | 인덱싱 전에 기존 데이터를 지웁니다. |
-| `indexing.additional_suffix` | `null` | 모든 OpenSearch 인덱스 이름과 Neptune 레이블에서 실행 접미사 뒤에 붙습니다(`<prefix>-<suffix>-<additional_suffix>`, `<suffix>`는 `--suffix` 값 또는 `default`). 버전별·테넌트별로 분리할 때 씁니다. |
+| `indexing.additional_suffix` | `null` | 모든 OpenSearch 인덱스 이름과 Neptune 레이블에서 실행 접미사 뒤에 붙습니다(`<prefix>-<suffix>-<additional_suffix>`). `<suffix>`는 인제스천에서는 `processing.document_parsing.index_value`, 질의에서는 `--suffix`이며 지정하지 않으면 둘 다 `default`입니다. 인제스천과 질의에 같은 값을 설정하세요. 버전별·테넌트별로 분리할 때 씁니다. |
 | `indexing.cross_run_merge` | `true` | 증분 실행에서 기존 그래프를 덮어쓰지 않고 새 데이터와 합쳐, 변경되지 않은 문서와 공유되는 엔터티의 계보를 유지합니다(§5). `false`면 덮어씁니다. |
 | `indexing.cross_run_fuzzy_merge` | `false` | `cross_run_merge`에 엔터티 이름 유사도 매칭을 더합니다. |
 | `indexing.max_failure_rate` | `0.2` | 인덱스 유형별 쓰기 실패율이 이 값을 넘으면 인덱싱 스테이지를 실패로 처리합니다. `1.0`이면 부분 실패 검사를 끕니다. |
@@ -1366,9 +1367,11 @@ DynamoDB(증분 인덱싱이 켜진 경우).
   (+ `additional_target_languages`)를 설정하고
   `indexing.opensearch.language_analyzers` 아래에 언어 analyzer를 추가하세요.
   번역 스테이지는 단일 언어 코퍼스에서 no-op됩니다.
-- **이종 도메인:** `entity_types`를 도메인들의 합집합에 맞게 튜닝하세요(또는
-  멀티테넌트 분리를 위해 `--suffix` / `indexing.additional_suffix`로 도메인별
-  별도 인덱스를 운영).
+- **이종 도메인:** `entity_types`를 도메인들의 합집합에 맞게 튜닝하거나,
+  도메인이나 테넌트마다 인덱스를 분리하세요. 각각 고유한
+  `processing.document_parsing.index_value`로 인제스천하고 같은 값을 `--suffix`로
+  넘겨 질의합니다(`indexing.additional_suffix`는 두 번째 구분자를 붙이며
+  인제스천과 질의 양쪽에서 같아야 합니다).
 - **증분:** DynamoDB를 활성화하여 대규모 코퍼스가 후속 실행에서 변경된 델타에
   대해서만 비용을 내도록 하세요.
 

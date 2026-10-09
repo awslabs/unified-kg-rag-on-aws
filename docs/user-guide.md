@@ -428,6 +428,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `processing.similarity_threshold` | `0.6` | Fuzzy-match threshold for entity resolution. Raise it if distinct entities merge. |
 | `processing.document_parsing.source_directory` | `"source"` | Fallback for library callers. `run-ingestion` requires `--source-directory` (or `GRAPHRAG_SOURCE_DIRECTORY`). |
 | `processing.document_parsing.target_directory` | `null` | Export each parsed document as `<stem>.json` for inspection (same as `--target-directory`). Must not be the source directory. |
+| `processing.document_parsing.index_value` | `null` | Index suffix the run writes: every OpenSearch index and Neptune label is named `<prefix>-<index_value>` (`null` = `default`). Query the corpus with the same value as `run-rag`/`run-eval --suffix`. `run-ingestion` has no flag for it; use one config file per tenant or version. |
 | `processing.document_parsing.source_scope` | `null` | Corpus identity for incremental deletion: a run only deletes registry documents of its own index suffix and source scope. `null` = the resolved source directory; the container entrypoint sets it to the S3 URI (`GRAPHRAG_SOURCE_SCOPE`). See §5. |
 | `processing.chunking.chunker_type` | `"intelligent"` | `intelligent` lets an LLM pick semantic boundaries; `simple` splits by size. |
 | `processing.chunking.min_chunk_size` | `1000` | Minimum chunk size in characters; shorter pieces merge into a neighbour. |
@@ -469,7 +470,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | Key | Default | What it does / when to change |
 |---|---|---|
 | `indexing.reset` | `false` | Clear existing indexed data before indexing. |
-| `indexing.additional_suffix` | `null` | Appended after the run suffix in every OpenSearch index name and Neptune label (`<prefix>-<suffix>-<additional_suffix>`, where `<suffix>` is `--suffix` or `default`). Use it for versioned or multi-tenant separation. |
+| `indexing.additional_suffix` | `null` | Appended after the run suffix in every OpenSearch index name and Neptune label (`<prefix>-<suffix>-<additional_suffix>`, where `<suffix>` is `processing.document_parsing.index_value` at ingestion and `--suffix` at query time, both `default` when unset). Set it identically for ingestion and queries. Use it for versioned or multi-tenant separation. |
 | `indexing.cross_run_merge` | `true` | On delta runs, union the delta with existing graph state instead of overwriting, so entities shared with unchanged documents keep their lineage (§5). `false` overwrites. |
 | `indexing.cross_run_fuzzy_merge` | `false` | Extend `cross_run_merge` with fuzzy entity-name matching. |
 | `indexing.max_failure_rate` | `0.2` | Per-index-type write failure rate above which the indexing stage fails. `1.0` disables the partial-failure gate. |
@@ -1409,9 +1410,11 @@ on).
   `target_language` (+ `additional_target_languages`) and add language analyzers
   under `indexing.opensearch.language_analyzers`. The translation stage no-ops
   for single-language corpora.
-- **Heterogeneous domains:** tune `entity_types` to the union of your domains
-  (or run separate indices per domain using `--suffix` /
-  `indexing.additional_suffix` for multi-tenant separation).
+- **Heterogeneous domains:** tune `entity_types` to the union of your domains,
+  or keep separate indices per domain or tenant: ingest each with its own
+  `processing.document_parsing.index_value` and query it with the same value
+  as `--suffix` (`indexing.additional_suffix` adds a second segment and must
+  match on both sides).
 - **Incremental:** enable DynamoDB so large corpora only pay for the changed
   delta on subsequent runs.
 

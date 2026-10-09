@@ -652,7 +652,12 @@ class DocumentParsingConfig(BaseModel):
         ),
     )
     index_value: str | None = Field(
-        default=None, description="Value to index the parsed documents with"
+        default=None,
+        description=(
+            "Index suffix the run writes to (OpenSearch index and Neptune label "
+            "names); query with the same value as run-rag/run-eval --suffix. "
+            "None = 'default'."
+        ),
     )
     source_scope: str | None = Field(
         default=None,

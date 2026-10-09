@@ -202,6 +202,10 @@ processing:
     # Must not be the source directory: .json is a parseable source format, so
     # output there would be re-ingested as new documents on the next run.
     target_directory: null
+    # Index suffix this run writes: OpenSearch indices and Neptune labels are
+    # named <prefix>-<index_value> (null = "default"). Query the corpus with the
+    # same value as run-rag/run-eval --suffix. run-ingestion has no flag for
+    # it, so keep one config file per tenant or version.
     index_value: null
     # Identity of the corpus source for incremental indexing: a run only
     # treats registry documents of its own index suffix AND source scope as
