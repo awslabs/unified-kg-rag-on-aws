@@ -16,6 +16,7 @@ from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_ecs as ecs
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_logs as logs
+from aws_cdk import aws_s3 as s3
 from constructs import Construct
 
 from iac.config import DeploymentConfig
@@ -57,6 +58,13 @@ class ComputeStack(Stack):
             "Repo",
             repository_name=f"{config.prefix}-app",
             image_scan_on_push=True,
+            # With use_cmk, image layers are encrypted with the shared CMK. ECR
+            # adds its own KMS grant on the key, so pulls need no task-side KMS
+            # permission. ECR cannot change a repository's encryption in place,
+            # so without a CMK the property stays unset (default AES-256) to
+            # keep existing repositories from being replaced.
+            encryption=(ecr.RepositoryEncryption.KMS if self.kms_key else None),
+            encryption_key=self.kms_key,
             image_tag_mutability=(
                 ecr.TagMutability.IMMUTABLE
                 if pinned_image
@@ -80,6 +88,7 @@ class ComputeStack(Stack):
             self,
             "TaskLogs",
             log_group_name=f"/{config.prefix}/tasks",
+            encryption_key=self.kms_key,
             retention=logs.RetentionDays.ONE_MONTH,
             removal_policy=removal_policy,
         )
@@ -189,6 +198,12 @@ class ComputeStack(Stack):
         # DynamoDB doc-status registry + S3 cache (scoped to our resources).
         storage.doc_status_table.grant_read_write_data(role)
         storage.cache_bucket.grant_read_write(role)
+        if self.config.corpus_bucket_name:
+            # A corpus kept outside the cache bucket is only read (entrypoint
+            # `aws s3 sync`); the S3 endpoint policy allows it too.
+            s3.Bucket.from_bucket_name(
+                self, "CorpusBucket", self.config.corpus_bucket_name
+            ).grant_read(role)
         return role
 
     # ----------------------------------------------------- task definition

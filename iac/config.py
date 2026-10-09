@@ -25,6 +25,9 @@ Context keys (all optional; sensible defaults shown):
   cache_bucket_name   None             reuse an existing S3 cache bucket (else
                                        create one; SSE-S3, or the CMK when
                                        use_cmk=true)
+  corpus_bucket_name  None             extra S3 bucket the corpus is read from
+                                       (read-only grant + S3 endpoint policy);
+                                       unset = the corpus lives in the cache bucket
   neptune_instance    "db.r6g.large"   Neptune instance class (Graviton)
   neptune_instances   dev:1/else:2     Neptune instances (>=2 => Multi-AZ HA)
   opensearch_instance "r6g.large.search"  OpenSearch data node type (Graviton)
@@ -93,6 +96,7 @@ class DeploymentConfig:
     max_azs: int
     # storage
     cache_bucket_name: str | None
+    corpus_bucket_name: str | None
     neptune_instance: str
     neptune_instances: int
     opensearch_instance: str
@@ -162,6 +166,14 @@ class DeploymentConfig:
     def create_cache_bucket(self) -> bool:
         return not self.cache_bucket_name
 
+    def cache_bucket(self, account: str, region: str) -> str:
+        """Cache bucket name: the reused bucket, else the one storage creates.
+
+        Known before the storage stack exists, so the networking stack can put
+        it in the S3 endpoint policy without a cyclic cross-stack reference.
+        """
+        return self.cache_bucket_name or f"{self.prefix}-cache-{account}-{region}"
+
     @classmethod
     def from_context(cls, scope: Any) -> DeploymentConfig:
         def ctx(key: str, default: Any = None) -> Any:
@@ -201,6 +213,7 @@ class DeploymentConfig:
             network_mode=network_mode,
             max_azs=int(ctx("max_azs", 2)),
             cache_bucket_name=ctx("cache_bucket_name"),
+            corpus_bucket_name=ctx("corpus_bucket_name"),
             neptune_instance=str(ctx("neptune_instance", "db.r6g.large")),
             # HA vs cost is env-driven, mirroring the destructive-default pattern:
             # dev defaults to a single instance/node (cheap, no failover), while a

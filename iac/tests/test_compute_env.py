@@ -46,3 +46,22 @@ def test_doc_status_env_targets_iac_table_and_disables_auto_create() -> None:
 def test_doc_status_env_follows_env_scoped_table_name() -> None:
     env = _task_environment({"env_name": "prod"})
     assert env["GRAPHRAG_DOC_STATUS_TABLE"] == "prod-graphrag-doc-status"
+
+
+def test_corpus_bucket_is_granted_read_only() -> None:
+    app = cdk.App(context={"corpus_bucket_name": "my-corpus"})
+    config = DeploymentConfig.from_context(app)
+    networking = NetworkingStack(app, "Net", config=config, env=_ENV)
+    storage = StorageStack(app, "Store", config=config, networking=networking, env=_ENV)
+    compute = ComputeStack(
+        app, "Compute", config=config, networking=networking, storage=storage, env=_ENV
+    )
+    policies = Template.from_stack(compute).find_resources("AWS::IAM::Policy")
+    (statement,) = [
+        s
+        for p in policies.values()
+        for s in p["Properties"]["PolicyDocument"]["Statement"]
+        if "my-corpus" in str(s["Resource"])
+    ]
+    assert "s3:GetObject*" in statement["Action"]
+    assert not [a for a in statement["Action"] if a.startswith(("s3:Put", "s3:Del"))]

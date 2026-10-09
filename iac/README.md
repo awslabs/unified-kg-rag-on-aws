@@ -14,7 +14,7 @@ can coexist in one account/region. Every resource also carries an `env` tag.
 
 | Stack | Resources |
 |---|---|
-| `GraphRagNetwork` | VPC (reuse or create), subnets, security group, VPC endpoints for a created VPC: S3/DynamoDB gateways always; in `private` mode also interface endpoints for Bedrock (`bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`), ECR (`ecr.api`, `ecr.dkr`), CloudWatch Logs and STS |
+| `GraphRagNetwork` | VPC (reuse or create), subnets, data-plane security group, VPC endpoints for a created VPC: S3/DynamoDB gateways always; in `private` mode also interface endpoints (own security group, 443 from the data plane only) for Bedrock (`bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`), ECR (`ecr.api`, `ecr.dkr`), CloudWatch Logs and STS |
 | `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (VPC, encrypted), DynamoDB doc-status table, S3 cache bucket |
 | `GraphRagCompute` | ECR repo, ECS cluster, Fargate task definition + least-privilege task role |
 | `GraphRagOrchestration` | Step Functions state machine — 4 resumable phases on Fargate + retries + SNS alarm topic. The topic is encrypted with its own customer-managed key whose policy lets CloudWatch alarms publish (the AWS-managed `alias/aws/sns` key cannot, so alarm notifications would be dropped) |
@@ -101,6 +101,7 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `vpc_id` | _(none)_ | **reuse** an existing VPC instead of creating one. The stack adds **no** VPC endpoints or subnets to it (synth warns with the list): in `private` mode it needs `PRIVATE_ISOLATED` subnets (no NAT or internet gateway route), S3/DynamoDB gateway endpoints, and private-DNS interface endpoints for `bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`, `ecr.api`, `ecr.dkr`, `logs` and `sts`; in `public` mode it needs `PRIVATE_WITH_EGRESS` subnets (NAT route) |
 | `max_azs` | `2` | AZs for a newly-created VPC |
 | `cache_bucket_name` | _(none)_ | **reuse** an existing S3 cache bucket instead of creating one |
+| `corpus_bucket_name` | _(none)_ | S3 bucket the corpus is read from when it is not in the cache bucket: the task role gets read-only access and, in `private` mode, the S3 gateway endpoint policy allows it |
 | `neptune_instance` | `db.r6g.large` | Neptune instance class (Graviton) |
 | `neptune_instances` | `1` (dev) / `2` (non-dev) | Neptune instances; `>=2` ⇒ Multi-AZ HA (reader in another AZ). dev defaults to 1 (no failover) for cost |
 | `opensearch_instance` | `r6g.large.search` | OpenSearch data node type (Graviton) |
@@ -112,7 +113,7 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `image_tag` | `latest` | container image tag the task pulls; pin a version tag to make ECR tags immutable |
 | `create_guardrail` | `true` | `GraphRagGuardrail` creates and keeps a baseline PII/prompt-attack guardrail in `bedrock_region` (retained on stack deletion unless `removal_destroy`). `false` = bring your own guardrail; nothing is created |
 | `guardrail_identifier` | _(none)_ | guardrail id the compute task **uses**, injected as `BEDROCK_GUARDRAIL_IDENTIFIER`. The created guardrail's id is **not** injected automatically: pass the `GuardrailIdentifier` output of `GraphRagGuardrail` here (two-step flow above), or an external id with `create_guardrail=false`. Unset = no guardrail on the task |
-| `use_cmk` | `false` | customer-managed KMS key for at-rest encryption (S3/Neptune/OpenSearch/DDB). The SNS alarm topic always uses its own customer-managed key (see below) |
+| `use_cmk` | `false` | customer-managed KMS key for at-rest encryption (S3/Neptune/OpenSearch/DDB/ECR and every log group; the key policy lets CloudWatch Logs use it for this account's log groups, and principals in this account may use it through CloudWatch Logs (`kms:ViaService`), so log writers and readers need no KMS permissions of their own). Choose it before the first deploy: ECR sets a repository's encryption only at creation, and CloudFormation cannot replace the fixed-name repository, so turning `use_cmk` on (or off) for a deployed environment fails until the compute stack is destroyed and redeployed. The SNS alarm topic always uses its own customer-managed key (see below) |
 | `vpc_flow_logs` | `false` (dev) / `true` (non-dev) | enable VPC flow logs (created VPC only) |
 | `flow_log_retention_days` | `731` | flow-log log group retention; must be a CloudWatch Logs retention value (e.g. `30`, `90`, `365`, `731`) |
 | `deletion_protection` | `false` (dev) / `true` (non-dev) | deletion protection on the Neptune cluster and the DynamoDB doc-status table (blocks a direct delete API/console call). OpenSearch domains have no deletion-protection setting; outside dev the domain is only kept by `removal_destroy=false` (CloudFormation `Retain`), which does not stop a direct `DeleteDomain` call |
@@ -161,6 +162,10 @@ single-node domain.
 
 ## Usage
 
+Prerequisites: Python 3.10+ (CI uses 3.12), Node.js 20+ with the AWS CDK CLI
+(`npm install -g aws-cdk@2.1143.0`, the version CI pins), and Docker to build
+the app image.
+
 ```bash
 cd iac
 python -m venv .venv && . .venv/bin/activate
@@ -188,7 +193,10 @@ cdk deploy --all
 ## After deploy
 
 1. Build & push the app image (`docker/Dockerfile`, build context = repo root)
-   to the created ECR repo (tag `latest`). The image bakes in the tracked,
+   to the created ECR repo (tag `latest`). Outside dev, push a unique version
+   tag instead and deploy with `-c image_tag=<tag>`: any tag other than
+   `latest` makes the repository's tags immutable, so a pushed image cannot be
+   swapped under the running task definition. The image bakes in the tracked,
    endpoint-free `docker/config.yaml` as `/app/config.yaml`; the deployed
    endpoints come from the injected `NEPTUNE_ENDPOINT` / `OPENSEARCH_ENDPOINT` /
    `S3_BUCKET_NAME` / `BEDROCK_REGION` env vars the app reads. The task also injects
@@ -213,7 +221,11 @@ cdk deploy --all
    container entrypoint (`docker/entrypoint.sh`) syncs it to local scratch
    before running the CLI. The config file is fixed at `/app/config.yaml` in
    the image. The task role is granted read/write on the cache bucket only;
-   to read a corpus from another bucket, grant the role access to it.
+   to read a corpus from another bucket, deploy with
+   `-c corpus_bucket_name=<bucket>`. In `private` mode the S3 and DynamoDB
+   gateway endpoints only allow this deployment's cache/corpus buckets, its
+   doc-status table and the ECR image-layer bucket, so a bucket granted to the
+   role by hand is still unreachable from the tasks.
 
    The bucket's 30-day expiry applies only to the prefixes the app writes,
    `pipeline-runs/` (stage checkpoints) and `embedding-cache/`; any other

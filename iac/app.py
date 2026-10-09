@@ -86,7 +86,9 @@ security = SecurityStack(app, stack_id("Security"), config=config, env=env)
 # NOT stop the guardrail stack from owning its guardrail (`create_guardrail`
 # controls that), so step 2 never deletes what step 1 created.
 GuardrailStack(app, stack_id("Guardrail"), config=config, env=bedrock_env)
-networking = NetworkingStack(app, stack_id("Network"), config=config, env=env)
+networking = NetworkingStack(
+    app, stack_id("Network"), config=config, kms_key=security.kms_key, env=env
+)
 storage = StorageStack(
     app,
     stack_id("Storage"),
@@ -112,6 +114,7 @@ orchestration = OrchestrationStack(
     networking=networking,
     compute=compute,
     cache_bucket_name=storage.cache_bucket.bucket_name,
+    kms_key=security.kms_key,
     env=env,
 )
 ObservabilityStack(

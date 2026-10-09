@@ -71,6 +71,7 @@ class OrchestrationStack(Stack):
         networking: NetworkingStack,
         compute: ComputeStack,
         cache_bucket_name: str,
+        kms_key: kms.IKey | None = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -133,6 +134,9 @@ class OrchestrationStack(Stack):
             self,
             "PipelineLogs",
             log_group_name=f"/{config.prefix}/pipeline",
+            # The shared CMK when use_cmk (Step Functions log delivery needs
+            # only the logs service principal in the key policy).
+            encryption_key=kms_key,
             retention=logs.RetentionDays.ONE_MONTH,
             # Fixed name: retained copies would collide on the next deploy.
             removal_policy=(
