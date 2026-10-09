@@ -87,7 +87,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   now the gleaned entities plus relationships per extracted one (it was the
   relative change of the self-reported quality score), and the gleaning stage
   reports `refinement_calls`. Cached gleaning and later stage outputs miss
-  once after upgrading, since their default-config cache keys change (#PR).
+  once after upgrading, since their default-config cache keys change (#171).
 - **Breaking:** `unified_kg_rag.shared.utils` no longer re-exports the
   LangChain-coupled and console helpers, so importing a `domain` module no
   longer loads LangChain, LangSmith, lxml, tenacity or tqdm. Import
@@ -268,7 +268,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   the removed score-based stop rule and are now ignored with an unknown-key
   warning; `GleaningStats` drops `initial_quality_score`,
   `final_quality_score`, `convergence_achieved`, the per-round averages and
-  the per-round `quality_improvement`/`convergence_score` (#PR).
+  the per-round `quality_improvement`/`convergence_score` (#171).
 - `indexing.neptune.min_entity_importance`: it thresholded an `importance`
   property no vertex stores; the key is now ignored with an unknown-key
   warning (#155).
