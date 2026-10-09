@@ -455,6 +455,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `entity_types` to make them the strict categories. Loading a config now
   logs a warning (not an error) naming the output tags a `graph_extraction`
   or `community_report` override no longer mentions (#PR).
+- A damaged stage cache entry is a miss instead of a partial hit. A chunked
+  entry skipped a missing or unreadable chunk with a log line and returned the
+  rest as the stage output, and the resume check only tested that the chunk
+  files existed. Chunk count and the recorded per-chunk hashes (and the
+  single-file content hash) are now verified by both the resume check and the
+  load, so a missing, truncated or rewritten file recomputes the stage with a
+  WARNING. Chunk files, single-file entries and the index are written to a
+  temp file and renamed into place, the index last (#PR).
 - `run-prompt-tuning` doubles the braces in every corpus- or model-derived
   field (persona, domain, language, entity types, few-shot examples) before
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`

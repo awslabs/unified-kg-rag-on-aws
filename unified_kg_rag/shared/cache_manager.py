@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import json
+import uuid
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -21,6 +22,27 @@ from .logging import get_logger
 
 logger = get_logger(__name__)
 T = TypeVar("T", bound=BaseModel)
+
+
+class _CorruptCacheEntry(Exception):
+    """A cached entry's files are missing, truncated or fail their hash."""
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` so a reader sees the old file or the new one.
+
+    The data goes to a uniquely named sibling first and is then renamed over
+    ``path`` (atomic on POSIX and Windows), so a crash mid-write leaves the
+    previous file intact instead of a truncated one. The temp name does not end
+    in ``.json``, so the S3 cache sync never uploads one.
+    """
+    temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temp_path.write_text(text, encoding="utf-8")
+        temp_path.replace(path)
+    except BaseException:
+        temp_path.unlink(missing_ok=True)
+        raise
 
 
 class CacheManager:
@@ -64,22 +86,89 @@ class CacheManager:
         if entry is None:
             return False
 
-        if entry.metadata.get("is_chunked", False):
-            return self._chunked_cache_exists(entry, pipeline_id)
+        if entry.is_expired:
+            return False
 
-        return entry.exists_locally and not entry.is_expired
+        # A resume trusts this answer to skip the stage, so the entry must be
+        # complete and intact, not merely present: a missing, truncated or
+        # rewritten file is a miss and the stage is recomputed.
+        try:
+            if entry.metadata.get("is_chunked", False):
+                for _ in self._iter_chunks(entry, pipeline_id):
+                    pass
+            else:
+                self._read_single_file(entry, pipeline_id)
+        except _CorruptCacheEntry as e:
+            logger.warning(
+                "Cache entry '%s' is incomplete, treating it as a miss: %s",
+                cache_key,
+                e,
+            )
+            return False
+        return True
 
-    def _chunked_cache_exists(self, entry: CacheEntry, pipeline_id: str) -> bool:
-        chunk_count = entry.metadata.get("chunk_count", 0)
-        cache_dir = self.get_pipeline_cache_dir(pipeline_id) / entry.stage_name
+    def _read_single_file(self, entry: CacheEntry, pipeline_id: str) -> str:
+        """Read a single-file entry, verifying its content hash.
 
-        for i in range(chunk_count):
-            chunk_file = cache_dir / f"{entry.key}_chunk_{i:04d}.json"
-            if not chunk_file.exists():
-                logger.debug("Missing chunk file: %s", chunk_file)
-                return False
+        Raises:
+            _CorruptCacheEntry: The file is missing or its hash does not match.
+        """
+        path = entry.local_path
+        if path is None or not path.is_file():
+            raise _CorruptCacheEntry(f"missing file '{path}'")
+        content = path.read_text(encoding="utf-8")
+        if entry.content_hash and compute_hash(content) != entry.content_hash:
+            raise _CorruptCacheEntry(f"content hash mismatch in '{path}'")
+        return content
 
-        return not entry.is_expired
+    def _iter_chunks(self, entry: CacheEntry, pipeline_id: str) -> Iterator[str]:
+        """Yield a chunked entry's chunk files in order, each hash-verified.
+
+        Every chunk file is checked to exist before the first is yielded, so a
+        caller that stops early (``max_items``) still never treats an entry
+        with a missing chunk as a hit.
+
+        Raises:
+            _CorruptCacheEntry: The chunk count is invalid, or a chunk file is
+                missing or fails its recorded hash.
+        """
+        chunks_dir = entry.local_path
+        chunk_count = entry.metadata.get("chunk_count")
+        if (
+            chunks_dir is None
+            or not isinstance(chunk_count, int)
+            or isinstance(chunk_count, bool)
+            or chunk_count < 1
+        ):
+            raise _CorruptCacheEntry(f"invalid chunk count {chunk_count!r}")
+        # Entries written by earlier versions may lack hashes; they are still
+        # checked for missing chunks and unparseable JSON.
+        chunk_hashes = entry.metadata.get("chunk_hashes")
+        if chunk_hashes is not None and len(chunk_hashes) != chunk_count:
+            raise _CorruptCacheEntry(
+                f"{len(chunk_hashes)} chunk hashes recorded for {chunk_count} chunks"
+            )
+        chunk_files = [
+            chunks_dir / f"{entry.key}_chunk_{i:04d}.json" for i in range(chunk_count)
+        ]
+        missing = [f.name for f in chunk_files if not f.is_file()]
+        if missing:
+            raise _CorruptCacheEntry(f"missing chunk file(s) {', '.join(missing)}")
+        for i, chunk_file in enumerate(chunk_files):
+            content = chunk_file.read_text(encoding="utf-8")
+            if chunk_hashes is not None:
+                if compute_hash(content) != chunk_hashes[i]:
+                    raise _CorruptCacheEntry(
+                        f"content hash mismatch in '{chunk_file.name}'"
+                    )
+            else:
+                try:
+                    json.loads(content)
+                except json.JSONDecodeError as e:
+                    raise _CorruptCacheEntry(
+                        f"unparseable chunk '{chunk_file.name}': {e}"
+                    ) from e
+            yield content
 
     def load_cache_index(self, pipeline_id: str) -> CacheIndex:
         index_path = self.get_pipeline_cache_dir(pipeline_id) / "cache_index.json"
@@ -134,7 +223,7 @@ class CacheManager:
             index = self.load_cache_index(pipeline_id)
             entry = index.get_entry(cache_key)
 
-            if entry is None or not entry.exists_locally:
+            if entry is None:
                 self.stats.record_miss(cache_key)
                 return None
 
@@ -148,17 +237,24 @@ class CacheManager:
                 self.stats.record_miss(cache_key)
                 return None
 
-            if entry.metadata.get("is_chunked", False):
-                data = self._load_chunked_data(
-                    entry, data_type, chunk_filter, max_items
+            try:
+                if entry.metadata.get("is_chunked", False):
+                    data = self._load_chunked_data(
+                        entry, pipeline_id, data_type, chunk_filter, max_items
+                    )
+                else:
+                    data = self._load_single_file_data(entry, pipeline_id, data_type)
+            except _CorruptCacheEntry as e:
+                logger.warning(
+                    "Cache entry '%s' is incomplete, treating it as a miss: %s",
+                    cache_key,
+                    e,
                 )
-            else:
-                data = self._load_single_file_data(entry, data_type)
+                self.stats.record_miss(cache_key)
+                return None
 
-            if data is not None:
-                self.stats.record_hit(cache_key)
-                logger.debug("Cache hit for key '%s'", cache_key)
-
+            self.stats.record_hit(cache_key)
+            logger.debug("Cache hit for key '%s'", cache_key)
             return data
         except (OSError, json.JSONDecodeError) as e:
             logger.error("Failed to load cache entry '%s': %s", cache_key, e)
@@ -166,64 +262,49 @@ class CacheManager:
             return None
 
     def _load_single_file_data(
-        self, entry: CacheEntry, data_type: type[T] | None = None
+        self, entry: CacheEntry, pipeline_id: str, data_type: type[T] | None = None
     ) -> Any:
-        if entry.local_path is None or not entry.local_path.exists():
-            return None
-
-        with open(entry.local_path, encoding="utf-8") as f:
-            content = f.read()
-
+        content = self._read_single_file(entry, pipeline_id)
         return (
             self._deserialize_data(content, data_type)
             if data_type
             else json.loads(content)
         )
 
-    @staticmethod
     def _load_chunked_data(
+        self,
         entry: CacheEntry,
+        pipeline_id: str,
         data_type: type[T] | None = None,
         chunk_filter: Callable | None = None,
         max_items: int | None = None,
-    ) -> list[Any] | None:
-        if entry.local_path is None or not entry.local_path.exists():
-            return None
+    ) -> list[Any]:
+        """Load a chunked entry; any bad chunk makes the whole entry a miss.
 
+        Raises:
+            _CorruptCacheEntry: A chunk is missing, fails its hash, or does not
+                parse or validate as ``data_type``. Skipping it would return
+                part of the stage output as if it were all of it.
+        """
         chunk_count = entry.metadata.get("chunk_count", 0)
-        chunks_dir = Path(entry.local_path)
-        chunk_file_pattern = f"{entry.key}_chunk_{{:04d}}.json"
-        all_data = []
+        all_data: list[Any] = []
         items_loaded = 0
 
-        for i in range(chunk_count):
+        for i, content in enumerate(self._iter_chunks(entry, pipeline_id)):
             if max_items and items_loaded >= max_items:
                 break
-
-            chunk_file = chunks_dir / chunk_file_pattern.format(i)
-            if not chunk_file.exists():
-                logger.warning("Missing chunk file: %s", chunk_file)
-                continue
-
             try:
-                with open(chunk_file, encoding="utf-8") as f:
-                    chunk_data = json.loads(f.read())
-
+                chunk_data = json.loads(content)
                 if chunk_filter:
                     chunk_data = [item for item in chunk_data if chunk_filter(item)]
-
                 if max_items:
-                    remaining_items = max_items - items_loaded
-                    chunk_data = chunk_data[:remaining_items]
-
+                    chunk_data = chunk_data[: max_items - items_loaded]
                 if data_type and chunk_data:
                     chunk_data = [data_type.model_validate(item) for item in chunk_data]
-
-                all_data.extend(chunk_data)
-                items_loaded += len(chunk_data)
             except Exception as e:
-                logger.error("Failed to load chunk %s: %s", i, e)
-                continue
+                raise _CorruptCacheEntry(f"chunk {i} could not be loaded: {e}") from e
+            all_data.extend(chunk_data)
+            items_loaded += len(chunk_data)
 
         if chunk_count > 1:
             logger.debug("Loaded %s items from %s chunks", items_loaded, chunk_count)
@@ -326,8 +407,7 @@ class CacheManager:
         content_hash = compute_hash(serialized_data, length=16)
         cache_file = stage_cache_dir / f"{cache_key}.json"
 
-        with open(cache_file, "w", encoding="utf-8") as f:
-            f.write(serialized_data)
+        _atomic_write_text(cache_file, serialized_data)
 
         entry = CacheEntry(
             key=cache_key,
@@ -382,12 +462,15 @@ class CacheManager:
         total_size = 0
         chunk_hashes = []
 
+        # Chunks first, the index last: until the index names the new chunk
+        # count and hashes, a reader still checks against the old entry, and a
+        # chunk already replaced fails that check (a miss) instead of mixing
+        # old and new data.
         for i, chunk in enumerate(chunks):
             chunk_file = stage_cache_dir / f"{cache_key}_chunk_{i:04d}.json"
             chunk_json = self.serialize_data(chunk)
 
-            with open(chunk_file, "w", encoding="utf-8") as f:
-                f.write(chunk_json)
+            _atomic_write_text(chunk_file, chunk_json)
 
             chunk_size = chunk_file.stat().st_size
             total_size += chunk_size
@@ -457,11 +540,8 @@ class CacheManager:
     def _save_cache_index(self, index: CacheIndex) -> None:
         index_path = self.get_pipeline_cache_dir(index.pipeline_id) / "cache_index.json"
         index_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = index_path.with_suffix(".json.tmp")
 
         try:
-            with open(temp_path, "w", encoding="utf-8") as f:
-                f.write(index.model_dump_json(indent=2))
-            temp_path.replace(index_path)
+            _atomic_write_text(index_path, index.model_dump_json(indent=2))
         except OSError as e:
             logger.error("Failed to save cache index to '%s': %s", index_path, e)
