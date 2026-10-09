@@ -34,7 +34,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   run's own scope fails before the registry is read (new
   `ConfigurationError`), as does a retire without the doc-status registry.
   Each retired scope costs one more projected registry scan on the run that
-  names it (#PR).
+  names it (#192).
 - `DataIngestionPipeline` accepts `doc_status`, `vector_indexer` and
   `graph_indexer`, threaded to the loading and indexing stages, so the whole
   pipeline runs on custom or in-memory backends through its public
@@ -516,10 +516,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   was a second full scan, and an eventually consistent DynamoDB `Scan` could
   still return the legacy key (scope = the run's) and miss its new copy, so
   the run read the legacy key as deleted and pruned the artifacts the adopted
-  document now owns (#PR).
+  document now owns (#192).
 - `DynamoDBDocStatusStore` returns the artifact-id lists of a record sorted.
   They are stored as string sets, which have no order, so two reads of one
-  record could compare unequal (#PR).
+  record could compare unequal (#192).
 - Delta detection looks up the pre-scope registry keys of new documents in
   batches instead of one DynamoDB `GetItem` per document on every run (1,000
   new documents were 1,000 sequential reads, repeated until they were
