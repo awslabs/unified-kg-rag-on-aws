@@ -100,6 +100,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   API, `count_tokens_many` counts inline instead of starting an 8-thread pool
   per call. Budgeting 300 sections of 1.5 KB takes 24 ms instead of 476 ms,
   and 32 concurrent queries 0.8 s instead of 16 s (#176).
+- The `docs/design.md` §15 "run without AWS" example passes a
+  `rerank_factory` (reranking is on by default and called Bedrock) and notes
+  that the retrievers and indexers must be injected too (#PR).
 - `CONTRIBUTING.md` and `docs/design.md` §15 describe the real extension
   mechanisms: a new strategy also needs a `SearchStrategy` enum member,
   backends are passed to constructors (there is no backend registry), and

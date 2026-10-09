@@ -454,11 +454,18 @@ providers = Providers(
     cfg,
     llm_factory=OllamaModelFactory(),
     embedding_factory=MyEmbeddingFactory(),
+    # Reranking is on by default (search.reranking.enabled) and would otherwise
+    # call Bedrock; pass a factory or set search.reranking.enabled: false.
+    rerank_factory=MyRerankFactory(),
     token_counter_factory=lambda model_id, **_: MyTokenCounter(model_id),
 )
 chain = GraphRAGChain(config=cfg, providers=providers)
 pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
 ```
+
+Models are only half of it: without `retriever_builders` the chain still reads
+Neptune and OpenSearch, and without `doc_status`/`vector_indexer`/
+`graph_indexer` the pipeline still writes to them (see the table above).
 
 Anything not supplied is built lazily with the Bedrock default, and at most once
 per bundle, so a chain constructs its Bedrock clients once rather than per

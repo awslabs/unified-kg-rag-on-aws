@@ -447,11 +447,18 @@ providers = Providers(
     cfg,
     llm_factory=OllamaModelFactory(),
     embedding_factory=MyEmbeddingFactory(),
+    # 리랭킹은 기본으로 켜져 있어(search.reranking.enabled) 그대로 두면 Bedrock을
+    # 호출합니다. 팩토리를 넘기거나 search.reranking.enabled: false로 끕니다.
+    rerank_factory=MyRerankFactory(),
     token_counter_factory=lambda model_id, **_: MyTokenCounter(model_id),
 )
 chain = GraphRAGChain(config=cfg, providers=providers)
 pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
 ```
+
+모델만으로는 AWS에서 벗어나지 않습니다. `retriever_builders`가 없으면 체인은 여전히
+Neptune과 OpenSearch에서 읽고, `doc_status`/`vector_indexer`/`graph_indexer`가 없으면
+파이프라인은 여전히 그곳에 씁니다(위 표 참고).
 
 지정하지 않은 제공자는 처음 사용할 때 Bedrock 기본값으로 묶음당 한 번만 만들어집니다.
 그래서 체인은 Bedrock 클라이언트를 구성 요소나 쿼리마다가 아니라 한 번만 생성합니다(검색
