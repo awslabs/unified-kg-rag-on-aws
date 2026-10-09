@@ -24,6 +24,7 @@ from langchain_core.output_parsers import XMLOutputParser
 from langchain_core.runnables import RunnableLambda
 
 import unified_kg_rag.shared.utils.langchain as langchain_module
+from unified_kg_rag.shared.utils import ensure_list
 from unified_kg_rag.shared.utils.langchain import (
     BATCH_ITEM_FAILED,
     BatchProcessor,
@@ -889,3 +890,106 @@ def test_wrong_record_end_tag_closes_the_open_record() -> None:
     parsed = RobustXMLOutputParser(tags=["relationships"]).parse(raw)
     rels = parsed["relationships"]["relationship"]
     assert [(r["source"], r["target"]) for r in rels] == [("A", "B"), ("B", "C")]
+
+
+def _relationship_pairs(raw: str) -> list[tuple[Any, Any]]:
+    parsed = RobustXMLOutputParser(tags=["relationships"]).parse(raw)
+    rels = ensure_list(parsed["relationships"], inner_key="relationship")
+    return [(r.get("source"), r.get("target")) for r in rels]
+
+
+def test_stray_end_tag_between_fields_keeps_the_record_open() -> None:
+    # A stray end tag inside a record (between two fields) is dropped; it
+    # must not end the record and push its later fields out of it.
+    raw = (
+        "<relationships><relationship><source>A</source></entity_placeholder>"
+        "<target>B</target><type>OWNS</type></relationship>"
+        "<relationship><source>B</source><target>A</target><type>OWNED_BY</type>"
+        "</relationship></relationships>"
+    )
+    assert _relationship_pairs(raw) == [("A", "B"), ("B", "A")]
+
+
+def test_misnamed_field_end_tag_closes_the_field() -> None:
+    # `<strength>7</strong>`, `<target>B</source>` (naming the field just
+    # closed) and `<source>B</source_text>` close the open field.
+    raw = (
+        "<relationships><relationship><source>A</source><target>B</source>"
+        "<strength>7</strong><type>OWNS</type></relationship>"
+        "<relationship><source>B</source_text><target>C</target></relationship>"
+        "</relationships>"
+    )
+    parsed = RobustXMLOutputParser(tags=["relationships"]).parse(raw)
+    first, second = parsed["relationships"]["relationship"]
+    assert first == {"source": "A", "target": "B", "strength": "7", "type": "OWNS"}
+    assert second == {"source": "B", "target": "C"}
+
+
+def test_stray_and_misnamed_end_tags_combined() -> None:
+    # A stray tag between fields, a misnamed field close and `</entity>` for
+    # `</relationship>` in one response.
+    raw = (
+        "<relationships>\n"
+        "<relationship><source>A</source>\n</entity_placeholder>\n"
+        "<target>B</target><strength>7</strong></entity>\n"
+        "<relationship><source>B</source><target>C</target></relationship>\n"
+        "<relationship><source>C</source><target>A</target>\n"
+        "</entity_placeholder>\n</relationship>\n"
+        "</relationships>"
+    )
+    assert _relationship_pairs(raw) == [("A", "B"), ("B", "C"), ("C", "A")]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (
+            "findById returns Optional<User> when found",
+            "findById returns Optional<User> when found",
+        ),
+        ("uses <br> tag and <T> generic", "uses <br> tag and <T> generic"),
+        ("a line break <br/> here", "a line break <br/> here"),
+        ("wraps it in <b>bold</b> text", "wraps it in <b>bold</b> text"),
+        ("if a < b then a <b", "if a < b then a <b"),
+        ("AT&T & Smith &amp; Sons", "AT&T & Smith & Sons"),
+        # An unmatched end tag right before the field's own close is dropped.
+        ("closes with </div> only", "closes with  only"),
+    ],
+)
+def test_tag_like_text_in_a_field_stays_text(value: str, expected: str) -> None:
+    raw = (
+        "<relationships><relationship><source>A</source><target>B</target>"
+        f"<source_text>{value}</source_text></relationship></relationships>"
+    )
+    parsed = RobustXMLOutputParser(tags=["relationships"]).parse(raw)
+    rel = parsed["relationships"]["relationship"]
+    assert rel == {"source": "A", "target": "B", "source_text": expected}
+
+
+def test_tag_like_text_in_descriptions_across_sections() -> None:
+    raw = (
+        "<entities>\n<entity><name>Repository</name>"
+        "<description>findById returns Optional<User> or <T></description>"
+        "</entity>\n<entity><name>User</name><description>A record</description>"
+        "</entity>\n</entities>\n<relationships>\n<relationship>"
+        "<source>Repository</source><target>User</target>"
+        "<description>uses <br> tag & a < b</description></relationship>\n"
+        "</relationships>"
+    )
+    parsed = RobustXMLOutputParser(tags=["entities", "relationships"]).parse(raw)
+    first, second = parsed["entities"]["entity"]
+    assert first["description"] == "findById returns Optional<User> or <T>"
+    assert second == {"name": "User", "description": "A record"}
+    rel = parsed["relationships"]["relationship"]
+    assert rel["description"] == "uses <br> tag & a < b"
+
+
+def test_record_tag_inside_an_open_field_closes_the_record() -> None:
+    # A field left open before the next record: the record tag is markup
+    # (it is in the response's vocabulary) and closes the open record.
+    raw = (
+        "<relationships><relationship><source>A</source><target>B"
+        "<relationship><source>B</source><target>C</target></relationship>"
+        "</relationships>"
+    )
+    assert _relationship_pairs(raw) == [("A", "B"), ("B", "C")]

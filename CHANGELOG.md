@@ -598,6 +598,16 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   The chunking prompt no longer ends with `<?xml ...?>` and an open
   `<chunk_boundaries>`: it already asks the model to emit the whole document
   (#174).
+- The LLM XML parser repairs stray and misnamed end tags more
+  conservatively. A stray end tag between two fields of a record (e.g.
+  `</entity_placeholder>` after `<source>`) closed the record, so its later
+  fields and every later record were lost; it is now dropped, and an
+  unmatched end tag only closes the innermost element when that is a field
+  (`<strength>7</strong>`). An opening tag naming an open record closes it,
+  so `</entity>` written for `</relationship>` still yields two records, and
+  `<target>B</source>` no longer nests the record's remaining fields inside
+  `target`. Tag-like text inside a field (`Optional<User>`, `<br>`, `<T>`) is
+  kept verbatim instead of being parsed into a nested element (#PR).
 - A model response that stopped at its output-token limit (`stopReason`
   or `stop_reason` `max_tokens`) fails with `LLMOutputTruncatedError`
   instead of being parsed. The XML parser recovered the sections before the
