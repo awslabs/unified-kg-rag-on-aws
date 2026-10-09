@@ -66,12 +66,11 @@ derived) to avoid replace-on-rename conflicts.
 > `-c create_guardrail=false -c guardrail_identifier=<id>`; the stack then
 > creates nothing.
 >
-> **Behaviour change for bring-your-own users:** setting only
-> `-c guardrail_identifier=<id>` used to skip creation; it now *also* creates the
-> baseline guardrail (`create_guardrail` defaults to `true`). Synth emits a
-> warning when `guardrail_identifier` is set without an explicit
-> `create_guardrail`; pass `-c create_guardrail=false` for an external guardrail
-> (or `-c create_guardrail=true` to acknowledge and silence it in the two-step flow).
+> Setting only `-c guardrail_identifier=<id>` still creates the baseline
+> guardrail, because `create_guardrail` defaults to `true`. Synth warns when
+> `guardrail_identifier` is set without an explicit `create_guardrail`; pass
+> `-c create_guardrail=false` for an external guardrail (or
+> `-c create_guardrail=true` to acknowledge the warning in the two-step flow).
 >
 > The created guardrail follows `removal_destroy`: `DESTROY` in dev (default), so
 > deploy → destroy → deploy cycles work, and `RETAIN` otherwise because its id
@@ -160,6 +159,75 @@ single-node domain.
 > mutating/data path (`InvokeModel`) stays ARN-scoped. Each is documented inline
 > in `compute_stack.py` and in the cdk-nag suppressions.
 
+## Deployment topology
+
+```mermaid
+flowchart LR
+    operator["Operator"] -->|start-execution| sfn["Step Functions<br/>Prep, GraphBuild, Analysis, Index"]
+    operator -->|run-task| task
+    sfn -->|RunTask per phase| task
+    subgraph vpc["VPC (max_azs AZs)"]
+        subgraph app["app subnets: isolated (private) or NAT egress (public)"]
+            task["ECS Fargate task<br/>container app"]
+            neptune[("Neptune cluster<br/>IAM auth, port 8182")]
+            opensearch[("OpenSearch domain<br/>HTTPS 443")]
+        end
+        iface["Interface endpoints, private mode only<br/>bedrock, bedrock-runtime, bedrock-agent-runtime,<br/>ecr.api, ecr.dkr, logs, sts"]
+        gateway["Gateway endpoints<br/>S3, DynamoDB"]
+    end
+    task --> neptune
+    task --> opensearch
+    task --> iface
+    task --> gateway
+    iface --> bedrock["Amazon Bedrock<br/>models, rerank, guardrail"]
+    iface --> ecr[("ECR repository")]
+    iface --> logs["CloudWatch Logs"]
+    gateway --> s3[("S3 cache bucket")]
+    gateway --> ddb[("DynamoDB doc-status table")]
+    logs --> alarms["Dashboard and alarms"] --> sns["SNS alarm topic"]
+```
+
+- One VPC holds the data plane. The Fargate task, the Neptune cluster and the
+  OpenSearch domain run in the `app` subnets and share one security group that
+  allows Neptune (8182) and OpenSearch (443) traffic between its members, so
+  both stores are reachable only from inside the VPC.
+- In `private` mode (default) the `app` subnets have no route to the internet.
+  The task reaches AWS services only through the interface endpoints and the
+  S3/DynamoDB gateway endpoints shown, so Bedrock calls must go to the deploy
+  region (leave `bedrock_region` at the deploy region). In `public` mode the
+  `app` subnets route through one NAT gateway per AZ, no interface endpoints are
+  created, and Bedrock may be in another region.
+- Step Functions runs the four ingestion phases as separate Fargate tasks of
+  one task definition; they hand off through the S3 stage checkpoints.
+  Querying (`run-rag`, `run-eval`) runs as a one-off task of the same task
+  definition ([After deploy](#after-deploy)).
+- The optional guardrail stack lives in `bedrock_region`, outside the deploy
+  region's stacks.
+
+## Cost drivers
+
+No prices are listed here; use the [AWS Pricing Calculator](https://calculator.aws/)
+for your region and sizes. What scales each service's cost:
+
+| Service | Cost grows with | Levers in this stack or the app config |
+|---|---|---|
+| Amazon Bedrock models | Tokens per ingestion (one or more extraction calls per chunk, up to `max_rounds` gleaning calls, one report per community, optional claim extraction) and per query (routing, query processing, map steps, answer) | Fast tier for light roles, `aws.bedrock.ingestion_effort`, `processing.gleaning.max_rounds`, keep claim extraction off, incremental indexing |
+| Bedrock embeddings and rerank | Embedded text units, entities, relationships and reports; one rerank call per query over up to `search.reranking.top_k` candidates | `indexing.opensearch.persist_embedding_cache`, `search.reranking.top_k` |
+| Amazon Neptune | Instance-hours × `neptune_instances`, storage and I/O, backup retention | `neptune_instance`, `neptune_instances` (1 in dev), `backup_retention_days`, tear down dev |
+| Amazon OpenSearch Service | Data node-hours × `opensearch_count`, plus three dedicated masters when `opensearch_count > 1`, and 50 GiB gp3 storage per data node | `opensearch_instance`, `opensearch_master_instance`, `opensearch_count` (1 in dev) |
+| AWS Fargate | vCPU and memory per task for the run time of each phase and query task | `fargate_cpu`, `fargate_memory` |
+| VPC interface endpoints (`private`) | Seven endpoints × `max_azs`, billed per AZ-hour, plus data processed | `max_azs`, or reuse a VPC's endpoints (`vpc_id`) |
+| NAT gateways (`public`) | One per AZ, billed per hour, plus data processed | `max_azs`, or use `private` mode |
+| Amazon S3 | Stage checkpoints, embedding cache, corpus, access logs | 30-day expiry on `pipeline-runs/` and `embedding-cache/` |
+| Amazon DynamoDB | On-demand reads and writes: one full-table diff scan per ingestion plus one record per processed document; point-in-time recovery | Fewer, larger runs |
+| Amazon CloudWatch | Log ingestion and retention (task, pipeline and, with `vpc_flow_logs`, flow logs), alarms, dashboard | `vpc_flow_logs`, `flow_log_retention_days` |
+| AWS KMS | Customer-managed keys per month and requests: the alarm-topic key always, the data key with `use_cmk` | `use_cmk` |
+| AWS Step Functions | State transitions per ingestion run (a few per phase) | — |
+
+Neptune, OpenSearch, interface endpoints and NAT gateways bill while the stack
+exists, whether or not anything runs. `cdk destroy --all` removes them in the
+default `dev` environment.
+
 ## Prerequisites
 
 - Python 3.10+ (CI synthesizes with 3.12).
@@ -171,10 +239,6 @@ single-node domain.
   and region. To push the app image after deploy: Docker.
 
 ## Usage
-
-Prerequisites: Python 3.10+ (CI uses 3.12), Node.js 20+ with the AWS CDK CLI
-(`npm install -g aws-cdk@2.1143.0`, the version CI pins), and Docker to build
-the app image.
 
 ```bash
 cd iac
@@ -190,76 +254,153 @@ cdk synth -c vpc_id=vpc-0abc... -c cache_bucket_name=my-cache -c network_mode=pr
 # Public egress (simpler dev):
 cdk synth -c network_mode=public
 
-# Deploy (creates resources — incurs cost; see project "ask first" rule)
+# Deploy (creates billable resources)
 cdk bootstrap            # once per account/region
 cdk deploy --all
 ```
 
-> **Cost / approval:** deploying creates Neptune + OpenSearch (hourly billed) and
-> NAT gateways in `public` mode. `removal_destroy=true` (dev default) tears
+> **Cost:** deploying creates Neptune + OpenSearch (hourly billed) and
+> NAT gateways in `public` mode (see [Cost drivers](#cost-drivers)). `removal_destroy=true` (dev default) tears
 > everything down on `cdk destroy --all`; non-dev envs default to
 > `removal_destroy=false` and `deletion_protection=true`.
 
 ## After deploy
 
-1. Build & push the app image (`docker/Dockerfile`, build context = repo root)
-   to the created ECR repo (tag `latest`). Outside dev, push a unique version
-   tag instead and deploy with `-c image_tag=<tag>`: any tag other than
-   `latest` makes the repository's tags immutable, so a pushed image cannot be
-   swapped under the running task definition. The image bakes in the tracked,
-   endpoint-free `docker/config.yaml` as `/app/config.yaml`; the deployed
-   endpoints come from the injected `NEPTUNE_ENDPOINT` / `OPENSEARCH_ENDPOINT` /
-   `S3_BUCKET_NAME` / `BEDROCK_REGION` env vars the app reads. The task also injects
-   `GRAPHRAG_DOC_STATUS_TABLE` (the table this stack created,
-   `graphrag-doc-status` in `dev`) and `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false`,
-   which override `aws.dynamodb.table_name` / `create_table_if_missing`, so the
-   app and the CloudWatch alarms track the same IaC-managed table. The image
-   config sets `aws.dynamodb.enabled: true`, so ingestion runs incrementally.
-   S3 cache uploads default to the bucket's own encryption
-   (`aws.s3.encryption.encryption_type: BUCKET_DEFAULT`), so `use_cmk=true`
-   objects are encrypted with the CMK.
-2. Upload the corpus under a prefix of the cache bucket (for example `corpus/`)
-   and start an ingestion run:
-   ```bash
-   aws stepfunctions start-execution \
-     --state-machine-arn <…-ingestion arn> \
-     --input '{"source_directory":"s3://<cache-bucket>/corpus/","pipeline_id":"run-001"}'
-   ```
-   The input takes exactly these two keys, passed to every phase as
-   `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID`. Each phase runs in a
-   fresh Fargate task, so `source_directory` must be an `s3://` URI: the
-   container entrypoint (`docker/entrypoint.sh`) syncs it to local scratch
-   before running the CLI. The config file is fixed at `/app/config.yaml` in
-   the image. The task role is granted read/write on the cache bucket only;
-   to read a corpus from another bucket, deploy with
-   `-c corpus_bucket_name=<bucket>`. In `private` mode the S3 and DynamoDB
-   gateway endpoints only allow this deployment's cache/corpus buckets, its
-   doc-status table and the ECR image-layer bucket, so a bucket granted to the
-   role by hand is still unreachable from the tasks.
+The commands below assume the default `dev` environment (stack and resource
+names as in [Resource naming](#resource-naming)), a shell in the repository
+root, and the AWS CLI v2, Docker and `jq`. For another `env_name`, use its
+stack names (for example `GraphRagProdStorage`) and resource prefix
+(`prod-graphrag`).
 
-   The bucket's 30-day expiry applies only to the prefixes the app writes,
-   `pipeline-runs/` (stage checkpoints) and `embedding-cache/`; any other
-   prefix never expires. Do not put the corpus under those two prefixes: with
-   incremental indexing an expired source file looks deleted, and the next run
-   removes its graph and vector artifacts. A reused bucket
-   (`cache_bucket_name`) keeps its own lifecycle rules, so check them the same
-   way.
+### 1. Read the stack outputs
 
-   **Run one ingestion at a time.** The state machine does not stop a second
-   execution from starting while one is running, and two runs against the same
-   stores race on the doc-status registry and on the graph and vector writes
-   (both may index, merge or delete the same documents). Before starting a run,
-   check that none is in progress:
-   ```bash
-   aws stepfunctions list-executions --state-machine-arn <…-ingestion arn> \
-     --status-filter RUNNING
-   ```
-3. To query (`run-rag`) or run other CLIs against the deployed stores, use the
-   `GraphRagStorage` outputs: `NeptuneEndpoint` and `OpenSearchEndpoint` are
-   bare hostnames (no `https://`), the form `NEPTUNE_ENDPOINT` /
-   `OPENSEARCH_ENDPOINT` and `aws.neptune.endpoint` / `aws.opensearch.endpoint`
-   expect. Both stores are VPC-only: they accept connections only from inside
-   the VPC through the service security group. Run the CLI there, for example as
-   a one-off task of the same task definition (`aws ecs run-task` with a
-   `run-rag …` command override, in the app subnets and service security
-   group), not from a laptop.
+```bash
+REGION=<deploy region>
+output() {
+  aws cloudformation describe-stacks --region "$REGION" --stack-name "$1" \
+    --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" --output text
+}
+STATE_MACHINE_ARN=$(output GraphRagOrchestration StateMachineArn)
+CACHE_BUCKET=$(output GraphRagStorage CacheBucketName)
+NEPTUNE_ENDPOINT=$(output GraphRagStorage NeptuneEndpoint)
+OPENSEARCH_ENDPOINT=$(output GraphRagStorage OpenSearchEndpoint)
+```
+
+| Stack | Output | Value |
+|---|---|---|
+| `GraphRagStorage` | `NeptuneEndpoint`, `OpenSearchEndpoint` | Bare hostnames (no `https://`), the form `aws.neptune.endpoint` / `aws.opensearch.endpoint` and `NEPTUNE_ENDPOINT` / `OPENSEARCH_ENDPOINT` expect |
+| `GraphRagStorage` | `CacheBucketName`, `DocStatusTableName` | S3 cache bucket and doc-status table |
+| `GraphRagOrchestration` | `StateMachineArn` | Ingestion state machine |
+| `GraphRagSecurity` | `KmsKeyArn` | Shared CMK, only with `use_cmk=true` |
+| `GraphRagGuardrail` | `GuardrailIdentifier` | Created guardrail, in `bedrock_region` |
+
+The task already receives the endpoints, bucket, table and regions as
+environment variables, so these outputs are needed only for tools that run
+elsewhere in the VPC.
+
+### 2. Build and push the app image
+
+```bash
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+REGISTRY="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
+aws ecr get-login-password --region "$REGION" \
+  | docker login --username AWS --password-stdin "$REGISTRY"
+docker build --platform linux/amd64 -f docker/Dockerfile -t "$REGISTRY/graphrag-app:latest" .
+docker push "$REGISTRY/graphrag-app:latest"
+```
+
+The build context is the repository root, and the task runs on the default
+Fargate architecture (x86_64). Outside dev, push a unique version tag instead
+and deploy with `-c image_tag=<tag>`: any tag other than `latest` makes the
+repository's tags immutable, so a pushed image cannot be swapped under the
+running task definition. To parse `.md`/`.html` files, build with
+`--build-arg UV_EXTRAS="--extra unstructured"`.
+
+The image bakes in the tracked, endpoint-free `docker/config.yaml` as
+`/app/config.yaml`; the deployed values come from the environment variables the
+task injects: `NEPTUNE_ENDPOINT`, `OPENSEARCH_ENDPOINT`, `S3_BUCKET_NAME`,
+`AWS_REGION`, `BEDROCK_REGION`, `LOG_FORMAT`, `GRAPHRAG_DOC_STATUS_TABLE`
+(the table this stack created) and `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false`,
+plus `BEDROCK_GUARDRAIL_IDENTIFIER` when `guardrail_identifier` is set. The
+image config sets `aws.dynamodb.enabled: true`, so ingestion runs
+incrementally. S3 cache uploads default to the bucket's own encryption
+(`aws.s3.encryption.encryption_type: BUCKET_DEFAULT`), so with `use_cmk=true`
+objects are encrypted with the CMK.
+
+### 3. Upload the corpus and start an ingestion run
+
+```bash
+aws s3 sync ./source "s3://$CACHE_BUCKET/corpus/" --region "$REGION"
+
+# Run one ingestion at a time: check that none is in progress first.
+aws stepfunctions list-executions --region "$REGION" \
+  --state-machine-arn "$STATE_MACHINE_ARN" --status-filter RUNNING
+
+EXECUTION_ARN=$(aws stepfunctions start-execution --region "$REGION" \
+  --state-machine-arn "$STATE_MACHINE_ARN" \
+  --input "{\"source_directory\":\"s3://$CACHE_BUCKET/corpus/\",\"pipeline_id\":\"run-001\"}" \
+  --query executionArn --output text)
+
+aws stepfunctions describe-execution --region "$REGION" \
+  --execution-arn "$EXECUTION_ARN" --query status --output text
+aws logs tail /graphrag/tasks --region "$REGION" --follow
+```
+
+- The input takes exactly two keys, passed to every phase as
+  `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID`. Each phase runs in a
+  fresh Fargate task, so `source_directory` must be an `s3://` URI: the
+  container entrypoint (`docker/entrypoint.sh`) syncs it to local scratch
+  before running the CLI. `pipeline_id` accepts lowercase letters, digits,
+  hyphens and underscores; reuse an id to resume a failed run from its S3
+  checkpoints.
+- The task role can read and write the cache bucket only. To read a corpus
+  from another bucket, deploy with `-c corpus_bucket_name=<bucket>`. In
+  `private` mode the S3 and DynamoDB gateway endpoints only allow this
+  deployment's cache and corpus buckets, its doc-status table and the ECR
+  image-layer bucket, so a bucket granted to the role by hand is still
+  unreachable from the tasks.
+- The bucket's 30-day expiry applies only to the prefixes the app writes,
+  `pipeline-runs/` (stage checkpoints) and `embedding-cache/`; any other
+  prefix never expires. Do not put the corpus under those two prefixes: with
+  incremental indexing an expired source file looks deleted, and the next run
+  removes its graph and vector artifacts. A reused bucket
+  (`cache_bucket_name`) keeps its own lifecycle rules, so check them the same
+  way.
+- **Run one ingestion at a time.** The state machine does not stop a second
+  execution from starting while one is running, and two runs against the same
+  stores race on the doc-status registry and on the graph and vector writes
+  (both may index, merge or delete the same documents).
+
+### 4. Query from inside the VPC
+
+Both stores accept connections only from inside the VPC, so run `run-rag` as a
+one-off task of the same task definition, in the subnets and
+security group the state machine uses:
+
+```bash
+DEFINITION=$(aws stepfunctions describe-state-machine --region "$REGION" \
+  --state-machine-arn "$STATE_MACHINE_ARN" --query definition --output text)
+PHASE=$(echo "$DEFINITION" | jq '.States.PrepPhase.Parameters')
+CLUSTER=$(echo "$PHASE" | jq -r '.Cluster')
+TASK_DEFINITION=$(echo "$PHASE" | jq -r '.TaskDefinition')
+SUBNETS=$(echo "$PHASE" | jq -r '.NetworkConfiguration.AwsvpcConfiguration.Subnets | join(",")')
+SECURITY_GROUPS=$(echo "$PHASE" | jq -r '.NetworkConfiguration.AwsvpcConfiguration.SecurityGroups | join(",")')
+
+TASK_ARN=$(aws ecs run-task --region "$REGION" --cluster "$CLUSTER" \
+  --launch-type FARGATE --task-definition "$TASK_DEFINITION" \
+  --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS],assignPublicIp=DISABLED}" \
+  --overrides '{"containerOverrides":[{"name":"app","command":["run-rag","--config-path","/app/config.yaml","--query","What are the main themes?","--search-strategy","global"]}]}' \
+  --query 'tasks[0].taskArn' --output text)
+
+aws ecs wait tasks-stopped --region "$REGION" --cluster "$CLUSTER" --tasks "$TASK_ARN"
+aws logs tail /graphrag/tasks --region "$REGION" --since 30m
+```
+
+The command override must name the CLI explicitly (`run-rag ...`). The answer
+is written to the task's log stream (`app/app/<task id>` in
+`/graphrag/tasks`). `run-eval` reads its dataset from a local
+path, and the image holds none, so evaluate from a machine inside the VPC or
+from an image that includes the dataset.
+
+Operational procedures (re-ingesting, failed documents, alarms, caches) are in
+the [Operator Runbook](../docs/operations.md).
