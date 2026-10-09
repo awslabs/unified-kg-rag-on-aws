@@ -162,6 +162,10 @@ single-node domain.
 
 ## Usage
 
+Prerequisites: Python 3.10+ (CI uses 3.12), Node.js 20+ with the AWS CDK CLI
+(`npm install -g aws-cdk@2.1143.0`, the version CI pins), and Docker to build
+the app image.
+
 ```bash
 cd iac
 python -m venv .venv && . .venv/bin/activate
