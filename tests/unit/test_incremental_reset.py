@@ -18,6 +18,7 @@ import pytest
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.domain.ingestion.delta_detector import (
     compute_content_hash,
+    compute_doc_id,
     document_doc_id,
 )
 from unified_kg_rag.domain.models import (
@@ -106,7 +107,26 @@ def test_reset_records_the_full_corpus_after_rebuilding(mocker) -> None:
 
     a, b = _doc("/a.txt", "Vendor ships."), _doc("/b.txt", "Buyer pays.")
     store = FakeDocStatusStore()
-    store.put(DocStatusRecord(doc_id="stale-doc", content_hash="old"))
+    store.put(
+        DocStatusRecord(
+            doc_id="stale-doc", content_hash="old", scope="default|/old-corpus"
+        )
+    )
+    # Another namespace sharing the table: its stores were not cleared, so
+    # its records stay. So does a record written before scopes existed.
+    other = DocStatusRecord(
+        doc_id="other-namespace", content_hash="h", scope="default-y|/corpus"
+    )
+    scopeless = DocStatusRecord(doc_id="scopeless", content_hash="h")
+    # Written before scopes existed, under this namespace's legacy key: its
+    # namespace is known from the key, so it is cleared.
+    legacy = DocStatusRecord(
+        doc_id=compute_doc_id("gone.txt", "default"),
+        content_hash="h",
+        file_path="gone.txt",
+    )
+    for record in (other, scopeless, legacy):
+        store.put(record)
     config = _reset_config()
 
     manager = mocker.MagicMock()
@@ -138,7 +158,13 @@ def test_reset_records_the_full_corpus_after_rebuilding(mocker) -> None:
     manager.index_all_data.assert_called_once()
     manager.index_delta.assert_not_called()
     records = {r.doc_id: r for r in store.list_all()}
-    assert set(records) == {document_doc_id(a), document_doc_id(b)}
+    assert set(records) == {
+        document_doc_id(a),
+        document_doc_id(b),
+        other.doc_id,
+        scopeless.doc_id,
+    }
+    assert records[other.doc_id] == other
     assert records[document_doc_id(a)].status == DocStatus.PROCESSED
     assert records[document_doc_id(a)].entity_ids == ["e-vendor"]
     assert records[document_doc_id(b)].content_hash == compute_content_hash(b)

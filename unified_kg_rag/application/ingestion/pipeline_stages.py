@@ -33,6 +33,7 @@ from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
 from unified_kg_rag.domain.ingestion.delta_detector import (
     assign_document_identity,
     document_doc_id,
+    scope_namespace,
 )
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
@@ -43,6 +44,7 @@ from unified_kg_rag.domain.models import (
     CommunityReport,
     Config,
     Constants,
+    DocStatusRecord,
     Document,
     DocumentDelta,
     DocumentLineage,
@@ -1451,8 +1453,50 @@ class IndexingStage(PipelineStage):
 
         return DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
 
-    def _clear_doc_status_registry(self) -> None:
-        """Delete all records from the doc-status registry (reset path).
+    def _reset_namespaces(
+        self, context: PipelineContext, text_units: list[TextUnit]
+    ) -> set[str]:
+        """The registry namespaces whose stores a reset clears.
+
+        ``clear_all_data`` clears the suffixes of the run's text units under
+        ``indexing.additional_suffix``; the run's own namespace (its registry
+        scope, else the configured ``index_value``) is always included.
+        """
+        from unified_kg_rag.ports.indexer import BaseIndexer
+        from unified_kg_rag.shared.utils.document_identity import registry_namespace
+
+        additional = self.config.indexing.additional_suffix
+        namespaces = {
+            registry_namespace(BaseIndexer.get_suffix(unit), additional)
+            for unit in text_units
+        }
+        namespaces.add(
+            scope_namespace(context.incremental_scope)
+            or registry_namespace(
+                self.config.processing.document_parsing.index_value, additional
+            )
+        )
+        return namespaces
+
+    @staticmethod
+    def _record_in_namespaces(record: DocStatusRecord, namespaces: set[str]) -> bool:
+        from unified_kg_rag.shared.utils.document_identity import compute_doc_id
+
+        if record.scope is not None:
+            return scope_namespace(record.scope) in namespaces
+        return record.file_path is not None and any(
+            record.doc_id == compute_doc_id(record.file_path, namespace)
+            for namespace in namespaces
+        )
+
+    def _clear_doc_status_registry(self, namespaces: set[str]) -> None:
+        """Delete the registry records of ``namespaces`` (reset path).
+
+        Only the namespaces whose stores the reset cleared: other index
+        suffixes sharing the table keep their records, which still describe
+        their intact stores. A record written before scopes existed has no
+        scope; it belongs to a namespace when its key is that namespace's
+        legacy key for its file (see ``compute_doc_id``), else it is kept.
 
         Uses the port's list_all + delete so no new port method is needed.
         Best-effort: a registry-clear failure should not abort the reset run
@@ -1460,10 +1504,18 @@ class IndexingStage(PipelineStage):
         """
         try:
             store = self._build_doc_status_store()
-            records = store.list_all()
+            records = [
+                record
+                for record in store.list_all()
+                if self._record_in_namespaces(record, namespaces)
+            ]
             for record in records:
                 store.delete(record.doc_id)
-            logger.info("Cleared %s doc-status registry records on reset", len(records))
+            logger.info(
+                "Cleared %s doc-status registry records of namespaces %s on reset",
+                len(records),
+                ", ".join(sorted(namespaces)),
+            )
         except Exception as e:  # noqa: BLE001 - reset cleanup is best-effort
             logger.warning("Failed to clear doc-status registry on reset: %s", e)
 
@@ -1486,7 +1538,9 @@ class IndexingStage(PipelineStage):
             # leave rows for docs no longer in the corpus. Only relevant when the
             # registry is in use (incremental mode).
             if self._doc_status is not None or self.config.aws.dynamodb.enabled:
-                self._clear_doc_status_registry()
+                self._clear_doc_status_registry(
+                    self._reset_namespaces(context, text_units)
+                )
 
         if not self.indexing_manager.initialize():
             raise RuntimeError("Failed to initialize indexing pipeline")

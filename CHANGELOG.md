@@ -466,6 +466,40 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- A configured `document_parsing.source_scope` that is a local path with a
+  trailing or repeated slash (`/mnt/corpus/`) can now be retired. The scope
+  is stored as given, but `indexing.retire_source_scopes` normalized the
+  retire value, so neither `/mnt/corpus/` nor `/mnt/corpus` matched the
+  stored records and the run only warned that the scope had no records. A
+  retired scope now also matches every stored scope of the run's namespace
+  whose source scope normalizes to the same value (read from the scopes the
+  diff's scan already returns; the run's own scope is never retired). Stored
+  scopes are not re-keyed (#195).
+- The delta detection reads the records of changed documents in one batch
+  (`DocStatusPort.get_many`, `BatchGetItem` on DynamoDB) to check
+  `indexing.max_document_failures`, instead of one `GetItem` per changed
+  document: editing 300 documents, or the recovery run after an interrupted
+  run left 300 `PENDING` records, cost 300 sequential reads. A custom store
+  without `get_many` still gets one `get` per document (#195).
+- Deleting or changing a document no longer leaves its entities and
+  relationships in the stores because a document of another index namespace
+  sharing the registry table references the same ids. The removal plan
+  grouped survivors by the record's `suffix`, which is the item suffix
+  (`index_value`, `default` when unset) and the same for every
+  `indexing.additional_suffix`, so another namespace's documents counted as
+  survivors and the artifacts stayed, stripped of their text units. Survivors
+  are now grouped by the namespace read from each record's scope; a record
+  written before scopes existed still counts as a survivor for every
+  namespace of its suffix (#195).
+- `indexing.reset` on one index namespace (`index_value` +
+  `indexing.additional_suffix`) no longer deletes the doc-status records of
+  every namespace sharing the registry table. Every config uses the same
+  default table name, and the reset only clears its own namespace's stores,
+  so the other namespaces lost the lineage of intact stores: their next run
+  re-extracted the whole corpus, and a file removed from them before that run
+  was never removed from their stores. The reset now deletes only the records
+  whose scope belongs to the cleared namespaces, and a record written before
+  scopes existed only when its key is such a namespace's legacy key (#195).
 - An incremental run interrupted inside the indexing stage (a killed task, a
   store outage, the failure gate) is repaired by the next run. Before, a run
   that stopped after pruning a changed document left its old content hash in

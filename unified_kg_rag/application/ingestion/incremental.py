@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 from unified_kg_rag.domain.ingestion.delta_detector import (
     detect_delta,
     document_doc_id,
+    scope_namespace,
 )
 from unified_kg_rag.domain.models import (
     PENDING_CONTENT_HASH,
@@ -180,6 +181,22 @@ def _artifact_ids(record: DocStatusRecord | DocumentLineage) -> list[str]:
         + record.claim_ids
         + record.community_report_ids
     )
+
+
+# (item suffix, index namespace or None when the record has no scope).
+_NamespaceKey = tuple[str, str | None]
+
+
+def _namespace_key(record: DocStatusRecord) -> _NamespaceKey:
+    """The removal-planning group of ``record``.
+
+    ``record.suffix`` is the item suffix the indexers are called with
+    (``index_value``, ``default`` when unset); the index namespace adds
+    ``indexing.additional_suffix`` and is read from the record's scope (see
+    ``scope_namespace``). A record written before scopes existed has no known
+    namespace (``None``).
+    """
+    return record.suffix, scope_namespace(record.scope)
 
 
 def _read_many(
@@ -665,12 +682,16 @@ class IncrementalIndexer:
     def _plan_removal(self, doc_ids: list[str]) -> dict[str, _SuffixRemoval]:
         target = set(doc_ids)
         # Artifact ids referenced by SURVIVING documents -> keep them. Tracked
-        # PER SUFFIX: artifact ids are suffix-independent (an entity "Vendor"
-        # yields the same uuid5 id in every tenant), so a global retained set
-        # would let a surviving doc in tenant B suppress the deletion of the same
-        # id in tenant A. Only a same-suffix survivor should retain an id.
-        retained: dict[str, set[str]] = defaultdict(set)
-        removing: dict[str, list[DocStatusRecord]] = defaultdict(list)
+        # PER NAMESPACE: artifact ids are namespace-independent (an entity
+        # "Vendor" yields the same uuid5 id in every tenant), so a global
+        # retained set would let a surviving doc in tenant B suppress the
+        # deletion of the same id in tenant A. Only a survivor of the same
+        # namespace should retain an id. The namespace is read from the
+        # record's scope, not from ``record.suffix``: that is the item suffix
+        # the indexers are called with, which every
+        # ``indexing.additional_suffix`` shares (see _namespace_key).
+        retained: dict[_NamespaceKey, set[str]] = defaultdict(set)
+        removing: dict[_NamespaceKey, list[DocStatusRecord]] = defaultdict(list)
         for record in self.doc_status.list_all():
             if record.doc_id in self._in_flight:
                 # This run's PENDING record also lists what the run writes
@@ -681,18 +702,34 @@ class IncrementalIndexer:
                 prior = self._prior.get(record.doc_id)
                 if prior is None:
                     continue
-                if record.doc_id in target:
-                    removing[prior.suffix].append(prior)
-                else:
-                    retained[prior.suffix].update(_artifact_ids(prior))
-            elif record.doc_id in target:
-                removing[record.suffix].append(record)
+                record = prior
+            key = _namespace_key(record)
+            if record.doc_id in target:
+                removing[key].append(record)
             else:
-                retained[record.suffix].update(_artifact_ids(record))
+                retained[key].update(_artifact_ids(record))
 
         plan: dict[str, _SuffixRemoval] = {}
-        for suffix, records in removing.items():
-            kept = retained[suffix]
+        for suffix in dict.fromkeys(key[0] for key in removing):
+            records = [
+                record
+                for key, group in removing.items()
+                if key[0] == suffix
+                for record in group
+            ]
+            # The ids a survivor of any removed record's namespace keeps. A
+            # record without a scope may belong to any namespace of its
+            # suffix: it retains for all of them, and all of them retain for
+            # it.
+            kept: set[str] = set()
+            for key in removing:
+                if key[0] != suffix:
+                    continue
+                for other, ids in retained.items():
+                    if other[0] == suffix and (
+                        key[1] is None or other[1] is None or other[1] == key[1]
+                    ):
+                        kept |= ids
             ids = {i for record in records for i in _artifact_ids(record)}
             text_units = {i for record in records for i in record.text_unit_ids}
             plan[suffix] = _SuffixRemoval(
