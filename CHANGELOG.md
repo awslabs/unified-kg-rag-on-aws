@@ -440,6 +440,21 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   joined without their line break. Merged chunks are now the source text's
   span (overlap dropped and a separator used if a chunk cannot be located)
   (#180).
+- `run-prompt-tuning` keeps the built-in output format. The tuned
+  `graph_extraction_system` and `community_report_system` replaced the whole
+  system prompt with a persona paragraph, dropping the XML schema the parsers
+  read and the extraction rules (verbatim `<source_text>` grounding, no
+  invented entities); with no generated examples there was no format at all.
+  Each is now a domain-adapted preamble followed by the prompt's built-in
+  rules and format verbatim, then any few-shot examples, which now carry a
+  verbatim `<source_text>` span (records no sentence supports are left out).
+  For `run-prompt-tuning` users: re-run it to regenerate prompts written by an
+  earlier version. The tuned extraction prompt now holds the model to the
+  configured `processing.graph_extraction.entity_types` (`{entity_types}`);
+  the profile's entity types are listed as guidance, so copy them into
+  `entity_types` to make them the strict categories. Loading a config now
+  logs a warning (not an error) naming the output tags a `graph_extraction`
+  or `community_report` override no longer mentions (#PR).
 - `run-prompt-tuning` doubles the braces in every corpus- or model-derived
   field (persona, domain, language, entity types, few-shot examples) before
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`

@@ -84,6 +84,15 @@ class BasePrompt(ABC):
     # maximum), so a prompt with a long output is never truncated by a cap
     # sized for short answers. Thinking tokens count toward it.
     min_output_tokens: ClassVar[int] = 0
+    # Prompts whose answer is parsed as XML split the built-in system prompt
+    # into a domain-adaptable persona (``system_preamble``) and the rules and
+    # output format the parser relies on (``output_rules``); prompt tuning
+    # replaces only the preamble. ``required_output_tags`` are the tags a
+    # custom override must still teach — a load-time warning names any that
+    # are missing. Empty for prompts without that split.
+    system_preamble: ClassVar[str] = ""
+    output_rules: ClassVar[str] = ""
+    required_output_tags: ClassVar[tuple[str, ...]] = ()
 
     @classmethod
     def output_floor(cls, config: "Config") -> int:

@@ -1238,8 +1238,13 @@ run-visualization --data-path visualization_data.json --renderers interactive --
 run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
 ```
 
-출력 YAML에는 `custom_prompts` 블록(과 감지된 도메인이 담긴 `profile`)이
-포함됩니다. **검토한 후** 원하는 프롬프트를 `config.yaml`의 `custom_prompts:`
+출력 YAML에는 `custom_prompts` 블록(과 감지된 도메인과 엔티티 유형이 담긴
+`profile`)이 포함됩니다. 튜닝된 `graph_extraction_system`과
+`community_report_system`은 도메인에 맞춘 서문 뒤에 내장 규칙과 출력 형식을
+그대로 붙인 것이며, 생성된 few-shot 예시는 맨 뒤에 옵니다. 엔티티 카테고리는
+여전히 `processing.graph_extraction.entity_types`(`{entity_types}` 변수)에서
+오므로, 모델이 프로파일의 `entity_types`를 따르게 하려면 그 값을 여기에
+복사하세요. **검토한 후** 원하는 프롬프트를 `config.yaml`의 `custom_prompts:`
 아래로 복사하세요. 일반 텍스트 파일은 그대로 읽고, 그 밖의 포맷(PDF, CSV, JSON,
 `ParserFactory.register_loader`로 등록한 포맷)은 인제스션과 같은 로더로 파싱합니다.
 파싱에 실패한 파일은 경고를 남기고 건너뜁니다. 프로파일링 모델이 JSON
@@ -1276,19 +1281,13 @@ processing:
 
 ```yaml
 custom_prompts:
-  graph_extraction_system: |
-    You are a medical knowledge extractor. Extract diseases, symptoms, treatments,
-    and medications and their relationships. Prioritize clinical accuracy.
+  # human만 오버라이드하면 내장 system 프롬프트와 출력 형식이 그대로 유지됩니다.
   graph_extraction_human: |
     Extract medical entities and relationships from this clinical text:
     {input_text}
     Extraction Limits:
     - Maximum Entities: {max_entities_per_chunk}
     - Maximum Relationships: {max_relationships_per_chunk}
-
-  community_report_system: |
-    You are a legal analyst. Report on case law, regulatory frameworks, and
-    legal precedents within each topic cluster.
 
   entity_extraction_system: |
     You are a financial expert. Extract companies, instruments, markets, and metrics
@@ -1315,6 +1314,17 @@ custom_prompts:
   `answer_generation`은 `{query}`와 `{context}`가 필요합니다. 나머지
   변수(`{max_entities_per_chunk}` 같은 한도, `{entity_types}`)는 빼도 됩니다.
 - `run-prompt-tuning` 출력은 이미 이스케이프되어 있습니다.
+
+`*_system` 오버라이드는 출력 지시를 포함한 내장 system 프롬프트 전체를
+대체합니다. `graph_extraction`과 `community_report`에서는 그 안에 파서가 읽는
+XML 형식(추출의 경우 환각 방지 장치가 검사하는 원문 그대로의 `<source_text>`
+규칙 포함)이 있으므로 대체 프롬프트에도 이를 남겨야 합니다. 내장 규칙과 형식
+앞에 도메인 서문을 붙여 주는 `run-prompt-tuning` 출력에서 시작하거나
+`unified_kg_rag/domain/prompts/graph_extraction.py`의 형식 부분을 복사하세요. 이
+두 프롬프트의 오버라이드에 파서가 읽는 태그(`<entities>`, `<relationships>`,
+`<source_text>`, `<community_name>`, `<summary>`, `<rating>`,
+`<rating_explanation>`, `<findings>`)가 빠져 있으면 로드할 때 빠진 태그를 알려
+주는 경고를 남깁니다.
 
 **권장 흐름:** `run-prompt-tuning`을 실행해 시작점 생성 → 검토 → 유용한
 프롬프트 병합 + `entity_types`를 직접 튜닝 → 재인제스천.

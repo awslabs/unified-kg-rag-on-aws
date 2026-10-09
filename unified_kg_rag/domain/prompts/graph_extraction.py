@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from .base import (
     THINKING_HEADROOM_TOKENS,
@@ -22,29 +22,17 @@ TOKENS_PER_REPORT_FINDING = 300
 REPORT_HEADER_TOKENS = 200
 
 
-@dataclass(frozen=True)
-class GraphExtractionPrompt(BasePrompt):
-    prompt_key = "graph_extraction"
-    input_variables = [
-        "input_text",
-        "max_entities_per_chunk",
-        "max_relationships_per_chunk",
-        "entity_types",
-        "target_language",
-    ]
-
-    @classmethod
-    def output_floor(cls, config: "Config") -> int:
-        # Defaults: (50 entities + 50 relationships) x 150 + 8192 = 23192.
-        return graph_output_floor(config)
-
-    system_prompt_template = """You are a world-class knowledge graph extraction expert with unparalleled expertise in
+# The built-in system prompts are a persona/mission preamble followed by the
+# rules and output format. Prompt tuning replaces only the preamble: the rules
+# carry the XML schema the parsers read and the verbatim source_text
+# grounding the hallucination guard checks.
+_GRAPH_EXTRACTION_PREAMBLE = """You are a world-class knowledge graph extraction expert with unparalleled expertise in
 transforming unstructured text into precise, comprehensive knowledge graphs.
 
 MISSION: Extract entities and relationships from text with maximum accuracy and completeness while strictly adhering to
-output format requirements.
+output format requirements."""
 
-# ENTITY EXTRACTION RULES
+_GRAPH_EXTRACTION_RULES = """# ENTITY EXTRACTION RULES
 
 ## Entity Categories (STRICT - use only these types):
 {entity_types}
@@ -141,6 +129,115 @@ MANDATORY: Use this exact XML structure with no deviations:
 ✓ Confidence scores accurately reflect extraction certainty (1-10 scale)
 
 Focus on accuracy over quantity. Extract meaningful, verifiable information only."""
+
+_COMMUNITY_REPORT_PREAMBLE = """You are an expert knowledge graph analyst specializing in community analysis and report
+generation. Transform raw community data into comprehensive, actionable intelligence reports.
+
+MISSION: Generate structured community reports that reveal key patterns, relationships, and strategic insights using the
+exact output format specified."""
+
+_COMMUNITY_REPORT_RULES = """# ANALYSIS FRAMEWORK
+
+## Core Analysis Dimensions:
+1. **Structural Composition**: Entity types, hierarchies, network topology
+2. **Relationship Patterns**: Connection types, strength distribution, critical paths
+3. **Functional Purpose**: Primary activities, workflows, value creation
+4. **Key Players**: Central entities, influencers, critical connectors
+5. **Strategic Value**: Opportunities, risks, competitive advantages
+
+## Report Components (REQUIRED):
+
+### 1. Community Name (5-8 words):
+- Descriptive and memorable
+- Captures primary function or essence
+- Professional terminology
+
+### 2. Executive Summary (2-3 sentences):
+- Most critical insights
+- Strategic significance
+- Unique value proposition
+
+### 3. Importance Rating (0.0-10.0):
+- A float reflecting the community's overall importance / impact severity
+- Justified in one sentence (rating_explanation)
+
+### 4. Findings (length-dependent count):
+- Each finding = a one-line summary + a multi-sentence explanation
+- **short**: 5-7 findings
+- **medium**: 7-10 findings
+- **long**: 10-15 findings
+
+## Content Requirements:
+- Evidence-based insights referencing specific entities/relationships
+- Pattern recognition highlighting non-obvious connections
+- Quantitative integration when statistics enabled
+- Key entity spotlight when requested
+- Strategic focus with actionable intelligence
+
+# OUTPUT FORMAT (MANDATORY - use exact structure):
+
+<community_name>[Descriptive 5-8 word community name]</community_name>
+<summary>[2-3 sentence executive summary of key insights]</summary>
+<rating>[A single number from 0.0 to 10.0 rating the community's overall importance / impact severity]</rating>
+<rating_explanation>[One sentence justifying the rating]</rating_explanation>
+<findings>
+  <finding>
+    <summary>[One-line headline for this insight]</summary>
+    <explanation>[Several sentences of evidence-based supporting detail, referencing specific entities/relationships]</explanation>
+  </finding>
+  <finding>
+    <summary>[Next insight headline]</summary>
+    <explanation>[Supporting detail]</explanation>
+  </finding>
+</findings>
+
+Emit one <finding> per distinct insight. Produce enough findings to satisfy the
+requested report length (short: 5-7, medium: 7-10, long: 10-15). Do NOT emit a
+<full_content> tag — the full report body is assembled from the findings.
+
+# ANALYSIS QUALITY STANDARDS:
+✓ Lead with most impactful discoveries
+✓ Use precise, quantified language
+✓ Structure insights from general to specific
+✓ Maintain objectivity with clear interpretation
+✓ Reference specific data points as evidence
+✓ Focus on actionable strategic intelligence
+
+# CONTENT GUIDELINES:
+- Start with community's core purpose and composition
+- Analyze relationship patterns and network structure
+- Identify key entities and their roles
+- Highlight unique characteristics and differentiators
+- Assess strategic value and implications
+- Conclude with actionable insights"""
+
+
+@dataclass(frozen=True)
+class GraphExtractionPrompt(BasePrompt):
+    prompt_key = "graph_extraction"
+    input_variables = [
+        "input_text",
+        "max_entities_per_chunk",
+        "max_relationships_per_chunk",
+        "entity_types",
+        "target_language",
+    ]
+
+    @classmethod
+    def output_floor(cls, config: "Config") -> int:
+        # Defaults: (50 entities + 50 relationships) x 150 + 8192 = 23192.
+        return graph_output_floor(config)
+
+    # Persona/mission (domain-adaptable) and the rules + output format the
+    # parser and grounding guard rely on (kept by tuned prompts).
+    system_preamble: ClassVar[str] = _GRAPH_EXTRACTION_PREAMBLE
+    output_rules: ClassVar[str] = _GRAPH_EXTRACTION_RULES
+    required_output_tags: ClassVar[tuple[str, ...]] = (
+        "<entities>",
+        "<relationships>",
+        "<source_text>",
+    )
+    system_prompt_template = f"{system_preamble}\n\n{output_rules}"
 
     human_prompt_template = """Extract entities and relationships from the following text using the exact specifications
 provided.
@@ -499,86 +596,16 @@ class CommunityReportPrompt(BasePrompt):
             + THINKING_HEADROOM_TOKENS
         )
 
-    system_prompt_template = """You are an expert knowledge graph analyst specializing in community analysis and report
-generation. Transform raw community data into comprehensive, actionable intelligence reports.
-
-MISSION: Generate structured community reports that reveal key patterns, relationships, and strategic insights using the
-exact output format specified.
-
-# ANALYSIS FRAMEWORK
-
-## Core Analysis Dimensions:
-1. **Structural Composition**: Entity types, hierarchies, network topology
-2. **Relationship Patterns**: Connection types, strength distribution, critical paths
-3. **Functional Purpose**: Primary activities, workflows, value creation
-4. **Key Players**: Central entities, influencers, critical connectors
-5. **Strategic Value**: Opportunities, risks, competitive advantages
-
-## Report Components (REQUIRED):
-
-### 1. Community Name (5-8 words):
-- Descriptive and memorable
-- Captures primary function or essence
-- Professional terminology
-
-### 2. Executive Summary (2-3 sentences):
-- Most critical insights
-- Strategic significance
-- Unique value proposition
-
-### 3. Importance Rating (0.0-10.0):
-- A float reflecting the community's overall importance / impact severity
-- Justified in one sentence (rating_explanation)
-
-### 4. Findings (length-dependent count):
-- Each finding = a one-line summary + a multi-sentence explanation
-- **short**: 5-7 findings
-- **medium**: 7-10 findings
-- **long**: 10-15 findings
-
-## Content Requirements:
-- Evidence-based insights referencing specific entities/relationships
-- Pattern recognition highlighting non-obvious connections
-- Quantitative integration when statistics enabled
-- Key entity spotlight when requested
-- Strategic focus with actionable intelligence
-
-# OUTPUT FORMAT (MANDATORY - use exact structure):
-
-<community_name>[Descriptive 5-8 word community name]</community_name>
-<summary>[2-3 sentence executive summary of key insights]</summary>
-<rating>[A single number from 0.0 to 10.0 rating the community's overall importance / impact severity]</rating>
-<rating_explanation>[One sentence justifying the rating]</rating_explanation>
-<findings>
-  <finding>
-    <summary>[One-line headline for this insight]</summary>
-    <explanation>[Several sentences of evidence-based supporting detail, referencing specific entities/relationships]</explanation>
-  </finding>
-  <finding>
-    <summary>[Next insight headline]</summary>
-    <explanation>[Supporting detail]</explanation>
-  </finding>
-</findings>
-
-Emit one <finding> per distinct insight. Produce enough findings to satisfy the
-requested report length (short: 5-7, medium: 7-10, long: 10-15). Do NOT emit a
-<full_content> tag — the full report body is assembled from the findings.
-
-# ANALYSIS QUALITY STANDARDS:
-✓ Lead with most impactful discoveries
-✓ Use precise, quantified language
-✓ Structure insights from general to specific
-✓ Maintain objectivity with clear interpretation
-✓ Reference specific data points as evidence
-✓ Focus on actionable strategic intelligence
-
-# CONTENT GUIDELINES:
-- Start with community's core purpose and composition
-- Analyze relationship patterns and network structure
-- Identify key entities and their roles
-- Highlight unique characteristics and differentiators
-- Assess strategic value and implications
-- Conclude with actionable insights"""
+    system_preamble: ClassVar[str] = _COMMUNITY_REPORT_PREAMBLE
+    output_rules: ClassVar[str] = _COMMUNITY_REPORT_RULES
+    required_output_tags: ClassVar[tuple[str, ...]] = (
+        "<community_name>",
+        "<summary>",
+        "<rating>",
+        "<rating_explanation>",
+        "<findings>",
+    )
+    system_prompt_template = f"{system_preamble}\n\n{output_rules}"
 
     human_prompt_template = """Generate a comprehensive community analysis report using the provided data.
 
