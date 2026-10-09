@@ -427,6 +427,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- Merging small chunks no longer drops text when a chunk repeats the previous
+  chunk's last lines verbatim, such as a document ending in two identical
+  `Signed: ____` lines with an LLM line boundary between them. The repeated
+  chunk matched the earlier copy inside the previous chunk and vanished from
+  the merged span. Line-boundary slices are now located with no overlap
+  allowance, and any located chunk must end after the previous one (#PR).
 - The interactive graph HTML (`graph.html`, the community hierarchy) escapes
   node tooltips when pyvis renders them as HTML. Once any node title contained
   `href`, pyvis replaced the plain-text tooltip with a popup that sets
