@@ -2,7 +2,7 @@
 
 > 🇰🇷 한국어판: [docs/design.ko.md](./design.ko.md)
 
-This document is a **design reference for contributors and advanced users**, covering the architecture, algorithms, data model, and operational aspects of the `unified-kg-rag-on-aws` library. For the "what/why" and a quick start, see [README.md](../README.md); for "how to use it," see the [User Guide](user-guide.md); for contribution/extension conventions, see [CLAUDE.md](../CLAUDE.md).
+This document is a **design reference for contributors and advanced users**, covering the architecture, algorithms, data model, and operational aspects of the `unified-kg-rag-on-aws` library. For the "what/why" and a quick start, see [README.md](../README.md); for "how to use it," see the [User Guide](user-guide.md); for the contribution workflow, see [CONTRIBUTING.md](../CONTRIBUTING.md). Extension recipes are in [§15](#15-extension-guide).
 
 ## Table of Contents
 
@@ -27,7 +27,7 @@ This document is a **design reference for contributors and advanced users**, cov
 
 ## 1. Overview and Design Philosophy
 
-`unified-kg-rag-on-aws` is a library that reimplements the Microsoft GraphRAG paper on top of an AWS-native stack (Bedrock + Neptune + OpenSearch + S3 + DynamoDB). The core design principles are as follows.
+`unified-kg-rag-on-aws` is a library that reimplements the Microsoft GraphRAG and LightRAG methodologies on top of an AWS-native stack (Bedrock + Neptune + OpenSearch + S3 + DynamoDB). The core design principles are as follows.
 
 - **Two methodologies, one infrastructure**: GraphRAG (community-summary) and LightRAG (dual-level keyword) share the same ingestion, indexing, caching, multilingual, and hybrid-search infrastructure, and **only the retrieval algorithm layer is swapped**.
 - **Generalization first**: We avoid hardcoding, regex heuristics, and overfitting. Semantic judgments are delegated to the LLM or to authoritative data, token counting uses the Bedrock `count_tokens` API, and thresholds/weights are config-driven.
@@ -42,12 +42,20 @@ This document is a **design reference for contributors and advanced users**, cov
 
 Imports point **inward** (left imports right, never the reverse). `shared/` is a cross-cutting kernel any layer may use, so the package roots it imports stay dependency-light: importing any `domain/` module must not load LangChain, LangSmith, boto3/botocore, lxml, opensearch-py or gremlin-python, even transitively. LangChain-coupled helpers are imported from their own submodules (`shared.utils.langchain`, `shared.utils.document_converter`; the rich console helpers from `shared.utils.display`), never re-exported from `shared.utils`. `tests/unit/test_domain_purity.py` checks this in a clean interpreter. The two RAG methodologies (GraphRAG community-summary, LightRAG dual-level keyword) share one ingestion/indexing/caching/hybrid-search infrastructure and diverge only at the algorithm layer.
 
-![Hexagonal Architecture](../assets/hexagonal-architecture.png)
+```mermaid
+flowchart TB
+    application["<b>application/</b> - orchestration and entry points<br/>cli (run-*) · DataIngestionPipeline + stages · IndexingManager · GraphRAGChain"]
+    adapters["<b>adapters/</b> - technology bindings<br/>aws (Bedrock, Neptune, OpenSearch, DynamoDB, S3) · search_strategies (GraphRAG + LightRAG)<br/>storage · retrievers · retrieval · ingestion · renderers · evaluators"]
+    ports["<b>ports/</b> - abstract interfaces<br/>DocStatusPort · CachePort · model factory and TokenCounter ports · BaseIndexer / GraphIndexer / VectorIndexer"]
+    domain["<b>domain/</b> - technology-agnostic core<br/>models · ingestion (delta, merge, resolve, analyze) · retrieval (strategy_registry) · prompts"]
+    shared["<b>shared/</b> - cross-cutting kernel<br/>config · logging · exceptions · metrics · cache and pipeline managers · utils"]
+    application --> adapters --> ports --> domain
+    application -.-> shared
+    adapters -.-> shared
+    domain -.-> shared
+```
 
-```
-application  ──►  adapters  ──►  ports  ──►  domain
-        └──────────────┴────────────┴──────────►  shared (cross-cutting kernel)
-```
+Solid arrows are the dependency rule (a layer imports only the layers it points to); dotted arrows show that any layer may import `shared/`. Search strategies are adapters: the domain only holds their registry, so both methodologies plug into the same ports.
 
 ```
 unified_kg_rag/
@@ -145,7 +153,7 @@ This pattern follows the same philosophy as the existing `ParserFactory._loader_
 
 ### 2.4 Dependency Rule Verification Status
 
-Verified with grep: `domain/` does not import `adapters`/`application` at runtime, and neither does `ports/`. One compile-time-only exception remains — `domain/retrieval/strategy_registry.py` references `adapters.retrieval.base.BaseSearchStrategy` under `TYPE_CHECKING` (because the registry stores strategy subclasses). Extracting pure strategy/retriever ports would also remove this type-level reference; it is left in place as a deliberate boundary (see "Deliberate Design Boundaries" at the end of this document).
+`domain/` does not import `adapters`/`application` at runtime, and neither does `ports/`. One compile-time-only exception exists — `domain/retrieval/strategy_registry.py` references `adapters.retrieval.base.BaseSearchStrategy` under `TYPE_CHECKING` (because the registry stores strategy subclasses). Extracting pure strategy/retriever ports would also remove this type-level reference; it is left in place as a deliberate boundary (see "Deliberate Design Boundaries" at the end of this document).
 
 Code imports from real layer locations (`application.retrieval.rag_chain`, `application.storage.indexing_manager`, `application.ingestion.pipeline`, and the `adapters.*` / `domain.*` modules). `evaluation/` and `visualization/` are real logic packages (see the layout note in §2).
 
@@ -161,9 +169,11 @@ The `domain/models/` package contains pure Pydantic models with no infrastructur
 - `DocStatus` (state machine: PENDING→PARSING→PROCESSING→PROCESSED|FAILED), `DocStatusRecord` (content hash + artifact lineage + suffix), `DocumentDelta` (new/changed/unchanged/deleted), `DocumentLineage` (per-document artifact attribution)
 - `SearchQuery`/`SearchResult`/`RetrievalResult`, `SearchStrategy`/`SearchType`/`RetrieverRole`
 
-**Lineage is the core data.** Entities/relationships record the `text_unit_ids` they appeared in at extraction time, and this authoritative data replaces the (old) token-overlap heuristic, judging "is this entity related to this text unit?" accurately and language-independently.
+**Lineage is the core data.** Entities/relationships record the `text_unit_ids` they appeared in at extraction time, and this lineage, rather than a token-overlap heuristic, decides "is this entity related to this text unit?" accurately and language-independently.
 
-**Entity names, IDs, and multilingual support**: `Entity.name` (and relationship `source_name`/`target_name`) keeps the *display form* the source used, only trimmed and whitespace-collapsed (`clean_display_name`), so retrieval context and community reports can quote "$1,000 penalty", "Section 4.2", or "C++" verbatim. Identity is a separate key: entity/relationship IDs are hashes of `entity_key(name)` (`shared/utils/common.py`), which applies NFKC + casefold, treats `_`/`-` as spaces, drops quote marks and commas, collapses whitespace, and strips trailing sentence punctuation, but **keeps every other symbol and the letters/digits of all scripts**. Case, whitespace, and quote variants of one name ("ACME  Corp." / "Acme Corp") therefore share an ID, while "C++" and "C#" no longer collide, and Korean, CJK, and accented names get unique IDs. A non-empty name never yields an empty key. Exact-name matching (extraction endpoint lookup, gleaner merges, claim resolution, incremental `merge_entities`) and the fuzzy matcher's shingles use the same key; the punctuation-stripping `normalize_name` is kept only for token-level similarity. **Changing the key changes every ID: graphs indexed before this scheme must be fully re-indexed** (incremental indexing would otherwise add new-ID duplicates next to the old entities).
+**Index suffix**: every OpenSearch index and Neptune label is named `<prefix>-<suffix>[-<additional_suffix>]`. The suffix is written at ingestion from `processing.document_parsing.index_value` and selected at query time by `RAGInput.suffix` (`--suffix` on `run-rag`/`run-eval`); both default to `default`, and `indexing.additional_suffix` appends the same second segment on both sides. This document calls the resulting value the *index suffix*; one per tenant or corpus version is the intended use.
+
+**Entity names, IDs, and multilingual support**: `Entity.name` (and relationship `source_name`/`target_name`) keeps the *display form* the source used, only trimmed and whitespace-collapsed (`clean_display_name`), so retrieval context and community reports can quote "$1,000 penalty", "Section 4.2", or "C++" verbatim. Identity is a separate key: entity/relationship IDs are hashes of `entity_key(name)` (`shared/utils/common.py`), which applies NFKC + casefold, treats `_`/`-` as spaces, drops quote marks and commas, collapses whitespace, and strips trailing sentence punctuation, but **keeps every other symbol and the letters/digits of all scripts**. Case, whitespace, and quote variants of one name ("ACME  Corp." / "Acme Corp") therefore share an ID, while "C++" and "C#" stay distinct, and Korean, CJK, and accented names get unique IDs. A non-empty name never yields an empty key. Exact-name matching (extraction endpoint lookup, gleaner merges, claim resolution, incremental `merge_entities`) and the fuzzy matcher's shingles use the same key; the punctuation-stripping `normalize_name` is kept only for token-level similarity. **Changing the key changes every ID, so a graph indexed under a different key must be fully re-indexed** (incremental indexing would otherwise add new-ID duplicates next to the old entities).
 
 ---
 
@@ -188,7 +198,7 @@ The `DataIngestionPipeline` in `application/ingestion/pipeline.py` runs 12 stage
 | 11 | Community detection | `community_detector.py` | hierarchical Leiden, community report generation (degree-sort + token-budget pack) |
 | 12 | Indexing | `application/storage/indexing_manager.py` | OpenSearch + Neptune |
 
-> The stage order is single-sourced in `DataIngestionPipeline.STAGE_CLASSES` (`pipeline.py:62`). Stages that require Bedrock are declared in `BOTO_REQUIRED_STAGES`; with the addition of description re-summarization, **graph resolution (7) is now also included in this set**.
+> The stage order is single-sourced in `DataIngestionPipeline.STAGE_CLASSES` (`application/ingestion/pipeline.py`). Stages that require Bedrock are declared in `DataIngestionPipeline.BOTO_REQUIRED_STAGES`; **graph resolution (7) is in this set** because it re-summarizes merged descriptions with an LLM.
 
 **Merged-description re-summarization (stage 7)**: Graph resolution merges descriptions of the same entity/relationship by simple concatenation, so the description of a popular entity that appears in many chunks grows without bound. `DescriptionSummarizer` (run in `GraphResolutionStage`) re-summarizes only descriptions that exceed a token budget into a single coherent description using a cheap LLM (parity with MS GraphRAG `summarize_descriptions` / LightRAG `_handle_entity_relation_summary`, controlled by `DescriptionSummarizationConfig`). The goal is to prevent embedding/prompt bloat.
 
@@ -200,7 +210,7 @@ The `DataIngestionPipeline` in `application/ingestion/pipeline.py` runs 12 stage
 
 **Structured community reports (MS GraphRAG parity)**: The report prompt emits a structured result — an executive `summary`, an importance `rating` (0-10) with a one-sentence `rating_explanation`, and a list of `findings`, each a one-line `summary` plus a multi-sentence `explanation` (`CommunityReport.findings`/`rating`, `CommunityFinding`). The free-text `full_content` used for embeddings, global-search map-reduce, and display is **rendered deterministically** from these structured fields (`CommunityReport.render_full_content`), so the structure adds no second LLM call and the embedding/search path is unchanged. The `rating` is also indexed on the community-reports OpenSearch document for importance-aware ranking.
 
-**Community report lineage (stage 11)**: Each report carries `text_unit_ids` and `document_ids`, indexed as keyword fields on the community-reports document (`CommunityDetector._attach_report_lineage`). These are **community membership provenance**: the union of the member entities' `text_unit_ids`, and the documents those units came from. They are not report-input provenance — `max_entities_per_report` and the token budget may keep a member out of the prompt while its sources stay in the lineage — and they do not establish sentence-level citation support. They exist so a consumer can filter reports by source document or re-summarize a community per reader. The schema alone does not backfill reports indexed before the fields existed; those index both as empty lists until report generation and indexing are re-run.
+**Community report lineage (stage 11)**: Each report carries `text_unit_ids` and `document_ids`, indexed as keyword fields on the community-reports document (`CommunityDetector._attach_report_lineage`). These are **community membership provenance**: the union of the member entities' `text_unit_ids`, and the documents those units came from. They are not report-input provenance — `max_entities_per_report` and the token budget may keep a member out of the prompt while its sources stay in the lineage — and they do not establish sentence-level citation support. They exist so a consumer can filter reports by source document or re-summarize a community per reader.
 
 **Pipeline infrastructure**: Stage-checkpoint-based resumption (`shared/pipeline_manager.py`), S3 cache sync (`adapters/aws/s3_cache.py`), a `continue_on_error` toggle, per-stage caching (`shared/cache_manager.py`). The translation stage is skipped at no cost when `TranslationConfig.is_noop` (source == target & no additional languages). LLM output parsing consistently uses a `FixingConfig`-based output-fixing parser. The pipeline releases indexer/client resources via `close()`, which the `run-ingestion` CLI calls in `finally` (§8.6).
 
@@ -214,9 +224,31 @@ The `DataIngestionPipeline` in `application/ingestion/pipeline.py` runs 12 stage
 
 When documents are added/changed/deleted, only the delta is processed instead of a full re-index.
 
-![Incremental Indexing](../assets/incremental_indexing.png)
+```mermaid
+flowchart LR
+    corpus["Corpus: doc_id + content hash"] --> diff["detect_delta / DocStatusPort.diff (run scope only)"]
+    registry[("Doc-status registry (DynamoDB)")] -.-> diff
+    diff --> unchanged["unchanged: skipped"]
+    diff --> work["new, changed or FAILED: stages 3-11 on these documents"]
+    diff --> deleted["deleted"]
+    subgraph indexing["indexing stage"]
+        prune["prune_changed: remove exclusive artifacts, strip shared ones"]
+        remove["remove_deleted: exclusive artifacts, then registry rows"]
+        commit["commit: merge_with_existing_graph, then index_delta upserts"]
+        record["record: DocStatusRecord + DocumentLineage, PROCESSED or FAILED"]
+        prune --> remove --> commit --> record
+    end
+    work --> prune
+    deleted --> remove
+    prune --> stores[("Neptune + OpenSearch")]
+    remove --> stores
+    commit --> stores
+    record -.-> registry
+```
 
-1. **Delta detection** (`domain/ingestion/delta_detector.py`): Builds `{doc_id: content_hash}` from a stable `doc_id` + content SHA-256 hash, and `DocStatusPort.diff(incoming, scope)` classifies them as new/changed/unchanged/deleted. `doc_id` hashes the document's index namespace (`index_value` + `indexing.additional_suffix`) and its path relative to the corpus root, so two tenants' identically named files staged in the same directory stay distinct. Deletion is **scoped**: only registry records of the run's scope (index namespace + corpus source, `document_parsing.source_scope` or the resolved source directory) are deletion candidates, and records written before scopes existed never are. Files that failed to parse or load this run are reported as `failed` and excluded from `deleted`.
+The names are `IncrementalIndexer` methods (`application/ingestion/incremental.py`) unless noted. A document recorded `FAILED` is classified as changed on the next run until it reaches `indexing.max_document_failures`; registry records are written only when the delta's writes pass the indexing failure gate.
+
+1. **Delta detection** (`domain/ingestion/delta_detector.py`): Builds `{doc_id: content_hash}` from a stable `doc_id` + content SHA-256 hash, and `DocStatusPort.diff(incoming, scope)` classifies them as new/changed/unchanged/deleted. `doc_id` hashes the document's index suffix (`index_value` + `indexing.additional_suffix`) and its path relative to the corpus root, so two tenants' identically named files staged in the same directory stay distinct. Deletion is **scoped**: only registry records of the run's scope (index suffix + corpus source, `document_parsing.source_scope` or the resolved source directory) are deletion candidates, and records written before scopes existed never are. Files that failed to parse or load this run are reported as `failed` and excluded from `deleted`.
 2. **Stale cleanup** (`IncrementalIndexer.prune_changed`): For changed documents, first removes existing artifacts that are *not shared* (so entities that disappear after re-extraction do not linger in the graph).
 3. **Delta upsert** (`IncrementalIndexer.commit`): With `indexing.cross_run_merge` (default on), `IndexingManager.merge_with_existing_graph` first reads back the existing entities/relationships the delta touches, per index suffix, and merges the delta into them (merge semantics below), so an entity shared with unchanged documents keeps their descriptions and `text_unit_ids`. A delta item that merged into a stored one under another id (a fuzzy entity match, or an edge whose endpoint was remapped) is recorded in the lineage by the stored id. `IndexingManager.index_delta` then writes the result as is: Neptune uses a Gremlin `coalesce(unfold, addV)` idempotent upsert; OpenSearch upserts by id into the live alias index. The relationship vector index is updated the same way.
 4. **Deletion propagation** (`remove_deleted`): Removes only the *exclusive* artifacts of deleted documents via `delete_by_id` (preserving shared entities). Targets the text-unit, entity, and relationship indices alike. Entities and relationships shared with surviving documents (in the same suffix) are kept but stripped of the removed documents' text units, with `frequency`/weight recomputed, in Neptune and OpenSearch alike (`IndexingManager.remove_text_units_from_shared`); step 2 does the same for changed documents before their re-extraction is merged back in. If any removal fails, the registry records are kept for a retry and the indexing stage fails after the delta is committed, so the run (and the `IndexingFailures` alarm) reports it.
@@ -240,7 +272,34 @@ Enable with: `config.aws.dynamodb.enabled = true`.
 
 The `GraphRAGChain` (an LCEL Runnable) in `application/retrieval/rag_chain.py` performs strategy resolution → query processing (translation, entity/keyword extraction) → memory → retrieval → (RAG) context build + answer generation. The methodology is selected via `RAGInput.search_strategy`.
 
-![Retrieval Pipeline](../assets/retrieval_pipeline.png)
+```mermaid
+flowchart TD
+    input["RAGInput: query, search_strategy, suffix, filters"] --> resolve["Resolve strategy (auto: LLM router over search.auto_routable_strategies)"]
+    resolve --> qp["Query processing: translation, then entities or dual-level keywords as the strategy declares"]
+    qp --> memory["Conversation memory (use_memory)"]
+    memory --> graphrag
+    memory --> lightrag
+    subgraph graphrag["GraphRAG strategies"]
+        simple["simple: OpenSearch vector + BM25"]
+        local["local: entities, Neptune expansion, text units, reports, relationships, claims"]
+        global["global: community reports, map-reduce key points"]
+        drift["drift: iterative query refinement, optional primer"]
+    end
+    subgraph lightrag["LightRAG strategies"]
+        naive["naive: vector chunks"]
+        hybrid["hybrid: ll keywords to entity index, hl keywords to relationship index, one-hop expansion"]
+        mix["mix: hybrid + cited chunks + vector chunks"]
+    end
+    graphrag --> fuse["HybridScorer: RRF or weighted fusion, MMR diversity, Bedrock rerank"]
+    lightrag --> fuse
+    fuse --> mode{"ChainMode"}
+    mode -- SEARCH --> results["Fused retrieval results"]
+    mode -- RAG --> budget["TokenManager: per-section token budget"]
+    budget --> answer["Context building + answer generation"]
+    answer --> output["RAGOutput: answer + sources the model saw"]
+```
+
+Neptune graph expansion is part of `local` and `drift`; for `mix`/`hybrid` it is opt-in (`search.lightrag_search.enable_graph_expansion`).
 
 ### 6.1 GraphRAG Methodology (`adapters/search_strategies/`)
 
@@ -287,7 +346,7 @@ Per-source behavior:
 ## 7. Hybrid Scoring and Token Management
 
 - **HybridScorer** (`adapters/retrieval/hybrid_scorer.py`): Combines per-source results via RRF (`rrf_k`) or weighted fusion, diversity filtering (`diversity_lambda`), and Bedrock reranking. Weights/method come from `config.search.fusion`/`hybrid`. Reranking is only active when `search.reranking.enabled`, and `compress_documents` temporarily adjusts `top_n` to the document count before restoring it. On initialization failure, the reranker degrades to disabled (`None`).
-  - **IAM caveat**: Bedrock Rerank requires the `bedrock:Rerank` permission on **`Resource:*`** (discovered in real-AWS E2E — narrowing it to the model ARN yields AccessDenied). Isolate it as a dedicated statement in IaC.
+  - **IAM caveat**: the Rerank API authorizes `bedrock:Rerank` against a different resource shape than `InvokeModel`, so a statement scoped to foundation-model or inference-profile ARNs denies it. The IaC task role grants `bedrock:Rerank` on `Resource: "*"` in its own statement (`ComputeStack._build_task_role` in `iac/stacks/compute_stack.py`). Without it the scorer logs `Reranking failed: ...` at ERROR and returns the fused results unreranked.
 - **TokenManager** (`adapters/retrieval/token_manager.py`): Optimizes context within model limits. Weights by per-section-type priority multiplier (`PRIORITY_MULTIPLIERS`: TEXT 1.3 / ENTITY 1.2 / RELATIONSHIP 1.1 / CLAIM 1.1 / COMMUNITY 1.0 / GENERAL 0.8) and selects sections within budget in descending priority order. `SectionType.CLAIM` is the type used to fold query-time claims injection (§6.1) into the token budget. The chain keeps this selection (`OptimizedContext`) in state and builds `RAGOutput.sources` from it, so sources list only what the answer model saw, in retrieval-rank order: sections cut for budget are not reported, a section truncated to fit carries its truncated text and `metadata.truncated: true`, and each source's metadata keeps `truncated` / `source_id` / `document_ids` / `chunk_id` / `section_type` / `score` with `*_embedding` vectors removed. When the answer step short-circuits on an empty context, `sources` is empty.
 - **Token counting** (`adapters/aws/token_counter.py`): The Bedrock `count_tokens` API is the single source of truth. It degrades to a script-aware estimate only on failure (no third-party tokenizer). A non-transient failure (e.g. `AccessDeniedException`, or a `ValidationException` whose message says the model does not support the operation) marks the model unsupported process-wide so later counts skip the API; throttling, timeouts, and input-level `ValidationException`s do not. Blank or whitespace-only text never calls the API. Embedding and rerank counters are built without a client, so they never call the API (it does not accept those models); language models that CountTokens rejects (Claude 4.7+/5.x, OpenAI GPT) skip it by capability flag (`supports_count_tokens`). Truncation uses a convergence loop that estimates candidates by char ratio and validates them via the API.
 
@@ -307,7 +366,7 @@ All adapters can be injected with a `boto_session` (by default created from `con
 
 ### 8.5 Retrieval Error Visibility
 
-The retrievers (`opensearch_retriever`/`neptune_retriever`) do not disguise authentication/configuration/connection failures as "no results." `is_fatal_retrieval_error()` (`adapters/retrieval/base.py:50`) re-raises fatal errors with `exc_info` and degrades to `[]` only for transient errors, so an incorrect IAM permission or an endpoint typo surfaces instead of being buried as "0 search hits." Neptune's per-query `_execute_traversal` re-raises fatal errors too, so they reach that top-level guard. The search strategies apply the same rule to every sub-retrieval through one helper, `BaseSearchStrategy._safe_aretrieve`, so a section-level handler cannot re-swallow a fatal error the retriever raised; a transient failure still degrades only that section.
+The retrievers (`opensearch_retriever`/`neptune_retriever`) do not disguise authentication/configuration/connection failures as "no results." `is_fatal_retrieval_error()` (`adapters/retrieval/base.py`) re-raises fatal errors with `exc_info` and degrades to `[]` only for transient errors, so an incorrect IAM permission or an endpoint typo surfaces instead of being buried as "0 search hits." Neptune's per-query `_execute_traversal` re-raises fatal errors too, so they reach that top-level guard. The search strategies apply the same rule to every sub-retrieval through one helper, `BaseSearchStrategy._safe_aretrieve`, so a section-level handler cannot re-swallow a fatal error the retriever raised; a transient failure still degrades only that section.
 
 ### 8.6 Client Lifecycle / Resource Release
 
@@ -322,8 +381,8 @@ Each retriever build opens a Neptune WebSocket + thread pool and OpenSearch (a)s
 
 - **OpenSearch analyzers**: The language→analyzer mapping is exposed via config (`indexing.opensearch.language_analyzers`, default `{"en": "english", "ko": "nori"}`) so it can be extended without code changes. nori (the Korean morphological analyzer) is built into OpenSearch Service. Languages without a mapping fall back to `default_analyzer`.
 - **Entity ID normalization**: IDs hash `entity_key` (`shared/utils/common.py`): NFKC + casefold, symbols and letters/digits of all scripts preserved, only quotes/commas/trailing punctuation dropped → Korean, CJK, and accented names get unique IDs and "C++"/"C#" stay distinct, while `Entity.name` keeps the display form (§3). Non-empty input is not collapsed to an empty ID.
-- **Translation skip**: When `TranslationConfig.is_noop` (source_language == target_language and no additional target languages), the translation stage is skipped in its entirety at no cost (`pipeline_stages.py:541`).
-- **Encoding auto-detection**: When the text parser hits a `UnicodeDecodeError` on a non-UTF-8 file, it detects the encoding via `charset-normalizer` and retries with an explicit `encoding=` (`parser.py:89`). LangChain's `autodetect_encoding=True` (which pulls in the extra `chardet` dependency) is intentionally not used.
+- **Translation skip**: When `TranslationConfig.is_noop` (source_language == target_language and no additional target languages), the translation stage is skipped in its entirety at no cost (`TranslationStage._should_skip` in `application/ingestion/pipeline_stages.py`).
+- **Encoding auto-detection**: When the text parser hits a `UnicodeDecodeError` on a non-UTF-8 file, it detects the encoding via `charset-normalizer` and retries with an explicit `encoding=` (`FileParser._detect_encoding` in `adapters/ingestion/parser.py`). LangChain's `autodetect_encoding=True` (which pulls in the extra `chardet` dependency) is intentionally not used.
 
 ---
 
@@ -392,13 +451,14 @@ Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 
 ## 15. Extension Guide
 
-Strategies, renderers, parsers and evaluators extend through registries (an evaluator still adds one branch to its type map), and backends through constructor injection; none needs a change to dispatch code (details in `CONTRIBUTING.md`/`CLAUDE.md`).
+This section is the single reference for extending the framework; the README, user guide and CONTRIBUTING.md link here. Strategies, renderers and parsers extend through registries, evaluators through one branch in their type map, and backends through constructor injection; none needs a change to dispatch code.
 
-- **New search strategy**: Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; strategies are keyed by this closed enum, and the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py`. `query_inputs` declares the query-side LLM extractions the strategy reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest.
+- **New search strategy**: Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; strategies are keyed by this closed enum, and the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py`. `query_inputs` declares the query-side LLM extractions the strategy reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. No edit to `rag_chain` is needed; add the strategy to `search.auto_routable_strategies` if `auto` may pick it.
 - **New storage/LLM backend**: Implement the relevant port and pass it to the constructor that uses it (see "Custom backends" below); there is no backend registry. Do not hardcode it into a manager's `__init__`.
 - **New evaluator**: Subclass `BaseGraphRAGEvaluator` + add a branch in `EvaluationManager._resolve_evaluator_class` + an `EvaluatorType` enum.
 - **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`. Registration happens on import: `GraphVisualizationManager` sees any renderer imported in the process, `run-visualization` only those that `adapters/renderers/__init__.py` imports.
 - **New parser / file format**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — any LangChain `BaseLoader` subclass; no edit to the factory, and the extension is then auto-discovered + parseable. Override a built-in by registering its extension.
+- **New config section**: Define a Pydantic `BaseModel` → attach it to its parent via `Field(default_factory=...)` → document it in `config-template.yaml` (see §12).
 
 ### Custom backends (run without AWS)
 
@@ -518,26 +578,26 @@ intentional decisions rather than oversights:
   uses a `ProjectionExpression` to fetch only `doc_id` + `content_hash` (not the
   full record with its six artifact-id lists) — but the scan itself remains.
   This is fine for a single-corpus deployment; with tens of thousands of
-  `suffix` (tenant/project) partitions in one table it is still a real per-run
-  cost. Eliminating the scan requires either a GSI keyed by `suffix` (so a run
+  index suffixes (tenants or corpus versions) in one table it is still a real per-run
+  cost. Eliminating the scan requires either a GSI keyed by index suffix (so a run
   scopes its query to its own partition) or a corpus manifest — both a
   schema/redeploy change, deferred until that scale is real. Pairs with the
-  per-suffix OpenSearch index multiplication noted below.
+  per-index-suffix OpenSearch index multiplication noted below.
 
-- **One physical OpenSearch index per `suffix` per artifact type.**
-  Multi-tenant/versioned isolation uses a real index per `suffix`
+- **One physical OpenSearch index per index suffix per artifact type.**
+  Multi-tenant/versioned isolation uses a real index per index suffix
   (`{prefix}-{suffix}`). With a handful of tenants this is fine; with tens of
-  thousands of `suffix` values it multiplies the cluster's index/shard count and
+  thousands of index suffixes it multiplies the cluster's index/shard count and
   the cluster-state overhead. The scale-out fix is a single index per artifact
   type with a `tenant` filter field + routing (delete-by-query instead of index
   drop) — a behavior-affecting change across the index/search/delete paths,
-  deferred as a dedicated migration rather than bundled here. That design would
+  deferred as a dedicated migration. That design would
   need the tenant filter enforced on every index and Neptune label, unlike
   today's metadata filters: those apply only to the stores that declare a key
   (relationships, claims and community vertices pass unfiltered) and graph
   expansion and community reports cross documents, so they are relevance
-  filters, not access control. Until then, isolation comes from the separate
-  `suffix` namespaces (user guide §4, attribute filters).
+  filters, not access control. Isolation comes from separate index suffixes
+  (user guide §4, attribute filters).
 
 ---
 
