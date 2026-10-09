@@ -21,6 +21,7 @@ import asyncio
 import os
 import uuid
 from collections.abc import Iterator
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -538,6 +539,44 @@ def test_additional_target_language_is_searchable(local_config: Config) -> None:
         assert indexer.index_text_units([unit]).failed_items == 0
         (hits,) = _korean_lexical_hits(config, "보증 기간")
         assert hits == {"a1"}
+    finally:
+        indexer.clear([_SUFFIX])
+        indexer.close()
+
+
+def test_full_reindex_keeps_one_index_per_alias(
+    local_config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Each full run builds a new timestamped index and swaps the alias onto
+    # it; the previous ones must be deleted, or every run leaks an index until
+    # the domain's shard limit blocks index creation.
+    start = datetime(2026, 1, 1)
+    ticks = iter(range(10_000))
+
+    class _Clock:
+        @staticmethod
+        def now() -> datetime:
+            return start + timedelta(seconds=next(ticks))
+
+    # Second-resolution names: advance the clock so runs never share a name.
+    monkeypatch.setattr("unified_kg_rag.shared.utils.store_names.datetime", _Clock)
+    config = local_config.model_copy(deep=True)
+    config.indexing.additional_suffix = f"bg{uuid.uuid4().hex[:8]}"
+    indexer = OpenSearchIndexer(config, embedding_factory=HashingEmbeddingFactory())
+    os_client = indexer.opensearch_client
+    alias = indexer._get_name(config.indexing.opensearch.entities_index_prefix, None)
+    # A sibling store whose index names also match ``<alias>-*``.
+    sibling = f"{alias}-2-20250101000000"
+    try:
+        os_client.client.indices.create(index=sibling)
+        for _ in range(3):
+            assert indexer.index_entities(_entities()).failed_items == 0
+
+        indices = os_client.get_aliases_by_index(f"{alias}-*")
+        live = os_client.get_indices_by_alias(alias)
+        assert len(live) == 1
+        assert indices == {live[0]: [alias], sibling: []}
+        assert _vector_entity_count(indexer) == 3
     finally:
         indexer.clear([_SUFFIX])
         indexer.close()

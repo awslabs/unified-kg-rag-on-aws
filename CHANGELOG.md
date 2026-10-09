@@ -445,6 +445,19 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   it all again to restore the context. The data loaded during verification
   is now reused for the restore, and an entry that fails its hash is still a
   miss, so its stage is recomputed (#184).
+- A full OpenSearch index run deletes the timestamped indices it replaced.
+  The cleanup looked them up with an alias-name query on the index-name
+  pattern `<alias>-*`, which matched nothing, so every full run left up to
+  five indices per suffix behind until the domain's shard limit blocked
+  `create_index`. Old indices are now found by index name and only
+  `<alias>-<timestamp>` indices older than the new one and no longer behind
+  the alias are deleted, so another suffix such as `default-2` is not
+  touched. Cleanup runs only after a successful alias swap: a run that
+  writes nothing keeps the live index and drops its own unused new index,
+  and a failed cleanup no longer deletes the index just made live. Indices
+  leaked by earlier runs are deleted on the next successful full run of the
+  same alias; those of a suffix that is never rebuilt must be deleted by
+  hand (#185).
 - The interactive graph HTML (`graph.html`, the community hierarchy) escapes
   node tooltips when pyvis renders them as HTML. Once any node title contained
   `href`, pyvis replaced the plain-text tooltip with a popup that sets

@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import re
 import time
 from array import array
 from collections.abc import Callable
@@ -646,44 +647,30 @@ class OpenSearchIndexer(VectorIndexer):
                         len(failed_ids),
                     )
 
+                swapped = False
                 if docs:
                     indexing_stats = self._perform_indexing(index_name, docs)
                     total_stats.merge(indexing_stats)
 
                     if indexing_stats.successful_items > 0:
-                        remove_pattern = (
-                            f"{alias_prefix}-{suffix}-{self.config.indexing.additional_suffix}-*"
-                            if self.config.indexing.additional_suffix
-                            else f"{alias_prefix}-{suffix}-*"
-                        )
                         self.opensearch_client.update_alias(
-                            alias_name, index_name, remove_pattern=remove_pattern
+                            alias_name, index_name, remove_pattern=f"{alias_name}-*"
                         )
+                        swapped = True
 
-                old_indices_pattern = (
-                    f"{alias_prefix}-{suffix}-{self.config.indexing.additional_suffix}-*"
-                    if self.config.indexing.additional_suffix
-                    else f"{alias_prefix}-{suffix}-*"
-                )
-                all_indices_for_alias = self.opensearch_client.get_indices_by_alias(
-                    old_indices_pattern
-                )
-                indices_to_clean = [
-                    idx for idx in all_indices_for_alias if idx != index_name
-                ]
-
-                if indices_to_clean:
-                    self.opensearch_client.delete_indices(indices_to_clean)
+                if swapped:
+                    self._reap_stale_indices(alias_name, index_name)
+                else:
+                    # Nothing was written, so the alias stays on the previous
+                    # index; drop the unused new one instead of leaking it.
+                    self._drop_unswapped_index(alias_name, index_name)
 
             except Exception as e:
                 logger.error(
                     "Failed to index %s (suffix=%s): %s", item_type_name, suffix, e
                 )
                 total_stats.add_error(str(e), len(chunk_items))
-                try:
-                    self.opensearch_client.delete_indices([index_name])
-                except Exception:
-                    pass
+                self._drop_unswapped_index(alias_name, index_name)
 
         if total_stats.failed_items > 0:
             logger.warning(
@@ -701,6 +688,66 @@ class OpenSearchIndexer(VectorIndexer):
 
         self._flush_embedding_cache()
         return total_stats
+
+    @staticmethod
+    def _index_timestamp(alias_name: str, index_name: str) -> str | None:
+        """Timestamp of ``<alias>-<YYYYmmddHHMMSS>``, or ``None`` if not that shape.
+
+        Requiring the 14-digit timestamp keeps ``<alias>-*`` from matching a
+        sibling alias's indices (e.g. suffix ``default-2`` under ``default``).
+        """
+        match = re.fullmatch(rf"{re.escape(alias_name)}-(\d{{14}})", index_name)
+        return match.group(1) if match else None
+
+    def _reap_stale_indices(self, alias_name: str, live_index: str) -> None:
+        """Delete this alias's older timestamped indices after a successful swap.
+
+        Matches indices by *name* (an alias lookup on ``<alias>-*`` matches
+        nothing, which is how stale indices used to leak). Only indices of this
+        alias's exact naming scheme that are older than ``live_index`` and no
+        longer carry the alias are deleted, so a sibling suffix's indices and a
+        newer concurrent build are left alone. A cleanup failure is logged, not
+        raised: the swap already succeeded and the live index must survive.
+        """
+        live_ts = self._index_timestamp(alias_name, live_index)
+        if live_ts is None:
+            return
+        try:
+            candidates = self.opensearch_client.get_aliases_by_index(f"{alias_name}-*")
+            stale = sorted(
+                name
+                for name, aliases in candidates.items()
+                if name != live_index
+                and alias_name not in aliases
+                and (ts := self._index_timestamp(alias_name, name)) is not None
+                and ts < live_ts
+            )
+            if stale:
+                self.opensearch_client.delete_indices(stale)
+                logger.info(
+                    "Deleted %s stale index(es) of '%s'", len(stale), alias_name
+                )
+        except Exception as e:
+            logger.warning(
+                "Failed to delete stale indices of '%s' (live index '%s' kept): %s",
+                alias_name,
+                live_index,
+                e,
+            )
+
+    def _drop_unswapped_index(self, alias_name: str, index_name: str) -> None:
+        """Delete a new index the alias was not swapped onto.
+
+        Skipped if the alias already points at ``index_name`` (a same-second
+        rebuild reuses the live index's name), so the live index is never
+        deleted on a failed run. Best-effort: a failure is logged, not raised.
+        """
+        try:
+            if index_name in self.opensearch_client.get_indices_by_alias(alias_name):
+                return
+            self.opensearch_client.delete_indices([index_name])
+        except Exception as e:
+            logger.warning("Failed to delete unused index '%s': %s", index_name, e)
 
     def _generate_embeddings(
         self, items: list[Any], extractors: list[Callable]
