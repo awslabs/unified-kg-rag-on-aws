@@ -87,6 +87,7 @@ class OpenSearchIndexer(VectorIndexer):
             model_id=self.opensearch_config.embedding_model_id.value,
             dimension=self._embedding_dimension,
             boto_session=self.boto_session,
+            encryption=self.config.aws.s3.encryption,
         )
 
     def _resolve_embedding_dimension(self) -> int:

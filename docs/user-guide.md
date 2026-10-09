@@ -241,7 +241,7 @@ the same values.
 | `aws.opensearch.allow_anonymous` | `false` | Connect with no auth, for a local OpenSearch with the security plugin disabled (§1 Local stores). Cannot be combined with `use_iam` or username/password. |
 | `aws.opensearch.sigv4_service_name` | `"es"` | `es` for a managed domain, `aoss` for OpenSearch Serverless. A wrong value often shows up as zero search hits. |
 | `aws.s3.bucket_name` | `null` | Bucket for cache sync and embedding-cache persistence. |
-| `aws.s3.encryption.encryption_type` | `"BUCKET_DEFAULT"` | `BUCKET_DEFAULT` lets the bucket's default encryption apply; `AES256` or `aws:kms` (with `kms_key_id`) force a per-object header. |
+| `aws.s3.encryption.encryption_type` | `"BUCKET_DEFAULT"` | `BUCKET_DEFAULT` lets the bucket's default encryption apply; `AES256` or `aws:kms` (with `kms_key_id`) force a per-object header. Applies to the stage-cache sync and the persisted embedding cache. |
 | `aws.dynamodb.enabled` | `false` | Turn on the doc-status registry for incremental indexing (§5). |
 | `aws.dynamodb.table_name` | `"unified-kg-rag-on-aws-doc-status"` | Doc-status table name. |
 | `aws.dynamodb.create_table_if_missing` | `true` | Create the table on first use. Set `false` when the table is managed by IaC. |

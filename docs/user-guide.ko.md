@@ -237,7 +237,7 @@ ignored` WARNING 로그를 남긴 뒤 버려집니다. 파일을 고치거나 �
 | `aws.opensearch.allow_anonymous` | `false` | 인증 없이 연결합니다. 보안 플러그인을 끈 로컬 OpenSearch용입니다(§1 로컬 저장소). `use_iam`이나 username/password와 함께 쓸 수 없습니다. |
 | `aws.opensearch.sigv4_service_name` | `"es"` | 관리형 도메인은 `es`, OpenSearch Serverless는 `aoss`입니다. 값이 틀리면 검색 결과가 0건으로 나오는 경우가 많습니다. |
 | `aws.s3.bucket_name` | `null` | 캐시 동기화와 임베딩 캐시 저장에 쓰는 버킷입니다. |
-| `aws.s3.encryption.encryption_type` | `"BUCKET_DEFAULT"` | `BUCKET_DEFAULT`는 버킷 기본 암호화를 따릅니다. `AES256`이나 `aws:kms`(`kms_key_id` 필요)는 객체별 헤더를 강제합니다. |
+| `aws.s3.encryption.encryption_type` | `"BUCKET_DEFAULT"` | `BUCKET_DEFAULT`는 버킷 기본 암호화를 따릅니다. `AES256`이나 `aws:kms`(`kms_key_id` 필요)는 객체별 헤더를 강제합니다. 단계 캐시 동기화와 영구 임베딩 캐시 업로드에 모두 적용됩니다. |
 | `aws.dynamodb.enabled` | `false` | 증분 인덱싱용 doc-status 레지스트리를 켭니다(§5). |
 | `aws.dynamodb.table_name` | `"unified-kg-rag-on-aws-doc-status"` | doc-status 테이블 이름입니다. |
 | `aws.dynamodb.create_table_if_missing` | `true` | 처음 사용할 때 테이블을 만듭니다. IaC로 관리하는 테이블이면 `false`로 두세요. |

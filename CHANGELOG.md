@@ -613,6 +613,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#160).
 
 ### Security
+- The persisted embedding cache (`persist_embedding_cache`) uploads with the
+  `aws.s3.encryption` settings the stage-cache sync already used. It sent no
+  SSE header, so `AES256` or `aws:kms` with a specific key were ignored for
+  that object (#PR).
 - `run-rag` prints answers, errors and the verbose query/source panels as
   plain text with terminal control characters (other than newline and tab)
   removed. Model output was rendered as rich markup, so `[link=...]` became a
