@@ -936,23 +936,35 @@ document-status registry by **content hash**.
 
 ### Deletion scope
 
-A document's registry key is its index suffix (`document_parsing.index_value`,
-plus `indexing.additional_suffix`) and its path relative to the source
-directory. A run only treats as deleted the documents recorded under its own
-**scope**: the same index suffix and the same corpus source
+A run's **scope** is its index suffix (`document_parsing.index_value`, plus
+`indexing.additional_suffix`) and its corpus source
 (`document_parsing.source_scope`, by default the resolved source directory;
-the container entrypoint sets it to the S3 URI it syncs from). So:
+the container entrypoint sets it to the S3 URI it syncs from). A document's
+registry key is its scope and its path relative to the source directory, and a
+run only diffs, and treats as deleted, the documents recorded under its own
+scope. So:
 
 - a run for another tenant (another `index_value`) never deletes this tenant's
   documents, even when both corpora are staged in the same local directory;
 - running a subfolder as its own source directory never deletes the rest of
   the corpus (its files register as separate documents, so do not index the
   same files from two roots into one suffix);
+- two corpora indexed into one suffix from different sources are separate
+  documents even where both hold the same relative path (`contract.txt` in
+  each); each run only updates or deletes its own;
 - a file that fails to parse or load is reported as `failed` and keeps its
   indexed content until a run reads it again.
 
-Moving a local corpus to another directory changes its default scope: set
-`source_scope` to a stable name first, or rebuild.
+Moving a local corpus to another directory changes its default scope, so the
+next run indexes every document again under the new scope and the records of
+the old one stay in the registry: set `source_scope` to a stable name first,
+or rebuild.
+
+Registries written before the source scope was part of the key are keyed by
+index suffix and relative path only. The first run after an upgrade adopts
+each such record whose scope is the run's (or that has no scope) under the new
+key, keeping its content hash and lineage, so nothing is re-extracted or
+deleted; records of other scopes are left for their own runs to adopt.
 
 ### Failed documents
 

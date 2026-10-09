@@ -106,9 +106,10 @@ def test_filter_skips_unchanged_documents() -> None:
 
         assert [d.file_path for d in kept] == ["/b.txt"]
         assert skipped == 1
-        # The delta is stashed on the context for the IndexingStage.
+        # The delta is stashed on the context for the IndexingStage. New
+        # documents are keyed with the run's source scope (the source root).
         assert ctx.incremental_delta is not None
-        assert compute_doc_id("/b.txt") in ctx.incremental_delta.new
+        assert compute_doc_id("/b.txt", "default", "/") in ctx.incremental_delta.new
 
 
 def test_filter_stops_retrying_a_document_after_max_failures() -> None:

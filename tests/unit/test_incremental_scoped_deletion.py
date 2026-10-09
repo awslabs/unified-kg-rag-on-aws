@@ -29,11 +29,20 @@ from unified_kg_rag.application.ingestion.pipeline_stages import (
     DocumentLoadingStage,
     DocumentParsingStage,
 )
-from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
+from unified_kg_rag.domain.ingestion.delta_detector import (
+    assign_document_identity,
+    assign_registry_source,
+    compute_content_hash,
+    compute_doc_id,
+    detect_delta,
+    document_doc_id,
+    legacy_doc_id,
+)
 from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
     DocStatusRecord,
+    Document,
     PipelineContext,
     PipelineStageStatus,
 )
@@ -89,6 +98,12 @@ def _run(
     return context
 
 
+def _doc_id(context: PipelineContext, relative: str, namespace: str = "default"):
+    """The registry key of ``relative`` in ``context``'s source scope."""
+    source_scope = context.incremental_scope.split("|", 1)[1]
+    return compute_doc_id(relative, namespace, source_scope)
+
+
 def test_another_tenants_run_does_not_delete_this_tenants_documents(
     tmp_path, mocker
 ) -> None:
@@ -129,9 +144,9 @@ def test_a_file_that_fails_to_parse_is_not_deleted(tmp_path, mocker) -> None:
 
     delta = context.incremental_delta
     assert delta.deleted == []
-    assert delta.failed == [compute_doc_id("b.txt")]
-    assert delta.unchanged == [compute_doc_id("a.txt")]
-    assert store.get(compute_doc_id("b.txt")) is not None
+    assert delta.failed == [_doc_id(context, "b.txt")]
+    assert delta.unchanged == [_doc_id(context, "a.txt")]
+    assert store.get(_doc_id(context, "b.txt")) is not None
 
 
 def test_a_subfolder_run_does_not_delete_the_parent_corpus(tmp_path, mocker) -> None:
@@ -155,7 +170,7 @@ def test_a_removed_file_is_still_deleted_within_the_scope(tmp_path, mocker) -> N
 
     (root / "b.txt").unlink()
     context = _run(root, store, _config(), mocker)
-    assert context.incremental_delta.deleted == [compute_doc_id("b.txt")]
+    assert context.incremental_delta.deleted == [_doc_id(context, "b.txt")]
 
 
 def test_source_scope_setting_identifies_the_corpus_not_the_staging_dir(
@@ -169,7 +184,7 @@ def test_source_scope_setting_identifies_the_corpus_not_the_staging_dir(
     first = _run(_write(tmp_path / "a", {"x.txt": "Vendor."}), store, config, mocker)
     second = _run(_write(tmp_path / "b", {"y.txt": "Buyer."}), store, config, mocker)
     assert first.incremental_scope == second.incremental_scope
-    assert second.incremental_delta.deleted == [compute_doc_id("x.txt")]
+    assert second.incremental_delta.deleted == [_doc_id(second, "x.txt")]
 
     other = _config()
     other.processing.document_parsing.source_scope = "s3://bucket/corpus-2/"
@@ -186,7 +201,7 @@ def test_committed_records_carry_scope_and_relative_path(tmp_path, mocker) -> No
     assert record.scope == context.incremental_scope
     assert record.scope.startswith("tenant-a|")
     assert record.file_path == "docs/a.txt"
-    assert record.doc_id == compute_doc_id("docs/a.txt", "tenant-a")
+    assert record.doc_id == _doc_id(context, "docs/a.txt", "tenant-a")
 
 
 # --- registry diff contract (fake and DynamoDB stay identical) ---------------
@@ -227,3 +242,136 @@ def test_scoped_diff_only_deletes_records_of_the_same_scope(registry) -> None:
     # The scope round-trips through the store.
     assert registry.get("c").scope == "s2"
     assert registry.get("legacy").scope is None
+
+
+# --- adopting records keyed without the source scope ------------------------
+
+_SCOPE = "default|s3://bucket/corpus-1/"
+_SOURCE = "s3://bucket/corpus-1/"
+
+
+def _scoped_document(relative: str, text: str) -> Document:
+    document = Document(
+        page_content=text,
+        document_id=relative,
+        file_name=relative,
+        file_path=f"/staging/{relative}",
+        file_type="txt",
+        total_pages=1,
+    )
+    assign_document_identity(document, "/staging")
+    assign_registry_source(document, _SOURCE)
+    return document
+
+
+def _legacy_record(document: Document, scope: str | None) -> DocStatusRecord:
+    return DocStatusRecord(
+        doc_id=legacy_doc_id(document),
+        content_hash=compute_content_hash(document),
+        status=DocStatus.PROCESSED,
+        scope=scope,
+        file_path="a.txt",
+        entity_ids=["e1"],
+        text_unit_ids=["t1"],
+    )
+
+
+def test_source_scope_is_part_of_the_doc_id() -> None:
+    assert compute_doc_id("a.txt", "default", "s1") != compute_doc_id(
+        "a.txt", "default", "s2"
+    )
+    assert compute_doc_id("a.txt", "default", "s1") != compute_doc_id("a.txt")
+    document = _scoped_document("a.txt", "Vendor ships goods.")
+    assert document_doc_id(document) == compute_doc_id("a.txt", "default", _SOURCE)
+    assert legacy_doc_id(document) == compute_doc_id("a.txt", "default")
+
+
+def test_a_legacy_record_of_the_scope_is_adopted(registry) -> None:
+    document = _scoped_document("a.txt", "Vendor ships goods.")
+    registry.put(_legacy_record(document, _SCOPE))
+    doc_id = document_doc_id(document)
+
+    delta, _ = detect_delta(
+        [document],
+        registry,
+        scope=_SCOPE,
+        legacy_doc_ids={doc_id: legacy_doc_id(document)},
+    )
+
+    assert delta.unchanged == [doc_id]
+    assert delta.new == delta.deleted == []
+    assert registry.get(legacy_doc_id(document)) is None
+    adopted = registry.get(doc_id)
+    assert adopted.entity_ids == ["e1"] and adopted.text_unit_ids == ["t1"]
+    assert adopted.scope == _SCOPE
+
+
+def test_a_failed_files_legacy_record_is_adopted_not_deleted(registry) -> None:
+    document = _scoped_document("a.txt", "Vendor ships goods.")
+    registry.put(_legacy_record(document, _SCOPE))
+    doc_id = document_doc_id(document)
+
+    # a.txt failed to parse this run, so no document reaches the diff.
+    delta, _ = detect_delta(
+        [],
+        registry,
+        scope=_SCOPE,
+        failed_doc_ids=[doc_id],
+        legacy_doc_ids={doc_id: legacy_doc_id(document)},
+    )
+
+    assert delta.deleted == []
+    assert delta.failed == [doc_id]
+    assert registry.get(doc_id).entity_ids == ["e1"]
+    assert registry.get(legacy_doc_id(document)) is None
+
+
+def test_an_interrupted_adoption_only_drops_the_stale_legacy_key(registry) -> None:
+    document = _scoped_document("a.txt", "Vendor ships goods.")
+    legacy = _legacy_record(document, _SCOPE)
+    doc_id = document_doc_id(document)
+    registry.put(legacy)
+    registry.put(legacy.model_copy(update={"doc_id": doc_id}))
+
+    delta, _ = detect_delta(
+        [document],
+        registry,
+        scope=_SCOPE,
+        legacy_doc_ids={doc_id: legacy_doc_id(document)},
+    )
+
+    assert delta.unchanged == [doc_id]
+    assert delta.deleted == []
+    assert [r.doc_id for r in registry.list_all()] == [doc_id]
+
+
+def test_a_legacy_record_of_another_scope_is_not_adopted(registry) -> None:
+    document = _scoped_document("a.txt", "Vendor ships goods.")
+    other = _legacy_record(document, "default|s3://bucket/corpus-2/")
+    registry.put(other)
+    doc_id = document_doc_id(document)
+
+    delta, _ = detect_delta(
+        [document],
+        registry,
+        scope=_SCOPE,
+        legacy_doc_ids={doc_id: legacy_doc_id(document)},
+    )
+
+    assert delta.new == [doc_id]
+    assert delta.deleted == []
+    assert registry.get(legacy_doc_id(document)) == other
+    assert registry.get(doc_id) is None
+
+
+def test_without_a_scope_nothing_is_adopted(registry) -> None:
+    document = _scoped_document("a.txt", "Vendor ships goods.")
+    registry.put(_legacy_record(document, None))
+    doc_id = document_doc_id(document)
+
+    delta, _ = detect_delta(
+        [document], registry, legacy_doc_ids={doc_id: legacy_doc_id(document)}
+    )
+
+    assert delta.new == [doc_id]
+    assert registry.get(legacy_doc_id(document)) is not None

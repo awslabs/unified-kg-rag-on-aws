@@ -164,8 +164,8 @@ class DocStatusRecord(BaseModel):
     """
 
     doc_id: str = Field(
-        description="Stable document identifier: hash of the index namespace and "
-        "the path relative to the corpus root"
+        description="Stable document identifier: hash of the index namespace, the "
+        "corpus source scope and the path relative to the corpus root"
     )
     content_hash: str = Field(description="Content hash used for change detection")
     status: DocStatus = Field(

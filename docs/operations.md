@@ -55,12 +55,14 @@ With `aws.dynamodb.enabled: true` (the container image sets it), every
 hash and indexes only new and changed documents. The diff is scoped to the
 run's [index suffix](./user-guide.md#index-suffix) and its source scope
 (`processing.document_parsing.source_scope`, by default the resolved source
-directory; the container entrypoint sets it to the `s3://` source URI). A file
+directory; the container entrypoint sets it to the `s3://` source URI), and
+both are part of each document's registry key, so two corpora on one suffix
+never share a record even for files with the same relative path. A file
 missing from the source is treated as deleted, and its exclusive artifacts are
 removed. Therefore:
 
 - keep the same source directory (or a fixed `source_scope`) for a corpus;
-  moving it changes the scope;
+  moving it changes the scope, and the next run re-indexes every document;
 - never let corpus files expire or disappear unintentionally: the next run
   removes their graph and vector content;
 - index each tenant or corpus version under its own index suffix, with its own
