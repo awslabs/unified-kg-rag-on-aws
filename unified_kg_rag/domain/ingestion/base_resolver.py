@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import re
+import unicodedata
 from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Sequence
@@ -16,6 +17,10 @@ from unified_kg_rag.shared.utils import (
     default_max_workers,
     entity_key,
     normalize_name,
+)
+from unified_kg_rag.shared.utils.scripts import (
+    drop_dense_script_spaces,
+    is_dense_script_char,
 )
 
 logger = get_logger(__name__)
@@ -49,6 +54,73 @@ _RE_ROMAN_NUMERAL = re.compile(r"x{0,3}(?:ix|iv|v?i{0,3})")
 # Entity types that carry no information and so never block a merge.
 _GENERIC_ENTITY_TYPES = frozenset({"", "unknown"})
 
+# Legal-form designators, matched after NFKC + casefold (so "㈜" is "(주)" and
+# "㈱" is "(株)"). They state the company form, not which company, so they are
+# ignored when comparing names: "(주)가나다", "가나다 주식회사" and "가나다"
+# name one company. CJK forms may lead or trail the name, with or without a
+# space; Latin forms must be a whole trailing word ("Acme Inc", not "Taco").
+_CJK_LEGAL_FORMS = (
+    "(주)",
+    "주식회사",
+    "(유)",
+    "유한회사",
+    "(株)",
+    "株式会社",
+    "(有)",
+    "有限会社",
+    "有限公司",
+)
+_LATIN_LEGAL_FORMS = ("inc", "ltd", "llc", "co", "corp")
+_CJK_LEGAL_FORM_ALT = "|".join(re.escape(f) for f in _CJK_LEGAL_FORMS)
+_RE_LEADING_LEGAL_FORM = re.compile(rf"^(?:{_CJK_LEGAL_FORM_ALT})\s*")
+_RE_TRAILING_LEGAL_FORM = re.compile(
+    rf"(?:\s*(?:{_CJK_LEGAL_FORM_ALT})|\s+(?:{'|'.join(_LATIN_LEGAL_FORMS)})\.?)$"
+)
+
+
+def strip_legal_forms(name: str) -> str:
+    """Remove leading/trailing legal-form designators from ``name``.
+
+    Expects (and returns) NFKC-casefolded text; ``entity_key`` output works.
+    A name that is only a designator is returned unchanged, so it never
+    collapses to an empty string.
+    """
+    text = unicodedata.normalize("NFKC", name).casefold().strip()
+    stripped = text
+    while True:
+        shorter = _RE_TRAILING_LEGAL_FORM.sub(
+            "", _RE_LEADING_LEGAL_FORM.sub("", stripped)
+        ).strip()
+        if shorter == stripped:
+            break
+        stripped = shorter
+    return stripped or text
+
+
+def compact_name_key(name: str | None) -> str:
+    """Return the ``entity_key`` of ``name`` without its spelling variants.
+
+    Legal-form designators are stripped and spaces next to Han, Hangul and
+    Kana letters dropped. Names with the same compact key are the same entity
+    written differently, and the fuzzy matcher links them with score 1.0.
+    This is a matching key only: entity ids keep using ``entity_key``.
+    """
+    return drop_dense_script_spaces(strip_legal_forms(entity_key(name)))
+
+
+def head_character(name: str | None) -> str:
+    """Return the final character of a dense-script name, else ``""``.
+
+    In Han, Hangul and Kana compounds the head noun comes last and is often
+    one character: "가나다연구원" (institute) and "가나다연구소" (lab) share
+    every character but the head and name different organizations, and so do
+    the given names 김철수 and 김철민. Two names may only be fuzzy-linked when
+    their head characters are equal. For a name ending in another script the
+    result is ``""``, so Latin names are unaffected.
+    """
+    key = compact_name_key(name)
+    return key[-1] if key and is_dense_script_char(key[-1]) else ""
+
 
 def discriminator_tokens(name: str | None) -> frozenset[str]:
     """Return the tokens of ``name`` that identify *which* instance it denotes.
@@ -73,8 +145,11 @@ def discriminator_tokens(name: str | None) -> frozenset[str]:
     discriminators differ. The rule is deliberately conservative: a variant
     that only one side spells with an initial ("J. Smith" vs "Smith") stays a
     separate entity rather than risking a wrong merge.
+
+    Legal-form designators are removed first (:func:`strip_legal_forms`), so
+    the "주" of "(주)가나다" does not count as an identifier.
     """
-    tokens = normalize_name(name).split()
+    tokens = normalize_name(strip_legal_forms(name) if name else name).split()
     return frozenset(
         token
         for token in tokens
@@ -174,6 +249,11 @@ class FuzzyMatcher:
         self.discriminator_index = {
             name: discriminator_tokens(name) for name in self.candidates
         }
+        self.head_index = {name: head_character(name) for name in self.candidates}
+        # Spacing and legal-form variants of one name share a compact key.
+        self.compact_index: dict[str, list[str]] = {}
+        for name in self.candidates:
+            self.compact_index.setdefault(compact_name_key(name), []).append(name)
         self.abbreviation_index: dict[str, str] = {}
         for name in self.candidates:
             for abbrev in self._generate_abbreviations(name):
@@ -266,25 +346,41 @@ class FuzzyMatcher:
         symbols kept), so key-equal names (incl. CJK) score 1.0 under LSH while
         "C++" and "C#" do not collide.
 
-        Candidates whose :func:`discriminator_tokens` differ from the query's
-        are dropped: "purchase order 1001" and "purchase order 1002" share most
-        shingles but name different things, and every consumer of this method
-        (full-build grouping, incremental merge) would otherwise collapse them.
+        Candidates with the same :func:`compact_name_key` (spacing and
+        legal-form variants: "가나다 상사" / "(주)가나다상사") match with 1.0.
+
+        Candidates whose :func:`discriminator_tokens` or
+        :func:`head_character` differ from the query's are dropped:
+        "purchase order 1001" and "purchase order 1002" share most shingles
+        but name different things, as do "가나다연구원" and "가나다연구소",
+        and every consumer of this method (full-build grouping, incremental
+        merge) would otherwise collapse them.
         """
         if self.resolution_method == ResolutionMethod.MINHASH:
             matches = self._find_all_lsh_matches(query)
         else:
             matches = self._find_all_string_similarity_matches(query)
+        variants = self.compact_index.get(compact_name_key(query), [])
+        if variants:
+            scores = dict(matches)
+            scores.update(dict.fromkeys(variants, 1.0))
+            matches = list(scores.items())
         query_discriminators = discriminator_tokens(query)
+        query_head = head_character(query)
         return [
             match
             for match in matches
             if self._discriminators_of(match[0]) == query_discriminators
+            and self._head_of(match[0]) == query_head
         ]
 
     def _discriminators_of(self, candidate: str) -> frozenset[str]:
         cached = self.discriminator_index.get(candidate)
         return cached if cached is not None else discriminator_tokens(candidate)
+
+    def _head_of(self, candidate: str) -> str:
+        cached = self.head_index.get(candidate)
+        return cached if cached is not None else head_character(candidate)
 
     def _find_all_lsh_matches(self, query: str) -> list[tuple[str, float]]:
         if self.resolution_method != ResolutionMethod.MINHASH:

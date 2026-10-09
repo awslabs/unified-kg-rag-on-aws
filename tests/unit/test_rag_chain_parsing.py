@@ -79,6 +79,13 @@ def test_rag_input_defaults() -> None:
     assert ri.conversation_id is None
 
 
+def test_rag_input_composes_decomposed_hangul() -> None:
+    # Indexed text is NFC; an NFD query ("보증", conjoining jamo) must match it.
+    nfd = "\u1107\u1169\u110c\u1173\u11bc"
+    assert RAGInput(query=nfd).query == "보증"
+    assert RAGInput(query="ＡＢＣ").query == "ＡＢＣ"  # NFC, not NFKC
+
+
 def test_processed_query_defaults_empty_keyword_lists() -> None:
     pq = ProcessedQuery(original_query="q", final_query="q")
     assert pq.entities == []

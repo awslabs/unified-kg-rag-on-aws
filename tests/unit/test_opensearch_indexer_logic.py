@@ -24,6 +24,7 @@ from unified_kg_rag.domain.models import (
     Entity,
     TextUnit,
 )
+from unified_kg_rag.domain.models.config import LanguageCode
 from unified_kg_rag.ports.indexer import IndexingStats
 
 pytestmark = pytest.mark.unit
@@ -111,6 +112,28 @@ def test_prepare_text_unit_doc_adds_translation_key(indexer) -> None:
     unit = TextUnit(id="t1", text="hola", translated_texts={lang: "hello"})
     doc = indexer._prepare_text_unit_doc(unit, ([0.0],))
     assert doc[f"translated_text_{lang}"] == "hello"
+
+
+def test_additional_target_languages_are_indexed(indexer) -> None:
+    # Each additional language gets its own field with its own analyzer, so
+    # the translations the pipeline paid for are searchable.
+    translation = indexer.config.processing.translation
+    translation.target_language = LanguageCode.EN
+    translation.additional_target_languages = [LanguageCode.KO, LanguageCode.JA]
+    props = _props(indexer._get_text_units_mapping())
+    assert props["translated_text_en"]["analyzer"] == "english"
+    assert props["translated_text_ko"]["analyzer"] == "nori"
+    assert props["translated_text_ja"]["analyzer"] == "standard"
+    unit = TextUnit(
+        id="t1",
+        text="x",
+        translated_texts={"en": "contract", "ko": "계약", "ja": "契約", "fr": "c"},
+    )
+    doc = indexer._prepare_text_unit_doc(unit, ([0.0],))
+    assert doc["translated_text_en"] == "contract"
+    assert doc["translated_text_ko"] == "계약"
+    assert doc["translated_text_ja"] == "契約"
+    assert "translated_text_fr" not in doc
 
 
 def test_text_unit_embedding_text_prefers_translation(indexer) -> None:
@@ -290,8 +313,27 @@ def test_text_units_mapping(indexer) -> None:
     props = _props(indexer._get_text_units_mapping())
     assert props["text"]["type"] == "text"
     assert props["text_embedding"]["type"] == "knn_vector"
-    assert props[f"translated_text_{lang}"]["analyzer"] == "standard"
+    # Per-language analyzer from language_analyzers (default target "en").
+    assert props[f"translated_text_{lang}"]["analyzer"] == "english"
     assert props["n_tokens"]["type"] == "integer"
+
+
+@pytest.mark.parametrize(
+    ("source", "analyzer"),
+    [
+        (LanguageCode.KO, "nori"),
+        (LanguageCode.EN, "english"),
+        (LanguageCode.ZH, "standard"),
+    ],
+)
+def test_text_field_uses_source_language_analyzer(
+    indexer, source: LanguageCode, analyzer: str
+) -> None:
+    # The original chunk text is in the source language; an untranslated
+    # Korean corpus is only searchable through this field.
+    indexer.config.processing.translation.source_language = source
+    props = _props(indexer._get_text_units_mapping())
+    assert props["text"]["analyzer"] == analyzer
 
 
 def test_claims_mapping(indexer) -> None:

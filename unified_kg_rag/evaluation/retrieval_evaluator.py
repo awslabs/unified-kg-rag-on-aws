@@ -41,6 +41,7 @@ all is a miss and scores 0.
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime
 from typing import Any
 
@@ -72,14 +73,18 @@ def _is_path_like(identifier: str) -> bool:
 
 
 def source_keys(identifier: str) -> frozenset[str]:
-    """Match keys of a file name / path / title: full name and stem (module doc)."""
-    name = identifier.strip()
+    """Match keys of a file name / path / title: full name and stem (module doc).
+
+    NFKC + casefold first: macOS and many PDF tools write decomposed (NFD)
+    Hangul file names, and full-width letters ("ＡＢＣ") should equal ASCII.
+    """
+    name = unicodedata.normalize("NFKC", identifier).casefold().strip()
     if _is_path_like(name):
         name = re.split(r"[/\\]", name)[-1]
     # Underscores stand for spaces in file names derived from titles
     # ("Miquette_Giraudy.txt" for the title "Miquette Giraudy"), so both sides
     # compare with underscores folded to spaces.
-    name = " ".join(name.replace("_", " ").split()).lower()
+    name = " ".join(name.replace("_", " ").split())
     if not name:
         return frozenset()
     stem = _EXTENSION.sub("", name).strip()

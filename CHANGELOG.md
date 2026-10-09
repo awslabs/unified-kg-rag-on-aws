@@ -391,6 +391,52 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - `run-eval` closes its chain on exit, whether the run succeeds or fails, so
   the retrievers' Neptune/OpenSearch sockets are released instead of the
   process ending with "Unclosed client session / connector" warnings (#176).
+- **Breaking (index data):** the chunk `text` field is analyzed with the
+  source-language analyzer (`language_analyzers[source_language]`, else
+  `default_analyzer`) instead of `standard`. An untranslated Korean corpus
+  (`source_language: ko`, `target_language: ko`) had almost no BM25 recall:
+  `standard` keeps "홍길동으로부터" as one token, so "홍길동" never matched.
+  Re-index existing text-unit indices to pick up the new mapping (#177).
+- Lexical search no longer applies `fuzziness: AUTO` to a query that contains
+  Hangul, Han or Kana. One such character is a whole syllable or morpheme, so
+  the one edit AUTO allows on a 3-5 character term matched a different word
+  ("김철민" found "김철수"). Latin-script queries keep typo tolerance (#177).
+- Entity resolution no longer fuzzy-merges Han/Hangul/Kana names whose final
+  character (the head noun) differs ("가나다연구원" / "가나다연구소",
+  "김철수" / "김철민"), and does merge spacing and legal-form variants
+  ("가나다 상사" / "가나다상사", "(주)가나다" / "가나다", "Acme Inc" /
+  "Acme"); the "주" of "(주)" no longer counts as an identifier token. Entity
+  ids are unchanged (#177).
+- `answer_contains` and `graph_aware` phrase matching: a Korean particle may
+  follow any gold word, so `2024`, `AWS` and `Acme Corp` match `2024년에`,
+  `AWS는` and `Acme Corp입니다`; spacing next to CJK letters is ignored
+  (`3억 원` = `3억원`); and a CJK substring no longer matches inside a longer
+  number (`2년` in `12년`, `二年` in `十二年`) (#177).
+- The `retrieval` evaluator NFKC-normalizes and casefolds source names before
+  matching, so a decomposed (NFD) Hangul file name from macOS or a PDF tool
+  and a full-width `ＡＢＣ` match their reference sources (#177).
+- Parsed document text and the `RAGInput.query` are NFC-normalized, so
+  decomposed (NFD) Hangul from macOS file systems or PDF text layers matches
+  composed queries, analyzer dictionaries and entity names. NFC text is
+  unchanged and keeps its ids; a document that contained NFD text gets a new
+  content hash and document id, so the next incremental run re-indexes it
+  once (#177).
+- Entity grounding (opt-in) judges Chinese and Japanese spans: their length
+  counts each Han/Hangul/Kana character as a token, where the whitespace
+  count made every span "too short" and so always grounded. Dense-script
+  spans fall back to character-bigram overlap, so a Korean paraphrase that
+  only changes particles is kept, and punctuation no longer separates
+  "2년이다." from "2년이다" (#177).
+- **Breaking (index data):** translations into
+  `processing.translation.additional_target_languages` were produced (one LLM
+  call per chunk and language) but never indexed. Each is now indexed in its
+  own `translated_text_<language>` field with that language's analyzer and
+  included in lexical text-unit search. Re-index text units so existing
+  indices get the analyzed fields (#177).
+- The size-based splitter also splits after CJK sentence terminators
+  (`。．｡！？；`) before falling back to spaces and characters, so Chinese and
+  Japanese text is no longer cut mid-sentence. Text without these characters
+  is chunked exactly as before (#177).
 - The LLM XML parser no longer tries LangChain's `XMLOutputParser.parse`
   first. Without `defusedxml` (not a dependency) that call raised
   `ImportError` on every response, so the strict and the two re-escaping

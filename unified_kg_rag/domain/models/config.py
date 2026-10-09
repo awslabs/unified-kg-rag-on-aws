@@ -759,16 +759,26 @@ class TranslationConfig(BaseModel):
     )
     source_language: LanguageCode = Field(
         default=LanguageCode.EN,
-        description="Predominant source language of the corpus. Used only for the "
-        "same-language no-op skip; translation is content-driven so this need not "
-        "be exact for mixed corpora.",
+        description="Predominant source language of the corpus. Selects the "
+        "OpenSearch analyzer of the original chunk text and drives the "
+        "same-language no-op skip; translation itself is content-driven.",
     )
     target_language: LanguageCode = Field(
         default=LanguageCode.EN, description="Target language code for translation"
     )
     additional_target_languages: list[LanguageCode] | None = Field(
-        default=None, description="Additional target languages for translation"
+        default=None,
+        description="Additional target languages for translation. Each one is "
+        "indexed in its own translated_text_<language> field (with that "
+        "language's analyzer) and searched lexically; the target language "
+        "alone feeds extraction, embeddings and the answer context.",
     )
+
+    @property
+    def translated_languages(self) -> list[str]:
+        """Language codes with a translated text field: target first, no repeats."""
+        languages = [self.target_language, *(self.additional_target_languages or [])]
+        return list(dict.fromkeys(language.value for language in languages))
 
     @property
     def is_noop(self) -> bool:
@@ -854,7 +864,8 @@ class EntityGroundingConfig(BaseModel):
         ge=1,
         description="Evidence spans shorter than this (after normalization) are "
         "treated as grounded — too short to judge, so the gate never deletes "
-        "short legitimate names on weak signal.",
+        "short legitimate names on weak signal. A Han/Hangul/Kana character "
+        "counts as one token.",
     )
     min_overlap_ratio: float = Field(
         default=0.6,

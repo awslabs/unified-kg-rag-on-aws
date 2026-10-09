@@ -429,18 +429,18 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `processing.document_parsing.source_scope` | `null` | Corpus identity for incremental deletion: a run only deletes registry documents of its own index suffix and source scope. `null` = the resolved source directory; the container entrypoint sets it to the S3 URI (`GRAPHRAG_SOURCE_SCOPE`). See §5. |
 | `processing.chunking.chunker_type` | `"intelligent"` | `intelligent` lets an LLM pick semantic boundaries; `simple` splits by size. |
 | `processing.chunking.min_chunk_size` | `1000` | Minimum chunk size in characters; shorter pieces merge into a neighbour. |
-| `processing.chunking.max_chunk_size` | `8000` | Maximum chunk size in characters. Must fit the embedding and rerank input limits. |
+| `processing.chunking.max_chunk_size` | `8000` | Maximum chunk size in characters. Must fit the embedding and rerank input limits. Sizes count characters, not tokens: English averages ~4 characters per token, but a Han/Hangul/Kana character is ~1 token, so 8,000 CJK characters is ~8K tokens. That fits Titan Text Embeddings V2 (8,192) but not the 4,096-token Cohere Rerank 3.5 document limit; for CJK corpora with reranking use about half the sizes. |
 | `processing.chunking.chunk_overlap` | `500` | Overlap between chunks in characters. |
-| `processing.chunking.fallback_chunk_size` | `4800` | Target size for the size-based splitter (`simple`, or when intelligent chunking fails). |
+| `processing.chunking.fallback_chunk_size` | `4800` | Target size for the size-based splitter (`simple`, or when intelligent chunking fails). It splits at paragraphs, then lines, then after CJK sentence terminators (`。．｡！？；`), then spaces. |
 | `processing.translation.enabled` | `true` | Run the translation stage. It is a no-op (zero LLM cost) when the source and target languages match and no additional target is set. |
 | `processing.translation.source_language` | `"en"` | Predominant corpus language; used only for the no-op check. |
 | `processing.translation.target_language` | `"en"` | Language the corpus is translated into (see §3 Multilingual ingestion). |
-| `processing.translation.additional_target_languages` | `null` | Extra target languages to translate into. |
+| `processing.translation.additional_target_languages` | `null` | Extra target languages to translate into. Each is indexed in its own `translated_text_<language>` field with that language's analyzer and searched lexically (useful with a per-query `RAGInput.target_language`); extraction, embeddings and the answer context use `target_language` only. Each language is one more LLM call per chunk. |
 | `processing.graph_extraction.entity_types` | 7 generic types | `"LABEL: description"` items injected into the extraction prompt. The most effective domain-adaptation knob (§9). An empty list lets the model choose. |
 | `processing.graph_extraction.max_entities_per_chunk` | `50` | Cap on entities per chunk (relationships: `max_relationships_per_chunk`, also `50`). |
 | `processing.graph_extraction.entity_confidence_threshold` | `0.0` | Drop entities below this confidence; `0.0` keeps all. |
 | `processing.graph_extraction.description_summarization.enabled` | `true` | Re-summarize merged descriptions longer than `force_summary_threshold_tokens` (`600`) with an LLM. |
-| `processing.graph_extraction.entity_grounding.enabled` | `false` | Hallucination guard: drop (or, with `action: "penalize"`, down-weight) entities and relationships whose verbatim `source_text` span is absent from the chunk. Also gates gleaning additions. |
+| `processing.graph_extraction.entity_grounding.enabled` | `false` | Hallucination guard: drop (or, with `action: "penalize"`, down-weight) entities and relationships whose verbatim `source_text` span is absent from the chunk (punctuation ignored; Han/Hangul/Kana spans are compared by character bigrams, so a Korean particle change still counts as present). Also gates gleaning additions. |
 | `processing.gleaning.enabled` | `true` | Extra extraction passes that catch missed entities and relationships. |
 | `processing.gleaning.max_rounds` | `3` | Gleaning rounds per text unit. A later round re-sends only the units whose previous answer added a new entity or relationship, so a unit stops as soon as an answer adds nothing new. `1` matches MS GraphRAG's default. |
 | `processing.claim_extraction.enabled` | `false` | Extract claims (one extra LLM call per text unit). When on, `local` search injects matching claims and `simple` search sweeps the claims index. |
@@ -736,7 +736,15 @@ empty/null, the translation stage is an `is_noop` skip — an English-only corpu
 pays **no** translation LLM cost even with `enabled: true`. Language-aware
 OpenSearch analyzers are configured under
 `indexing.opensearch.language_analyzers` (e.g. `ko: nori`); unlisted languages
-fall back to `default_analyzer`.
+fall back to `default_analyzer`. The original chunk `text` is analyzed for
+`source_language` and the translated text for `target_language`, so set
+`source_language` to the corpus language even when no translation runs: a
+Korean corpus with `source_language: en` gets the `english` analyzer, which
+keeps Korean words with their particles ("홍길동으로부터") as single tokens.
+Changing `source_language` changes the mapping, so re-index the text units.
+Parsed text and queries are NFC-normalized, so decomposed Hangul (NFD, as
+written by macOS file systems and many PDF text layers) matches its composed
+form.
 
 A text unit whose translation fails keeps its original text and is extracted
 in the source language. A failed call for a whole target language fails the
@@ -1068,7 +1076,8 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   Only attributable sources are ranked, and `attributable_fraction`
   (attributable / reported sources, also in `grouped_statistics` per strategy)
   shows how much of the context the rank metrics cover. Matching is
-  case-insensitive on the full name or, when the name ends in a file extension
+  NFKC-normalized and case-insensitive (so decomposed NFD Hangul file names
+  and full-width letters match) on the full name or, when the name ends in a file extension
   (`.` + 1-5 letters/digits, at least one letter), its stem: `docs/Terms.pdf` =
   `terms.pdf` = `terms`. A `/` is a directory separator only in a path-like
   value (a file extension, a URI scheme, or a leading `/`, `./`, `~/`), so
@@ -1082,8 +1091,12 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   generated answer as a whole-word phrase) is the headline deterministic
   metric: long-form RAG answers rarely equal a short gold span, so it tracks
   correctness far better than exact match. Korean particles are tolerated
-  (gold `서울 특별시` matches `서울 특별시는`), and a single-word CJK gold is
-  matched as a substring. SQuAD-style `exact_match` and `token_f1` are also
+  after any word, including Latin words and numbers (gold `서울 특별시`
+  matches `서울 특별시는`, `AWS` matches `AWS는`, `2024` matches `2024년에`),
+  and spacing next to CJK letters is ignored (`3억 원` = `3억원`,
+  `가나다 상사` = `가나다상사`). A single-word CJK gold is matched as a
+  substring, but not inside a longer number or Latin word (`2년` does not
+  match `12년`). SQuAD-style `exact_match` and `token_f1` are also
   emitted for comparison with published benchmarks. Text is NFKC-normalized, then normalized as in the official SQuAD
   v1.1 script: lowercase, punctuation deleted (`1,000` = `1000`), English
   articles dropped, whitespace collapsed. Token F1 splits on whitespace, so for

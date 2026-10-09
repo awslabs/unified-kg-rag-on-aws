@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import unicodedata
 from pathlib import Path
 
 from langchain_core.documents import Document as LangChainDocument
@@ -19,9 +20,14 @@ def convert_langchain_to_document(
 ) -> Document:
     path = Path(file_path)
 
-    combined_text = "\n\n".join(
-        doc.page_content for doc in langchain_docs if doc.page_content
-    )
+    # NFC: macOS file systems and many PDF text layers emit decomposed (NFD)
+    # Hangul and accented letters, which never match the composed form of the
+    # same word in a query, an analyzer dictionary or an entity name. NFC only
+    # recombines; compatibility forms (full-width letters, "㈜") are kept.
+    page_texts = [
+        unicodedata.normalize("NFC", doc.page_content) for doc in langchain_docs
+    ]
+    combined_text = "\n\n".join(text for text in page_texts if text)
     # Strip a leading UTF-8 BOM (U+FEFF): loaders that decode as plain "utf-8"
     # (not "utf-8-sig") leave the BOM in the text, so the same logical document
     # with/without a BOM would hash to a different content-derived document_id
@@ -46,11 +52,13 @@ def convert_langchain_to_document(
     pages = [
         Page(
             page_number=i + 1,
-            text_content=doc.page_content,
+            text_content=page_text,
             elements=[],
             raw_data=doc.metadata,
         )
-        for i, doc in enumerate(langchain_docs)
+        for i, (doc, page_text) in enumerate(
+            zip(langchain_docs, page_texts, strict=True)
+        )
     ]
 
     content = DocumentContent(text=combined_text, html=None, markdown=None)

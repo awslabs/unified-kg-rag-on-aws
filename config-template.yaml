@@ -233,9 +233,13 @@ processing:
     # no-op when source_language == target_language and there are no
     # additional_target_languages (e.g. an English-only corpus pays no LLM cost).
     enabled: true
-    # Predominant source language of the corpus (used only for the no-op skip).
+    # Predominant source language of the corpus: picks the OpenSearch analyzer
+    # of the original chunk text and drives the no-op skip. Changing it
+    # requires re-indexing the text units.
     source_language: "en"
     target_language: "en"
+    # Extra languages to translate into; each is indexed in its own analyzed
+    # translated_text_<language> field and searched lexically.
     additional_target_languages: null
 
   # Graph Extraction
@@ -280,7 +284,7 @@ processing:
       enabled: false
       action: "drop" # "drop" removes ungrounded entities; "penalize" scales confidence
       penalty_factor: 0.5 # confidence multiplier when action == "penalize"
-      min_span_tokens: 4 # spans shorter than this are treated as grounded (too short to judge)
+      min_span_tokens: 4 # spans shorter than this are treated as grounded (too short to judge); a Han/Hangul/Kana character counts as one token
       min_overlap_ratio: 0.6 # non-verbatim spans need this token-overlap fraction to count as grounded
 
   # Gleaning (Iterative Information Extraction)

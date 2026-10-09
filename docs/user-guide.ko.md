@@ -418,18 +418,18 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `processing.document_parsing.source_scope` | `null` | 증분 삭제에 쓰는 코퍼스 식별자입니다. 실행은 자기 인덱스 접미사와 소스 범위에 속한 레지스트리 문서만 삭제합니다. `null`이면 소스 디렉터리의 절대 경로이며, 컨테이너 엔트리포인트는 S3 URI로 설정합니다(`GRAPHRAG_SOURCE_SCOPE`). §5 참고. |
 | `processing.chunking.chunker_type` | `"intelligent"` | `intelligent`는 LLM이 의미 경계를 고르고, `simple`은 크기로 나눕니다. |
 | `processing.chunking.min_chunk_size` | `1000` | 최소 청크 크기(문자)입니다. 이보다 짧은 조각은 이웃 청크에 합칩니다. |
-| `processing.chunking.max_chunk_size` | `8000` | 최대 청크 크기(문자)입니다. 임베딩과 리랭크 입력 한도 안에 들어야 합니다. |
+| `processing.chunking.max_chunk_size` | `8000` | 최대 청크 크기(문자)입니다. 임베딩과 리랭크 입력 한도 안에 들어야 합니다. 크기는 토큰이 아닌 문자 수입니다. 영어는 평균 약 4자가 1토큰이지만 한자·한글·가나는 1자가 약 1토큰이므로 CJK 8,000자는 약 8K 토큰입니다. Titan Text Embeddings V2(8,192)에는 들어가지만 Cohere Rerank 3.5의 문서당 한도(4,096 토큰)는 넘으므로, 리랭크를 쓰는 CJK 코퍼스는 크기를 절반 정도로 줄이세요. |
 | `processing.chunking.chunk_overlap` | `500` | 청크 간 겹침(문자)입니다. |
-| `processing.chunking.fallback_chunk_size` | `4800` | 크기 기반 분할(`simple`, 또는 intelligent 청킹이 실패할 때)의 목표 크기입니다. |
+| `processing.chunking.fallback_chunk_size` | `4800` | 크기 기반 분할(`simple`, 또는 intelligent 청킹이 실패할 때)의 목표 크기입니다. 문단, 줄, CJK 문장 끝 기호(`。．｡！？；`) 뒤, 공백 순으로 나눕니다. |
 | `processing.translation.enabled` | `true` | 번역 스테이지를 실행합니다. 원문과 대상 언어가 같고 추가 대상 언어가 없으면 아무것도 하지 않습니다(LLM 비용 0). |
 | `processing.translation.source_language` | `"en"` | 코퍼스의 주 언어입니다. 번역 생략 여부 판단에만 씁니다. |
 | `processing.translation.target_language` | `"en"` | 코퍼스를 번역할 언어입니다(§3 다국어 인제스천 참고). |
-| `processing.translation.additional_target_languages` | `null` | 추가로 번역할 대상 언어 목록입니다. |
+| `processing.translation.additional_target_languages` | `null` | 추가로 번역할 대상 언어 목록입니다. 언어마다 해당 언어 analyzer를 쓰는 `translated_text_<언어>` 필드에 인덱싱해 lexical 검색에 포함합니다(질의별 `RAGInput.target_language`와 함께 쓰면 유용). 추출, 임베딩, 답변 컨텍스트는 `target_language`만 씁니다. 언어 하나마다 청크당 LLM 호출이 하나씩 늘어납니다. |
 | `processing.graph_extraction.entity_types` | 범용 유형 7개 | 추출 프롬프트에 넣는 `"LABEL: 설명"` 목록입니다. 도메인 적응에 가장 효과가 큰 항목입니다(§9). 빈 목록이면 모델이 유형을 고릅니다. |
 | `processing.graph_extraction.max_entities_per_chunk` | `50` | 청크당 엔터티 상한입니다(관계는 `max_relationships_per_chunk`, 역시 `50`). |
 | `processing.graph_extraction.entity_confidence_threshold` | `0.0` | 신뢰도가 이 값보다 낮은 엔터티를 버립니다. `0.0`이면 모두 유지합니다. |
 | `processing.graph_extraction.description_summarization.enabled` | `true` | 병합된 설명이 `force_summary_threshold_tokens`(`600`)를 넘으면 LLM으로 다시 요약합니다. |
-| `processing.graph_extraction.entity_grounding.enabled` | `false` | 환각 방지 장치입니다. 원문 `source_text` 구간이 청크에 없는 엔터티와 관계를 버리거나, `action: "penalize"`이면 가중치를 낮춥니다. gleaning이 추가한 항목에도 적용됩니다. |
+| `processing.graph_extraction.entity_grounding.enabled` | `false` | 환각 방지 장치입니다. 원문 `source_text` 구간이 청크에 없는 엔터티와 관계를 버리거나, `action: "penalize"`이면 가중치를 낮춥니다. 문장 부호는 무시하고, 한자·한글·가나 구간은 문자 bigram으로 비교하므로 한국어 조사가 바뀌어도 원문에 있는 것으로 봅니다. gleaning이 추가한 항목에도 적용됩니다. |
 | `processing.gleaning.enabled` | `true` | 첫 추출에서 놓친 엔터티와 관계를 찾는 추가 추출 단계입니다. |
 | `processing.gleaning.max_rounds` | `3` | 텍스트 단위당 최대 gleaning 횟수입니다. 다음 회차에는 직전 응답에서 새 엔터티나 관계가 추가된 단위만 다시 보내므로, 응답에 새 항목이 없으면 그 단위는 바로 멈춥니다. `1`이 MS GraphRAG 기본값과 같습니다. |
 | `processing.claim_extraction.enabled` | `false` | claim을 추출합니다(텍스트 단위마다 LLM 호출 1회 추가). 켜면 `local` 검색이 관련 claim을 컨텍스트에 넣고 `simple` 검색이 claim 인덱스도 함께 찾습니다. |
@@ -722,6 +722,14 @@ processing:
 코퍼스는 `enabled: true`라도 번역 LLM 비용을 **전혀** 내지 않습니다. 언어 인식
 OpenSearch analyzer는 `indexing.opensearch.language_analyzers`(예: `ko: nori`)
 아래에서 설정합니다. 목록에 없는 언어는 `default_analyzer`로 폴백됩니다.
+원문 청크 `text`는 `source_language`, 번역문은 `target_language`의 analyzer로
+분석합니다. 따라서 번역을 하지 않더라도 `source_language`를 코퍼스 언어로
+지정하세요. 한국어 코퍼스를 `source_language: en`으로 두면 `english`
+analyzer가 조사가 붙은 어절("홍길동으로부터")을 토큰 하나로 남겨 "홍길동"
+검색에 걸리지 않습니다. `source_language`를 바꾸면 매핑이 달라지므로 텍스트
+유닛을 다시 인덱싱해야 합니다.
+파싱한 텍스트와 질의는 NFC로 정규화하므로, 자모가 분해된 한글(NFD, macOS 파일
+시스템과 많은 PDF 텍스트 레이어가 쓰는 형태)도 조합형 한글과 매칭됩니다.
 
 번역에 실패한 텍스트 단위는 원문을 유지한 채 원래 언어로 추출됩니다. 대상 언어
 하나의 번역 호출 전체가 실패하면 `processing.ignore_errors`가 `true`가 아닌 한
@@ -1035,7 +1043,8 @@ judge 없이 실행하려면 `enabled_evaluators: [answer_match, retrieval, grap
   답변 모델이 실제로 읽은 범위의 상한입니다. 순위는 귀속 가능한 소스만으로 매기며,
   `attributable_fraction`(귀속 가능한 소스 / 보고된 소스, `grouped_statistics`에서
   전략별로도 제공)으로 순위 지표가 컨텍스트를 얼마나 보는지 알 수 있습니다.
-  매칭은 대소문자를 구분하지 않고 전체 이름으로 하며, 이름이 파일 확장자(`.` +
+  매칭은 NFKC 정규화 후 대소문자를 구분하지 않고(NFD로 분해된 한글 파일명과
+  전각 문자도 매칭) 전체 이름으로 하며, 이름이 파일 확장자(`.` +
   영문자·숫자 1-5자, 영문자 1개 이상)로 끝나면 stem으로도 비교합니다:
   `docs/Terms.pdf` = `terms.pdf` = `terms`. `/`는 경로처럼 보이는 값(파일 확장자,
   URI 스킴, `/`·`./`·`~/`로 시작)에서만 디렉터리 구분자로 보므로 `St. Louis
@@ -1046,9 +1055,12 @@ judge 없이 실행하려면 `enabled_evaluators: [answer_match, retrieval, grap
   `metadata.answer_aliases`에 대해 계산하고 최댓값을 씁니다. 대표 결정적 지표는
   **`answer_contains`**(정답이나 별칭이 생성된 답변에 단어 단위 구문으로 나타나면
   1.0)입니다. RAG 답변은 길어서 짧은 정답과 정확히 일치하는 경우가 드물기 때문에
-  exact match보다 정답 여부를 훨씬 잘 반영합니다. 한국어 조사는 허용하고(정답
-  `서울 특별시`가 `서울 특별시는`과 매칭), 한 단어짜리 CJK 정답은 부분 문자열로
-  비교합니다. 공개 벤치마크와 비교할 수 있도록 SQuAD 방식 `exact_match`와
+  exact match보다 정답 여부를 훨씬 잘 반영합니다. 영문 단어와 숫자를 포함해
+  모든 단어 뒤의 한국어 조사를 허용하고(정답 `서울 특별시`가 `서울 특별시는`,
+  `AWS`가 `AWS는`, `2024`가 `2024년에`와 매칭), CJK 문자 옆의 띄어쓰기는
+  무시합니다(`3억 원` = `3억원`, `가나다 상사` = `가나다상사`). 한 단어짜리 CJK
+  정답은 부분 문자열로 비교하되 더 긴 숫자나 영문 단어 안에서는 매칭하지
+  않습니다(`2년`은 `12년`과 매칭되지 않음). 공개 벤치마크와 비교할 수 있도록 SQuAD 방식 `exact_match`와
   `token_f1`도 함께 산출합니다. 텍스트는 NFKC로 정규화한 뒤 공식 SQuAD v1.1 스크립트와 같이
   소문자화, 문장 부호 삭제(`1,000` = `1000`), 영어 관사 제거, 공백 정리를
   거칩니다. 토큰 F1은 공백으로 나누므로 중국어/일본어 텍스트에서는 exact match와

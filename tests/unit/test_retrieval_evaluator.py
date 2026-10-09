@@ -87,6 +87,15 @@ class TestSourceKeys:
     def test_leading_slash_is_a_path(self) -> None:
         assert source_keys("/data/in/Buyer Notes") == {"buyer notes"}
 
+    def test_unicode_forms_compare_equal(self) -> None:
+        # macOS and many PDF tools write decomposed (NFD) Hangul file names;
+        # full-width Latin letters NFKC-fold to ASCII; casefold covers "ß".
+        nfd = "\u1100\u1168\u110b\u1163\u11a8\u1109\u1165_\u1100\u1161\u1102\u1161\u1103\u1161\u1109\u1161\u11bc\u1109\u1161.pdf"
+        assert nfd != "계약서_가나다상사.pdf"
+        assert source_keys(nfd) == source_keys("계약서 가나다상사.pdf")
+        assert source_keys("ＡＢＣ.pdf") == source_keys("abc.pdf")
+        assert source_keys("Straße.txt") == source_keys("STRASSE.txt")
+
     def test_blank_has_no_keys(self) -> None:
         assert source_keys("  ") == frozenset()
 

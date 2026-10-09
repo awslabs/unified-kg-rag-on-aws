@@ -34,6 +34,7 @@ from unified_kg_rag.shared.utils import (
     strip_embedding_fields,
     text_digest,
 )
+from unified_kg_rag.shared.utils.scripts import has_dense_script
 
 logger = get_logger(__name__)
 
@@ -99,10 +100,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         await self._opensearch_client.aclose()
 
     def _initialize_field_mappings(self) -> dict[str, dict[str, list[str]]]:
-        target_language = self._config.processing.translation.target_language.value
+        languages = self._config.processing.translation.translated_languages
         return {
             self._opensearch_config.text_units_index_prefix: {
-                "lexical": ["text", f"translated_text_{target_language}"],
+                "lexical": ["text", *(f"translated_text_{lang}" for lang in languages)],
                 "vector": ["text_embedding"],
             },
             self._opensearch_config.entities_index_prefix: {
@@ -136,7 +137,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         """Index prefix -> its declared filterable fields (``filter_schema``)."""
         o = self._opensearch_config
         by_kind = opensearch_filter_fields(
-            self._config.processing.translation.target_language.value
+            *self._config.processing.translation.translated_languages
         )
         return {
             o.text_units_index_prefix: by_kind["text_units"],
@@ -413,9 +414,15 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         if not query.query or query.query == "*":
             return {"match_all": {}}
 
-        main_query = {
-            "multi_match": {"query": query.query, "fields": fields, "fuzziness": "AUTO"}
+        main_query: dict[str, Any] = {
+            "multi_match": {"query": query.query, "fields": fields}
         }
+        # AUTO allows one edit on a 3-5 character term. On Latin words that
+        # absorbs a typo; on Hangul/Han/Kana, where one character is a whole
+        # syllable or morpheme, it matches a different word ("가나라상사" for
+        # "가나다상사"). A query containing such text is matched exactly.
+        if not has_dense_script(query.query):
+            main_query["multi_match"]["fuzziness"] = "AUTO"
 
         if not query.optional_keywords:
             return main_query

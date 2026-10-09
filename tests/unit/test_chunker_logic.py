@@ -608,3 +608,28 @@ def test_default_chunk_sizes_fit_the_embedding_input() -> None:
     assert chunking.max_chunk_size <= 8192
     assert chunking.min_chunk_size < chunking.fallback_chunk_size
     assert chunking.fallback_chunk_size < chunking.max_chunk_size
+
+
+class TestSplitterSeparators:
+    def test_cjk_text_splits_at_sentence_ends(self) -> None:
+        # No spaces or newlines: the splitter used to cut mid-sentence at the
+        # character limit. It now ends chunks at "。", "！", "？" or "；".
+        splitter = SimpleTextChunker._create_splitter(20, 0)
+        text = "第一条の文章は短い。" * 3 + "本当ですか？" + "はい！" + "以上；終わり"
+        chunks = splitter.split_text(text)
+        assert all(len(c) <= 20 for c in chunks)
+        assert all(c[-1] in "。！？；" for c in chunks[:-1]), chunks
+        assert "".join(chunks) == text
+
+    def test_full_width_stop_is_a_sentence_end(self) -> None:
+        splitter = SimpleTextChunker._create_splitter(12, 0)
+        chunks = splitter.split_text("あいうえおかきく．さしすせそたちつ．")
+        assert chunks == ["あいうえおかきく．", "さしすせそたちつ．"]
+
+    def test_english_splitting_unchanged(self) -> None:
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+        text = "Vendor ships widgets.\n\nBuyer pays on time. " * 20
+        default = RecursiveCharacterTextSplitter(chunk_size=80, chunk_overlap=10)
+        ours = SimpleTextChunker._create_splitter(80, 10)
+        assert ours.split_text(text) == default.split_text(text)

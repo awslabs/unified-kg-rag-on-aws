@@ -101,3 +101,48 @@ class TestIsGrounded:
     def test_min_span_tokens_configurable(self) -> None:
         # With min_span_tokens=1 a 2-token ungrounded span is now judged.
         assert is_grounded("fabricated clause", CHUNK, min_span_tokens=1) is False
+
+
+# Synthetic Korean / Japanese / Chinese chunks for the dense-script paths.
+KO_CHUNK = "가나다상사와 홍길동은 공급 계약을 체결했다. 보증 기간이 2년이다."
+JA_CHUNK = "そらいろ商事は東京本社で新製品の販売契約を締結した。"
+ZH_CHUNK = "华青贸易公司与供应商签订了三年的供货合同。"
+
+
+class TestPunctuation:
+    def test_trailing_punctuation_ignored(self) -> None:
+        assert normalize_for_grounding("2년이다.") == normalize_for_grounding("2년이다")
+        span = "The Vendor pays the Buyer USD 1,000 per day."
+        assert is_grounded(span, CHUNK) is True
+
+    def test_symbols_kept(self) -> None:
+        # Symbols (Unicode category S*) such as "$" and "+" are content.
+        assert normalize_for_grounding("$5 + tax") == "$5 + tax"
+
+
+class TestDenseScripts:
+    def test_japanese_hallucination_rejected(self) -> None:
+        # One whitespace "token": the old token-count minimum always kept it.
+        assert is_grounded("株式会社ほしぞら銀行が融資を実行した", JA_CHUNK) is False
+
+    def test_chinese_hallucination_rejected(self) -> None:
+        assert is_grounded("违约金为合同总额的百分之五", ZH_CHUNK) is False
+
+    def test_japanese_verbatim_grounded(self) -> None:
+        assert is_grounded("東京本社で新製品の販売契約を締結した", JA_CHUNK) is True
+
+    def test_korean_particle_paraphrase_grounded(self) -> None:
+        # Particles change (이 -> 은, 을 -> 를) and spacing differs.
+        assert is_grounded("보증기간은 2년이다", KO_CHUNK) is True
+        assert is_grounded("홍길동은 공급계약를 체결했다", KO_CHUNK) is True
+
+    def test_korean_spacing_variant_is_verbatim(self) -> None:
+        assert is_grounded("가나다 상사와 홍길동은", KO_CHUNK) is True
+
+    def test_korean_hallucination_rejected(self) -> None:
+        assert is_grounded("하자담보책임은 인수일로부터 24개월이다", KO_CHUNK) is False
+
+    def test_short_dense_span_cannot_judge(self) -> None:
+        # Three characters is below the default minimum of four.
+        assert is_grounded("라마바", KO_CHUNK) is True
+        assert is_grounded("라마바사", KO_CHUNK) is False
