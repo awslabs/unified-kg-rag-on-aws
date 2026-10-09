@@ -15,6 +15,10 @@ anyway), about an eighth of a list of Python floats. The S3 object stays a
 JSON ``{key: [float, ...]}`` map, so caches written by earlier versions load
 unchanged and vice versa.
 
+Thread-safe: indexing tasks running on threads share one cache, so ``put``
+and ``flush`` may overlap. A flush uploads a snapshot and clears only the
+keys it uploaded.
+
 Best-effort: any S3 error degrades to an in-memory-only cache (load returns
 empty, flush is skipped) rather than failing the run.
 """
@@ -22,6 +26,7 @@ empty, flush is skipped) rather than failing the run.
 from __future__ import annotations
 
 import json
+import threading
 from array import array
 from typing import TYPE_CHECKING, Any
 
@@ -72,6 +77,11 @@ class S3EmbeddingCache:
         # re-reading (and re-parsing) the whole object.
         self._etag: str | None = None
         self._loaded = False
+        # Guards the maps above against concurrent put/flush; held only for
+        # in-memory updates and snapshots, never across an S3 call.
+        self._lock = threading.Lock()
+        # Serialises flushes, so two never upload interleaved snapshots.
+        self._flush_lock = threading.Lock()
 
     @property
     def client(self) -> S3Client:
@@ -95,18 +105,26 @@ class S3EmbeddingCache:
         except Exception as e:  # noqa: BLE001 - missing/unreadable object -> empty
             logger.info("Embedding cache not read from S3 (starting empty): %s", e)
             return
-        self._etag = obj.get("ETag")
         if not isinstance(data, dict):
+            with self._lock:
+                self._etag = obj.get("ETag")
             return
         prefix = f"{self._namespace}|"
+        foreign: dict[str, Any] = {}
+        vectors: dict[str, array] = {}
         for key, vector in data.items():
             if not key.startswith(prefix):
-                self._foreign[key] = vector
-            elif key not in self._cache:
-                try:
-                    self._cache[key] = array("f", vector)
-                except (TypeError, ValueError):
-                    logger.debug("Skipping malformed embedding-cache entry '%s'", key)
+                foreign[key] = vector
+                continue
+            try:
+                vectors[key] = array("f", vector)
+            except (TypeError, ValueError):
+                logger.debug("Skipping malformed embedding-cache entry '%s'", key)
+        with self._lock:
+            self._etag = obj.get("ETag")
+            self._foreign.update(foreign)
+            for key, vector in vectors.items():
+                self._cache.setdefault(key, vector)
 
     def load(self) -> None:
         """Load the persisted cache from S3 (best-effort, once)."""
@@ -128,8 +146,10 @@ class S3EmbeddingCache:
 
     def put(self, content_hash: str, vector: list[float]) -> None:
         key = self._namespaced(content_hash)
-        self._cache[key] = array("f", vector)
-        self._pending.add(key)
+        value = array("f", vector)
+        with self._lock:
+            self._cache[key] = value
+            self._pending.add(key)
 
     def _remote_changed(self) -> bool:
         if self._etag is None:
@@ -140,12 +160,13 @@ class S3EmbeddingCache:
             return True
         return head.get("ETag") != self._etag
 
-    def _encode(self) -> bytes:
+    @staticmethod
+    def _encode(
+        foreign: list[tuple[str, Any]], vectors: list[tuple[str, array]]
+    ) -> bytes:
         # One entry at a time, so the vectors never all exist as float lists.
-        entries = [f"{json.dumps(k)}:{json.dumps(v)}" for k, v in self._foreign.items()]
-        entries.extend(
-            f"{json.dumps(k)}:{json.dumps(v.tolist())}" for k, v in self._cache.items()
-        )
+        entries = [f"{json.dumps(k)}:{json.dumps(v)}" for k, v in foreign]
+        entries.extend(f"{json.dumps(k)}:{json.dumps(v.tolist())}" for k, v in vectors)
         return ("{" + ",".join(entries) + "}").encode("utf-8")
 
     def flush(self) -> None:
@@ -155,27 +176,38 @@ class S3EmbeddingCache:
         wrote it, its entries are merged in first, so they are preserved rather
         than clobbered by the whole-object overwrite. Worst case under a true
         write-write race is re-embedding a few vectors, never a wrong one.
+
+        The upload is a snapshot taken under the lock; vectors ``put`` while it
+        runs stay pending for the next flush.
         """
-        if not self._pending:
-            return
-        try:
-            if self._remote_changed():
-                self._merge_remote()
-            response = self.client.put_object(
-                Bucket=self.bucket_name,
-                Key=self.key,
-                Body=self._encode(),
-                **self._sse_args,
-            )
-            self._etag = response.get("ETag") if isinstance(response, dict) else None
-            flushed_count = len(self._pending)
-            self._pending.clear()
-            logger.info(
-                "Flushed %s embedding-cache entries to 's3://%s/%s' (%s total)",
-                flushed_count,
-                self.bucket_name,
-                self.key,
-                len(self._cache) + len(self._foreign),
-            )
-        except Exception as e:  # noqa: BLE001 - persistence is best-effort
-            logger.warning("Failed to flush embedding cache to S3: %s", e)
+        with self._flush_lock:
+            with self._lock:
+                if not self._pending:
+                    return
+            try:
+                if self._remote_changed():
+                    self._merge_remote()
+                with self._lock:
+                    flushed = set(self._pending)
+                    foreign = list(self._foreign.items())
+                    vectors = list(self._cache.items())
+                response = self.client.put_object(
+                    Bucket=self.bucket_name,
+                    Key=self.key,
+                    Body=self._encode(foreign, vectors),
+                    **self._sse_args,
+                )
+                with self._lock:
+                    self._etag = (
+                        response.get("ETag") if isinstance(response, dict) else None
+                    )
+                    self._pending -= flushed
+                logger.info(
+                    "Flushed %s embedding-cache entries to 's3://%s/%s' (%s total)",
+                    len(flushed),
+                    self.bucket_name,
+                    self.key,
+                    len(foreign) + len(vectors),
+                )
+            except Exception as e:  # noqa: BLE001 - persistence is best-effort
+                logger.warning("Failed to flush embedding cache to S3: %s", e)

@@ -616,6 +616,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   classifier marks permanent also cost a second call. Truncated responses
   are now never retried, and other non-retryable items fail after one call
   (#PR).
+- The persisted embedding cache (`persist_embedding_cache`) is safe to share
+  across the indexing threads. A flush iterated the vectors while other
+  threads added to them, failed with `dictionary changed size during
+  iteration` (logged as a WARNING) and left the cache unpersisted, and a
+  flush that succeeded forgot the vectors added during its upload, so they
+  were never written. A flush now uploads a snapshot and keeps the vectors
+  added meanwhile pending for the next one (#PR).
 - A model response that stopped at its output-token limit (`stopReason`
   or `stop_reason` `max_tokens`) fails with `LLMOutputTruncatedError`
   instead of being parsed. The XML parser recovered the sections before the

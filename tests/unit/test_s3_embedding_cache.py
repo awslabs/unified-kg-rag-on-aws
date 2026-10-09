@@ -11,6 +11,9 @@ all with a fake S3 client (no AWS).
 from __future__ import annotations
 
 import json
+import logging
+import sys
+import threading
 
 import boto3
 import pytest
@@ -239,3 +242,67 @@ def test_flush_merges_a_concurrent_writers_entries() -> None:
         "titan:1024|mine": [1.0],
     }
     assert c.get("theirs") == [7.0]
+
+
+def test_put_during_an_upload_stays_pending_for_the_next_flush() -> None:
+    fake = _VersionedS3()
+    c = _cache(fake)
+    c.load()
+    c.put("first", [1.0])
+    upload = fake.put_object
+
+    def put_object_while_another_thread_puts(**kwargs):
+        # Another indexing thread computes a vector during the upload.
+        worker = threading.Thread(target=c.put, args=("late", [2.0]))
+        worker.start()
+        worker.join()
+        return upload(**kwargs)
+
+    fake.put_object = put_object_while_another_thread_puts  # type: ignore[method-assign]
+    c.flush()
+    assert set(json.loads(fake.objects[_KEY])) == {"titan:1024|first"}
+    assert c._pending == {"titan:1024|late"}
+
+    fake.put_object = upload  # type: ignore[method-assign]
+    c.flush()
+    assert set(json.loads(fake.objects[_KEY])) == {
+        "titan:1024|first",
+        "titan:1024|late",
+    }
+    assert not c._pending
+
+
+def test_concurrent_puts_and_flushes_persist_every_vector(caplog) -> None:
+    # Indexing tasks share one cache across threads; a flush iterating the
+    # map while they put raised "dictionary changed size during iteration".
+    previous = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        fake = _VersionedS3()
+        c = _cache(fake)
+        c.load()
+        for i in range(5000):
+            c.put(f"seed{i}", [float(i)])
+        done = threading.Event()
+
+        def writer(n: int) -> None:
+            for i in range(2000):
+                c.put(f"w{n}-{i}", [float(i)])
+            done.set()
+
+        threads = [threading.Thread(target=writer, args=(n,)) for n in range(4)]
+        with caplog.at_level(logging.WARNING):
+            for t in threads:
+                t.start()
+            while any(t.is_alive() for t in threads):
+                c.flush()
+            for t in threads:
+                t.join()
+            c.flush()
+    finally:
+        sys.setswitchinterval(previous)
+
+    assert "Failed to flush" not in caplog.text
+    stored = json.loads(fake.objects[_KEY])
+    assert len(stored) == 5000 + 4 * 2000
+    assert not c._pending
