@@ -641,9 +641,11 @@ def test_shipped_tier_efforts_keep_default_quality() -> None:
     bedrock = Config().aws.bedrock
     assert bedrock.tier_effort("default") == "high"
     assert bedrock.tier_effort("fast") == "low"
-    # The shipped fast model has no thinking, so fast_effort is a no-op there.
+    # The shipped fast model thinks adaptively and accepts the fast effort, so
+    # fast_effort really sets its reasoning depth.
     fast_info = _lang_factory().get_model_info(bedrock.fast_model_id)
-    assert not fast_info.supports_thinking
+    assert fast_info.uses_adaptive_thinking
+    assert bedrock.tier_effort("fast") in fast_info.supported_efforts
 
 
 def test_same_model_on_both_tiers_uses_default_effort() -> None:

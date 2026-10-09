@@ -267,18 +267,19 @@ class TestFingerprintScope:
     _RELEASED_DEFAULT_FINGERPRINTS = {
         PipelineStageType.DOCUMENT_PARSING: "1035b7a62512",
         PipelineStageType.DOCUMENT_LOADING: "ac616352a4e7",
-        PipelineStageType.TEXT_CHUNKING: "4f4d6918f24f",
-        PipelineStageType.TRANSLATION: "f7885a7f8b8f",
-        PipelineStageType.GRAPH_EXTRACTION: "f5679b85b1b0",
-        PipelineStageType.GLEANING: "3154dc9fb4f4",
-        PipelineStageType.GRAPH_RESOLUTION: "09067b47d9fb",
-        PipelineStageType.CLAIM_EXTRACTION: "96015659a99b",
-        PipelineStageType.CLAIM_RESOLUTION: "96015659a99b",
+        # The fast tier's default model moved to Claude Haiku 5.5, so every
+        # stage from chunking on (each has a fast-tier role upstream) re-keys.
+        PipelineStageType.TEXT_CHUNKING: "7d24d450ee75",
+        PipelineStageType.TRANSLATION: "5abcca511058",
+        PipelineStageType.GRAPH_EXTRACTION: "5cecc719e0a7",
+        PipelineStageType.GLEANING: "7daa823fa004",
+        PipelineStageType.GRAPH_RESOLUTION: "5709e17d032a",
+        PipelineStageType.CLAIM_EXTRACTION: "99e66b287398",
+        PipelineStageType.CLAIM_RESOLUTION: "99e66b287398",
         # graph.analysis is no longer an input (it shapes nothing a later
         # stage reads), so graph analysis shares claim resolution's inputs.
-        PipelineStageType.GRAPH_ANALYSIS: "96015659a99b",
-        # auto_resolution now defaults to false; graph.analysis dropped.
-        PipelineStageType.COMMUNITY_DETECTION: "98d775b8f65c",
+        PipelineStageType.GRAPH_ANALYSIS: "99e66b287398",
+        PipelineStageType.COMMUNITY_DETECTION: "a35b6a8701d2",
     }
 
     def test_default_config_fingerprints_are_unchanged(self) -> None:

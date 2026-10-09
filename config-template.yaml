@@ -33,7 +33,7 @@ aws:
     #     search.drift_search.{query_refinement,keyword_expansion,
     #                          convergence_assessment,primer}_model_id
     default_model_id: "anthropic.claude-sonnet-5-5"
-    fast_model_id: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    fast_model_id: "anthropic.claude-haiku-5-5"
     # max_tokens per LLM request, clamped to the model maximum. Bedrock reserves
     # input + max_tokens against the tokens-per-minute quota at request start,
     # so asking for the model maximum (128K on Claude 5.x) throttles concurrent
@@ -66,9 +66,8 @@ aws:
     # Ignored by older Claude models, which still use thinking_budget_tokens.
     # A call's tier follows its model id: a call on fast_model_id (when it
     # differs from default_model_id) uses fast_effort, every other call uses
-    # default_effort. The shipped fast model (Claude Haiku 4.5) does not reason
-    # on these calls, so fast_effort only matters once fast_model_id is an
-    # adaptive-thinking or GPT model. The former `effort` key is migrated to
+    # default_effort. The shipped fast model (Claude Haiku 5.5) thinks
+    # adaptively, so fast_effort sets how much it reasons on fast-tier calls. The former `effort` key is migrated to
     # default_effort with a deprecation warning.
     default_effort: "high"
     fast_effort: "low"
