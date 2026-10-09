@@ -466,6 +466,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- The delta detection reads the records of changed documents in one batch
+  (`DocStatusPort.get_many`, `BatchGetItem` on DynamoDB) to check
+  `indexing.max_document_failures`, instead of one `GetItem` per changed
+  document: editing 300 documents, or the recovery run after an interrupted
+  run left 300 `PENDING` records, cost 300 sequential reads. A custom store
+  without `get_many` still gets one `get` per document (#PR).
 - Deleting or changing a document no longer leaves its entities and
   relationships in the stores because a document of another index namespace
   sharing the registry table references the same ids. The removal plan

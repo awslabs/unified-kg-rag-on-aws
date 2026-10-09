@@ -595,13 +595,17 @@ def _stop_retrying_exhausted(
 
     ``written`` holds the records this run just wrote (adopted legacy
     records), used as they are instead of read back from a store that may
-    not return them yet.
+    not return them yet. The others are read in one batch
+    (:meth:`DocStatusPort.get_many`), not one ``get`` per changed document.
     """
     written = written or {}
+    stored = _get_many(
+        doc_status, [doc_id for doc_id in delta.changed if doc_id not in written]
+    )
     exhausted: list[str] = []
     labels: list[str] = []
     for doc_id in delta.changed:
-        record = written.get(doc_id) or doc_status.get(doc_id)
+        record = written.get(doc_id) or stored.get(doc_id)
         if (
             record is not None
             and record.status is DocStatus.FAILED

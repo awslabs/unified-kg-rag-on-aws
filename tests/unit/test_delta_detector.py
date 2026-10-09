@@ -20,7 +20,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     registry_scope,
     scope_namespace,
 )
-from unified_kg_rag.domain.models import DocStatusRecord, Document
+from unified_kg_rag.domain.models import DocStatus, DocStatusRecord, Document
 from unified_kg_rag.ports import DocStatusPort
 
 pytestmark = pytest.mark.unit
@@ -225,3 +225,44 @@ def test_scope_namespace_reads_the_namespace_of_a_registry_scope() -> None:
     assert scope_namespace(registry_scope("tenant", "s3://bucket/p/")) == "tenant"
     assert scope_namespace(None) is None
     assert scope_namespace("no-separator") is None
+
+
+def _failed_corpus(store: FakeDocStatusStore, count: int) -> list[Document]:
+    """``count`` documents, every one recorded FAILED 3 times with its content
+    except the first, which was edited."""
+    documents = [_doc(f"/d{i}.txt", f"text {i}") for i in range(count)]
+    for i, document in enumerate(documents):
+        store.put(
+            DocStatusRecord(
+                doc_id=document_doc_id(document),
+                content_hash="edited" if i == 0 else compute_content_hash(document),
+                status=DocStatus.FAILED,
+                failure_count=3,
+            )
+        )
+    return documents
+
+
+def test_exhausted_retries_are_read_in_one_batch() -> None:
+    store = _CountingStore()
+    documents = _failed_corpus(store, 300)
+
+    delta, _ = detect_delta(documents, store, max_failures=3)
+
+    assert delta.changed == [document_doc_id(documents[0])]
+    assert len(delta.unchanged) == 299
+    assert store.gets == 0
+    assert store.batches == [300]
+
+
+def test_exhausted_retries_fall_back_to_get_without_get_many() -> None:
+    class _Legacy(FakeDocStatusStore):
+        get_many = None  # type: ignore[assignment]
+
+    store = _Legacy()
+    documents = _failed_corpus(store, 3)
+
+    delta, _ = detect_delta(documents, store, max_failures=3)
+
+    assert delta.changed == [document_doc_id(documents[0])]
+    assert len(delta.unchanged) == 2
