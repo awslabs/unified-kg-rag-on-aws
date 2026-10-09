@@ -79,8 +79,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   empty answer, a re-proposed known item, or an ungrounded addition ends that
   unit). The corpus-wide early stop on the model's self-reported
   completeness/accuracy and a convergence score is gone, so units that keep
-  gaining now run the full `max_rounds`. The refinement prompt no longer asks
-  for quality scores. `gleaning_improvement_rate` in the pipeline metrics is
+  gaining now run the full `max_rounds`. The refinement prompt still asks the
+  model to score completeness and accuracy before listing issues: the scores
+  are no longer read, but dropping that self-check cut round-1 additions by
+  about half (+44 vs +89 entities) and final entities by about 5% in an E2E
+  A/B. `gleaning_improvement_rate` in the pipeline metrics is
   now the gleaned entities plus relationships per extracted one (it was the
   relative change of the self-reported quality score), and the gleaning stage
   reports `refinement_calls`. Cached gleaning and later stage outputs miss
