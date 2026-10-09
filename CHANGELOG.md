@@ -611,6 +611,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or
   `LANGCHAIN_TRACING_V2` enables LangSmith tracing, which uploads prompts,
   retrieved context and model outputs. Tracing is not turned off (#156).
+- Logs at INFO and above no longer carry query text, rewritten (DRIFT) queries,
+  corpus entity names or raw model output; they log lengths, counts, ids and a
+  short hash instead, and the text moves to DEBUG. The XML parser's exception
+  message no longer embeds model output, and the per-query "no entity focus"
+  WARNING is now a DEBUG record (#PR).
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on
   Python 3.11+ (GHSA-4mvj-m6j5-pmf7), which also drops NLTK and its model
   artifact path traversal (GHSA-8mgp-746c-j5xp); Python 3.10 keeps the core

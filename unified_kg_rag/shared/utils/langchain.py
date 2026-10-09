@@ -20,6 +20,7 @@ from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
 
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils.common import text_digest
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 if TYPE_CHECKING:
@@ -654,11 +655,18 @@ class RobustXMLOutputParser(XMLOutputParser):
                 e,
             )
 
-        logger.error("All XML parsing attempts failed for content: '%s...'", text[:200])
+        # Model output can echo corpus or query text: only its size reaches
+        # ERROR and the exception message; the text itself is DEBUG-only (and
+        # carried on ``llm_output`` for OutputFixingParser).
+        logger.error(
+            "All XML parsing attempts failed for content: %s", text_digest(text)
+        )
+        logger.debug("Unparseable XML content: '%s'", text[:200])
         # OutputParserException (a ValueError) is what OutputFixingParser
         # catches to run its repair LLM; a bare ValueError bypassed it.
         raise OutputParserException(
-            f"Failed to parse XML after multiple attempts. Content preview: '{text[:200]}...'",
+            "Failed to parse XML after multiple attempts "
+            f"(content {text_digest(text)})",
             llm_output=text,
         )
 

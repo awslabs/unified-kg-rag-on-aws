@@ -29,6 +29,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 )
 from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils import text_digest
 
 logger = get_logger(__name__)
 
@@ -61,8 +62,8 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         start_time = time.time()
         logger.info(
-            "Neptune retrieval started - query: '%s...' ('%s')",
-            query.query[:50],
+            "Neptune retrieval started - query: %s ('%s')",
+            text_digest(query.query),
             query.search_type.value,
         )
 
@@ -75,7 +76,9 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
             seed_entities, seed_communities = await self._get_seed_nodes(g, query)
 
             if not seed_entities and not seed_communities:
-                logger.warning("No seed nodes found for query: '%s'", query.query)
+                logger.warning(
+                    "No seed nodes found for query: %s", text_digest(query.query)
+                )
                 return []
 
             traversal_results = await self._traverse_from_seeds(
@@ -177,7 +180,10 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         if query.entity_focus:
             traversal = traversal.has("name", P.within(query.entity_focus))
         else:
-            logger.warning("No entity focus provided. Using query: '%s'", query.query)
+            logger.debug(
+                "No entity focus provided; matching names against query terms: '%s'",
+                query.query,
+            )
             query_terms = re.findall(r"\b\w+\b", query.query.lower())
             if not query_terms:
                 return []

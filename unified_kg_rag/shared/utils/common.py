@@ -100,6 +100,18 @@ def compute_hash(data: str, algorithm: str = "sha256", length: int = 16) -> str:
     return hash_obj.hexdigest()[:length]
 
 
+def text_digest(text: str | None) -> str:
+    """Log-safe stand-in for user, corpus or model text: length + short hash.
+
+    INFO-and-above log records carry this instead of the text itself (queries,
+    entity names and model output are DEBUG-only); the hash lets one query be
+    correlated across records without revealing it.
+    """
+    if not text:
+        return "len=0"
+    return f"len={len(text)} sha={compute_hash(text, length=8)}"
+
+
 def ensure_list(data: Any, inner_key: str | None = None) -> list[Any]:
     if isinstance(data, dict):
         data = data.get(inner_key, []) if inner_key else data

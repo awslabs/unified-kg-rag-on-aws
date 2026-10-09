@@ -522,7 +522,7 @@ class GraphExtractor(BaseProcessor):
                 logger.info(
                     "Dropping ungrounded entity '%s' — source_text not found in "
                     "chunk '%s' (likely hallucinated)",
-                    entity.name,
+                    entity.short_id,
                     text_unit.short_id,
                 )
         dropped_keys -= {entity_key(e.name) for e in kept}

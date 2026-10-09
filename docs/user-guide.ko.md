@@ -528,6 +528,16 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `logging.log_to_file` | `true` | CLI가 로그를 `log_file_path`(`logs/log.txt`, 실제 파일명은 `log_YYYYMMDD.txt`)에도 기록합니다. 상대 경로는 작업 디렉터리 기준입니다. 패키지를 라이브러리로 import하면 핸들러나 파일을 설정하지 않고 호스트 애플리케이션의 로깅 설정을 따릅니다. |
 | `logging.library_levels` | `{langchain_aws: WARNING, botocore: WARNING, urllib3: WARNING}` | 로그가 많은 라이브러리의 로거별 수준입니다. 지정하면 기본 목록 전체가 대체됩니다. |
 
+**로그에 남는 내용.** `INFO` 이상 수준에서는 사용자·코퍼스 텍스트 대신 길이,
+개수, ID와 짧은 해시만 기록합니다(예: `query: len=42 sha=1a2b3c4d`). 해시는
+항상 같은 값이므로 내용을 드러내지 않고 같은 질의를 여러 로그 레코드에서 추적할
+수 있습니다. 질의 원문, 다시 쓴 질의(DRIFT·번역), 엔터티 이름과 모델 원본 출력은
+`DEBUG`에서만 기록하며 예외 메시지에는 모델 출력을 넣지 않습니다. `DEBUG`
+로그(`logging.level: DEBUG`, `LOG_LEVEL=DEBUG`, `--verbose`)에는 사용자·코퍼스
+데이터가 들어 있다고 보고, 로그를 공유 저장소로 보내는 환경에서는 켜지 마세요.
+`logging.library_levels`에서 `DEBUG`로 둔 라이브러리(예: `botocore`)는 요청
+본문까지 기록할 수 있습니다.
+
 ### 2.8 `evaluation`
 
 | 키 | 기본값 | 역할 / 바꿀 때 |

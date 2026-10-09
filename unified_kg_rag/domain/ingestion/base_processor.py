@@ -100,11 +100,9 @@ class BaseProcessor:
             )
         except Exception as e:
             logger.warning(
-                "Failed to parse entity '%s' in text unit '%s': %s",
-                entity_data.get("name", "unknown"),
-                text_unit.short_id,
-                e,
+                "Failed to parse entity in text unit '%s': %s", text_unit.short_id, e
             )
+            logger.debug("Unparsed entity name: '%s'", entity_data.get("name"))
             return None
 
     @staticmethod
@@ -150,8 +148,12 @@ class BaseProcessor:
 
             if not all((source_name, target_name, rel_type)):
                 logger.warning(
-                    "Skipping relationship with missing data in text unit '%s': source='%s', target='%s', type='%s'",
+                    "Skipping relationship with missing source, target or type "
+                    "in text unit '%s'",
                     text_unit.short_id,
+                )
+                logger.debug(
+                    "Skipped relationship: source='%s', target='%s', type='%s'",
                     raw_source_name,
                     raw_target_name,
                     rel_type,
@@ -210,11 +212,12 @@ class BaseProcessor:
             )
         except Exception as e:
             logger.warning(
-                "Failed to parse relationship '%s' -> '%s' in text unit '%s': %s",
-                raw_source_name,
-                raw_target_name,
+                "Failed to parse relationship in text unit '%s': %s",
                 text_unit.short_id,
                 e,
+            )
+            logger.debug(
+                "Unparsed relationship: '%s' -> '%s'", raw_source_name, raw_target_name
             )
             return None
 
@@ -279,9 +282,8 @@ class BaseProcessor:
                 normalized = raw_confidence
             return max(0.0, min(1.0, normalized))
         except (ValueError, TypeError):
-            logger.warning(
-                "Invalid confidence value '%s', using default %s", value, default
-            )
+            logger.warning("Invalid confidence value, using default %s", default)
+            logger.debug("Invalid confidence value: '%s'", value)
             return default
 
     @staticmethod

@@ -25,6 +25,7 @@ from unified_kg_rag.domain.retrieval.strategy_registry import (
     register_strategy,
 )
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils import text_digest
 
 logger = get_logger(__name__)
 
@@ -47,11 +48,12 @@ class LocalSearchStrategy(BaseSearchStrategy):
     ) -> SearchResult:
         start_time = time.time()
         logger.info(
-            "Local search started - query: '%s...' ('%s') with entities: '%s'",
-            query.query[:50],
+            "Local search started - query: %s ('%s') with %s focus entities",
+            text_digest(query.query),
             query.search_type.value,
-            ", ".join(query.entity_focus),
+            len(query.entity_focus),
         )
+        logger.debug("Local search focus entities: '%s'", ", ".join(query.entity_focus))
 
         # MS GraphRAG local search builds context from entities + the community
         # reports those entities belong to + in-network relationships + text

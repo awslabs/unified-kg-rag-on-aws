@@ -540,6 +540,17 @@ quotas (`search.local_search.type_quota`) are in the template.
 | `logging.log_to_file` | `true` | The CLIs also write logs to `log_file_path` (`logs/log.txt`, dated as `log_YYYYMMDD.txt`; a relative path is resolved against the working directory). Importing the package as a library configures no handler or file: the host application's logging setup applies. |
 | `logging.library_levels` | `{langchain_aws: WARNING, botocore: WARNING, urllib3: WARNING}` | Per-logger levels for chatty libraries. Setting the key replaces the whole map. |
 
+**What the logs contain.** At `INFO` and above the package logs only lengths,
+counts, ids and a short hash for user and corpus text, for example
+`query: len=42 sha=1a2b3c4d`. The hash is stable, so one query can be followed
+across records without revealing it. Query text, rewritten (DRIFT and
+translated) queries, entity names and raw model output are logged only at
+`DEBUG`, and exception messages never carry model output. Treat `DEBUG` logs
+(`logging.level: DEBUG`, `LOG_LEVEL=DEBUG` or `--verbose`) as containing user
+and corpus data: do not enable them where logs are shipped to shared storage.
+Libraries set to `DEBUG` in `logging.library_levels` (for example `botocore`)
+can log request bodies too.
+
 ### 2.8 `evaluation`
 
 | Key | Default | What it does / when to change |
