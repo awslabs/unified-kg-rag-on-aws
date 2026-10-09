@@ -137,7 +137,7 @@ class ClaimExtractor(BaseProcessor):
             factory=self.factory,
             enable_output_fixing=self.config.fixing.enabled,
             output_fixing_model_id=self.config.fixing.fixing_model_id,
-            min_output_tokens=ClaimExtractionPrompt.min_output_tokens,
+            min_output_tokens=ClaimExtractionPrompt.output_floor(self.config),
             output_tags=["claims"],
         )
         self.claim_extractor = setup_chain(
@@ -145,6 +145,7 @@ class ClaimExtractor(BaseProcessor):
             factory=self.factory,
             model_id=self.claim_extraction_config.extraction_model_id,
             prompt_class=ClaimExtractionPrompt,
+            min_output_tokens=ClaimExtractionPrompt.output_floor(self.config),
             parser=robust_xml_output_parser,
             custom_prompts=self.config.custom_prompts,
         )

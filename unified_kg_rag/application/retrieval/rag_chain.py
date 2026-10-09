@@ -76,6 +76,7 @@ from unified_kg_rag.domain.prompts import (
     StrategySelectionPrompt,
     TranslationPrompt,
 )
+from unified_kg_rag.domain.prompts.retrieval import describe_routable_strategies
 from unified_kg_rag.domain.retrieval.strategy_registry import (
     QueryInput,
     get_strategy_spec,
@@ -389,6 +390,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 {
                     "query": query,
                     "strategies": ", ".join(s.value for s in routable),
+                    "strategy_descriptions": describe_routable_strategies(routable),
                 },
                 config,
             )

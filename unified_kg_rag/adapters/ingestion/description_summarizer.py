@@ -131,6 +131,8 @@ class DescriptionSummarizer:
                 "entity_name": name,
                 "descriptions": description,
                 "max_summary_tokens": str(self.summarization_config.max_summary_tokens),
+                # Extraction and gleaning write descriptions in the target
+                # language, so the merged input is already in it.
                 "language": self.target_language,
                 "target_language": self.target_language,
             }

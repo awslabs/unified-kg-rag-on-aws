@@ -97,8 +97,8 @@ def prepare_input_task(
     all_relationships: list[Relationship],
     config: dict[str, Any],
 ) -> dict[str, Any]:
+    target_language = config.get("target_language", "en")
     if unit.translated_texts:
-        target_language = config.get("target_language", "en")
         unit_text = unit.translated_texts.get(target_language, unit.text or "")
     else:
         unit_text = unit.text or ""
@@ -128,6 +128,7 @@ def prepare_input_task(
         "text": unit_text,
         "entities": entities_str,
         "relationships": relationships_str,
+        "target_language": target_language,
     }
 
 
@@ -198,7 +199,7 @@ class GraphGleaner(BaseProcessor):
             factory=self.factory,
             enable_output_fixing=self.config.fixing.enabled,
             output_fixing_model_id=self.config.fixing.fixing_model_id,
-            min_output_tokens=GraphRefinementPrompt.min_output_tokens,
+            min_output_tokens=GraphRefinementPrompt.output_floor(self.config),
             output_tags=["refinement_plan"],
         )
         self.graph_refiner = setup_chain(
@@ -206,6 +207,7 @@ class GraphGleaner(BaseProcessor):
             factory=self.factory,
             model_id=self.gleaning_config.graph_refinement_model_id,
             prompt_class=GraphRefinementPrompt,
+            min_output_tokens=GraphRefinementPrompt.output_floor(self.config),
             parser=robust_xml_output_parser,
             custom_prompts=self.config.custom_prompts,
         )

@@ -23,6 +23,11 @@ from unified_kg_rag.adapters.ingestion.graph_extractor import (
 )
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
+from unified_kg_rag.domain.models.config import LanguageCode
+from unified_kg_rag.domain.prompts.graph_extraction import (
+    GraphExtractionPrompt,
+    GraphRefinementPrompt,
+)
 from unified_kg_rag.shared import DataProcessingError
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED
 
@@ -489,6 +494,12 @@ class TestPrepareExtractionInputs:
             extractor.extraction_config.max_entities_per_chunk
         )
 
+    def test_inputs_carry_target_language(self, extractor) -> None:
+        # Descriptions are written in the graph's (target) language.
+        extractor.config.processing.translation.target_language = LanguageCode.KO
+        inputs = extractor._prepare_extraction_inputs([TextUnit(id="t1", text="x")])
+        assert inputs[0]["target_language"] == "ko"
+
 
 # --------------------------------------------------------------------------- #
 # _process_extraction_results
@@ -860,3 +871,13 @@ class TestDroppedEntityNotResurrected:
         _, rels = extractor._process_extraction_results([text_unit], [result])
         assert {r.type for r in rels} == {"OFFERS", "WORKS_AT"}
         assert extractor.stats.relationships_dropped_ungrounded_endpoint == 0
+
+
+@pytest.mark.parametrize(
+    "prompt", [GraphExtractionPrompt, GraphRefinementPrompt], ids=lambda p: p.__name__
+)
+def test_description_prompts_take_the_output_language(prompt) -> None:
+    assert "target_language" in prompt.input_variables
+    human = prompt.resolve().human_prompt_template
+    assert "Write every <description> in the language with code" in human
+    assert "'{target_language}'" in human

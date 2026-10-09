@@ -71,6 +71,12 @@ aws:
     # default_effort with a deprecation warning.
     default_effort: "high"
     fast_effort: "low"
+    # Effort for ingestion calls on the default tier (graph extraction,
+    # gleaning, claim extraction, community reports; the output fixer only
+    # when fixing.fixing_model_id is a default-tier model), which use most of an ingestion's default-tier tokens. null inherits
+    # default_effort; set e.g. "medium" to cut ingestion cost without changing
+    # query-time effort. Fast-tier ingestion calls keep fast_effort.
+    ingestion_effort: null
     # Amazon Bedrock Guardrails (WAF security pillar). Disabled unless an
     # identifier is set; when set, the guarded LLM calls enforce the
     # guardrail's content/PII/grounding policies on prompts and completions.
@@ -241,6 +247,8 @@ processing:
     # of the original chunk text and drives the no-op skip. Changing it
     # requires re-indexing the text units.
     source_language: "en"
+    # Language of the index: text is translated into it, queries are
+    # translated into it, and entity/relationship descriptions are written in it.
     target_language: "en"
     # Extra languages to translate into; each is indexed in its own analyzed
     # translated_text_<language> field and searched lexically.

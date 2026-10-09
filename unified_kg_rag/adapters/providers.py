@@ -31,6 +31,7 @@ from unified_kg_rag.adapters.aws.bedrock import (
     BedrockRerankModelFactory,
     get_assumed_role_boto_session,
 )
+from unified_kg_rag.adapters.aws.bedrock_models import get_language_model_info
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.ports.model_factory import (
@@ -136,17 +137,22 @@ class Providers:
         """A token counter for ``model_id`` (a new instance per call).
 
         Counters keep a per-instance LRU cache, so each consumer owns one; the
-        default Bedrock counters share a single ``bedrock-runtime`` client.
+        default Bedrock counters share a single ``bedrock-runtime`` client and
+        scale their local estimate by the model's ``token_estimate_multiplier``.
         """
         if self._token_counter_factory is not None:
             return self._token_counter_factory(
                 model_id, cache_maxsize=cache_maxsize, api_supported=api_supported
             )
+        info = get_language_model_info(
+            model_id, self.config.aws.bedrock.model_overrides
+        )
         return BedrockTokenCounter(
             model_id=model_id,
             client=self._count_tokens_client() if api_supported else None,
             cache_maxsize=cache_maxsize,
             api_supported=api_supported,
+            estimate_multiplier=info.token_estimate_multiplier,
         )
 
     def _count_tokens_client(self) -> Any:

@@ -768,7 +768,8 @@ class BedrockLanguageModelFactory(
             tier: ModelTier = (
                 "fast" if kwargs.get("model_tier") == "fast" else "default"
             )
-            effort = self.config.aws.bedrock.tier_effort(tier)
+            purpose = ModelPurpose(kwargs.get("model_purpose", ModelPurpose.QUERY))
+            effort = self.config.aws.bedrock.tier_effort(tier, purpose)
             source = f"aws.bedrock.{tier}_effort"
         if effort not in EFFORT_LEVELS:
             raise LanguageModelError(

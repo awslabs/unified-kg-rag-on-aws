@@ -324,6 +324,9 @@ class TestFingerprintScope:
         assert fingerprint({"default_effort": "medium"}) != baseline
         assert fingerprint({"fast_effort": "low"}) == baseline
         assert fingerprint({"fast_effort": "medium"}) != baseline
+        # Unset ingestion_effort inherits default_effort: same key as before.
+        assert fingerprint({"ingestion_effort": None}) == baseline
+        assert fingerprint({"ingestion_effort": "medium"}) != baseline
 
     def test_key_is_the_attribute_plus_the_fingerprint(self) -> None:
         config = Config()

@@ -439,6 +439,18 @@ class BedrockConfig(BaseModel):
             "calls; it has no effect on a fast model that does not reason."
         ),
     )
+    ingestion_effort: EffortLevel | None = Field(
+        default=None,
+        description=(
+            "Reasoning effort for ingestion calls on the default tier (graph "
+            "extraction, gleaning, claim extraction, community reports, prompt "
+            "tuning, and the output fixer when fixing_model_id is a "
+            "default-tier model). These make up most of an "
+            "ingestion's default-tier tokens, so lowering this cuts ingestion "
+            "cost without changing query-time effort. null inherits "
+            "default_effort. Fast-tier ingestion calls keep fast_effort."
+        ),
+    )
     guardrail: GuardrailConfig = Field(
         default_factory=GuardrailConfig,
         description="Amazon Bedrock Guardrails configuration (disabled unless identifier set)",
@@ -461,9 +473,18 @@ class BedrockConfig(BaseModel):
             return "fast"
         return "default"
 
-    def tier_effort(self, tier: ModelTier) -> EffortLevel:
-        """Configured effort for ``tier``."""
-        return self.fast_effort if tier == "fast" else self.default_effort
+    def tier_effort(
+        self, tier: ModelTier, purpose: "ModelPurpose | None" = None
+    ) -> EffortLevel:
+        """Configured effort for ``tier``, for a call made for ``purpose``.
+
+        A default-tier ingestion call uses ``ingestion_effort`` when it is set.
+        """
+        if tier == "fast":
+            return self.fast_effort
+        if purpose is ModelPurpose.INGESTION and self.ingestion_effort:
+            return self.ingestion_effort
+        return self.default_effort
 
 
 class NeptuneConfig(BaseModel):
@@ -2156,6 +2177,12 @@ class LightRAGSearchConfig(BaseModel):
     )
 
 
+def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrategy]:
+    if SearchStrategy.AUTO in strategies:
+        raise ValueError("auto_routable_strategies cannot include 'auto'")
+    return strategies
+
+
 class SearchConfig(BaseModel):
     translation_model_id: BedrockModelId = role_model_field(
         "fast",
@@ -2174,7 +2201,9 @@ class SearchConfig(BaseModel):
             "latency is added to every AUTO query."
         ),
     )
-    auto_routable_strategies: list[SearchStrategy] = Field(
+    auto_routable_strategies: Annotated[
+        list[SearchStrategy], AfterValidator(_reject_auto_strategy)
+    ] = Field(
         default_factory=lambda: [
             SearchStrategy.LOCAL,
             SearchStrategy.MIX,

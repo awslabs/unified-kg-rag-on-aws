@@ -227,6 +227,7 @@ the same values.
 | `aws.bedrock.fast_model_id` | `"anthropic.claude-haiku-5-5"` | Model for every fast-tier role. |
 | `aws.bedrock.default_max_output_tokens` | `16384` | `max_tokens` per request, clamped to the model maximum. Raise it if answers are cut off (`stopReason: max_tokens`); `null` sends the model maximum. |
 | `aws.bedrock.default_effort` | `"high"` | Reasoning depth for calls on `default_model_id` (adaptive-thinking Claude and GPT models): `low`, `medium`, `high`, `xhigh`, `max`. Lower it to cut cost and latency. |
+| `aws.bedrock.ingestion_effort` | `null` | Reasoning depth for ingestion calls on the default tier (graph extraction, gleaning, claim extraction, community reports; the output fixer only when `fixing.fixing_model_id` is a default-tier model). `null` inherits `default_effort`; lower it (e.g. `"medium"`) to cut ingestion cost without changing query-time effort. Fast-tier ingestion calls keep `fast_effort`. |
 | `aws.bedrock.fast_effort` | `"low"` | Reasoning depth for calls on `fast_model_id` when it differs from `default_model_id`. The shipped Claude Haiku 5.5 thinks adaptively, so this sets its reasoning depth; no effect on a fast model that does not reason. |
 | `aws.bedrock.enable_1m_context` | `false` | Opt into the 1M window on models where it is a beta (premium billing). Claude 5 has a native 1M window. |
 | `aws.bedrock.model_overrides` | `{}` | Capability records for a language model the package does not know (see Model selection notes). Embedding and rerank models are a closed list. |
@@ -335,9 +336,14 @@ uses the largest). Adding a model is a code change: a member in
 tokens-per-minute quota when a request starts, so asking for the model maximum
 (128K on Claude 5.x) throttles concurrent ingestion long before real usage
 does. That is why `default_max_output_tokens` is 16384. Thinking tokens count
-toward it, and prompts with long outputs declare a higher floor that wins
-(graph and claim extraction, gleaning, community reports and their output
-fixer 32768; document translation 65536).
+toward it, and prompts with long outputs derive a higher floor from their own
+limits that wins: the largest answer those limits allow plus 8192 tokens of
+reasoning headroom. Graph extraction and gleaning (and their output fixer)
+budget 150 tokens per record at `max_entities_per_chunk` +
+`max_relationships_per_chunk` (23192 by default); document translation budgets
+1.35 tokens per character of `max_chunk_size` (18992), claim extraction twice
+that (29792); community reports stay under the default cap. Raising those
+limits raises the floor with them.
 
 **Prompt caching.** On Claude models that support explicit prompt caching, the
 end of each system prompt is marked as a cache checkpoint: a `cachePoint` block
@@ -366,7 +372,7 @@ against the tokens-per-minute quota.
 All of these are inference-profile-only. Only OpenAI's proprietary GPT models
 are offered; the open-weight `gpt-oss` models are not.
 
-Three things differ for Claude 4.7-and-later models:
+Four things differ for Claude 4.7-and-later models:
 
 - **Inference profiles are mandatory.** They ship without `ON_DEMAND`
   throughput, so the bare model id is not invocable — a cross-region profile
@@ -380,11 +386,18 @@ Three things differ for Claude 4.7-and-later models:
   A call uses `fast_effort` when its model is `fast_model_id` (and that differs
   from `default_model_id`), otherwise `default_effort`; the shipped fast model,
   Claude Haiku 5.5, thinks adaptively, so `fast_effort` (default `low`) sets
-  how much it reasons on fast-tier calls. Claude Sonnet 5.5 always thinks, so `--enable-thinking` is a
+  how much it reasons on fast-tier calls. A default-tier ingestion call uses
+  `ingestion_effort` instead when it is set. Claude Sonnet 5.5 always thinks, so `--enable-thinking` is a
   no-op for it — depth is `effort` only. A level the model does not accept
   (e.g. `xhigh` on Opus or Sonnet 4.6) fails fast.
 - **Sampling parameters are dropped.** `temperature`/`top_k` are not accepted
   and are omitted from requests automatically; steer behaviour by prompting.
+- **Token estimates are scaled.** Their tokenizer counts roughly 1x-1.35x the
+  tokens of older Claude models for the same text and CountTokens rejects
+  them, so the local estimate (~4 characters per token for Latin text) is
+  multiplied by the record's `token_estimate_multiplier` (1.3) when sizing
+  context budgets. Override it per model with
+  `aws.bedrock.model_overrides`.
 
 OpenAI GPT models differ from Claude in these ways:
 
@@ -437,7 +450,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `processing.chunking.fallback_chunk_size` | `4800` | Target size for the size-based splitter (`simple`, or when intelligent chunking fails). It splits at paragraphs, then lines, then after CJK sentence terminators (`。．｡！？；`), then spaces. |
 | `processing.translation.enabled` | `true` | Run the translation stage. It is a no-op (zero LLM cost) when the source and target languages match and no additional target is set. |
 | `processing.translation.source_language` | `"en"` | Predominant corpus language; used only for the no-op check. |
-| `processing.translation.target_language` | `"en"` | Language the corpus is translated into (see §3 Multilingual ingestion). |
+| `processing.translation.target_language` | `"en"` | Language the corpus is translated into (see §3 Multilingual ingestion); entity and relationship descriptions are written in it. |
 | `processing.translation.additional_target_languages` | `null` | Extra target languages to translate into. Each is indexed in its own `translated_text_<language>` field with that language's analyzer and searched lexically (useful with a per-query `RAGInput.target_language`); extraction, embeddings and the answer context use `target_language` only. Each language is one more LLM call per chunk. |
 | `processing.graph_extraction.entity_types` | 7 generic types | `"LABEL: description"` items injected into the extraction prompt. The most effective domain-adaptation knob (§9). An empty list lets the model choose. |
 | `processing.graph_extraction.max_entities_per_chunk` | `50` | Cap on entities per chunk (relationships: `max_relationships_per_chunk`, also `50`). |
@@ -493,7 +506,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 
 | Key | Default | What it does / when to change |
 |---|---|---|
-| `search.auto_routable_strategies` | `["local", "mix", "global", "drift"]` | Strategies the `auto` router may pick. Any strategy can still be chosen explicitly. |
+| `search.auto_routable_strategies` | `["local", "mix", "global", "drift"]` | Strategies the `auto` router may pick; its prompt describes exactly these, in this order. `auto` itself is rejected. Any strategy can still be chosen explicitly. |
 | `search.hybrid.lexical_weight` | `0.5` | Lexical weight in the OpenSearch hybrid pipeline (vector: `vector_weight`, also `0.5`). |
 | `search.fusion.method` | `"rrf"` | `rrf` (reciprocal rank fusion) or `weighted`. |
 | `search.fusion.rrf_k` | `60` | RRF constant `k`. |

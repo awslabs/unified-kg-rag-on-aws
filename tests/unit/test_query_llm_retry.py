@@ -156,7 +156,11 @@ def _query_chain(
     )
 
 
-_QUERY = {"query": "Which parts does Vendor ship?", "strategies": "local, mix"}
+_QUERY = {
+    "query": "Which parts does Vendor ship?",
+    "strategies": "local, mix",
+    "strategy_descriptions": "1. LOCAL SEARCH\n\n2. MIX SEARCH",
+}
 
 
 # --- wrapper behaviour ----------------------------------------------------

@@ -109,6 +109,7 @@ _INPUT = {
     "max_entities_per_chunk": 10,
     "max_relationships_per_chunk": 10,
     "entity_types": "ORG",
+    "target_language": "en",
 }
 
 

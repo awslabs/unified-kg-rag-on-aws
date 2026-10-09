@@ -129,7 +129,7 @@ class CommunityDetector(BaseProcessor):
                 factory=self.factory,
                 enable_output_fixing=self.config.fixing.enabled,
                 output_fixing_model_id=self.config.fixing.fixing_model_id,
-                min_output_tokens=CommunityReportPrompt.min_output_tokens,
+                min_output_tokens=CommunityReportPrompt.output_floor(self.config),
                 output_tags=[
                     "community_name",
                     "summary",
@@ -143,6 +143,7 @@ class CommunityDetector(BaseProcessor):
                 factory=self.factory,
                 model_id=self.community_detection_config.report_generation.report_generation_model_id,
                 prompt_class=CommunityReportPrompt,
+                min_output_tokens=CommunityReportPrompt.output_floor(self.config),
                 parser=parser,
                 custom_prompts=self.config.custom_prompts,
             )

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import math
 import re
 import threading
 from functools import lru_cache
@@ -143,6 +144,11 @@ class BedrockTokenCounter:
     Callers that already know the model cannot be counted (embedding and rerank
     models do not accept the Converse input this counter sends) pass
     ``api_supported=False`` and may pass ``client=None``.
+
+    ``estimate_multiplier`` scales the local estimate for a model whose
+    tokenizer counts more tokens than the one the estimate is calibrated to
+    (``LanguageModelInfo.token_estimate_multiplier``); API counts are exact and
+    never scaled.
     """
 
     MAX_TRUNCATION_ITERATIONS: int = 8
@@ -154,10 +160,12 @@ class BedrockTokenCounter:
         cache_maxsize: int = 1024,
         *,
         api_supported: bool = True,
+        estimate_multiplier: float = 1.0,
     ) -> None:
         self.model_id = model_id
         self._client = client
         self._api_supported = api_supported and client is not None
+        self._estimate_multiplier = estimate_multiplier
 
         @lru_cache(maxsize=cache_maxsize)
         def _cached_count(text: str) -> int:
@@ -177,22 +185,28 @@ class BedrockTokenCounter:
         # Converse rejects blank text blocks with a ValidationException; never
         # send one (it would also be indistinguishable from a model rejection).
         if not text.strip():
-            return estimate_token_count(text)
+            return self._estimate(text)
         if not self._api_supported or is_count_tokens_known_unsupported(self.model_id):
-            return estimate_token_count(text)
+            return self._estimate(text)
         try:
             return self._cached_count(text)
         except Exception as e:
             if is_count_tokens_unsupported_error(e):
                 mark_count_tokens_unsupported(self.model_id, e)
-                return estimate_token_count(text)
+                return self._estimate(text)
             logger.debug(
                 "Bedrock count_tokens failed for model '%s': %s. Degrading to "
                 "script-aware estimate.",
                 self.model_id,
                 e,
             )
-            return estimate_token_count(text)
+            return self._estimate(text)
+
+    def _estimate(self, text: str) -> int:
+        estimate = estimate_token_count(text)
+        if self._estimate_multiplier == 1.0:
+            return estimate
+        return math.ceil(estimate * self._estimate_multiplier)
 
     def truncate_to_token_limit(self, text: str, max_tokens: int) -> tuple[str, int]:
         """Truncate text to fit within max_tokens using ratio-based estimation and verification.
