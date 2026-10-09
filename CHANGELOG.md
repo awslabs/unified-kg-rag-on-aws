@@ -457,7 +457,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   and a failed cleanup no longer deletes the index just made live. Indices
   leaked by earlier runs are deleted on the next successful full run of the
   same alias; those of a suffix that is never rebuilt must be deleted by
-  hand (#PR).
+  hand (#185).
 - The interactive graph HTML (`graph.html`, the community hierarchy) escapes
   node tooltips when pyvis renders them as HTML. Once any node title contained
   `href`, pyvis replaced the plain-text tooltip with a popup that sets
