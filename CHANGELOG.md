@@ -104,7 +104,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (10 attempts) first; the indexing stage also refuses to rebuild when
   incremental indexing is on but no delta reached it (e.g. under
   `continue_on_error`), and the loading stage drops a delta restored from a
-  reused pipeline id's metadata before recomputing it (#PR).
+  reused pipeline id's metadata before recomputing it (#186).
 - MinHash entity resolution shares one set of seeded permutations instead of
   regenerating them for every name and query, hashes each name's shingles in
   one batch, and reuses the candidates' signatures when they are queried;
@@ -477,7 +477,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   the restored entities, relationships and claims. The graph is built by
   `graph_analysis` but neither cached nor kept in the run metadata, so the
   resumed stage always failed with "Knowledge graph is required for community
-  detection" (#PR).
+  detection" (#186).
 - Incremental runs no longer record a document `PROCESSED` when some of its
   artifacts failed to write. OpenSearch bulk calls resent nothing
   (`streaming_bulk` defaults to no item retries, and the client's
@@ -490,7 +490,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   failed (`IndexingStats.failed_ids`), and the commit records the documents
   owning them `FAILED` (counted against `indexing.max_document_failures`) so
   the next run rewrites them. A failure reported without an id marks every
-  document of the commit `FAILED` (#PR).
+  document of the commit `FAILED` (#186).
 - The interactive graph HTML (`graph.html`, the community hierarchy) escapes
   node tooltips when pyvis renders them as HTML. Once any node title contained
   `href`, pyvis replaced the plain-text tooltip with a popup that sets
