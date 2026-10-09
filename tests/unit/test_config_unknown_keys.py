@@ -62,3 +62,17 @@ def test_config_template_has_no_unknown_keys(
     with caplog.at_level(logging.WARNING):
         warn_unknown_keys(yaml.safe_load(_TEMPLATE.read_text()), Config)
     assert _unknown(caplog) == []
+
+
+@pytest.mark.parametrize("text", ["", "# only a comment\n"])
+def test_empty_config_file_loads_defaults(tmp_path: Path, text: str) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(text)
+    assert ConfigLoader(path).load_config() == Config()
+
+
+def test_non_mapping_config_file_is_a_clear_error(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text("- a\n- b\n")
+    with pytest.raises(ValueError, match="must be a YAML mapping"):
+        ConfigLoader(path).load_config()
