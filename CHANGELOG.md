@@ -461,7 +461,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   and retrieval could still surface the deleted content. The removal is now
   planned once over changed + deleted documents. If it fails, the deleted
   documents' registry records are kept as before, and the run fails before
-  committing whenever the delta has changed documents (#PR).
+  committing whenever the delta has changed documents (#190).
 - A full build and an incremental build of the same corpus store the same
   entity and relationship descriptions. Graph and claim extraction merged
   the descriptions of one item found in several text units with `"; "` and
@@ -469,7 +469,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   newline and drop duplicate lines. All three now use the newline rule
   (`merge.merger.merge_descriptions`); the resolver also compares lines
   rather than whole descriptions. Descriptions written before stay as they
-  are until the item is re-extracted or the index is rebuilt (#PR).
+  are until the item is re-extracted or the index is rebuilt (#190).
 - An incremental commit no longer records every document FAILED when one
   community's `MemberOf` edges fail in more than one Neptune entity batch.
   Each failed batch carries the community id, and the commit deduplicated the
@@ -508,7 +508,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   of a file deleted before the upgrade therefore stays, and so do its
   artifacts. Run once with `indexing.reset: true` to clear them; deleting
   those registry items (no `registry_scope` attribute) only cleans the
-  registry and leaves the artifacts until a reset (#PR).
+  registry and leaves the artifacts until a reset (#190).
 - `run-prompt-tuning` few-shot examples show relationship strength on the
   1-10 scale the extraction prompt teaches. Relationship weight already holds
   the raw strength, but the example renderer multiplied it by 10 (so a
