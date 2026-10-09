@@ -994,6 +994,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (`<context>`), context building, community relevance, global map/reduce
   (`<community_reports>`, `<summaries>`) and the DRIFT primer and query
   refinement prompts (#179).
+- Input values can no longer close the tag block that delimits them. A corpus
+  chunk or retrieved context containing `</context>` (or `</input_text>`)
+  ended the data block, so the text after it read as instructions. Every
+  chain now escapes the opening and closing forms of its prompt's delimiter
+  tags (the tags around a `{placeholder}`, read from the resolved template,
+  so `custom_prompts` delimiters are covered) in every string input,
+  case-insensitively and allowing whitespace: `</context>` reaches the model
+  as `&lt;/context>` (#PR).
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or
   `LANGCHAIN_TRACING_V2` enables LangSmith tracing, which uploads prompts,
   retrieved context and model outputs. Tracing is not turned off (#156).
