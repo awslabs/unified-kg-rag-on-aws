@@ -230,8 +230,11 @@ class ComputeStack(Stack):
             "S3_BUCKET_NAME": storage.cache_bucket.bucket_name,
             # Maps to aws.dynamodb.table_name. The table is IaC-managed (KMS,
             # PITR, alarms) and the task role has no dynamodb:CreateTable, so
-            # disable app-side auto-creation: a missing table fails fast with
-            # ResourceNotFound instead of an AccessDenied on CreateTable.
+            # disable app-side auto-creation. With aws.dynamodb.enabled, a
+            # missing table (or any other registry error) fails the
+            # document_loading stage with DocStatusRegistryError naming the
+            # table and the ResourceNotFoundException, rather than an
+            # AccessDenied on CreateTable or a silent full rebuild.
             # aws.dynamodb.enabled stays a config.yaml decision.
             "GRAPHRAG_DOC_STATUS_TABLE": self.config.doc_status_table,
             "GRAPHRAG_DOC_STATUS_CREATE_TABLE": "false",

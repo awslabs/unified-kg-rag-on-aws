@@ -28,6 +28,11 @@ class IndexingStats(BaseModel):
     successful_items: int = Field(default=0)
     failed_items: int = Field(default=0)
     errors: list[str] = Field(default_factory=list)
+    # Ids of the items whose write failed, where the failure site knows them.
+    # An incremental commit records the documents owning these artifacts
+    # FAILED so the next run rewrites them; failed_items above len(failed_ids)
+    # are failures no id was reported for.
+    failed_ids: list[str] = Field(default_factory=list)
     processing_time: float = Field(default=0.0)
 
     @property
@@ -41,8 +46,12 @@ class IndexingStats(BaseModel):
     def add_success(self, count: int = 1) -> None:
         self.successful_items += count
 
-    def add_error(self, error_message: str, count: int = 1) -> None:
+    def add_error(
+        self, error_message: str, count: int = 1, ids: list[str] | None = None
+    ) -> None:
         self.failed_items += count
+        if ids:
+            self.failed_ids.extend(ids)
         if error_message not in self.errors:
             self.errors.append(error_message)
 
@@ -50,6 +59,7 @@ class IndexingStats(BaseModel):
         self.total_items += other.total_items
         self.successful_items += other.successful_items
         self.failed_items += other.failed_items
+        self.failed_ids.extend(other.failed_ids)
         self.processing_time += other.processing_time
 
         unique_errors = set(self.errors)

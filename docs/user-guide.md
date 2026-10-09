@@ -957,7 +957,9 @@ Moving a local corpus to another directory changes its default scope: set
 ### Failed documents
 
 A document is recorded `FAILED` when translation, graph extraction, gleaning or
-claim extraction failed on any of its text units. The next run treats it as
+claim extraction failed on any of its text units, or when writing one of its
+artifacts to the stores failed (below `indexing.max_failure_rate`; above it
+the indexing stage fails and nothing is recorded). The next run treats it as
 changed even if the file did not change: it removes what the failed run wrote
 and processes the document again. A document that fails
 `indexing.max_document_failures` (default `3`) consecutive runs with the same

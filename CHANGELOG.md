@@ -91,6 +91,20 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#157).
 
 ### Changed
+- **Behaviour change:** with incremental indexing on (`aws.dynamodb.enabled`
+  or an injected `doc_status`), a doc-status registry that cannot be read
+  fails the `document_loading` stage with the new `DocStatusRegistryError`,
+  naming the table, the cause and the fix. Before, the stage logged a warning
+  and processed every document with no delta, so the indexing stage took the
+  full-rebuild path: it cleared the suffix's Neptune entities, pointed the
+  OpenSearch aliases at indices holding only this run's documents and never
+  wrote the registry. A missing table, AccessDenied or throttling thus turned
+  every incremental run into a rebuild that dropped other scopes' documents.
+  The DynamoDB client now retries throttling with botocore's standard mode
+  (10 attempts) first; the indexing stage also refuses to rebuild when
+  incremental indexing is on but no delta reached it (e.g. under
+  `continue_on_error`), and the loading stage drops a delta restored from a
+  reused pipeline id's metadata before recomputing it (#186).
 - MinHash entity resolution shares one set of seeded permutations instead of
   regenerating them for every name and query, hashes each name's shingles in
   one batch, and reuses the candidates' signatures when they are queried;
@@ -458,6 +472,25 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   leaked by earlier runs are deleted on the next successful full run of the
   same alias; those of a suffix that is never rebuilt must be deleted by
   hand (#185).
+- Re-running a failed `community_detection` with the same `--pipeline-id`
+  (the documented recovery) works: the stage rebuilds the knowledge graph from
+  the restored entities, relationships and claims. The graph is built by
+  `graph_analysis` but neither cached nor kept in the run metadata, so the
+  resumed stage always failed with "Knowledge graph is required for community
+  detection" (#186).
+- Incremental runs no longer record a document `PROCESSED` when some of its
+  artifacts failed to write. OpenSearch bulk calls resent nothing
+  (`streaming_bulk` defaults to no item retries, and the client's
+  request-level retries never see per-item 429 rejections inside a 200
+  response), and a commit within `indexing.max_failure_rate` recorded every
+  document `PROCESSED`, so dropped entities or relationships were never
+  rewritten: their documents read as unchanged on every later run. Bulk items
+  rejected with 429/502/503/504 are now resent up to four times with backoff,
+  the OpenSearch and Neptune indexers report the ids of items that still
+  failed (`IndexingStats.failed_ids`), and the commit records the documents
+  owning them `FAILED` (counted against `indexing.max_document_failures`) so
+  the next run rewrites them. A failure reported without an id marks every
+  document of the commit `FAILED` (#186).
 - The interactive graph HTML (`graph.html`, the community hierarchy) escapes
   node tooltips when pyvis renders them as HTML. Once any node title contained
   `href`, pyvis replaced the plain-text tooltip with a popup that sets

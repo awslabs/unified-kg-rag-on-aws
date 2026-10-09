@@ -13,10 +13,13 @@ tests; both conform structurally to ``unified_kg_rag.ports.DocStatusPort``.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.config import Config as BotoConfig
+from botocore.exceptions import BotoCoreError, ClientError
 
 from unified_kg_rag.domain.models import (
     Config,
@@ -24,7 +27,11 @@ from unified_kg_rag.domain.models import (
     DocStatusRecord,
     DocumentDelta,
 )
-from unified_kg_rag.shared import DataProcessingError, get_logger
+from unified_kg_rag.shared import (
+    DataProcessingError,
+    DocStatusRegistryError,
+    get_logger,
+)
 
 if TYPE_CHECKING:
     from types_boto3_dynamodb import DynamoDBClient
@@ -37,6 +44,28 @@ _PARTITION_KEY = "doc_id"
 _SCOPE_ATTRIBUTE = "registry_scope"
 # DynamoDB rejects an item over 400 KB (attribute names plus values).
 _MAX_ITEM_BYTES = 400 * 1024
+# botocore's standard retry mode backs off and retries throttling
+# (ThrottlingException, ProvisionedThroughputExceededException,
+# RequestLimitExceeded) and transient 5xx/connection errors. Ten attempts ride
+# out a throttling burst; an error that outlasts them fails the run.
+_RETRY_CONFIG = BotoConfig(retries={"mode": "standard", "total_max_attempts": 10})
+
+_MISSING_TABLE_CODES = frozenset({"ResourceNotFoundException"})
+_ACCESS_CODES = frozenset(
+    {
+        "AccessDeniedException",
+        "UnrecognizedClientException",
+        "ExpiredTokenException",
+        "KMSAccessDeniedException",
+    }
+)
+_THROTTLING_CODES = frozenset(
+    {
+        "ThrottlingException",
+        "ProvisionedThroughputExceededException",
+        "RequestLimitExceeded",
+    }
+)
 
 
 class DynamoDBDocStatusStore:
@@ -57,23 +86,67 @@ class DynamoDBDocStatusStore:
     @property
     def client(self) -> DynamoDBClient:
         if self._client is None:
-            self._client = self.boto_session.client("dynamodb")
+            client = self.boto_session.client("dynamodb", config=_RETRY_CONFIG)
             if self.ddb_config.create_table_if_missing:
-                self._ensure_table()
+                with self._registry_errors("create the table"):
+                    self._ensure_table(client)
+            self._client = client
         return self._client
 
-    def _ensure_table(self) -> None:
-        """Create the doc-status table on first use if it does not exist."""
-        assert self._client is not None
+    @contextmanager
+    def _registry_errors(self, operation: str) -> Iterator[None]:
+        """Re-raise AWS errors as :class:`DocStatusRegistryError` with a fix hint."""
         try:
-            self._client.describe_table(TableName=self.table_name)
+            yield
+        except (ClientError, BotoCoreError) as e:
+            raise DocStatusRegistryError(self._describe_error(operation, e)) from e
+
+    def _describe_error(self, operation: str, error: Exception) -> str:
+        code = (
+            str(error.response.get("Error", {}).get("Code", ""))
+            if isinstance(error, ClientError)
+            else type(error).__name__
+        )
+        if code in _MISSING_TABLE_CODES:
+            hint = (
+                "The table does not exist in this account and region. Create it "
+                "(the CDK stack does), point aws.dynamodb.table_name (env "
+                "GRAPHRAG_DOC_STATUS_TABLE) at the existing table, or set "
+                "aws.dynamodb.create_table_if_missing: true."
+            )
+        elif code in _ACCESS_CODES:
+            hint = (
+                "Refresh the credentials, or grant the caller dynamodb:Scan, "
+                "GetItem, PutItem, DeleteItem and DescribeTable on the table "
+                "(and the use of the table's KMS key, if it has one)."
+            )
+        elif code in _THROTTLING_CODES:
+            hint = (
+                "Still throttled after the client's retries. Raise the table's "
+                "capacity or switch it to on-demand billing, then re-run."
+            )
+        else:
+            hint = "Check the table and the connection to DynamoDB, then re-run."
+        region = self.boto_session.region_name or "unset"
+        return (
+            f"Doc-status registry: could not {operation} on DynamoDB table "
+            f"'{self.table_name}' (region {region}): {code}: {error}. {hint} "
+            "Incremental indexing needs the registry; set aws.dynamodb.enabled: "
+            "false to run without it (every run then rebuilds the stores from "
+            "its own documents)."
+        )
+
+    def _ensure_table(self, client: DynamoDBClient) -> None:
+        """Create the doc-status table on first use if it does not exist."""
+        try:
+            client.describe_table(TableName=self.table_name)
             return
         except ClientError as e:
             if e.response.get("Error", {}).get("Code") != "ResourceNotFoundException":
                 raise
 
         logger.info("Creating DynamoDB doc-status table '%s'", self.table_name)
-        self._client.create_table(
+        client.create_table(
             TableName=self.table_name,
             KeySchema=[{"AttributeName": _PARTITION_KEY, "KeyType": "HASH"}],
             AttributeDefinitions=[
@@ -81,12 +154,13 @@ class DynamoDBDocStatusStore:
             ],
             BillingMode=self.ddb_config.billing_mode,  # type: ignore[arg-type]
         )
-        self._client.get_waiter("table_exists").wait(TableName=self.table_name)
+        client.get_waiter("table_exists").wait(TableName=self.table_name)
 
     def get(self, doc_id: str) -> DocStatusRecord | None:
-        response = self.client.get_item(
-            TableName=self.table_name, Key={_PARTITION_KEY: {"S": doc_id}}
-        )
+        with self._registry_errors("read a record"):
+            response = self.client.get_item(
+                TableName=self.table_name, Key={_PARTITION_KEY: {"S": doc_id}}
+            )
         item = response.get("Item")
         if not item:
             return None
@@ -107,7 +181,8 @@ class DynamoDBDocStatusStore:
                 f"{size} bytes, over the DynamoDB 400 KB item limit; split the "
                 "document into smaller files"
             )
-        self.client.put_item(TableName=self.table_name, Item=item)
+        with self._registry_errors("write a record"):
+            self.client.put_item(TableName=self.table_name, Item=item)
 
     @staticmethod
     def _item_size(item: dict[str, Any]) -> int:
@@ -126,16 +201,18 @@ class DynamoDBDocStatusStore:
         return size
 
     def delete(self, doc_id: str) -> None:
-        self.client.delete_item(
-            TableName=self.table_name, Key={_PARTITION_KEY: {"S": doc_id}}
-        )
+        with self._registry_errors("delete a record"):
+            self.client.delete_item(
+                TableName=self.table_name, Key={_PARTITION_KEY: {"S": doc_id}}
+            )
 
     def list_all(self) -> list[DocStatusRecord]:
         records: list[DocStatusRecord] = []
-        paginator = self.client.get_paginator("scan")
-        for page in paginator.paginate(TableName=self.table_name):
-            for item in page.get("Items", []):
-                records.append(self._deserialize(item))
+        with self._registry_errors("scan the records"):
+            paginator = self.client.get_paginator("scan")
+            for page in paginator.paginate(TableName=self.table_name):
+                for item in page.get("Items", []):
+                    records.append(self._deserialize(item))
         return records
 
     def _scan_fingerprints(self) -> dict[str, tuple[str, str | None, bool]]:
@@ -179,7 +256,8 @@ class DynamoDBDocStatusStore:
         stored records of that scope can be classified deleted. A FAILED
         record is ``changed`` even with an unchanged hash, so it is retried.
         """
-        stored = self._scan_fingerprints()
+        with self._registry_errors("scan the records"):
+            stored = self._scan_fingerprints()
         delta = DocumentDelta()
         for doc_id, content_hash in incoming.items():
             if doc_id not in stored:

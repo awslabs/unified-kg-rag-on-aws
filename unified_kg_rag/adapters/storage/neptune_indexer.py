@@ -336,7 +336,7 @@ class NeptuneIndexer(GraphIndexer):
                             edge_traversal, "Community edge indexing"
                         )
                     except Exception as e:
-                        stats.add_error(str(e))
+                        stats.add_error(str(e), ids=[comm.id])
                         logger.warning(
                             "Community edge indexing failed for community '%s': %s",
                             comm.id,
@@ -480,7 +480,7 @@ class NeptuneIndexer(GraphIndexer):
                     if written:
                         stats.add_success(1)
                     else:
-                        stats.add_error("source entity vertex not found")
+                        stats.add_error("source entity vertex not found", ids=[rel.id])
                         logger.warning(
                             "Relationship '%s' not written: source entity '%s' "
                             "not found",
@@ -488,7 +488,7 @@ class NeptuneIndexer(GraphIndexer):
                             rel.source_id,
                         )
                 except Exception as e:
-                    stats.add_error(str(e))
+                    stats.add_error(str(e), ids=[rel.id])
                     logger.warning("Failed indexing relationship '%s': %s", rel.id, e)
                 if index % self._PROGRESS_LOG_EVERY == 0:
                     logger.info(
@@ -770,7 +770,11 @@ class NeptuneIndexer(GraphIndexer):
                     self._execute_with_retries(traversal, operation_name)
                     stats.add_success(1)
                 except Exception as item_error:
-                    stats.add_error(str(item_error))
+                    item_id = getattr(item, "id", None)
+                    stats.add_error(
+                        str(item_error),
+                        ids=[str(item_id)] if item_id is not None else None,
+                    )
                     logger.warning(
                         "Individual %s failed: %s", operation_name, item_error
                     )

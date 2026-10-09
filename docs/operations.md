@@ -71,12 +71,21 @@ the description text a changed or deleted document contributed, and delta
 runs append communities rather than re-clustering. A periodic full rebuild
 (`indexing.reset: true`) refreshes both. Details: [User Guide §5](./user-guide.md#5-incremental-indexing).
 
+If the registry cannot be read (missing table, denied access, throttling that
+outlasts the client's retries), the `document_loading` stage fails with
+`DocStatusRegistryError`, naming the table and the cause. The run does not fall
+back to indexing every document: that path replaces the suffix's index content
+with this run's documents only. Fix the registry and re-run with the same
+`--pipeline-id`, or set `aws.dynamodb.enabled: false` to run without
+incremental indexing.
+
 ## Failed documents
 
 A document is recorded `FAILED` when translation, graph extraction, gleaning
-or claim extraction failed on any of its text units. The next run
-treats it as changed: it removes what the failed run wrote and processes the
-document again.
+or claim extraction failed on any of its text units, or when the write of one
+of its artifacts (text unit, entity, relationship, claim, community, report)
+to OpenSearch or Neptune failed. The next run treats it as changed: it removes
+what the failed run wrote and processes the document again.
 
 - After `indexing.max_document_failures` (default `3`) consecutive failures
   with unchanged content, the document is no longer retried. It stays
@@ -87,10 +96,15 @@ document again.
   10,000 ids) fails the indexing stage with an error naming the file. Split
   the file.
 
-Write failures are gated separately. If more than `indexing.max_failure_rate`
-(default `0.2`) of one artifact type's writes fail, the indexing stage fails
-and the documents are not recorded, so the next run retries them. On the CDK
-stack, three alarms report problems to the SNS topic:
+Write failures are gated separately. OpenSearch bulk items rejected with a
+retryable status (429, 502, 503, 504) are resent up to four times with
+backoff first. If more than `indexing.max_failure_rate` (default `0.2`) of one
+artifact type's writes still fail, the indexing stage fails and the documents
+are not recorded, so the next run retries them. Below that rate the run
+succeeds and only the documents that own a failed artifact are recorded
+`FAILED`; a failure the backend reports without an item id marks every
+document of the run `FAILED`. On the CDK stack, three alarms report problems
+to the SNS topic:
 
 | Alarm | Fires when |
 |---|---|
@@ -152,6 +166,8 @@ results.
 | `No indices found for suffix '<suffix>' ...` | Nothing was ingested under that index suffix | Run ingestion, or query with the suffix the corpus was ingested under |
 | `InvalidFilterError` | No store the strategy reads declares a filter key | Use a key from the list in the message |
 | `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | The `unstructured` extra is not installed | Install it (Python 3.11+) or convert the files |
+| `DocStatusRegistryError` | The doc-status registry table is missing, not accessible, or throttled | Create the table or fix `aws.dynamodb.table_name`, grant the DynamoDB permissions named in the message, then resume with the same `--pipeline-id` |
+| `Incremental indexing is enabled but no document delta was computed` | The indexing stage ran without a registry diff (the loading stage failed under `continue_on_error`) | Re-run from `document_loading` once the registry is reachable |
 | `CacheSyncError` | The S3 stage-cache download or upload failed | Check bucket permissions and `aws.s3.encryption`, then resume with the same `--pipeline-id` |
 | `Pipeline failed at stage(s): ...` | A stage failed; the CLI exits 1 | Read the stage's log lines, fix, resume with the same `--pipeline-id` |
 | Bedrock calls hang in a private VPC | Bedrock is called in a region the VPC endpoint does not serve | Keep `aws.bedrock.region_name` unset or equal to the VPC's region |

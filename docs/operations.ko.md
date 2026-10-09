@@ -73,11 +73,20 @@
 (`indexing.reset: true`)으로 둘 다 새로 고칩니다. 자세한 내용은
 [사용자 가이드](./user-guide.ko.md) §5에 있습니다.
 
+레지스트리를 읽을 수 없으면(테이블 없음, 접근 거부, 클라이언트 재시도로도 풀리지
+않는 스로틀링) `document_loading` 단계가 테이블 이름과 원인을 담은
+`DocStatusRegistryError`로 실패합니다. 모든 문서를 인덱싱하는 경로로 넘어가지
+않습니다. 그 경로는 접미사의 인덱스 내용을 이번 실행의 문서만으로 바꾸기
+때문입니다. 레지스트리를 고친 뒤 같은 `--pipeline-id`로 다시 실행하거나, 증분
+인덱싱 없이 실행하려면 `aws.dynamodb.enabled: false`로 설정합니다.
+
 ## 실패한 문서
 
 번역, 그래프 추출, gleaning, 주장 추출 중 하나가 문서의 텍스트 단위 일부에서
-실패하면 그 문서는 `FAILED`로 기록됩니다. 다음 실행은 이 문서를 바뀐 문서로
-취급해 실패한 실행이 쓴 내용을 지우고 다시 처리합니다.
+실패하거나, 문서의 산출물(텍스트 단위, 엔티티, 관계, 주장, 커뮤니티, 보고서)을
+OpenSearch나 Neptune에 쓰는 데 실패하면 그 문서는 `FAILED`로 기록됩니다. 다음
+실행은 이 문서를 바뀐 문서로 취급해 실패한 실행이 쓴 내용을 지우고 다시
+처리합니다.
 
 - 내용이 그대로인 채로 `indexing.max_document_failures`(기본값 `3`)번 연속
   실패하면 더 이상 재시도하지 않습니다. 문서는 `FAILED`로 남아 인덱싱된 내용을
@@ -87,10 +96,14 @@
 - 한 문서의 산출물 ID가 DynamoDB 항목 하나(400 KB, 약 10,000개 ID)를 넘으면
   인덱싱 단계가 파일 이름을 담은 오류로 실패합니다. 파일을 나눕니다.
 
-쓰기 실패는 따로 판정합니다. 한 산출물 유형의 쓰기 중 실패 비율이
-`indexing.max_failure_rate`(기본값 `0.2`)를 넘으면 인덱싱 단계가 실패하고
-문서를 기록하지 않으므로, 다음 실행이 다시 시도합니다. CDK 스택에서는 다음 세
-경보가 SNS 토픽으로 문제를 알립니다.
+쓰기 실패는 따로 판정합니다. 재시도할 수 있는 상태(429, 502, 503, 504)로
+거부된 OpenSearch bulk 항목은 먼저 백오프를 두고 최대 네 번 다시 보냅니다. 그래도
+한 산출물 유형의 쓰기 중 실패 비율이 `indexing.max_failure_rate`(기본값 `0.2`)를
+넘으면 인덱싱 단계가 실패하고 문서를 기록하지 않으므로, 다음 실행이 다시
+시도합니다. 그 이하이면 실행은 성공하고, 실패한 산출물을 가진 문서만 `FAILED`로
+기록됩니다. 백엔드가 항목 ID 없이 보고한 실패가 있으면 그 실행의 모든 문서를
+`FAILED`로 기록합니다. CDK 스택에서는 다음 세 경보가 SNS 토픽으로 문제를
+알립니다.
 
 | 경보 | 발생 조건 |
 |---|---|
@@ -150,6 +163,8 @@ Error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoi
 | `No indices found for suffix '<suffix>' ...` | 그 인덱스 접미사로 수집한 데이터가 없음 | 수집을 실행하거나, 코퍼스를 수집할 때 쓴 접미사로 질의 |
 | `InvalidFilterError` | 전략이 읽는 어떤 저장소도 그 필터 키를 선언하지 않음 | 메시지에 나온 키 목록에서 선택 |
 | `Skipping N '.md' file(s) ...` / `No supported source files found in '<dir>'` | `unstructured` 추가 패키지가 설치되지 않음 | 설치(Python 3.11 이상)하거나 파일 형식을 변환 |
+| `DocStatusRegistryError` | 문서 상태 레지스트리 테이블이 없거나, 접근할 수 없거나, 스로틀링됨 | 테이블을 만들거나 `aws.dynamodb.table_name`을 고치고, 메시지에 나온 DynamoDB 권한을 부여한 뒤 같은 `--pipeline-id`로 재개 |
+| `Incremental indexing is enabled but no document delta was computed` | 레지스트리 비교 없이 인덱싱 단계가 실행됨(`continue_on_error`로 로딩 단계 실패 뒤 진행) | 레지스트리에 접근할 수 있게 한 뒤 `document_loading`부터 다시 실행 |
 | `CacheSyncError` | S3 단계 캐시 다운로드나 업로드가 실패함 | 버킷 권한과 `aws.s3.encryption`을 확인한 뒤 같은 `--pipeline-id`로 재개 |
 | `Pipeline failed at stage(s): ...` | 단계가 실패해 CLI가 1로 종료함 | 해당 단계 로그를 확인해 고친 뒤 같은 `--pipeline-id`로 재개 |
 | 프라이빗 VPC에서 Bedrock 호출이 멈춤 | VPC 엔드포인트가 처리하지 않는 리전으로 Bedrock을 호출함 | `aws.bedrock.region_name`을 비우거나 VPC 리전과 같게 설정 |

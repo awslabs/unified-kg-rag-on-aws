@@ -23,6 +23,7 @@ from unified_kg_rag.domain.models import (
     DocStatusRecord,
     Document,
 )
+from unified_kg_rag.shared import DocStatusRegistryError
 
 pytestmark = pytest.mark.integration
 
@@ -139,12 +140,17 @@ def test_filter_stops_retrying_a_document_after_max_failures() -> None:
         assert skipped == 1
 
 
-def test_filter_degrades_gracefully_on_error() -> None:
-    # No moto context -> store calls fail -> process everything, no crash.
-    config = Config()
-    config.aws.dynamodb.enabled = True
-    config.aws.dynamodb.create_table_if_missing = False
-    stage = _stage(config, boto3.Session(region_name="us-east-1"))
-    docs = [_doc("/a.txt", "A")]
-    kept, skipped = stage._apply_incremental_filter(docs, _Ctx())
-    assert kept == docs and skipped == 0
+def test_filter_fails_fast_on_a_missing_table() -> None:
+    # A missing table must not degrade to processing everything with no
+    # delta: the indexing stage would then rebuild the live index from this
+    # run's documents only.
+    with mock_aws():
+        config = Config()
+        config.aws.dynamodb.enabled = True
+        config.aws.dynamodb.table_name = "absent-doc-status"
+        config.aws.dynamodb.create_table_if_missing = False
+        stage = _stage(config, boto3.Session(region_name="us-east-1"))
+        ctx = _Ctx()
+        with pytest.raises(DocStatusRegistryError, match="absent-doc-status"):
+            stage._apply_incremental_filter([_doc("/a.txt", "A")], ctx)
+        assert ctx.incremental_delta is None

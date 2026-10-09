@@ -222,20 +222,17 @@ class DataIngestionPipeline:
         """Build the document-status registry adapter once (incremental mode).
 
         Returns the injected store when given, and None when the registry is
-        disabled or unreachable, so stages fall back to processing everything
-        rather than failing the build.
+        disabled. Building the adapter does no I/O; a registry that cannot be
+        reached fails the document_loading stage (DocStatusRegistryError)
+        rather than silently turning the run into a full rebuild.
         """
         if self._doc_status is not None:
             return self._doc_status
         if not self.config.aws.dynamodb.enabled:
             return None
-        try:
-            from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
+        from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
 
-            return DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
-        except Exception as e:  # noqa: BLE001 - degrade gracefully
-            logger.warning("Doc-status registry unavailable (%s); incremental off", e)
-            return None
+        return DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
 
     def _initialize_stages(
         self,

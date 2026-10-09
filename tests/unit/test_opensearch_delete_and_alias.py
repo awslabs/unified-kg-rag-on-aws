@@ -83,7 +83,7 @@ def test_bulk_delete_treats_not_found_as_success(mocker) -> None:
 
 
 def test_bulk_delete_reports_real_failures(mocker) -> None:
-    rejected = (False, {"delete": {"_id": "b", "status": 429, "error": "throttled"}})
+    rejected = (False, {"delete": {"_id": "b", "status": 400, "error": "rejected"}})
     mocker.patch.object(
         opensearch_mod,
         "streaming_bulk",

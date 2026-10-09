@@ -1,7 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-from collections.abc import Callable, Generator
+import time
+from collections.abc import Callable
 from functools import wraps
 from typing import Any
 
@@ -17,10 +18,26 @@ from opensearchpy import (
 from opensearchpy.exceptions import NotFoundError, TransportError
 from opensearchpy.helpers import streaming_bulk
 
+from unified_kg_rag.adapters.aws.bedrock_retry import backoff_delay
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import AWSServiceError, get_logger
 
 logger = get_logger(__name__)
+
+# Module-level indirection so tests can stub the bulk-item backoff wait.
+_sleep = time.sleep
+
+# Per-item statuses inside a bulk response worth resending: the cluster
+# rejected the item under load (429, e.g. a full write queue) or a node was
+# briefly unavailable. The client's retry_on_status only covers the status of
+# the whole request, and a bulk request with rejected items still returns 200.
+RETRYABLE_BULK_ITEM_STATUSES = frozenset({429, 502, 503, 504})
+
+
+def _bulk_item_status(result: dict[str, Any]) -> int | None:
+    item: Any = next(iter(result.values()), {})
+    status = item.get("status") if isinstance(item, dict) else None
+    return status if isinstance(status, int) else None
 
 
 def _handle_opensearch_errors(func: Callable) -> Callable:
@@ -99,6 +116,13 @@ def _finish_without_loop(awaitable: Any) -> None:
 
 
 class OpenSearchClient:
+    # Resends of bulk items rejected with a retryable status (see
+    # RETRYABLE_BULK_ITEM_STATUSES), with exponential backoff between rounds.
+    BULK_ITEM_MAX_RETRIES = 4
+    BULK_ITEM_BASE_DELAY_SECONDS = 1.0
+    BULK_ITEM_MAX_DELAY_SECONDS = 30.0
+    BULK_CHUNK_SIZE = 100
+
     def __init__(self, config: Config, boto_session: boto3.Session | None = None):
         self.config = config
         self.opensearch_config = config.aws.opensearch
@@ -361,29 +385,19 @@ class OpenSearchClient:
         if not documents:
             return {"errors": False, "items": []}
 
-        def generate_actions() -> Generator[dict[str, Any], None, None]:
-            for doc in documents:
-                action = {"_op_type": "index", "_index": index, "_source": doc}
-                if (doc_id := doc.get("id")) is not None:
-                    action["_id"] = str(doc_id)
-                yield action
+        actions: list[dict[str, Any]] = []
+        for doc in documents:
+            action = {"_op_type": "index", "_index": index, "_source": doc}
+            if (doc_id := doc.get("id")) is not None:
+                action["_id"] = str(doc_id)
+            actions.append(action)
 
-        success_count, errors = 0, []
         try:
-            # raise_on_error=False so a single rejected document is collected
-            # into `errors` and reported, rather than aborting the whole batch
-            # mid-stream (matches bulk_delete). Without it, one bad doc raises
-            # BulkIndexError and silently kills every other doc in the batch.
-            for ok, result in streaming_bulk(
-                client=self.client,
-                actions=generate_actions(),
-                chunk_size=100,
-                raise_on_error=False,
-            ):
-                if ok:
-                    success_count += 1
-                else:
-                    errors.append(result)
+            # Rejected documents are collected into `errors` and reported
+            # rather than aborting the batch mid-stream (matches bulk_delete).
+            success_count, errors = self._bulk_with_item_retries(
+                actions, lambda ok, _result: ok
+            )
         except Exception as e:
             raise AWSServiceError("Streaming bulk operation failed.") from e
 
@@ -412,27 +426,17 @@ class OpenSearchClient:
         if not ids:
             return {"errors": False, "items": []}
 
-        def generate_actions() -> Generator[dict[str, Any], None, None]:
-            for doc_id in ids:
-                yield {"_op_type": "delete", "_index": index, "_id": str(doc_id)}
+        actions = [
+            {"_op_type": "delete", "_index": index, "_id": str(doc_id)}
+            for doc_id in ids
+        ]
 
-        success_count, errors = 0, []
+        def deleted(ok: bool, result: dict[str, Any]) -> bool:
+            # A delete of a missing doc reports not_found; treat as ok.
+            return ok or result.get("delete", {}).get("result") == "not_found"
+
         try:
-            for ok, result in streaming_bulk(
-                client=self.client,
-                actions=generate_actions(),
-                chunk_size=100,
-                raise_on_error=False,
-            ):
-                if ok:
-                    success_count += 1
-                else:
-                    # A delete of a missing doc reports not_found; treat as ok.
-                    delete_result = result.get("delete", {})
-                    if delete_result.get("result") == "not_found":
-                        success_count += 1
-                    else:
-                        errors.append(result)
+            success_count, errors = self._bulk_with_item_retries(actions, deleted)
         except Exception as e:
             raise AWSServiceError("Streaming bulk delete failed.") from e
 
@@ -440,6 +444,66 @@ class OpenSearchClient:
             self.client.indices.refresh(index=index)
 
         return {"errors": bool(errors), "items": errors}
+
+    def _bulk_with_item_retries(
+        self,
+        actions: list[dict[str, Any]],
+        succeeded: Callable[[bool, dict[str, Any]], bool],
+    ) -> tuple[int, list[dict[str, Any]]]:
+        """Send ``actions`` in bulk, resending items rejected with a retryable status.
+
+        ``streaming_bulk`` (``raise_on_error=False``) yields one result per
+        action, in order, so each failed result maps back to its action. Items
+        that failed with a status in :data:`RETRYABLE_BULK_ITEM_STATUSES` are
+        resent up to :attr:`BULK_ITEM_MAX_RETRIES` times with backoff; other
+        failures are final. Returns the success count and the failed results
+        (each ``{op_type: {"_id", "status", "error", ...}}``).
+        """
+        success_count = 0
+        failures: list[dict[str, Any]] = []
+        retry_results: list[dict[str, Any]] = []
+        pending = actions
+        for attempt in range(self.BULK_ITEM_MAX_RETRIES + 1):
+            if attempt:
+                delay = backoff_delay(
+                    attempt,
+                    self.BULK_ITEM_BASE_DELAY_SECONDS,
+                    self.BULK_ITEM_MAX_DELAY_SECONDS,
+                )
+                logger.warning(
+                    "Resending %s bulk item(s) rejected with a retryable status "
+                    "(retry %s/%s) in %.1fs",
+                    len(pending),
+                    attempt,
+                    self.BULK_ITEM_MAX_RETRIES,
+                    delay,
+                )
+                _sleep(delay)
+            retry_actions: list[dict[str, Any]] = []
+            retry_results = []
+            results = streaming_bulk(
+                client=self.client,
+                actions=iter(pending),
+                chunk_size=self.BULK_CHUNK_SIZE,
+                raise_on_error=False,
+            )
+            for action, (ok, result) in zip(pending, results, strict=True):
+                if succeeded(ok, result):
+                    success_count += 1
+                elif _bulk_item_status(result) in RETRYABLE_BULK_ITEM_STATUSES:
+                    retry_actions.append(action)
+                    retry_results.append(result)
+                else:
+                    failures.append(result)
+            if not retry_actions:
+                return success_count, failures
+            pending = retry_actions
+        logger.warning(
+            "%s bulk item(s) still rejected after %s retries",
+            len(retry_results),
+            self.BULK_ITEM_MAX_RETRIES,
+        )
+        return success_count, failures + retry_results
 
     @_handle_opensearch_errors
     def create_index(self, index: str, body: dict[str, Any]) -> None:

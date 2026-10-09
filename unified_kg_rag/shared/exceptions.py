@@ -21,6 +21,15 @@ class DataProcessingError(GraphRAGException):
     pass
 
 
+class DocStatusRegistryError(AWSServiceError):
+    """The incremental-indexing doc-status registry could not be read or written.
+
+    Raised instead of falling back to a full rebuild: without the registry an
+    incremental run cannot tell new, changed and deleted documents apart, and a
+    full rebuild of only this run's documents replaces the live index content.
+    """
+
+
 class EvaluationException(GraphRAGException):
     pass
 
