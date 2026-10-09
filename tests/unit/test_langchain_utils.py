@@ -610,12 +610,42 @@ class TestRobustXMLOutputParser:
         assert isinstance(out, dict)
         assert "plan" in out
 
-    def test_unescaped_ampersand_keeps_section(self) -> None:
-        parser = RobustXMLOutputParser()
-        # A bare & in text content still yields a dict with the section.
-        out = parser.parse("<note>Tom & Jerry</note>")
-        assert isinstance(out, dict)
-        assert "note" in out
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("<name>A&B Corp</name>", {"name": "A&B Corp"}),
+            ("<note>Tom & Jerry</note>", {"note": "Tom & Jerry"}),
+            (
+                "<plan><item>R&D budget < 5M</item></plan>",
+                {"plan": {"item": "R&D budget < 5M"}},
+            ),
+            ("<note>x&lt;y &amp; z &#38; w</note>", {"note": "x<y & z & w"}),
+        ],
+    )
+    def test_bare_ampersand_and_less_than_keep_text(self, text, expected) -> None:
+        # A bare & or a < that does not start a tag is text, not markup:
+        # recovery must not drop it (or the word after it).
+        assert RobustXMLOutputParser().parse(text) == expected
+
+    def test_bare_ampersand_and_less_than_keep_text_across_sections(self) -> None:
+        text = (
+            "<entities>\n<entity><name>A&B Corp</name><description>R&D spend < 5M"
+            "</description></entity>\n</entities>\n<relationships>\n"
+            "<relationship><source>A&B Corp</source><target>Smith & Sons</target>"
+            "<description>x < y</description></relationship>\n</relationships>"
+        )
+        assert RobustXMLOutputParser().parse(text) == {
+            "entities": {
+                "entity": {"name": "A&B Corp", "description": "R&D spend < 5M"}
+            },
+            "relationships": {
+                "relationship": {
+                    "source": "A&B Corp",
+                    "target": "Smith & Sons",
+                    "description": "x < y",
+                }
+            },
+        }
 
     def test_single_root_parses_to_children_by_tag(self) -> None:
         # A well-formed single-root response (claims, refinement plan) parses

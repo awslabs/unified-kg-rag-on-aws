@@ -330,6 +330,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   into lists of one-key dicts that the extractors cannot read. Every response
   now goes through the lxml recovery path, which produced all results before,
   so parsed output does not change (#165).
+- The LLM XML parser keeps a bare `&` and a `<` that does not start a tag
+  as text. lxml recovery ran on the unescaped response and cut them, with
+  the characters after them, from single-root responses (claims, gleaning
+  refinement plans): `A&B Corp` parsed as `A Corp` and `R&D budget < 5M` as
+  `R budget  5M`. The escaping attempts removed in #165 never reached such a
+  response, since lxml recovery came first and returned the cut text (#PR).
 - `cdk destroy` with `removal_destroy=true` (dev default) deletes the
   OpenSearch domain's app, slow-index and slow-search log groups. The domain
   created them with CDK's default `Retain`, so every dev teardown left three

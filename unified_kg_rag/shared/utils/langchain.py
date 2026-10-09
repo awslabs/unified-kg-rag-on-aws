@@ -595,6 +595,12 @@ class BatchProcessor(BaseModel):
         return results
 
 
+# `&` not starting one of the XML predefined or numeric character references.
+_BARE_AMPERSAND = re.compile(r"&(?!(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+);)")
+# `<` not followed by what can start a tag, end tag, comment or declaration.
+_TEXT_LESS_THAN = re.compile(r"<(?![A-Za-z_/!?])")
+
+
 class RobustXMLOutputParser(XMLOutputParser):
     """Parse LLM XML into nested dicts, recovering from malformed output.
 
@@ -782,7 +788,15 @@ class RobustXMLOutputParser(XMLOutputParser):
 
     @staticmethod
     def _clean_xml_for_lxml(text: str) -> bytes:
+        """Strip control characters and escape markup characters used as text.
+
+        A bare ``&`` (not starting an XML entity) and a ``<`` that cannot start
+        a tag are text in LLM output ("AT&T", "budget < 5M"); lxml recovery
+        would drop them and the word after them.
+        """
         text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+        text = _BARE_AMPERSAND.sub("&amp;", text)
+        text = _TEXT_LESS_THAN.sub("&lt;", text)
         return text.strip().encode("utf-8")
 
     @staticmethod
