@@ -486,14 +486,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `DynamoDBDocStatusStore` uses `BatchWriteItem`, 25 items per request, with
   unprocessed items retried), and the commit no longer reads the registry
   once per document. A role with a custom IAM policy needs
-  `dynamodb:BatchWriteItem` (#PR).
+  `dynamodb:BatchWriteItem` (#194).
 - Removing a changed or deleted document's text units from entities and
   relationships shared with surviving documents rewrites every shared item it
   reads back from Neptune. It rewrote only the items whose Neptune copy still
   cited the removed text units, so after a removal whose Neptune write landed
   but whose OpenSearch write was interrupted or failed, every retry found the
   Neptune copy already stripped and left the OpenSearch copy citing text units
-  that no longer exist (#PR).
+  that no longer exist (#194).
 - An incremental run that both changes one document and deletes another no
   longer leaves behind the entities and relationships only those two
   documents shared. The stale artifacts of changed documents and of deleted
