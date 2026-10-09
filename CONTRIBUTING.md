@@ -39,16 +39,27 @@ The codebase uses a hexagonal (ports & adapters) architecture with registries, s
 most extensions need **no edits to existing dispatch code**. See `CLAUDE.md` for
 the full guide. In short:
 
-- **New search strategy** — subclass `BaseSearchStrategy`, decorate with
-  `@register_strategy(SearchStrategy.X, required_roles=(...))`, export from
-  `adapters/search_strategies/__init__.py`.
-- **New storage / LLM backend** — implement the relevant port in
-  `ports/` and register it; do not hardcode it into a manager's `__init__`.
+- **New search strategy** — add a member to the `SearchStrategy` enum
+  (`domain/models/retrieval.py`; the CLI `--search-strategy` choices follow
+  it), subclass `BaseSearchStrategy`, decorate with
+  `@register_strategy(SearchStrategy.X, required_roles=(...))`, and export it
+  from `adapters/search_strategies/__init__.py`. No edit to `rag_chain` is
+  needed; add it to `search.auto_routable_strategies` if `auto` may pick it.
+- **New storage / LLM backend** — implement the relevant port from `ports/`
+  and pass it to the constructor that uses it (there is no backend registry):
+  `Providers(...)` for models, `DataIngestionPipeline(..., doc_status=...,
+  vector_indexer=..., graph_indexer=...)` or `IndexingManager(...)` for the
+  write side, `GraphRAGChain(retriever_builders=...)` for retrieval. Do not
+  hardcode it into a manager's `__init__`. See `docs/design.md` §15.
 - **New evaluator** — subclass `BaseGraphRAGEvaluator`, add a branch in
   `EvaluationManager._resolve_evaluator_class`, and add an `EvaluatorType` enum
   value.
-- **New visualization renderer** — subclass `BaseRenderer`, decorate with
-  `@register_renderer("name")`; the manager and `run-visualization` pick it up.
+- **New visualization renderer** — subclass `BaseRenderer` and decorate
+  with `@register_renderer("name")`. Registration happens on import: the
+  visualization manager uses any renderer whose module was imported in the
+  process, while `run-visualization` only sees the renderers that
+  `adapters/renderers/__init__.py` imports, so a renderer in this package must
+  be imported there.
 - **New config section** — add a Pydantic `BaseModel`, attach via
   `Field(default_factory=...)`, document it in `config-template.yaml`.
 

@@ -390,12 +390,12 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 ## 15. 확장 가이드
 
-대부분의 확장은 레지스트리 등록만으로 가능하며 디스패치 코드를 수정하지 않습니다(자세한 내용 `CONTRIBUTING.md`/`CLAUDE.md`).
+검색 전략, 렌더러, 파서, 평가자는 레지스트리로(평가자는 타입 맵에 분기 하나를 추가), 백엔드는 생성자 주입으로 확장하며, 어느 쪽도 디스패치 코드를 수정하지 않습니다(자세한 내용 `CONTRIBUTING.md`/`CLAUDE.md`).
 
-- **새 검색 전략**: `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + `adapters/search_strategies/__init__.py` export. `query_inputs`는 전략이 읽는 질의 측 LLM 추출(`entity_focus`용 `ENTITIES`, `hl_keywords`/`ll_keywords`용 `DUAL_KEYWORDS`)을 선언하며, 체인은 나머지를 건너뜁니다.
-- **새 스토리지/LLM 백엔드**: 해당 포트 구현 후 주입(아래 "커스텀 백엔드" 참조). 매니저 `__init__`에 하드코딩 금지.
+- **새 검색 전략**: `SearchStrategy` enum 멤버 추가(`domain/models/retrieval.py`. 전략은 이 닫힌 enum을 키로 쓰며 CLI 선택지도 이를 따름) + `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + `adapters/search_strategies/__init__.py` export. `query_inputs`는 전략이 읽는 질의 측 LLM 추출(`entity_focus`용 `ENTITIES`, `hl_keywords`/`ll_keywords`용 `DUAL_KEYWORDS`)을 선언하며, 체인은 나머지를 건너뜁니다.
+- **새 스토리지/LLM 백엔드**: 해당 포트를 구현해 그 포트를 쓰는 생성자에 넘김(아래 "커스텀 백엔드" 참조). 백엔드 레지스트리는 없음. 매니저 `__init__`에 하드코딩 금지.
 - **새 평가자**: `BaseGraphRAGEvaluator` 상속 + `EvaluationManager._resolve_evaluator_class`에 분기 추가 + `EvaluatorType` enum 추가.
-- **새 렌더러**: `BaseRenderer` 상속 + `@register_renderer("name")`.
+- **새 렌더러**: `BaseRenderer` 상속 + `@register_renderer("name")`. 등록은 import 시점에 일어남. `GraphVisualizationManager`는 프로세스에서 import된 렌더러를 모두 쓰지만, `run-visualization`은 `adapters/renderers/__init__.py`가 import하는 렌더러만 봄.
 - **새 파서 / 파일 형식**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — LangChain `BaseLoader` 서브클래스면 됨. 팩토리 수정 불필요, 등록한 확장자는 자동으로 탐색·파싱 대상이 됨(내장 형식도 같은 확장자로 등록하면 오버라이드).
 
 ### 커스텀 백엔드 (AWS 없이 실행)

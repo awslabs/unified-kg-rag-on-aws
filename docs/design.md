@@ -392,12 +392,12 @@ Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 
 ## 15. Extension Guide
 
-Most extensions are possible with registry registration alone and require no changes to dispatch code (details in `CONTRIBUTING.md`/`CLAUDE.md`).
+Strategies, renderers, parsers and evaluators extend through registries (an evaluator still adds one branch to its type map), and backends through constructor injection; none needs a change to dispatch code (details in `CONTRIBUTING.md`/`CLAUDE.md`).
 
-- **New search strategy**: Subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py`. `query_inputs` declares the query-side LLM extractions the strategy reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest.
-- **New storage/LLM backend**: Implement the relevant port and inject it (see "Custom backends" below). Do not hardcode it into a manager's `__init__`.
+- **New search strategy**: Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; strategies are keyed by this closed enum, and the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py`. `query_inputs` declares the query-side LLM extractions the strategy reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest.
+- **New storage/LLM backend**: Implement the relevant port and pass it to the constructor that uses it (see "Custom backends" below); there is no backend registry. Do not hardcode it into a manager's `__init__`.
 - **New evaluator**: Subclass `BaseGraphRAGEvaluator` + add a branch in `EvaluationManager._resolve_evaluator_class` + an `EvaluatorType` enum.
-- **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`.
+- **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`. Registration happens on import: `GraphVisualizationManager` sees any renderer imported in the process, `run-visualization` only those that `adapters/renderers/__init__.py` imports.
 - **New parser / file format**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — any LangChain `BaseLoader` subclass; no edit to the factory, and the extension is then auto-discovered + parseable. Override a built-in by registering its extension.
 
 ### Custom backends (run without AWS)
