@@ -13,9 +13,11 @@ pipeline / tuner construction is patched so nothing touches AWS.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sys
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -773,3 +775,24 @@ def test_repair_metadata_success_is_handled(config, mocker) -> None:
     runner.pipeline.verify_pipeline_metadata.return_value = False
     runner.pipeline.repair_pipeline_metadata.return_value = True
     assert runner._handle_metadata_operations() is True
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_eval_main_closes_the_chain(config, mocker, fails) -> None:
+    """run-eval must release the chain's retriever sockets on every exit path,
+    or the process ends with "Unclosed client session / connector" warnings."""
+    chain = MagicMock()
+    chain.aclose = AsyncMock()
+    mocker.patch.object(run_evaluation, "GraphRAGChain", return_value=chain)
+    mocker.patch.object(run_evaluation, "get_config", return_value=config)
+    mocker.patch.object(run_evaluation, "setup_logging")
+    runner = MagicMock()
+    runner.run = AsyncMock(side_effect=RuntimeError("boom") if fails else None)
+    runner.run.return_value = 0
+    mocker.patch.object(run_evaluation, "EvaluationRunner", return_value=runner)
+    mocker.patch.object(sys, "argv", ["run-eval", "--eval-data-path", "d.json"])
+
+    with pytest.raises(SystemExit) if fails else contextlib.nullcontext():
+        run_evaluation.main()
+
+    chain.aclose.assert_awaited_once()

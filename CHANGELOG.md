@@ -329,6 +329,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`
   made graph extraction fail to format, and `{input_text}` in a sample was
   substituted with the chunk being extracted (#173).
+- `run-eval` closes its chain on exit, whether the run succeeds or fails, so
+  the retrievers' Neptune/OpenSearch sockets are released instead of the
+  process ending with "Unclosed client session / connector" warnings (#PR).
 - The LLM XML parser no longer tries LangChain's `XMLOutputParser.parse`
   first. Without `defusedxml` (not a dependency) that call raised
   `ImportError` on every response, so the strict and the two re-escaping

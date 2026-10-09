@@ -324,9 +324,17 @@ def main() -> None:
             logging.getLogger("unified_kg_rag").setLevel(logging.DEBUG)
 
         rag_chain = GraphRAGChain(config)
-        runner = EvaluationRunner(args, rag_chain)
+
+        async def _run_and_close() -> int:
+            # Release the retrievers' Neptune/OpenSearch sockets on every exit
+            # path, on the loop they were opened on.
+            try:
+                return await EvaluationRunner(args, rag_chain).run()
+            finally:
+                await rag_chain.aclose()
+
         exit_code = event_loop.run(
-            runner.run(), io_workers=config.processing.io_workers
+            _run_and_close(), io_workers=config.processing.io_workers
         )
         if exit_code:
             sys.exit(exit_code)
