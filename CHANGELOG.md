@@ -473,7 +473,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   new key with its content hash, status and lineage, so the upgrade neither
   re-extracts nor deletes anything; another scope's legacy record is left for
   that scope's run. Moving a local corpus to another directory without a
-  fixed `source_scope` now re-indexes it under the new scope (#PR).
+  fixed `source_scope` now re-indexes it under the new scope (#188).
 - Merging small chunks no longer drops text when a chunk repeats the previous
   chunk's last lines verbatim, such as a document ending in two identical
   `Signed: ____` lines with an LLM line boundary between them. The repeated
