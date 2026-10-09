@@ -814,31 +814,48 @@ class RobustXMLOutputParser(XMLOutputParser):
 
     @staticmethod
     def _drop_unmatched_closing_tags(text: str) -> str:
-        """Remove closing tags that close no open element.
+        """Make the element nesting well formed before lxml recovery.
 
-        Models sometimes emit a stray end tag (e.g. ``</entity_placeholder>``
-        inside a ``<relationship>``). lxml recovery treats it as closing the
-        enclosing elements, so every later sibling is lost; dropping it keeps
-        the rest of the section. A closing tag that matches an open element
-        further up the stack still closes everything above it, as in XML.
+        Models sometimes emit an end tag whose name matches nothing open: a
+        stray ``</entity_placeholder>`` after a ``<relationship>``'s fields, or
+        a typo such as ``<strength>7</strong>``. lxml recovery neither drops
+        such a tag nor closes the elements it skips, so every later sibling
+        ends up nested inside the open element and is lost. Here:
+
+        - an end tag naming an element further up the stack closes the
+          elements above it explicitly, as XML nesting implies;
+        - an unmatched end tag right after a leaf element's text closes that
+          leaf (it is the model closing the field it just wrote);
+        - any other unmatched end tag is dropped.
         """
-        open_tags: list[str] = []
+        stack: list[list[Any]] = []  # [name, has_child_element]
         out: list[str] = []
         pos = 0
         for match in _TAG.finditer(text):
             is_close, name, rest = match.group(1), match.group(2), match.group(3)
-            keep = True
+            tag = match.group(0)
+            names = [entry[0] for entry in stack]
             if is_close:
-                if name in open_tags:
-                    while open_tags and open_tags.pop() != name:
-                        pass
+                if name in names:
+                    closes = []
+                    while stack:
+                        top = stack.pop()[0]
+                        closes.append(f"</{top}>")
+                        if top == name:
+                            break
+                    tag = "".join(closes)
+                elif stack and not stack[-1][1]:
+                    tag = f"</{stack.pop()[0]}>"
                 else:
-                    keep = False
+                    tag = ""
             elif not rest.rstrip().endswith("/"):
-                open_tags.append(name)
+                if stack:
+                    stack[-1][1] = True
+                stack.append([name, False])
+            elif stack:
+                stack[-1][1] = True
             out.append(text[pos : match.start()])
-            if keep:
-                out.append(match.group(0))
+            out.append(tag)
             pos = match.end()
         out.append(text[pos:])
         return "".join(out)
