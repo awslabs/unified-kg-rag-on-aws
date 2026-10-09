@@ -838,7 +838,6 @@ class CommunityDetector(BaseProcessor):
         report_results = self.batch_processor.execute_with_fallback(
             items_to_process=report_inputs,
             prepare_inputs_func=self._create_report_chain_inputs,
-            batch_func=self.report_generator.batch,
             sequential_func=self.report_generator.invoke,
             task_name="Community report generation",
             run_config=self.config.processing.model_dump(),

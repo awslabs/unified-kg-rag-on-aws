@@ -65,21 +65,21 @@ def test_worker_writes_do_not_leak_into_the_caller() -> None:
 
 
 def test_batch_processor_workers_see_the_bound_log_context() -> None:
-    # Two chunks on the chunk pool, each under the per-call timeout wrapper's
-    # own thread: both hops must keep the caller's log context.
+    # Two chunks on the chunk pool, each item on the chunk's item pool and
+    # under the per-call timeout wrapper's own thread: every hop must keep the
+    # caller's log context.
     seen: list[dict[str, Any]] = []
     bp = BatchProcessor(batch_size=1, chunk_concurrency=2, call_timeout_seconds=5)
 
-    def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
+    def call(item):  # noqa: ANN001
         seen.append(get_contextvars())
-        return [inputs[0]["v"]]
+        return item["v"]
 
     with bound_contextvars(query_id="q-1"):
         results = bp.execute_with_fallback(
             items_to_process=[1, 2],
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
-            batch_func=batch,
-            sequential_func=lambda item: item["v"],
+            sequential_func=call,
             task_name="t",
             show_progress=False,
         )

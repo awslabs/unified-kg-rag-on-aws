@@ -713,7 +713,6 @@ class IntelligentTextChunker(BaseChunker):
             results = self.batch_processor.execute_with_fallback(
                 items_to_process=pre_chunks,
                 prepare_inputs_func=self._create_chain_inputs,
-                batch_func=self.chunker.batch,
                 sequential_func=self.chunker.invoke,
                 task_name=f"Processing boundaries for '{doc_name}'",
                 run_config=self.config.processing.model_dump(),

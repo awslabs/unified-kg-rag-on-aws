@@ -110,7 +110,7 @@ class TestSummarizeEntities:
         spy.assert_not_called()
 
     def test_above_threshold_summarized(self, summarizer, mocker) -> None:
-        summarizer.summarizer.batch = mocker.Mock(return_value=["A concise summary."])
+        summarizer.summarizer.invoke = mocker.Mock(return_value="A concise summary.")
         ents = [Entity(id="e1", name="Alice", description=LONG_DESCRIPTION)]
         out = summarizer.summarize_entities(ents)
         assert out[0].description == "A concise summary."
@@ -133,7 +133,7 @@ class TestSummarizeEntities:
         assert out[0].description == LONG_DESCRIPTION
 
     def test_empty_summary_keeps_concatenation(self, summarizer, mocker) -> None:
-        summarizer.summarizer.batch = mocker.Mock(return_value=["   "])
+        summarizer.summarizer.invoke = mocker.Mock(return_value="   ")
         ents = [Entity(id="e1", name="Alice", description=LONG_DESCRIPTION)]
         out = summarizer.summarize_entities(ents)
         assert out[0].description == LONG_DESCRIPTION
@@ -152,7 +152,7 @@ class TestSummarizeEntities:
         assert out[0].description == LONG_DESCRIPTION
 
     def test_non_description_fields_preserved(self, summarizer, mocker) -> None:
-        summarizer.summarizer.batch = mocker.Mock(return_value=["summary"])
+        summarizer.summarizer.invoke = mocker.Mock(return_value="summary")
         ent = Entity(
             id="e1",
             name="Alice",
@@ -172,8 +172,8 @@ class TestSummarizeEntities:
         assert out.confidence == 0.9
 
     def test_only_over_threshold_items_sent_to_llm(self, summarizer, mocker) -> None:
-        batch = mocker.Mock(return_value=["summary"])
-        summarizer.summarizer.batch = batch
+        invoke = mocker.Mock(return_value="summary")
+        summarizer.summarizer.invoke = invoke
         ents = [
             Entity(id="e1", name="Alice", description="short"),
             Entity(id="e2", name="Bob", description=LONG_DESCRIPTION),
@@ -183,7 +183,7 @@ class TestSummarizeEntities:
         assert out[0].description == "short"
         assert out[1].description == "summary"
         # Exactly one input item was prepared for the LLM.
-        sent_inputs = batch.call_args.args[0]
+        sent_inputs = [call.args[0] for call in invoke.call_args_list]
         assert len(sent_inputs) == 1
         assert sent_inputs[0]["entity_name"] == "Bob"
 
@@ -198,7 +198,7 @@ class TestSummarizeRelationships:
     def test_above_threshold_summarized_preserves_weight(
         self, summarizer, mocker
     ) -> None:
-        summarizer.summarizer.batch = mocker.Mock(return_value=["rel summary"])
+        summarizer.summarizer.invoke = mocker.Mock(return_value="rel summary")
         rel = Relationship(
             id="r1",
             source_id="e1",

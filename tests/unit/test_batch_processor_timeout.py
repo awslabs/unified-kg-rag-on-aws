@@ -4,9 +4,9 @@
 
 A hung Bedrock Converse call (open socket, no completion) is not caught by
 botocore's byte-gap read_timeout and would block the single Fargate worker for
-a whole stage (observed in claim_extraction). BatchProcessor wraps each
-batch/sequential call in a wall-clock timeout so it aborts and falls back to
-per-item retries instead.
+a whole stage (observed in claim_extraction). BatchProcessor runs every item
+as its own call under a wall-clock timeout, so a hung item aborts and is
+retried alone while the other items keep their results.
 
 A "hung" call here blocks on an Event that the ``release_hung_calls`` fixture
 sets at teardown. A timed-out call is abandoned, not cancelled, and executor
@@ -15,11 +15,12 @@ the test process alive for the whole sleep after the suite finished.
 """
 
 import threading
+from collections import Counter
 from collections.abc import Iterator
 
 import pytest
 
-from unified_kg_rag.shared.utils.langchain import BatchProcessor
+from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 pytestmark = pytest.mark.unit
 
@@ -45,28 +46,95 @@ def test_run_with_timeout_zero_disables() -> None:
     assert BatchProcessor._run_with_timeout(lambda: "ok", 0, "nolimit") == "ok"
 
 
-def test_batch_timeout_falls_back_to_sequential(release_hung_calls) -> None:
-    # A batch that hangs should time out, then the sequential path handles items.
-    bp = BatchProcessor(call_timeout_seconds=1, batch_size=10)
+class _SlowFirstCall:
+    """Per-item call whose first call for item ``slow`` hangs until released."""
 
-    def hung_batch(
-        _inputs, config=None, return_exceptions=False
-    ):  # noqa: ANN001, ARG001
-        release_hung_calls.wait()
-        return []
+    def __init__(self, slow: int, release: threading.Event) -> None:
+        self.slow = slow
+        self.release = release
+        self.calls: Counter[int] = Counter()
+        self._lock = threading.Lock()
 
-    def sequential(item):  # noqa: ANN001
+    def __call__(self, item: dict[str, int]) -> dict[str, int]:
+        with self._lock:
+            self.calls[item["v"]] += 1
+            first = self.calls[item["v"]] == 1
+        if item["v"] == self.slow and first:
+            self.release.wait()
         return {"echo": item["v"]}
 
+
+def test_one_slow_item_times_out_alone(release_hung_calls) -> None:
+    # Each item has its own timeout: the finished items keep their results
+    # and only the slow one is called again (it used to time out the whole
+    # chunk and re-run all ten items).
+    fake = _SlowFirstCall(slow=3, release=release_hung_calls)
+    bp = BatchProcessor(
+        call_timeout_seconds=1,
+        batch_size=10,
+        retry_multiplier=1.0,
+        retry_max_wait=0,
+    )
     results = bp.execute_with_fallback(
-        items_to_process=[1, 2],
+        items_to_process=list(range(10)),
         prepare_inputs_func=lambda items: [{"v": i} for i in items],
-        batch_func=hung_batch,
-        sequential_func=sequential,
+        sequential_func=fake,
         task_name="t",
         show_progress=False,
     )
-    assert results == [{"echo": 1}, {"echo": 2}]
+    assert results == [{"echo": i} for i in range(10)]
+    assert fake.calls[3] == 2
+    assert sum(fake.calls.values()) == 11
+
+
+def test_item_slow_on_every_attempt_fails_in_place(release_hung_calls) -> None:
+    # The first call and each of the max_attempts retries time out; only
+    # that position is marked failed.
+    calls: Counter[int] = Counter()
+    lock = threading.Lock()
+
+    def call(item: dict[str, int]) -> dict[str, int]:
+        with lock:
+            calls[item["v"]] += 1
+        if item["v"] == 1:
+            release_hung_calls.wait()
+        return {"echo": item["v"]}
+
+    bp = BatchProcessor(
+        call_timeout_seconds=1,
+        batch_size=10,
+        max_attempts=2,
+        retry_multiplier=1.0,
+        retry_max_wait=0,
+    )
+    results = bp.execute_with_fallback(
+        items_to_process=[0, 1, 2],
+        prepare_inputs_func=lambda items: [{"v": i} for i in items],
+        sequential_func=call,
+        task_name="t",
+        show_progress=False,
+    )
+    assert results == [{"echo": 0}, BATCH_ITEM_FAILED, {"echo": 2}]
+    assert calls == Counter({0: 1, 1: 3, 2: 1})
+
+
+def test_items_of_a_chunk_run_concurrently() -> None:
+    # The items of one chunk are in flight together, up to max_concurrency.
+    barrier = threading.Barrier(3, timeout=10)
+
+    def call(item: dict[str, int]) -> dict[str, int]:
+        barrier.wait()
+        return {"echo": item["v"]}
+
+    bp = BatchProcessor(batch_size=3, max_concurrency=3, call_timeout_seconds=0)
+    results = bp.execute_with_fallback(
+        items_to_process=[1, 2, 3],
+        prepare_inputs_func=lambda items: [{"v": i} for i in items],
+        sequential_func=call,
+        task_name="t",
+        show_progress=False,
+    )
+    assert results == [{"echo": 1}, {"echo": 2}, {"echo": 3}]
 
 
 def test_chunk_results_preserve_order_when_concurrent() -> None:
@@ -78,18 +146,17 @@ def test_chunk_results_preserve_order_when_concurrent() -> None:
     n = 4
     done = [threading.Event() for _ in range(n)]
 
-    def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
-        v = inputs[0]["v"]
+    def call(item: dict[str, int]) -> dict[str, int]:
+        v = item["v"]
         if v + 1 < n:
             assert done[v + 1].wait(timeout=10), "chunks did not run concurrently"
         done[v].set()
-        return [{"echo": v}]
+        return {"echo": v}
 
     results = bp.execute_with_fallback(
         items_to_process=list(range(n)),
         prepare_inputs_func=lambda items: [{"v": i} for i in items],
-        batch_func=batch,
-        sequential_func=lambda item: {"echo": -1},
+        sequential_func=call,
         task_name="t",
         show_progress=False,
     )
@@ -106,7 +173,7 @@ def test_chunks_run_concurrently() -> None:
     in_flight = 0
     max_in_flight = 0
 
-    def batch(inputs, config=None, return_exceptions=False):  # noqa: ANN001, ARG001
+    def call(item: dict[str, int]) -> dict[str, int]:
         nonlocal in_flight, max_in_flight
         with lock:
             in_flight += 1
@@ -116,13 +183,12 @@ def test_chunks_run_concurrently() -> None:
         finally:
             with lock:
                 in_flight -= 1
-        return [{"echo": inputs[0]["v"]}]
+        return {"echo": item["v"]}
 
     results = bp.execute_with_fallback(
         items_to_process=[1, 2, 3, 4],
         prepare_inputs_func=lambda items: [{"v": i} for i in items],
-        batch_func=batch,
-        sequential_func=lambda item: {"echo": -1},
+        sequential_func=call,
         task_name="t",
         show_progress=False,
     )
@@ -131,12 +197,11 @@ def test_chunks_run_concurrently() -> None:
 
 
 def test_chunk_concurrency_one_is_serial() -> None:
-    # chunk_concurrency=1 keeps the legacy strictly-serial path.
+    # chunk_concurrency=1 keeps the strictly-serial chunk loop.
     bp = BatchProcessor(batch_size=1, chunk_concurrency=1, call_timeout_seconds=0)
     results = bp.execute_with_fallback(
         items_to_process=[1, 2, 3],
         prepare_inputs_func=lambda items: [{"v": i} for i in items],
-        batch_func=lambda inputs, **_: [{"echo": inputs[0]["v"]}],
         sequential_func=lambda item: {"echo": item["v"]},
         task_name="t",
         show_progress=False,

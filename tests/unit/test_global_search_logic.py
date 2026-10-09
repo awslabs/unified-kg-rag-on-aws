@@ -517,15 +517,9 @@ class _MapRater:
     def __init__(self) -> None:
         self.configs: list = []
 
-    def batch(self, inputs, config=None, return_exceptions=False):  # noqa: ANN001
-        self.configs.append(config)
-        return ['{"points": [{"description": "Vendor ships", "score": 80}]}'] * len(
-            inputs
-        )
-
     def invoke(self, single_input, config=None):  # noqa: ANN001
         self.configs.append(config)
-        return '{"points": []}'
+        return '{"points": [{"description": "Vendor ships", "score": 80}]}'
 
 
 async def test_select_dynamic_passes_the_callers_config() -> None:
@@ -555,8 +549,6 @@ async def test_map_reduce_passes_the_callers_config_to_map_and_reduce() -> None:
         _communities(2), SearchQuery(query="q"), config=caller_config
     )
 
-    # The map batch merges the caller's config with BatchProcessor's own.
-    (map_config,) = strat.map_rater.configs
-    assert map_config["tags"] == ["caller"]
-    assert map_config["max_concurrency"] == 4
+    # The map call gets the caller's config.
+    assert strat.map_rater.configs == [caller_config]
     assert strat.map_reducer.configs == [caller_config]

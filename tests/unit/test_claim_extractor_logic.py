@@ -408,8 +408,8 @@ class TestExtractFromTextUnits:
 
     def test_end_to_end_with_mocked_chain(self, extractor, mocker) -> None:
         units = [TextUnit(id="t1", text="Acme acquired Beta.")]
-        extractor.claim_extractor.batch = mocker.Mock(
-            return_value=[
+        extractor.claim_extractor.invoke = mocker.Mock(
+            side_effect=[
                 {
                     "claims": {
                         "claim": {

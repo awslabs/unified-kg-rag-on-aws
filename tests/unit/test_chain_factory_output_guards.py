@@ -157,7 +157,6 @@ def test_truncated_item_is_a_batch_failure() -> None:
     results = BatchProcessor(max_attempts=1).execute_with_fallback(
         items_to_process=[_INPUT],
         prepare_inputs_func=lambda items: list(items),
-        batch_func=chain.batch,
         sequential_func=chain.invoke,
         task_name="extraction",
         show_progress=False,

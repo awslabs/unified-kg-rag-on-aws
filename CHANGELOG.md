@@ -368,6 +368,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   calling it, since it could only invent the structure; the batch retry
   re-asks the original model. `create_robust_xml_output_parser` takes a
   required keyword `output_tags` (**Breaking** for direct callers) (#PR).
+- `BatchProcessor.execute_with_fallback` runs every item as its own call
+  under its own `call_timeout_seconds`. The timeout wrapped a chunk's whole
+  `batch()` call, so one slow item discarded the chunk's finished results
+  and re-ran every item (10 items with one slow: 20 model calls instead of
+  11), while the abandoned calls kept running and billing. Now only the
+  timed-out or failed item is retried, with the same `max_attempts`.
+  **Breaking** for direct callers: the synchronous method no longer takes
+  `batch_func` (the async one still does) (#PR).
 - `cdk destroy` with `removal_destroy=true` (dev default) deletes the
   OpenSearch domain's app, slow-index and slow-search log groups. The domain
   created them with CDK's default `Retain`, so every dev teardown left three

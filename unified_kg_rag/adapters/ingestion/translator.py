@@ -131,7 +131,6 @@ class TextUnitTranslator:
                 prepare_inputs_func=lambda texts: self._create_chain_inputs(
                     texts, target_language
                 ),
-                batch_func=self.translator.batch,
                 sequential_func=self.translator.invoke,
                 task_name=f"Translation ({target_language.value})",
                 run_config=self.config.processing.model_dump(),

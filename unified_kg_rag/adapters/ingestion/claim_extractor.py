@@ -194,7 +194,6 @@ class ClaimExtractor(BaseProcessor):
             extraction_results = self.batch_processor.execute_with_fallback(
                 items_to_process=units_to_process,
                 prepare_inputs_func=prepare_inputs_for_chunk,
-                batch_func=self.claim_extractor.batch,
                 sequential_func=self.claim_extractor.invoke,
                 task_name="Claim Extraction",
                 run_config=self.config.processing.model_dump(),

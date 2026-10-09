@@ -110,8 +110,8 @@ class BatchProcessor(BaseModel):
     max_attempts: int = Field(
         default=5,
         ge=1,
-        description="Total attempts for an item called on its own after its "
-        "batch call fails, including the first (1 disables the retry)",
+        description="Calls an item gets after its first call fails: at least "
+        "one, and up to this many while its error is retryable",
     )
     batch_size: int = Field(
         default=10,
@@ -128,10 +128,12 @@ class BatchProcessor(BaseModel):
     call_timeout_seconds: int = Field(
         default=300,
         ge=0,
-        description="Wall-clock timeout for a single batch/sequential LLM call. "
-        "botocore's read_timeout only measures the gap between bytes, so a server "
-        "that dribbles keep-alive data can hang a call indefinitely; this hard "
-        "ceiling forces such a call to abort (and fall back / retry). 0 disables.",
+        description="Wall-clock timeout for one item's LLM call. botocore's "
+        "read_timeout only measures the gap between bytes, so a server that "
+        "dribbles keep-alive data can hang a call indefinitely; this hard "
+        "ceiling aborts such a call and retries that item alone. Keep it below "
+        "the Bedrock client's read timeout so it is the limit that fires. "
+        "0 disables.",
     )
     is_transient_error: Callable[[BaseException], bool] | None = Field(
         default=None,
@@ -148,16 +150,14 @@ class BatchProcessor(BaseModel):
         """Run ``func`` under a wall-clock timeout.
 
         A hung Bedrock call (no completion despite an open socket) would otherwise
-        block the only worker for the full mini-batch; this bounds it so the
-        caller can fall back to per-item retries. ``timeout_seconds <= 0`` runs
-        ``func`` directly with no timeout.
+        block its worker indefinitely; this bounds it so the item can be retried.
+        ``timeout_seconds <= 0`` runs ``func`` directly with no timeout.
 
         Python cannot kill a thread, so a timed-out call is abandoned, not
-        cancelled: its in-flight Bedrock request(s) keep running (and billing)
-        until botocore's own read timeout or completion, while the caller's
-        fallback re-issues the same work. Keep ``call_timeout_seconds`` well
-        above normal call latency so this path stays reserved for genuinely hung
-        calls; the cost of a timeout is roughly one extra copy of the call.
+        cancelled: its in-flight Bedrock request keeps running (and billing)
+        until botocore's own read timeout or completion, while the retry
+        re-issues that one item. Keep ``call_timeout_seconds`` well above normal
+        call latency so this path stays reserved for genuinely hung calls.
         """
         if timeout_seconds <= 0:
             return func()
@@ -166,7 +166,7 @@ class BatchProcessor(BaseModel):
         # would block until the hung call actually returns (up to the full
         # BOTO_READ_TIMEOUT), defeating the whole point of the timeout. Instead
         # abandon the doomed thread with shutdown(wait=False, cancel_futures=True)
-        # so control returns to the caller immediately for the per-item fallback.
+        # so control returns to the caller immediately for the item's retry.
         pool = ContextThreadPoolExecutor(max_workers=1)
         future = pool.submit(func)
         try:
@@ -193,12 +193,20 @@ class BatchProcessor(BaseModel):
         self,
         items_to_process: list[Any],
         prepare_inputs_func: Callable[[list[Any]], list[dict[str, Any]]],
-        batch_func: Callable[..., list[Any]],
-        sequential_func: Callable[..., Any],
+        sequential_func: Callable[[dict[str, Any]], Any],
         task_name: str,
         run_config: dict[str, Any] | None = None,
         show_progress: bool = True,
     ) -> list[Any]:
+        """Call ``sequential_func`` once per item, in chunks, and retry failures.
+
+        Each item is its own call under its own ``call_timeout_seconds``, run
+        ``max_concurrency`` at a time within a chunk, so a slow or failed item
+        neither discards the finished results of its chunk nor makes them run
+        again: only the failed items are retried (``max_attempts``). Results
+        are 1:1 with the prepared inputs; an item that failed every attempt is
+        :data:`BATCH_ITEM_FAILED`.
+        """
         if not items_to_process:
             return []
 
@@ -212,10 +220,8 @@ class BatchProcessor(BaseModel):
             )
             self.max_attempts = run_config.get("max_attempts", self.max_attempts)
 
-        prepared_batch_func = self._create_batch_func(batch_func)
-
-        # Bound each single-item call by the same wall-clock ceiling so a hung
-        # item aborts and is retried by the decorator instead of blocking.
+        # Bound every item call by the wall-clock ceiling so a hung item
+        # aborts and is retried instead of blocking.
         def timed_sequential_func(single_input: dict[str, Any]) -> Any:
             return self._run_with_timeout(
                 lambda: sequential_func(single_input),
@@ -252,38 +258,11 @@ class BatchProcessor(BaseModel):
                     "No valid inputs prepared for chunk %s, skipping", chunk_num
                 )
                 return []
-            try:
-
-                def run_batch(inputs: list[dict[str, Any]] = chunk_inputs) -> Any:
-                    return prepared_batch_func(inputs)
-
-                results: list[Any] = list(
-                    self._run_with_timeout(
-                        run_batch,
-                        self.call_timeout_seconds,
-                        f"{task_name} batch chunk {chunk_num}",
-                    )
-                )
-            except Exception as e:
-                logger.warning(
-                    "Batch processing failed for chunk %s: %s. Falling back to "
-                    "sequential processing",
-                    chunk_num,
-                    e,
-                )
-                return self._process_sequentially_with_fallback(
-                    chunk_inputs,
-                    retrying_sequential_func,
-                    f"{task_name} (chunk {chunk_num})",
-                    show_progress=show_progress,
-                )
-
-            # The batch ran with return_exceptions=True: keep the successful
-            # results and retry ONLY the failed positions, so one bad item no
-            # longer re-pays every successful LLM call in its chunk.
+            results = self._call_each(timed_sequential_func, chunk_inputs)
+            # Keep the successful results and retry ONLY the failed positions.
             failed = self._failed_indices(results)
             if not failed:
-                logger.debug("Chunk %s processed successfully in batch mode", chunk_num)
+                logger.debug("Chunk %s processed successfully", chunk_num)
                 return results
             self._log_partial_failure(task_name, chunk_num, results, failed)
             retried = self._process_sequentially_with_fallback(
@@ -334,6 +313,21 @@ class BatchProcessor(BaseModel):
         logger.info("Completed '%s': processed %s results", task_name, len(all_results))
         return all_results
 
+    def _call_each(
+        self, func: Callable[[dict[str, Any]], Any], inputs: list[dict[str, Any]]
+    ) -> list[Any]:
+        """``func`` per input, ``max_concurrency`` at a time; errors in place."""
+        workers = min(self.max_concurrency, len(inputs))
+        with ContextThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(func, single_input) for single_input in inputs]
+            results: list[Any] = []
+            for future in futures:
+                try:
+                    results.append(future.result())
+                except Exception as e:
+                    results.append(e)
+        return results
+
     def _batch_kwargs(self) -> dict[str, Any]:
         # batch_func follows the Runnable.batch/abatch signature; per-item
         # exceptions come back in place so only the failed items are retried.
@@ -368,14 +362,6 @@ class BatchProcessor(BaseModel):
         for idx, res in zip(failed, retried, strict=True):
             merged[idx] = res
         return merged
-
-    def _create_batch_func(self, batch_func: Callable[..., list[Any]]) -> Callable:
-        batch_kwargs = self._batch_kwargs()
-
-        def _batch_func(inputs: list[dict[str, Any]]) -> list[Any]:
-            return batch_func(inputs, **batch_kwargs)
-
-        return _batch_func
 
     def _is_retryable(self, exc: BaseException) -> bool:
         # A malformed LLM response or a hung call can succeed on a new attempt.

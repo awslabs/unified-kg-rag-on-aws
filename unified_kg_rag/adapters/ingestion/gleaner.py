@@ -442,7 +442,6 @@ class GraphGleaner(BaseProcessor):
             results = self.batch_processor.execute_with_fallback(
                 items_to_process=prepared_units,
                 prepare_inputs_func=prepare_inputs_for_chunk,
-                batch_func=self.graph_refiner.batch,
                 sequential_func=self.graph_refiner.invoke,
                 task_name="Graph Refinement",
                 run_config=self.config.processing.model_dump(),
