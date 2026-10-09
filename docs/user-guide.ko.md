@@ -460,6 +460,7 @@ LLM 스테이지는 Bedrock I/O 바운드이므로 동시성을 CPU 수보다 �
 | `indexing.cross_run_merge` | `true` | 증분 실행에서 기존 그래프를 덮어쓰지 않고 새 데이터와 합쳐, 변경되지 않은 문서와 공유되는 엔터티의 계보를 유지합니다(§5). `false`면 덮어씁니다. |
 | `indexing.cross_run_fuzzy_merge` | `false` | `cross_run_merge`에 엔터티 이름 유사도 매칭을 더합니다. |
 | `indexing.max_failure_rate` | `0.2` | 인덱스 유형별 쓰기 실패율이 이 값을 넘으면 인덱싱 스테이지를 실패로 처리합니다. `1.0`이면 부분 실패 검사를 끕니다. |
+| `indexing.max_document_failures` | `3` | 증분 실행에서 내용이 그대로인 문서가 연속으로 이 횟수만큼 `FAILED`로 기록되면 더는 재시도하지 않습니다(§5). |
 | `indexing.opensearch.embedding_model_id` | `"amazon.titan-embed-text-v2:0"` | 임베딩 모델이며 정해진 목록에서 고릅니다(모델 선택 주의사항 참고). 바꾸면 다시 인덱싱해야 합니다. |
 | `indexing.opensearch.build_relationship_vector_index` | `true` | LightRAG `mix`/`hybrid`가 쓰는 관계 벡터 인덱스를 만듭니다. GraphRAG만 쓰는 배포라면 `false`로 둡니다. |
 | `indexing.opensearch.persist_embedding_cache` | `false` | 임베딩 캐시를 S3에 저장해 바뀌지 않은 텍스트를 실행마다 다시 임베딩하지 않습니다. `aws.s3.bucket_name`이 필요합니다. |
@@ -931,6 +932,17 @@ URI로 설정)에 기록된 문서만 삭제된 것으로 판단합니다. 따�
 
 로컬 코퍼스를 다른 디렉터리로 옮기면 기본 범위가 바뀝니다. 먼저 `source_scope`를
 고정된 이름으로 설정하거나 재구축합니다.
+
+### 실패한 문서
+
+번역, 그래프 추출, gleaning, 클레임 추출 중 하나가 텍스트 단위 하나라도 실패한
+문서는 `FAILED`로 기록됩니다. 다음 실행은 파일이 바뀌지 않았어도 이 문서를 변경된
+문서로 보고, 실패한 실행이 쓴 결과를 지운 뒤 다시 처리합니다. 내용이 같은 채로
+`indexing.max_document_failures`(기본값 `3`)번 연속 실패한 문서는 더 이상 재시도하지
+않습니다. 이 문서는 `FAILED` 상태와 이미 인덱싱된 결과를 유지하고, 실행마다 파일
+이름을 담은 WARNING과 함께 변경 없음으로 건너뜁니다. 파일을 수정하면(내용이 바뀌면
+횟수를 다시 셉니다) 또는 한도를 올리면 다시 시도합니다. 횟수 필드가 생기기 전에
+기록된 레코드는 `0`부터 셉니다.
 
 ### 문서 크기 한도
 

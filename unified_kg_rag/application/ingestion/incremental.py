@@ -191,11 +191,18 @@ class IncrementalIndexer:
         self.scope = scope
 
     def plan(
-        self, documents: list[Document], failed_doc_ids: list[str] | None = None
+        self,
+        documents: list[Document],
+        failed_doc_ids: list[str] | None = None,
+        max_failures: int | None = None,
     ) -> tuple[DocumentDelta, dict[str, str]]:
         """Compute the delta for ``documents`` without mutating any store."""
         return detect_delta(
-            documents, self.doc_status, self.scope, failed_doc_ids or ()
+            documents,
+            self.doc_status,
+            self.scope,
+            failed_doc_ids or (),
+            max_failures=max_failures,
         )
 
     def remove_obsolete_artifacts(self, doc_ids: list[str]) -> bool:
@@ -460,13 +467,25 @@ class IncrementalIndexer:
         for lineage in lineages:
             failed = lineage.doc_id in failed_doc_ids
             existing = self.doc_status.get(lineage.doc_id)
+            content_hash = fingerprints.get(
+                lineage.doc_id, existing.content_hash if existing else ""
+            )
+            # Consecutive failures of this content; new content starts over.
+            failure_count = 0
+            if failed:
+                failure_count = 1
+                if (
+                    existing is not None
+                    and existing.status is DocStatus.FAILED
+                    and existing.content_hash == content_hash
+                ):
+                    failure_count += existing.failure_count
             record = DocStatusRecord(
                 doc_id=lineage.doc_id,
-                content_hash=fingerprints.get(
-                    lineage.doc_id, existing.content_hash if existing else ""
-                ),
+                content_hash=content_hash,
                 status=DocStatus.FAILED if failed else DocStatus.PROCESSED,
                 error_info=("extraction failed on some text units" if failed else None),
+                failure_count=failure_count,
                 suffix=lineage.suffix,
                 scope=(
                     self.scope

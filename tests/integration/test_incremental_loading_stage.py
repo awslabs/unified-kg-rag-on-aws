@@ -17,7 +17,12 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
     compute_content_hash,
     compute_doc_id,
 )
-from unified_kg_rag.domain.models import Config, DocStatusRecord, Document
+from unified_kg_rag.domain.models import (
+    Config,
+    DocStatus,
+    DocStatusRecord,
+    Document,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -103,6 +108,35 @@ def test_filter_skips_unchanged_documents() -> None:
         # The delta is stashed on the context for the IndexingStage.
         assert ctx.incremental_delta is not None
         assert compute_doc_id("/b.txt") in ctx.incremental_delta.new
+
+
+def test_filter_stops_retrying_a_document_after_max_failures() -> None:
+    with mock_aws():
+        config = Config()
+        config.aws.dynamodb.enabled = True
+        config.aws.dynamodb.table_name = "test-doc-status"
+        config.indexing.max_document_failures = 3
+        session = boto3.Session(region_name="us-east-1")
+        store = DynamoDBDocStatusStore(config, boto_session=session)
+        _ = store.client  # create table
+
+        a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
+        for path, doc, failures in (("/a.txt", a, 3), ("/b.txt", b, 2)):
+            store.put(
+                DocStatusRecord(
+                    doc_id=compute_doc_id(path),
+                    content_hash=compute_content_hash(doc),
+                    status=DocStatus.FAILED,
+                    failure_count=failures,
+                )
+            )
+
+        stage = _stage(config, session)
+        kept, skipped = stage._apply_incremental_filter([a, b], _Ctx())
+
+        # /a.txt used up its retries; /b.txt has one left.
+        assert [d.file_path for d in kept] == ["/b.txt"]
+        assert skipped == 1
 
 
 def test_filter_degrades_gracefully_on_error() -> None:

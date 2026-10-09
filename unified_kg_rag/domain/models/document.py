@@ -213,6 +213,12 @@ class DocStatusRecord(BaseModel):
     error_info: str | None = Field(
         default=None, description="Error detail if status is FAILED"
     )
+    failure_count: int = Field(
+        default=0,
+        ge=0,
+        description="Consecutive runs that recorded this content FAILED; 0 once "
+        "processed. A record written before the field existed reads as 0",
+    )
     created_at: str | None = Field(
         default=None, description="ISO timestamp when first registered"
     )

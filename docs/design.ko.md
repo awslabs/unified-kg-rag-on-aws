@@ -220,7 +220,7 @@ grep으로 검증: `domain/`은 런타임에 `adapters`/`application`을 import�
 4. **삭제 전파** (`remove_deleted`): 삭제 문서의 *독점* 아티팩트만 `delete_by_id`로 제거합니다(공유 엔티티 보존). 텍스트 단위·엔티티·관계 인덱스가 모두 대상입니다. 같은 suffix의 남은 문서와 공유하는 엔티티와 관계는 유지하되, 제거되는 문서의 텍스트 단위를 빼고 `frequency`와 weight를 다시 계산해 Neptune과 OpenSearch에 함께 반영합니다(`IndexingManager.remove_text_units_from_shared`). 2단계도 변경 문서의 재추출 결과를 병합하기 전에 같은 처리를 합니다. 제거가 하나라도 실패하면 재시도를 위해 레지스트리 레코드를 남기고, 델타를 커밋한 뒤 인덱싱 단계를 실패시켜 실행 결과와 `IndexingFailures` 알람에 드러나게 합니다.
 
    **한계**: 공유 아티팩트의 설명에는 변경되거나 삭제된 문서가 기여한 문장이 남습니다. 이를 빼려면 남은 출처로 설명을 다시 요약해야 하고 영향받는 아티팩트마다 LLM 호출이 필요하므로, 전체 재구축(`indexing.reset`) 전까지 그대로 둡니다. 공유 커뮤니티와 그 리포트도 마찬가지입니다(아래 참고).
-5. **레지스트리 갱신**: 처리한 문서를 `DocumentLineage`(문서별 아티팩트 id + suffix)로 `DocStatusRecord`에 기록하고, 실행 범위와 상대 경로도 함께 저장합니다. 번역·그래프 추출·gleaning·클레임 추출이 텍스트 단위 하나라도 실패한 문서는 기록한 계보와 함께 `FAILED`로 남기고, `diff`는 해시가 같아도 `FAILED` 레코드를 changed로 분류하므로 다음 실행이 이를 정리한 뒤 다시 추출합니다.
+5. **레지스트리 갱신**: 처리한 문서를 `DocumentLineage`(문서별 아티팩트 id + suffix)로 `DocStatusRecord`에 기록하고, 실행 범위와 상대 경로도 함께 저장합니다. 번역·그래프 추출·gleaning·클레임 추출이 텍스트 단위 하나라도 실패한 문서는 기록한 계보와 함께 `FAILED`로 남기고, `diff`는 해시가 같아도 `FAILED` 레코드를 changed로 분류하므로 다음 실행이 이를 정리한 뒤 다시 추출합니다. 레코드는 같은 내용의 연속 실패 횟수(`failure_count`)를 세고, `indexing.max_document_failures`에 이르면 `detect_delta`가 이 문서를 변경 없음으로 분류해 매번 다시 추출하지 않습니다.
 
 `indexing.reset`이면 diff를 건너뜁니다. 저장소와 레지스트리를 비운 뒤 전체 인덱싱 경로로 코퍼스 전체를 다시 구축하고, 모든 문서를 다시 기록합니다(재구축 쓰기가 델타 커밋과 같은 실패 기준을 통과한 경우에만).
 

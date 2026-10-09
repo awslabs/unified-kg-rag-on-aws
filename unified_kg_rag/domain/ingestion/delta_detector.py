@@ -22,7 +22,12 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from unified_kg_rag.domain.models import Constants, Document, DocumentDelta
+from unified_kg_rag.domain.models import (
+    Constants,
+    DocStatus,
+    Document,
+    DocumentDelta,
+)
 from unified_kg_rag.ports import DocStatusPort
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils.document_identity import (
@@ -140,6 +145,7 @@ def detect_delta(
     doc_status: DocStatusPort,
     scope: str | None = None,
     failed_doc_ids: Iterable[str] = (),
+    max_failures: int | None = None,
 ) -> tuple[DocumentDelta, dict[str, str]]:
     """Classify ``documents`` against the persisted registry.
 
@@ -151,6 +157,10 @@ def detect_delta(
             registry (single-corpus deployments that predate scopes).
         failed_doc_ids: Registry ids of corpus files that failed to parse or
             load this run. They are reported as ``failed`` and never deleted.
+        max_failures: A document whose unchanged content was recorded FAILED
+            this many consecutive times is classified unchanged instead of
+            changed, so a deterministic failure is not re-extracted every run.
+            ``None`` retries without limit.
 
     Returns:
         The :class:`DocumentDelta` plus the ``{doc_id: content_hash}``
@@ -163,6 +173,8 @@ def detect_delta(
         if scope is None
         else doc_status.diff(fingerprints, scope=scope)
     )
+    if max_failures is not None and delta.changed:
+        _stop_retrying_exhausted(delta, doc_status, fingerprints, max_failures)
     failed = set(failed_doc_ids) - set(fingerprints)
     if failed:
         delta.deleted = [doc_id for doc_id in delta.deleted if doc_id not in failed]
@@ -181,6 +193,39 @@ def detect_delta(
         len(delta.failed),
     )
     return delta, fingerprints
+
+
+def _stop_retrying_exhausted(
+    delta: DocumentDelta,
+    doc_status: DocStatusPort,
+    fingerprints: dict[str, str],
+    max_failures: int,
+) -> None:
+    """Move changed documents that used up their retries to ``unchanged``."""
+    exhausted: list[str] = []
+    labels: list[str] = []
+    for doc_id in delta.changed:
+        record = doc_status.get(doc_id)
+        if (
+            record is not None
+            and record.status is DocStatus.FAILED
+            and record.content_hash == fingerprints[doc_id]
+            and record.failure_count >= max_failures
+        ):
+            exhausted.append(doc_id)
+            labels.append(record.file_path or doc_id)
+    if not exhausted:
+        return
+    delta.changed = [doc_id for doc_id in delta.changed if doc_id not in exhausted]
+    delta.unchanged.extend(exhausted)
+    logger.warning(
+        "Not retrying %d documents that failed %d consecutive runs with unchanged "
+        "content (kept FAILED; edit the file or raise "
+        "indexing.max_document_failures to retry): %s",
+        len(exhausted),
+        max_failures,
+        ", ".join(labels),
+    )
 
 
 def filter_documents_to_process(

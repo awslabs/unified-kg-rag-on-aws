@@ -244,3 +244,47 @@ def test_shared_artifacts_are_not_deleted(indexer) -> None:
     assert "shared" not in all_deleted_ids
     # b's registry record is still removed even though its only artifact survives.
     assert {r.doc_id for r in store.list_all()} == {compute_doc_id("/a.txt")}
+
+
+def _fail(inc: IncrementalIndexer, fps: dict[str, str], path: str) -> None:
+    inc.commit([_lineage(path, ["e1"])], fps, failed_doc_ids={compute_doc_id(path)})
+
+
+def test_a_document_failing_every_run_stops_being_retried(indexer) -> None:
+    # A document that fails deterministically is retried up to max_failures
+    # consecutive FAILED records, then treated as unchanged (still FAILED).
+    inc, store, _ = indexer
+    docs = [_doc("/a.txt", "A")]
+    doc_id = compute_doc_id("/a.txt")
+    for attempt in (1, 2):
+        delta, fps = inc.plan(docs, max_failures=2)
+        assert doc_id in delta.to_process
+        _fail(inc, fps, "/a.txt")
+        record = store.get(doc_id)
+        assert record is not None
+        assert record.failure_count == attempt
+
+    delta, _ = inc.plan(docs, max_failures=2)
+
+    assert delta.unchanged == [doc_id]
+    assert not delta.to_process
+    record = store.get(doc_id)
+    assert record is not None and record.status.value == "failed"
+
+
+def test_failure_count_resets_on_success_and_on_new_content(indexer) -> None:
+    inc, store, _ = indexer
+    doc_id = compute_doc_id("/a.txt")
+    _, fps = inc.plan([_doc("/a.txt", "A")])
+    _fail(inc, fps, "/a.txt")
+    _fail(inc, fps, "/a.txt")
+
+    # New content is a new document version: its count starts again.
+    _, edited = inc.plan([_doc("/a.txt", "EDITED")])
+    _fail(inc, edited, "/a.txt")
+    record = store.get(doc_id)
+    assert record is not None and record.failure_count == 1
+
+    inc.commit([_lineage("/a.txt", ["e1"])], edited)
+    record = store.get(doc_id)
+    assert record is not None and record.failure_count == 0

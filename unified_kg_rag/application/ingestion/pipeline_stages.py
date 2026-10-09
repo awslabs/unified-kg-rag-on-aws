@@ -395,7 +395,11 @@ class DocumentLoadingStage(PipelineStage):
 
             store = self._build_doc_status_store()
             delta, fingerprints = detect_delta(
-                documents, store, scope=scope, failed_doc_ids=failed_doc_ids
+                documents,
+                store,
+                scope=scope,
+                failed_doc_ids=failed_doc_ids,
+                max_failures=self.config.indexing.max_document_failures,
             )
             context.incremental_delta = delta
             context.incremental_fingerprints = fingerprints

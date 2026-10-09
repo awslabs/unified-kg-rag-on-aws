@@ -435,6 +435,11 @@ indexing:
   # edges dropped) that would otherwise be reported as a successful run. Set to
   # 1.0 to disable the partial-failure gate.
   max_failure_rate: 0.2
+  # Incremental runs only (aws.dynamodb.enabled): a document recorded FAILED
+  # this many consecutive runs with unchanged content is no longer retried. It
+  # stays FAILED and is skipped as unchanged (WARNING per run) until the file
+  # changes or this value is raised.
+  max_document_failures: 3
 
   # OpenSearch Indexing
   opensearch:

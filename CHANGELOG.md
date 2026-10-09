@@ -13,6 +13,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 **Breaking** change configuration, stored index data, or a public interface.
 
 ### Added
+- `indexing.max_document_failures` (default `3`): an incremental run stops
+  retrying a document recorded FAILED that many consecutive runs with
+  unchanged content. It stays FAILED and is skipped as unchanged with a
+  WARNING until the file changes or the limit is raised; before, a document
+  that failed deterministically was pruned and re-extracted on every run. The
+  count is stored as `failure_count` on the doc-status record; records
+  written before it existed read as `0` (#PR).
 - Claude Haiku 5.5 (`anthropic.claude-haiku-5-5`) in the model catalog: 1M
   context, 128K output, adaptive thinking with `effort` low–max, 512-token
   cache minimum, served through inference profiles only (#162).
