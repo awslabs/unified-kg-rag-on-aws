@@ -67,8 +67,8 @@ def _reset_warnings() -> Any:
 def test_every_role_field_declares_a_tier_and_ships_its_default() -> None:
     roles = _role_fields(Config())
     tiers = [tier for tier, _ in roles.values()]
-    assert tiers.count("default") == 9
-    assert tiers.count("fast") == 12
+    assert tiers.count("default") == 8
+    assert tiers.count("fast") == 13
     for path, (tier, value) in roles.items():
         assert value == (DEFAULT_MODEL_ID if tier == "default" else FAST_MODEL_ID), path
 

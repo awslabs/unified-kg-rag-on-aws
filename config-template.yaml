@@ -18,14 +18,14 @@ aws:
     # its own *_model_id key is set (e.g. search.answer_generation_model_id),
     # which always wins. Any Bedrock model id or inference-profile id works,
     # including models released after this package.
-    #   default tier: fixing.fixing_model_id,
-    #     processing.graph_extraction.extraction_model_id,
+    #   default tier: processing.graph_extraction.extraction_model_id,
     #     processing.gleaning.graph_refinement_model_id,
     #     processing.claim_extraction.extraction_model_id,
     #     graph.community_detection.report_generation.report_generation_model_id,
     #     search.{entity_extraction,context_building,answer_generation}_model_id,
     #     evaluation.evaluation_model_id
-    #   fast tier: processing.chunking.chunking_model_id,
+    #   fast tier: fixing.fixing_model_id,
+    #     processing.chunking.chunking_model_id,
     #     processing.translation.translation_model_id,
     #     processing.graph_extraction.description_summarization.summary_model_id,
     #     search.{translation,strategy_selection}_model_id,

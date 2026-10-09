@@ -425,6 +425,8 @@ def test_defaults_use_sonnet_5_5_and_keep_haiku() -> None:
     for key in (
         "search.answer_generation_model_id",
         "evaluation.evaluation_model_id",
-        "fixing.fixing_model_id",
     ):
         assert defaults[key] == LanguageModelId.CLAUDE_V5_5_SONNET, key
+    # Re-emitting a completion as valid XML is mechanical: the fixer runs on
+    # the fast tier.
+    assert defaults["fixing.fixing_model_id"] == LanguageModelId.CLAUDE_V5_5_HAIKU
