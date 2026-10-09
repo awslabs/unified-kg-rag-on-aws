@@ -182,7 +182,10 @@ class DocStatusRecord(BaseModel):
     )
     suffix: str = Field(
         default="default",
-        description="Index/label suffix the document's artifacts were written under",
+        description="Item suffix (index_value) the document's artifacts were "
+        "written under, as passed to the indexers. Every "
+        "indexing.additional_suffix shares it, so it does not identify the "
+        "index namespace: that is the prefix of ``scope`` (scope_namespace)",
     )
     scope: str | None = Field(
         default=None,

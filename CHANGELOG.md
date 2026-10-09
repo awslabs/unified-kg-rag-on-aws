@@ -466,6 +466,16 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- Deleting or changing a document no longer leaves its entities and
+  relationships in the stores because a document of another index namespace
+  sharing the registry table references the same ids. The removal plan
+  grouped survivors by the record's `suffix`, which is the item suffix
+  (`index_value`, `default` when unset) and the same for every
+  `indexing.additional_suffix`, so another namespace's documents counted as
+  survivors and the artifacts stayed, stripped of their text units. Survivors
+  are now grouped by the namespace read from each record's scope; a record
+  written before scopes existed still counts as a survivor for every
+  namespace of its suffix (#PR).
 - `indexing.reset` on one index namespace (`index_value` +
   `indexing.additional_suffix`) no longer deletes the doc-status records of
   every namespace sharing the registry table. Every config uses the same

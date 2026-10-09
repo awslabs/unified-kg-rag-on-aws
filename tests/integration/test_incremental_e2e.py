@@ -22,6 +22,7 @@ from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
 from unified_kg_rag.domain.models import (
     Config,
+    DocStatusRecord,
     Document,
     DocumentLineage,
     Entity,
@@ -226,3 +227,45 @@ def test_exclusive_deletion_is_scoped_per_suffix(harness) -> None:
     assert kept.text_unit_ids == ["tu-tenant-b"]
     assert {suffix for _, suffix in vector.delete_calls} == {"tenant-a"}
     assert [r.doc_id for r in store.list_all()] == ["doc-tenant-b"]
+
+
+@pytest.mark.parametrize(
+    ("survivor_scope", "kept"),
+    [
+        # Another additional_suffix: same item suffix, another namespace.
+        ("default-y|/corpus", False),
+        # The same namespace, another source scope.
+        ("default-x|/other", True),
+        # Written before scopes existed: its namespace is unknown, so it keeps
+        # the id rather than risk deleting what it references.
+        (None, True),
+    ],
+)
+def test_survivors_retain_artifacts_only_in_their_namespace(
+    harness, survivor_scope, kept
+) -> None:
+    inc, store, _, _ = harness
+    store.put(
+        DocStatusRecord(
+            doc_id="doc-x",
+            content_hash="h",
+            scope="default-x|/corpus",
+            entity_ids=["e-vendor"],
+            text_unit_ids=["tu-x"],
+        )
+    )
+    store.put(
+        DocStatusRecord(
+            doc_id="doc-survivor",
+            content_hash="h",
+            scope=survivor_scope,
+            entity_ids=["e-vendor"],
+            text_unit_ids=["tu-survivor"],
+        )
+    )
+
+    (removal,) = inc._plan_removal(["doc-x"]).values()
+
+    assert ("e-vendor" in removal.exclusive_ids) is not kept
+    assert removal.shared_entity_ids == (["e-vendor"] if kept else [])
+    assert "tu-x" in removal.exclusive_ids
