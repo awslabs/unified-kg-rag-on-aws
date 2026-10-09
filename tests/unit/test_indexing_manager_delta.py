@@ -155,6 +155,34 @@ def test_cross_run_merge_threads_entity_id_remap_to_relationships(manager) -> No
     assert merged_rels[0].target_id == "e_other"
 
 
+def test_cross_run_merge_of_a_same_id_entity_leaves_its_other_edges_alone(
+    manager,
+) -> None:
+    # A delta entity that matches its own stored id has nothing to remap, so
+    # the manager must read back only the delta's own edges. Reading every
+    # incident edge would rewrite a hub entity's whole neighbourhood on each
+    # incremental run.
+    mgr, _, neptune_indexer = manager
+    neptune_indexer.read_entities.return_value = [
+        Entity(id="e-vendor", name="Vendor", text_unit_ids=["t1"])
+    ]
+    neptune_indexer.read_relationships.return_value = []
+    delta_rel = Relationship(
+        id="r-new", source_id="e-vendor", target_id="e-bank", text_unit_ids=["t2"]
+    )
+
+    result = mgr.merge_with_existing_graph(
+        [Entity(id="e-vendor", name="Vendor", text_unit_ids=["t2"])], [delta_rel]
+    )
+
+    neptune_indexer.find_incident_relationship_ids.assert_not_called()
+    neptune_indexer.read_relationships.assert_called_once_with(
+        ["r-new"], suffix="default"
+    )
+    assert [r.id for r in result.relationships or []] == ["r-new"]
+    assert result.id_remap_by_suffix == {}
+
+
 def test_fuzzy_cross_run_merge_collapses_near_duplicate_entity(mocker) -> None:
     # With cross_run_fuzzy_merge on, a delta entity whose name only FUZZILY
     # matches an existing one (different id) must collapse onto the existing

@@ -140,7 +140,8 @@ def test_cross_run_merge_of_a_read_back_edge_keeps_one_edge(indexer) -> None:
     assert edge.id == stored.id
     assert edge.type == "SUPPLIES"
     assert edge.text_unit_ids == ["t1", "t2"]
-    assert edge.weight == 2.0
+    # 1.0 stored for t1 plus the delta's 2.0 for t2.
+    assert edge.weight == 3.0
 
 
 def test_an_untyped_edge_merges_with_its_untyped_delta(indexer) -> None:
@@ -166,7 +167,11 @@ def test_text_unit_ids_survive_repeated_round_trips(indexer) -> None:
         )
 
     assert edge.text_unit_ids == ["t1", "t2", "t3"]
-    assert edge.weight == 3.0
+    # The per-text-unit strengths survive the edge encoding, so the weight is
+    # the sum of each delta's 2.0 rather than a re-split of the total.
+    assert edge.attributes is not None
+    assert edge.attributes["text_unit_weights"] == [2.0, 2.0, 2.0]
+    assert edge.weight == 6.0
 
 
 def test_long_text_unit_lists_are_not_truncated_into_invalid_json(indexer) -> None:

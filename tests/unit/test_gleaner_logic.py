@@ -84,6 +84,18 @@ class TestUpdateRelationshipsAfterMerge:
         assert out[0].weight == 3.0
         assert "a" in out[0].description and "b" in out[0].description
 
+    def test_duplicate_edges_union_text_units_and_sum_per_unit(self) -> None:
+        rels = [
+            _rel("r1", "e1", "e2", weight=1.0, text_unit_ids=["t1"]),
+            _rel("r2", "e1", "e2", weight=2.0, text_unit_ids=["t2"]),
+        ]
+        out = GraphGleaner._update_relationships_after_merge(
+            rels, unique_entity_ids={"e1", "e2"}, id_remap={}
+        )
+        assert out[0].weight == 3.0
+        # The second edge's lineage was dropped before; it is now kept.
+        assert out[0].text_unit_ids == ["t1", "t2"]
+
     def test_distinct_types_not_merged(self) -> None:
         rels = [
             Relationship(id="r1", source_id="e1", target_id="e2", type="A"),

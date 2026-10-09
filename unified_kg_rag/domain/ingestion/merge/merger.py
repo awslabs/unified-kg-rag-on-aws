@@ -15,6 +15,11 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
+from unified_kg_rag.domain.ingestion.relationship_weights import (
+    apply_text_unit_weights,
+    overlay_weights,
+    text_unit_weights,
+)
 from unified_kg_rag.domain.models import (
     Community,
     CommunityReport,
@@ -131,7 +136,10 @@ def merge_entities(
     when a gleaning correction renamed a stored entity and kept its id.
 
     Returns the merged entity list and ``{delta_id: surviving_id}`` for entities
-    that merged into an existing one (so relationships can be remapped).
+    that merged into an existing one under a different id (so relationships can
+    be remapped). A delta entity that matched its own stored id is merged but not
+    listed: there is nothing to remap, and callers treat a non-empty remap as a
+    reason to read back and rewrite the surviving entities' edges.
 
     When ``fuzzy_matcher`` is supplied (built over the *old* entity names), a
     delta entity whose normalized name does not exactly match an old one is
@@ -150,6 +158,7 @@ def merge_entities(
     # surviving entity to merge into.
     old_id_by_name: dict[str, str] = {}
     id_remap: dict[str, str] = {}
+    merged_count = 0
 
     for entity in old:
         by_id[entity.id] = entity.model_copy(deep=True)
@@ -172,7 +181,9 @@ def merge_entities(
             continue
 
         # Merge into the surviving (old) entity; keep its id.
-        id_remap[entity.id] = existing.id
+        merged_count += 1
+        if entity.id != existing.id:
+            id_remap[entity.id] = existing.id
         _merge_entity_fields(existing, entity)
 
     merged = list(by_id.values())
@@ -181,7 +192,7 @@ def merge_entities(
         len(old),
         len(delta),
         len(merged),
-        len(id_remap),
+        merged_count,
     )
     return merged, id_remap
 
@@ -217,22 +228,6 @@ def _find_fuzzy_old_match(
     return by_id.get(old_id_by_name[best_name])
 
 
-def _relationship_weight(rel: Relationship, supporting_text_units: list[str]) -> float:
-    """Derive an edge weight from the count of distinct supporting text units.
-
-    The full-build resolver sums per-instance weights across a (source, target,
-    type) group, and each extracted instance carries ~1.0 — so the summed weight
-    tracks the number of supporting occurrences. Deriving the weight from the
-    *deduplicated* supporting-text-unit count makes the incremental merge
-    converge to the same value AND idempotent: re-applying a delta unions the
-    same ids, so the count (and weight) is unchanged. An edge carrying no
-    text-unit lineage falls back to its own weight (default 1.0).
-    """
-    if supporting_text_units:
-        return float(len(supporting_text_units))
-    return rel.weight if rel.weight is not None else 1.0
-
-
 def _remapped_endpoints(
     rel: Relationship, entity_id_remap: dict[str, str]
 ) -> tuple[str, str]:
@@ -265,11 +260,13 @@ def merge_relationships(
     full-build resolver groups by (source, target, type) too — keying on
     endpoints alone here would silently collapse them and drop the delta type).
 
-    The merge is idempotent: weight is derived from the deduplicated
-    supporting-text-unit union (not summed), and an edge whose remapped endpoints
-    collapse onto the same entity is dropped as a self-loop — matching the
-    full-build :class:`RelationshipResolver`, which removes self-referencing
-    edges and would otherwise diverge from this path.
+    Weight is the sum of the per-text-unit strengths (see
+    ``relationship_weights``); a delta entry for a text unit replaces the stored
+    one, so re-applying a delta is idempotent and the result equals a full build
+    over the union of the text units. Stored edges the delta does not touch are
+    returned unchanged. An edge whose remapped endpoints collapse onto the same
+    entity is dropped as a self-loop, matching the full-build
+    :class:`RelationshipResolver`.
     """
     remap = entity_id_remap or {}
     by_id: dict[str, Relationship] = {}
@@ -282,9 +279,7 @@ def merge_relationships(
         # stored set.
         if rel.source_id == rel.target_id:
             continue
-        existing = rel.model_copy(deep=True)
-        existing.weight = _relationship_weight(existing, existing.text_unit_ids or [])
-        by_id[rel.id] = existing
+        by_id[rel.id] = rel.model_copy(deep=True)
         id_by_key.setdefault(
             _relationship_key(rel.source_id, rel.target_id, rel), rel.id
         )
@@ -305,17 +300,18 @@ def merge_relationships(
             new_rel = rel.model_copy(deep=True)
             new_rel.source_id = source_id
             new_rel.target_id = target_id
-            new_rel.weight = _relationship_weight(new_rel, new_rel.text_unit_ids or [])
+            apply_text_unit_weights(new_rel, text_unit_weights(new_rel))
             by_id[rel.id] = new_rel
             id_by_key.setdefault(key, rel.id)
             continue
 
+        weights = overlay_weights(text_unit_weights(match), text_unit_weights(rel))
         match.description = _merge_descriptions(match.description, rel.description)
         match.attributes = _merge_attributes(match.attributes, rel.attributes)
         match.text_unit_ids = _dedupe_preserve_order(
             (match.text_unit_ids or []) + (rel.text_unit_ids or [])
         )
-        match.weight = _relationship_weight(match, match.text_unit_ids or [])
+        apply_text_unit_weights(match, weights)
 
     merged = list(by_id.values())
     logger.info(
@@ -367,7 +363,8 @@ def remove_text_units(
     surviving documents: they stay, but must stop citing the removed chunks.
     Returns updated copies of only the items that referenced one of
     ``text_unit_ids``. Frequency and weight follow the same rules as the merge
-    (number of supporting text units). Descriptions are left as they are:
+    (frequency = number of supporting text units, weight = sum of the remaining
+    per-text-unit strengths). Descriptions are left as they are:
     removing a document's contribution would need an LLM re-summary.
     """
     removed = set(text_unit_ids)
@@ -385,9 +382,12 @@ def remove_text_units(
     for rel in relationships:
         if removed.isdisjoint(rel.text_unit_ids or []):
             continue
+        weights = {
+            tu: w for tu, w in text_unit_weights(rel).items() if tu not in removed
+        }
         kept = [t for t in rel.text_unit_ids or [] if t not in removed]
         updated = rel.model_copy(deep=True, update={"text_unit_ids": kept})
-        updated.weight = _relationship_weight(updated, kept)
+        apply_text_unit_weights(updated, weights)
         updated_relationships.append(updated)
     return updated_entities, updated_relationships
 

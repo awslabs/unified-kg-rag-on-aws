@@ -4,7 +4,7 @@
 
 graph_resolver.py is pure domain (no AWS) and carries the entity/relationship
 merge arithmetic that feeds ranking and the incremental path. These lock the
-merge semantics — max-confidence, frequency = |text_unit_ids|, evidence-count
+merge semantics — max-confidence, frequency = |text_unit_ids|, summed per-text-unit
 weight, self-loop removal, type normalization, determinism — and the stats
 reduction-rate guards. Run with use_process_pool=False so grouping is
 deterministic and in-process.
@@ -135,17 +135,40 @@ def test_group_similar_relationships_normalizes_type(resolver: GraphResolver) ->
     assert len(resolved) == 1
 
 
-def test_relationship_weight_is_supporting_text_unit_count(
+def test_relationship_weight_sums_strengths_per_text_unit(
     resolver: GraphResolver,
 ) -> None:
     rels = [
-        Relationship(id="r1", source_id="a", target_id="b", text_unit_ids=["t1"]),
-        Relationship(id="r2", source_id="a", target_id="b", text_unit_ids=["t1", "t2"]),
+        Relationship(
+            id="r1", source_id="a", target_id="b", weight=8.0, text_unit_ids=["t1"]
+        ),
+        Relationship(
+            id="r2", source_id="a", target_id="b", weight=3.0, text_unit_ids=["t2"]
+        ),
+        Relationship(
+            id="r3", source_id="a", target_id="b", weight=1.0, text_unit_ids=["t1"]
+        ),
     ]
     resolved, _ = resolver.relationship_resolver.resolve(rels, {})
     assert len(resolved) == 1
-    # Deduped union {t1, t2} -> weight 2.0 (evidence count, not summed strength).
-    assert resolved[0].weight == 2.0
+    # MS GraphRAG sums instance strengths; the per-text-unit sums are kept so
+    # the incremental merge can reproduce the weight.
+    assert resolved[0].weight == 12.0
+    assert resolved[0].text_unit_ids == ["t1", "t2"]
+    assert resolved[0].attributes == {"text_unit_weights": [9.0, 3.0]}
+
+
+def test_single_chunk_relationship_keeps_its_strength(
+    resolver: GraphResolver,
+) -> None:
+    rels = [
+        Relationship(
+            id="r1", source_id="a", target_id="b", weight=8.0, text_unit_ids=["t1"]
+        )
+    ]
+    resolved, _ = resolver.relationship_resolver.resolve(rels, {})
+    assert resolved[0].weight == 8.0
+    assert resolved[0].attributes == {"text_unit_weights": [8.0]}
 
 
 def test_relationship_weight_falls_back_without_text_units(

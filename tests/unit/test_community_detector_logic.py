@@ -604,11 +604,11 @@ class TestGenerateReportsGuards:
     def test_returns_empty_when_report_generation_disabled(self) -> None:
         cd = _detector(report=False)
         # No report_generator attribute -> short-circuits to [].
-        assert cd.generate_reports([_community(["e1"])]) == []
+        assert cd.generate_reports([_community(["e1"])]) == ([], [])
 
     def test_returns_empty_when_no_communities(self) -> None:
         cd = _detector(report=False)
-        assert cd.generate_reports([]) == []
+        assert cd.generate_reports([]) == ([], [])
 
 
 class _StubBatchProcessor:
@@ -658,7 +658,7 @@ class TestGenerateReportsCounting:
                 }
             ]
         )
-        reports = cd.generate_reports([_community(["e1"])])
+        reports, _ = cd.generate_reports([_community(["e1"])])
         assert len(reports) == 1
         report = reports[0]
         assert report.community_id == "L0_C0"
@@ -686,7 +686,7 @@ class TestGenerateReportsCounting:
                 }
             ]
         )
-        reports = cd.generate_reports([_community(["e1"])])
+        reports, _ = cd.generate_reports([_community(["e1"])])
         assert len(reports[0].findings) == 1
         assert reports[0].findings[0].summary == "Only"
         assert reports[0].rating == 3.0
@@ -703,8 +703,11 @@ class TestGenerateReportsCounting:
                 None,
             ]
         )
-        reports = cd.generate_reports([_community(["e1"]), _community(["e1"])])
+        failing = _community(["e1"]).model_copy(update={"id": "L0_C1"})
+        reports, failed = cd.generate_reports([_community(["e1"]), failing])
         assert len(reports) == 1
+        # The community without a report is returned so its documents retry.
+        assert failed == ["L0_C1"]
 
 
 class TestSubCommunityRollup:
@@ -819,10 +822,10 @@ class TestSubCommunityRollup:
                 )
                 for c in communities
             ]
-            return reports, 0
+            return reports, []
 
         cd._run_report_batch = _fake_run_batch  # type: ignore[method-assign]
-        reports = cd.generate_reports([parent, child])
+        reports, _ = cd.generate_reports([parent, child])
 
         assert {r.community_id for r in reports} == {"L0_C0", "L1_C0"}
         # Child (level 0) prepared before parent (level 1).
@@ -880,10 +883,10 @@ class TestSubCommunityRollup:
                     size=c.size,
                 )
                 for c in communities
-            ], 0
+            ], []
 
         cd._run_report_batch = _fake_run_batch  # type: ignore[method-assign]
-        reports = cd.generate_reports([parent, child])
+        reports, _ = cd.generate_reports([parent, child])
 
         assert generated == ["L0_C0"]
         by_community = {r.community_id: r for r in reports}
@@ -927,7 +930,7 @@ class TestSubCommunityRollup:
             return [
                 CommunityReport(id=f"r-{c.id}", community_id=c.id, name=c.name)
                 for c in communities
-            ], 0
+            ], []
 
         cd._run_report_batch = _fake_run_batch  # type: ignore[method-assign]
         cd.generate_reports([parent, child])
@@ -944,10 +947,10 @@ class TestSubCommunityRollup:
 
         called = {"flat": False, "rollup": False}
         cd._generate_reports_flat = (  # type: ignore[method-assign]
-            lambda c, a: (called.__setitem__("flat", True) or ([], 0))
+            lambda c, a: (called.__setitem__("flat", True) or ([], []))
         )
         cd._generate_reports_with_rollup = (  # type: ignore[method-assign]
-            lambda c, a: (called.__setitem__("rollup", True) or ([], 0))
+            lambda c, a: (called.__setitem__("rollup", True) or ([], []))
         )
         cd.generate_reports([_community(["e0"])])
         assert called["flat"] and not called["rollup"]
@@ -1088,7 +1091,7 @@ class TestStableCommunityIds:
             cd.batch_processor = _StubBatchProcessor(
                 [{"community_name": c.name, "summary": "s"} for c in communities]
             )
-            return communities, cd.generate_reports(communities)
+            return communities, cd.generate_reports(communities)[0]
 
         corpus_communities, corpus_reports = _detect_with_reports(_triangles("n", 3))
         delta_communities, delta_reports = _detect_with_reports(_triangles("d", 1))

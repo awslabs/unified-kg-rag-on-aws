@@ -13,6 +13,11 @@ from unified_kg_rag.domain.ingestion.base_resolver import (
     FuzzyMatcher,
     normalize_entity_type,
 )
+from unified_kg_rag.domain.ingestion.relationship_weights import (
+    apply_text_unit_weights,
+    sum_weights,
+    text_unit_weights,
+)
 from unified_kg_rag.domain.models import Config, Entity, Relationship
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
@@ -443,24 +448,22 @@ class RelationshipResolver(BaseResolver):
         return list(groups_dict.values())
 
     def _merge_relationships(self, relationships: list[Relationship]) -> Relationship:
+        # Weight is the sum of the extracted strengths per supporting text unit
+        # (MS GraphRAG sums instance strengths). The per-text-unit map is kept
+        # on the edge so the incremental merge reaches the same weight; see
+        # relationship_weights. Without text-unit lineage the primary edge's
+        # own weight is kept.
+        weights = sum_weights(text_unit_weights(r) for r in relationships)
         if len(relationships) == 1:
-            return relationships[0]
+            single = relationships[0].model_copy()
+            apply_text_unit_weights(single, weights)
+            return single
         primary_rel = relationships[0]
         merged_text_unit_ids = self._merge_lists(
             [r.text_unit_ids for r in relationships if r.text_unit_ids]
         )
-        # Weight tracks the count of distinct supporting text units (evidence
-        # count). This is idempotent and order-independent, so the full-build and
-        # incremental (merge_relationships) paths converge to the same weight; a
-        # summed LLM "strength" would diverge and double-count on incremental
-        # re-application. Falls back to the primary edge's own weight when no
-        # text-unit lineage exists.
-        merged_weight = (
-            float(len(merged_text_unit_ids))
-            if merged_text_unit_ids
-            else (primary_rel.weight if primary_rel.weight is not None else 1.0)
-        )
-        return Relationship(
+        merged_weight = primary_rel.weight if primary_rel.weight is not None else 1.0
+        merged = Relationship(
             id=primary_rel.id,
             short_id=primary_rel.short_id,
             source_id=primary_rel.source_id,
@@ -486,6 +489,8 @@ class RelationshipResolver(BaseResolver):
             ),
             updated_at=datetime.now(),
         )
+        apply_text_unit_weights(merged, dict(sorted(weights.items())))
+        return merged
 
 
 class GraphResolver:

@@ -196,7 +196,7 @@ class TestGenerateReportsAttachesLineage:
         mocker.patch.object(CommunityDetector, "_prepare_report_input", return_value={})
         mocker.patch.object(detector_module, "estimate_token_count", return_value=1)
 
-        reports = detector.generate_reports(
+        reports, _ = detector.generate_reports(
             [_community("c1", ["t1"])],
             text_units=[TextUnit(id="t1", text="a", document_ids=["d1"])],
         )

@@ -730,7 +730,7 @@ class CommunityDetector(BaseProcessor):
         self,
         communities: list[Community],
         text_units: list[TextUnit] | None = None,
-    ) -> list[CommunityReport]:
+    ) -> tuple[list[CommunityReport], list[str]]:
         """Generate one report per community.
 
         Args:
@@ -741,16 +741,19 @@ class CommunityDetector(BaseProcessor):
                 empty; the report's ``text_unit_ids`` are recorded either way.
 
         Returns:
-            One report per community that produced a non-empty LLM result.
+            One report per community that produced a non-empty LLM result, and
+            the ids of the communities that got none (every community when
+            generation raised under ``ignore_errors``), so the caller can retry
+            their documents.
         """
         report_config = self.community_detection_config.report_generation
         if not report_config.enabled or not hasattr(self, "report_generator"):
             logger.info("Community report generation is disabled")
-            return []
+            return [], []
 
         if not communities:
             logger.warning("No communities provided for report generation")
-            return []
+            return [], []
 
         try:
             logger.info("Generating reports for %s communities.", len(communities))
@@ -772,7 +775,9 @@ class CommunityDetector(BaseProcessor):
 
             if failed:
                 logger.warning(
-                    "%s of %s community reports had no result", failed, len(communities)
+                    "%s of %s community reports had no result",
+                    len(failed),
+                    len(communities),
                 )
             logger.info(
                 "Generated %s reports in %.2fs.",
@@ -784,9 +789,9 @@ class CommunityDetector(BaseProcessor):
             if not self.ignore_errors:
                 raise
             logger.error("Error during community report generation: %s", e)
-            return []
+            return [], [community.id for community in communities]
 
-        return reports
+        return reports, failed
 
     @staticmethod
     def _attach_report_lineage(
@@ -834,8 +839,8 @@ class CommunityDetector(BaseProcessor):
         report_inputs: list[dict[str, Any]],
         communities: list[Community],
         graph_attributes: dict[str, Any],
-    ) -> tuple[list[CommunityReport], int]:
-        """Run one batch of prepared report inputs through the LLM chain."""
+    ) -> tuple[list[CommunityReport], list[str]]:
+        """Run one batch of report inputs; return the reports and failed ids."""
         report_results = self.batch_processor.execute_with_fallback(
             items_to_process=report_inputs,
             prepare_inputs_func=self._create_report_chain_inputs,
@@ -846,16 +851,16 @@ class CommunityDetector(BaseProcessor):
         )
 
         reports: list[CommunityReport] = []
-        failed = 0
+        failed: list[str] = []
         for community, result in zip(communities, report_results, strict=True):
             if result and result is not BATCH_ITEM_FAILED:
                 reports.append(
                     self._create_community_report(community, result, graph_attributes)
                 )
             else:
-                # Empty LLM result: count and log rather than silently producing
-                # fewer reports while the run still 'succeeds'.
-                failed += 1
+                # Empty LLM result: report it so the caller retries the
+                # community's documents instead of silently storing fewer reports.
+                failed.append(community.id)
                 logger.warning(
                     "No report generated for community '%s' (empty LLM result)",
                     community.id,
@@ -864,14 +869,14 @@ class CommunityDetector(BaseProcessor):
 
     def _generate_reports_flat(
         self, communities: list[Community], graph_attributes: dict[str, Any]
-    ) -> tuple[list[CommunityReport], int]:
+    ) -> tuple[list[CommunityReport], list[str]]:
         """Original behaviour: every community summarized independently."""
         report_inputs = [self._prepare_report_input(c) for c in communities]
         return self._run_report_batch(report_inputs, communities, graph_attributes)
 
     def _generate_reports_with_rollup(
         self, communities: list[Community], graph_attributes: dict[str, Any]
-    ) -> tuple[list[CommunityReport], int]:
+    ) -> tuple[list[CommunityReport], list[str]]:
         """Bottom-up per-level generation with sub-community roll-up.
 
         Communities are grouped by level and processed finest-first (level 0 =
@@ -890,7 +895,7 @@ class CommunityDetector(BaseProcessor):
 
         reports_by_id: dict[str, CommunityReport] = {}
         all_reports: list[CommunityReport] = []
-        total_failed = 0
+        total_failed: list[str] = []
         community_by_id = {c.id: c for c in communities}
 
         for level in sorted({_level(c) for c in communities}):
@@ -913,9 +918,9 @@ class CommunityDetector(BaseProcessor):
             level_reports, failed = (
                 self._run_report_batch(report_inputs, to_generate, graph_attributes)
                 if to_generate
-                else ([], 0)
+                else ([], [])
             )
-            total_failed += failed
+            total_failed.extend(failed)
             for report in [*level_reports, *reused]:
                 reports_by_id[report.community_id] = report
             all_reports.extend(level_reports)

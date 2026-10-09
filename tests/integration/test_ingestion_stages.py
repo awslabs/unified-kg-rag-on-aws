@@ -55,10 +55,10 @@ def _source_text(human: str) -> str:
     return match.group(1)
 
 
-def _extraction(text: str) -> str:
+def _extraction(text: str, known_names: tuple[str, ...] = _NAMES) -> str:
     if _UNREADABLE in text:
         return "Sorry, I cannot help with that."
-    names = [name for name in _NAMES if name in text]
+    names = [name for name in known_names if name in text]
     entities = "".join(
         f"<entity><name>{n}</name><type>ORGANIZATION</type>"
         f"<description>{n} in the supply chain</description>"
@@ -284,3 +284,81 @@ def test_whole_pipeline_runs_without_aws_through_the_public_constructor(
     records = store.list_all()
     assert len(records) == 2
     assert {r.status for r in records} == {DocStatus.PROCESSED}
+
+
+def test_failed_community_reports_mark_documents_failed_and_are_regenerated(
+    tmp_path: Path,
+) -> None:
+    # Both community reports fail. The documents behind them are recorded
+    # FAILED instead of PROCESSED, so the next run re-processes them and
+    # generates the reports that were missing.
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.domain.models import PipelineConfig, PipelineStageType
+
+    names = ("Vendor", "Buyer", "Carrier", "Bank")
+    fail_reports = {"on": True}
+
+    def respond(system: str, human: str) -> str:
+        if "knowledge graph extraction expert" in system:
+            return _extraction(_source_text(human), names)
+        if "community analysis" in system:
+            if fail_reports["on"]:
+                raise RuntimeError("report model unavailable")
+            return _REPORT
+        return _respond(system, human)
+
+    config = _config()
+    config.processing.gleaning.enabled = False
+    config.processing.claim_extraction.enabled = False
+    config.graph.community_detection.report_generation.enable_sub_community_rollup = (
+        False
+    )
+    # Tolerate every report failing so the run completes and records them.
+    config.indexing.max_failure_rate = 1.0
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "supply.txt").write_text("Vendor supplies widgets to Buyer.")
+    (source / "freight.txt").write_text("Carrier pays Bank monthly.")
+    providers = Providers(
+        config,
+        boto_session=MagicMock(),
+        llm_factory=ScriptedLLMFactory(respond),
+        embedding_factory=HashingEmbeddingFactory(),
+    )
+    store = FakeDocStatusStore()
+    graph, vectors = FakeGraphStore(), FakeVectorStore(config.indexing.opensearch)
+
+    def run(pipeline_id: str) -> PipelineContext:
+        pipeline = DataIngestionPipeline(
+            config,
+            PipelineConfig(
+                stages_enabled=dict.fromkeys(PipelineStageType, True),
+                local_directory=tmp_path / "cache",
+            ),
+            source_directory=source,
+            providers=providers,
+            doc_status=store,
+            vector_indexer=vectors,
+            graph_indexer=graph,
+        )
+        for stage in pipeline.stages:
+            if isinstance(stage, ps.GraphResolutionStage):
+                stage.resolver.entity_resolver.use_process_pool = False
+                stage.resolver.relationship_resolver.use_process_pool = False
+        return pipeline.run(source, pipeline_id=pipeline_id)
+
+    context = run("reports-fail")
+    assert context.status is PipelineStageStatus.COMPLETED
+    assert len(context.communities) == 2
+    assert context.community_reports == []
+    assert {r.status for r in store.list_all()} == {DocStatus.FAILED}
+
+    fail_reports["on"] = False
+    context = run("reports-retry")
+    assert context.status is PipelineStageStatus.COMPLETED
+    assert len(context.community_reports) == 2
+    assert {r.community_id for r in context.community_reports} == {
+        c.id for c in context.communities
+    }
+    assert len(vectors.ids("community_reports")) == 2
+    assert {r.status for r in store.list_all()} == {DocStatus.PROCESSED}

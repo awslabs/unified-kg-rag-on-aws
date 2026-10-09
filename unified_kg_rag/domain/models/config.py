@@ -1635,8 +1635,11 @@ class IndexingConfig(BaseModel):
         "the indexing stage is marked FAILED. A fully-failed index type (0 "
         "successes) always fails regardless of this value; this additionally "
         "catches PARTIAL failures (e.g. most relationship edges dropped) that "
-        "would otherwise be reported as a successful run. Set to 1.0 to disable "
-        "the partial-failure gate (only total failures fail the stage).",
+        "would otherwise be reported as a successful run. The same rate bounds "
+        "the share of communities left without a report before the community "
+        "detection stage fails; below it their documents are recorded FAILED "
+        "and retried. Set to 1.0 to disable the partial-failure gate (only "
+        "total write failures fail the indexing stage).",
     )
     max_document_failures: int = Field(
         default=3,

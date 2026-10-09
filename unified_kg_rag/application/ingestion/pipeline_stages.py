@@ -1232,6 +1232,38 @@ class CommunityDetectionStage(PipelineStage):
             return None
         return self.cache_directory / context.pipeline_id / "visualization"
 
+    def _check_report_failures(
+        self, communities: list[Community], failed_community_ids: list[str]
+    ) -> list[str]:
+        """Text units of the communities left without a report.
+
+        Their documents are recorded FAILED, so the next incremental run
+        re-processes them and generates the missing reports, the same way an
+        extraction failure is retried. More failures than
+        ``indexing.max_failure_rate`` of the communities fail the stage (the
+        reports are the community-report index's items).
+        """
+        if not failed_community_ids:
+            return []
+        max_failure_rate = self.config.indexing.max_failure_rate
+        failure_rate = len(failed_community_ids) / max(len(communities), 1)
+        if failure_rate > max_failure_rate:
+            raise PipelineStageError(
+                f"Community report generation failed for "
+                f"{len(failed_community_ids)} of {len(communities)} communities "
+                f"({failure_rate:.0%} > {max_failure_rate:.0%} tolerated by "
+                f"indexing.max_failure_rate). Check the report model errors above."
+            )
+        failed = set(failed_community_ids)
+        return sorted(
+            {
+                unit_id
+                for community in communities
+                if community.id in failed
+                for unit_id in community.text_unit_ids or []
+            }
+        )
+
     @staticmethod
     def _get_detection_stats_dict(metrics_obj: CommunityMetrics) -> dict[str, Any]:
         if not metrics_obj:
@@ -1274,7 +1306,7 @@ class CommunityDetectionStage(PipelineStage):
         self.detector(context.knowledge_graph)
         community_objects = self.detector.generate_community_objects()
         # Text units resolve each report's source documents (report lineage).
-        community_reports = self.detector.generate_reports(
+        community_reports, failed_community_ids = self.detector.generate_reports(
             community_objects,
             text_units=context.text_units or context.translated_units,
         )
@@ -1282,6 +1314,9 @@ class CommunityDetectionStage(PipelineStage):
 
         context.communities = community_objects
         context.community_reports = community_reports
+        context.failed_text_unit_ids[self.name] = self._check_report_failures(
+            community_objects, failed_community_ids
+        )
 
         if self.config.graph.visualization.enabled and context.knowledge_graph:
             try:
@@ -1314,6 +1349,7 @@ class CommunityDetectionStage(PipelineStage):
             "relationships_processed": len(relationships),
             "communities_detected": communities_count,
             "reports_generated": reports_count,
+            "reports_failed": len(failed_community_ids),
             "modularity_score": metrics_obj.modularity if metrics_obj else 0.0,
             "detection_stats": (
                 self._get_detection_stats_dict(metrics_obj) if metrics_obj else {}

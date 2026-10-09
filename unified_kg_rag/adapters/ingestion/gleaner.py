@@ -22,6 +22,11 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     check_relationship_relevance_task,
 )
 from unified_kg_rag.domain.ingestion.entity_grounding import is_grounded
+from unified_kg_rag.domain.ingestion.relationship_weights import (
+    apply_text_unit_weights,
+    sum_weights,
+    text_unit_weights,
+)
 from unified_kg_rag.domain.models import (
     Config,
     Entity,
@@ -905,13 +910,20 @@ class GraphGleaner(BaseProcessor):
                         else:
                             existing_rel.description = rel.description
 
-                    # Use `is not None` (not `or`): a legitimate weight of 0.0
-                    # must not be silently promoted to the 1.0 default.
-                    existing_w = (
-                        existing_rel.weight if existing_rel.weight is not None else 1.0
+                    # Instance strengths add up per supporting text unit, as in
+                    # the extractor's merge (see relationship_weights).
+                    weights = sum_weights(
+                        [text_unit_weights(existing_rel), text_unit_weights(rel)]
                     )
-                    delta_w = rel.weight if rel.weight is not None else 1.0
-                    existing_rel.weight = existing_w + delta_w
+                    if weights:
+                        apply_text_unit_weights(existing_rel, weights)
+                    else:
+                        # No lineage: plain sum. `is not None` keeps a real 0.0.
+                        existing_rel.weight = (
+                            existing_rel.weight
+                            if existing_rel.weight is not None
+                            else 1.0
+                        ) + (rel.weight if rel.weight is not None else 1.0)
             else:
                 # Endpoint merged away / not resolved, or a self-loop after
                 # remap: the relationship cannot be kept. Count it so dropped

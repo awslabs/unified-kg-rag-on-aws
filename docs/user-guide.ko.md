@@ -423,7 +423,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `indexing.additional_suffix` | `null` | 모든 OpenSearch 인덱스 이름과 Neptune 레이블에서 실행 접미사 뒤에 붙습니다(`<prefix>-<suffix>-<additional_suffix>`). `<suffix>`는 수집 시 `processing.document_parsing.index_value`, 질의 시 `--suffix`이며 지정하지 않으면 둘 다 `default`입니다. 수집과 질의에 같은 값을 지정하세요. 버전별·테넌트별 분리에 씁니다. |
 | `indexing.cross_run_merge` | `true` | 증분 실행에서 변경분을 기존 그래프 상태에 덮어쓰지 않고 합칩니다. 그래서 바뀌지 않은 문서와 공유하는 엔티티의 계보가 유지됩니다(§5). `false`이면 덮어씁니다. |
 | `indexing.cross_run_fuzzy_merge` | `false` | `cross_run_merge`에 엔티티 이름 퍼지 매칭을 더합니다. |
-| `indexing.max_failure_rate` | `0.2` | 인덱스 유형별 쓰기 실패율이 이 값을 넘으면 인덱싱 단계가 실패합니다. `1.0`이면 부분 실패 검사를 끕니다. |
+| `indexing.max_failure_rate` | `0.2` | 인덱스 유형별 쓰기 실패율이 이 값을 넘으면 인덱싱 단계가, 보고서가 없는 커뮤니티 비율이 이 값을 넘으면 커뮤니티 탐지 단계가 실패합니다. `1.0`이면 부분 실패 검사를 끕니다. |
 | `indexing.max_document_failures` | `3` | 증분 실행에서 내용이 바뀌지 않은 문서가 연속으로 이 횟수만큼 FAILED로 기록되면 더는 재시도하지 않습니다(§5). |
 | `indexing.opensearch.embedding_model_id` | `"amazon.titan-embed-text-v2:0"` | 임베딩 모델이며, 정해진 목록에서 고릅니다(모델 선택 참고 사항 참고). 바꾸면 다시 인덱싱해야 합니다. |
 | `indexing.opensearch.build_relationship_vector_index` | `true` | LightRAG `mix`/`hybrid`용 관계 벡터 인덱스입니다. GraphRAG만 쓰는 배포라면 `false`로 두세요. |
@@ -933,9 +933,11 @@ aws:
 
 ### 실패한 문서
 
-텍스트 단위 하나라도 번역, 그래프 추출, gleaning, 주장 추출에 실패했거나, 산출물 하나를
-저장소에 쓰는 데 실패한 문서는 `FAILED`로 기록됩니다(`indexing.max_failure_rate` 이하일
-때이며, 이를 넘으면 인덱싱 단계가 실패하고 아무것도 기록하지 않습니다). 다음 실행은 파일이 바뀌지 않았더라도 이 문서를 변경된 문서로 처리합니다.
+텍스트 단위 하나라도 번역, 그래프 추출, gleaning, 주장 추출에 실패했거나, 텍스트 단위를
+포함한 커뮤니티의 보고서가 생성되지 않았거나, 산출물 하나를 저장소에 쓰는 데 실패한 문서는
+`FAILED`로 기록됩니다. 보고서 실패와 쓰기 실패는 각각 커뮤니티 수와 산출물 유형별 쓰기 수의
+`indexing.max_failure_rate`까지 허용하며, 이를 넘으면 해당 단계가 실패하고 아무것도
+기록하지 않습니다. 다음 실행은 파일이 바뀌지 않았더라도 이 문서를 변경된 문서로 처리합니다.
 실패한 실행이 쓴 내용을 제거하고 문서를 다시 처리합니다. 내용이 같은 채로
 `indexing.max_document_failures`(기본 `3`)회 연속 실패한 문서는 더 재시도하지
 않습니다. `FAILED` 상태와 인덱싱된 내용을 그대로 유지하고, 파일 이름이 담긴 WARNING과
