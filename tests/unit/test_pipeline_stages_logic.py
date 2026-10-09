@@ -477,3 +477,64 @@ def test_gleaning_stage_improvement_rate_is_graph_growth(mocker) -> None:
 
     # 2 items added on top of the 4 extracted.
     assert metrics["improvement_rate"] == pytest.approx(0.5)
+
+
+# --- CommunityDetectionStage: failed community reports ----------------------
+
+
+def _community_stage(mocker, failed: list[str], max_failure_rate: float):
+    import networkx as nx
+
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.models import Community
+
+    communities = [
+        Community(
+            id=f"c{i}",
+            name=f"Community {i}",
+            level="0",
+            parent="",
+            children=[],
+            entity_ids=[f"e{i}"],
+            text_unit_ids=[f"t{i}", "t-shared"],
+        )
+        for i in range(4)
+    ]
+    detector = mocker.MagicMock()
+    detector.generate_community_objects.return_value = communities
+    detector.generate_reports.return_value = ([], failed)
+    detector.get_community_metrics.return_value = None
+    mocker.patch.object(ps, "CommunityDetector", return_value=detector)
+    config = Config()
+    config.graph.visualization.enabled = False
+    config.indexing.max_failure_rate = max_failure_rate
+    stage = ps.CommunityDetectionStage(config=config, boto_session=mocker.MagicMock())
+    ctx = _context()
+    ctx.knowledge_graph = nx.Graph()
+    return stage, ctx
+
+
+def test_community_stage_records_text_units_of_failed_reports(mocker) -> None:
+    # 1 of 4 is within the 25% tolerance: the stage completes and the failed
+    # community's text units are recorded so their documents are retried.
+    stage, ctx = _community_stage(mocker, failed=["c1"], max_failure_rate=0.25)
+
+    _, _, metrics = stage._execute_core(ctx)
+
+    assert ctx.failed_text_unit_ids == {"community_detection": ["t-shared", "t1"]}
+    assert metrics is not None and metrics["reports_failed"] == 1
+
+
+def test_community_stage_fails_above_the_tolerated_failure_rate(mocker) -> None:
+    stage, ctx = _community_stage(mocker, failed=["c1", "c2"], max_failure_rate=0.25)
+
+    with pytest.raises(PipelineStageError, match="2 of 4 communities"):
+        stage._execute_core(ctx)
+
+
+def test_community_stage_without_report_failures_records_none(mocker) -> None:
+    stage, ctx = _community_stage(mocker, failed=[], max_failure_rate=0.0)
+
+    stage._execute_core(ctx)
+
+    assert ctx.failed_text_unit_ids == {"community_detection": []}

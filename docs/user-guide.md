@@ -437,7 +437,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.additional_suffix` | `null` | Appended after the run suffix in every OpenSearch index name and Neptune label (`<prefix>-<suffix>-<additional_suffix>`, where `<suffix>` is `processing.document_parsing.index_value` at ingestion and `--suffix` at query time, both `default` when unset). Set it identically for ingestion and queries. Use it for versioned or multi-tenant separation. |
 | `indexing.cross_run_merge` | `true` | On delta runs, union the delta with existing graph state instead of overwriting, so entities shared with unchanged documents keep their lineage (§5). `false` overwrites. |
 | `indexing.cross_run_fuzzy_merge` | `false` | Extend `cross_run_merge` with fuzzy entity-name matching. |
-| `indexing.max_failure_rate` | `0.2` | Per-index-type write failure rate above which the indexing stage fails. `1.0` disables the partial-failure gate. |
+| `indexing.max_failure_rate` | `0.2` | Per-index-type write failure rate above which the indexing stage fails, and share of communities without a report above which community detection fails. `1.0` disables the partial-failure gate. |
 | `indexing.max_document_failures` | `3` | Incremental runs: consecutive FAILED records of unchanged content after which a document is no longer retried (§5). |
 | `indexing.opensearch.embedding_model_id` | `"amazon.titan-embed-text-v2:0"` | Embedding model, one of a closed list (see Model selection notes). Changing it requires a reindex. |
 | `indexing.opensearch.build_relationship_vector_index` | `true` | Relationship vector index for LightRAG `mix`/`hybrid`. Set `false` for a GraphRAG-only deployment. |
@@ -969,9 +969,11 @@ deleted; records of other scopes are left for their own runs to adopt.
 ### Failed documents
 
 A document is recorded `FAILED` when translation, graph extraction, gleaning or
-claim extraction failed on any of its text units, or when writing one of its
-artifacts to the stores failed (below `indexing.max_failure_rate`; above it
-the indexing stage fails and nothing is recorded). The next run treats it as
+claim extraction failed on any of its text units, when a community covering
+one of its text units got no report, or when writing one of its artifacts to
+the stores failed. Report and write failures are tolerated up to
+`indexing.max_failure_rate` of the communities or of one artifact type's
+writes; above it the stage fails and nothing is recorded. The next run treats it as
 changed even if the file did not change: it removes what the failed run wrote
 and processes the document again. A document that fails
 `indexing.max_document_failures` (default `3`) consecutive runs with the same

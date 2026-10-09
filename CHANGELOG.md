@@ -486,6 +486,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   re-extracts nor deletes anything; another scope's legacy record is left for
   that scope's run. Moving a local corpus to another directory without a
   fixed `source_scope` now re-indexes it under the new scope (#188).
+- Community reports that fail are no longer dropped silently. Report
+  generation returns the ids of the communities that got no report, and the
+  community detection stage records their text units as failed, so an
+  incremental run marks those documents `FAILED` and the next run
+  re-processes them and generates the missing reports (subject to
+  `indexing.max_document_failures`). Before, the failures were only logged,
+  the documents were recorded `PROCESSED` and the reports stayed missing
+  until a full rebuild. More than `indexing.max_failure_rate` of the
+  communities without a report now fails the stage (#PR).
 - An incremental run no longer rewrites the stored edges of every delta
   entity that is already in the graph. The cross-run entity merge recorded an
   id remap even when the delta entity kept its stored id, and a non-empty
