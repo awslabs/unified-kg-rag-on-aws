@@ -398,9 +398,11 @@ class IncrementalIndexer:
         for stats in results.values():
             if not stats:
                 continue
-            ids = set(stats.failed_ids)
-            failed_ids |= ids
-            unattributed += max(0, stats.failed_items - len(ids))
+            # failed_ids keeps one entry per failed item, so the unattributed
+            # count must come from the list, not the deduplicated set: one
+            # artifact failing in several batches is still fully attributed.
+            failed_ids.update(stats.failed_ids)
+            unattributed += stats.unattributed_failures
         if unattributed:
             logger.warning(
                 "%d write failures carry no artifact id; recording all %d "

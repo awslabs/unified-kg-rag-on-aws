@@ -254,16 +254,36 @@ class PromptTuner:
         return None
 
     @staticmethod
+    def _casefold_with_origin(text: str) -> tuple[str, list[int]]:
+        """Casefold ``text`` and map each folded character to its source index.
+
+        ``str.casefold`` can change length ("ß" folds to "ss"), so offsets in
+        the folded copy are not offsets in ``text``; ``origin[i]`` is the index
+        in ``text`` of the character that produced folded character ``i``.
+        """
+        parts: list[str] = []
+        origin: list[int] = []
+        for index, char in enumerate(text):
+            folded = char.casefold()
+            parts.append(folded)
+            origin.extend([index] * len(folded))
+        return "".join(parts), origin
+
+    @staticmethod
     def _covering_window(span: str, names: list[str]) -> str | None:
         """Shortest slice of ``span`` holding one mention of each of ``names``.
 
         Padded with surrounding text up to ``_MAX_EVIDENCE_CHARS``; ``None``
         when the mentions are more than ``_MAX_EVIDENCE_SPAN_CHARS`` apart.
+        Names are matched casefolded, the same test _evidence_span filters
+        sentences with, so a name whose casefold changes length ("Straße" vs
+        "STRASSE") is still located.
         """
+        folded, origin = PromptTuner._casefold_with_origin(span)
         mentions = [
             [
-                (m.start(), m.end())
-                for m in re.finditer(re.escape(name), span, re.IGNORECASE)
+                (origin[m.start()], origin[m.end() - 1] + 1)
+                for m in re.finditer(re.escape(name.casefold()), folded)
             ]
             for name in names
         ]

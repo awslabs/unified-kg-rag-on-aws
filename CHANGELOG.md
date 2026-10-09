@@ -441,6 +441,26 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- An incremental commit no longer records every document FAILED when one
+  community's `MemberOf` edges fail in more than one Neptune entity batch.
+  Each failed batch carries the community id, and the commit deduplicated the
+  ids before comparing them with the failure count, so the repeated failures
+  counted as failures without an id. Failed ids are now counted once per
+  failed item (`IndexingStats.unattributed_failures`), and only the documents
+  owning the failed community are recorded FAILED (#187).
+- `run-prompt-tuning` finds an evidence span in a long sentence for a name
+  whose casefolded form has a different length, such as `Straße Holding`
+  written `STRASSE Holding`. The sentence filter compared casefolded text
+  but the window search used case-insensitive regex matching, which does not
+  equate `ß` with `ss`, so the relationship was left out. Both now match on
+  casefolded text (#187).
+- Deleting OpenSearch indices no longer fails once many have accumulated.
+  All names were joined into one request path, so reaping the ~80 stale
+  indices that earlier full reindexes leaked exceeded OpenSearch's 4 KB
+  request-line limit and the cleanup failed on every run. Indices are now
+  deleted in batches of at most 20 names and 3,000 characters; a failed batch
+  does not stop the others, and the error names the indices left behind
+  (#187).
 - Merging small chunks no longer drops text when a chunk repeats the previous
   chunk's last lines verbatim, such as a document ending in two identical
   `Signed: ____` lines with an LLM line boundary between them. The repeated

@@ -34,6 +34,40 @@ _sleep = time.sleep
 RETRYABLE_BULK_ITEM_STATUSES = frozenset({429, 502, 503, 504})
 
 
+# Bounds for one delete-index request. The names are joined into the URL
+# path, and OpenSearch's default max request line is 4 KB; staying well under
+# it leaves room for the host, URL encoding and query string.
+_DELETE_BATCH_MAX_NAMES = 20
+_DELETE_BATCH_MAX_CHARS = 3000
+# How many undeleted names a delete_indices error message lists.
+_DELETE_REPORT_NAMES = 10
+
+
+def _index_name_batches(index_names: list[str]) -> list[list[str]]:
+    """Split ``index_names`` into batches within the delete-request bounds.
+
+    A batch holds at most ``_DELETE_BATCH_MAX_NAMES`` names whose comma-joined
+    length is at most ``_DELETE_BATCH_MAX_CHARS``; a single name longer than
+    that still gets a batch of its own.
+    """
+    batches: list[list[str]] = []
+    batch: list[str] = []
+    length = 0
+    for name in index_names:
+        added = len(name) + (1 if batch else 0)
+        if batch and (
+            len(batch) >= _DELETE_BATCH_MAX_NAMES
+            or length + added > _DELETE_BATCH_MAX_CHARS
+        ):
+            batches.append(batch)
+            batch, length, added = [], 0, len(name)
+        batch.append(name)
+        length += added
+    if batch:
+        batches.append(batch)
+    return batches
+
+
 def _bulk_item_status(result: dict[str, Any]) -> int | None:
     item: Any = next(iter(result.values()), {})
     status = item.get("status") if isinstance(item, dict) else None
@@ -541,12 +575,38 @@ class OpenSearchClient:
         )
         self.client.indices.delete_alias(index=final_indices, name=final_aliases)
 
-    @_handle_opensearch_errors
     def delete_indices(self, index_names: list[str]) -> None:
-        if index_names:
-            indices_str = ",".join(index_names)
-            self.client.indices.delete(index=indices_str)
-            logger.info("Deleted indices: %s", indices_str)
+        """Delete ``index_names`` (names or patterns) in bounded batches.
+
+        The names travel in the request path, and OpenSearch rejects a request
+        line over 4 KB, so one call naming every index fails outright once
+        enough have accumulated. Each batch is deleted on its own and a failed
+        batch does not stop the rest; ``AWSServiceError`` is raised at the end
+        naming the indices that were not deleted.
+        """
+        not_deleted: list[str] = []
+        errors: list[str] = []
+        for batch in _index_name_batches(index_names):
+            try:
+                self._delete_index_batch(batch)
+            except Exception as e:
+                not_deleted.extend(batch)
+                errors.append(str(e))
+        if not_deleted:
+            shown = ", ".join(not_deleted[:_DELETE_REPORT_NAMES])
+            more = len(not_deleted) - _DELETE_REPORT_NAMES
+            raise AWSServiceError(
+                f"Failed to delete {len(not_deleted)} of {len(index_names)} "
+                f"index name(s): {shown}"
+                + (f" (+{more} more)" if more > 0 else "")
+                + f"; first error: {errors[0]}"
+            )
+
+    @_handle_opensearch_errors
+    def _delete_index_batch(self, index_names: list[str]) -> None:
+        indices_str = ",".join(index_names)
+        self.client.indices.delete(index=indices_str)
+        logger.info("Deleted indices: %s", indices_str)
 
     @_handle_opensearch_errors
     def get_index_name_by_alias(self, alias_name: str) -> str | None:
