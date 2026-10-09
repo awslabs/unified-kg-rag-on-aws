@@ -12,8 +12,7 @@ two retrieval methodologies on one stack: **Microsoft GraphRAG**
 - For *internals / architecture* (hexagonal layers, ports & adapters, the
   dependency rule), see [docs/design.md](./design.md).
 
-Everything below is grounded in the actual CLI flags and config keys in the
-codebase. The five console entry points (defined as `pyproject` scripts) are:
+The five console entry points (defined as `pyproject` scripts) are:
 
 | Script | Module | Purpose |
 |---|---|---|
@@ -22,6 +21,26 @@ codebase. The five console entry points (defined as `pyproject` scripts) are:
 | `run-eval` | `application.cli.run_evaluation` | Evaluate retrieval + generation |
 | `run-visualization` | `application.cli.run_visualization` | Render an exported graph (no ingestion) |
 | `run-prompt-tuning` | `application.cli.run_prompt_tuning` | Generate domain-adapted prompts |
+
+Every CLI's `--help` ends with an example invocation and a link to its section here.
+
+## Contents
+
+1. [Prerequisites & Installation](#1-prerequisites--installation) (including [Required models](#required-models))
+2. [Configuration](#2-configuration)
+3. [Ingestion (`run-ingestion`)](#3-ingestion-run-ingestion)
+4. [Querying (`run-rag`)](#4-querying-run-rag)
+5. [Incremental indexing](#5-incremental-indexing)
+6. [Evaluation (`run-eval`)](#6-evaluation-run-eval)
+7. [Visualization (`run-visualization`)](#7-visualization-run-visualization)
+8. [Prompt tuning (`run-prompt-tuning`)](#8-prompt-tuning-run-prompt-tuning)
+9. [Domain adaptation](#9-domain-adaptation)
+10. [Operations & troubleshooting](#10-operations--troubleshooting)
+11. [Using the library from Python](#11-using-the-library-from-python)
+12. [Limitations](#12-limitations)
+
+Related pages: [Model Catalog](./models.md) · [Operator Runbook](./operations.md) ·
+[Design Doc](./design.md) · [`iac/README.md`](../iac/README.md)
 
 ---
 
@@ -42,8 +61,40 @@ codebase. The five console entry points (defined as `pyproject` scripts) are:
 | **Amazon S3** | Yes | Pipeline cache sync; optional embedding-cache persistence; document storage. |
 | **Amazon DynamoDB** | Only for incremental indexing | Document-status registry that diffs the corpus by content hash. |
 
+### Required models
+
+Enable access to these Bedrock models before the first run. They are the code
+defaults; a model you configure instead replaces the one in its row.
+
+| Role | Default model id | Config key |
+|---|---|---|
+| Default tier (extraction, gleaning, community reports, answers, judges) | `anthropic.claude-sonnet-5-5` | `aws.bedrock.default_model_id` |
+| Fast tier (chunking, translation, summarization, routing, map steps) | `anthropic.claude-haiku-5-5` | `aws.bedrock.fast_model_id` |
+| Embeddings (indexing, evaluation and visualization layout) | `amazon.titan-embed-text-v2:0` | `indexing.opensearch.embedding_model_id`, `evaluation.embedding_model_id` |
+| Reranking | `cohere.rerank-v3-5:0` | `search.reranking.rerank_model_id` |
+
+- **Region.** Every Bedrock call, the rerank call included, goes to
+  `aws.bedrock.region_name`, which defaults to `aws.region_name` (`us-west-2`).
+  All four default models are offered there. Rerank models are not offered in
+  every region (for example not in `ap-northeast-2`): in such a region, set
+  `aws.bedrock.region_name` to a region that offers them, or set
+  `search.reranking.enabled: false`. A private VPC whose only Bedrock route is
+  its VPC endpoint must keep Bedrock in its own region.
+- **Inference profiles.** Claude Sonnet 5.5 and Haiku 5.5 are invocable only
+  through a cross-region inference profile. Keep
+  `aws.bedrock.enable_global_profile: true` and grant
+  `bedrock:ListInferenceProfiles`; if no profile resolves, model creation fails with a message that names this remedy.
+- **Permissions.** See [§10 IAM permissions](#iam-permissions); reranking needs
+  its own statement.
+
+The [Model Catalog](./models.md) lists every curated model and its limits.
+
 The framework connects to services that **already exist** — it never creates
-them. You have two ways to get there:
+them. Choose one of three ways to run it:
+
+- **Local stores (development).** Run Neptune and OpenSearch stand-ins in
+  containers and use Bedrock for models; see [Local stores](#local-stores-development)
+  below.
 
 - **Bring your own services.** If Neptune, OpenSearch, S3 (and optionally
   DynamoDB) are already running, just record their endpoints in `config.yaml`
@@ -197,11 +248,11 @@ value stops the CLI with `Configuration validation error: ...`. An unknown key
 logged at WARNING as `Unknown config key '<path>' is ignored` and dropped, so
 check the log after editing the file or upgrading.
 
-Renamed keys are still accepted: each is applied to its replacement with a
+Deprecated keys are accepted: each is applied to its replacement with a
 WARNING `Config key '<old>' is deprecated; applied as '<new>: <value>'`, and is
 ignored if the replacement is also set.
 
-| Former key | Replacement |
+| Deprecated key | Replacement |
 |---|---|
 | `search.llm_retry` | `aws.bedrock.transient_retry` |
 | `aws.bedrock.effort` | `aws.bedrock.default_effort` (same value) |
@@ -267,16 +318,14 @@ the same values.
 > (`ChatBedrock`, used for non-cross-region model ids) an intervention is
 > detected only with `trace: true`; the guardrail is enforced either way.
 >
-> Upgrading: earlier releases guarded every call; set `apply_to: "all"` to keep
-> that. Custom code that builds chains with `setup_chain` or calls `get_model`
+> Custom code that builds chains with `setup_chain` or calls `get_model`
 > for non-query work should pass `model_purpose=ModelPurpose.INGESTION` (or
 > `EVALUATION`). Unmarked calls default to `QUERY`: they stay guarded and get
 > the query-time transient-error retry.
 
 > **S3 cache encryption.** With the CDK stack's `use_cmk=true`, the bucket
-> default is the customer-managed KMS key, so `BUCKET_DEFAULT` uses it. Releases
-> before this default sent `AES256`, which silently bypassed a bucket's CMK. When
-> you reuse a bucket whose default is SSE-KMS, the writer needs
+> default is the customer-managed KMS key, so `BUCKET_DEFAULT` uses it; forcing
+> `AES256` would bypass a bucket's CMK. When you reuse a bucket whose default is SSE-KMS, the writer needs
 > `kms:GenerateDataKey` and `kms:Decrypt` on that key.
 
 #### Model selection notes
@@ -299,38 +348,14 @@ search:
   answer_generation_model_id: "anthropic.claude-opus-5-5"  # one role pinned
 ```
 
-Model-id keys accept any Bedrock model id, or an inference-profile id such as
-`us.anthropic.claude-sonnet-5-5` (used as-is). The models below have a curated
-capability record (as do the older Claude 3.x/4.x ids). Any other id still
-works: `anthropic.claude-*` ids get the request shape of their generation,
-`openai.gpt-*` ids the GPT shape, and other providers a conservative Converse
-request (no reasoning or sampling parameters, 32K window, 4K output), each with
-one WARNING. Describe or correct a model with `aws.bedrock.model_overrides`
-(keys are capability-record fields such as `context_window_size` and
-`max_output_tokens`; an unknown key fails fast):
-
-```yaml
-aws:
-  bedrock:
-    model_overrides:
-      "amazon.nova-pro-v1:0":
-        context_window_size: 300000
-        max_output_tokens: 10000
-```
-
-Embedding and rerank model ids work differently: they are a closed list, and
-`model_overrides` does not apply to them. `embedding_model_id` accepts
-`amazon.titan-embed-text-v2:0`, `amazon.titan-embed-text-v1`,
-`cohere.embed-v4:0`, `cohere.embed-english-v3` or
-`cohere.embed-multilingual-v3`; `rerank_model_id` accepts
-`cohere.rerank-v3-5:0` or `amazon.rerank-v1:0`. Any other id fails config
-validation. The embedding dimension is written into the OpenSearch vector
-mappings and checked against the model's record, so an unknown model has no
-safe default; `indexing.opensearch.embedding_dimension` picks among the
-dimensions a listed model supports (Titan Embed V2: 256, 512 or 1024; unset
-uses the largest). Adding a model is a code change: a member in
-`EmbeddingModelId`/`RerankModelId` (`domain/models/config.py`) and a record in
-`adapters/aws/bedrock_models.py`.
+The full list of curated models, the request differences between Claude
+generations and OpenAI GPT models, prompt caching, and how to describe a model
+the package does not know (`aws.bedrock.model_overrides`) are in the
+[Model Catalog](./models.md). Embedding and rerank model ids are a closed list
+(`amazon.titan-embed-text-v2:0`, `amazon.titan-embed-text-v1`,
+`cohere.embed-v4:0`, `cohere.embed-english-v3`, `cohere.embed-multilingual-v3`;
+`cohere.rerank-v3-5:0`, `amazon.rerank-v1:0`); any other id fails config
+validation.
 
 **Output cap.** Bedrock reserves input + `max_tokens` against the
 tokens-per-minute quota when a request starts, so asking for the model maximum
@@ -344,80 +369,6 @@ budget 150 tokens per record at `max_entities_per_chunk` +
 1.35 tokens per character of `max_chunk_size` (18992), claim extraction twice
 that (29792); community reports stay under the default cap. Raising those
 limits raises the floor with them.
-
-**Prompt caching.** On Claude models that support explicit prompt caching, the
-end of each system prompt is marked as a cache checkpoint: a `cachePoint` block
-on the Converse API (every inference profile) and `cache_control` on
-InvokeModel. A system prompt shorter than the model's minimum checkpoint size
-(512 tokens on Claude Sonnet/Opus 5.5 and Opus 5, 1024 on most others, 4096 on
-Claude Haiku 4.5 and Opus 4.5-4.7) gets no marker, because Bedrock would accept
-it but cache nothing. Cache reads show up as `cache_read` in the response's
-`usage_metadata.input_token_details`, and cached input tokens do not count
-against the tokens-per-minute quota.
-
-| Model id | Provider | Context / max output | Reasoning control |
-| --- | --- | --- | --- |
-| `anthropic.claude-sonnet-5-5` (default) | Anthropic | 1M / 128K | adaptive, always on; `effort` low–max |
-| `anthropic.claude-opus-5-5` | Anthropic | 1M / 128K | adaptive, always on; `effort` low–max |
-| `anthropic.claude-haiku-5-5` | Anthropic | 1M / 128K | adaptive, on by default; `effort` low–max |
-| `anthropic.claude-sonnet-5`, `anthropic.claude-opus-5` | Anthropic | 1M / 128K | adaptive, always on; `effort` |
-| `anthropic.claude-opus-4-8`, `anthropic.claude-opus-4-7` | Anthropic | 1M / 128K | adaptive, always on; `effort` low–max |
-| `anthropic.claude-opus-4-6-v1` | Anthropic | 1M / 128K | opt-in (`--enable-thinking`), adaptive; `effort` low/medium/high/max |
-| `anthropic.claude-sonnet-4-6` | Anthropic | 1M / 64K | opt-in, adaptive; `effort` low/medium/high/max |
-| `openai.gpt-6.1-sol` | OpenAI | 1M / 131K | `reasoning.effort` low–max, always on |
-| `openai.gpt-6-astra`, `openai.gpt-6-sol`, `openai.gpt-6-luna` | OpenAI | 1.05M / 128K | `reasoning.effort` low–max, always on |
-| `openai.gpt-5.6-sol`, `openai.gpt-5.6-terra`, `openai.gpt-5.6-luna` | OpenAI | 1.05M / 128K | `reasoning.effort` low–max, always on |
-| `openai.gpt-5.5`, `openai.gpt-5.4` | OpenAI | 1.05M / 128K | `reasoning.effort` low–max, always on |
-
-All of these are inference-profile-only. Only OpenAI's proprietary GPT models
-are offered; the open-weight `gpt-oss` models are not.
-
-Four things differ for Claude 4.7-and-later models:
-
-- **Inference profiles are mandatory.** They ship without `ON_DEMAND`
-  throughput, so the bare model id is not invocable — a cross-region profile
-  must resolve. Keep `enable_global_profile: true` and grant
-  `bedrock:ListInferenceProfiles`; the adapter fails fast with the remedy if no
-  profile resolves. Note that in `ap-northeast-2` only `global.` profiles exist
-  for Claude 5 (no `apac.`), so disabling the global profile leaves no path.
-- **`effort` replaces the thinking token budget.** `thinking_budget_tokens` is
-  ignored for these models (the old `budget_tokens` request shape is rejected
-  with a 400); set `bedrock.default_effort` / `bedrock.fast_effort` instead.
-  A call uses `fast_effort` when its model is `fast_model_id` (and that differs
-  from `default_model_id`), otherwise `default_effort`; the shipped fast model,
-  Claude Haiku 5.5, thinks adaptively, so `fast_effort` (default `low`) sets
-  how much it reasons on fast-tier calls. A default-tier ingestion call uses
-  `ingestion_effort` instead when it is set. Claude Sonnet 5.5 always thinks, so `--enable-thinking` is a
-  no-op for it — depth is `effort` only. A level the model does not accept
-  (e.g. `xhigh` on Opus or Sonnet 4.6) fails fast.
-- **Sampling parameters are dropped.** `temperature`/`top_k` are not accepted
-  and are omitted from requests automatically; steer behaviour by prompting.
-- **Token estimates are scaled.** Their tokenizer counts roughly 1x-1.35x the
-  tokens of older Claude models for the same text and CountTokens rejects
-  them, so the local estimate (~4 characters per token for Latin text) is
-  multiplied by the record's `token_estimate_multiplier` (1.3) when sizing
-  context budgets. Override it per model with
-  `aws.bedrock.model_overrides`.
-
-OpenAI GPT models differ from Claude in these ways:
-
-- They always go through the Converse API on a `us.`/`global.` inference
-  profile (no `apac.`/`eu.` geo profiles; keep `enable_global_profile: true`
-  outside the US). The tier's effort (`bedrock.default_effort` /
-  `fast_effort`) is sent as
-  `reasoning: {effort: ...}` (the flat `reasoning_effort` field is rejected).
-  GPT-5.6 and GPT-6.x answered a trivial prompt in roughly 10-25 s even at
-  `effort: low`, so size timeouts and concurrency accordingly.
-- No Anthropic-only fields are sent (`thinking`, `output_config`,
-  `anthropic_beta`), and sampling parameters are omitted.
-- Explicit prompt-cache markers are not sent: Converse supports only implicit
-  caching for these models. Bedrock CountTokens does not support them, so the
-  retrieval context budget uses the local token estimate.
-
-Claude Fable 5 / 5.1 are not offered: they need a non-default account
-data-retention mode (Data Retention API only), and accounts on the default mode
-get `data retention mode 'default' is not available for this model` on every
-call.
 
 ### 2.2 `fixing` — auto-repair malformed model output
 
@@ -499,8 +450,8 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.neptune.max_attempts` | `4` | Attempts per Neptune write, including the first. Failures are retried with jittered exponential backoff from `retry_delay_seconds` (`2`), except errors a retry cannot fix (malformed query, access denied, bad parameter), which fail on the first attempt. `1` disables the retry. |
 | `indexing.neptune.max_hops` | `3` | Neighbour-expansion depth at retrieval time. |
 | `indexing.neptune.property_max_length` | `4000` | Character cap per Neptune property value. Keep it above the longest description that is not re-summarized (summarization triggers above 600 tokens, ~2,400 characters). Takes effect on re-ingestion. |
-| `indexing.neptune.entity_importance_source` | `"rank"` | Entity importance in graph-expansion relevance: `rank` (indexed entity rank), `degree` (edge count at query time) or `none` (neutral 0.5, the old behaviour). |
-| `indexing.neptune.traversal_fetch_multiplier` | `3` | Graph expansion fetches this many times the result width, ranks, then cuts. `1` = cut in traversal order (old behaviour). |
+| `indexing.neptune.entity_importance_source` | `"rank"` | Entity importance in graph-expansion relevance: `rank` (indexed entity rank), `degree` (edge count at query time) or `none` (neutral 0.5 for every entity). |
+| `indexing.neptune.traversal_fetch_multiplier` | `3` | Graph expansion fetches this many times the result width, ranks, then cuts. `1` = cut in traversal order. |
 
 ### 2.6 `search` — retrieval, fusion, reranking, per-strategy knobs
 
@@ -521,7 +472,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `search.global_search.map_batch_size` | `5` | Reports per map-step LLM call; lower it for long reports. |
 | `search.global_search.max_map_reduce_tokens` | `8000` | Token budget for ranked key points fed to the reduce step. |
 | `search.global_search.reduce_with_llm` | `false` | `true` = a reduce LLM summarizes the packed key points before the answer model rewrites them (one extra LLM call). `false` passes the points straight to the answer model. |
-| `search.global_search.reserve_report_slots` | `true` | Reserve `max_communities` fusion slots for community reports and cap their text units at `text_unit_slots`. `false` = one flat `top_k` cut over reports and chunks (old behaviour). |
+| `search.global_search.reserve_report_slots` | `true` | Reserve `max_communities` fusion slots for community reports and cap their text units at `text_unit_slots`. `false` = one flat `top_k` cut over reports and chunks. |
 | `search.global_search.text_unit_slots` | `null` | Text-unit slots next to the reserved report slots; `null` = the query's `top_k`. |
 | `search.local_search.entity_frequency_threshold` | `20` | Drop graph-expanded entities that appear in more text units than this (too generic). |
 | `search.local_search.include_bridge_relationships` | `true` | Also fetch relationships incident to the expanded entities, edges between two retrieved entities first (multi-hop bridges). Needs the relationship index. `false` = relationship vector query only. |
@@ -652,7 +603,7 @@ indexing still needs `aws.dynamodb.enabled: true` in the config file.
 Ingestion turns a directory of documents into a knowledge graph indexed in
 OpenSearch + Neptune.
 
-### CLI flags (verified)
+### CLI flags
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -736,6 +687,23 @@ embeddings specifically, set
 `indexing.opensearch.persist_embedding_cache: true` to avoid re-embedding
 unchanged text across runs.
 
+### Index suffix
+
+Every OpenSearch index and Neptune label a corpus uses is named
+`<prefix>-<suffix>`, or `<prefix>-<suffix>-<additional_suffix>` when
+`indexing.additional_suffix` is set. This guide calls `<suffix>` the **index
+suffix**. The same value has a different name on each side:
+
+- ingestion writes it from `processing.document_parsing.index_value`
+  (`run-ingestion` has no flag for it);
+- queries select it with `--suffix` on `run-rag`/`run-eval`, or
+  `RAGInput.suffix` in Python.
+
+Both default to `default`. Use one index suffix per tenant or corpus version,
+with one config file each; `indexing.additional_suffix` must be the same on
+both sides. Incremental indexing and deletion are scoped to the index suffix
+(§5).
+
 ### Multilingual ingestion
 
 Set the corpus's predominant language and the target you want to index in:
@@ -774,7 +742,7 @@ documents as failed so the next run translates them again (§5).
 
 ## 4. Querying (`run-rag`)
 
-### CLI flags (verified)
+### CLI flags
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -783,7 +751,7 @@ documents as failed so the next run translates them again (§5).
 | `--mode` | `rag` | `rag` (full generation) or `search` (retrieval only) |
 | `--conversation-id` | — | Continue an existing conversation |
 | `--use-memory` | off | Enable conversation memory (auto in interactive) |
-| `--suffix` | — | Index/label suffix for multi-tenant or versioned indices |
+| `--suffix` | — (`default`) | [Index suffix](#index-suffix) to query; must match the corpus's `processing.document_parsing.index_value` |
 | `--enable-thinking` | off | Enable model step-by-step reasoning |
 | `--search-strategy` | `auto` | `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive` |
 | `--search-type` | `hybrid` | `hybrid`, `lexical`, `vector` |
@@ -895,16 +863,15 @@ or `document_ids`, Neptune community vertices declare only their own fields,
 and Neptune keeps entity vertices that lack an `attr_<key>` property. Graph
 expansion and community reports can also bring in content from documents the
 filter would exclude. Do not use filters to separate tenants or users with
-different permissions. Give each one its own namespace instead: a distinct
-`--suffix` (with `document_parsing.index_value` and, if used,
+different permissions. Give each one its own [index suffix](#index-suffix)
+instead: a distinct `--suffix` (with `document_parsing.index_value` and, if used,
 `indexing.additional_suffix`) gives it separate OpenSearch indices and Neptune
 labels, and the query suffix is validated so it cannot widen the index target.
 Decide in the calling application which suffix a caller may query.
 
 A filter key that no store the selected strategy reads declares (for example
-the earlier `category` or `entity_type`) raises `InvalidFilterError`, whose
-message lists the filterable keys. Earlier releases ignored such keys silently
-and returned unfiltered results. The schema is defined in
+`category` or `entity_type`) raises `InvalidFilterError`, whose message lists
+the filterable keys. The schema is defined in
 `unified_kg_rag/adapters/storage/filter_schema.py`.
 
 ### Interactive mode & conversation memory
@@ -996,8 +963,7 @@ and processes the document again. A document that fails
 `indexing.max_document_failures` (default `3`) consecutive runs with the same
 content is no longer retried: it stays `FAILED`, keeps what it indexed, and is
 skipped as unchanged with a WARNING naming the file. Editing the file (new
-content starts the count again) or raising the limit retries it. Records
-written before the count existed start at `0`.
+content starts the count again) or raising the limit retries it.
 
 ### Document size limit
 
@@ -1029,13 +995,13 @@ chunks counts as a failed removal (its registry row is kept for a retry).
 
 ## 6. Evaluation (`run-eval`)
 
-### CLI flags (verified)
+### CLI flags
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--eval-data-path` | **required** | JSON file of questions + ground truths |
 | `--outputs-directory` | `evaluation.outputs_directory` | Where to save results |
-| `--suffix` | — | Index/label suffix |
+| `--suffix` | — (`default`) | [Index suffix](#index-suffix) to evaluate against |
 | `--enable-thinking` | off | Model reasoning |
 | `--search-strategy` | `auto` | Strategy used to answer each question |
 | `--search-type` | `hybrid` | Search method |
@@ -1240,7 +1206,7 @@ Layout and error behaviour:
   the same name is removed first). If nothing is rendered (e.g. an empty graph),
   `run-visualization` logs an error and exits with status `1`.
 
-### CLI flags (verified)
+### CLI flags
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -1269,7 +1235,7 @@ Samples documents from a directory, profiles the corpus (domain / language /
 persona / entity types) via Bedrock, and writes a domain-adapted
 `custom_prompts` YAML fragment for you to review and merge into `config.yaml`.
 
-### CLI flags (verified)
+### CLI flags
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -1386,15 +1352,25 @@ InvokeModelWithResponseStream for your model IDs, plus embeddings), Neptune
 indices), S3 (the configured bucket), and DynamoDB (when incremental indexing is
 on).
 
-> **Bedrock reranking needs its own statement.** The Rerank API
-> (`bedrock:Rerank`, and `bedrock:InvokeModel` on the rerank model) is a
-> separate action from chat/embedding model invocation. Give it `Resource: "*"`
-> (or the appropriate rerank model/inference-profile ARNs) in its **own**
-> statement — a model-scoped `InvokeModel` statement alone will not authorize
-> reranking, and reranking is enabled by default (`search.reranking.enabled`).
-> If you cannot grant it, set `search.reranking.enabled: false`.
+> **Bedrock reranking needs its own statement.** Reranking calls the Rerank
+> API, which authorizes `bedrock:Rerank` against a different resource shape
+> than `InvokeModel`: a statement scoped to foundation-model or
+> inference-profile ARNs denies it. Grant `bedrock:Rerank` on `Resource: "*"`
+> in its own statement, as the CDK task role does
+> (`iac/stacks/compute_stack.py`). Without it, every query logs
+> `Reranking failed: ...` at ERROR and returns the fused results unreranked.
+> Reranking is on by default (`search.reranking.enabled`); if you cannot grant
+> the action, set it to `false`.
+>
+> The model resolver also calls `bedrock:ListInferenceProfiles`, an
+> account-level read that takes `Resource: "*"`, and a guardrail needs
+> `bedrock:ApplyGuardrail`.
 
 ### Common errors
+
+The [Operator Runbook](./operations.md) covers re-ingestion, failed documents,
+cache prefixes and the start-up endpoint check in more depth.
+
 
 - **`--source-directory is required`** — pass it (or set
   `$GRAPHRAG_SOURCE_DIRECTORY`); metadata-only ops (`--verify-metadata` /
@@ -1452,6 +1428,107 @@ answer generation per query. Levers: use cheaper models for mechanical stages
 to Haiku-class models), cap `gleaning.max_rounds`, leave `claim_extraction`
 off unless needed, enable embedding/stage caching, and use incremental indexing
 to avoid full re-ingests.
+
+
+---
+
+## 11. Using the library from Python
+
+The CLIs are thin wrappers over two public classes. Build the `Config` with
+`get_config`, which applies the same file and environment-variable layers as
+the CLIs (§2).
+
+```python
+from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
+from unified_kg_rag.domain.models import PipelineConfig, PipelineStageStatus
+from unified_kg_rag.shared import get_config
+
+config = get_config("config.yaml")
+
+# Ingest. PipelineConfig carries the run options the run-ingestion flags set
+# (pipeline_id, cache directory, S3 sync, enabled stages, force_rebuild).
+pipeline = DataIngestionPipeline(config, PipelineConfig(pipeline_id="run-001"))
+try:
+    context = pipeline.run("./source")
+    if context.status == PipelineStageStatus.FAILED:
+        raise SystemExit("ingestion failed")
+finally:
+    pipeline.close()  # releases the indexers' Neptune/OpenSearch connections
+
+# Query. One chain serves many queries, including concurrent ones.
+chain = GraphRAGChain(config)
+try:
+    output = chain.invoke(RAGInput(query="How are Alice and Acme related?", search_strategy="mix"))
+    print(output.answer)
+    for source in output.sources:  # only what the answer model saw
+        print(source)
+finally:
+    chain.close()
+```
+
+- `pipeline.run` returns a `PipelineContext`. A failed stage sets its `status`
+  to `FAILED` rather than raising, so check it as above (the CLI exits non-zero
+  in that case).
+- `RAGInput` takes the `run-rag` options as fields: `search_strategy`,
+  `search_type`, `top_k`, `suffix` ([index suffix](#index-suffix)), `filters`,
+  `conversation_id` and `use_memory`, `target_language`. A plain dict with
+  these keys also works.
+- `GraphRAGChain(config, mode=ChainMode.SEARCH)` returns retrieval results
+  without generating an answer (`ChainMode` is in the same module).
+- In async code, use `await chain.ainvoke(...)` and `await chain.aclose()`.
+  An async host should also size the event loop's executor once at startup:
+  `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`
+  (from `unified_kg_rag.shared.utils`).
+- Always close what you build. Both classes open connections on first use;
+  without `close()`/`aclose()` they stay open until garbage collection.
+- Importing the package configures no logging handler; call
+  `unified_kg_rag.shared.setup_logging(config)` to get the CLI's logging.
+
+Both constructors accept injected backends (`providers`, `retriever_builders`,
+`doc_status`, `vector_indexer`, `graph_indexer`); see
+[Design Doc §15](./design.md#15-extension-guide).
+
+---
+
+## 12. Limitations
+
+- **Extraction can hallucinate.** Graph extraction is an LLM step and can emit
+  entities or relationships that the source text does not support, which then
+  reach retrieval. `processing.graph_extraction.entity_grounding.enabled`
+  drops (or down-weights) items whose quoted `source_text` is absent from the
+  chunk; it is off by default.
+- **Runs are not reproducible.** Extraction, gleaning, community reports, the
+  `auto` router and answers are LLM outputs, so two ingestions of the same
+  corpus build different graphs and the same query can get different answers.
+  Leiden clustering is deterministic for a given graph. Compare configurations
+  over more than one ingestion and query run.
+- **Reranking is regional.** The rerank models are not offered in every
+  Bedrock region (see [Required models](#required-models)). Without reranking,
+  results are ranked by fusion only.
+- **Bedrock only.** Model calls go to Amazon Bedrock. Other providers need a
+  custom model factory ([Design Doc §15](./design.md#15-extension-guide)).
+- **Two store backends ship.** Neptune (or a TinkerPop Gremlin Server for
+  local development) and OpenSearch. Other stores need custom adapters.
+- **No serving layer.** The package provides CLIs and a Python library; it has
+  no HTTP API, end-user authentication or rate limiting.
+- **Filters are not access control** (§4). Separate tenants by index suffix.
+- **A lighter ingestion limits the strategies.** With
+  `graph.community_detection.enabled: false`, `global` and `drift` have no
+  community reports to use; with
+  `indexing.opensearch.build_relationship_vector_index: false`, `mix` and
+  `hybrid` lose high-level keyword retrieval.
+- **Incremental indexing approximations** (§5). A shared entity or
+  relationship keeps the description a changed or deleted document
+  contributed, and delta runs append communities instead of re-clustering the
+  whole graph; only a full rebuild (`indexing.reset: true`) refreshes both.
+  Each run scans the whole doc-status table, and one document's artifact ids
+  must fit one 400 KB DynamoDB item.
+- **One ingestion at a time** per set of stores; concurrent runs race on the
+  registry and the stores.
+- **Markdown and HTML** need the optional `unstructured` extra (Python 3.11+),
+  which the container image leaves out by default.
+- **Changing the embedding model** (or its dimension) requires a reindex.
 
 ---
 
