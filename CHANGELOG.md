@@ -321,7 +321,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   field (persona, domain, language, entity types, few-shot examples) before
   writing the `custom_prompts` templates. A sample containing `{"retries": 3}`
   made graph extraction fail to format, and `{input_text}` in a sample was
-  substituted with the chunk being extracted (#PR).
+  substituted with the chunk being extracted (#173).
 - The LLM XML parser no longer tries LangChain's `XMLOutputParser.parse`
   first. Without `defusedxml` (not a dependency) that call raised
   `ImportError` on every response, so the strict and the two re-escaping
@@ -616,21 +616,21 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - The user guide and design doc state that metadata filters are relevance
   filters, not an access-control boundary: stores that do not declare a key
   (relationships, claims, Neptune community vertices) return unfiltered
-  content. Isolate tenants with separate `suffix` namespaces (#PR).
+  content. Isolate tenants with separate `suffix` namespaces (#173).
 - `pipeline_id` (`--pipeline-id`, `GRAPHRAG_PIPELINE_ID`, which the Step
   Functions task sets, `PipelineConfig` and `DataIngestionPipeline.run`) must
   be a single path segment: letters, digits, `.`, `_` and `-`, starting with a
   letter or digit and without `..`. The id names the local cache directory
   and the S3 prefix, so `../x` or `a/b` reached paths outside the cache
-  directory (#PR).
+  directory (#173).
 - The persisted embedding cache (`persist_embedding_cache`) uploads with the
   `aws.s3.encryption` settings the stage-cache sync already used. It sent no
   SSE header, so `AES256` or `aws:kms` with a specific key were ignored for
-  that object (#PR).
+  that object (#173).
 - `run-rag` prints answers, errors and the verbose query/source panels as
   plain text with terminal control characters (other than newline and tab)
   removed. Model output was rendered as rich markup, so `[link=...]` became a
-  terminal hyperlink, and escape sequences in it reached the terminal (#PR).
+  terminal hyperlink, and escape sequences in it reached the terminal (#173).
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or
   `LANGCHAIN_TRACING_V2` enables LangSmith tracing, which uploads prompts,
   retrieved context and model outputs. Tracing is not turned off (#156).
@@ -638,7 +638,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   corpus entity names or raw model output; they log lengths, counts, ids and a
   short hash instead, and the text moves to DEBUG. The XML parser's exception
   message no longer embeds model output, and the per-query "no entity focus"
-  WARNING is now a DEBUG record (#PR).
+  WARNING is now a DEBUG record (#173).
 - Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on
   Python 3.11+ (GHSA-4mvj-m6j5-pmf7), which also drops NLTK and its model
   artifact path traversal (GHSA-8mgp-746c-j5xp); Python 3.10 keeps the core
