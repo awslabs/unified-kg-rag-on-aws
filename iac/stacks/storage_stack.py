@@ -18,6 +18,7 @@ from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_kms as kms
+from aws_cdk import aws_logs as logs
 from aws_cdk import aws_neptune_alpha as neptune
 from aws_cdk import aws_opensearchservice as opensearch
 from aws_cdk import aws_s3 as s3
@@ -270,6 +271,12 @@ class StorageStack(Stack):
         ):
             assert log_group is not None  # enabled in `logging` above
             log_group.apply_removal_policy(self.removal_policy)
+            if self.kms_key is not None:
+                # The domain construct offers no key option for the log groups
+                # it creates, so set it on the CloudFormation resource.
+                cfn_log_group = log_group.node.default_child
+                assert isinstance(cfn_log_group, logs.CfnLogGroup)
+                cfn_log_group.kms_key_id = self.kms_key.key_arn
         # Resource-scoped access policy (added post-construction so it can
         # reference the domain's own ARN). Network access is already restricted
         # to the VPC + service SG; this requires IAM-signed requests AND scopes

@@ -21,6 +21,7 @@ from __future__ import annotations
 from aws_cdk import Annotations, RemovalPolicy, Stack
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_iam as iam
+from aws_cdk import aws_kms as kms
 from aws_cdk import aws_logs as logs
 from constructs import Construct
 
@@ -57,10 +58,16 @@ INTERFACE_ENDPOINTS = {
 
 class NetworkingStack(Stack):
     def __init__(
-        self, scope: Construct, construct_id: str, config: DeploymentConfig, **kwargs
+        self,
+        scope: Construct,
+        construct_id: str,
+        config: DeploymentConfig,
+        kms_key: kms.IKey | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
         self.config = config
+        self.kms_key = kms_key  # encrypts the flow-log group when use_cmk
 
         self.vpc = self._resolve_vpc()
         self.service_sg = self._build_service_security_group()
@@ -128,6 +135,7 @@ class NetworkingStack(Stack):
         log_group = logs.LogGroup(
             self,
             "FlowLogsGroup",
+            encryption_key=self.kms_key,
             removal_policy=(
                 RemovalPolicy.DESTROY
                 if self.config.removal_destroy

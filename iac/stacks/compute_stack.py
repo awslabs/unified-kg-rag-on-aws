@@ -88,6 +88,7 @@ class ComputeStack(Stack):
             self,
             "TaskLogs",
             log_group_name=f"/{config.prefix}/tasks",
+            encryption_key=self.kms_key,
             retention=logs.RetentionDays.ONE_MONTH,
             removal_policy=removal_policy,
         )
