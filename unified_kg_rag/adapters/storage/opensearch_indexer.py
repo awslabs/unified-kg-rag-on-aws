@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
+from array import array
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -61,8 +62,10 @@ class OpenSearchIndexer(VectorIndexer):
             self.target_language, self.opensearch_config.default_analyzer
         )
         # Per-process content-hash -> embedding cache (avoids re-embedding
-        # duplicate/unchanged text within and across incremental runs).
-        self._embedding_cache: dict[str, list[float]] = {}
+        # duplicate/unchanged text within and across incremental runs). Held
+        # as float32 (what the knn field stores), an eighth of a float list;
+        # unused when the S3 tier below is on, which holds the same vectors.
+        self._embedding_cache: dict[str, array] = {}
         # Optional S3-persisted cache so unchanged text is not re-embedded across
         # separate runs/phases (each Fargate phase is a fresh process). Loaded
         # lazily on first embed; best-effort (S3 errors degrade to in-process).
@@ -726,12 +729,7 @@ class OpenSearchIndexer(VectorIndexer):
                 continue
             key = compute_hash(text, length=32)
             key_to_indices.setdefault(key, []).append(i)
-            cached = self._embedding_cache.get(key)
-            if cached is None and self._s3_embedding_cache is not None:
-                # Promote an S3-tier hit into the in-process tier.
-                cached = self._s3_embedding_cache.get(key)
-                if cached is not None:
-                    self._embedding_cache[key] = cached
+            cached = self._cached_embedding(key)
             if cached is not None:
                 result[i] = cached
             else:
@@ -741,9 +739,10 @@ class OpenSearchIndexer(VectorIndexer):
 
         def _store(key: str, emb: list[float] | None) -> None:
             if emb is not None:
-                self._embedding_cache[key] = emb
                 if self._s3_embedding_cache is not None:
                     self._s3_embedding_cache.put(key, emb)
+                else:
+                    self._embedding_cache[key] = array("f", emb)
             for idx in key_to_indices[key]:
                 result[idx] = emb
 
@@ -805,6 +804,12 @@ class OpenSearchIndexer(VectorIndexer):
         # Newly-computed vectors are held in the in-process tier and flushed once
         # per item-type by _flush_embedding_cache() at the indexing boundary.
         return result
+
+    def _cached_embedding(self, key: str) -> list[float] | None:
+        if self._s3_embedding_cache is not None:
+            return self._s3_embedding_cache.get(key)
+        vector = self._embedding_cache.get(key)
+        return vector.tolist() if vector is not None else None
 
     def _flush_embedding_cache(self) -> None:
         """Persist newly-computed vectors to the S3 tier (once per item-type).

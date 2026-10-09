@@ -109,3 +109,24 @@ def test_final_embedding_failures_summarized_at_warning(indexer, caplog) -> None
     ]
     assert len(summaries) == 1
     assert "1 of 2" in summaries[0].getMessage()
+
+
+def test_in_process_tier_holds_float32(indexer) -> None:
+    indexer._batch_embed(["alpha"])
+    (held,) = indexer._embedding_cache.values()
+    assert held.typecode == "f"
+    assert indexer._batch_embed(["alpha"]) == [[5.0] * 4]
+
+
+def test_s3_tier_is_the_only_copy_when_enabled(indexer) -> None:
+    from unified_kg_rag.adapters.aws.embedding_cache import S3EmbeddingCache
+
+    s3 = S3EmbeddingCache("bucket", "key", "titan", 4)
+    s3._loaded = True  # nothing to load; no S3 call
+    indexer._s3_embedding_cache = s3
+    indexer._batch_embed(["alpha", "beta"])
+    indexer._embedded_log.clear()
+
+    assert indexer._embedding_cache == {}
+    assert indexer._batch_embed(["alpha"]) == [[5.0] * 4]
+    assert indexer._embedded_log == []

@@ -72,7 +72,8 @@ def test_put_then_flush_persists_namespaced() -> None:
     stored = json.loads(fake.objects["embedding-cache/cache.json"])
     # Key is namespaced by model:dim so a model/dim change can't return stale.
     assert "titan:1024|hash1" in stored
-    assert stored["titan:1024|hash1"] == [0.1, 0.2]
+    # Held and persisted as float32, the precision an OpenSearch knn field keeps.
+    assert stored["titan:1024|hash1"] == pytest.approx([0.1, 0.2], rel=1e-6)
 
 
 def test_load_reads_back_persisted_entry() -> None:
@@ -168,3 +169,73 @@ def test_indexer_passes_s3_encryption_to_embedding_cache(config: Config) -> None
     cache = indexer._build_s3_embedding_cache()
     assert cache is not None
     assert cache._sse_args == {"ServerSideEncryption": "AES256"}
+
+
+class _VersionedS3(_FakeS3):
+    """Fake S3 with ETags and head_object; counts full-object reads."""
+
+    def __init__(self, objects: dict[str, bytes] | None = None) -> None:
+        super().__init__(objects)
+        self.get_calls = 0
+
+    def _etag(self, key: str) -> str:
+        return f'"{hash(self.objects[key])}"'
+
+    def get_object(self, Bucket: str, Key: str):  # noqa: N803
+        self.get_calls += 1
+        response = super().get_object(Bucket, Key)
+        response["ETag"] = self._etag(Key)
+        return response
+
+    def head_object(self, Bucket: str, Key: str):  # noqa: N803
+        if Key not in self.objects:
+            raise KeyError(Key)
+        return {"ETag": self._etag(Key)}
+
+    def put_object(self, Bucket: str, Key: str, Body: bytes):  # noqa: N803
+        super().put_object(Bucket, Key, Body)
+        return {"ETag": self._etag(Key)}
+
+
+_KEY = "embedding-cache/cache.json"
+
+
+def test_vectors_are_held_as_float32() -> None:
+    c = _cache(_FakeS3())
+    c.load()
+    c.put("h", [0.5, 0.25])
+    assert c._cache["titan:1024|h"].typecode == "f"
+    assert c.get("h") == [0.5, 0.25]
+
+
+def test_flush_skips_rereading_an_unchanged_object() -> None:
+    fake = _VersionedS3({_KEY: json.dumps({"titan:1024|old": [1.0]}).encode()})
+    c = _cache(fake)
+    c.load()
+    for i in range(3):
+        c.put(f"h{i}", [float(i)])
+        c.flush()
+
+    assert fake.get_calls == 1  # the load only
+    stored = json.loads(fake.objects[_KEY])
+    assert set(stored) == {f"titan:1024|{k}" for k in ("old", "h0", "h1", "h2")}
+
+
+def test_flush_merges_a_concurrent_writers_entries() -> None:
+    fake = _VersionedS3({_KEY: json.dumps({"other:512|x": [9.0]}).encode()})
+    c = _cache(fake)
+    c.load()
+    # Another process writes after this one loaded.
+    fake.objects[_KEY] = json.dumps(
+        {"other:512|x": [9.5], "other:512|y": [8.0], "titan:1024|theirs": [7.0]}
+    ).encode()
+    c.put("mine", [1.0])
+    c.flush()
+
+    assert json.loads(fake.objects[_KEY]) == {
+        "other:512|x": [9.5],
+        "other:512|y": [8.0],
+        "titan:1024|theirs": [7.0],
+        "titan:1024|mine": [1.0],
+    }
+    assert c.get("theirs") == [7.0]

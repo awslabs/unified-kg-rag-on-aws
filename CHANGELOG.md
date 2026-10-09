@@ -70,6 +70,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   after its prompt (e.g. `AnswerGenerationPrompt`) in traces (#156).
 
 ### Changed
+- The indexer's embedding cache holds vectors as float32 arrays instead of
+  lists of Python floats, and keeps one copy (the S3 tier when
+  `persist_embedding_cache` is on, else the in-process tier) instead of two:
+  5,000 1024-dimension vectors take 43 MB instead of 203 MB. A flush skips
+  re-reading the S3 object while its ETag is unchanged since this process
+  read or wrote it. The S3 object format is unchanged, so existing caches
+  load as before; cached vectors now carry float32 precision, which is what
+  the knn field stores (#PR).
 - `GraphRAGChain` builds each query-step LLM chain (router, entity/keyword
   extraction, translation, context building, answer) once per prompt, model
   and thinking flag and reuses it; it was rebuilt per query, creating two
