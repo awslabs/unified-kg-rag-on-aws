@@ -1384,6 +1384,10 @@ on).
   file is left, `No supported source files found in '<dir>'`) — install the
   `unstructured` extra (`uv sync --extra unstructured`, Python 3.11+) to parse
   `.md`/`.html`, or convert those documents to a supported format.
+- **`No indices found for suffix '<suffix>'`** — `run-rag`/`run-eval` queried
+  a suffix nothing was ingested under: ingestion has not run yet, or
+  `--suffix` does not match the `processing.document_parsing.index_value` the
+  corpus was ingested with (both default to `default`).
 - **OpenSearch auth failures with `use_iam: false`** — ensure `.env` has
   `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD`.
 - **LightRAG `mix`/`hybrid` returns nothing** — confirm the relationships index

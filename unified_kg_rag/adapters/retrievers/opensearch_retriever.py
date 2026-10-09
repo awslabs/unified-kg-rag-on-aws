@@ -22,13 +22,14 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 )
 from unified_kg_rag.domain.models import (
     Config,
+    Constants,
     RetrievalResult,
     SearchQuery,
     SearchType,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import IndexNotFoundError, get_logger
 from unified_kg_rag.shared.utils import (
     EMBEDDING_FIELD_SUFFIX,
     strip_embedding_fields,
@@ -280,7 +281,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 index_query, search_type, lexical_fields, vector_fields, query_vector
             )
             target_alias = self._get_name(prefix, query.suffix)
-            search_tasks.append(self._execute_search([target_alias], body, params))
+            search_tasks.append(
+                self._execute_search([target_alias], body, params, query.suffix)
+            )
 
         return search_tasks
 
@@ -616,7 +619,11 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         return all_results
 
     async def _execute_search(
-        self, aliases: list[str], body: dict[str, Any], params: dict[str, Any]
+        self,
+        aliases: list[str],
+        body: dict[str, Any],
+        params: dict[str, Any],
+        suffix: str | None = None,
     ) -> list[RetrievalResult]:
         if not aliases:
             return []
@@ -635,6 +642,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 logger.error("Fatal search error on indices %s: %s", aliases, e)
                 raise
             if _is_index_not_found(e):
+                await self._require_ingested_suffix(suffix, e)
                 # A missing alias is a config/index mismatch (the index was
                 # never built), not a transient failure.
                 logger.warning(
@@ -646,6 +654,30 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 return []
             logger.error("Search failed on indices %s: %s", aliases, e)
             return []
+
+    async def _require_ingested_suffix(
+        self, suffix: str | None, cause: Exception
+    ) -> None:
+        """Raise when nothing was ingested under ``suffix``.
+
+        One missing index is normal: an index is created only when ingestion
+        has items for it (a corpus without claims has no claims index). The
+        text-units index exists for every ingested corpus, so its absence means
+        the suffix was never ingested and every search would come back empty.
+        """
+        alias = self._get_name(self._opensearch_config.text_units_index_prefix, suffix)
+        try:
+            if await self._opensearch_client.aindex_exists(alias):
+                return
+        except Exception:
+            return  # Cannot tell: keep skipping just the missing index.
+        shown = suffix or Constants.DEFAULT_SUFFIX.value
+        raise IndexNotFoundError(
+            f"No indices found for suffix '{shown}' (OpenSearch alias '{alias}' "
+            "does not exist). Did you run ingestion with "
+            f"processing.document_parsing.index_value '{shown}'? Query with the "
+            "suffix the corpus was ingested under (run-rag/run-eval --suffix)."
+        ) from cause
 
     def _parse_hit(self, hit: dict[str, Any]) -> RetrievalResult:
         source = hit.get("_source", {})

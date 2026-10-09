@@ -437,6 +437,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (`。．｡！？；`) before falling back to spaces and characters, so Chinese and
   Japanese text is no longer cut mid-sentence. Text without these characters
   is chunked exactly as before (#177).
+- Querying a suffix nothing was ingested under (before the first ingestion,
+  or a typo in `--suffix`) fails with `IndexNotFoundError`: "No indices found
+  for suffix '<suffix>' ... Did you run ingestion with
+  processing.document_parsing.index_value '<suffix>'?". It used to return a
+  successful answer over 0 results while logging `index_not_found` warnings.
+  A single missing optional index of an ingested corpus (no claims, no
+  community reports) is still skipped (#PR).
 - `custom_prompts` overrides are checked when the config loads. An unknown
   `{variable}` (often a literal JSON brace, which raised `KeyError` on every
   call) or a missing data variable such as `{input_text}` (which ran the

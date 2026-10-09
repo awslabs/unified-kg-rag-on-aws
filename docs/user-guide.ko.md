@@ -1341,6 +1341,10 @@ DynamoDB(증분 인덱싱이 켜진 경우).
   `No supported source files found in '<dir>'`) — `.md`/`.html`을 파싱하려면
   `unstructured` 추가 패키지를 설치하거나(`uv sync --extra unstructured`,
   Python 3.11 이상), 해당 문서를 지원 포맷으로 변환하세요.
+- **`No indices found for suffix '<suffix>'`** — `run-rag`/`run-eval`이
+  인제스천된 적 없는 접미사를 조회했습니다. 아직 인제스천을 실행하지 않았거나,
+  `--suffix`가 코퍼스를 인제스천할 때 쓴 `processing.document_parsing.index_value`와
+  다릅니다(둘 다 기본값은 `default`).
 - **`use_iam: false`에서 OpenSearch 인증 실패** — `.env`에
   `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD`가 있는지 확인하세요.
 - **LightRAG `mix`/`hybrid`가 아무것도 반환하지 않음** — 인제스천 중 관계
