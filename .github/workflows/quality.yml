@@ -103,7 +103,16 @@ jobs:
           python-version: "3.12"
 
       - name: Start Gremlin Server and OpenSearch
-        run: docker compose -f docker/compose.local.yaml up -d --wait
+        # Docker Hub rate-limits and drops anonymous pulls (including the
+        # OpenSearch build's base image); retry so a transient registry error
+        # does not fail the job.
+        run: |
+          for attempt in 1 2 3 4 5; do
+            docker compose -f docker/compose.local.yaml up -d --wait && exit 0
+            docker compose -f docker/compose.local.yaml down --remove-orphans || true
+            sleep $((attempt * 20))
+          done
+          exit 1
 
       - name: Sync dependencies
         run: uv sync --locked
