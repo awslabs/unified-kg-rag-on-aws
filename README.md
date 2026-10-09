@@ -66,21 +66,23 @@ If OpenSearch uses username/password instead of IAM (`aws.opensearch.use_iam: fa
 
 ### Ingest, query, evaluate
 
+`uv run` runs the CLIs in the project environment; with `pip`, activate the virtual environment instead and drop the `uv run` prefix.
+
 ```bash
 # Index a corpus (incremental when aws.dynamodb is enabled)
-run-ingestion --source-directory ./source --config-path config.yaml
+uv run run-ingestion --source-directory ./source --config-path config.yaml
 
 # Query with either methodology, or chat with conversation memory
-run-rag --query "What are the main themes?" --search-strategy global --config-path config.yaml
-run-rag --query "How are Alice and Acme related?" --search-strategy mix --config-path config.yaml
-run-rag --interactive --use-memory --conversation-id my-session --config-path config.yaml
+uv run run-rag --query "What are the main themes?" --search-strategy global --config-path config.yaml
+uv run run-rag --query "How are Alice and Acme related?" --search-strategy mix --config-path config.yaml
+uv run run-rag --interactive --use-memory --conversation-id my-session --config-path config.yaml
 
 # Evaluate (LangChain + RAGAS + graph-aware coverage, retrieval and answer-match metrics)
-run-eval --eval-data-path eval_data.json --config-path config.yaml
+uv run run-eval --eval-data-path eval_data.json --config-path config.yaml
 
 # Optional: render an exported graph, or tune prompts to your domain
-run-visualization --data-path visualization_data.json --output-dir ./viz --config-path config.yaml
-run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
+uv run run-visualization --data-path visualization_data.json --output-dir ./viz --config-path config.yaml
+uv run run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml --config-path config.yaml
 ```
 
 The graph-aware evaluator reports entity and relationship coverage (recall) against `expected_entities` / `expected_relationships`, without an LLM. It matches on word boundaries for space-delimited scripts and falls back to substring matching for CJK text. Two more LLM-free evaluators make runs comparable: `retrieval` scores hit@k, recall@k and MRR of the reported sources against `reference_sources`, and `answer_match` scores exact match and token F1 against `answer` (plus optional `metadata.answer_aliases`). The [User Guide](./docs/user-guide.md) covers every configuration section, CLI flag, and the evaluation data format.
