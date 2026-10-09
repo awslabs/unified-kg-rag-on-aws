@@ -607,7 +607,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   so `</entity>` written for `</relationship>` still yields two records, and
   `<target>B</source>` no longer nests the record's remaining fields inside
   `target`. Tag-like text inside a field (`Optional<User>`, `<br>`, `<T>`) is
-  kept verbatim instead of being parsed into a nested element (#PR).
+  kept verbatim instead of being parsed into a nested element (#182).
 - `BatchProcessor` no longer calls an item again when its first error is not
   retryable. The retry pass's first attempt was a new call, so a response
   truncated at the output-token limit (`LLMOutputTruncatedError`, documented
@@ -615,14 +615,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   every error is retried (`is_transient_error` unset); an error the
   classifier marks permanent also cost a second call. Truncated responses
   are now never retried, and other non-retryable items fail after one call
-  (#PR).
+  (#182).
 - The persisted embedding cache (`persist_embedding_cache`) is safe to share
   across the indexing threads. A flush iterated the vectors while other
   threads added to them, failed with `dictionary changed size during
   iteration` (logged as a WARNING) and left the cache unpersisted, and a
   flush that succeeded forgot the vectors added during its upload, so they
   were never written. A flush now uploads a snapshot and keeps the vectors
-  added meanwhile pending for the next one (#PR).
+  added meanwhile pending for the next one (#182).
 - A model response that stopped at its output-token limit (`stopReason`
   or `stop_reason` `max_tokens`) fails with `LLMOutputTruncatedError`
   instead of being parsed. The XML parser recovered the sections before the
@@ -1016,7 +1016,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   tags (the tags around a `{placeholder}`, read from the resolved template,
   so `custom_prompts` delimiters are covered) in every string input,
   case-insensitively and allowing whitespace: `</context>` reaches the model
-  as `&lt;/context>` (#PR).
+  as `&lt;/context>` (#182).
 - The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or
   `LANGCHAIN_TRACING_V2` enables LangSmith tracing, which uploads prompts,
   retrieved context and model outputs. Tracing is not turned off (#156).
