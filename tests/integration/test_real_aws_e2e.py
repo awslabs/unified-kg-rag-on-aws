@@ -116,8 +116,14 @@ def test_ingest_then_search_round_trip(live_config, tmp_path) -> None:
     """
     import asyncio
 
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
     from unified_kg_rag.application.retrieval.rag_chain import create_rag_chain
-    from unified_kg_rag.domain.models import RAGInput
+    from unified_kg_rag.domain.models import (
+        PipelineConfig,
+        PipelineStageStatus,
+        RAGInput,
+        RAGOutput,
+    )
 
     corpus = tmp_path / "docs"
     corpus.mkdir()
@@ -126,14 +132,24 @@ def test_ingest_then_search_round_trip(live_config, tmp_path) -> None:
         encoding="utf-8",
     )
 
-    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    pipeline = DataIngestionPipeline(
+        config=live_config,
+        pipeline_config=PipelineConfig(local_directory=str(tmp_path / "cache")),
+        source_directory=corpus,
+    )
+    # A failed stage returns a FAILED context instead of raising.
+    context = pipeline.run(corpus)
+    assert context.status != PipelineStageStatus.FAILED, context.stage_results
 
-    pipeline = DataIngestionPipeline(config=live_config, source_directory=corpus)
-    pipeline.run()
+    async def _ask() -> RAGOutput | dict:
+        chain = await create_rag_chain(live_config)
+        try:
+            return await chain.ainvoke(RAGInput(query="Where does Alice work?"))
+        finally:
+            await chain.aclose()
 
-    chain = create_rag_chain(live_config)
-    result = asyncio.run(chain.ainvoke(RAGInput(query="Where does Alice work?")))
-    assert result is not None
+    result = asyncio.run(_ask())
+    assert isinstance(result, RAGOutput), result
     # A round-trip that returns an empty/garbage answer would pass a bare
     # `is not None`; assert the answer actually reflects the ingested corpus so
     # this catches a silently-broken retrieval or generation path.

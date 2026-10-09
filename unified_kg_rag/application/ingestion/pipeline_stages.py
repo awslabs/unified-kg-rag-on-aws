@@ -395,7 +395,11 @@ class DocumentLoadingStage(PipelineStage):
 
             store = self._build_doc_status_store()
             delta, fingerprints = detect_delta(
-                documents, store, scope=scope, failed_doc_ids=failed_doc_ids
+                documents,
+                store,
+                scope=scope,
+                failed_doc_ids=failed_doc_ids,
+                max_failures=self.config.indexing.max_document_failures,
             )
             context.incremental_delta = delta
             context.incremental_fingerprints = fingerprints
@@ -708,6 +712,7 @@ class TranslationStage(PipelineStage):
             # Leave translated_units empty; downstream stages fall back to
             # context.text_units, so this is a true no-op.
             context.translated_units = []
+            context.failed_text_unit_ids[self.name] = []
             metrics = {
                 "target_language": self.target_language,
                 "units_processed": len(context.text_units),
@@ -720,15 +725,14 @@ class TranslationStage(PipelineStage):
 
         translated_units = self.translator.translate_text_units(context.text_units)
         context.translated_units = translated_units
+        # Units left untranslated are extracted in the source language; their
+        # documents are recorded FAILED and retried, like an extraction failure.
+        stats = self.translator.stats
+        context.failed_text_unit_ids[self.name] = (
+            list(stats.failed_text_unit_ids) if stats else []
+        )
 
-        translation_stats: dict[str, Any] = {}
-        try:
-            if hasattr(self.translator, "stats"):
-                stats = self.translator.stats
-                if stats is not None:
-                    translation_stats = self._stats_to_dict(stats)
-        except Exception as e:
-            logger.warning("Failed to get translation stats: %s", e)
+        translation_stats = self._stats_to_dict(stats)
 
         units_translated_count = len(
             [
@@ -742,6 +746,7 @@ class TranslationStage(PipelineStage):
             "target_language": self.target_language,
             "units_processed": len(context.text_units),
             "units_translated": units_translated_count,
+            "failed_units": len(context.failed_text_unit_ids[self.name]),
             "translation_stats": translation_stats,
         }
 

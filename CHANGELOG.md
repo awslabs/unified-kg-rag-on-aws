@@ -13,6 +13,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 **Breaking** change configuration, stored index data, or a public interface.
 
 ### Added
+- `indexing.max_document_failures` (default `3`): an incremental run stops
+  retrying a document recorded FAILED that many consecutive runs with
+  unchanged content. It stays FAILED and is skipped as unchanged with a
+  WARNING until the file changes or the limit is raised; before, a document
+  that failed deterministically was pruned and re-extracted on every run. The
+  count is stored as `failure_count` on the doc-status record; records
+  written before it existed read as `0` (#175).
 - Claude Haiku 5.5 (`anthropic.claude-haiku-5-5`) in the model catalog: 1M
   context, 128K output, adaptive thinking with `effort` low–max, 512-token
   cache minimum, served through inference profiles only (#162).
@@ -392,6 +399,44 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   stage's cache key, so a tuning change regenerated every community report.
   The `graph_analysis` and `community_detection` keys change once on upgrade,
   so a resumed pipeline recomputes those stages one time (#167).
+- The cross-run merge matches a delta entity or relationship to a stored one
+  by id before the name or (source, target, type) key. A gleaning correction
+  renames, retypes or reverses an item in place and keeps the id derived from
+  its old form, so a later document naming the old form produced a second
+  item with the same id: the stored entity's text units and description were
+  overwritten, and Neptune got two edges with one id (#175).
+- `NeptuneIndexer.read_entities` and `read_relationships` raise
+  `AWSServiceError` when the read fails instead of returning `[]`. Removing a
+  deleted or changed document's chunks from shared artifacts then counted a
+  transient read error as "nothing to update" and dropped the document's
+  registry row, leaving the shared artifacts citing removed chunks with no
+  lineage to retry; it now counts as a failed removal and keeps the row. A
+  failed read during the cross-run merge fails the indexing stage before any
+  write instead of overwriting the stored lineage (#175).
+- The translation stage honours `processing.ignore_errors`: a failed call for
+  a whole target language now fails the stage when it is `false` (the
+  translator swallowed every error, so the graph silently mixed languages).
+  Text units left untranslated, in any target language, are reported in the
+  stage's `failed_units` and through the per-stage failed text units, so an
+  incremental run records their documents FAILED and retries them instead of
+  recording them PROCESSED (#175).
+- Neptune expansion from seed communities (`NeptuneRetriever` queried with
+  the community label, e.g. through its LangChain retriever interface) gets
+  the entity expansion's per-seed budget from #161. A `limit()` inside
+  `repeat()` counted every traverser of the traversal and a final
+  `limit(top_k * retrieval_multiplier)` followed, so the seeds filled the
+  result: against Gremlin Server, 10 seed communities with 3 members each
+  returned only the 10 seeds at `top_k` 10 and the neighbourhoods of 5 of
+  them at `top_k` 100. Each seed now gets its members and their
+  neighbourhood within its own share of the fetch width, ranked and cut like
+  the entity expansion; the same probe returns all 10 seeds, 30 members and
+  neighbours of all 10 (#175).
+- The opt-in real-AWS ingest-then-search smoke test
+  (`GRAPHRAG_TEST_RUN_INGEST=1`) could not run: it built
+  `DataIngestionPipeline` without the required `pipeline_config`, called
+  `run()` without the source directory and never awaited the async
+  `create_rag_chain`. It now does all three, checks the pipeline did not
+  fail, and closes the chain (#175).
 - `indexing.reset` with the doc-status registry enabled rebuilds from the
   whole corpus and records every document again. The loading stage used to
   diff against the registry first, so the reset cleared the stores but

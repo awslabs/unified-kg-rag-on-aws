@@ -1596,6 +1596,14 @@ class IndexingConfig(BaseModel):
         "would otherwise be reported as a successful run. Set to 1.0 to disable "
         "the partial-failure gate (only total failures fail the stage).",
     )
+    max_document_failures: int = Field(
+        default=3,
+        ge=1,
+        description="Incremental runs: a document recorded FAILED this many "
+        "consecutive runs with unchanged content is no longer retried. It stays "
+        "FAILED and is skipped as unchanged (with a WARNING) until its content "
+        "changes or this value is raised.",
+    )
 
 
 class HybridConfig(BaseModel):

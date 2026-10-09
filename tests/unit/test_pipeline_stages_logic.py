@@ -17,6 +17,7 @@ import pytest
 
 from unified_kg_rag.domain.models import (
     Config,
+    LanguageCode,
     PipelineContext,
     PipelineStageStatus,
     PipelineStageType,
@@ -431,6 +432,28 @@ def test_extraction_stage_records_failed_units_and_rerun_replaces_them(
     extractor.extract_from_text_units.return_value = ([], [], ExtractionStats())
     stage._execute_core(ctx)
     assert ctx.failed_text_unit_ids == {"graph_extraction": []}
+
+
+def test_translation_stage_records_failed_units(mocker) -> None:
+    # A unit that kept its original text would be extracted in the source
+    # language; its document is recorded FAILED and retried like an
+    # extraction failure.
+    from unified_kg_rag.adapters.ingestion.translator import TranslationStats
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+
+    translator = mocker.MagicMock()
+    translator.translate_text_units.side_effect = lambda units: units
+    translator.stats = TranslationStats(failed_text_unit_ids=["t1"])
+    mocker.patch.object(ps, "TextUnitTranslator", return_value=translator)
+    config = Config()
+    config.processing.translation.enabled = True
+    config.processing.translation.additional_target_languages = [LanguageCode.KO]
+    stage = ps.TranslationStage(config=config, boto_session=mocker.MagicMock())
+    ctx = _context()
+
+    stage._execute_core(ctx)
+
+    assert ctx.failed_text_unit_ids == {"translation": ["t1"]}
 
 
 def test_gleaning_stage_improvement_rate_is_graph_growth(mocker) -> None:

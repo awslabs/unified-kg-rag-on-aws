@@ -471,6 +471,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.cross_run_merge` | `true` | On delta runs, union the delta with existing graph state instead of overwriting, so entities shared with unchanged documents keep their lineage (§5). `false` overwrites. |
 | `indexing.cross_run_fuzzy_merge` | `false` | Extend `cross_run_merge` with fuzzy entity-name matching. |
 | `indexing.max_failure_rate` | `0.2` | Per-index-type write failure rate above which the indexing stage fails. `1.0` disables the partial-failure gate. |
+| `indexing.max_document_failures` | `3` | Incremental runs: consecutive FAILED records of unchanged content after which a document is no longer retried (§5). |
 | `indexing.opensearch.embedding_model_id` | `"amazon.titan-embed-text-v2:0"` | Embedding model, one of a closed list (see Model selection notes). Changing it requires a reindex. |
 | `indexing.opensearch.build_relationship_vector_index` | `true` | Relationship vector index for LightRAG `mix`/`hybrid`. Set `false` for a GraphRAG-only deployment. |
 | `indexing.opensearch.persist_embedding_cache` | `false` | Persist the embedding cache to S3 so unchanged text is not re-embedded across runs. Requires `aws.s3.bucket_name`. |
@@ -737,6 +738,12 @@ OpenSearch analyzers are configured under
 `indexing.opensearch.language_analyzers` (e.g. `ko: nori`); unlisted languages
 fall back to `default_analyzer`.
 
+A text unit whose translation fails keeps its original text and is extracted
+in the source language. A failed call for a whole target language fails the
+stage unless `processing.ignore_errors` is `true`. Either way the stage reports
+the failed units (`failed_units`), and an incremental run records their
+documents as failed so the next run translates them again (§5).
+
 ---
 
 ## 4. Querying (`run-rag`)
@@ -954,6 +961,18 @@ the container entrypoint sets it to the S3 URI it syncs from). So:
 Moving a local corpus to another directory changes its default scope: set
 `source_scope` to a stable name first, or rebuild.
 
+### Failed documents
+
+A document is recorded `FAILED` when translation, graph extraction, gleaning or
+claim extraction failed on any of its text units. The next run treats it as
+changed even if the file did not change: it removes what the failed run wrote
+and processes the document again. A document that fails
+`indexing.max_document_failures` (default `3`) consecutive runs with the same
+content is no longer retried: it stays `FAILED`, keeps what it indexed, and is
+skipped as unchanged with a WARNING naming the file. Editing the file (new
+content starts the count again) or raising the limit retries it. Records
+written before the count existed start at `0`.
+
 ### Document size limit
 
 The registry stores each document's artifact ids (text units, entities,
@@ -975,6 +994,10 @@ graph adapter that supports read-back (one without it degrades to overwrite).
 When a document changes or is deleted, entities and relationships it shares
 with other documents lose its chunks from `text_unit_ids` (frequency and
 weight follow), but keep the description it contributed until a full rebuild.
+If reading the stored items back fails, nothing is overwritten: a failed read
+during the merge fails the indexing stage before any write (the documents stay
+unrecorded and are retried), and a failed read while removing a document's
+chunks counts as a failed removal (its registry row is kept for a retry).
 
 ---
 

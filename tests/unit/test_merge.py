@@ -312,6 +312,29 @@ class TestMergeRelationships:
         merged = merge_relationships(old, delta, entity_id_remap=remap)
         assert relationship_id_remap(delta, merged, remap) == {"r2": "r1"}
 
+    def test_same_id_wins_over_a_key_match(self) -> None:
+        # r1 was corrected in place to PAYS (id kept); a stored r2 holds the
+        # delta's key. The delta folds into its own id, not into r2.
+        old = [
+            Relationship(id="r1", source_id="e2", target_id="e1", type="PAYS"),
+            Relationship(id="r2", source_id="e1", target_id="e2", type="SUPPLIES"),
+        ]
+        delta = [
+            Relationship(
+                id="r1",
+                source_id="e1",
+                target_id="e2",
+                type="SUPPLIES",
+                text_unit_ids=["t9"],
+            )
+        ]
+        merged = merge_relationships(old, delta)
+        by_id = {r.id: r for r in merged}
+        assert set(by_id) == {"r1", "r2"}
+        assert by_id["r1"].text_unit_ids == ["t9"]
+        assert by_id["r2"].text_unit_ids is None
+        assert relationship_id_remap(delta, merged) == {}
+
     def test_distinct_types_between_same_endpoints_kept_separate(self) -> None:
         # A delta edge of a DIFFERENT type between the same endpoints must stay
         # a distinct edge (merge key includes normalized type) — not collapse

@@ -36,6 +36,12 @@ class TranslationStats(BaseModel):
     total_processing_time: float = Field(
         default=0.0, description="Total time spent processing translations (in seconds)"
     )
+    failed_text_unit_ids: list[str] = Field(
+        default_factory=list,
+        description="Ids of text units missing a translation in some target "
+        "language, each listed once. They keep their original text, so an "
+        "incremental run records their documents FAILED and retries them.",
+    )
 
     @property
     def processed_unit_count(self) -> int:
@@ -108,16 +114,12 @@ class TextUnitTranslator:
             ", ".join([lang.value for lang in self.all_target_languages]),
         )
 
-        try:
-            for target_language in self.all_target_languages:
-                logger.info("Translating to '%s'...", target_language.value)
-                self._translate_text_units_batch(text_units, target_language)
+        for target_language in self.all_target_languages:
+            logger.info("Translating to '%s'...", target_language.value)
+            self._translate_text_units_batch(text_units, target_language)
 
-            self.stats.total_processing_time = time.time() - start_time
-            self._log_completion_summary(self.stats)
-        except Exception as e:
-            logger.exception("Translation failed: %s", e)
-
+        self.stats.total_processing_time = time.time() - start_time
+        self._log_completion_summary(self.stats)
         return text_units
 
     def _translate_text_units_batch(
@@ -137,6 +139,8 @@ class TextUnitTranslator:
                 show_progress=self.show_progress,
             )
         except Exception as e:
+            if not self.ignore_errors:
+                raise
             logger.error(
                 "Translation to '%s' failed: %s",
                 target_language.value,
@@ -144,11 +148,9 @@ class TextUnitTranslator:
                 exc_info=True,
             )
             # Count the whole batch as failed so a fully-failed language does not
-            # read as a quiet success: num_total_units was preset, so without
-            # this the success rate drops but num_failed_translations stays 0 and
-            # the "X units failed" summary warning never fires.
-            if self.stats is not None:
-                self.stats.num_failed_translations += len(text_units)
+            # read as a quiet success.
+            for text_unit in text_units:
+                self._record_failure(text_unit)
             return
 
         for text_unit, result in zip(text_units, translation_results, strict=True):
@@ -174,8 +176,7 @@ class TextUnitTranslator:
         self, text_unit: TextUnit, result: str | None, target_language: LanguageCode
     ) -> None:
         if not result or not result.strip():
-            if self.stats:
-                self.stats.num_failed_translations += 1
+            self._record_failure(text_unit)
             return
 
         try:
@@ -191,8 +192,14 @@ class TextUnitTranslator:
             logger.error(
                 "Failed to apply translation for text unit '%s': %s", text_unit.id, e
             )
-            if self.stats:
-                self.stats.num_failed_translations += 1
+            self._record_failure(text_unit)
+
+    def _record_failure(self, text_unit: TextUnit) -> None:
+        if self.stats is None:
+            return
+        self.stats.num_failed_translations += 1
+        if text_unit.id not in self.stats.failed_text_unit_ids:
+            self.stats.failed_text_unit_ids.append(text_unit.id)
 
     @staticmethod
     def _log_completion_summary(stats: TranslationStats) -> None:

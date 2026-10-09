@@ -242,6 +242,7 @@ class DynamoDBDocStatusStore:
             item[attr] = {"S": value} if value is not None else {"NULL": True}
         if record.content_length is not None:
             item["content_length"] = {"N": str(record.content_length)}
+        item["failure_count"] = {"N": str(record.failure_count)}
         return item
 
     @staticmethod
@@ -261,6 +262,7 @@ class DynamoDBDocStatusStore:
             else None
         )
 
+        failure_count_cell = item.get("failure_count")
         return DocStatusRecord(
             doc_id=item[_PARTITION_KEY]["S"],
             content_hash=item["content_hash"]["S"],
@@ -277,6 +279,11 @@ class DynamoDBDocStatusStore:
             claim_ids=_str_set("claim_ids"),
             community_report_ids=_str_set("community_report_ids"),
             error_info=_str("error_info"),
+            failure_count=(
+                int(failure_count_cell["N"])
+                if failure_count_cell and "N" in failure_count_cell
+                else 0
+            ),
             created_at=_str("created_at"),
             updated_at=_str("updated_at"),
         )

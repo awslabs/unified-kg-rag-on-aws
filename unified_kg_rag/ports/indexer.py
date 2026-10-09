@@ -200,7 +200,8 @@ class GraphIndexer(BaseIndexer):
 
         Default returns ``[]`` (no read-back) so an adapter that cannot or does
         not support reads simply falls back to overwrite-on-upsert. Adapters that
-        can read existing state (Neptune; the test fakes) override this.
+        can read existing state (Neptune; the test fakes) override this, and
+        raise when a read fails: ``[]`` means nothing is stored.
         """
         return []
 

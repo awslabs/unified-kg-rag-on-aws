@@ -95,3 +95,15 @@ def test_put_writes_a_record_within_the_limit(mocker) -> None:
     store = _store(mocker)
     store.put(_full_record())
     store._client.put_item.assert_called_once()
+
+
+def test_failure_count_round_trips_and_defaults_to_zero() -> None:
+    record = _full_record().model_copy(
+        update={"status": DocStatus.FAILED, "failure_count": 2}
+    )
+    item = DynamoDBDocStatusStore._serialize(record)
+    assert DynamoDBDocStatusStore._deserialize(item).failure_count == 2
+
+    # A record written before the attribute existed reads as never failed.
+    del item["failure_count"]
+    assert DynamoDBDocStatusStore._deserialize(item).failure_count == 0

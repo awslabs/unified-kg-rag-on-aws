@@ -552,6 +552,39 @@ async def test_entity_traversal_budget_scales_with_fetch_multiplier(
     assert f".dedup().limit({per_seed}))" in text
 
 
+async def test_community_traversal_expands_each_seed_with_its_own_budget(
+    retriever, config
+) -> None:
+    # Same shape as the entity expansion: a limit() inside repeat() is global,
+    # so the first communities' members used it up. Each seed community now
+    # gets its members and their neighbourhood inside its own local().
+    config.indexing.neptune.traversal_fetch_multiplier = 3
+    object.__setattr__(retriever, "_max_hops", 2)
+    object.__setattr__(retriever, "_max_results_per_hop", 7)
+    captured: list = []
+
+    async def _capture(traversal):
+        captured.append(traversal)
+        return []
+
+    object.__setattr__(retriever, "_with_projection", lambda t, **_: t)
+    object.__setattr__(retriever, "_execute_traversal", _capture)
+    query = SearchQuery(query="x", top_k=10, retrieval_multiplier=1)
+    await retriever._traverse_from_communities(
+        Graph().traversal(), [{"id": c} for c in ("c1", "c2", "c3", "c4")], query
+    )
+    # Fetch width 10 * 1 * 3 = 30 split over 4 seeds -> 8 entities per seed.
+    assert Translator("g").translate(captured[0].bytecode) == (
+        "g.V().hasLabel('Community-default')"
+        ".has('id',within(['c1','c2','c3','c4']))"
+        ".union(__.identity(),"
+        "__.local(__.in('MemberOf').hasLabel('Entity-default').limit(8)),"
+        "__.local(__.in('MemberOf').hasLabel('Entity-default')"
+        ".repeat(__.local(__.both().hasLabel('Entity-default').limit(7))"
+        ".dedup().limit(8)).times(2).emit()))"
+    )
+
+
 def test_a_node_reached_from_two_seeds_keeps_its_shortest_path(retriever) -> None:
     items = [
         _entity_item("seed", 0, rank=1),

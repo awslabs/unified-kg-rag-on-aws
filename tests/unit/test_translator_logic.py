@@ -56,6 +56,11 @@ def _make_translator(
     return translator, fake_chain
 
 
+class _BoomProcessor:
+    def execute_with_fallback(self, *args, **kwargs):
+        raise RuntimeError("bedrock down")
+
+
 def _units() -> list[TextUnit]:
     return [
         TextUnit(id="t1", text="Hello world"),
@@ -121,19 +126,23 @@ class TestTranslateTextUnits:
         # unit in the batch is counted failed so the success rate + "X failed"
         # summary warning reflect reality.
         tr, _ = _make_translator(mocker, target=LanguageCode.KO)
+        tr.ignore_errors = True
         units = _units()
-        tr.stats = TranslationStats(num_total_units=len(units))
-
-        class _BoomProcessor:
-            def execute_with_fallback(self, *args, **kwargs):
-                raise RuntimeError("bedrock down")
-
-        # BatchProcessor is a frozen-ish pydantic model; swap the whole instance.
         tr.batch_processor = _BoomProcessor()
-        tr._translate_text_units_batch(units, LanguageCode.KO)
 
+        tr.translate_text_units(units)
+
+        assert tr.stats is not None
         assert tr.stats.num_failed_translations == len(units)
+        assert tr.stats.failed_text_unit_ids == ["t1", "t2"]
         assert units[0].translated_texts is None
+
+    def test_whole_batch_failure_raises_unless_errors_are_ignored(self, mocker) -> None:
+        tr, _ = _make_translator(mocker, target=LanguageCode.KO)
+        tr.batch_processor = _BoomProcessor()
+
+        with pytest.raises(RuntimeError, match="bedrock down"):
+            tr.translate_text_units(_units())
 
     def test_single_language_maps_results_back(self, mocker) -> None:
         tr, fake = _make_translator(mocker, target=LanguageCode.KO)
@@ -180,6 +189,21 @@ class TestTranslateTextUnits:
         assert units[1].translated_texts is None
         assert tr.stats.num_successful_translations == 1
         assert tr.stats.num_failed_translations == 1
+        # Its document is recorded FAILED and retried, not left half-translated.
+        assert tr.stats.failed_text_unit_ids == ["t2"]
+
+    def test_a_unit_failing_in_two_languages_is_listed_once(self, mocker) -> None:
+        tr, _ = _make_translator(
+            mocker,
+            target=LanguageCode.EN,
+            additional=[LanguageCode.KO],
+            transform=lambda inp: "" if inp["text"] == "Hello world" else "ok",
+        )
+
+        tr.translate_text_units(_units())
+
+        assert tr.stats is not None
+        assert tr.stats.failed_text_unit_ids == ["t1"]
 
 
 class TestTranslationStats:

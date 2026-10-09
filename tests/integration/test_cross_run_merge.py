@@ -19,6 +19,7 @@ from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.models import (
     Config,
+    DocumentDelta,
     DocumentLineage,
     Entity,
     Relationship,
@@ -148,3 +149,105 @@ def test_lineage_records_the_ids_the_merge_kept() -> None:
     assert record is not None
     assert record.entity_ids == ["e-buyer", "e-old"]
     assert record.relationship_ids == ["r-old"]
+
+
+def test_delta_entity_merges_into_a_corrected_entity_with_its_id() -> None:
+    # A gleaning ENTITY_CORRECTION renames an entity in place and keeps the id
+    # derived from the old name. A later doc naming the old form gets that same
+    # id; the merge must fold it into the stored entity, not keep both under
+    # one id (the second write would drop the first one's text units).
+    incremental, graph, _ = _harness(cross_run_merge=True)
+    _commit_entity(
+        incremental,
+        "doc-a",
+        Entity(id="e1", name="Acme Corporation", description="A", text_unit_ids=["t1"]),
+    )
+    _commit_entity(
+        incremental,
+        "doc-b",
+        Entity(id="e1", name="Acme Corp", description="B", text_unit_ids=["t2"]),
+    )
+
+    (stored,) = graph.read_entities(["e1"])
+    assert stored.name == "Acme Corporation"
+    assert set(stored.text_unit_ids or []) == {"t1", "t2"}
+    assert stored.description == "A\nB"
+
+
+def test_delta_relationship_merges_into_a_corrected_edge_with_its_id() -> None:
+    # A RELATIONSHIP_CORRECTION changes type/direction in place and keeps the
+    # id. A later doc extracting the uncorrected edge gets that id; the merge
+    # must return one edge for it, carrying both docs' text units.
+    incremental, _, _ = _harness(cross_run_merge=True)
+    incremental.commit(
+        lineages=[DocumentLineage(doc_id="doc-a", relationship_ids=["r1"])],
+        fingerprints={"doc-a": "h-a"},
+        entities=[
+            Entity(id="e-v", name="Vendor", text_unit_ids=["t1"]),
+            Entity(id="e-b", name="Buyer", text_unit_ids=["t1"]),
+        ],
+        relationships=[
+            Relationship(
+                id="r1",
+                source_id="e-b",
+                target_id="e-v",
+                type="PAYS",
+                text_unit_ids=["t1"],
+            )
+        ],
+    )
+    delta = [
+        Relationship(
+            id="r1",
+            source_id="e-v",
+            target_id="e-b",
+            type="SUPPLIES",
+            text_unit_ids=["t2"],
+        )
+    ]
+
+    merged = incremental.indexing_manager.merge_with_existing_graph(None, delta)
+
+    assert merged.relationships is not None
+    (edge,) = merged.relationships
+    assert (edge.id, edge.source_id, edge.target_id) == ("r1", "e-b", "e-v")
+    assert edge.type == "PAYS"
+    assert set(edge.text_unit_ids or []) == {"t1", "t2"}
+
+
+def test_failed_read_back_keeps_a_deleted_docs_registry_row(mocker) -> None:
+    # Deleting doc-b strips its text unit from the entity it shares with doc-a.
+    # If reading that entity back fails, the strip did not happen: the removal
+    # must count as failed so doc-b's row (its lineage) is kept for a retry.
+    incremental, graph, store = _harness(cross_run_merge=True)
+    for doc_id, unit in (("doc-a", "t1"), ("doc-b", "t2")):
+        incremental.commit(
+            lineages=[
+                DocumentLineage(doc_id=doc_id, entity_ids=["e1"], text_unit_ids=[unit])
+            ],
+            fingerprints={doc_id: f"h-{doc_id}"},
+            entities=[Entity(id="e1", name="Vendor", text_unit_ids=[unit])],
+        )
+    mocker.patch.object(
+        graph, "read_entities", side_effect=RuntimeError("connection reset")
+    )
+
+    removed = incremental.remove_deleted(DocumentDelta(deleted=["doc-b"]))
+
+    assert removed is False
+    assert store.get("doc-b") is not None
+
+
+def test_failed_read_back_fails_the_commit_before_any_write(mocker) -> None:
+    # Overwriting on a failed read would drop the stored entity's lineage;
+    # failing first leaves the doc unrecorded, so the next run retries it.
+    incremental, graph, store = _harness(cross_run_merge=True)
+    _commit_entity(incremental, "doc-a", Entity(id="e1", name="Vendor"))
+    mocker.patch.object(
+        graph, "read_entities", side_effect=RuntimeError("connection reset")
+    )
+
+    with pytest.raises(RuntimeError):
+        _commit_entity(incremental, "doc-b", Entity(id="e1", name="Vendor"))
+
+    assert store.get("doc-b") is None
