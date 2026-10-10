@@ -550,6 +550,18 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   first run, twice the `BatchGetItem` requests). Only a document whose
   stored record is `PENDING` can have overflow to keep; leftover overflow
   next to other records is collected from the diff's report (#198).
+- Deleting a document no longer deletes an entity that a registry record
+  without a scope still lists, when that record's key is no legacy key of a
+  namespace the removal knew of. Since #198 such a record retained nothing
+  in any namespace, which is only right for a pipeline record of another
+  namespace: a record the direct API wrote under a caller's own `doc_id`,
+  or one a direct-API run without a scope wrote (keyed by the bare item
+  suffix, while the indexers write under `indexing.additional_suffix`),
+  lost its entities to the next scoped run that added and deleted a
+  document sharing them. A record without a scope now has a namespace only
+  when its key is the legacy key of the run's namespace or of one a scope
+  in the registry names; any other counts as a survivor in every
+  namespace of its suffix (#PR).
 - An incremental run no longer fails on a large document whose old and new
   versions each fit one doc-status record but not together. The write-ahead
   `PENDING` record lists both lineages; for such a document (each version

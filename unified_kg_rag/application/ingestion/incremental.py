@@ -192,14 +192,8 @@ def _artifact_ids(record: DocStatusRecord | DocumentLineage) -> list[str]:
 _NamespaceKey = tuple[str, str | None]
 
 
-# The namespace of a record written before scopes existed whose legacy key
-# names none of the namespaces a removal plans for (see _namespace_key). No
-# scope's namespace contains a NUL.
-_OTHER_NAMESPACE = "\x00other"
-
-
 def _namespace_key(
-    record: DocStatusRecord, candidates: Collection[str] = ()
+    record: DocStatusRecord, known: Collection[str] = ()
 ) -> _NamespaceKey:
     """The removal-planning group of ``record``.
 
@@ -208,23 +202,24 @@ def _namespace_key(
     ``indexing.additional_suffix`` and is read from the record's scope (see
     ``scope_namespace``).
 
-    A record written before scopes existed has no scope. With a
-    ``file_path`` it is keyed by its namespace and that path (the legacy key
-    ``compute_doc_id(file_path, namespace)``), so it is in the ``candidates``
-    namespace its key matches, or in another one (``_OTHER_NAMESPACE``) when
-    it matches none. Without a ``file_path`` (a record of the initial
-    release, keyed by the path alone) its namespace is unknown (``None``):
-    removal planning treats it as part of every namespace of its suffix
-    until a reset of the suffix clears it.
+    A record without a scope has its namespace only when its key proves it:
+    a ``file_path`` whose legacy key ``compute_doc_id(file_path, namespace)``
+    is its ``doc_id`` for one of the ``known`` namespaces. Any other
+    scope-less record is of an unknown namespace (``None``), which removal
+    planning treats as part of every namespace of its suffix: a record of
+    the initial release (keyed by the path alone, no ``file_path``), a
+    pipeline record of a namespace no scope in the registry names yet, a
+    record of the direct API without a scope (keyed by the bare suffix,
+    whatever ``indexing.additional_suffix`` the indexers write under) or
+    one under a caller's own ``doc_id``.
     """
     if record.scope is not None:
         return record.suffix, scope_namespace(record.scope)
-    if record.file_path is None:
-        return record.suffix, None
-    for candidate in candidates:
-        if record.doc_id == compute_doc_id(record.file_path, candidate):
-            return record.suffix, candidate
-    return record.suffix, _OTHER_NAMESPACE
+    if record.file_path is not None:
+        for namespace in known:
+            if record.doc_id == compute_doc_id(record.file_path, namespace):
+                return record.suffix, namespace
+    return record.suffix, None
 
 
 def _read_many(
@@ -985,22 +980,20 @@ class IncrementalIndexer:
                 record = prior
             planned.append(record)
         # The namespaces a record without a scope is matched against (by its
-        # legacy key): the run's and those of the scoped records it removes.
-        candidates = {
-            namespace
-            for namespace in (
-                scope_namespace(self.scope),
-                *(scope_namespace(r.scope) for r in planned if r.doc_id in target),
-            )
-            if namespace is not None
-        }
+        # legacy key): the run's and every one a scope in the registry names.
+        known = sorted(
+            {
+                namespace
+                for namespace in (
+                    scope_namespace(self.scope),
+                    *(scope_namespace(r.scope) for r in (*records, *planned)),
+                )
+                if namespace is not None
+            }
+        )
         for record in planned:
-            key = _namespace_key(record, sorted(candidates))
+            key = _namespace_key(record, known)
             if record.doc_id in target:
-                if key[1] == _OTHER_NAMESPACE:
-                    # Removed from a namespace none of the others names:
-                    # every survivor of its suffix retains for it.
-                    key = (key[0], None)
                 removing[key].append(record)
             else:
                 retained[key].update(_artifact_ids(record))
@@ -1016,8 +1009,7 @@ class IncrementalIndexer:
             # The ids a survivor of any removed record's namespace keeps. A
             # record of an unknown namespace (see _namespace_key) may belong
             # to any namespace of its suffix: it retains for all of them, and
-            # all of them retain for it. A record without a scope whose
-            # legacy key names another namespace retains for none of them.
+            # all of them retain for it.
             kept: set[str] = set()
             for key in removing:
                 if key[0] != suffix:

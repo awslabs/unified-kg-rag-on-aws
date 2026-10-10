@@ -272,20 +272,24 @@ def test_survivors_retain_artifacts_only_in_their_namespace(
 
 
 @pytest.mark.parametrize(
-    ("survivor_namespace", "file_path", "kept"),
+    ("survivor_namespace", "file_path", "visible", "kept"),
     [
-        # Written before scopes existed under another namespace's legacy key.
-        ("default-y", "a.txt", False),
+        # Written before scopes existed under the legacy key of another
+        # namespace a scope in the registry names.
+        ("default-y", "a.txt", True, False),
+        # Under the legacy key of a namespace no scope names: its namespace
+        # is unknown, so it retains.
+        ("default-y", "a.txt", False, True),
         # Under the removed record's namespace's legacy key.
-        ("default-x", "a.txt", True),
+        ("default-x", "a.txt", False, True),
         # Under the run's namespace's legacy key: not the removed record's.
-        ("default-run", "a.txt", False),
+        ("default-run", "a.txt", False, False),
         # No file_path (initial release): namespace unknown, so it retains.
-        ("default-y", None, True),
+        ("default-y", None, True, True),
     ],
 )
 def test_a_scopeless_survivor_retains_only_in_its_legacy_namespace(
-    harness, survivor_namespace, file_path, kept
+    harness, survivor_namespace, file_path, visible, kept
 ) -> None:
     inc, store, _, _ = harness
     inc.scope = "default-run|/corpus"
@@ -298,6 +302,12 @@ def test_a_scopeless_survivor_retains_only_in_its_legacy_namespace(
             text_unit_ids=["tu-x"],
         )
     )
+    if visible:
+        # A record of the survivor's namespace that a run since the upgrade
+        # wrote with a scope (it lists nothing the removal touches).
+        store.put(
+            DocStatusRecord(doc_id="doc-y", content_hash="h", scope="default-y|/new")
+        )
     store.put(
         DocStatusRecord(
             doc_id=compute_doc_id("a.txt", survivor_namespace),
@@ -311,6 +321,78 @@ def test_a_scopeless_survivor_retains_only_in_its_legacy_namespace(
 
     assert ("e-vendor" in removal.exclusive_ids) is not kept
     assert removal.shared_entity_ids == (["e-vendor"] if kept else [])
+
+
+def test_a_scopeless_survivor_under_a_custom_doc_id_retains(harness) -> None:
+    inc, store, _, _ = harness
+    inc.scope = "default-x|/corpus"
+    store.put(
+        DocStatusRecord(
+            doc_id="doc-x",
+            content_hash="h",
+            scope="default-x|/corpus",
+            entity_ids=["e-vendor"],
+            text_unit_ids=["tu-x"],
+        )
+    )
+    # Committed through the direct API under the caller's own doc id: no
+    # namespace's legacy key, so its namespace is unknown.
+    store.put(
+        DocStatusRecord(
+            doc_id="contract-42",
+            content_hash="h",
+            file_path="contracts/42.txt",
+            entity_ids=["e-vendor"],
+            text_unit_ids=["tu-42"],
+        )
+    )
+
+    (removal,) = inc._plan_removal(["doc-x"]).values()
+
+    assert removal.shared_entity_ids == ["e-vendor"]
+    assert "e-vendor" not in removal.exclusive_ids
+
+
+def test_a_direct_api_record_retains_for_a_scoped_run_of_its_namespace(
+    mocker,
+) -> None:
+    """Direct API without a scope, then a scoped run in the same stores.
+
+    With ``indexing.additional_suffix`` set, the indexers write under
+    ``default-x`` while a scope-less direct-API run keys its records by the
+    bare suffix (``compute_doc_id(path, "default")``). A later scoped run in
+    ``default-x`` that adds and deletes a document sharing an entity must
+    not delete it.
+    """
+    config = Config()
+    config.indexing.additional_suffix = "x"
+    graph = FakeGraphStore()
+    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
+    manager = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)
+    store = FakeDocStatusStore()
+
+    direct = IncrementalIndexer(store, manager)
+    a = _doc("a.txt", "Vendor ships.")
+    tu_a, _ = _artifacts_for(a, [])
+    shared = Entity(id="e-shared", name="Shared", text_unit_ids=[tu_a[0].id])
+    _commit(direct, [a], tu_a, [shared])
+    (record,) = store.list_all()
+    assert record.scope is None
+    assert record.doc_id == compute_doc_id("a.txt", "default")
+
+    scoped = IncrementalIndexer(store, manager, scope="default-x|/corpus")
+    c = _doc("c.txt", "Vendor bills.")
+    c.metadata["registry_namespace"] = "default-x"
+    c.metadata["registry_source"] = "/corpus"
+    tu_c, _ = _artifacts_for(c, [])
+    shared_c = Entity(id="e-shared", name="Shared", text_unit_ids=[tu_c[0].id])
+    _commit(scoped, [c], tu_c, [shared_c])
+    delta, _ = scoped.plan([])
+    assert delta.deleted == [compute_doc_id("c.txt", "default-x", "/corpus")]
+    assert scoped.remove_deleted(delta)
+
+    assert "e-shared" in graph.ids("entities")
+    assert "e-shared" in vector.ids("entities")
 
 
 def test_a_removed_scopeless_record_of_no_known_namespace_is_retained_for(
