@@ -113,7 +113,12 @@ run once with `indexing.reset: true`: besides the namespace's own records, a
 reset deletes every record without a scope on the suffixes it clears (such
 records come from the era of one namespace per suffix). Deleting those registry items (they have
 no `registry_scope` attribute and their file is gone) only cleans the
-registry; their artifacts stay until a reset.
+registry; their artifacts stay until a reset. Until then, such a record keeps
+the artifacts it lists in other documents' removals only within its own
+namespace, which its key names when it stores its `file_path`; a record of
+the initial release (no `file_path`) keeps them in every namespace of its
+suffix, so a document of another `indexing.additional_suffix` deleted
+meanwhile can leave entities behind that the reset then clears.
 
 What incremental runs do not refresh: a shared entity or relationship keeps
 the description text a changed or deleted document contributed, and delta

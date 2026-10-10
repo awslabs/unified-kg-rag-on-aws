@@ -54,7 +54,10 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports import DocStatusPort
 from unified_kg_rag.shared import DataProcessingError, get_logger
-from unified_kg_rag.shared.utils.document_identity import RELATIVE_PATH_KEY
+from unified_kg_rag.shared.utils.document_identity import (
+    RELATIVE_PATH_KEY,
+    compute_doc_id,
+)
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
@@ -189,16 +192,39 @@ def _artifact_ids(record: DocStatusRecord | DocumentLineage) -> list[str]:
 _NamespaceKey = tuple[str, str | None]
 
 
-def _namespace_key(record: DocStatusRecord) -> _NamespaceKey:
+# The namespace of a record written before scopes existed whose legacy key
+# names none of the namespaces a removal plans for (see _namespace_key). No
+# scope's namespace contains a NUL.
+_OTHER_NAMESPACE = "\x00other"
+
+
+def _namespace_key(
+    record: DocStatusRecord, candidates: Collection[str] = ()
+) -> _NamespaceKey:
     """The removal-planning group of ``record``.
 
     ``record.suffix`` is the item suffix the indexers are called with
     (``index_value``, ``default`` when unset); the index namespace adds
     ``indexing.additional_suffix`` and is read from the record's scope (see
-    ``scope_namespace``). A record written before scopes existed has no known
-    namespace (``None``).
+    ``scope_namespace``).
+
+    A record written before scopes existed has no scope. With a
+    ``file_path`` it is keyed by its namespace and that path (the legacy key
+    ``compute_doc_id(file_path, namespace)``), so it is in the ``candidates``
+    namespace its key matches, or in another one (``_OTHER_NAMESPACE``) when
+    it matches none. Without a ``file_path`` (a record of the initial
+    release, keyed by the path alone) its namespace is unknown (``None``):
+    removal planning treats it as part of every namespace of its suffix
+    until a reset of the suffix clears it.
     """
-    return record.suffix, scope_namespace(record.scope)
+    if record.scope is not None:
+        return record.suffix, scope_namespace(record.scope)
+    if record.file_path is None:
+        return record.suffix, None
+    for candidate in candidates:
+        if record.doc_id == compute_doc_id(record.file_path, candidate):
+            return record.suffix, candidate
+    return record.suffix, _OTHER_NAMESPACE
 
 
 def _read_many(
@@ -893,6 +919,7 @@ class IncrementalIndexer:
                 if r.status is DocStatus.PENDING and r.doc_id not in self._in_flight
             ],
         )
+        planned: list[DocStatusRecord] = []
         for record in records:
             if record.doc_id in overflow:
                 record = record.model_copy(
@@ -908,8 +935,24 @@ class IncrementalIndexer:
                 if prior is None:
                     continue
                 record = prior
-            key = _namespace_key(record)
+            planned.append(record)
+        # The namespaces a record without a scope is matched against (by its
+        # legacy key): the run's and those of the scoped records it removes.
+        candidates = {
+            namespace
+            for namespace in (
+                scope_namespace(self.scope),
+                *(scope_namespace(r.scope) for r in planned if r.doc_id in target),
+            )
+            if namespace is not None
+        }
+        for record in planned:
+            key = _namespace_key(record, sorted(candidates))
             if record.doc_id in target:
+                if key[1] == _OTHER_NAMESPACE:
+                    # Removed from a namespace none of the others names:
+                    # every survivor of its suffix retains for it.
+                    key = (key[0], None)
                 removing[key].append(record)
             else:
                 retained[key].update(_artifact_ids(record))
@@ -923,9 +966,10 @@ class IncrementalIndexer:
                 for record in group
             ]
             # The ids a survivor of any removed record's namespace keeps. A
-            # record without a scope may belong to any namespace of its
-            # suffix: it retains for all of them, and all of them retain for
-            # it.
+            # record of an unknown namespace (see _namespace_key) may belong
+            # to any namespace of its suffix: it retains for all of them, and
+            # all of them retain for it. A record without a scope whose
+            # legacy key names another namespace retains for none of them.
             kept: set[str] = set()
             for key in removing:
                 if key[0] != suffix:

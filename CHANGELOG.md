@@ -518,6 +518,16 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   its text units. A reset now also deletes every record without a scope
   whose `suffix` is one of the cleared suffixes: such records come from the
   era of one namespace per suffix (#197).
+- Deleting a document of one index namespace no longer leaves its entities
+  in the stores, without text units, because a registry record of another
+  namespace on the same item suffix (another `indexing.additional_suffix`)
+  written before scopes existed lists them. Removal planning counted every
+  record without a scope as a survivor in every namespace of its suffix. A
+  record without a scope that stores its `file_path` is now matched to its
+  namespace by its legacy key (`compute_doc_id(file_path, namespace)`, the
+  check a reset already makes) and retains only there; one without
+  `file_path` (the initial release) still retains in every namespace of its
+  suffix until a reset clears it (#PR).
 - An incremental run no longer fails on a large document whose old and new
   versions each fit one doc-status record but not together. The write-ahead
   `PENDING` record lists both lineages; for such a document (each version
