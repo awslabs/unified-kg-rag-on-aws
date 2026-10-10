@@ -500,6 +500,16 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   was never removed from their stores. The reset now deletes only the records
   whose scope belongs to the cleared namespaces, and a record written before
   scopes existed only when its key is such a namespace's legacy key (#195).
+- `indexing.reset` again clears the doc-status records written by the
+  initial public release. Since #195 a record without a scope was cleared
+  only when it stored its `file_path` and its key was a cleared namespace's
+  legacy key, which those records (keyed by a hash of the file path alone,
+  no `file_path`) never match, so they stayed. Removal planning counts a
+  record without a scope as a survivor in every namespace of its suffix, so
+  an entity such a record listed was never deleted again, only stripped of
+  its text units. A reset now also deletes every record without a scope
+  whose `suffix` is one of the cleared suffixes: such records come from the
+  era of one namespace per suffix (#PR).
 - An incremental run no longer fails on a large document whose old and new
   versions each fit one doc-status record but not together. The write-ahead
   `PENDING` record lists both lineages; for such a document (each version
