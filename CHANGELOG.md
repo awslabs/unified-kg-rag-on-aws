@@ -398,6 +398,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   vertex labels from one helper (`shared/utils/store_names.py`) instead of two
   copies of the naming rule and a repeated `prefix.capitalize()` at every
   Neptune call site; the names are unchanged (#169).
+- Documentation: concurrent ingestion runs are documented as not supported
+  (Operator Runbook "Concurrent runs", User Guide §12, Design Doc §5). Two
+  runs on the same index suffix race on the alias swap and old-index
+  cleanup of a full reindex, and two runs on the same doc-status table
+  namespace race on the registry read the removal plan is built from. Runs
+  on different suffixes with separate doc-status tables are fine. The CDK
+  state machine does not block an overlapping execution and the stack has
+  no schedule or trigger that starts one (#PR).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).

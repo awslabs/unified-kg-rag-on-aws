@@ -1567,8 +1567,14 @@ Both constructors accept injected backends (`providers`, `retriever_builders`,
   whole graph; only a full rebuild (`indexing.reset: true`) refreshes both.
   Each run scans the whole doc-status table, and one document's artifact ids
   must fit one 400 KB DynamoDB item.
-- **One ingestion at a time** per set of stores; concurrent runs race on the
-  registry and the stores.
+- **Concurrent runs are not supported.** Do not run two ingestions at once
+  against the same index suffix (a full reindex's alias swap and old-index
+  cleanup can delete the other run's index) or the same doc-status table
+  namespace (removal planning reads the registry once, so the other run's
+  records can be pruned). Runs on different suffixes with separate
+  doc-status tables are fine. The CDK state machine does not block an
+  overlapping execution; see
+  [Operator Runbook: Concurrent runs](./operations.md#concurrent-runs).
 - **Markdown and HTML** need the optional `unstructured` extra (Python 3.11+),
   which the container image leaves out by default.
 - **Changing the embedding model** (or its dimension) requires a reindex.
