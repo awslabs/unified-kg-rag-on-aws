@@ -527,7 +527,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   namespace by its legacy key (`compute_doc_id(file_path, namespace)`, the
   check a reset already makes) and retains only there; one without
   `file_path` (the initial release) still retains in every namespace of its
-  suffix until a reset clears it (#PR).
+  suffix until a reset clears it (#198).
 - Write-ahead lineage overflow no longer stays in the doc-status table when
   a run stops between a commit's record write and its overflow delete. The
   document then reads unchanged, and only the write-ahead of a document it
@@ -535,7 +535,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   changed or was removed. The diff's scan now reports overflow next to a
   record that is not `PENDING`, or next to none
   (`DocumentDelta.orphan_overflow`), and the next incremental run's
-  write-ahead deletes it for the owners of its namespace (#PR).
+  write-ahead deletes it for the owners of its namespace (#198).
 - A write-ahead lineage overflow append that DynamoDB stored only in part
   no longer strands an overflow item for good. All new parts went out in
   one `BatchWriteItem`, which can store any subset: with part 1 stored and
@@ -544,12 +544,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   by a reset. Parts are now written in index order, each only after the
   one before it, and deleting a document's overflow also removes parts
   after a gap: those the last registry scan found, or those a probe that
-  does not stop at a missing part finds (#PR).
+  does not stop at a missing part finds (#198).
 - The incremental write-ahead no longer probes for lineage overflow of
   every new and changed document with strongly consistent reads (on a
   first run, twice the `BatchGetItem` requests). Only a document whose
   stored record is `PENDING` can have overflow to keep; leftover overflow
-  next to other records is collected from the diff's report (#PR).
+  next to other records is collected from the diff's report (#198).
 - An incremental run no longer fails on a large document whose old and new
   versions each fit one doc-status record but not together. The write-ahead
   `PENDING` record lists both lineages; for such a document (each version
