@@ -42,7 +42,9 @@ def cite_relationship_endpoints(
         The entities (in input order, stubs appended) and the number of stubs.
     """
     known_ids = {e.id for e in entities}
-    cited_by_edges: dict[str, list[str]] = {}
+    # Insertion-ordered dicts as ordered sets: membership is O(1), so an
+    # entity with many edges costs linear rather than quadratic time.
+    cited_by_edges: dict[str, dict[str, None]] = {}
     stubs: dict[str, Entity] = {}
     for rel in relationships:
         for ent_id, name in (
@@ -57,13 +59,15 @@ def cite_relationship_endpoints(
                 stubs[ent_id] = Entity.model_validate(
                     {"id": ent_id, "name": name, "text_unit_ids": []}
                 )
-            units = cited_by_edges.setdefault(ent_id, [])
-            units.extend(t for t in rel.text_unit_ids or [] if t not in units)
+            cited_by_edges.setdefault(ent_id, {}).update(
+                dict.fromkeys(rel.text_unit_ids or [])
+            )
 
     result: list[Entity] = []
     for entity in [*entities, *stubs.values()]:
         own = list(entity.text_unit_ids or [])
-        units = own + [t for t in cited_by_edges.get(entity.id, []) if t not in own]
+        own_set = set(own)
+        units = own + [t for t in cited_by_edges.get(entity.id, {}) if t not in own_set]
         if units != own:
             entity = entity.model_copy(
                 update={"text_unit_ids": units, "frequency": len(units)}

@@ -500,6 +500,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   too (gleaning stat `entities_dropped_low_confidence`). A stub still gets
   the default confidence, as an entity listed without a score does: it only
   exists for an entity not rejected for its unit (#PR).
+- Citing relationship endpoints (after extraction, in every gleaning round
+  and at the start of graph resolution) took time quadratic in an entity's
+  edge count: an entity on 20,000 edges took several seconds per pass. It is
+  now linear, with the same text-unit order (#PR).
 - Relationships gleaning adds now make their endpoints cite the gleaned text
   unit, as first-pass extraction does. Before, an entity one document
   extracted kept citing only its own text units when gleaning another
