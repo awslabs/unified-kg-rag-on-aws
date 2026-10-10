@@ -154,8 +154,8 @@ single-node domain.
 > **A few Bedrock read actions use `Resource: "*"` by necessity**, not oversight:
 > `bedrock:Rerank` (authorizes against a different resource shape than
 > `InvokeModel` — scoping it to the model ARNs denies the call) and
-> `bedrock:ListInferenceProfiles` / `GetInferenceProfile` (account-level reads
-> with no resource scoping). These are read/inference-only actions; the
+> `bedrock:ListInferenceProfiles` (an account-level read with no resource
+> scoping). These are read/inference-only actions; the
 > mutating/data path (`InvokeModel`) stays ARN-scoped. Each is documented inline
 > in `compute_stack.py` and in the cdk-nag suppressions.
 

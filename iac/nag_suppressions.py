@@ -127,7 +127,7 @@ def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
     _suppress_iam5(
         compute.task_role,
         [
-            # bedrock:Rerank and List/GetInferenceProfile: no resource scoping.
+            # bedrock:Rerank and ListInferenceProfiles: no resource scoping.
             "Resource::*",
             # Cross-region inference fans one call out to models in several
             # regions, so model/profile/guardrail ARNs need region + id wildcards.
