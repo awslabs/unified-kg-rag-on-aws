@@ -565,20 +565,20 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   document sharing them. A record without a scope now has a namespace only
   when its key is the legacy key of the run's namespace or of one a scope
   in the registry names; any other counts as a survivor in every
-  namespace of its suffix (#PR).
+  namespace of its suffix (#199).
 - `indexing.reset` on one index namespace no longer deletes the doc-status
   records without a scope of another namespace on the same item suffix.
   Since #197 a reset cleared every record without a scope whose `suffix`
   was a cleared suffix before checking its key, so a record stored with its
   `file_path` under another `indexing.additional_suffix`'s legacy key lost
   the lineage of intact stores. Only a record without `file_path` is now
-  cleared by its suffix (#PR).
+  cleared by its suffix (#199).
 - `indexing.reset` no longer fails on an index namespace that was never
   indexed. Clearing OpenSearch deleted the namespace's five aliases in one
   request, which OpenSearch answers with a 404 when none of them exists,
   so the reset stopped with "Failed to clear existing data before
   indexing". Deleting an index drops its aliases; only an alias still on
-  another index is now deleted (#PR).
+  another index is now deleted (#199).
 - `indexing.reset` no longer deletes the OpenSearch indices of other index
   namespaces. Clearing a namespace deleted every index matching
   `<prefix>-<suffix>[-<additional_suffix>]-*`, so a reset of `default`
@@ -586,7 +586,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   of every suffix starting with `default-` (a reset of `acme` took
   `acme-eu`), while their Neptune labels and registry records stayed. The
   reset now deletes only the indices named `<alias>-<timestamp>` for the
-  namespace's own aliases (#PR).
+  namespace's own aliases (#199).
 - An incremental run no longer fails on a large document whose old and new
   versions each fit one doc-status record but not together. The write-ahead
   `PENDING` record lists both lineages; for such a document (each version
