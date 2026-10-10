@@ -69,6 +69,19 @@ class _FakeCluster:
         self.calls.append(("get_aliases_by_index", index_pattern))
         return {name: sorted(self.indices[name]) for name in self._match(index_pattern)}
 
+    def delete_alias(self, index_names, alias_names):
+        self.calls.append(("delete_alias", tuple(index_names), tuple(alias_names)))
+        targets = [
+            aliases
+            for name, aliases in self.indices.items()
+            if index_names == "_all" or name in index_names
+        ]
+        # OpenSearch answers 404 when none of the named aliases exists.
+        if not any(alias in aliases for aliases in targets for alias in alias_names):
+            raise RuntimeError("aliases_not_found_exception")
+        for aliases in targets:
+            aliases.difference_update(alias_names)
+
     def delete_indices(self, indices):
         self.calls.append(("delete_indices", tuple(indices)))
         for pattern in indices:
@@ -259,3 +272,83 @@ def test_create_index_failure_rolls_back(config) -> None:
     assert client.indices == {live: {_ALIAS}}
     assert "update_alias" not in _op_names(client.calls)
     assert stats.failed_items >= 1
+
+
+def test_clear_of_a_namespace_never_indexed_succeeds(config) -> None:
+    # No alias of the namespace exists: deleting them would be a 404 that
+    # failed the reset of a namespace before its first run.
+    client = _FakeCluster()
+    indexer = _indexer(config, client)
+
+    assert indexer.clear(["default"])
+    assert "delete_alias" not in _op_names(client.calls)
+
+
+def test_clear_of_some_stores_deletes_their_indices_and_aliases(config) -> None:
+    # Only the entities store was written; the other stores have no alias.
+    # An alias left on an index outside the naming scheme is deleted too.
+    live = f"{_ALIAS}-20260101000000"
+    client = _FakeCluster({live: {_ALIAS}, "manual-index": {_ALIAS}})
+    indexer = _indexer(config, client)
+
+    assert indexer.clear(["default"])
+
+    assert client.indices == {"manual-index": set()}
+
+
+def _store_indices(config: Config, base: str, ts: str) -> dict[str, set[str]]:
+    """One live index per store under the alias ``<prefix>-<base>``."""
+    os_config = config.indexing.opensearch
+    prefixes = (
+        os_config.text_units_index_prefix,
+        os_config.entities_index_prefix,
+        os_config.community_reports_index_prefix,
+        os_config.relationships_index_prefix,
+        os_config.claims_index_prefix,
+    )
+    return {f"{p}-{base}-{ts}": {f"{p}-{base}"} for p in prefixes}
+
+
+@pytest.mark.parametrize(
+    ("additional", "cleared", "siblings"),
+    [
+        # No additional suffix: ``default`` must not take ``default-x`` or
+        # another suffix starting with ``default-``.
+        (None, "default", ("default-x", "default-eu")),
+        # With one: ``default-x`` must not take ``default-x-y``.
+        ("x", "default-x", ("default", "default-x-y", "default-y")),
+    ],
+)
+def test_clear_deletes_only_its_own_namespace(
+    config, additional, cleared, siblings
+) -> None:
+    config.indexing.additional_suffix = additional
+    existing = _store_indices(config, cleared, "20260101000000")
+    # A replaced index the alias no longer points at: also this namespace's.
+    entities = config.indexing.opensearch.entities_index_prefix
+    existing[f"{entities}-{cleared}-20251231000000"] = set()
+    kept: dict[str, set[str]] = {}
+    for sibling in siblings:
+        kept |= _store_indices(config, sibling, "20260101000000")
+    client = _FakeCluster({**existing, **kept})
+    indexer = _indexer(config, client)
+
+    assert indexer.clear(["default"])
+
+    assert client.indices == kept
+    deleted = {
+        name for call in client.calls if call[0] == "delete_indices" for name in call[1]
+    }
+    # Exact names, never a pattern a sibling's index could match.
+    assert deleted == set(existing)
+
+
+def test_clear_of_a_suffix_keeps_suffixes_that_extend_it(config) -> None:
+    existing = _store_indices(config, "acme", "20260101000000")
+    kept = _store_indices(config, "acme-eu", "20260101000000")
+    client = _FakeCluster({**existing, **kept})
+    indexer = _indexer(config, client)
+
+    assert indexer.clear(["acme"])
+
+    assert client.indices == kept
