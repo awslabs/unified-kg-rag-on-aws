@@ -309,7 +309,8 @@ class GraphExtractor(BaseProcessor):
 
         # Materialize entities referenced only by a relationship endpoint (the
         # LLM mentioned them in a relation but did not list them as an entity),
-        # so those relationships are not later skipped as orphans. MS GraphRAG
+        # so those relationships are not later skipped as orphans, and make
+        # every endpoint cite its relationships' text units. MS GraphRAG
         # likewise lets relationships introduce entities.
         all_entities = self._materialize_relationship_endpoints(
             all_entities, all_relationships
@@ -632,34 +633,54 @@ class GraphExtractor(BaseProcessor):
         entities: list[Entity],
         relationships: list[Relationship],
     ) -> list[Entity]:
-        """Create stub entities for relationship endpoints not already extracted.
+        """Make every relationship endpoint an entity citing the edge's text units.
 
         Endpoint ids are name-derived, so when the LLM references an entity only
         inside a relationship (or it was extracted in another chunk) we add a
         minimal entity for it rather than letting graph_builder drop the edge.
+
+        Every endpoint, extracted or stub, also cites the text units of each
+        relationship it is an endpoint of: a chunk that names an entity in a
+        relationship mentions it. This keeps an entity's text units independent
+        of which chunks share an extraction batch, so an incremental run (a
+        smaller batch, merged into the graph) cites the same text units as a
+        full build, and removing a document strips an entity down to exactly
+        the text units of the surviving documents that mention it.
         """
-        existing_ids = {e.id for e in entities}
+        cited: dict[str, list[str]] = {
+            e.id: list(e.text_unit_ids or []) for e in entities
+        }
         stubs: dict[str, Entity] = {}
         for rel in relationships:
             for ent_id, name in (
                 (rel.source_id, rel.source_name),
                 (rel.target_id, rel.target_name),
             ):
-                if not ent_id or ent_id in existing_ids or ent_id in stubs or not name:
+                if not ent_id:
                     continue
-                stubs[ent_id] = Entity.model_validate(
-                    {
-                        "id": ent_id,
-                        "name": name,
-                        "text_unit_ids": list(rel.text_unit_ids or []),
-                    }
-                )
+                if ent_id not in cited:
+                    if not name:
+                        continue
+                    stubs[ent_id] = Entity.model_validate(
+                        {"id": ent_id, "name": name, "text_unit_ids": []}
+                    )
+                    cited[ent_id] = []
+                units = cited[ent_id]
+                units.extend(t for t in rel.text_unit_ids or [] if t not in units)
         if stubs:
             logger.info(
                 "Materialized %s entities referenced only by relationships",
                 len(stubs),
             )
-        return entities + list(stubs.values())
+        result = []
+        for entity in [*entities, *stubs.values()]:
+            units = cited[entity.id]
+            if units != (entity.text_unit_ids or []):
+                entity = entity.model_copy(
+                    update={"text_unit_ids": units, "frequency": len(units)}
+                )
+            result.append(entity)
+        return result
 
     def _filter_orphan_relationships(
         self,

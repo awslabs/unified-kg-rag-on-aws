@@ -113,6 +113,14 @@ def build_document_lineage(
         _attribute(e.id, e.text_unit_ids, entity_ids)
     for r in relationships:
         _attribute(r.id, r.text_unit_ids, relationship_ids)
+        # A relationship's endpoints belong to its documents too: an entity
+        # one document extracts may be the endpoint of another's relationship
+        # (named there only inside it). Removing the first document must keep
+        # it, as a fresh build of the survivors would: deleting the entity
+        # also drops every edge incident to it.
+        for endpoint in (r.source_id, r.target_id):
+            if endpoint:
+                _attribute(endpoint, r.text_unit_ids, entity_ids)
     for c in claims:
         _attribute(c.id, c.text_unit_ids, claim_ids)
 

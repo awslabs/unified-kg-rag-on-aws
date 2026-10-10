@@ -96,3 +96,31 @@ def test_community_report_attributed_via_its_community() -> None:
     by_doc = {ln.doc_id: ln for ln in lineages}
     assert by_doc[a].community_ids == ["comm1"]
     assert by_doc[a].community_report_ids == ["rep1"]
+
+
+def test_relationship_endpoints_attributed_to_the_relationships_documents() -> None:
+    # "Vendor" is extracted from a.txt only; b.txt names it only inside its
+    # Vendor -> Depot relationship. b.txt must retain Vendor, or deleting a.txt
+    # would delete Vendor and with it b.txt's edge.
+    docs = [_doc("d1", "/a.txt"), _doc("d2", "/b.txt")]
+    text_units = [
+        TextUnit(id="t1", text="...", document_ids=["d1"]),
+        TextUnit(id="t2", text="...", document_ids=["d2"]),
+    ]
+    entities = [
+        Entity(id="vendor", name="Vendor", text_unit_ids=["t1"]),
+        Entity(id="depot", name="Depot", text_unit_ids=["t2"]),
+    ]
+    relationships = [
+        Relationship(
+            id="r1", source_id="vendor", target_id="depot", text_unit_ids=["t2"]
+        ),
+    ]
+
+    lineages = build_document_lineage(docs, text_units, entities, relationships, [], [])
+    by_doc = {ln.doc_id: ln for ln in lineages}
+
+    a, b = compute_doc_id("/a.txt"), compute_doc_id("/b.txt")
+    assert by_doc[a].entity_ids == ["vendor"]
+    assert by_doc[b].entity_ids == ["depot", "vendor"]
+    assert by_doc[b].relationship_ids == ["r1"]

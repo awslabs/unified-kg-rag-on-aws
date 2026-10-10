@@ -307,6 +307,39 @@ class TestMaterializeRelationshipEndpoints:
         out = extractor._materialize_relationship_endpoints(existing, [rel])
         assert len(out) == 1
 
+    def test_endpoints_cite_their_relationships_text_units(self, extractor) -> None:
+        # An extracted endpoint also cites the chunks naming it only inside a
+        # relationship; a stub cites every relationship it is an endpoint of.
+        existing = [Entity(id="e1", name="Alice", text_unit_ids=["t1"])]
+        rels = [
+            Relationship(
+                id="r1",
+                source_id="e1",
+                target_id="e2",
+                source_name="Alice",
+                target_name="Bob",
+                text_unit_ids=["t2"],
+            ),
+            Relationship(
+                id="r2",
+                source_id="e2",
+                target_id="e1",
+                source_name="Bob",
+                target_name="Alice",
+                text_unit_ids=["t1", "t3"],
+            ),
+        ]
+        out = {
+            e.id: e
+            for e in extractor._materialize_relationship_endpoints(existing, rels)
+        }
+        assert out["e1"].text_unit_ids == ["t1", "t2", "t3"]
+        assert out["e1"].frequency == 3
+        assert out["e2"].text_unit_ids == ["t2", "t1", "t3"]
+        assert out["e2"].frequency == 3
+        # The input entity is not mutated.
+        assert existing[0].text_unit_ids == ["t1"]
+
     def test_same_missing_endpoint_materialized_once(self, extractor) -> None:
         existing: list[Entity] = []
         rels = [
