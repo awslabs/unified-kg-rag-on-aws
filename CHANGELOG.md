@@ -485,12 +485,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   either part. Latin words must match whole, so "Ven" no longer matches
   "Vendor" nor "AI" "aim", also inside a mixed-script name; a
   one-character Han/Hangul/Kana name must stand alone instead of matching
-  any text containing the character (#PR).
+  any text containing the character (#203).
 - `pipeline_metadata.json` no longer carries the extraction stage's
   `rejected_entities`. The list is a cached stage output, yet every metadata
   save (after each stage) re-serialized it and synced it to S3: a run with
   20,000 rejections wrote about 3.4 MB per save. A resume still restores the
-  rejections from the stage cache (#PR).
+  rejections from the stage cache (#203).
 - With `entity_grounding` enabled, gleaning no longer brings back an entity
   the grounding guard rejected. Since #201 a gleaned relationship naming an
   entity the batch lacks adds it as a stub, and the relationship's grounding
