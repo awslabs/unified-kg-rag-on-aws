@@ -494,6 +494,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   grounded in other chunks, cite a chunk with no evidence for it. An
   ungrounded relationship between two entities its chunk extracted is still
   kept at the penalized weight; its endpoints cite that chunk already (#PR).
+- Design doc: §4 now states that relationship endpoints cite their
+  relationships' text units, a deliberate divergence from MS GraphRAG and
+  LightRAG (where an entity cites only the chunks that list it) made for
+  incremental convergence, and that a run resumed with the same
+  `pipeline_id` after upgrading reuses the old stage outputs, so
+  `--force-rebuild` or a new `pipeline_id` is needed (#PR).
 - Deleting or changing a document no longer deletes a relationship a
   surviving document still lists. When one document extracted an entity and
   another named it only as the endpoint of its relationship in the same run,
