@@ -113,7 +113,12 @@ run once with `indexing.reset: true`: besides the namespace's own records, a
 reset deletes every record without a scope on the suffixes it clears (such
 records come from the era of one namespace per suffix). Deleting those registry items (they have
 no `registry_scope` attribute and their file is gone) only cleans the
-registry; their artifacts stay until a reset.
+registry; their artifacts stay until a reset. Until then, such a record keeps
+the artifacts it lists in other documents' removals only within its own
+namespace, which its key names when it stores its `file_path`; a record of
+the initial release (no `file_path`) keeps them in every namespace of its
+suffix, so a document of another `indexing.additional_suffix` deleted
+meanwhile can leave entities behind that the reset then clears.
 
 What incremental runs do not refresh: a shared entity or relationship keeps
 the description text a changed or deleted document contributed, and delta
@@ -152,7 +157,10 @@ lets the next run find the interrupted run's writes. When a large document's
 old and new artifact ids do not fit one DynamoDB item together, the ids the
 record lacks are kept in overflow items of the same table, keyed
 `<doc_id>#pending#<n>` with `record_kind` `lineage_overflow`; leave them too.
-The run deletes them when it commits or removes the document. The stage writes the registry in batches, so a role with a
+The run deletes them when it commits or removes the document; overflow a
+run left next to a committed record (it stopped between the commit and the
+delete) is deleted by the next incremental run of the same namespace, even
+when the document is unchanged. The stage writes the registry in batches, so a role with a
 custom policy needs `dynamodb:BatchWriteItem` as well as `BatchGetItem`
 (the CDK stack's `grant_read_write_data` covers both).
 

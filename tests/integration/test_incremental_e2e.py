@@ -269,3 +269,75 @@ def test_survivors_retain_artifacts_only_in_their_namespace(
     assert ("e-vendor" in removal.exclusive_ids) is not kept
     assert removal.shared_entity_ids == (["e-vendor"] if kept else [])
     assert "tu-x" in removal.exclusive_ids
+
+
+@pytest.mark.parametrize(
+    ("survivor_namespace", "file_path", "kept"),
+    [
+        # Written before scopes existed under another namespace's legacy key.
+        ("default-y", "a.txt", False),
+        # Under the removed record's namespace's legacy key.
+        ("default-x", "a.txt", True),
+        # Under the run's namespace's legacy key: not the removed record's.
+        ("default-run", "a.txt", False),
+        # No file_path (initial release): namespace unknown, so it retains.
+        ("default-y", None, True),
+    ],
+)
+def test_a_scopeless_survivor_retains_only_in_its_legacy_namespace(
+    harness, survivor_namespace, file_path, kept
+) -> None:
+    inc, store, _, _ = harness
+    inc.scope = "default-run|/corpus"
+    store.put(
+        DocStatusRecord(
+            doc_id="doc-x",
+            content_hash="h",
+            scope="default-x|/corpus",
+            entity_ids=["e-vendor"],
+            text_unit_ids=["tu-x"],
+        )
+    )
+    store.put(
+        DocStatusRecord(
+            doc_id=compute_doc_id("a.txt", survivor_namespace),
+            content_hash="h",
+            file_path=file_path,
+            entity_ids=["e-vendor"],
+            text_unit_ids=["tu-survivor"],
+        )
+    )
+    (removal,) = inc._plan_removal(["doc-x"]).values()
+
+    assert ("e-vendor" in removal.exclusive_ids) is not kept
+    assert removal.shared_entity_ids == (["e-vendor"] if kept else [])
+
+
+def test_a_removed_scopeless_record_of_no_known_namespace_is_retained_for(
+    harness,
+) -> None:
+    inc, store, _, _ = harness
+    # Removed: no scope, legacy key of a namespace no candidate names.
+    store.put(
+        DocStatusRecord(
+            doc_id=compute_doc_id("a.txt", "default-y"),
+            content_hash="h",
+            file_path="a.txt",
+            entity_ids=["e-vendor"],
+            text_unit_ids=["tu-a"],
+        )
+    )
+    store.put(
+        DocStatusRecord(
+            doc_id="doc-y",
+            content_hash="h",
+            scope="default-z|/corpus",
+            entity_ids=["e-vendor"],
+            text_unit_ids=["tu-y"],
+        )
+    )
+
+    (removal,) = inc._plan_removal([compute_doc_id("a.txt", "default-y")]).values()
+
+    assert removal.shared_entity_ids == ["e-vendor"]
+    assert "tu-a" in removal.exclusive_ids

@@ -14,13 +14,16 @@ import boto3
 import pytest
 from moto import mock_aws
 
+from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.incremental_runs import (
     Corpus,
     IncrementalRun,
+    Killed,
     document,
     expected_state,
 )
 from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
+from unified_kg_rag.adapters.aws.dynamodb import _overflow_item
 from unified_kg_rag.domain.ingestion.delta_detector import document_doc_id
 from unified_kg_rag.domain.models import (
     Config,
@@ -28,6 +31,7 @@ from unified_kg_rag.domain.models import (
     DocStatusRecord,
     DocumentLineage,
 )
+from unified_kg_rag.shared import DocStatusRegistryError
 
 pytestmark = pytest.mark.integration
 
@@ -173,3 +177,131 @@ def test_large_document_write_ahead_spills_and_recovers(
     assert harness.state() == expected_state(R1)
     assert harness.registry_problems(R1) == []
     assert _overflow_keys(ddb_store) == []
+
+
+def test_diff_reports_overflow_without_a_pending_record(
+    ddb_store: DynamoDBDocStatusStore,
+) -> None:
+    fake = FakeDocStatusStore()
+    for store in (ddb_store, fake):
+        store.put(
+            DocStatusRecord(doc_id="done", content_hash="h", status=DocStatus.PROCESSED)
+        )
+        store.put(
+            DocStatusRecord(doc_id="busy", content_hash="pending", status="pending")
+        )
+        store.add_lineage_overflow(
+            [
+                DocumentLineage(doc_id=doc_id, entity_ids=["e"])
+                for doc_id in ("done", "busy", "gone")
+            ]
+        )
+    # Left by an interrupted commit (next to a committed record) or removal
+    # (no record); a PENDING record's overflow is part of its lineage.
+    assert ddb_store.diff({}).orphan_overflow == ["done", "gone"]
+    assert fake.diff({}).orphan_overflow == ["done", "gone"]
+
+
+def test_overflow_left_by_an_interrupted_commit_is_dropped_by_the_next_run(
+    ddb_store: DynamoDBDocStatusStore,
+) -> None:
+    harness = IncrementalRun(ddb_store)
+    harness.run(R0)
+    original = ddb_store.delete_lineage_overflow
+
+    def kill_at_commit(doc_ids):
+        if _big_id() in list(doc_ids):
+            raise Killed("overflow cleanup")
+        original(doc_ids)
+
+    ddb_store.delete_lineage_overflow = kill_at_commit  # type: ignore[method-assign]
+    try:
+        assert harness.run(R1)
+    finally:
+        ddb_store.delete_lineage_overflow = original  # type: ignore[method-assign]
+    assert _overflow_keys(ddb_store)
+
+    # big reads unchanged: only the diff's report of the overflow drops it.
+    harness.run(R1)
+    assert harness.extracted == []
+    assert _overflow_keys(ddb_store) == []
+    assert harness.state() == expected_state(R1)
+
+
+def test_overflow_parts_are_written_in_order(
+    ddb_store: DynamoDBDocStatusStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # DynamoDB may store any subset of a BatchWriteItem: here it never stores
+    # part 0. A part 1 stored without it would never be read or deleted.
+    monkeypatch.setattr(
+        "unified_kg_rag.adapters.aws.dynamodb.time.sleep", lambda _: None
+    )
+    batch_write = ddb_store.client.batch_write_item
+    part_zero = "d#pending#0"
+
+    def drop_part_zero(**kwargs):
+        requests = kwargs["RequestItems"][ddb_store.table_name]
+        zero = [
+            r for r in requests if r["PutRequest"]["Item"]["doc_id"]["S"] == part_zero
+        ]
+        rest = [r for r in requests if r not in zero]
+        if rest:
+            batch_write(RequestItems={ddb_store.table_name: rest})
+        return {"UnprocessedItems": {ddb_store.table_name: zero} if zero else {}}
+
+    monkeypatch.setattr(ddb_store.client, "batch_write_item", drop_part_zero)
+    with pytest.raises(DocStatusRegistryError):
+        ddb_store.add_lineage_overflow(
+            [DocumentLineage(doc_id="d", entity_ids=_ids("e", 12000))]
+        )
+
+    assert _overflow_keys(ddb_store) == []
+
+
+def _put_part(store: DynamoDBDocStatusStore, doc_id: str, part: int) -> None:
+    store.client.put_item(
+        TableName=store.table_name,
+        Item=_overflow_item(doc_id, part, {"entity_ids": [f"e-{part}"]}),
+    )
+
+
+@pytest.mark.parametrize("scan", [None, "diff", "list_all"])
+@pytest.mark.parametrize("parts", [[1], [1, 2], [0, 2], [9]])
+def test_deleting_overflow_removes_parts_after_a_gap(
+    ddb_store: DynamoDBDocStatusStore, scan: str | None, parts: list[int]
+) -> None:
+    # Gaps an append storing parts out of order left (before parts were
+    # written in order).
+    ddb_store.put(DocStatusRecord(doc_id="d", content_hash="h", status="processed"))
+    for part in parts:
+        _put_part(ddb_store, "d", part)
+    _put_part(ddb_store, "other", 0)
+    store = DynamoDBDocStatusStore(
+        ddb_store.config, boto_session=ddb_store.boto_session
+    )
+    if scan == "diff":
+        assert store.diff({}).orphan_overflow == ["d", "other"]
+    elif scan == "list_all":
+        store.list_all()
+    elif max(parts) >= 8:
+        pytest.skip("only a scan finds a part after a whole probe round's gap")
+
+    store.delete_lineage_overflow(["d"])
+
+    assert _overflow_keys(store) == ["other#pending#0"]
+
+
+def test_a_first_run_reads_no_overflow(ddb_store: DynamoDBDocStatusStore) -> None:
+    consistent: list[int] = []
+    batch_get = ddb_store.client.batch_get_item
+
+    def counting(**kwargs):
+        request = kwargs["RequestItems"][ddb_store.table_name]
+        if request.get("ConsistentRead"):
+            consistent.append(len(request["Keys"]))
+        return batch_get(**kwargs)
+
+    ddb_store.client.batch_get_item = counting  # type: ignore[method-assign]
+    IncrementalRun(ddb_store).run({"/c/a.txt": [[("Vendor", "Depot", 1)]]})
+
+    assert consistent == []

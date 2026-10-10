@@ -54,7 +54,10 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports import DocStatusPort
 from unified_kg_rag.shared import DataProcessingError, get_logger
-from unified_kg_rag.shared.utils.document_identity import RELATIVE_PATH_KEY
+from unified_kg_rag.shared.utils.document_identity import (
+    RELATIVE_PATH_KEY,
+    compute_doc_id,
+)
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
@@ -189,16 +192,39 @@ def _artifact_ids(record: DocStatusRecord | DocumentLineage) -> list[str]:
 _NamespaceKey = tuple[str, str | None]
 
 
-def _namespace_key(record: DocStatusRecord) -> _NamespaceKey:
+# The namespace of a record written before scopes existed whose legacy key
+# names none of the namespaces a removal plans for (see _namespace_key). No
+# scope's namespace contains a NUL.
+_OTHER_NAMESPACE = "\x00other"
+
+
+def _namespace_key(
+    record: DocStatusRecord, candidates: Collection[str] = ()
+) -> _NamespaceKey:
     """The removal-planning group of ``record``.
 
     ``record.suffix`` is the item suffix the indexers are called with
     (``index_value``, ``default`` when unset); the index namespace adds
     ``indexing.additional_suffix`` and is read from the record's scope (see
-    ``scope_namespace``). A record written before scopes existed has no known
-    namespace (``None``).
+    ``scope_namespace``).
+
+    A record written before scopes existed has no scope. With a
+    ``file_path`` it is keyed by its namespace and that path (the legacy key
+    ``compute_doc_id(file_path, namespace)``), so it is in the ``candidates``
+    namespace its key matches, or in another one (``_OTHER_NAMESPACE``) when
+    it matches none. Without a ``file_path`` (a record of the initial
+    release, keyed by the path alone) its namespace is unknown (``None``):
+    removal planning treats it as part of every namespace of its suffix
+    until a reset of the suffix clears it.
     """
-    return record.suffix, scope_namespace(record.scope)
+    if record.scope is not None:
+        return record.suffix, scope_namespace(record.scope)
+    if record.file_path is None:
+        return record.suffix, None
+    for candidate in candidates:
+        if record.doc_id == compute_doc_id(record.file_path, candidate):
+            return record.suffix, candidate
+    return record.suffix, _OTHER_NAMESPACE
 
 
 def _read_many(
@@ -369,10 +395,18 @@ class IncrementalIndexer:
         together) keeps the stored lineage in the record and the other
         planned ids in lineage overflow (``add_lineage_overflow``, written
         after the record and still before any store write), which a later
-        run reads back with the record and which the commit and the removal
-        of the document delete. A document whose planned lineage alone
+        run reads back with the record (only a stored PENDING record's is
+        read) and which the commit and the removal of the document delete. A document whose planned lineage alone
         cannot fit in a record raises :class:`DataProcessingError` here,
         before anything is written.
+
+        Overflow the diff found left over (``delta.orphan_overflow``: next to
+        a record that is not PENDING, after a commit or removal interrupted
+        before deleting it) is deleted first when its owner is a record of
+        the run's namespace (any record when the run has no scope) or a
+        document of this run, as re-read here. Overflow of another
+        namespace's owner, or of an owner whose record is gone, is left
+        alone.
 
         :meth:`commit` replaces the records with the real ones. A PENDING
         record has ``failure_count`` 0 and is never FAILED: an interruption is
@@ -385,22 +419,26 @@ class IncrementalIndexer:
         """
         planned = {lineage.doc_id: lineage for lineage in lineages}
         doc_ids = list(dict.fromkeys([*delta.to_process, *planned]))
+        if not doc_ids and not delta.orphan_overflow:
+            return
+        read = _read_many(self.doc_status, [*doc_ids, *delta.orphan_overflow])
+        self._collect_leftover_overflow(delta.orphan_overflow, read, set(doc_ids))
         if not doc_ids:
             return
-        stored = _read_many(self.doc_status, doc_ids)
+        stored = {doc_id: read[doc_id] for doc_id in doc_ids if doc_id in read}
         self._check_committable(stored, planned)
-        overflow = _read_overflow(self.doc_status, doc_ids)
         # Overflow belongs to a PENDING record (an interrupted run's): its ids
-        # are part of that record's lineage. Next to any other record, or
-        # none, it is left over from a commit or removal interrupted before
-        # deleting it, and is dropped before it can mix with this run's.
-        kept = {
-            doc_id: lineage
-            for doc_id, lineage in overflow.items()
-            if doc_id in stored and stored[doc_id].status is DocStatus.PENDING
-        }
-        _delete_overflow(
-            self.doc_status, [doc_id for doc_id in overflow if doc_id not in kept]
+        # are part of that record's lineage, so only those documents' is
+        # read. Next to any other record, or none, it is left over from a
+        # commit or removal interrupted before deleting it, and was collected
+        # above (delta.orphan_overflow).
+        kept = _read_overflow(
+            self.doc_status,
+            [
+                doc_id
+                for doc_id, record in stored.items()
+                if record.status is DocStatus.PENDING
+            ],
         )
         self._prior = {
             doc_id: (
@@ -442,6 +480,42 @@ class IncrementalIndexer:
                 else ""
             ),
         )
+
+    def _collect_leftover_overflow(
+        self,
+        owners: list[str],
+        records: dict[str, DocStatusRecord],
+        documents: set[str],
+    ) -> None:
+        """Delete the leftover overflow of ``owners`` this run may delete.
+
+        ``records`` are the owners' records as read now: an owner that
+        became PENDING since the diff has its overflow read with it. An
+        owner without a record is only this run's when it is one of its
+        ``documents`` (keyed in its namespace).
+        """
+        namespace = scope_namespace(self.scope)
+        leftover = []
+        for owner in owners:
+            record = records.get(owner)
+            if record is None:
+                if owner in documents:
+                    leftover.append(owner)
+                continue
+            if record.status is DocStatus.PENDING:
+                continue
+            if self.scope is None or (
+                namespace is not None
+                and _namespace_key(record, [namespace])[1] == namespace
+            ):
+                leftover.append(owner)
+        if leftover:
+            logger.info(
+                "Deleting the leftover lineage overflow of %d documents "
+                "(an interrupted commit or removal did not delete it)",
+                len(leftover),
+            )
+            _delete_overflow(self.doc_status, leftover)
 
     def _fit(
         self, full: DocStatusRecord, stored: DocStatusRecord | None
@@ -893,6 +967,7 @@ class IncrementalIndexer:
                 if r.status is DocStatus.PENDING and r.doc_id not in self._in_flight
             ],
         )
+        planned: list[DocStatusRecord] = []
         for record in records:
             if record.doc_id in overflow:
                 record = record.model_copy(
@@ -908,8 +983,24 @@ class IncrementalIndexer:
                 if prior is None:
                     continue
                 record = prior
-            key = _namespace_key(record)
+            planned.append(record)
+        # The namespaces a record without a scope is matched against (by its
+        # legacy key): the run's and those of the scoped records it removes.
+        candidates = {
+            namespace
+            for namespace in (
+                scope_namespace(self.scope),
+                *(scope_namespace(r.scope) for r in planned if r.doc_id in target),
+            )
+            if namespace is not None
+        }
+        for record in planned:
+            key = _namespace_key(record, sorted(candidates))
             if record.doc_id in target:
+                if key[1] == _OTHER_NAMESPACE:
+                    # Removed from a namespace none of the others names:
+                    # every survivor of its suffix retains for it.
+                    key = (key[0], None)
                 removing[key].append(record)
             else:
                 retained[key].update(_artifact_ids(record))
@@ -923,9 +1014,10 @@ class IncrementalIndexer:
                 for record in group
             ]
             # The ids a survivor of any removed record's namespace keeps. A
-            # record without a scope may belong to any namespace of its
-            # suffix: it retains for all of them, and all of them retain for
-            # it.
+            # record of an unknown namespace (see _namespace_key) may belong
+            # to any namespace of its suffix: it retains for all of them, and
+            # all of them retain for it. A record without a scope whose
+            # legacy key names another namespace retains for none of them.
             kept: set[str] = set()
             for key in removing:
                 if key[0] != suffix:
