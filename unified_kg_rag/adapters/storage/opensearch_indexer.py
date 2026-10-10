@@ -151,17 +151,23 @@ class OpenSearchIndexer(VectorIndexer):
                 for suffix in suffixes
             ]
 
-            index_patterns_to_delete = []
-            for prefix in prefixes:
-                for suffix in suffixes:
-                    if self.config.indexing.additional_suffix:
-                        pattern = f"{prefix}-{suffix}-{self.config.indexing.additional_suffix}-*"
-                    else:
-                        pattern = f"{prefix}-{suffix}-*"
-                    index_patterns_to_delete.append(pattern)
+            # Only this namespace's own indices (``<alias>-<timestamp>``), by
+            # exact name: ``<alias>-*`` also matches the indices of a sibling
+            # namespace (``default-x`` under ``default``, ``acme-eu`` under
+            # ``acme``).
+            indices_to_delete = sorted(
+                {
+                    name
+                    for alias in aliases_to_delete
+                    for name in self.opensearch_client.get_aliases_by_index(
+                        f"{alias}-*"
+                    )
+                    if self._index_timestamp(alias, name) is not None
+                }
+            )
 
-            if index_patterns_to_delete:
-                self.opensearch_client.delete_indices(index_patterns_to_delete)
+            if indices_to_delete:
+                self.opensearch_client.delete_indices(indices_to_delete)
 
             # Deleting an index drops its aliases. Only an alias still on an
             # index is deleted: deleting aliases none of which exists (a

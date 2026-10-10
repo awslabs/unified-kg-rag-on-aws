@@ -588,7 +588,46 @@ def test_full_reindex_keeps_one_index_per_alias(
         assert _vector_entity_count(indexer) == 3
     finally:
         indexer.clear([_SUFFIX])
+        # Another store's index: clear leaves it alone.
+        os_client.delete_indices([sibling])
         indexer.close()
+
+
+def test_clear_keeps_sibling_namespaces(local_config: Config) -> None:
+    # A reset of one namespace clears its stores only, though the index
+    # names of its suffix under an additional suffix, and of a suffix
+    # extending it, also match ``<alias>-*``.
+    config = local_config.model_copy(deep=True)
+    config.indexing.additional_suffix = None
+    with_x = config.model_copy(deep=True)
+    with_x.indexing.additional_suffix = "x"
+    tag = f"clr{uuid.uuid4().hex[:8]}"
+    # (item suffix, indexer): the cleared namespace, a suffix extending it,
+    # and the same suffix under an additional suffix.
+    stores = [
+        (suffix, OpenSearchIndexer(c, embedding_factory=HashingEmbeddingFactory()))
+        for suffix, c in ((tag, config), (f"{tag}-eu", config), (tag, with_x))
+    ]
+    cleared = stores[0][1]
+    try:
+        for suffix, indexer in stores:
+            entities = [
+                e.model_copy(update={"attributes": {"index": suffix}})
+                for e in _entities()
+            ]
+            assert indexer.index_entities(entities).failed_items == 0
+        assert cleared.clear([tag])
+
+        os_client = cleared.opensearch_client
+        prefix = config.indexing.opensearch.entities_index_prefix
+        assert not os_client.get_indices_by_alias(f"{prefix}-{tag}")
+        assert not os_client.get_aliases_by_index(f"{prefix}-{tag}-2*")
+        assert os_client.get_indices_by_alias(f"{prefix}-{tag}-eu")
+        assert os_client.get_indices_by_alias(f"{prefix}-{tag}-x")
+    finally:
+        for suffix, indexer in stores:
+            indexer.clear([suffix])
+            indexer.close()
 
 
 def test_clear_of_a_namespace_never_indexed_succeeds(local_config: Config) -> None:

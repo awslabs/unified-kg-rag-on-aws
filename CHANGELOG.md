@@ -579,6 +579,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   so the reset stopped with "Failed to clear existing data before
   indexing". Deleting an index drops its aliases; only an alias still on
   another index is now deleted (#PR).
+- `indexing.reset` no longer deletes the OpenSearch indices of other index
+  namespaces. Clearing a namespace deleted every index matching
+  `<prefix>-<suffix>[-<additional_suffix>]-*`, so a reset of `default`
+  without an additional suffix also deleted the indices of `default-x` and
+  of every suffix starting with `default-` (a reset of `acme` took
+  `acme-eu`), while their Neptune labels and registry records stayed. The
+  reset now deletes only the indices named `<alias>-<timestamp>` for the
+  namespace's own aliases (#PR).
 - An incremental run no longer fails on a large document whose old and new
   versions each fit one doc-status record but not together. The write-ahead
   `PENDING` record lists both lineages; for such a document (each version
