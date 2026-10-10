@@ -573,6 +573,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `file_path` under another `indexing.additional_suffix`'s legacy key lost
   the lineage of intact stores. Only a record without `file_path` is now
   cleared by its suffix (#PR).
+- `indexing.reset` no longer fails on an index namespace that was never
+  indexed. Clearing OpenSearch deleted the namespace's five aliases in one
+  request, which OpenSearch answers with a 404 when none of them exists,
+  so the reset stopped with "Failed to clear existing data before
+  indexing". Deleting an index drops its aliases; only an alias still on
+  another index is now deleted (#PR).
 - An incremental run no longer fails on a large document whose old and new
   versions each fit one doc-status record but not together. The write-ahead
   `PENDING` record lists both lineages; for such a document (each version

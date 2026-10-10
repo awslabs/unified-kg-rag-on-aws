@@ -591,6 +591,17 @@ def test_full_reindex_keeps_one_index_per_alias(
         indexer.close()
 
 
+def test_clear_of_a_namespace_never_indexed_succeeds(local_config: Config) -> None:
+    # A reset before a namespace's first run has no alias to delete.
+    config = local_config.model_copy(deep=True)
+    config.indexing.additional_suffix = f"new{uuid.uuid4().hex[:8]}"
+    indexer = OpenSearchIndexer(config, embedding_factory=HashingEmbeddingFactory())
+    try:
+        assert indexer.clear([_SUFFIX])
+    finally:
+        indexer.close()
+
+
 def _stored_texts(indexer: OpenSearchIndexer, config: Config) -> set[str]:
     client = indexer.opensearch_client.client
     alias = indexer._get_name(config.indexing.opensearch.text_units_index_prefix, None)

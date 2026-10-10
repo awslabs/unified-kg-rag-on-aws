@@ -160,13 +160,18 @@ class OpenSearchIndexer(VectorIndexer):
                         pattern = f"{prefix}-{suffix}-*"
                     index_patterns_to_delete.append(pattern)
 
-            if aliases_to_delete:
-                self.opensearch_client.delete_alias(
-                    index_names="_all", alias_names=aliases_to_delete
-                )
-
             if index_patterns_to_delete:
                 self.opensearch_client.delete_indices(index_patterns_to_delete)
+
+            # Deleting an index drops its aliases. Only an alias still on an
+            # index is deleted: deleting aliases none of which exists (a
+            # namespace never indexed, or a store it never wrote) is a 404.
+            for alias in aliases_to_delete:
+                remaining = self.opensearch_client.get_indices_by_alias(alias)
+                if remaining:
+                    self.opensearch_client.delete_alias(
+                        index_names=remaining, alias_names=[alias]
+                    )
 
             time.sleep(1)
             logger.info("Cleared OpenSearch indices for '%s'", aliases_to_delete)

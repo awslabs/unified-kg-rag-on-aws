@@ -69,6 +69,19 @@ class _FakeCluster:
         self.calls.append(("get_aliases_by_index", index_pattern))
         return {name: sorted(self.indices[name]) for name in self._match(index_pattern)}
 
+    def delete_alias(self, index_names, alias_names):
+        self.calls.append(("delete_alias", tuple(index_names), tuple(alias_names)))
+        targets = [
+            aliases
+            for name, aliases in self.indices.items()
+            if index_names == "_all" or name in index_names
+        ]
+        # OpenSearch answers 404 when none of the named aliases exists.
+        if not any(alias in aliases for aliases in targets for alias in alias_names):
+            raise RuntimeError("aliases_not_found_exception")
+        for aliases in targets:
+            aliases.difference_update(alias_names)
+
     def delete_indices(self, indices):
         self.calls.append(("delete_indices", tuple(indices)))
         for pattern in indices:
@@ -259,3 +272,25 @@ def test_create_index_failure_rolls_back(config) -> None:
     assert client.indices == {live: {_ALIAS}}
     assert "update_alias" not in _op_names(client.calls)
     assert stats.failed_items >= 1
+
+
+def test_clear_of_a_namespace_never_indexed_succeeds(config) -> None:
+    # No alias of the namespace exists: deleting them would be a 404 that
+    # failed the reset of a namespace before its first run.
+    client = _FakeCluster()
+    indexer = _indexer(config, client)
+
+    assert indexer.clear(["default"])
+    assert "delete_alias" not in _op_names(client.calls)
+
+
+def test_clear_of_some_stores_deletes_their_indices_and_aliases(config) -> None:
+    # Only the entities store was written; the other stores have no alias.
+    # An alias left on an index outside the naming scheme is deleted too.
+    live = f"{_ALIAS}-20260101000000"
+    client = _FakeCluster({live: {_ALIAS}, "manual-index": {_ALIAS}})
+    indexer = _indexer(config, client)
+
+    assert indexer.clear(["default"])
+
+    assert client.indices == {"manual-index": set()}
