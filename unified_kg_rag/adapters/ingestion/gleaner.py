@@ -22,6 +22,9 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     check_relationship_relevance_task,
 )
 from unified_kg_rag.domain.ingestion.entity_grounding import is_grounded
+from unified_kg_rag.domain.ingestion.relationship_endpoints import (
+    cite_relationship_endpoints,
+)
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
     sum_weights,
@@ -327,18 +330,10 @@ class GraphGleaner(BaseProcessor):
             len(new_relationships),
         )
 
-        merged_entities, entity_id_map = self._merge_duplicate_entities(
-            current_entities + new_entities
-        )
-        merged_relationships = self._update_relationships_after_merge(
+        merged_entities, merged_relationships = self._merge_round(
+            current_entities + new_entities,
             current_relationships + new_relationships,
-            {e.id for e in merged_entities},
-            entity_id_map,
         )
-        # Runs after every correction and the merge, so it sees the final id ->
-        # name mapping for the round; an ENTITY_CORRECTION rename or a merge that
-        # re-pointed an edge would otherwise leave the edge naming the old entity.
-        self._sync_relationship_endpoint_names(merged_relationships, merged_entities)
 
         # A unit gained when it proposed an entity the graph did not have, or a
         # relationship that survived the merge (which re-points it in place)
@@ -376,6 +371,41 @@ class GraphGleaner(BaseProcessor):
             processing_time=time.time() - round_start_time,
         )
         return merged_entities, merged_relationships, round_info, gained_unit_ids
+
+    @classmethod
+    def _merge_round(
+        cls,
+        entities: list[Entity],
+        relationships: list[Relationship],
+    ) -> tuple[list[Entity], list[Relationship]]:
+        """Merge a round's additions into the graph it was gleaned from.
+
+        Endpoints first cite their relationships' text units, as after
+        first-pass extraction (see :func:`cite_relationship_endpoints`): an
+        added edge naming an entity another chunk extracted makes that entity
+        cite this chunk, and one naming an entity no chunk listed adds it as a
+        stub. Otherwise the endpoint would not cite the chunk while the
+        document lineage still attributes it to the chunk's document, so
+        removing the entity's other documents would leave it citing nothing,
+        and the edge would depend on which documents shared the batch.
+        """
+        entities, stub_count = cite_relationship_endpoints(entities, relationships)
+        if stub_count:
+            logger.debug(
+                "Materialized %s entities referenced only by gleaned relationships",
+                stub_count,
+            )
+        merged_entities, entity_id_map = cls._merge_duplicate_entities(entities)
+        merged_relationships = cls._update_relationships_after_merge(
+            relationships,
+            {e.id for e in merged_entities},
+            entity_id_map,
+        )
+        # Runs after every correction and the merge, so it sees the final id ->
+        # name mapping for the round; an ENTITY_CORRECTION rename or a merge that
+        # re-pointed an edge would otherwise leave the edge naming the old entity.
+        cls._sync_relationship_endpoint_names(merged_relationships, merged_entities)
+        return merged_entities, merged_relationships
 
     def _perform_llm_refinement(
         self,

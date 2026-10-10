@@ -9,12 +9,14 @@ edges with the same text units and weights. Nothing the corpus no longer
 mentions may survive as an orphan.
 
 A document is a list of text units; a text unit lists a few synthetic entity
-names and a set of weighted edges between them. An edge endpoint the unit does
-not list is named only inside the edge, so an entity one document lists can be
-the endpoint of another document's edge. "Extraction" is deterministic: ids
-come from the same stable-id helpers the extractor uses, endpoints go through
-the extractor's own endpoint materialization over the whole batch, and a text
-unit's id depends on its document, position and content.
+names, a set of weighted edges between them, and a set of edges gleaning adds
+afterwards. An edge endpoint the unit does not list is named only inside the
+edge, so an entity one document lists can be the endpoint of another
+document's edge. "Extraction" is deterministic: ids come from the same
+stable-id helpers the extractor uses, endpoints go through the extractor's own
+endpoint materialization over the whole batch, then the gleaned edges go
+through the gleaner's own round merge, and a text unit's id depends on its
+document, position and content.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from hypothesis import strategies as st
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from unified_kg_rag.adapters.ingestion.gleaner import GraphGleaner
 from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
 from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
@@ -54,28 +57,29 @@ _NAMES = ["Vendor", "Depot", "Carrier", "Buyer"]
 _TYPE = "RELATED_TO"
 
 # Edge = (source name, target name, strength). A text unit = (the entity
-# names it lists, its edges); an endpoint it does not list is named only
-# inside the edge.
+# names it lists, its extracted edges, the edges gleaning adds); an endpoint
+# it does not list is named only inside the edge.
 _edge = st.tuples(
     st.sampled_from(_NAMES), st.sampled_from(_NAMES), st.integers(1, 3)
 ).filter(lambda e: e[0] != e[1])
 _edges = st.lists(_edge, max_size=3, unique_by=lambda e: (e[0], e[1]))
 _listed = st.lists(st.sampled_from(_NAMES), max_size=2, unique=True)
-_unit = st.tuples(_listed, _edges).filter(lambda u: u[0] or u[1])
+_unit = st.tuples(_listed, _edges, _edges).filter(lambda u: u[0] or u[1] or u[2])
 _content = st.lists(_unit, min_size=1, max_size=2)
 # One round: each path's content, or None when the file is absent.
 _round = st.fixed_dictionaries({path: st.none() | _content for path in _PATHS})
 
-Unit = tuple[list[str], list[tuple[str, str, int]]]
+Edge = tuple[str, str, int]
+Unit = tuple[list[str], list[Edge], list[Edge]]
 Content = list[Unit]
 
 _EXTRACTOR = GraphExtractor.__new__(GraphExtractor)
 
 
 def _unit_id(path: str, index: int, unit: Unit) -> str:
-    listed, edges = unit
+    listed, edges, gleaned = unit
     digest = hashlib.sha256(
-        f"{path}|{index}|{sorted(listed)}|{sorted(edges)}".encode()
+        f"{path}|{index}|{sorted(listed)}|{sorted(edges)}|{sorted(gleaned)}".encode()
     ).hexdigest()
     return f"tu-{digest[:16]}"
 
@@ -91,26 +95,45 @@ def _document(path: str, content: Content) -> Document:
     )
 
 
+def _edge(source: str, target: str, weights: dict[str, float]) -> Relationship:
+    edge = Relationship(
+        id=BaseProcessor._generate_relationship_id(source, target, _TYPE),
+        source_id=BaseProcessor._generate_entity_id(source),
+        target_id=BaseProcessor._generate_entity_id(target),
+        source_name=source,
+        target_name=target,
+        type=_TYPE,
+    )
+    apply_text_unit_weights(edge, weights)
+    return edge
+
+
 def _extract(corpus: dict[str, Content]):
     """Text units, entities and edges a build over ``corpus`` produces.
 
     An entity cites the units listing it; the extractor's endpoint
-    materialization then runs over the whole batch, as in a real build.
+    materialization then runs over the whole batch, as in a real build, and
+    the gleaned edges are merged in by the gleaner's round merge.
     """
     units: list[TextUnit] = []
     entity_units: dict[str, list[str]] = {}
     edge_weights: dict[tuple[str, str], list[dict[str, float]]] = {}
+    gleaned: list[Relationship] = []
     for path, content in corpus.items():
         for index, unit in enumerate(content):
             unit_id = _unit_id(path, index, unit)
             units.append(TextUnit(id=unit_id, text="...", document_ids=[path]))
-            listed, unit_edges = unit
+            listed, unit_edges, unit_gleaned = unit
             for name in listed:
                 entity_units.setdefault(name, []).append(unit_id)
             for source, target, strength in unit_edges:
                 edge_weights.setdefault((source, target), []).append(
                     {unit_id: float(strength)}
                 )
+            gleaned += [
+                _edge(source, target, {unit_id: float(strength)})
+                for source, target, strength in unit_gleaned
+            ]
     entities = [
         Entity(
             id=BaseProcessor._generate_entity_id(name),
@@ -120,19 +143,13 @@ def _extract(corpus: dict[str, Content]):
         )
         for name, cited in entity_units.items()
     ]
-    edges = []
-    for (source, target), weights in edge_weights.items():
-        edge = Relationship(
-            id=BaseProcessor._generate_relationship_id(source, target, _TYPE),
-            source_id=BaseProcessor._generate_entity_id(source),
-            target_id=BaseProcessor._generate_entity_id(target),
-            source_name=source,
-            target_name=target,
-            type=_TYPE,
-        )
-        apply_text_unit_weights(edge, sum_weights(weights))
-        edges.append(edge)
+    edges = [
+        _edge(source, target, sum_weights(weights))
+        for (source, target), weights in edge_weights.items()
+    ]
     entities = _EXTRACTOR._materialize_relationship_endpoints(entities, edges)
+    if gleaned:
+        entities, edges = GraphGleaner._merge_round(entities, edges + gleaned)
     return units, entities, edges
 
 
@@ -199,13 +216,28 @@ def _run(inc: IncrementalIndexer, corpus: dict[str, Content]) -> None:
 @example(
     rounds=[
         {
-            _PATHS[0]: [(["Vendor", "Buyer"], [("Vendor", "Buyer", 1)])],
-            _PATHS[1]: [(["Depot"], [("Vendor", "Depot", 2)])],
+            _PATHS[0]: [(["Vendor", "Buyer"], [("Vendor", "Buyer", 1)], [])],
+            _PATHS[1]: [(["Depot"], [("Vendor", "Depot", 2)], [])],
             _PATHS[2]: None,
         },
         {
             _PATHS[0]: None,
-            _PATHS[1]: [(["Depot"], [("Vendor", "Depot", 2)])],
+            _PATHS[1]: [(["Depot"], [("Vendor", "Depot", 2)], [])],
+            _PATHS[2]: None,
+        },
+    ]
+)
+# The same, but gleaning (not extraction) adds b.txt's Vendor -> Depot edge.
+@example(
+    rounds=[
+        {
+            _PATHS[0]: [(["Vendor"], [], [])],
+            _PATHS[1]: [(["Depot"], [], [("Vendor", "Depot", 2)])],
+            _PATHS[2]: None,
+        },
+        {
+            _PATHS[0]: None,
+            _PATHS[1]: [(["Depot"], [], [("Vendor", "Depot", 2)])],
             _PATHS[2]: None,
         },
     ]

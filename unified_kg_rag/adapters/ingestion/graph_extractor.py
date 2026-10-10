@@ -16,6 +16,9 @@ from unified_kg_rag.adapters.aws.chain_factory import (
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.entity_grounding import is_grounded
+from unified_kg_rag.domain.ingestion.relationship_endpoints import (
+    cite_relationship_endpoints,
+)
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
     sum_weights,
@@ -92,6 +95,12 @@ class ExtractionStats(BaseModel):
         description="Number of relationships dropped because an endpoint entity "
         "was dropped by the grounding guard in the same chunk (otherwise the "
         "relationship would recreate the hallucinated entity as a stub)",
+    )
+    relationships_dropped_ungrounded_unlisted_endpoint: int = Field(
+        default=0,
+        description="Number of ungrounded relationships dropped in 'penalize' "
+        "mode because their chunk did not extract one of their endpoints "
+        "(keeping them would make that entity cite the chunk)",
     )
 
     @property
@@ -390,7 +399,9 @@ class GraphExtractor(BaseProcessor):
         relationships = self._drop_relationships_to_dropped_entities(
             relationships, dropped_keys, text_unit
         )
-        relationships = self._apply_relationship_grounding(relationships, text_unit)
+        relationships = self._apply_relationship_grounding(
+            relationships, text_unit, {e.id for e in entities}
+        )
 
         return entities, relationships
 
@@ -580,7 +591,10 @@ class GraphExtractor(BaseProcessor):
         return kept
 
     def _apply_relationship_grounding(
-        self, relationships: list[Relationship], text_unit: TextUnit
+        self,
+        relationships: list[Relationship],
+        text_unit: TextUnit,
+        chunk_entity_ids: set[str],
     ) -> list[Relationship]:
         """Drop or weight-penalize relationships not grounded in their chunk.
 
@@ -588,6 +602,17 @@ class GraphExtractor(BaseProcessor):
         the verbatim evidence span (stripped here). In ``penalize`` mode the
         relationship weight (not confidence — relationships have no confidence)
         is scaled by ``penalty_factor``. No-op when grounding is disabled.
+
+        ``penalize`` keeps an ungrounded relationship only when the chunk
+        extracted both endpoints (``chunk_entity_ids``), which therefore cite
+        the chunk already. Every kept relationship makes its endpoints cite
+        its chunk (see :func:`cite_relationship_endpoints`), so keeping one
+        that names an entity the chunk did not list would make that entity,
+        possibly well grounded elsewhere, cite a chunk with no evidence for it.
+        Exempting ungrounded edges from the citation instead would make the
+        entity's text units depend on the batch (a stub when no other chunk
+        lists it, nothing otherwise), which incremental removal cannot
+        reproduce, so such a relationship is dropped.
         """
         grounding = self.extraction_config.entity_grounding
         chunk_text = self.get_text_for_processing(text_unit)
@@ -607,7 +632,23 @@ class GraphExtractor(BaseProcessor):
                 continue
 
             self.stats.relationships_ungrounded += 1
-            if grounding.action == "penalize":
+            if (
+                grounding.action == "penalize"
+                and not {
+                    rel.source_id,
+                    rel.target_id,
+                }
+                <= chunk_entity_ids
+            ):
+                self.stats.relationships_dropped_ungrounded_unlisted_endpoint += 1
+                logger.info(
+                    "Dropping ungrounded relationship '%s -> %s' — it names an "
+                    "entity chunk '%s' did not extract",
+                    rel.source_name,
+                    rel.target_name,
+                    text_unit.short_id,
+                )
+            elif grounding.action == "penalize":
                 rel.weight = (rel.weight or 1.0) * grounding.penalty_factor
                 kept.append(rel)
                 logger.debug(
@@ -635,51 +676,15 @@ class GraphExtractor(BaseProcessor):
     ) -> list[Entity]:
         """Make every relationship endpoint an entity citing the edge's text units.
 
-        Endpoint ids are name-derived, so when the LLM references an entity only
-        inside a relationship (or it was extracted in another chunk) we add a
-        minimal entity for it rather than letting graph_builder drop the edge.
-
-        Every endpoint, extracted or stub, also cites the text units of each
-        relationship it is an endpoint of: a chunk that names an entity in a
-        relationship mentions it. This keeps an entity's text units independent
-        of which chunks share an extraction batch, so an incremental run (a
-        smaller batch, merged into the graph) cites the same text units as a
-        full build, and removing a document strips an entity down to exactly
-        the text units of the surviving documents that mention it.
+        See :func:`cite_relationship_endpoints`; gleaning and graph resolution
+        apply the same step to the relationships they see.
         """
-        cited: dict[str, list[str]] = {
-            e.id: list(e.text_unit_ids or []) for e in entities
-        }
-        stubs: dict[str, Entity] = {}
-        for rel in relationships:
-            for ent_id, name in (
-                (rel.source_id, rel.source_name),
-                (rel.target_id, rel.target_name),
-            ):
-                if not ent_id:
-                    continue
-                if ent_id not in cited:
-                    if not name:
-                        continue
-                    stubs[ent_id] = Entity.model_validate(
-                        {"id": ent_id, "name": name, "text_unit_ids": []}
-                    )
-                    cited[ent_id] = []
-                units = cited[ent_id]
-                units.extend(t for t in rel.text_unit_ids or [] if t not in units)
-        if stubs:
+        result, stub_count = cite_relationship_endpoints(entities, relationships)
+        if stub_count:
             logger.info(
                 "Materialized %s entities referenced only by relationships",
-                len(stubs),
+                stub_count,
             )
-        result = []
-        for entity in [*entities, *stubs.values()]:
-            units = cited[entity.id]
-            if units != (entity.text_unit_ids or []):
-                entity = entity.model_copy(
-                    update={"text_unit_ids": units, "frequency": len(units)}
-                )
-            result.append(entity)
         return result
 
     def _filter_orphan_relationships(
@@ -748,10 +753,12 @@ class GraphExtractor(BaseProcessor):
             logger.info(
                 "Grounding guard - Entities ungrounded: %s, Relationships "
                 "ungrounded: %s, Relationships dropped with an ungrounded "
-                "endpoint: %s",
+                "endpoint: %s, Ungrounded relationships dropped naming an "
+                "unlisted entity: %s",
                 stats.entities_ungrounded,
                 stats.relationships_ungrounded,
                 stats.relationships_dropped_ungrounded_endpoint,
+                stats.relationships_dropped_ungrounded_unlisted_endpoint,
             )
 
         if stats.num_failed_extractions > 0:
