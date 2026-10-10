@@ -1505,22 +1505,22 @@ class IndexingStage(PipelineStage):
         """Whether a reset of ``namespaces`` (item ``suffixes``) clears ``record``.
 
         A scoped record belongs to its scope's namespace. A record without a
-        scope was written before scopes existed, when a suffix had a single
-        namespace: it is cleared with its suffix, whatever its key (the
-        initial release keyed records by the file path alone and stored no
-        ``file_path``). Kept scope-less, removal planning would treat it as a
-        survivor in every namespace of its suffix and never delete the
-        entities it lists.
+        scope that stores its ``file_path`` belongs to the namespace whose
+        legacy key ``compute_doc_id(file_path, namespace)`` is its key (even
+        if its ``suffix`` field does not match), so a reset of one namespace
+        keeps such a record of another namespace on the same suffix. A record
+        without a scope or ``file_path`` (the initial release, keyed by the
+        file path alone) names no namespace: it is cleared with its suffix,
+        since removal planning treats it as a survivor in every namespace of
+        its suffix and would otherwise never delete the entities it lists.
         """
         from unified_kg_rag.shared.utils.document_identity import compute_doc_id
 
         if record.scope is not None:
             return scope_namespace(record.scope) in namespaces
-        if record.suffix in suffixes:
-            return True
-        # A legacy namespace key names its namespace even if the record's
-        # suffix field does not match.
-        return record.file_path is not None and any(
+        if record.file_path is None:
+            return record.suffix in suffixes
+        return any(
             record.doc_id == compute_doc_id(record.file_path, namespace)
             for namespace in namespaces
         )
@@ -1532,10 +1532,10 @@ class IndexingStage(PipelineStage):
 
         Only the namespaces whose stores the reset cleared: other index
         suffixes sharing the table keep their records, which still describe
-        their intact stores. A record written before scopes existed has no
-        scope; it is cleared when its suffix is one of the cleared
-        ``suffixes`` or its key is a cleared namespace's legacy key for its
-        file (see ``_record_in_namespaces``), else it is kept.
+        their intact stores. A record without a scope is cleared when its key
+        is a cleared namespace's legacy key for its ``file_path``, or, with no
+        ``file_path``, when its suffix is one of the cleared ``suffixes`` (see
+        ``_record_in_namespaces``); else it is kept.
 
         Uses the port's list_all + delete so no new port method is needed.
         Best-effort: a registry-clear failure should not abort the reset run

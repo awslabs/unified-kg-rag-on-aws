@@ -274,3 +274,54 @@ def test_reset_clears_initial_release_records_of_cleared_suffixes(mocker) -> Non
     (removal,) = inc._plan_removal([document_doc_id(a)]).values()
     assert vendor in removal.exclusive_ids
     assert removal.shared_entity_ids == []
+
+
+def test_reset_keeps_scopeless_records_of_another_namespace_of_the_suffix(
+    mocker,
+) -> None:
+    a = _doc("/a.txt", "Vendor ships.")
+    store = FakeDocStatusStore()
+    # Written before scopes existed under the legacy key of another
+    # additional_suffix on the same item suffix: that namespace's stores are
+    # intact, so its record stays.
+    other_namespace = DocStatusRecord(
+        doc_id=compute_doc_id("keep.txt", "default-y"),
+        content_hash="h",
+        suffix="default",
+        file_path="keep.txt",
+        entity_ids=["e-kept"],
+    )
+    # The same era under the cleared namespace's legacy key: cleared.
+    cleared = DocStatusRecord(
+        doc_id=compute_doc_id("gone.txt", "default-x"),
+        content_hash="h",
+        suffix="default",
+        file_path="gone.txt",
+    )
+    # No file_path (initial release): no namespace, cleared with its suffix.
+    initial_release = DocStatusRecord(
+        doc_id=compute_hash("old.txt", algorithm="sha256", length=32),
+        content_hash="h",
+        suffix="default",
+    )
+    for record in (other_namespace, cleared, initial_release):
+        store.put(record)
+    config = _reset_config()
+    config.indexing.additional_suffix = "x"
+    stage = _reset_stage(mocker, config, store)
+
+    context = _context()
+    context.documents, _ = _loading_stage(config, store)._apply_incremental_filter(
+        [a], context
+    )
+    context.text_units = [
+        TextUnit(id="tu-a", text="Vendor ships.", document_ids=[a.document_id])
+    ]
+
+    stage._execute_core(context)
+
+    records = {r.doc_id: r for r in store.list_all()}
+    assert records[other_namespace.doc_id] == other_namespace
+    assert cleared.doc_id not in records
+    assert initial_release.doc_id not in records
+    assert document_doc_id(a) in records

@@ -516,8 +516,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   record without a scope as a survivor in every namespace of its suffix, so
   an entity such a record listed was never deleted again, only stripped of
   its text units. A reset now also deletes every record without a scope
-  whose `suffix` is one of the cleared suffixes: such records come from the
-  era of one namespace per suffix (#197).
+  and without `file_path` whose `suffix` is one of the cleared suffixes:
+  such a record names no namespace, so it counts as a survivor in every
+  namespace of its suffix. A record without a scope that stores its
+  `file_path` is still cleared only when its key is a cleared namespace's
+  legacy key, so a reset keeps another namespace's records on the same
+  suffix (#197).
 - Deleting a document of one index namespace no longer leaves its entities
   in the stores, without text units, because a registry record of another
   namespace on the same item suffix (another `indexing.additional_suffix`)
@@ -562,6 +566,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   when its key is the legacy key of the run's namespace or of one a scope
   in the registry names; any other counts as a survivor in every
   namespace of its suffix (#PR).
+- `indexing.reset` on one index namespace no longer deletes the doc-status
+  records without a scope of another namespace on the same item suffix.
+  Since #197 a reset cleared every record without a scope whose `suffix`
+  was a cleared suffix before checking its key, so a record stored with its
+  `file_path` under another `indexing.additional_suffix`'s legacy key lost
+  the lineage of intact stores. Only a record without `file_path` is now
+  cleared by its suffix (#PR).
 - An incremental run no longer fails on a large document whose old and new
   versions each fit one doc-status record but not together. The write-ahead
   `PENDING` record lists both lineages; for such a document (each version
