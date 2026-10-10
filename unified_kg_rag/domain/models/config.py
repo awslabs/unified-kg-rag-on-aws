@@ -878,7 +878,10 @@ class EntityGroundingConfig(BaseModel):
         pattern="^(drop|penalize)$",
         description="What to do with an ungrounded entity: 'drop' removes it; "
         "'penalize' multiplies its confidence by penalty_factor so the "
-        "confidence threshold can filter it without hard deletion.",
+        "confidence threshold can filter it without hard deletion. An "
+        "ungrounded relationship is likewise dropped, or kept at its weight "
+        "times penalty_factor; 'penalize' still drops one naming an entity its "
+        "chunk did not extract, which it would otherwise make cite the chunk.",
     )
     penalty_factor: float = Field(
         default=0.5,

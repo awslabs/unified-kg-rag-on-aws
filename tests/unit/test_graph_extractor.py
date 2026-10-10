@@ -827,6 +827,74 @@ class TestRelationshipGrounding:
         for r in rels:
             assert "_source_text" not in (r.attributes or {})
 
+    def test_penalize_drops_ungrounded_edge_naming_an_unlisted_entity(
+        self, extractor, text_unit
+    ) -> None:
+        g = extractor.extraction_config.entity_grounding
+        g.enabled = True
+        g.action = "penalize"
+        # t0 lists Acme Corp with a grounded span; t1 lists Alice and an
+        # ungrounded edge to Acme Corp, which t1 does not list.
+        acme_unit = TextUnit(id="t0", text="Acme Corp is a Vendor of parts.")
+        acme = {
+            "entities": [
+                {
+                    "name": "Acme Corp",
+                    "type": "ORG",
+                    "source_text": "Acme Corp is a Vendor of parts.",
+                }
+            ]
+        }
+        result = self._result()
+        result["entities"] = result["entities"][:1]
+        result["relationships"].append(
+            {
+                "source": "Alice",
+                "target": "Alice's Garage",
+                "type": "OWNS",
+                "strength": 5,
+                "source_text": "Alice owns a garage with three bays downtown.",
+            }
+        )
+        entities, rels = extractor._process_extraction_results(
+            [acme_unit, text_unit], [acme, result]
+        )
+        by_name = {e.name: e for e in entities}
+        # The grounded WORKS_AT edge still makes Acme Corp cite t1. The
+        # ungrounded FOUNDED edge to it and OWNS (whose target no chunk lists)
+        # are dropped rather than penalized.
+        assert {r.type for r in rels} == {"WORKS_AT"}
+        assert set(by_name["Acme Corp"].text_unit_ids) == {"t0", "t1"}
+        assert "Alice's Garage" not in by_name
+        assert extractor.stats.relationships_ungrounded == 2
+        assert extractor.stats.relationships_dropped_ungrounded_unlisted_endpoint == 2
+
+    def test_penalize_never_cites_a_chunk_through_an_ungrounded_edge(
+        self, extractor, text_unit
+    ) -> None:
+        g = extractor.extraction_config.entity_grounding
+        g.enabled = True
+        g.action = "penalize"
+        acme_unit = TextUnit(id="t0", text="Acme Corp is a Vendor of parts.")
+        acme = {
+            "entities": [
+                {
+                    "name": "Acme Corp",
+                    "type": "ORG",
+                    "source_text": "Acme Corp is a Vendor of parts.",
+                }
+            ]
+        }
+        result = self._result()
+        result["entities"] = result["entities"][:1]
+        result["relationships"] = result["relationships"][1:]  # FOUNDED only
+        entities, rels = extractor._process_extraction_results(
+            [acme_unit, text_unit], [acme, result]
+        )
+        by_name = {e.name: e for e in entities}
+        assert rels == []
+        assert by_name["Acme Corp"].text_unit_ids == ["t0"]
+
 
 # --------------------------------------------------------------------------- #
 # A relationship must not resurrect an entity dropped by the grounding guard

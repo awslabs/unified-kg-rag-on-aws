@@ -96,6 +96,12 @@ class ExtractionStats(BaseModel):
         "was dropped by the grounding guard in the same chunk (otherwise the "
         "relationship would recreate the hallucinated entity as a stub)",
     )
+    relationships_dropped_ungrounded_unlisted_endpoint: int = Field(
+        default=0,
+        description="Number of ungrounded relationships dropped in 'penalize' "
+        "mode because their chunk did not extract one of their endpoints "
+        "(keeping them would make that entity cite the chunk)",
+    )
 
     @property
     def processed_unit_count(self) -> int:
@@ -393,7 +399,9 @@ class GraphExtractor(BaseProcessor):
         relationships = self._drop_relationships_to_dropped_entities(
             relationships, dropped_keys, text_unit
         )
-        relationships = self._apply_relationship_grounding(relationships, text_unit)
+        relationships = self._apply_relationship_grounding(
+            relationships, text_unit, {e.id for e in entities}
+        )
 
         return entities, relationships
 
@@ -583,7 +591,10 @@ class GraphExtractor(BaseProcessor):
         return kept
 
     def _apply_relationship_grounding(
-        self, relationships: list[Relationship], text_unit: TextUnit
+        self,
+        relationships: list[Relationship],
+        text_unit: TextUnit,
+        chunk_entity_ids: set[str],
     ) -> list[Relationship]:
         """Drop or weight-penalize relationships not grounded in their chunk.
 
@@ -591,6 +602,17 @@ class GraphExtractor(BaseProcessor):
         the verbatim evidence span (stripped here). In ``penalize`` mode the
         relationship weight (not confidence — relationships have no confidence)
         is scaled by ``penalty_factor``. No-op when grounding is disabled.
+
+        ``penalize`` keeps an ungrounded relationship only when the chunk
+        extracted both endpoints (``chunk_entity_ids``), which therefore cite
+        the chunk already. Every kept relationship makes its endpoints cite
+        its chunk (see :func:`cite_relationship_endpoints`), so keeping one
+        that names an entity the chunk did not list would make that entity,
+        possibly well grounded elsewhere, cite a chunk with no evidence for it.
+        Exempting ungrounded edges from the citation instead would make the
+        entity's text units depend on the batch (a stub when no other chunk
+        lists it, nothing otherwise), which incremental removal cannot
+        reproduce, so such a relationship is dropped.
         """
         grounding = self.extraction_config.entity_grounding
         chunk_text = self.get_text_for_processing(text_unit)
@@ -610,7 +632,23 @@ class GraphExtractor(BaseProcessor):
                 continue
 
             self.stats.relationships_ungrounded += 1
-            if grounding.action == "penalize":
+            if (
+                grounding.action == "penalize"
+                and not {
+                    rel.source_id,
+                    rel.target_id,
+                }
+                <= chunk_entity_ids
+            ):
+                self.stats.relationships_dropped_ungrounded_unlisted_endpoint += 1
+                logger.info(
+                    "Dropping ungrounded relationship '%s -> %s' — it names an "
+                    "entity chunk '%s' did not extract",
+                    rel.source_name,
+                    rel.target_name,
+                    text_unit.short_id,
+                )
+            elif grounding.action == "penalize":
                 rel.weight = (rel.weight or 1.0) * grounding.penalty_factor
                 kept.append(rel)
                 logger.debug(
@@ -715,10 +753,12 @@ class GraphExtractor(BaseProcessor):
             logger.info(
                 "Grounding guard - Entities ungrounded: %s, Relationships "
                 "ungrounded: %s, Relationships dropped with an ungrounded "
-                "endpoint: %s",
+                "endpoint: %s, Ungrounded relationships dropped naming an "
+                "unlisted entity: %s",
                 stats.entities_ungrounded,
                 stats.relationships_ungrounded,
                 stats.relationships_dropped_ungrounded_endpoint,
+                stats.relationships_dropped_ungrounded_unlisted_endpoint,
             )
 
         if stats.num_failed_extractions > 0:

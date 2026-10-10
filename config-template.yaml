@@ -294,7 +294,7 @@ processing:
     # but it is the defense against corpus-absent entities polluting the index.
     entity_grounding:
       enabled: false
-      action: "drop" # "drop" removes ungrounded entities; "penalize" scales confidence
+      action: "drop" # "drop" removes ungrounded entities/relationships; "penalize" scales confidence/weight (an ungrounded relationship naming an entity its chunk did not extract is still dropped)
       penalty_factor: 0.5 # confidence multiplier when action == "penalize"
       min_span_tokens: 4 # spans shorter than this are treated as grounded (too short to judge); a Han/Hangul/Kana character counts as one token
       min_overlap_ratio: 0.6 # non-verbatim spans need this token-overlap fraction to count as grounded

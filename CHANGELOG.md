@@ -486,6 +486,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   documents share a batch. Graph resolution applies the same step to its
   input, so resuming from an extraction or gleaning output cached before
   this fix also cites the endpoints (#PR).
+- With `entity_grounding.action: penalize`, an ungrounded relationship naming
+  an entity its chunk did not extract is now dropped (counted in
+  `relationships_dropped_ungrounded_unlisted_endpoint`) instead of kept at
+  the penalized weight. Since every relationship endpoint cites the
+  relationship's text units, keeping it made that entity, possibly well
+  grounded in other chunks, cite a chunk with no evidence for it. An
+  ungrounded relationship between two entities its chunk extracted is still
+  kept at the penalized weight; its endpoints cite that chunk already (#PR).
 - Deleting or changing a document no longer deletes a relationship a
   surviving document still lists. When one document extracted an entity and
   another named it only as the endpoint of its relationship in the same run,
