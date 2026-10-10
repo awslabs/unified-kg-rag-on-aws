@@ -13,6 +13,9 @@ from unified_kg_rag.domain.ingestion.base_resolver import (
     FuzzyMatcher,
     normalize_entity_type,
 )
+from unified_kg_rag.domain.ingestion.relationship_endpoints import (
+    cite_relationship_endpoints,
+)
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
     sum_weights,
@@ -514,6 +517,11 @@ class GraphResolver:
             len(entities),
             len(relationships),
         )
+
+        # Every producer (extraction, gleaning) already does this; repeating it
+        # here (idempotent) makes it hold for whatever reaches resolution, e.g.
+        # an extraction or gleaning output cached before the rule existed.
+        entities, _ = cite_relationship_endpoints(entities, relationships)
 
         (
             resolved_entities,

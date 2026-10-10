@@ -474,6 +474,18 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- Relationships gleaning adds now make their endpoints cite the gleaned text
+  unit, as first-pass extraction does. Before, an entity one document
+  extracted kept citing only its own text units when gleaning another
+  document's chunk added an edge to it, while the document lineage
+  attributed it to both documents: deleting the first document kept the
+  entity but stripped it to no text units (`frequency` 0) in Neptune and
+  OpenSearch, where local search still retrieved it. A gleaned edge naming an
+  entity the batch did not extract now adds it as a stub citing the gleaned
+  unit instead of being dropped, so gleaning no longer depends on which
+  documents share a batch. Graph resolution applies the same step to its
+  input, so resuming from an extraction or gleaning output cached before
+  this fix also cites the endpoints (#PR).
 - Deleting or changing a document no longer deletes a relationship a
   surviving document still lists. When one document extracted an entity and
   another named it only as the endpoint of its relationship in the same run,

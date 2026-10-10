@@ -16,6 +16,9 @@ from unified_kg_rag.adapters.aws.chain_factory import (
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.entity_grounding import is_grounded
+from unified_kg_rag.domain.ingestion.relationship_endpoints import (
+    cite_relationship_endpoints,
+)
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
     sum_weights,
@@ -635,51 +638,15 @@ class GraphExtractor(BaseProcessor):
     ) -> list[Entity]:
         """Make every relationship endpoint an entity citing the edge's text units.
 
-        Endpoint ids are name-derived, so when the LLM references an entity only
-        inside a relationship (or it was extracted in another chunk) we add a
-        minimal entity for it rather than letting graph_builder drop the edge.
-
-        Every endpoint, extracted or stub, also cites the text units of each
-        relationship it is an endpoint of: a chunk that names an entity in a
-        relationship mentions it. This keeps an entity's text units independent
-        of which chunks share an extraction batch, so an incremental run (a
-        smaller batch, merged into the graph) cites the same text units as a
-        full build, and removing a document strips an entity down to exactly
-        the text units of the surviving documents that mention it.
+        See :func:`cite_relationship_endpoints`; gleaning and graph resolution
+        apply the same step to the relationships they see.
         """
-        cited: dict[str, list[str]] = {
-            e.id: list(e.text_unit_ids or []) for e in entities
-        }
-        stubs: dict[str, Entity] = {}
-        for rel in relationships:
-            for ent_id, name in (
-                (rel.source_id, rel.source_name),
-                (rel.target_id, rel.target_name),
-            ):
-                if not ent_id:
-                    continue
-                if ent_id not in cited:
-                    if not name:
-                        continue
-                    stubs[ent_id] = Entity.model_validate(
-                        {"id": ent_id, "name": name, "text_unit_ids": []}
-                    )
-                    cited[ent_id] = []
-                units = cited[ent_id]
-                units.extend(t for t in rel.text_unit_ids or [] if t not in units)
-        if stubs:
+        result, stub_count = cite_relationship_endpoints(entities, relationships)
+        if stub_count:
             logger.info(
                 "Materialized %s entities referenced only by relationships",
-                len(stubs),
+                stub_count,
             )
-        result = []
-        for entity in [*entities, *stubs.values()]:
-            units = cited[entity.id]
-            if units != (entity.text_unit_ids or []):
-                entity = entity.model_copy(
-                    update={"text_unit_ids": units, "frequency": len(units)}
-                )
-            result.append(entity)
         return result
 
     def _filter_orphan_relationships(
