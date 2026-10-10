@@ -488,11 +488,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   relationship's endpoints to the relationship's documents. Entity
   `frequency` counts these text units. Registry records written before keep
   the old lineage until their document is re-indexed or the stores are
-  rebuilt (`indexing.reset: true`) (#PR).
+  rebuilt (`indexing.reset: true`) (#200).
 - Operations guide: a direct-API record without a scope that stores a
   `file_path` under a caller's own `doc_id` survives every reset; the guide
   now says so and how to delete such records through the doc-status store
-  (#PR).
+  (#200).
 - A configured `document_parsing.source_scope` that is a local path with a
   trailing or repeated slash (`/mnt/corpus/`) can now be retired. The scope
   is stored as given, but `indexing.retire_source_scopes` normalized the
