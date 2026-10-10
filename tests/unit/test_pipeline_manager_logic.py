@@ -474,9 +474,11 @@ def test_validate_integrity_passes_when_all_cache_present(tmp_path) -> None:
     state.save_pipeline_metadata(
         _context("pid", [_stage_result("graph_extraction", "completed")])
     )
-    # graph_extraction maps to context attrs "entities" + "relationships".
+    # graph_extraction maps to context attrs "entities", "relationships" and
+    # "rejected_entities".
     cache.store[_key("entities", "graph_extraction")] = [Entity(id="e1", name="A")]
     cache.store[_key("relationships", "graph_extraction")] = []
+    cache.store[_key("rejected_entities", "graph_extraction")] = []
     resume = PipelineResumeManager(state)
 
     ok, errors = resume.validate_pipeline_integrity("pid")
@@ -551,15 +553,17 @@ def test_resume_after_gleaning_restores_gleaned_relationships(tmp_path) -> None:
     # both lists, and a resume must restore the gleaned relationships rather
     # than fall back to extraction's (which would drop the gleaned edges).
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
-    from unified_kg_rag.domain.models import Relationship
+    from unified_kg_rag.domain.models import RejectedEntity, Relationship
 
     extracted = [Relationship(id="r1", source_id="e1", target_id="e2")]
+    rejected = [RejectedEntity(text_unit_id="t1", entity_key="x", reason="ungrounded")]
     gleaned = extracted + [Relationship(id="r2", source_id="e2", target_id="e3")]
     entities = [Entity(id=f"e{i}", name=f"Vendor {i}") for i in (1, 2, 3)]
     produced = {
         PipelineStageType.GRAPH_EXTRACTION: {
             "entities": entities,
             "relationships": extracted,
+            "rejected_entities": rejected,
         },
         PipelineStageType.GLEANING: {"entities": entities, "relationships": gleaned},
     }
@@ -584,3 +588,4 @@ def test_resume_after_gleaning_restores_gleaned_relationships(tmp_path) -> None:
         "pid", ["graph_extraction", "gleaning"]
     )
     assert [r.id for r in context.relationships] == ["r1", "r2"]
+    assert context.rejected_entities == rejected

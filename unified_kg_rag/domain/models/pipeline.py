@@ -13,7 +13,7 @@ from .community_report import CommunityReport
 from .config import PipelineConfig
 from .covariate import Claim
 from .document import Document, DocumentDelta
-from .entity import Entity
+from .entity import Entity, RejectedEntity
 from .relationship import Relationship
 from .text_unit import TextUnit
 
@@ -168,6 +168,11 @@ class PipelineContext(BaseModel):
     )
     relationships: "list[Relationship]" = Field(
         default_factory=list, description="Relationships extracted between entities."
+    )
+    rejected_entities: "list[RejectedEntity]" = Field(
+        default_factory=list,
+        description="Entities graph extraction rejected, per text unit; "
+        "gleaning does not re-add them through a gleaned relationship.",
     )
     claims: "list[Claim]" = Field(
         default_factory=list, description="Claims and covariates extracted from text."

@@ -393,7 +393,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `processing.graph_extraction.max_entities_per_chunk` | `50` | 청크당 엔티티 상한입니다(관계는 `max_relationships_per_chunk`, 역시 `50`). |
 | `processing.graph_extraction.entity_confidence_threshold` | `0.0` | 신뢰도가 이 값보다 낮은 엔티티를 버립니다. `0.0`이면 모두 유지합니다. |
 | `processing.graph_extraction.description_summarization.enabled` | `true` | 병합된 설명이 `force_summary_threshold_tokens`(`600`)보다 길면 LLM으로 다시 요약합니다. |
-| `processing.graph_extraction.entity_grounding.enabled` | `false` | 환각 방지 장치입니다. 원문 그대로의 `source_text` 구간이 청크에 없는 엔티티와 관계를 버리거나, `action: "penalize"`이면 가중치를 낮춥니다. 다만 `penalize`여도 청크가 추출하지 않은 엔티티를 가리키는 근거 없는 관계는 버립니다. 문장 부호는 무시하며, 한자·한글·가나 구간은 문자 바이그램으로 비교하므로 한국어 조사가 달라져도 원문에 있는 것으로 봅니다. gleaning이 추가한 항목에도 적용합니다. |
+| `processing.graph_extraction.entity_grounding.enabled` | `false` | 환각 방지 장치입니다. 원문 그대로의 `source_text` 구간이 청크에 없는 엔티티와 관계를 버리거나, `action: "penalize"`이면 가중치를 낮춥니다. 다만 `penalize`여도 청크가 추출하지 않은 엔티티를 가리키는 근거 없는 관계는 버립니다. 문장 부호는 무시하며, 한자·한글·가나 구간은 문자 바이그램으로 비교하므로 한국어 조사가 달라져도 원문에 있는 것으로 봅니다. gleaning이 추가한 항목에도 적용합니다. 그 청크에서 거부된 엔티티를 가리키는 gleaning 관계는 버리고, 청크가 나열하지 않은 엔티티를 가리키는 관계는 청크에 그 이름이 있을 때만 남깁니다. |
 | `processing.gleaning.enabled` | `true` | 놓친 엔티티와 관계를 찾는 추가 추출 패스입니다. |
 | `processing.gleaning.max_rounds` | `3` | 텍스트 단위당 gleaning 횟수입니다. 다음 회차에는 직전 응답이 새 엔티티나 관계를 추가한 단위만 다시 보내므로, 응답에 새 항목이 없으면 그 단위는 바로 멈춥니다. `1`은 MS GraphRAG 기본값과 같습니다. |
 | `processing.claim_extraction.enabled` | `false` | 주장을 추출합니다(텍스트 단위마다 LLM 호출 1회 추가). 켜면 `local` 검색이 일치하는 주장을 컨텍스트에 넣고 `simple` 검색이 주장 인덱스도 검색합니다. |

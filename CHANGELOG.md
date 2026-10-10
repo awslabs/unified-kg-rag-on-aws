@@ -474,6 +474,20 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- With `entity_grounding` enabled, gleaning no longer brings back an entity
+  the grounding guard rejected. Since #201 a gleaned relationship naming an
+  entity the batch lacks adds it as a stub, and the relationship's grounding
+  check covers only its quote, which need not name its endpoints: a
+  relationship to an entity gleaning rejected in the same answer (or an
+  earlier round), or to one extraction dropped as ungrounded for that unit,
+  recreated the entity. Such relationships are now dropped (gleaning stat
+  `relationships_dropped_rejected_endpoint`), and a gleaned relationship
+  naming an entity its unit does not list is kept only when the unit's text
+  contains that name (`relationships_dropped_ungrounded_endpoint_name`).
+  Extraction now hands its rejected entities to gleaning as a cached stage
+  output (`rejected_entities`), so a run resumed from an extraction cache
+  written before this fix re-runs extraction. With grounding disabled
+  gleaning is unchanged (#PR).
 - Relationships gleaning adds now make their endpoints cite the gleaned text
   unit, as first-pass extraction does. Before, an entity one document
   extracted kept citing only its own text units when gleaning another

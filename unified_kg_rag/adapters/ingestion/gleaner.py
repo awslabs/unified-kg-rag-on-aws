@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
+from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from functools import partial
@@ -20,8 +21,12 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
     check_entity_relevance_task,
     check_relationship_relevance_task,
+    coerce_llm_text,
 )
-from unified_kg_rag.domain.ingestion.entity_grounding import is_grounded
+from unified_kg_rag.domain.ingestion.entity_grounding import (
+    is_grounded,
+    is_name_grounded,
+)
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     cite_relationship_endpoints,
 )
@@ -34,6 +39,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Entity,
     ModelPurpose,
+    RejectedEntity,
     Relationship,
     TextUnit,
 )
@@ -164,6 +170,13 @@ class GleaningStats(BaseModel):
     num_failed_units: int = 0
     # Distinct ids of the units with at least one failed refinement.
     failed_text_unit_ids: list[str] = Field(default_factory=list)
+    # Gleaned relationships dropped because an endpoint is an entity rejected
+    # for the relationship's unit: dropped by extraction's grounding guard, or
+    # proposed by gleaning with evidence not found in the unit.
+    relationships_dropped_rejected_endpoint: int = 0
+    # Gleaned relationships dropped (entity grounding on) because an endpoint
+    # is an entity the unit does not list and whose name it does not contain.
+    relationships_dropped_ungrounded_endpoint_name: int = 0
     rounds: list[GleaningRound] = Field(default_factory=list)
 
     @property
@@ -191,6 +204,12 @@ class GraphGleaner(BaseProcessor):
         self.use_process_pool = use_process_pool
         self.show_progress = show_progress
         self._failed_unit_ids: list[str] = []
+        # Entity keys rejected per text unit (by extraction, or by gleaning's
+        # grounding check in an earlier round); see
+        # _drop_unsupported_relationships.
+        self._rejected_keys: dict[str, set[str]] = {}
+        self._dropped_rejected_endpoint = 0
+        self._dropped_ungrounded_endpoint_name = 0
 
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor(
@@ -225,6 +244,8 @@ class GraphGleaner(BaseProcessor):
         text_units: list[TextUnit],
         initial_entities: list[Entity],
         initial_relationships: list[Relationship],
+        *,
+        rejected_entities: Sequence[RejectedEntity] = (),
     ) -> tuple[list[Entity], list[Relationship], GleaningStats]:
         """Glean each text unit for at most ``max_rounds`` rounds.
 
@@ -234,12 +255,23 @@ class GraphGleaner(BaseProcessor):
         the model saying nothing more is missing (the answer MS GraphRAG gets
         from its separate Y/N loop prompt), and items that merge into existing
         ones or fail grounding are not new.
+
+        ``rejected_entities`` are the entities extraction rejected per unit; a
+        relationship gleaned from that unit naming one is dropped rather than
+        bringing the entity back as a stub.
         """
         start_time = time.time()
         current_entities = initial_entities.copy()
         current_relationships = initial_relationships.copy()
         stats = GleaningStats()
         self._failed_unit_ids = []
+        self._rejected_keys = {}
+        for rejected in rejected_entities:
+            self._rejected_keys.setdefault(rejected.text_unit_id, set()).add(
+                rejected.entity_key
+            )
+        self._dropped_rejected_endpoint = 0
+        self._dropped_ungrounded_endpoint_name = 0
         max_rounds = self.gleaning_config.max_rounds
 
         logger.info(
@@ -287,6 +319,10 @@ class GraphGleaner(BaseProcessor):
         stats.total_rounds = len(stats.rounds)
         stats.num_failed_units = len(self._failed_unit_ids)
         stats.failed_text_unit_ids = sorted(set(self._failed_unit_ids))
+        stats.relationships_dropped_rejected_endpoint = self._dropped_rejected_endpoint
+        stats.relationships_dropped_ungrounded_endpoint_name = (
+            self._dropped_ungrounded_endpoint_name
+        )
         stats.total_processing_time = time.time() - start_time
 
         self._log_completion_summary(stats, units_still_gaining=len(units_to_glean))
@@ -384,7 +420,8 @@ class GraphGleaner(BaseProcessor):
         first-pass extraction (see :func:`cite_relationship_endpoints`): an
         added edge naming an entity another chunk extracted makes that entity
         cite this chunk, and one naming an entity no chunk listed adds it as a
-        stub. Otherwise the endpoint would not cite the chunk while the
+        stub (with entity grounding on, only one whose name the chunk contains
+        gets here: see :meth:`_drop_unsupported_relationships`). Otherwise the endpoint would not cite the chunk while the
         document lineage still attributes it to the chunk's document, so
         removing the entity's other documents would leave it citing nothing,
         and the edge would depend on which documents shared the batch.
@@ -559,6 +596,7 @@ class GraphGleaner(BaseProcessor):
                 issues = ensure_list(issues_data)
 
             current_and_new_entities = list(existing_entities)
+            rejected_keys: set[str] = set()
 
             for issue in issues:
                 self._process_issue(
@@ -568,7 +606,14 @@ class GraphGleaner(BaseProcessor):
                     new_entities,
                     new_relationships,
                     existing_relationships or [],
+                    rejected_keys=rejected_keys,
                 )
+
+            new_relationships = self._drop_unsupported_relationships(
+                new_relationships, unit, current_and_new_entities, rejected_keys
+            )
+            if rejected_keys:
+                self._rejected_keys.setdefault(unit.id, set()).update(rejected_keys)
 
             if new_entities or new_relationships:
                 logger.debug(
@@ -595,7 +640,15 @@ class GraphGleaner(BaseProcessor):
         new_entities: list[Entity],
         new_relationships: list[Relationship],
         current_relationships: list[Relationship] | None = None,
+        *,
+        rejected_keys: set[str] | None = None,
     ) -> None:
+        """Apply one refinement issue to the round's additions.
+
+        The name key of a MISSING_ENTITY the grounding check rejects is added
+        to ``rejected_keys``, so a relationship naming it can be dropped (see
+        :meth:`_drop_unsupported_relationships`).
+        """
         details = issue.get("details", {})
         issue_type = issue.get("issue_type", "").upper()
 
@@ -620,6 +673,14 @@ class GraphGleaner(BaseProcessor):
                     issue_type or "issue",
                     unit.short_id,
                 )
+                if (
+                    issue_type == "MISSING_ENTITY"
+                    and rejected_keys is not None
+                    and isinstance(details, dict)
+                ):
+                    name = clean_display_name(coerce_llm_text(details.get("name")))
+                    if name:
+                        rejected_keys.add(entity_key(name))
                 return
 
         if issue_type == "MISSING_ENTITY":
@@ -650,6 +711,74 @@ class GraphGleaner(BaseProcessor):
                 issue_type or "<missing>",
                 unit.short_id,
             )
+
+    def _drop_unsupported_relationships(
+        self,
+        relationships: list[Relationship],
+        unit: TextUnit,
+        entities: list[Entity],
+        rejected_keys: set[str],
+    ) -> list[Relationship]:
+        """Drop gleaned relationships whose endpoint the unit does not support.
+
+        Every kept relationship makes its endpoints cite its unit, adding a
+        stub for one the batch lacks (:func:`cite_relationship_endpoints`), so
+        a relationship naming an entity rejected for this unit would bring it
+        back. Rejected means dropped as ungrounded by extraction for this
+        unit, or proposed by gleaning (this or an earlier round) with
+        evidence not found in it; the grounding check on the relationship
+        covers only its quote, which need not name its endpoints. A rejected
+        entity is supported again once an entity of that name cites the unit
+        (the unit listed it with grounded evidence). Extraction drops the same
+        relationships (``_drop_relationships_to_dropped_entities``).
+
+        With entity grounding on, an endpoint no entity citing the unit names
+        must also be named in the unit's text, whether or not another unit
+        lists it: requiring that only of a stub would make the outcome depend
+        on which units share the batch, which an incremental run cannot
+        reproduce. With grounding off nothing is rejected and every
+        relationship is kept.
+        """
+        if not relationships:
+            return relationships
+        grounding = self.extraction_config.entity_grounding
+        cited = {
+            entity_key(e.name) for e in entities if unit.id in (e.text_unit_ids or [])
+        }
+        blocked = (self._rejected_keys.get(unit.id, set()) | rejected_keys) - cited
+        if not blocked and not grounding.enabled:
+            return relationships
+        chunk_text = self.get_text_for_processing(unit) if grounding.enabled else ""
+
+        kept: list[Relationship] = []
+        for rel in relationships:
+            names = (rel.source_name or "", rel.target_name or "")
+            keys = tuple(entity_key(name) for name in names)
+            if any(key in blocked for key in keys):
+                self._dropped_rejected_endpoint += 1
+                logger.info(
+                    "Dropping gleaned relationship '%s -> %s' — an endpoint was "
+                    "rejected as ungrounded in chunk '%s'",
+                    rel.source_name,
+                    rel.target_name,
+                    unit.short_id,
+                )
+                continue
+            if grounding.enabled and any(
+                key not in cited and not is_name_grounded(name, chunk_text)
+                for name, key in zip(names, keys, strict=True)
+            ):
+                self._dropped_ungrounded_endpoint_name += 1
+                logger.info(
+                    "Dropping gleaned relationship '%s -> %s' — chunk '%s' neither "
+                    "lists nor names an endpoint",
+                    rel.source_name,
+                    rel.target_name,
+                    unit.short_id,
+                )
+                continue
+            kept.append(rel)
+        return kept
 
     @staticmethod
     def _clean_text(value: Any) -> str | None:

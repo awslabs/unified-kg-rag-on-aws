@@ -17,6 +17,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageResult,
     PipelineStageStatus,
     PipelineStageType,
+    RejectedEntity,
     Relationship,
     TextUnit,
 )
@@ -336,6 +337,7 @@ STAGE_OUTPUTS: dict[PipelineStageType, dict[str, type[Any]]] = {
     PipelineStageType.GRAPH_EXTRACTION: {
         "entities": Entity,
         "relationships": Relationship,
+        "rejected_entities": RejectedEntity,
     },
     PipelineStageType.GLEANING: {"entities": Entity, "relationships": Relationship},
     PipelineStageType.GRAPH_RESOLUTION: {
