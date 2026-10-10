@@ -149,6 +149,83 @@ def test_interrupted_overflow_cleanup_is_dropped_by_the_next_run() -> None:
     assert harness.registry_problems(edited) == []
 
 
+def test_overflow_left_by_a_commit_is_dropped_while_the_document_is_unchanged() -> None:
+    """b reads unchanged after its commit died before the overflow delete; the
+    next run's diff reports the overflow and its write-ahead drops it."""
+    harness, store = _harness()
+    b = _doc_id("/c/b.txt", R1)
+    original = store.delete_lineage_overflow
+
+    def kill_at_commit(doc_ids):
+        if b in doc_ids:
+            raise Killed("overflow cleanup")
+        original(doc_ids)
+
+    store.delete_lineage_overflow = kill_at_commit  # type: ignore[method-assign]
+    try:
+        assert harness.run(R1)
+    finally:
+        store.delete_lineage_overflow = original  # type: ignore[method-assign]
+    assert b in store.overflow
+    assert store.diff({}).orphan_overflow == [b]
+
+    harness.run(R1)
+
+    assert harness.extracted == []
+    assert store.overflow == {}
+    assert harness.state() == expected_state(R1)
+    assert harness.registry_problems(R1) == []
+
+
+def _leftover(scope: str | None, status: DocStatus) -> DocStatusRecord:
+    return DocStatusRecord(doc_id="owner", content_hash="h", status=status, scope=scope)
+
+
+@pytest.mark.parametrize(
+    ("record", "run_scope", "collected"),
+    [
+        # A committed record of the run's namespace (another source scope).
+        (_leftover("ns-a|/other", DocStatus.PROCESSED), "ns-a|/c", True),
+        (_leftover("ns-a|/c", DocStatus.FAILED), "ns-a|/c", True),
+        # Another namespace's: its runs collect it.
+        (_leftover("ns-b|/c", DocStatus.PROCESSED), "ns-a|/c", False),
+        # Became PENDING since the diff: the overflow is that record's.
+        (_leftover("ns-a|/c", DocStatus.PENDING), "ns-a|/c", False),
+        # No record, and no document of this run: namespace unknown.
+        (None, "ns-a|/c", False),
+        # A run without a scope owns the whole registry.
+        (_leftover("ns-b|/c", DocStatus.PROCESSED), None, True),
+    ],
+)
+def test_write_ahead_collects_leftover_overflow_of_its_namespace(
+    record: DocStatusRecord | None, run_scope: str | None, collected: bool
+) -> None:
+    store = FakeDocStatusStore()
+    if record is not None:
+        store.put(record)
+    store.add_lineage_overflow([DocumentLineage(doc_id="owner", entity_ids=["e"])])
+    inc = IncrementalIndexer(store, None, scope=run_scope)  # type: ignore[arg-type]
+
+    inc.write_ahead(DocumentDelta(orphan_overflow=["owner"]), [])
+
+    assert ("owner" not in store.overflow) is collected
+    assert store.list_all() == ([record] if record is not None else [])
+
+
+def test_write_ahead_collects_leftover_overflow_of_a_new_document() -> None:
+    store = FakeDocStatusStore()
+    store.add_lineage_overflow([DocumentLineage(doc_id="new", entity_ids=["e"])])
+    inc = IncrementalIndexer(store, None, scope="ns-a|/c")  # type: ignore[arg-type]
+    delta = store.diff({"new": "h"}, scope="ns-a|/c")
+    assert delta.orphan_overflow == ["new"]
+
+    inc.write_ahead(delta, [DocumentLineage(doc_id="new", entity_ids=["e2"])])
+
+    assert store.overflow == {}
+    pending = store.get("new")
+    assert pending is not None and pending.entity_ids == ["e2"]
+
+
 def test_recovery_reads_overflow_of_another_runs_pending_record() -> None:
     """A deleted document whose interrupted run left overflow is removed with
     everything that run may have written (it is not in this run's delta)."""

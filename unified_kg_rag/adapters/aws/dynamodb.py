@@ -115,6 +115,9 @@ class DynamoDBDocStatusStore:
             region_name=config.aws.region_name,
         )
         self._client: DynamoDBClient | None = None
+        # Overflow part keys by owner doc_id, as the last full scan (diff or
+        # list_all) found them.
+        self._scanned_overflow: dict[str, set[str]] = {}
 
     @property
     def client(self) -> DynamoDBClient:
@@ -437,42 +440,55 @@ class DynamoDBDocStatusStore:
                         records.append(self._deserialize(item))
         return records
 
-    def _scan_fingerprints(self) -> dict[str, tuple[str, str | None, bool]]:
-        """Scan only ``{doc_id: (content_hash, scope, failed)}`` for diffing.
+    def _scan_fingerprints(
+        self,
+    ) -> dict[str, tuple[str, str | None, bool, bool]]:
+        """Scan only ``{doc_id: (content_hash, scope, failed, pending)}``.
 
         ``diff`` needs just the partition key, the content hash, the scope and
-        whether the last run failed on the document,
+        whether the record is FAILED or PENDING,
         so this uses a ``ProjectionExpression`` to fetch those attributes instead
         of deserializing the full ``DocStatusRecord`` (content hash + six
         artifact-id lists) for every row. (A full ``scan`` is still required
         because deletion detection needs every stored doc_id of the scope.)
+        The lineage-overflow parts it passes are noted by owner
+        (``_scanned_overflow``).
         """
-        fingerprints: dict[str, tuple[str, str | None, bool]] = {}
+        fingerprints: dict[str, tuple[str, str | None, bool, bool]] = {}
+        overflow: dict[str, set[str]] = {}
         paginator = self.client.get_paginator("scan")
         for page in paginator.paginate(
             TableName=self.table_name,
             # Attribute-name placeholders keep the projection clear of
             # DynamoDB reserved words.
-            ProjectionExpression="#pk, #hash, #scope, #status, #kind",
+            ProjectionExpression="#pk, #hash, #scope, #status, #kind, #owner",
             ExpressionAttributeNames={
                 "#pk": _PARTITION_KEY,
                 "#hash": "content_hash",
                 "#scope": _SCOPE_ATTRIBUTE,
                 "#status": "status",
                 "#kind": _RECORD_KIND_ATTRIBUTE,
+                "#owner": _OVERFLOW_OWNER_ATTRIBUTE,
             },
         ):
             for item in page.get("Items", []):
                 if _is_overflow(item):
                     # Lineage overflow is no document: never new, changed,
                     # deleted or a stored scope.
+                    _note_overflow(overflow, item)
                     continue
                 doc_id = item.get(_PARTITION_KEY, {}).get("S")
                 content_hash = item.get("content_hash", {}).get("S", "")
                 scope = item.get(_SCOPE_ATTRIBUTE, {}).get("S")
-                failed = item.get("status", {}).get("S") == DocStatus.FAILED.value
+                status = item.get("status", {}).get("S")
                 if doc_id is not None:
-                    fingerprints[doc_id] = (content_hash, scope, failed)
+                    fingerprints[doc_id] = (
+                        content_hash,
+                        scope,
+                        status == DocStatus.FAILED.value,
+                        status == DocStatus.PENDING.value,
+                    )
+        self._scanned_overflow = overflow
         return fingerprints
 
     def diff(self, incoming: dict[str, str], scope: str | None = None) -> DocumentDelta:
@@ -496,12 +512,19 @@ class DynamoDBDocStatusStore:
         incoming_ids = set(incoming)
         delta.deleted = [
             doc_id
-            for doc_id, (_, stored_scope, _) in stored.items()
+            for doc_id, (_, stored_scope, _, _) in stored.items()
             if doc_id not in incoming_ids and (scope is None or stored_scope == scope)
         ]
         # Already projected for the deletion filter: reporting it is free.
         delta.stored_scopes = sorted(
-            {s for _, s, _ in stored.values() if s is not None}
+            {s for _, s, _, _ in stored.values() if s is not None}
+        )
+        # Overflow is only read with a PENDING record: next to any other
+        # record, or none, it is left over (see DocumentDelta).
+        delta.orphan_overflow = sorted(
+            owner
+            for owner in self._scanned_overflow
+            if owner not in stored or not stored[owner][3]
         )
         return delta
 
@@ -607,6 +630,14 @@ def _is_overflow(item: dict[str, Any]) -> bool:
 
 def _overflow_key(doc_id: str, part: int) -> str:
     return f"{doc_id}#pending#{part}"
+
+
+def _note_overflow(found: dict[str, set[str]], item: dict[str, Any]) -> None:
+    """Add overflow part ``item``'s key under its owner doc_id to ``found``."""
+    owner = item.get(_OVERFLOW_OWNER_ATTRIBUTE, {}).get("S")
+    key = item.get(_PARTITION_KEY, {}).get("S")
+    if owner is not None and key is not None:
+        found.setdefault(owner, set()).add(key)
 
 
 def _lineage_size(record: DocStatusRecord) -> int:

@@ -298,6 +298,15 @@ class DocumentDelta(BaseModel):
         "changes the partition. A store that does not report it leaves it "
         "empty",
     )
+    orphan_overflow: list[str] = Field(
+        default_factory=list,
+        description="Owner doc ids of write-ahead lineage overflow the diff "
+        "read next to a record that is not PENDING, or next to no record, "
+        "sorted: overflow left by a commit or removal interrupted before "
+        "deleting it, which no later run reads. The incremental write-ahead "
+        "deletes it for the owners of its namespace. A store that does not "
+        "report it leaves it empty",
+    )
 
     @property
     def is_empty(self) -> bool:

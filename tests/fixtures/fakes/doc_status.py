@@ -132,4 +132,10 @@ class FakeDocStatusStore:
         delta.stored_scopes = sorted(
             {r.scope for r in self._records.values() if r.scope is not None}
         )
+        delta.orphan_overflow = sorted(
+            doc_id
+            for doc_id in self.overflow
+            if doc_id not in self._records
+            or self._records[doc_id].status is not DocStatus.PENDING
+        )
         return delta

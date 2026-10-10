@@ -318,14 +318,19 @@ class IncrementalRun:
         lineage pointing at missing artifacts, artifacts no lineage lists."""
         records = self.store.list_all()
         problems = []
-        # Write-ahead lineage overflow never outlives its document's record.
-        # (Overflow next to a committed record, left when a commit died
-        # before deleting it, is ignored and dropped with the next write-ahead
-        # or removal of the document.)
+        # Write-ahead lineage overflow never outlives its document's PENDING
+        # record. (Overflow next to a committed record, left when a commit
+        # died before deleting it, is ignored and dropped by the next run's
+        # write-ahead.)
         overflow = set(getattr(self.store, "overflow", {}))
         orphans = overflow - {r.doc_id for r in records}
         if orphans:
             problems.append(f"lineage overflow without a record: {sorted(orphans)}")
+        leftover = overflow & {
+            r.doc_id for r in records if r.status is not DocStatus.PENDING
+        }
+        if leftover:
+            problems.append(f"lineage overflow left over: {sorted(leftover)}")
         paths = sorted(r.file_path or r.doc_id for r in records)
         if paths != sorted(corpus):
             problems.append(f"registry rows {paths} != corpus {sorted(corpus)}")

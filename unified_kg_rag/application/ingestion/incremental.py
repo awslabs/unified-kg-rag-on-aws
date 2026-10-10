@@ -400,6 +400,14 @@ class IncrementalIndexer:
         cannot fit in a record raises :class:`DataProcessingError` here,
         before anything is written.
 
+        Overflow the diff found left over (``delta.orphan_overflow``: next to
+        a record that is not PENDING, after a commit or removal interrupted
+        before deleting it) is deleted first when its owner is a record of
+        the run's namespace (any record when the run has no scope) or a
+        document of this run, as re-read here. Overflow of another
+        namespace's owner, or of an owner whose record is gone, is left
+        alone.
+
         :meth:`commit` replaces the records with the real ones. A PENDING
         record has ``failure_count`` 0 and is never FAILED: an interruption is
         not counted as a failure, but it resets the consecutive-failure count
@@ -411,9 +419,14 @@ class IncrementalIndexer:
         """
         planned = {lineage.doc_id: lineage for lineage in lineages}
         doc_ids = list(dict.fromkeys([*delta.to_process, *planned]))
+        orphans = [o for o in delta.orphan_overflow if o not in doc_ids]
+        if not doc_ids and not orphans:
+            return
+        read = _read_many(self.doc_status, [*doc_ids, *orphans])
+        self._collect_leftover_overflow(delta.orphan_overflow, read, set(doc_ids))
         if not doc_ids:
             return
-        stored = _read_many(self.doc_status, doc_ids)
+        stored = {doc_id: read[doc_id] for doc_id in doc_ids if doc_id in read}
         self._check_committable(stored, planned)
         overflow = _read_overflow(self.doc_status, doc_ids)
         # Overflow belongs to a PENDING record (an interrupted run's): its ids
@@ -468,6 +481,42 @@ class IncrementalIndexer:
                 else ""
             ),
         )
+
+    def _collect_leftover_overflow(
+        self,
+        owners: list[str],
+        records: dict[str, DocStatusRecord],
+        documents: set[str],
+    ) -> None:
+        """Delete the leftover overflow of ``owners`` this run may delete.
+
+        ``records`` are the owners' records as read now: an owner that
+        became PENDING since the diff has its overflow read with it. An
+        owner without a record is only this run's when it is one of its
+        ``documents`` (keyed in its namespace).
+        """
+        namespace = scope_namespace(self.scope)
+        leftover = []
+        for owner in owners:
+            record = records.get(owner)
+            if record is None:
+                if owner in documents:
+                    leftover.append(owner)
+                continue
+            if record.status is DocStatus.PENDING:
+                continue
+            if self.scope is None or (
+                namespace is not None
+                and _namespace_key(record, [namespace])[1] == namespace
+            ):
+                leftover.append(owner)
+        if leftover:
+            logger.info(
+                "Deleting the leftover lineage overflow of %d documents "
+                "(an interrupted commit or removal did not delete it)",
+                len(leftover),
+            )
+            _delete_overflow(self.doc_status, leftover)
 
     def _fit(
         self, full: DocStatusRecord, stored: DocStatusRecord | None

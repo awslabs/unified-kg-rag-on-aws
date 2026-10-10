@@ -14,9 +14,11 @@ import boto3
 import pytest
 from moto import mock_aws
 
+from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.incremental_runs import (
     Corpus,
     IncrementalRun,
+    Killed,
     document,
     expected_state,
 )
@@ -173,3 +175,52 @@ def test_large_document_write_ahead_spills_and_recovers(
     assert harness.state() == expected_state(R1)
     assert harness.registry_problems(R1) == []
     assert _overflow_keys(ddb_store) == []
+
+
+def test_diff_reports_overflow_without_a_pending_record(
+    ddb_store: DynamoDBDocStatusStore,
+) -> None:
+    fake = FakeDocStatusStore()
+    for store in (ddb_store, fake):
+        store.put(
+            DocStatusRecord(doc_id="done", content_hash="h", status=DocStatus.PROCESSED)
+        )
+        store.put(
+            DocStatusRecord(doc_id="busy", content_hash="pending", status="pending")
+        )
+        store.add_lineage_overflow(
+            [
+                DocumentLineage(doc_id=doc_id, entity_ids=["e"])
+                for doc_id in ("done", "busy", "gone")
+            ]
+        )
+    # Left by an interrupted commit (next to a committed record) or removal
+    # (no record); a PENDING record's overflow is part of its lineage.
+    assert ddb_store.diff({}).orphan_overflow == ["done", "gone"]
+    assert fake.diff({}).orphan_overflow == ["done", "gone"]
+
+
+def test_overflow_left_by_an_interrupted_commit_is_dropped_by_the_next_run(
+    ddb_store: DynamoDBDocStatusStore,
+) -> None:
+    harness = IncrementalRun(ddb_store)
+    harness.run(R0)
+    original = ddb_store.delete_lineage_overflow
+
+    def kill_at_commit(doc_ids):
+        if _big_id() in list(doc_ids):
+            raise Killed("overflow cleanup")
+        original(doc_ids)
+
+    ddb_store.delete_lineage_overflow = kill_at_commit  # type: ignore[method-assign]
+    try:
+        assert harness.run(R1)
+    finally:
+        ddb_store.delete_lineage_overflow = original  # type: ignore[method-assign]
+    assert _overflow_keys(ddb_store)
+
+    # big reads unchanged: only the diff's report of the overflow drops it.
+    harness.run(R1)
+    assert harness.extracted == []
+    assert _overflow_keys(ddb_store) == []
+    assert harness.state() == expected_state(R1)

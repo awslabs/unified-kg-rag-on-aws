@@ -528,6 +528,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   check a reset already makes) and retains only there; one without
   `file_path` (the initial release) still retains in every namespace of its
   suffix until a reset clears it (#PR).
+- Write-ahead lineage overflow no longer stays in the doc-status table when
+  a run stops between a commit's record write and its overflow delete. The
+  document then reads unchanged, and only the write-ahead of a document it
+  processes read (and dropped) overflow, so it stayed until the document
+  changed or was removed. The diff's scan now reports overflow next to a
+  record that is not `PENDING`, or next to none
+  (`DocumentDelta.orphan_overflow`), and the next incremental run's
+  write-ahead deletes it for the owners of its namespace (#PR).
 - An incremental run no longer fails on a large document whose old and new
   versions each fit one doc-status record but not together. The write-ahead
   `PENDING` record lists both lineages; for such a document (each version

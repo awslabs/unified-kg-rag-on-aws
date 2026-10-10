@@ -157,7 +157,10 @@ lets the next run find the interrupted run's writes. When a large document's
 old and new artifact ids do not fit one DynamoDB item together, the ids the
 record lacks are kept in overflow items of the same table, keyed
 `<doc_id>#pending#<n>` with `record_kind` `lineage_overflow`; leave them too.
-The run deletes them when it commits or removes the document. The stage writes the registry in batches, so a role with a
+The run deletes them when it commits or removes the document; overflow a
+run left next to a committed record (it stopped between the commit and the
+delete) is deleted by the next incremental run of the same namespace, even
+when the document is unchanged. The stage writes the registry in batches, so a role with a
 custom policy needs `dynamodb:BatchWriteItem` as well as `BatchGetItem`
 (the CDK stack's `grant_read_write_data` covers both).
 
