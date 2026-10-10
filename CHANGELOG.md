@@ -545,6 +545,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   one before it, and deleting a document's overflow also removes parts
   after a gap: those the last registry scan found, or those a probe that
   does not stop at a missing part finds (#PR).
+- The incremental write-ahead no longer probes for lineage overflow of
+  every new and changed document with strongly consistent reads (on a
+  first run, twice the `BatchGetItem` requests). Only a document whose
+  stored record is `PENDING` can have overflow to keep; leftover overflow
+  next to other records is collected from the diff's report (#PR).
 - An incremental run no longer fails on a large document whose old and new
   versions each fit one doc-status record but not together. The write-ahead
   `PENDING` record lists both lineages; for such a document (each version

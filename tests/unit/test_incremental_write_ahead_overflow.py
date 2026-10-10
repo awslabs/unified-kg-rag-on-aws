@@ -301,3 +301,27 @@ def test_document_too_large_to_commit_fails_before_any_write() -> None:
     assert small is not None and small.status is DocStatus.PENDING  # as stored
     assert small.content_hash == "h"
     assert store.overflow == {}
+
+
+def test_write_ahead_probes_overflow_only_of_pending_records() -> None:
+    store = FakeDocStatusStore()
+    for doc_id, status in (("done", DocStatus.PROCESSED), ("busy", DocStatus.PENDING)):
+        store.put(DocStatusRecord(doc_id=doc_id, content_hash="h", status=status))
+    probed: list[str] = []
+    original = store.get_lineage_overflow
+
+    def probe(doc_ids):
+        doc_ids = list(doc_ids)
+        probed.extend(doc_ids)
+        return original(doc_ids)
+
+    store.get_lineage_overflow = probe  # type: ignore[method-assign]
+    inc = IncrementalIndexer(store, None)  # type: ignore[arg-type]
+
+    inc.write_ahead(
+        DocumentDelta(new=["new"], changed=["done", "busy"]),
+        [DocumentLineage(doc_id=d, entity_ids=["e"]) for d in ("new", "done", "busy")],
+    )
+
+    # A new or committed record has no overflow to keep.
+    assert probed == ["busy"]

@@ -268,7 +268,7 @@ flowchart LR
 - 계보 초과분은 `PENDING` 레코드에 속합니다. 이후 실행은 레코드와 함께 이를 읽고(자기 문서는 선기록 읽기에서, 다른 실행의 `PENDING` 레코드는 제거 계획에서), 새 id는 기존 항목을 고치지 않고 새 항목으로 덧붙입니다. 커밋은 레코드를 바꾼 뒤에, 삭제된 문서의 제거는 레코드를 지우기 전에 초과분을 지웁니다. 그래서 중단되더라도 최악의 경우 커밋된 레코드 옆에 초과분이 남을 뿐입니다. diff의 스캔이 이런 초과분(`PENDING`이 아닌 레코드 옆이나 레코드가 없는 초과분, `DocumentDelta.orphan_overflow`)을 알려 주고, 다음 실행의 선기록은 다시 읽은 소유 레코드가 실행 네임스페이스의 것이고 여전히 `PENDING`이 아니면(또는 소유 문서가 이번 실행의 문서이면) 문서가 바뀌지 않았어도 이를 지웁니다.
 - 계보가 만들어지지 않은 델타 문서는 `PENDING`으로 남고(로그 기록), 다음 실행이 다시 추출합니다.
 
-비용은 실행마다 일괄 레지스트리 쓰기 한 번(실행 간 병합이 id를 remap하면 두 번)이 늘고, 커밋 때 문서마다 하던 `GetItem`이 일괄 읽기 한 번으로 바뀌며, 계보 초과분을 확인하려고 델타 문서(와 삭제된 문서)마다 `BatchGetItem` 키 하나를 읽는 정도입니다. `tests/unit/test_incremental_write_ahead.py`와 `tests/property/test_incremental_interruption_properties.py`는 모든 쓰기 단계에서 실행을 중단하고, 다음 실행이 같은 코퍼스, 변경 문서를 되돌린 코퍼스, 추가 문서를 뺀 코퍼스 각각의 새 전체 구축 결과로 수렴하는지 확인합니다.
+비용은 실행마다 일괄 레지스트리 쓰기 한 번(실행 간 병합이 id를 remap하면 두 번)이 늘고, 커밋 때 문서마다 하던 `GetItem`이 일괄 읽기 한 번으로 바뀌며, 계보 초과분을 확인하려고 저장된 레코드가 `PENDING`인 델타 문서(와 삭제된 문서)마다 `BatchGetItem` 키 하나를 읽는 정도입니다. `tests/unit/test_incremental_write_ahead.py`와 `tests/property/test_incremental_interruption_properties.py`는 모든 쓰기 단계에서 실행을 중단하고, 다음 실행이 같은 코퍼스, 변경 문서를 되돌린 코퍼스, 추가 문서를 뺀 코퍼스 각각의 새 전체 구축 결과로 수렴하는지 확인합니다.
 
 **문서 식별**(`shared/utils/document_identity.py`): 문서 버전의 `document_id`(텍스트 단위 id가 여기서 파생됩니다)는 코퍼스 루트 기준 상대 경로와 전체 텍스트를 해시한 값입니다. 파싱과 로딩 단계가 루트를 기준으로 이 값을 다시 계산하므로(`delta_detector.assign_document_identity`), 같은 코퍼스는 어디에 체크아웃하거나 동기화해도 같은 id를 얻고, 다른 폴더의 같은 이름 파일은 충돌하지 않습니다. 레지스트리 `doc_id`(1단계)도 같은 상대 경로 규칙을 따릅니다. 어느 규칙이든 바꾸면 id가 바뀌므로 다시 인덱싱해야 합니다.
 

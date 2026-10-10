@@ -395,8 +395,8 @@ class IncrementalIndexer:
         together) keeps the stored lineage in the record and the other
         planned ids in lineage overflow (``add_lineage_overflow``, written
         after the record and still before any store write), which a later
-        run reads back with the record and which the commit and the removal
-        of the document delete. A document whose planned lineage alone
+        run reads back with the record (only a stored PENDING record's is
+        read) and which the commit and the removal of the document delete. A document whose planned lineage alone
         cannot fit in a record raises :class:`DataProcessingError` here,
         before anything is written.
 
@@ -419,27 +419,26 @@ class IncrementalIndexer:
         """
         planned = {lineage.doc_id: lineage for lineage in lineages}
         doc_ids = list(dict.fromkeys([*delta.to_process, *planned]))
-        orphans = [o for o in delta.orphan_overflow if o not in doc_ids]
-        if not doc_ids and not orphans:
+        if not doc_ids and not delta.orphan_overflow:
             return
-        read = _read_many(self.doc_status, [*doc_ids, *orphans])
+        read = _read_many(self.doc_status, [*doc_ids, *delta.orphan_overflow])
         self._collect_leftover_overflow(delta.orphan_overflow, read, set(doc_ids))
         if not doc_ids:
             return
         stored = {doc_id: read[doc_id] for doc_id in doc_ids if doc_id in read}
         self._check_committable(stored, planned)
-        overflow = _read_overflow(self.doc_status, doc_ids)
         # Overflow belongs to a PENDING record (an interrupted run's): its ids
-        # are part of that record's lineage. Next to any other record, or
-        # none, it is left over from a commit or removal interrupted before
-        # deleting it, and is dropped before it can mix with this run's.
-        kept = {
-            doc_id: lineage
-            for doc_id, lineage in overflow.items()
-            if doc_id in stored and stored[doc_id].status is DocStatus.PENDING
-        }
-        _delete_overflow(
-            self.doc_status, [doc_id for doc_id in overflow if doc_id not in kept]
+        # are part of that record's lineage, so only those documents' is
+        # read. Next to any other record, or none, it is left over from a
+        # commit or removal interrupted before deleting it, and was collected
+        # above (delta.orphan_overflow).
+        kept = _read_overflow(
+            self.doc_status,
+            [
+                doc_id
+                for doc_id, record in stored.items()
+                if record.status is DocStatus.PENDING
+            ],
         )
         self._prior = {
             doc_id: (

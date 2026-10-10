@@ -289,3 +289,19 @@ def test_deleting_overflow_removes_parts_after_a_gap(
     store.delete_lineage_overflow(["d"])
 
     assert _overflow_keys(store) == ["other#pending#0"]
+
+
+def test_a_first_run_reads_no_overflow(ddb_store: DynamoDBDocStatusStore) -> None:
+    consistent: list[int] = []
+    batch_get = ddb_store.client.batch_get_item
+
+    def counting(**kwargs):
+        request = kwargs["RequestItems"][ddb_store.table_name]
+        if request.get("ConsistentRead"):
+            consistent.append(len(request["Keys"]))
+        return batch_get(**kwargs)
+
+    ddb_store.client.batch_get_item = counting  # type: ignore[method-assign]
+    IncrementalRun(ddb_store).run({"/c/a.txt": [[("Vendor", "Depot", 1)]]})
+
+    assert consistent == []
