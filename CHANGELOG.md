@@ -474,6 +474,23 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- With `entity_grounding` enabled, the check whether a gleaned
+  relationship's endpoint name occurs in its unit (#202) now accepts common
+  spelling variants and no longer accepts partial words. Both sides drop
+  accents and possessive "'s" and read dots, hyphens and apostrophes as
+  joined or separated ("Nestlé"/"Nestle", "U.S."/"US", "E-Mail"/"email",
+  "Vendor's Agent"/"vendor agent"); the last word may differ by a trailing
+  "s"/"es" or a corporate suffix (Corporation/Corp, Incorporated/Inc,
+  Company/Co, Limited/Ltd); a name with a parenthetical alias matches by
+  either part. Latin words must match whole, so "Ven" no longer matches
+  "Vendor" nor "AI" "aim", also inside a mixed-script name; a
+  one-character Han/Hangul/Kana name must stand alone instead of matching
+  any text containing the character (#203).
+- `pipeline_metadata.json` no longer carries the extraction stage's
+  `rejected_entities`. The list is a cached stage output, yet every metadata
+  save (after each stage) re-serialized it and synced it to S3: a run with
+  20,000 rejections wrote about 3.4 MB per save. A resume still restores the
+  rejections from the stage cache (#203).
 - With `entity_grounding` enabled, gleaning no longer brings back an entity
   the grounding guard rejected. Since #201 a gleaned relationship naming an
   entity the batch lacks adds it as a stub, and the relationship's grounding

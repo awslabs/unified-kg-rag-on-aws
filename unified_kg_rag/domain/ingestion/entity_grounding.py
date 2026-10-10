@@ -18,7 +18,9 @@ the gate on never silently deletes legitimate entities.
 
 from __future__ import annotations
 
+import re
 import unicodedata
+from functools import lru_cache
 
 from unified_kg_rag.shared.utils.scripts import (
     drop_dense_script_spaces,
@@ -155,29 +157,187 @@ def is_grounded(
     return token_overlap_ratio(source_text, chunk_text) >= min_overlap_ratio
 
 
+# Name matching (is_name_grounded) folds both sides further than
+# normalize_for_grounding: accents, dots, hyphens and apostrophes vary between
+# an LLM's spelling of a name and the document's ("Nestlé"/"Nestle",
+# "U.S."/"US", "E-Mail"/"email").
+
+# Characters that join a word rather than separate words: dots, apostrophes
+# and dashes (category Pd, checked separately). One view of the text removes
+# them ("u.s." -> "us"), the other turns them into spaces ("vendor-buyer" ->
+# "vendor buyer"), so either spelling of a name matches either of the text.
+_NAME_JOINERS = frozenset(".'\u2019\u02bc")
+_POSSESSIVE = re.compile(r"['\u2019\u02bc]s\b")
+_PARENTHETICAL = re.compile(r"\(([^()]*)\)")
+# A last-token spelling and its canonical short form.
+_CORPORATE_SUFFIXES = {
+    "corporation": "corp",
+    "incorporated": "inc",
+    "company": "co",
+    "limited": "ltd",
+}
+# Shortest stem a trailing "s"/"es" may be added to: "us" is not "u" plural.
+_MIN_PLURAL_STEM = 3
+
+
+def _strip_marks(text: str) -> str:
+    """NFKD, drop combining marks on non-dense letters, recompose (NFC).
+
+    Marks on Kana (dakuten) are kept: "ガ" and "カ" are different letters.
+    """
+    kept: list[str] = []
+    base_dense = False
+    for ch in unicodedata.normalize("NFKD", text):
+        if unicodedata.combining(ch):
+            if base_dense:
+                kept.append(ch)
+            continue
+        base_dense = is_dense_script_char(ch)
+        kept.append(ch)
+    return unicodedata.normalize("NFC", "".join(kept))
+
+
+def _split_scripts(token: str) -> list[str]:
+    """Split a token where it changes between dense and other script."""
+    parts: list[str] = []
+    start = 0
+    for i in range(1, len(token)):
+        if is_dense_script_char(token[i]) != is_dense_script_char(token[i - 1]):
+            parts.append(token[start:i])
+            start = i
+    parts.append(token[start:])
+    return parts
+
+
+@lru_cache(maxsize=256)
+def _name_tokens(text: str, join: bool) -> tuple[str, ...]:
+    """Fold ``text`` for name matching and split it into tokens.
+
+    Accents stripped and casefolded; a possessive "'s" dropped; joiners
+    removed (``join``) or turned into spaces; other punctuation separates
+    tokens, symbols are content. A token never mixes dense and other script,
+    so "vendor는" yields "vendor" and "는".
+    """
+    folded = _POSSESSIVE.sub("", _strip_marks(text).casefold())
+    chars: list[str] = []
+    for ch in folded:
+        category = unicodedata.category(ch)
+        if ch in _NAME_JOINERS or category == "Pd":
+            chars.append("" if join else " ")
+        elif category.startswith("P"):
+            chars.append(" ")
+        else:
+            chars.append(ch)
+    return tuple(
+        part for token in "".join(chars).split() for part in _split_scripts(token)
+    )
+
+
+def _is_dense(token: str) -> bool:
+    return is_dense_script_char(token[0])
+
+
+def _same_last_token(name_token: str, text_token: str, *, suffix: bool) -> bool:
+    """Equal up to a trailing "s"/"es", or (``suffix``) a corporate suffix.
+
+    The suffix table applies only after a main name: a bare "Co" is not
+    "company".
+    """
+    if name_token == text_token:
+        return True
+    if suffix and _CORPORATE_SUFFIXES.get(
+        name_token, name_token
+    ) == _CORPORATE_SUFFIXES.get(text_token, text_token):
+        return True
+    short, long = sorted((name_token, text_token), key=len)
+    return len(short) >= _MIN_PLURAL_STEM and long in (f"{short}s", f"{short}es")
+
+
+def _latin_segment_found(segment: list[str], tokens: tuple[str, ...]) -> bool:
+    """Whether ``segment`` occurs as consecutive whole tokens of ``tokens``."""
+    *head, last = segment
+    width = len(segment)
+    for start in range(len(tokens) - width + 1):
+        if list(tokens[start : start + width - 1]) == head and _same_last_token(
+            last, tokens[start + width - 1], suffix=width > 1
+        ):
+            return True
+    return False
+
+
+def _segments(tokens: tuple[str, ...]) -> list[tuple[bool, list[str]]]:
+    """Group consecutive tokens of one script: (is_dense, tokens)."""
+    groups: list[tuple[bool, list[str]]] = []
+    for token in tokens:
+        dense = _is_dense(token)
+        if groups and groups[-1][0] == dense:
+            groups[-1][1].append(token)
+        else:
+            groups.append((dense, [token]))
+    return groups
+
+
+def _dense_segment_found(word: str, tokens: tuple[str, ...], dense_text: str) -> bool:
+    """Substring of the space-dropped text; one character only as a token."""
+    if len(word) == 1:
+        return word in tokens
+    return word in dense_text
+
+
+def _single_name_grounded(name: str, chunk_text: str) -> bool:
+    for join in (True, False):
+        name_tokens = _name_tokens(name, join)
+        if not name_tokens:
+            continue
+        text_tokens = _name_tokens(chunk_text, join)
+        dense_text = drop_dense_script_spaces(" ".join(text_tokens))
+        if all(
+            (
+                _dense_segment_found("".join(segment), text_tokens, dense_text)
+                if dense
+                else _latin_segment_found(segment, text_tokens)
+            )
+            for dense, segment in _segments(name_tokens)
+        ):
+            return True
+    return False
+
+
 def is_name_grounded(name: str | None, chunk_text: str) -> bool:
     """Decide whether an entity ``name`` itself occurs in ``chunk_text``.
 
     :func:`is_grounded` checks an evidence span and calls a short span
     grounded because it is too short to judge, so it cannot vouch for a name
-    (most names are one to three tokens). This compares the normalized name
-    (see :func:`normalize_for_grounding`) with the normalized chunk: a match
-    must start at a word boundary, so "Vendors" and "Vendor's" match "Vendor"
-    while "Advendor" does not. Han/Hangul/Kana names match as substrings with
-    the spaces next to those letters removed, since particles attach to the
-    name ("벤더는" contains "벤더").
+    (most names are one to three tokens). Both sides are folded: NFKD with
+    combining marks stripped and casefolded ("Nestlé" = "Nestle"), a
+    possessive "'s" dropped, and dots, hyphens and apostrophes either
+    removed or read as spaces ("U.S." = "US", "Co-Op" = "CoOp", "Vendor" in
+    "Vendor-Buyer").
 
-    An empty chunk cannot be judged and counts as grounded, as in
-    :func:`is_grounded`; an empty name does not.
+    The name is matched per script segment:
+
+    - other scripts (Latin, digits): whole tokens, consecutive in the text,
+      so "Ven" does not match "Vendor" nor "AI" "aim". The last token may
+      differ by a trailing "s"/"es" ("Vendors" = "Vendor") or, after a main
+      name, a corporate suffix (Corporation/Corp, Incorporated/Inc,
+      Company/Co, Limited/Ltd).
+    - Han/Hangul/Kana: a substring of the text with the spaces next to those
+      letters removed, since particles attach to the name ("벤더는" contains
+      "벤더"). A one-character segment matches only as a standalone token: as
+      a substring it would match almost any text.
+
+    A name with a parenthetical alias ("한빛전자(Hanbit Electronics)") is
+    grounded when the main name or an alias is. An empty chunk cannot be
+    judged and counts as grounded, as in :func:`is_grounded`; an empty name
+    does not.
     """
-    norm_name = normalize_for_grounding(name)
-    if not norm_name:
+    if not name or not _name_tokens(name, False):
         return False
-    norm_chunk = normalize_for_grounding(chunk_text)
-    if not norm_chunk:
+    if not _name_tokens(chunk_text or "", False):
         return True
-    if has_dense_script(norm_name):
-        return drop_dense_script_spaces(norm_name) in drop_dense_script_spaces(
-            norm_chunk
-        )
-    return f" {norm_name}" in f" {norm_chunk}"
+    candidates = [_PARENTHETICAL.sub(" ", name), *_PARENTHETICAL.findall(name)]
+    return any(
+        _single_name_grounded(candidate, chunk_text)
+        for candidate in candidates
+        if candidate.strip()
+    )

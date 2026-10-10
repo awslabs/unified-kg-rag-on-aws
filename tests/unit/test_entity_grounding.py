@@ -13,6 +13,7 @@ import pytest
 
 from unified_kg_rag.domain.ingestion.entity_grounding import (
     is_grounded,
+    is_name_grounded,
     normalize_for_grounding,
     token_overlap_ratio,
 )
@@ -146,3 +147,76 @@ class TestDenseScripts:
         # Three characters is below the default minimum of four.
         assert is_grounded("라마바", KO_CHUNK) is True
         assert is_grounded("라마바사", KO_CHUNK) is False
+
+
+# (name, chunk text, grounded). Synthetic names only.
+NAME_GROUNDING_CASES = [
+    # Exact, case and possessive/plural text forms.
+    ("Vendor", "The Vendor ships.", True),
+    ("Vendor", "Vendors ship.", True),
+    ("Vendor", "The Vendor's agent signs.", True),
+    ("ACME Corp.", "acme corp signs", True),
+    # Corporate suffix abbreviations, on the last token, both directions.
+    ("Acme Corporation", "Acme Corp. signed the order.", True),
+    ("Acme Corp", "Acme Corporation signed the order.", True),
+    ("Acme Incorporated", "Acme Inc. signed.", True),
+    ("Acme Company", "Acme Co. signed.", True),
+    ("Acme Limited", "Acme Ltd signed.", True),
+    ("Acme Corporation", "Acme Company signed.", False),
+    ("Co", "The company signs.", False),
+    # Accents both ways.
+    ("Nestlé", "Nestle supplies the goods.", True),
+    ("Nestle", "Nestlé supplies the goods.", True),
+    ("Crème Brûlée Ltd", "creme brulee ltd delivered", True),
+    # Dotted abbreviations.
+    ("U.S.", "Goods shipped to the US port.", True),
+    ("US", "Goods shipped to the U.S. port.", True),
+    # Hyphens: joined and split readings.
+    ("E-Mail", "Notices go by email.", True),
+    ("email", "Notices go by E-Mail.", True),
+    ("CoOp", "The Co-Op buys.", True),
+    ("Co-Op", "The coop buys.", True),
+    ("Vendor", "The Vendor-Buyer agreement.", True),
+    # Plural name, singular text (last token only).
+    ("Vendors", "The Vendor ships.", True),
+    ("Boxes", "One box arrives.", True),
+    # Possessive in the name.
+    ("Vendor's Agent", "The vendor agent signs.", True),
+    ("Vendor’s Agent", "The vendor agent signs.", True),
+    # Parenthetical alias: main name or alias.
+    ("한빛전자(Hanbit Electronics)", "Hanbit Electronics supplies parts.", True),
+    ("한빛전자(Hanbit Electronics)", "한빛전자는 부품을 공급한다.", True),
+    ("Hanbit Electronics (HBE)", "HBE supplies parts.", True),
+    ("한빛전자(Hanbit Electronics)", "The Buyer pays.", False),
+    # Word boundaries on both ends of Latin tokens.
+    ("Ven", "The Vendor ships.", False),
+    ("AI", "We aim to ship.", False),
+    ("Vendor", "Advendor ships.", False),
+    ("US", "Bus fares rise.", False),
+    ("Acme Corp", "Acme Corporate Services", False),
+    ("Phantom Holdings", "Vendor ships.", False),
+    ("Vendor Agent", "The Vendor and the Agent.", False),
+    # Dense scripts: substring (particles attach), at least two characters.
+    ("벤더", "벤더는 물품을 납품한다.", True),
+    ("가나다 상사", "가나다상사와 계약했다.", True),
+    ("갑", "갑은 을에게 대금을 지급한다.", False),
+    ("갑", "계약 당사자 갑 은 대금을 지급한다.", True),
+    ("東京本社", "東京本社で契約した。", True),
+    ("ガス", "カスを納品した。", False),
+    # Mixed names: each script segment by its own rule.
+    ("AB전자", "AB전자는 부품을 공급한다.", True),
+    ("AB전자", "ABC전자는 부품을 공급한다.", False),
+    ("AB전자", "AB상사는 부품을 공급한다.", False),
+    ("AB전자", "XAB전자는 부품을 공급한다.", False),
+    ("Vendor 벤더", "Vendor(벤더)는 납품한다.", True),
+    # Cannot judge / nothing to judge.
+    ("", "Vendor ships.", False),
+    (None, "Vendor ships.", False),
+    ("...", "Vendor ships.", False),
+    ("Vendor", "", True),
+]
+
+
+@pytest.mark.parametrize(("name", "text", "grounded"), NAME_GROUNDING_CASES)
+def test_is_name_grounded(name: str | None, text: str, grounded: bool) -> None:
+    assert is_name_grounded(name, text) is grounded
