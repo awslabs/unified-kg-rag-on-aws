@@ -50,6 +50,9 @@ def _canonical_index(stage_name: str) -> int:
 
 class PipelineStateManager:
     PIPELINE_METADATA_FILE = "pipeline_metadata.json"
+    # Every stage output (STAGE_OUTPUTS below) lives in the stage cache, so the
+    # metadata file — rewritten after each stage and synced to S3 — must not
+    # duplicate it. The rest are derived graph payloads, equally heavy.
     EXCLUDED_DATA_FIELDS = {
         "centrality_metrics",
         "claims",
@@ -60,6 +63,7 @@ class PipelineStateManager:
         "graph",
         "graph_statistics",
         "knowledge_graph",
+        "rejected_entities",
         "relationships",
         "resolved_claims",
         "resolved_entities",

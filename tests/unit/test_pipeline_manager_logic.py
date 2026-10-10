@@ -128,6 +128,46 @@ def test_save_excludes_heavy_data_fields(tmp_path) -> None:
         assert excluded not in raw
 
 
+def test_every_cached_stage_output_is_excluded_from_metadata() -> None:
+    # A stage output is already persisted in the stage cache; writing it into
+    # pipeline_metadata.json too re-serializes (and re-syncs) it on every save.
+    from unified_kg_rag.shared.pipeline_manager import STAGE_OUTPUTS
+
+    cached = {attr for outputs in STAGE_OUTPUTS.values() for attr in outputs}
+    assert cached <= PipelineStateManager.EXCLUDED_DATA_FIELDS
+
+
+def test_rejected_entities_skip_metadata_but_restore_from_stage_cache(
+    tmp_path,
+) -> None:
+    from unified_kg_rag.domain.models import RejectedEntity
+
+    rejected = [
+        RejectedEntity(text_unit_id=f"t{i}", entity_key=f"k{i}", reason="ungrounded")
+        for i in range(3)
+    ]
+    cache = _StubCacheManager(tmp_path)
+    state = PipelineStateManager(cache)
+    ctx = _context("pid", [_stage_result("graph_extraction", "completed")])
+    ctx.rejected_entities = rejected
+    state.save_pipeline_metadata(ctx)
+
+    raw_text = (
+        cache.get_pipeline_cache_dir("pid") / "pipeline_metadata.json"
+    ).read_text(encoding="utf-8")
+    assert "rejected_entities" not in json.loads(raw_text)
+    assert "ungrounded" not in raw_text
+
+    cache.store[_key("entities", "graph_extraction")] = [Entity(id="e1", name="A")]
+    cache.store[_key("relationships", "graph_extraction")] = []
+    cache.store[_key("rejected_entities", "graph_extraction")] = rejected
+
+    restored = PipelineResumeManager(state).restore_pipeline_context(
+        "pid", ["graph_extraction"]
+    )
+    assert restored.rejected_entities == rejected
+
+
 def test_save_sets_end_time_on_completion(tmp_path) -> None:
     state = PipelineStateManager(_StubCacheManager(tmp_path))
     ctx = _context("pid", [_stage_result("indexing", "completed")])

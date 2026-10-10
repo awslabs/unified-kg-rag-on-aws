@@ -474,6 +474,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- `pipeline_metadata.json` no longer carries the extraction stage's
+  `rejected_entities`. The list is a cached stage output, yet every metadata
+  save (after each stage) re-serialized it and synced it to S3: a run with
+  20,000 rejections wrote about 3.4 MB per save. A resume still restores the
+  rejections from the stage cache (#PR).
 - With `entity_grounding` enabled, gleaning no longer brings back an entity
   the grounding guard rejected. Since #201 a gleaned relationship naming an
   entity the batch lacks adds it as a stub, and the relationship's grounding
