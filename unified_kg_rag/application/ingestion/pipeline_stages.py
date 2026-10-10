@@ -1457,6 +1457,22 @@ class IndexingStage(PipelineStage):
 
         return DynamoDBDocStatusStore(self.config, boto_session=self.boto_session)
 
+    def _reset_suffixes(self, text_units: list[TextUnit]) -> set[str]:
+        """The item suffixes whose stores a reset clears.
+
+        ``clear_all_data`` clears the suffixes of the run's text units; the
+        run's own suffix (``index_value``, ``default`` when unset) is always
+        included, as in ``_reset_namespaces``.
+        """
+        from unified_kg_rag.ports.indexer import BaseIndexer
+        from unified_kg_rag.shared.utils.document_identity import DEFAULT_NAMESPACE
+
+        suffixes = {BaseIndexer.get_suffix(unit) for unit in text_units}
+        suffixes.add(
+            self.config.processing.document_parsing.index_value or DEFAULT_NAMESPACE
+        )
+        return suffixes
+
     def _reset_namespaces(
         self, context: PipelineContext, text_units: list[TextUnit]
     ) -> set[str]:
@@ -1483,24 +1499,43 @@ class IndexingStage(PipelineStage):
         return namespaces
 
     @staticmethod
-    def _record_in_namespaces(record: DocStatusRecord, namespaces: set[str]) -> bool:
+    def _record_in_namespaces(
+        record: DocStatusRecord, namespaces: set[str], suffixes: set[str]
+    ) -> bool:
+        """Whether a reset of ``namespaces`` (item ``suffixes``) clears ``record``.
+
+        A scoped record belongs to its scope's namespace. A record without a
+        scope was written before scopes existed, when a suffix had a single
+        namespace: it is cleared with its suffix, whatever its key (the
+        initial release keyed records by the file path alone and stored no
+        ``file_path``). Kept scope-less, removal planning would treat it as a
+        survivor in every namespace of its suffix and never delete the
+        entities it lists.
+        """
         from unified_kg_rag.shared.utils.document_identity import compute_doc_id
 
         if record.scope is not None:
             return scope_namespace(record.scope) in namespaces
+        if record.suffix in suffixes:
+            return True
+        # A legacy namespace key names its namespace even if the record's
+        # suffix field does not match.
         return record.file_path is not None and any(
             record.doc_id == compute_doc_id(record.file_path, namespace)
             for namespace in namespaces
         )
 
-    def _clear_doc_status_registry(self, namespaces: set[str]) -> None:
+    def _clear_doc_status_registry(
+        self, namespaces: set[str], suffixes: set[str]
+    ) -> None:
         """Delete the registry records of ``namespaces`` (reset path).
 
         Only the namespaces whose stores the reset cleared: other index
         suffixes sharing the table keep their records, which still describe
         their intact stores. A record written before scopes existed has no
-        scope; it belongs to a namespace when its key is that namespace's
-        legacy key for its file (see ``compute_doc_id``), else it is kept.
+        scope; it is cleared when its suffix is one of the cleared
+        ``suffixes`` or its key is a cleared namespace's legacy key for its
+        file (see ``_record_in_namespaces``), else it is kept.
 
         Uses the port's list_all + delete so no new port method is needed.
         Best-effort: a registry-clear failure should not abort the reset run
@@ -1511,7 +1546,7 @@ class IndexingStage(PipelineStage):
             records = [
                 record
                 for record in store.list_all()
-                if self._record_in_namespaces(record, namespaces)
+                if self._record_in_namespaces(record, namespaces, suffixes)
             ]
             # Write-ahead lineage overflow is not listed as records.
             delete_overflow = getattr(store, "delete_lineage_overflow", None)
@@ -1547,7 +1582,8 @@ class IndexingStage(PipelineStage):
             # registry is in use (incremental mode).
             if self._doc_status is not None or self.config.aws.dynamodb.enabled:
                 self._clear_doc_status_registry(
-                    self._reset_namespaces(context, text_units)
+                    self._reset_namespaces(context, text_units),
+                    self._reset_suffixes(text_units),
                 )
 
         if not self.indexing_manager.initialize():
@@ -1766,6 +1802,22 @@ class IndexingStage(PipelineStage):
             normalize_source_scope,
         )
 
+        if context.incremental_retired_scopes is None:
+            # Saved before the delta recorded its retired scopes: whether
+            # they were applied is unknown.
+            if self.config.indexing.retire_source_scopes:
+                logger.warning(
+                    "indexing.retire_source_scopes / --retire-source-scope %s may "
+                    "not have been applied: this run resumed after the "
+                    "document_loading stage from a pipeline context that does "
+                    "not record which scopes its delta retired. Re-run from "
+                    "document_loading (--resume-from-stage document_loading) to "
+                    "make sure they are retired.",
+                    ", ".join(
+                        repr(s) for s in self.config.indexing.retire_source_scopes
+                    ),
+                )
+            return
         applied = {
             normalize_source_scope(s) for s in context.incremental_retired_scopes
         }

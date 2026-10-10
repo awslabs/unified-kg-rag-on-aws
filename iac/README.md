@@ -369,7 +369,8 @@ aws logs tail /graphrag/tasks --region "$REGION" --follow
 - **Run one ingestion at a time.** The state machine does not stop a second
   execution from starting while one is running, and two runs against the same
   stores race on the doc-status registry and on the graph and vector writes
-  (both may index, merge or delete the same documents).
+  (both may index, merge or delete the same documents). See
+  [Concurrent runs](../docs/operations.md#concurrent-runs).
 
 ### 4. Query from inside the VPC
 

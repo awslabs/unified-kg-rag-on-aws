@@ -223,12 +223,13 @@ class PipelineContext(BaseModel):
         description="Registry scope (index namespace + corpus source) the delta "
         "was computed in; recorded on every committed document.",
     )
-    incremental_retired_scopes: list[str] = Field(
-        default_factory=list,
+    incremental_retired_scopes: list[str] | None = Field(
+        default=None,
         description="The indexing.retire_source_scopes values the delta "
         "retired (their records are in its deleted set). A run resumed after "
         "document_loading reuses the delta, so it warns about configured "
-        "scopes missing here.",
+        "scopes missing here. None when unknown: a context saved before this "
+        "field existed.",
     )
     failed_source_files: list[str] = Field(
         default_factory=list,

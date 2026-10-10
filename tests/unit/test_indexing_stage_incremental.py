@@ -385,3 +385,37 @@ def test_resumed_delta_without_retired_scopes_warns(
     assert "--resume-from-stage document_loading" in messages[0]
     if applied:
         assert "'/old/a" not in messages[0]
+
+
+@pytest.mark.parametrize("retire", [["/old/a"], []])
+def test_resumed_context_saved_before_retired_scopes_warns_softly(
+    mocker, caplog, retire: list[str]
+) -> None:
+    """A context saved before the delta recorded its retired scopes does not
+    say which were applied: no "NOT applied" claim, only a hedged warning
+    when retire scopes are configured."""
+    manager = _RecordingManager()
+    manager.initialize = lambda: True  # type: ignore[attr-defined]
+    stage = _stage(mocker, FakeDocStatusStore(), manager)
+    stage.config.indexing.retire_source_scopes = retire
+    mocker.patch.object(stage, "_index_incremental", return_value={})
+    saved = _context(DocumentDelta(), []).model_dump(mode="json")
+    saved.pop("incremental_retired_scopes")
+    ctx = PipelineContext.model_validate(saved)
+    assert ctx.incremental_retired_scopes is None
+
+    with caplog.at_level("WARNING"):
+        stage._execute_core(ctx)
+
+    messages = [
+        r.getMessage()
+        for r in caplog.records
+        if "retire_source_scopes" in r.getMessage()
+    ]
+    if not retire:
+        assert messages == []
+        return
+    assert len(messages) == 1
+    assert "may not have been applied" in messages[0]
+    assert "NOT applied" not in messages[0]
+    assert "'/old/a'" in messages[0]

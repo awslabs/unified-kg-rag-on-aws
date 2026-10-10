@@ -32,6 +32,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.ports.indexer import IndexingStats
+from unified_kg_rag.shared.utils.common import compute_hash, generate_stable_id
 
 pytestmark = pytest.mark.unit
 
@@ -113,11 +114,12 @@ def test_reset_records_the_full_corpus_after_rebuilding(mocker) -> None:
         )
     )
     # Another namespace sharing the table: its stores were not cleared, so
-    # its records stay. So does a record written before scopes existed.
+    # its records stay. So does a record written before scopes existed on a
+    # suffix the reset did not clear.
     other = DocStatusRecord(
         doc_id="other-namespace", content_hash="h", scope="default-y|/corpus"
     )
-    scopeless = DocStatusRecord(doc_id="scopeless", content_hash="h")
+    scopeless = DocStatusRecord(doc_id="scopeless", content_hash="h", suffix="other")
     # Written before scopes existed, under this namespace's legacy key: its
     # namespace is known from the key, so it is cleared.
     legacy = DocStatusRecord(
@@ -205,3 +207,70 @@ def test_failed_reset_rebuild_does_not_record_documents(mocker) -> None:
     assert store.diff({document_doc_id(a): compute_content_hash(a)}).changed == [
         document_doc_id(a)
     ]
+
+
+def _reset_stage(mocker, config: Config, store: FakeDocStatusStore):
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+
+    manager = mocker.MagicMock()
+    manager.config = config
+    manager.clear_all_data.return_value = True
+    manager.initialize.return_value = True
+    manager.index_all_data.return_value = {
+        "neptune_entities": IndexingStats(total_items=1, successful_items=1)
+    }
+    mocker.patch.object(ps, "IndexingManager", return_value=manager)
+    return ps.IndexingStage(
+        config=config, boto_session=mocker.MagicMock(), doc_status=store
+    )
+
+
+def test_reset_clears_initial_release_records_of_cleared_suffixes(mocker) -> None:
+    from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
+
+    vendor = generate_stable_id("entity:vendor")
+    a = _doc("/a.txt", "Vendor ships.")
+    store = FakeDocStatusStore()
+    # Shaped like a record of the initial public release: keyed by a hash of
+    # the file path alone, no scope, no file_path. Its file is gone.
+    initial_release = DocStatusRecord(
+        doc_id=compute_hash("gone.txt", algorithm="sha256", length=32),
+        content_hash="h",
+        status=DocStatus.PROCESSED,
+        suffix="default",
+        entity_ids=[vendor],
+        text_unit_ids=["tu-gone"],
+    )
+    # The same era on a suffix the reset does not clear: kept.
+    other_suffix = initial_release.model_copy(
+        update={"doc_id": "other-suffix", "suffix": "other"}
+    )
+    store.put(initial_release)
+    store.put(other_suffix)
+    config = _reset_config()
+    stage = _reset_stage(mocker, config, store)
+
+    context = _context()
+    context.documents, _ = _loading_stage(config, store)._apply_incremental_filter(
+        [a], context
+    )
+    context.text_units = [
+        TextUnit(id="tu-a", text="Vendor ships.", document_ids=[a.document_id])
+    ]
+    context.resolved_entities = [
+        Entity(id=vendor, name="Vendor", text_unit_ids=["tu-a"])
+    ]
+
+    stage._execute_core(context)
+
+    records = {r.doc_id: r for r in store.list_all()}
+    assert initial_release.doc_id not in records
+    assert records[other_suffix.doc_id] == other_suffix
+    assert records[document_doc_id(a)].entity_ids == [vendor]
+
+    # Deleting the rebuilt document now deletes "vendor" as exclusive: no
+    # scope-less survivor of the suffix retains it.
+    inc = IncrementalIndexer(store, mocker.MagicMock())
+    (removal,) = inc._plan_removal([document_doc_id(a)]).values()
+    assert vendor in removal.exclusive_ids
+    assert removal.shared_entity_ids == []

@@ -20,9 +20,38 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 3. **Endpoints.** `run-ingestion`, `run-rag` and `run-eval` check at start-up,
    before any model call, that the store endpoints they need are set (see
    [Start-up endpoint check](#start-up-endpoint-check)).
-4. **No other ingestion is running** against the same stores. Two runs race on
-   the doc-status registry and on the graph and vector writes. On the CDK stack:
+4. **No other ingestion is running** against the same stores. Concurrent runs
+   are not supported (see [Concurrent runs](#concurrent-runs)). On the CDK
+   stack:
    `aws stepfunctions list-executions --state-machine-arn <arn> --status-filter RUNNING`.
+
+## Concurrent runs
+
+Concurrent ingestion runs are not supported. Do not start a run while another
+one is running against:
+
+- **the same index suffix** (the same OpenSearch aliases and Neptune labels).
+  A full reindex writes a new timestamped index, swaps the alias onto it and
+  deletes the alias's older indices, so one run can delete the index the other
+  is writing or leave the alias on the other run's index. A reset clears the
+  suffix's stores under the other run.
+- **the same doc-status table namespace.** An incremental run reads the
+  registry once to plan what to remove and which records to keep, so records
+  another run writes in the meantime can be pruned and their artifacts removed
+  or kept against the plan.
+
+Runs on different index suffixes that use separate doc-status tables
+(`aws.dynamodb.table_name`) do not share either and can run side by side.
+Otherwise, wait for one run to finish before starting the next.
+
+On the CDK stack, each `start-execution` starts one execution that runs the
+four phases in sequence. The stack defines no schedule or event trigger, so
+executions start only when someone (or an automation you add) calls
+`start-execution`, but the state machine does not stop a second execution from
+starting while one is running. Check for a `RUNNING` execution first (the
+command above) and do not start overlapping executions; a schedule you add
+should not fire while a previous execution can still be running (up to the
+state machine's 6-hour timeout).
 
 ## Re-ingest
 
@@ -80,7 +109,9 @@ scope adopts each legacy record whose file is still in the corpus, without
 re-extracting it. A record without a scope is never treated as deleted,
 though, so the record of a file removed from the corpus before the upgrade is
 never adopted or deleted, and its artifacts stay in the stores. To clear them,
-run once with `indexing.reset: true`. Deleting those registry items (they have
+run once with `indexing.reset: true`: besides the namespace's own records, a
+reset deletes every record without a scope on the suffixes it clears (such
+records come from the era of one namespace per suffix). Deleting those registry items (they have
 no `registry_scope` attribute and their file is gone) only cleans the
 registry; their artifacts stay until a reset.
 

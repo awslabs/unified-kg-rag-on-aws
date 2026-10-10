@@ -398,6 +398,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   vertex labels from one helper (`shared/utils/store_names.py`) instead of two
   copies of the naming rule and a repeated `prefix.capitalize()` at every
   Neptune call site; the names are unchanged (#169).
+- Documentation: concurrent ingestion runs are documented as not supported
+  (Operator Runbook "Concurrent runs", User Guide §12, Design Doc §5). Two
+  runs on the same index suffix race on the alias swap and old-index
+  cleanup of a full reindex, and two runs on the same doc-status table
+  namespace race on the registry read the removal plan is built from. Runs
+  on different suffixes with separate doc-status tables are fine. The CDK
+  state machine does not block an overlapping execution and the stack has
+  no schedule or trigger that starts one (#197).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
@@ -500,6 +508,16 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   was never removed from their stores. The reset now deletes only the records
   whose scope belongs to the cleared namespaces, and a record written before
   scopes existed only when its key is such a namespace's legacy key (#195).
+- `indexing.reset` again clears the doc-status records written by the
+  initial public release. Since #195 a record without a scope was cleared
+  only when it stored its `file_path` and its key was a cleared namespace's
+  legacy key, which those records (keyed by a hash of the file path alone,
+  no `file_path`) never match, so they stayed. Removal planning counts a
+  record without a scope as a survivor in every namespace of its suffix, so
+  an entity such a record listed was never deleted again, only stripped of
+  its text units. A reset now also deletes every record without a scope
+  whose `suffix` is one of the cleared suffixes: such records come from the
+  era of one namespace per suffix (#197).
 - An incremental run no longer fails on a large document whose old and new
   versions each fit one doc-status record but not together. The write-ahead
   `PENDING` record lists both lineages; for such a document (each version
@@ -525,6 +543,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   from document_loading (`--resume-from-stage document_loading`) to retire
   them. The applied scopes are recorded on the pipeline context
   (`incremental_retired_scopes`) (#196).
+- Resuming a pipeline context saved before #196, which has no
+  `incremental_retired_scopes`, no longer warns that every configured
+  `indexing.retire_source_scopes` value was NOT applied: whether they were is
+  unknown, so the WARNING now says they may not have been applied. The field
+  is `None` for such a context (#197).
 - The CI local-stores job no longer sleeps after its last failed attempt to
   start the stores before failing (#196).
 - An incremental run interrupted inside the indexing stage (a killed task, a
