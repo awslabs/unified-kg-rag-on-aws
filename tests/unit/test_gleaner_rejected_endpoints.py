@@ -338,3 +338,108 @@ def test_relationship_list_is_not_mutated(gleaner) -> None:
         relationships, UNIT, [_vendor()], {"phantom holdings"}
     )
     assert kept == [] and len(relationships) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Entities the confidence threshold removed
+# --------------------------------------------------------------------------- #
+def _extract_low_confidence(extractor: GraphExtractor, mocker):
+    extractor.extraction_config.entity_confidence_threshold = 0.5
+    answer = {
+        "entities": [
+            {"name": "Vendor", "type": "ORG", "confidence": "9"},
+            {"name": "Phantom Holdings", "type": "ORG", "confidence": "2"},
+        ],
+        "relationships": [],
+    }
+    extractor.batch_processor = mocker.Mock()
+    extractor.batch_processor.execute_with_fallback.return_value = [answer]
+    return extractor.extract_from_text_units([UNIT])
+
+
+def _glean_answer(gleaner, mocker, issues) -> None:
+    gleaner.gleaning_config.max_rounds = 1
+    gleaner.graph_refiner = mocker.Mock()
+    gleaner.graph_refiner.invoke.return_value = {
+        "refinement_plan": {"identified_issues": {"issue": issues}}
+    }
+
+
+@pytest.mark.parametrize("grounding", [False, True])
+def test_low_confidence_entity_is_not_resurrected_by_a_stub(
+    extractor, gleaner, mocker, grounding
+) -> None:
+    gleaner.extraction_config.entity_grounding.enabled = grounding
+    entities, relationships, stats = _extract_low_confidence(extractor, mocker)
+    assert [e.name for e in entities] == ["Vendor"]
+    assert stats.entities_filtered_by_confidence == 1
+    assert extractor.rejected_entities == [
+        RejectedEntity(
+            text_unit_id="t1", entity_key="phantom holdings", reason="low_confidence"
+        )
+    ]
+
+    _glean_answer(
+        gleaner,
+        mocker,
+        [_relationship_issue("Vendor", "Phantom Holdings", GROUNDED_QUOTE)],
+    )
+    entities, relationships, gleaning_stats = gleaner.glean_graph(
+        [UNIT], entities, relationships, rejected_entities=extractor.rejected_entities
+    )
+    assert PHANTOM not in {e.id for e in entities}
+    assert relationships == []
+    assert gleaning_stats.relationships_dropped_rejected_endpoint == 1
+
+
+def test_low_confidence_entity_is_not_regleaned_as_an_entity(
+    extractor, gleaner, mocker
+) -> None:
+    # The gleaner's answer carries no score, so it cannot overturn the
+    # extraction's; without this the entity would come back at 1.0.
+    entities, relationships, _ = _extract_low_confidence(extractor, mocker)
+    _glean_answer(
+        gleaner,
+        mocker,
+        [
+            _entity_issue("Phantom Holdings", GROUNDED_QUOTE),
+            _relationship_issue("Vendor", "Phantom Holdings", GROUNDED_QUOTE),
+        ],
+    )
+    entities, relationships, stats = gleaner.glean_graph(
+        [UNIT], entities, relationships, rejected_entities=extractor.rejected_entities
+    )
+    assert PHANTOM not in {e.id for e in entities}
+    assert relationships == []
+    assert stats.entities_dropped_low_confidence == 1
+
+
+def test_the_low_confidence_rejection_is_per_unit(extractor, gleaner, mocker) -> None:
+    # Another unit naming the entity is not bound by t1's low score.
+    entities, relationships, _ = _extract_low_confidence(extractor, mocker)
+    other = TextUnit(id="t2", text="Vendor and Phantom Holdings sign the lease.")
+    _glean_answer(
+        gleaner,
+        mocker,
+        [_relationship_issue("Vendor", "Phantom Holdings", other.text)],
+    )
+    entities, relationships, _ = gleaner.glean_graph(
+        [other], entities, relationships, rejected_entities=extractor.rejected_entities
+    )
+    by_id = {e.id: e for e in entities}
+    assert by_id[PHANTOM].text_unit_ids == ["t2"]
+    assert by_id[PHANTOM].confidence == 1.0
+    assert len(relationships) == 1
+
+
+def test_gleaned_entity_below_the_threshold_is_dropped(gleaner) -> None:
+    gleaner.extraction_config.entity_confidence_threshold = 0.5
+    issue = _entity_issue("Phantom Holdings", GROUNDED_QUOTE)
+    issue["details"]["confidence"] = "2"
+    entities, relationships = _glean(
+        gleaner,
+        [issue, _relationship_issue("Vendor", "Phantom Holdings", GROUNDED_QUOTE)],
+    )
+    assert PHANTOM not in entities
+    assert relationships == []
+    assert gleaner._dropped_low_confidence_entities == 1

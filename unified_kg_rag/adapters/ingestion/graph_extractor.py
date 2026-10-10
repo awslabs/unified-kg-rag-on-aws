@@ -330,8 +330,24 @@ class GraphExtractor(BaseProcessor):
             all_entities, all_relationships
         )
 
-        all_entities, filtered_count = self._filter_entities_by_confidence(all_entities)
+        kept_entities, filtered_count = self._filter_entities_by_confidence(
+            all_entities
+        )
         self.stats.entities_filtered_by_confidence = filtered_count
+        if filtered_count:
+            # Every unit the entity cites, so gleaning none of them re-adds it.
+            kept_ids = {e.id for e in kept_entities}
+            self.rejected_entities.extend(
+                RejectedEntity(
+                    text_unit_id=unit_id,
+                    entity_key=entity_key(entity.name),
+                    reason="low_confidence",
+                )
+                for entity in all_entities
+                if entity.id not in kept_ids
+                for unit_id in entity.text_unit_ids or []
+            )
+        all_entities = kept_entities
 
         if filtered_count > 0:
             all_relationships, rel_filtered_count = self._filter_orphan_relationships(

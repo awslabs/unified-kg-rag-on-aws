@@ -39,13 +39,16 @@ class RejectedEntity(BaseModel):
     """An entity graph extraction rejected for one text unit.
 
     Extraction drops an entity whose evidence is not in its chunk (entity
-    grounding). Gleaning runs later on the same chunk and must not bring it
-    back, through a gleaned relationship that names it, so the stage hands
-    these on (and caches them with its output).
+    grounding) or whose confidence is below ``entity_confidence_threshold``.
+    Gleaning runs later on the same chunk and must not bring it back, through
+    a gleaned relationship that names it (or, for a low-confidence entity, a
+    gleaned entity of the same name), so the stage hands these on (and caches
+    them with its output).
     """
 
     text_unit_id: str = Field(description="The text unit the entity came from")
     entity_key: str = Field(description="Identity key of the entity's name")
-    reason: Literal["ungrounded"] = Field(
-        description="ungrounded: the grounding guard dropped it"
+    reason: Literal["ungrounded", "low_confidence"] = Field(
+        description="ungrounded: the grounding guard dropped it; "
+        "low_confidence: the confidence threshold filtered it out"
     )

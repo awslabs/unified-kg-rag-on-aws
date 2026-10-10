@@ -171,9 +171,14 @@ class GleaningStats(BaseModel):
     # Distinct ids of the units with at least one failed refinement.
     failed_text_unit_ids: list[str] = Field(default_factory=list)
     # Gleaned relationships dropped because an endpoint is an entity rejected
-    # for the relationship's unit: dropped by extraction's grounding guard, or
-    # proposed by gleaning with evidence not found in the unit.
+    # for the relationship's unit: dropped by extraction's grounding guard or
+    # confidence threshold, or proposed by gleaning with evidence not found in
+    # the unit or a confidence below the threshold.
     relationships_dropped_rejected_endpoint: int = 0
+    # Gleaned entities dropped because their confidence is below
+    # entity_confidence_threshold, or the threshold removed them from their
+    # unit at extraction.
+    entities_dropped_low_confidence: int = 0
     # Gleaned relationships dropped (entity grounding on) because an endpoint
     # is an entity the unit does not list and whose name it does not contain.
     relationships_dropped_ungrounded_endpoint_name: int = 0
@@ -208,7 +213,11 @@ class GraphGleaner(BaseProcessor):
         # grounding check in an earlier round); see
         # _drop_unsupported_relationships.
         self._rejected_keys: dict[str, set[str]] = {}
+        # Entity keys below the confidence threshold per text unit; unlike
+        # _rejected_keys, a later grounded copy does not lift them.
+        self._low_confidence_keys: dict[str, set[str]] = {}
         self._dropped_rejected_endpoint = 0
+        self._dropped_low_confidence_entities = 0
         self._dropped_ungrounded_endpoint_name = 0
 
         self.factory = self.providers.llm_factory
@@ -258,7 +267,8 @@ class GraphGleaner(BaseProcessor):
 
         ``rejected_entities`` are the entities extraction rejected per unit; a
         relationship gleaned from that unit naming one is dropped rather than
-        bringing the entity back as a stub.
+        bringing the entity back as a stub, and an entity the confidence
+        threshold removed is not re-added from that unit at all.
         """
         start_time = time.time()
         current_entities = initial_entities.copy()
@@ -266,11 +276,16 @@ class GraphGleaner(BaseProcessor):
         stats = GleaningStats()
         self._failed_unit_ids = []
         self._rejected_keys = {}
+        self._low_confidence_keys = {}
         for rejected in rejected_entities:
-            self._rejected_keys.setdefault(rejected.text_unit_id, set()).add(
-                rejected.entity_key
+            keys = (
+                self._low_confidence_keys
+                if rejected.reason == "low_confidence"
+                else self._rejected_keys
             )
+            keys.setdefault(rejected.text_unit_id, set()).add(rejected.entity_key)
         self._dropped_rejected_endpoint = 0
+        self._dropped_low_confidence_entities = 0
         self._dropped_ungrounded_endpoint_name = 0
         max_rounds = self.gleaning_config.max_rounds
 
@@ -320,6 +335,7 @@ class GraphGleaner(BaseProcessor):
         stats.num_failed_units = len(self._failed_unit_ids)
         stats.failed_text_unit_ids = sorted(set(self._failed_unit_ids))
         stats.relationships_dropped_rejected_endpoint = self._dropped_rejected_endpoint
+        stats.entities_dropped_low_confidence = self._dropped_low_confidence_entities
         stats.relationships_dropped_ungrounded_endpoint_name = (
             self._dropped_ungrounded_endpoint_name
         )
@@ -647,7 +663,10 @@ class GraphGleaner(BaseProcessor):
 
         The name key of a MISSING_ENTITY the grounding check rejects is added
         to ``rejected_keys``, so a relationship naming it can be dropped (see
-        :meth:`_drop_unsupported_relationships`).
+        :meth:`_drop_unsupported_relationships`). A MISSING_ENTITY below
+        ``entity_confidence_threshold``, or one the threshold removed from
+        this unit at extraction, is dropped as extraction's filter would drop
+        it, and its key is held for the unit like a filtered entity's.
         """
         details = issue.get("details", {})
         issue_type = issue.get("issue_type", "").upper()
@@ -685,6 +704,8 @@ class GraphGleaner(BaseProcessor):
 
         if issue_type == "MISSING_ENTITY":
             entity = self.parse_entity_data(details, unit)
+            if entity and self._below_confidence_threshold(entity, unit):
+                return
             if entity:
                 # Strip the reserved grounding span (gleaner already verified it).
                 (entity.attributes or {}).pop("_source_text", None)
@@ -732,6 +753,12 @@ class GraphGleaner(BaseProcessor):
         (the unit listed it with grounded evidence). Extraction drops the same
         relationships (``_drop_relationships_to_dropped_entities``).
 
+        An entity the confidence threshold removed for this unit is rejected
+        whatever else cites the unit, so a stub never resurrects it. A stub
+        has no score of its own: it gets the default confidence (1.0), as an
+        entity the model lists without one does; it only exists for an entity
+        not rejected for its unit, so it never stands in for a filtered one.
+
         With entity grounding on, an endpoint no entity citing the unit names
         must also be named in the unit's text, whether or not another unit
         lists it: requiring that only of a stub would make the outcome depend
@@ -745,7 +772,9 @@ class GraphGleaner(BaseProcessor):
         cited = {
             entity_key(e.name) for e in entities if unit.id in (e.text_unit_ids or [])
         }
-        blocked = (self._rejected_keys.get(unit.id, set()) | rejected_keys) - cited
+        blocked = (
+            (self._rejected_keys.get(unit.id, set()) | rejected_keys) - cited
+        ) | self._low_confidence_keys.get(unit.id, set())
         if not blocked and not grounding.enabled:
             return relationships
         chunk_text = self.get_text_for_processing(unit) if grounding.enabled else ""
@@ -758,7 +787,7 @@ class GraphGleaner(BaseProcessor):
                 self._dropped_rejected_endpoint += 1
                 logger.info(
                     "Dropping gleaned relationship '%s -> %s' — an endpoint was "
-                    "rejected as ungrounded in chunk '%s'",
+                    "rejected (ungrounded or low confidence) in chunk '%s'",
                     rel.source_name,
                     rel.target_name,
                     unit.short_id,
@@ -779,6 +808,32 @@ class GraphGleaner(BaseProcessor):
                 continue
             kept.append(rel)
         return kept
+
+    def _below_confidence_threshold(self, entity: Entity, unit: TextUnit) -> bool:
+        """Whether a gleaned entity fails the extraction confidence threshold.
+
+        True when its confidence is below ``entity_confidence_threshold`` or
+        the threshold removed an entity of that name from ``unit`` at
+        extraction (the gleaner's answer carries no score, so it cannot
+        overturn the extraction's). Records the key for the unit, so a
+        relationship naming the entity is dropped too.
+        """
+        key = entity_key(entity.name)
+        held = self._low_confidence_keys.setdefault(unit.id, set())
+        threshold = self.extraction_config.entity_confidence_threshold
+        confidence = entity.confidence if entity.confidence is not None else 1.0
+        if key not in held and (threshold <= 0.0 or confidence >= threshold):
+            return False
+        held.add(key)
+        self._dropped_low_confidence_entities += 1
+        logger.info(
+            "Dropping gleaned entity '%s' in chunk '%s' — below the confidence "
+            "threshold %s",
+            entity.short_id,
+            unit.short_id,
+            threshold,
+        )
+        return True
 
     @staticmethod
     def _clean_text(value: Any) -> str | None:

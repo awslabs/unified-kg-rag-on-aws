@@ -488,6 +488,18 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   output (`rejected_entities`), so a run resumed from an extraction cache
   written before this fix re-runs extraction. With grounding disabled
   gleaning is unchanged (#PR).
+- An entity `entity_confidence_threshold` removed at extraction no longer
+  comes back through gleaning. The filter runs after extraction, so a gleaned
+  relationship naming the entity added it back as a stub at the default
+  confidence 1.0 (and graph resolution keeps the maximum confidence), as did
+  a gleaned entity of the same name, whose answer carries no score.
+  Extraction now hands the filtered entities to gleaning with the units they
+  cited (`rejected_entities`, reason `low_confidence`); gleaning drops
+  relationships from those units naming them and does not re-add them as
+  entities from those units. A gleaned entity below the threshold is dropped
+  too (gleaning stat `entities_dropped_low_confidence`). A stub still gets
+  the default confidence, as an entity listed without a score does: it only
+  exists for an entity not rejected for its unit (#PR).
 - Relationships gleaning adds now make their endpoints cite the gleaned text
   unit, as first-pass extraction does. Before, an entity one document
   extracted kept citing only its own text units when gleaning another
