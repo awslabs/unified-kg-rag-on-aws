@@ -1802,6 +1802,22 @@ class IndexingStage(PipelineStage):
             normalize_source_scope,
         )
 
+        if context.incremental_retired_scopes is None:
+            # Saved before the delta recorded its retired scopes: whether
+            # they were applied is unknown.
+            if self.config.indexing.retire_source_scopes:
+                logger.warning(
+                    "indexing.retire_source_scopes / --retire-source-scope %s may "
+                    "not have been applied: this run resumed after the "
+                    "document_loading stage from a pipeline context that does "
+                    "not record which scopes its delta retired. Re-run from "
+                    "document_loading (--resume-from-stage document_loading) to "
+                    "make sure they are retired.",
+                    ", ".join(
+                        repr(s) for s in self.config.indexing.retire_source_scopes
+                    ),
+                )
+            return
         applied = {
             normalize_source_scope(s) for s in context.incremental_retired_scopes
         }

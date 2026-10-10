@@ -535,6 +535,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   from document_loading (`--resume-from-stage document_loading`) to retire
   them. The applied scopes are recorded on the pipeline context
   (`incremental_retired_scopes`) (#196).
+- Resuming a pipeline context saved before #196, which has no
+  `incremental_retired_scopes`, no longer warns that every configured
+  `indexing.retire_source_scopes` value was NOT applied: whether they were is
+  unknown, so the WARNING now says they may not have been applied. The field
+  is `None` for such a context (#PR).
 - The CI local-stores job no longer sleeps after its last failed attempt to
   start the stores before failing (#196).
 - An incremental run interrupted inside the indexing stage (a killed task, a
