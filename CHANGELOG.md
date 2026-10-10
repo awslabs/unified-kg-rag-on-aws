@@ -536,6 +536,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   record that is not `PENDING`, or next to none
   (`DocumentDelta.orphan_overflow`), and the next incremental run's
   write-ahead deletes it for the owners of its namespace (#PR).
+- A write-ahead lineage overflow append that DynamoDB stored only in part
+  no longer strands an overflow item for good. All new parts went out in
+  one `BatchWriteItem`, which can store any subset: with part 1 stored and
+  part 0 unprocessed when the run died or ran out of retries, part 1 was
+  never read (reads stop at the first missing part) or deleted, not even
+  by a reset. Parts are now written in index order, each only after the
+  one before it, and deleting a document's overflow also removes parts
+  after a gap: those the last registry scan found, or those a probe that
+  does not stop at a missing part finds (#PR).
 - An incremental run no longer fails on a large document whose old and new
   versions each fit one doc-status record but not together. The write-ahead
   `PENDING` record lists both lineages; for such a document (each version

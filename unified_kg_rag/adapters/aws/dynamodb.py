@@ -48,8 +48,9 @@ _SCOPE_ATTRIBUTE = "registry_scope"
 _MAX_ITEM_BYTES = 400 * 1024
 # Lineage overflow (see add_lineage_overflow) lives in the same table, one
 # item per part under the key "<doc_id>#pending#<n>", n = 0, 1, ... with no
-# gap. The record-kind attribute tells a part from a registry record: every
-# read of records (get, get_many, list_all, diff) skips the parts.
+# gap (each part is written only after the one before it). The record-kind
+# attribute tells a part from a registry record: every read of records (get,
+# get_many, list_all, diff) skips the parts.
 _RECORD_KIND_ATTRIBUTE = "record_kind"
 _OVERFLOW_KIND = "lineage_overflow"
 _OVERFLOW_OWNER_ATTRIBUTE = "owner_doc_id"
@@ -116,8 +117,8 @@ class DynamoDBDocStatusStore:
         )
         self._client: DynamoDBClient | None = None
         # Overflow part keys by owner doc_id, as the last full scan (diff or
-        # list_all) found them.
-        self._scanned_overflow: dict[str, set[str]] = {}
+        # list_all) found them; None before the first scan.
+        self._scanned_overflow: dict[str, set[str]] | None = None
 
     @property
     def client(self) -> DynamoDBClient:
@@ -323,7 +324,12 @@ class DynamoDBDocStatusStore:
 
         Parts are only appended (from the first free index) until
         :meth:`delete_lineage_overflow` removes them all, so an interrupted
-        append can lose only the ids it was adding, never earlier ones.
+        append can lose only the ids it was adding, never earlier ones. The
+        new parts are written in index order, each only once the one before
+        it is stored (one ``BatchWriteItem`` round per part index, all
+        documents together): a ``BatchWriteItem`` can store any subset of
+        its items, and a later part stored without an earlier one would never
+        be read back.
         """
         wanted: dict[str, dict[str, set[str]]] = {}
         for lineage in lineages:
@@ -333,7 +339,8 @@ class DynamoDBDocStatusStore:
         if not wanted:
             return
         existing = self._read_overflow(list(wanted))
-        items: list[dict[str, Any]] = []
+        # rounds[i]: the i-th new part of every document that has one.
+        rounds: list[list[dict[str, Any]]] = []
         for doc_id, fields in wanted.items():
             parts = existing.get(doc_id, [])
             stored = _merge_parts(parts)
@@ -342,9 +349,14 @@ class DynamoDBDocStatusStore:
                 for name in _LINEAGE_FIELDS
             }
             for offset, chunk in enumerate(_chunk_lineage(new)):
-                items.append(_overflow_item(doc_id, len(parts) + offset, chunk))
-        for start in range(0, len(items), _BATCH_WRITE_SIZE):
-            self._batch_write(items[start : start + _BATCH_WRITE_SIZE])
+                if offset == len(rounds):
+                    rounds.append([])
+                rounds[offset].append(
+                    _overflow_item(doc_id, len(parts) + offset, chunk)
+                )
+        for items in rounds:
+            for start in range(0, len(items), _BATCH_WRITE_SIZE):
+                self._batch_write(items[start : start + _BATCH_WRITE_SIZE])
 
     def get_lineage_overflow(
         self, doc_ids: Iterable[str]
@@ -360,17 +372,71 @@ class DynamoDBDocStatusStore:
 
     def delete_lineage_overflow(self, doc_ids: Iterable[str]) -> None:
         """Delete every overflow part of ``doc_ids``, the last part first, so
-        an interrupted delete leaves a gap-free prefix that still reads back."""
+        an interrupted delete leaves a gap-free prefix that still reads back.
+
+        Parts after a gap are deleted too (left by an append that stored a
+        later part without an earlier one, before appends wrote parts in
+        order): those the last full scan (``diff``, ``list_all``) found for
+        the documents besides the gap-free parts read now (appends write in
+        order, so a part added since the scan follows them), or before any
+        scan, those a probe that does not stop at a missing part finds
+        (``_OVERFLOW_PROBE`` parts per round, while a round finds any).
+        """
+        owners = list(dict.fromkeys(doc_ids))
+        if not owners:
+            return
+        found: dict[str, set[str]]
+        if self._scanned_overflow is None:
+            found = self._probe_overflow_keys(owners)
+        else:
+            found = {
+                doc_id: {_overflow_key(doc_id, n) for n in range(len(parts))}
+                for doc_id, parts in self._read_overflow(owners).items()
+            }
+            for owner in owners:
+                found.setdefault(owner, set()).update(
+                    self._scanned_overflow.pop(owner, ())
+                )
         keys = [
-            _overflow_key(doc_id, n)
-            for doc_id, parts in self._read_overflow(list(doc_ids)).items()
-            for n in reversed(range(len(parts)))
+            key
+            for owner in owners
+            for key in sorted(found.get(owner, ()), key=_overflow_part, reverse=True)
         ]
         with self._registry_errors("delete lineage overflow"):
             for key in keys:
                 self.client.delete_item(
                     TableName=self.table_name, Key={_PARTITION_KEY: {"S": key}}
                 )
+
+    def _probe_overflow_keys(self, doc_ids: list[str]) -> dict[str, set[str]]:
+        """``{doc_id: stored overflow part keys}``, past gaps: parts
+        ``0 .. _OVERFLOW_PROBE - 1`` of every document, then the next
+        ``_OVERFLOW_PROBE`` for those whose last round found any."""
+        found: dict[str, set[str]] = {}
+        probe = dict.fromkeys(doc_ids, 0)
+        while probe:
+            keys = [
+                _overflow_key(doc_id, n)
+                for doc_id, start in probe.items()
+                for n in range(start, start + _OVERFLOW_PROBE)
+            ]
+            hits: set[str] = set()
+            for start in range(0, len(keys), _BATCH_GET_SIZE):
+                batch = keys[start : start + _BATCH_GET_SIZE]
+                for item in self._batch_get(batch, consistent=True):
+                    if _is_overflow(item):
+                        hits.add(item[_PARTITION_KEY]["S"])
+            following: dict[str, int] = {}
+            for doc_id, start in probe.items():
+                window = {
+                    _overflow_key(doc_id, n)
+                    for n in range(start, start + _OVERFLOW_PROBE)
+                } & hits
+                if window:
+                    found.setdefault(doc_id, set()).update(window)
+                    following[doc_id] = start + _OVERFLOW_PROBE
+            probe = following
+        return found
 
     def _read_overflow(self, doc_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
         """``{doc_id: [part 0, part 1, ...]}`` for the doc_ids with overflow.
@@ -434,10 +500,14 @@ class DynamoDBDocStatusStore:
         records: list[DocStatusRecord] = []
         with self._registry_errors("scan the records"):
             paginator = self.client.get_paginator("scan")
+            overflow: dict[str, set[str]] = {}
             for page in paginator.paginate(TableName=self.table_name):
                 for item in page.get("Items", []):
-                    if not _is_overflow(item):
+                    if _is_overflow(item):
+                        _note_overflow(overflow, item)
+                    else:
                         records.append(self._deserialize(item))
+        self._scanned_overflow = overflow
         return records
 
     def _scan_fingerprints(
@@ -523,7 +593,7 @@ class DynamoDBDocStatusStore:
         # record, or none, it is left over (see DocumentDelta).
         delta.orphan_overflow = sorted(
             owner
-            for owner in self._scanned_overflow
+            for owner in self._scanned_overflow or {}
             if owner not in stored or not stored[owner][3]
         )
         return delta
@@ -630,6 +700,11 @@ def _is_overflow(item: dict[str, Any]) -> bool:
 
 def _overflow_key(doc_id: str, part: int) -> str:
     return f"{doc_id}#pending#{part}"
+
+
+def _overflow_part(key: str) -> int:
+    """The part number of overflow key ``key``."""
+    return int(key.rsplit("#", 1)[1])
 
 
 def _note_overflow(found: dict[str, set[str]], item: dict[str, Any]) -> None:
