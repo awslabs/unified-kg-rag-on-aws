@@ -146,15 +146,12 @@ class ComputeStack(Stack):
                 resources=["*"],
             )
         )
-        # The cross-region model resolver lists/inspects inference profiles to
-        # pick the right global/regional profile id at runtime; these are
-        # account-level read actions (no resource scoping available).
+        # The cross-region model resolver lists inference profiles to pick the
+        # right global/regional profile id at runtime; this is an account-level
+        # read action (no resource scoping available).
         role.add_to_policy(
             iam.PolicyStatement(
-                actions=[
-                    "bedrock:ListInferenceProfiles",
-                    "bedrock:GetInferenceProfile",
-                ],
+                actions=["bedrock:ListInferenceProfiles"],
                 resources=["*"],
             )
         )

@@ -1528,6 +1528,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#160).
 
 ### Security
+- The CDK task role no longer grants `bedrock:GetInferenceProfile`; the model
+  resolver only calls `ListInferenceProfiles`, so the extra account-wide
+  read is dropped (least privilege) (#204).
 - The user guide and design doc state that metadata filters are relevance
   filters, not an access-control boundary: stores that do not declare a key
   (relationships, claims, Neptune community vertices) return unfiltered
