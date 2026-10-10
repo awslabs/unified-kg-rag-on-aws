@@ -8,10 +8,13 @@ corpus produces: the same entities citing the same text units, and the same
 edges with the same text units and weights. Nothing the corpus no longer
 mentions may survive as an orphan.
 
-A document is a list of text units; a text unit is a set of weighted edges
-between a few synthetic entity names. "Extraction" is deterministic: ids come
-from the same stable-id helpers the extractor uses, and a text unit's id
-depends on its document, position and content.
+A document is a list of text units; a text unit lists a few synthetic entity
+names and a set of weighted edges between them. An edge endpoint the unit does
+not list is named only inside the edge, so an entity one document lists can be
+the endpoint of another document's edge. "Extraction" is deterministic: ids
+come from the same stable-id helpers the extractor uses, endpoints go through
+the extractor's own endpoint materialization over the whole batch, and a text
+unit's id depends on its document, position and content.
 """
 
 from __future__ import annotations
@@ -19,11 +22,12 @@ from __future__ import annotations
 import hashlib
 
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
 from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
     build_document_lineage,
@@ -49,20 +53,30 @@ _PATHS = ["/corpus/a.txt", "/corpus/b.txt", "/corpus/c.txt"]
 _NAMES = ["Vendor", "Depot", "Carrier", "Buyer"]
 _TYPE = "RELATED_TO"
 
-# Edge = (source name, target name, strength); a text unit holds a few edges.
+# Edge = (source name, target name, strength). A text unit = (the entity
+# names it lists, its edges); an endpoint it does not list is named only
+# inside the edge.
 _edge = st.tuples(
     st.sampled_from(_NAMES), st.sampled_from(_NAMES), st.integers(1, 3)
 ).filter(lambda e: e[0] != e[1])
-_unit = st.lists(_edge, min_size=1, max_size=3, unique_by=lambda e: (e[0], e[1]))
+_edges = st.lists(_edge, max_size=3, unique_by=lambda e: (e[0], e[1]))
+_listed = st.lists(st.sampled_from(_NAMES), max_size=2, unique=True)
+_unit = st.tuples(_listed, _edges).filter(lambda u: u[0] or u[1])
 _content = st.lists(_unit, min_size=1, max_size=2)
 # One round: each path's content, or None when the file is absent.
 _round = st.fixed_dictionaries({path: st.none() | _content for path in _PATHS})
 
-Content = list[list[tuple[str, str, int]]]
+Unit = tuple[list[str], list[tuple[str, str, int]]]
+Content = list[Unit]
+
+_EXTRACTOR = GraphExtractor.__new__(GraphExtractor)
 
 
-def _unit_id(path: str, index: int, unit: list[tuple[str, str, int]]) -> str:
-    digest = hashlib.sha256(f"{path}|{index}|{sorted(unit)}".encode()).hexdigest()
+def _unit_id(path: str, index: int, unit: Unit) -> str:
+    listed, edges = unit
+    digest = hashlib.sha256(
+        f"{path}|{index}|{sorted(listed)}|{sorted(edges)}".encode()
+    ).hexdigest()
     return f"tu-{digest[:16]}"
 
 
@@ -78,7 +92,11 @@ def _document(path: str, content: Content) -> Document:
 
 
 def _extract(corpus: dict[str, Content]):
-    """Text units, entities and edges a build over ``corpus`` produces."""
+    """Text units, entities and edges a build over ``corpus`` produces.
+
+    An entity cites the units listing it; the extractor's endpoint
+    materialization then runs over the whole batch, as in a real build.
+    """
     units: list[TextUnit] = []
     entity_units: dict[str, list[str]] = {}
     edge_weights: dict[tuple[str, str], list[dict[str, float]]] = {}
@@ -86,11 +104,10 @@ def _extract(corpus: dict[str, Content]):
         for index, unit in enumerate(content):
             unit_id = _unit_id(path, index, unit)
             units.append(TextUnit(id=unit_id, text="...", document_ids=[path]))
-            for source, target, strength in unit:
-                for name in (source, target):
-                    cited = entity_units.setdefault(name, [])
-                    if unit_id not in cited:
-                        cited.append(unit_id)
+            listed, unit_edges = unit
+            for name in listed:
+                entity_units.setdefault(name, []).append(unit_id)
+            for source, target, strength in unit_edges:
                 edge_weights.setdefault((source, target), []).append(
                     {unit_id: float(strength)}
                 )
@@ -109,10 +126,13 @@ def _extract(corpus: dict[str, Content]):
             id=BaseProcessor._generate_relationship_id(source, target, _TYPE),
             source_id=BaseProcessor._generate_entity_id(source),
             target_id=BaseProcessor._generate_entity_id(target),
+            source_name=source,
+            target_name=target,
             type=_TYPE,
         )
         apply_text_unit_weights(edge, sum_weights(weights))
         edges.append(edge)
+    entities = _EXTRACTOR._materialize_relationship_endpoints(entities, edges)
     return units, entities, edges
 
 
@@ -169,11 +189,27 @@ def _run(inc: IncrementalIndexer, corpus: dict[str, Content]) -> None:
 
 
 @settings(
-    max_examples=60,
+    max_examples=300,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow],
 )
 @given(rounds=st.lists(_round, min_size=1, max_size=5))
+# a.txt lists Vendor; b.txt names it only inside its Vendor -> Depot edge.
+# Deleting a.txt must keep Vendor (citing b.txt's unit) and b.txt's edge.
+@example(
+    rounds=[
+        {
+            _PATHS[0]: [(["Vendor", "Buyer"], [("Vendor", "Buyer", 1)])],
+            _PATHS[1]: [(["Depot"], [("Vendor", "Depot", 2)])],
+            _PATHS[2]: None,
+        },
+        {
+            _PATHS[0]: None,
+            _PATHS[1]: [(["Depot"], [("Vendor", "Depot", 2)])],
+            _PATHS[2]: None,
+        },
+    ]
+)
 def test_incremental_rounds_match_a_full_build(rounds) -> None:
     config = Config()
     graph = FakeGraphStore()

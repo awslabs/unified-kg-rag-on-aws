@@ -474,6 +474,25 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- Deleting or changing a document no longer deletes a relationship a
+  surviving document still lists. When one document extracted an entity and
+  another named it only as the endpoint of its relationship in the same run,
+  the entity cited only the first document's text units and was attributed
+  to it alone: removing that document deleted the entity, and with it every
+  incident edge (in Neptune and the OpenSearch relationships index), while a
+  fresh build of the remaining corpus keeps the edge. Every relationship
+  endpoint now also cites the relationship's text units (an extracted entity
+  as well as a stub; a stub cites every relationship it is an endpoint of,
+  not just the first), so an entity's text units no longer depend on which
+  chunks shared an extraction batch, and the document lineage attributes a
+  relationship's endpoints to the relationship's documents. Entity
+  `frequency` counts these text units. Registry records written before keep
+  the old lineage until their document is re-indexed or the stores are
+  rebuilt (`indexing.reset: true`) (#200).
+- Operations guide: a direct-API record without a scope that stores a
+  `file_path` under a caller's own `doc_id` survives every reset; the guide
+  now says so and how to delete such records through the doc-status store
+  (#200).
 - A configured `document_parsing.source_scope` that is a local path with a
   trailing or repeated slash (`/mnt/corpus/`) can now be retired. The scope
   is stored as given, but `indexing.retire_source_scopes` normalized the
