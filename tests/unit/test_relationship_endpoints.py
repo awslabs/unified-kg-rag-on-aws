@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+import random
+import time
+
 import pytest
 
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
@@ -53,3 +56,58 @@ def test_pure_and_idempotent() -> None:
         ("a", ["t1", "t2"]),
         ("c", ["t2"]),
     ]
+
+
+def _reference_units(
+    entities: list[Entity], relationships: list[Relationship]
+) -> list[tuple[str, list[str]]]:
+    """The citation rule spelled out with lists, in first-seen order."""
+    known = [e.id for e in entities]
+    stubs: list[str] = []
+    cited: dict[str, list[str]] = {}
+    for rel in relationships:
+        for ent_id in (rel.source_id, rel.target_id):
+            if ent_id not in known and ent_id not in stubs:
+                stubs.append(ent_id)
+            units = cited.setdefault(ent_id, [])
+            units.extend(t for t in rel.text_unit_ids or [] if t not in units)
+    out = []
+    for ent_id, own in [(e.id, list(e.text_unit_ids or [])) for e in entities] + [
+        (s, []) for s in stubs
+    ]:
+        out.append((ent_id, own + [t for t in cited.get(ent_id, []) if t not in own]))
+    return out
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_order_matches_the_list_based_rule(seed: int) -> None:
+    rng = random.Random(seed)
+    ids = [f"e{i}" for i in range(6)]
+    units = [f"t{i}" for i in range(8)]
+    entities = [
+        Entity(id=ent_id, name=ent_id.upper(), text_unit_ids=rng.sample(units, 2))
+        for ent_id in ids[:3]
+    ]
+    rels = [
+        _rel(
+            rng.choice(ids),
+            rng.choice(ids),
+            [rng.choice(units) for _ in range(rng.randint(0, 3))],
+        )
+        for _ in range(rng.randint(0, 12))
+    ]
+    out, _ = cite_relationship_endpoints(entities, rels)
+    assert [(e.id, e.text_unit_ids) for e in out] == _reference_units(entities, rels)
+
+
+def test_high_degree_entity_is_linear() -> None:
+    # One entity on 20k edges, each from its own unit: the list-based
+    # membership checks took ~5 s here; the bound only catches that regression.
+    hub = Entity(id="hub", name="Hub", text_unit_ids=["t-own"])
+    rels = [_rel("hub", f"leaf{i}", [f"t{i}"]) for i in range(20_000)]
+    start = time.perf_counter()
+    out, stubs = cite_relationship_endpoints([hub], rels)
+    elapsed = time.perf_counter() - start
+    assert stubs == 20_000
+    assert out[0].text_unit_ids == ["t-own"] + [f"t{i}" for i in range(20_000)]
+    assert elapsed < 2.0

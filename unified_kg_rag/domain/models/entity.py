@@ -1,6 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-from pydantic import Field
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 from .base import Named
 
@@ -30,4 +32,23 @@ class Entity(Named):
         ge=0.0,
         le=1.0,
         description="Confidence score of the entity extraction (0.0-1.0). Higher values indicate more reliable extraction from source text.",
+    )
+
+
+class RejectedEntity(BaseModel):
+    """An entity graph extraction rejected for one text unit.
+
+    Extraction drops an entity whose evidence is not in its chunk (entity
+    grounding) or whose confidence is below ``entity_confidence_threshold``.
+    Gleaning runs later on the same chunk and must not bring it back, through
+    a gleaned relationship that names it (or, for a low-confidence entity, a
+    gleaned entity of the same name), so the stage hands these on (and caches
+    them with its output).
+    """
+
+    text_unit_id: str = Field(description="The text unit the entity came from")
+    entity_key: str = Field(description="Identity key of the entity's name")
+    reason: Literal["ungrounded", "low_confidence"] = Field(
+        description="ungrounded: the grounding guard dropped it; "
+        "low_confidence: the confidence threshold filtered it out"
     )

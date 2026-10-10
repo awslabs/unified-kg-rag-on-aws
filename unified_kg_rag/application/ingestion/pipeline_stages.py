@@ -922,6 +922,7 @@ class GraphExtractionStage(PipelineStage):
         )
         context.entities = entities
         context.relationships = relationships
+        context.rejected_entities = list(self.extractor.rejected_entities)
         context.failed_text_unit_ids[self.name] = (
             stats.failed_text_unit_ids if stats else []
         )
@@ -970,7 +971,10 @@ class GleaningStage(PipelineStage):
         initial_relationships = context.relationships
 
         entities, relationships, gleaning_stats = self.gleaner.glean_graph(
-            text_units, initial_entities, initial_relationships
+            text_units,
+            initial_entities,
+            initial_relationships,
+            rejected_entities=context.rejected_entities,
         )
 
         context.entities = entities

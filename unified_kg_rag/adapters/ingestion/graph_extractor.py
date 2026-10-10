@@ -28,6 +28,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Entity,
     ModelPurpose,
+    RejectedEntity,
     Relationship,
     TextUnit,
 )
@@ -156,11 +157,15 @@ class GraphExtractor(BaseProcessor):
         )
 
         self.stats: ExtractionStats = ExtractionStats()
+        # Entities the last extract_from_text_units call rejected, per text
+        # unit, so gleaning does not re-add them (see RejectedEntity).
+        self.rejected_entities: list[RejectedEntity] = []
 
     def extract_from_text_units(
         self, text_units: list[TextUnit]
     ) -> tuple[list[Entity], list[Relationship], ExtractionStats]:
         start_time = time.time()
+        self.rejected_entities = []
 
         if not text_units:
             logger.warning("No text units provided for graph extraction")
@@ -325,8 +330,24 @@ class GraphExtractor(BaseProcessor):
             all_entities, all_relationships
         )
 
-        all_entities, filtered_count = self._filter_entities_by_confidence(all_entities)
+        kept_entities, filtered_count = self._filter_entities_by_confidence(
+            all_entities
+        )
         self.stats.entities_filtered_by_confidence = filtered_count
+        if filtered_count:
+            # Every unit the entity cites, so gleaning none of them re-adds it.
+            kept_ids = {e.id for e in kept_entities}
+            self.rejected_entities.extend(
+                RejectedEntity(
+                    text_unit_id=unit_id,
+                    entity_key=entity_key(entity.name),
+                    reason="low_confidence",
+                )
+                for entity in all_entities
+                if entity.id not in kept_ids
+                for unit_id in entity.text_unit_ids or []
+            )
+        all_entities = kept_entities
 
         if filtered_count > 0:
             all_relationships, rel_filtered_count = self._filter_orphan_relationships(
@@ -387,6 +408,12 @@ class GraphExtractor(BaseProcessor):
                 entities.append(entity)
 
         entities, dropped_keys = self._apply_entity_grounding(entities, text_unit)
+        self.rejected_entities.extend(
+            RejectedEntity(
+                text_unit_id=text_unit.id, entity_key=key, reason="ungrounded"
+            )
+            for key in sorted(dropped_keys)
+        )
 
         entity_name_to_id = self.build_entity_key_index(entities)
         relationships_data = ensure_list(raw_relationships, inner_key="relationship")

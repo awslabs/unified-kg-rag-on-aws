@@ -35,7 +35,7 @@ from .document import (
     ElementType,
     Page,
 )
-from .entity import Entity
+from .entity import Entity, RejectedEntity
 from .evaluation import (
     EvaluationGroundTruth,
     EvaluationMetric,
@@ -115,6 +115,7 @@ __all__ = [
     "PipelineStageResult",
     "PipelineStageStatus",
     "PipelineStageType",
+    "RejectedEntity",
     "Relationship",
     "RerankModelId",
     "ResolutionMethod",

@@ -29,6 +29,7 @@ from unified_kg_rag.shared.utils.scripts import (
 __all__ = [
     "char_bigram_overlap_ratio",
     "is_grounded",
+    "is_name_grounded",
     "normalize_for_grounding",
     "span_length",
     "token_overlap_ratio",
@@ -152,3 +153,31 @@ def is_grounded(
         return True
 
     return token_overlap_ratio(source_text, chunk_text) >= min_overlap_ratio
+
+
+def is_name_grounded(name: str | None, chunk_text: str) -> bool:
+    """Decide whether an entity ``name`` itself occurs in ``chunk_text``.
+
+    :func:`is_grounded` checks an evidence span and calls a short span
+    grounded because it is too short to judge, so it cannot vouch for a name
+    (most names are one to three tokens). This compares the normalized name
+    (see :func:`normalize_for_grounding`) with the normalized chunk: a match
+    must start at a word boundary, so "Vendors" and "Vendor's" match "Vendor"
+    while "Advendor" does not. Han/Hangul/Kana names match as substrings with
+    the spaces next to those letters removed, since particles attach to the
+    name ("벤더는" contains "벤더").
+
+    An empty chunk cannot be judged and counts as grounded, as in
+    :func:`is_grounded`; an empty name does not.
+    """
+    norm_name = normalize_for_grounding(name)
+    if not norm_name:
+        return False
+    norm_chunk = normalize_for_grounding(chunk_text)
+    if not norm_chunk:
+        return True
+    if has_dense_script(norm_name):
+        return drop_dense_script_spaces(norm_name) in drop_dense_script_spaces(
+            norm_chunk
+        )
+    return f" {norm_name}" in f" {norm_chunk}"
