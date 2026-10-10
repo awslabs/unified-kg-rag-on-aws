@@ -124,7 +124,16 @@ no `file_path`; one of a namespace no scope names yet; one the direct API
 wrote without a scope or under a caller's own `doc_id`) keeps them in every
 namespace of its suffix, so a document of another
 `indexing.additional_suffix` deleted meanwhile can leave entities behind
-that the reset then clears.
+that the reset then clears. One kind of record outlives every reset: a record
+the direct API wrote without a scope but with a `file_path`, under a caller's
+own `doc_id` (not the legacy key of any namespace). A reset cannot tell which
+namespace it belongs to, so it keeps the record, and the record keeps
+retaining the ids it lists in every namespace of its suffix. Remove such
+records through the doc-status store, preferably before the reset run so the
+reset also clears what they listed: find them with `list_all()` (no `scope`,
+your own `doc_id`), then call `delete_lineage_overflow([doc_id, ...])` and
+`delete(doc_id)` for each (`DynamoDBDocStatusStore(config)` from
+`unified_kg_rag.adapters.aws`, or the store you passed as `doc_status`).
 
 What incremental runs do not refresh: a shared entity or relationship keeps
 the description text a changed or deleted document contributed, and delta
