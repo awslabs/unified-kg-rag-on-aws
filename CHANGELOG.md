@@ -405,7 +405,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   namespace race on the registry read the removal plan is built from. Runs
   on different suffixes with separate doc-status tables are fine. The CDK
   state machine does not block an overlapping execution and the stack has
-  no schedule or trigger that starts one (#PR).
+  no schedule or trigger that starts one (#197).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
@@ -517,7 +517,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   an entity such a record listed was never deleted again, only stripped of
   its text units. A reset now also deletes every record without a scope
   whose `suffix` is one of the cleared suffixes: such records come from the
-  era of one namespace per suffix (#PR).
+  era of one namespace per suffix (#197).
 - An incremental run no longer fails on a large document whose old and new
   versions each fit one doc-status record but not together. The write-ahead
   `PENDING` record lists both lineages; for such a document (each version
@@ -547,7 +547,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `incremental_retired_scopes`, no longer warns that every configured
   `indexing.retire_source_scopes` value was NOT applied: whether they were is
   unknown, so the WARNING now says they may not have been applied. The field
-  is `None` for such a context (#PR).
+  is `None` for such a context (#197).
 - The CI local-stores job no longer sleeps after its last failed attempt to
   start the stores before failing (#196).
 - An incremental run interrupted inside the indexing stage (a killed task, a
