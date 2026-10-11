@@ -325,6 +325,11 @@ Library API (Python callers and custom backends).
   Ollama chat and embedding models kept one async HTTP client, bound to the
   first loop, and failed later calls with "Event loop is closed"; they now
   get one client per loop (#227).
+- Local mode: the Ollama chat and embedding models no longer keep a client
+  and its open connection for every event loop they were used on, which grew
+  by one client and two file descriptors per `asyncio.run`. Their async
+  clients open no keep-alive connections, so each connection closes on its
+  own loop, and the clients of closed loops are dropped (#PR).
 - IaC: a zone-aware OpenSearch domain spans as many AZs as it has data
   nodes, up to 3 and up to the VPC's AZs, so `opensearch_count=3` with
   `max_azs=3` uses three zones instead of two. `bedrock_model_arns` that

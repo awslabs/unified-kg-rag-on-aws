@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -803,3 +805,42 @@ def test_per_loop_client_is_reused_within_a_loop_and_rebuilt_across_loops() -> N
     assert first_a is first_b
     assert second_a is not first_a
     assert len(built) == 2
+    # The first loop is closed, so its client was dropped for the second's.
+    assert len(proxy._clients) == 1
+
+
+_FD_DIR = Path("/proc/self/fd")
+
+
+def _open_fds() -> int:
+    return len(os.listdir(_FD_DIR))
+
+
+@pytest.mark.skipif(not _FD_DIR.is_dir(), reason="needs /proc/self/fd")
+def test_successive_event_loops_leave_no_ollama_clients_or_sockets() -> None:
+    # asyncio.run closes its loop but not the clients used on it. A client
+    # kept per loop with a pooled keep-alive connection stayed reachable (the
+    # connection references its loop) and kept its socket open: every run
+    # left a client and two descriptors (both ends) behind.
+    runs = 40
+    with _HTTPFakeServer(FakeServer()) as server:
+        config = _http_config("ollama", server.url)
+        chat = OllamaLanguageModelFactory(config).get_model("synthetic-chat")
+        embeddings = OllamaEmbeddingFactory(config).get_model(
+            "synthetic-embed", dimensions=DIM
+        )
+
+        async def query() -> None:
+            await chat.ainvoke([HumanMessage(content="Who ships?")])
+            await embeddings.aembed_query("Vendor")
+
+        asyncio.run(query())
+        before = _open_fds()
+        for _ in range(runs):
+            asyncio.run(query())
+        after = _open_fds()
+
+        # Only the last (closed) loop's client is left until the next lookup.
+        assert len(chat._async_client._clients) <= 1
+        assert len(embeddings.inner._async_client._clients) <= 1
+        assert after - before < runs
