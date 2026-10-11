@@ -17,10 +17,9 @@ import networkx as nx
 import numpy as np
 import pytest
 
-from unified_kg_rag.adapters.ingestion.community_detector import HierarchicalCommunity
 from unified_kg_rag.application.cli.run_visualization import load_render_context
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
-from unified_kg_rag.domain.models import Community, Config
+from unified_kg_rag.domain.models import Community, Config, HierarchicalCommunity
 from unified_kg_rag.visualization import base as viz_base
 from unified_kg_rag.visualization.base import (
     VISUALIZATION_DATA_FILENAME,

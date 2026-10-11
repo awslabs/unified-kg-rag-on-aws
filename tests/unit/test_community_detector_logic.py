@@ -17,11 +17,16 @@ import pytest
 
 from unified_kg_rag.adapters.ingestion.community_detector import (
     CommunityDetector,
-    HierarchicalCommunity,
     community_content_id,
 )
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
-from unified_kg_rag.domain.models import Community, Config, Entity, Relationship
+from unified_kg_rag.domain.models import (
+    Community,
+    Config,
+    Entity,
+    HierarchicalCommunity,
+    Relationship,
+)
 from unified_kg_rag.domain.prompts import CommunityReportPrompt
 from unified_kg_rag.shared import GraphError
 

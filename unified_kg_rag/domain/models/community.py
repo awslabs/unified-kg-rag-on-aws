@@ -49,3 +49,33 @@ class Community(Named):
         None, description="The size of the community (Amount of text units)"
     )
     period: str | None = Field(None, description="The period of the community")
+
+
+class HierarchicalCommunity(BaseModel):
+    """One community of the Leiden hierarchy (detector output, domain model)."""
+
+    community_id: str = Field(
+        description="Unique string identifier for this community within the hierarchical structure"
+    )
+    level: int = Field(
+        description="Depth level in the community hierarchy where 0 represents the base level with finest granularity"
+    )
+    nodes: set[str] = Field(
+        description="Collection of graph node identifiers that are members of this community"
+    )
+    parent_id: str | None = Field(
+        None,
+        description="Identifier of the parent community at the next higher hierarchical level, if any",
+    )
+    children_ids: list[str] = Field(
+        default_factory=list,
+        description="Ordered list of child community identifiers at the next lower hierarchical level",
+    )
+    label: str = Field(
+        default="",
+        description="Human-readable positional label (e.g. 'L0_C3') for display; "
+        "unlike community_id it is not stable across runs",
+    )
+
+    def __hash__(self) -> int:
+        return hash(self.community_id)

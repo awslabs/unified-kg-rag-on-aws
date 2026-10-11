@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from .base import Identified, Named
 from .cache import CacheEntry, CacheIndex, CacheStats, CacheStrategy
-from .community import Community, CommunityMetrics
+from .community import Community, CommunityMetrics, HierarchicalCommunity
 from .community_report import CommunityFinding, CommunityReport
 from .config import (
     ChunkingStrategy,
@@ -99,6 +99,7 @@ __all__ = [
     "EvaluationSummary",
     "EvaluatorType",
     "FusionMethod",
+    "HierarchicalCommunity",
     "Identified",
     "LanguageCode",
     "language_name",
