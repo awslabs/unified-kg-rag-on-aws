@@ -72,7 +72,8 @@ class FakeGraphStore:
 
     Neptune semantics kept: list properties of a vertex are set-cardinality
     (distinct values, a re-upsert replaces the list), a property absent from an
-    upsert keeps its stored value, re-adding an edge replaces it, dropping a
+    upsert keeps its stored value, re-adding an edge replaces it, an edge whose
+    endpoint vertex the suffix lacks is not written (a failed item), dropping a
     vertex drops its incident edges, and a full ``index_entities`` first clears
     the suffix's entity vertices.
     """
@@ -125,8 +126,23 @@ class FakeGraphStore:
     def upsert_relationships(self, relationships: list[Any]) -> IndexingStats:
         stats = IndexingStats(total_items=len(relationships))
         bucket = self.data.setdefault("relationships", {})
+        vertices = self.data.get("entities", {})
         for rel in relationships:
-            bucket[(BaseIndexer.get_suffix(rel), rel.id)] = {
+            suffix = BaseIndexer.get_suffix(rel)
+            # addE runs between the suffix's entity vertices: an edge whose
+            # endpoint vertex the suffix lacks is not written (see
+            # NeptuneIndexer._build_add_edge_traversal).
+            missing = [
+                end
+                for end in (rel.source_id, rel.target_id)
+                if (suffix, end) not in vertices
+            ]
+            if missing:
+                stats.add_error(
+                    f"endpoint entity '{missing[0]}' not found", ids=[rel.id]
+                )
+                continue
+            bucket[(suffix, rel.id)] = {
                 "props": {
                     "id": rel.id,
                     **relationship_properties(rel, self._max_length),

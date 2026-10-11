@@ -30,10 +30,10 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.incremental import (
     clear_registry_namespaces,
     context_lineages,
+    dedup_preferences,
     documents_with_failed_units,
     filter_to_delta,
     index_delta,
-    indexed_documents,
     reset_namespaces,
     reset_suffixes,
     run_incremental_indexer,
@@ -74,6 +74,18 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _resolved_claims(context: PipelineContext) -> list[Claim]:
+    """The claims the graph, the claim index and the lineage may hold.
+
+    Only claim resolution ties a claim to an entity (``subject_id``); an
+    extracted claim carries empty ids until then. So this never falls back to
+    ``context.claims``: when no claim resolves, or claim resolution did not
+    run (disabled through ``stages_enabled``), no claim is indexed rather than
+    claims attached to no entity.
+    """
+    return [claim for claim in context.resolved_claims if claim.subject_id]
+
+
 def _build_knowledge_graph(context: PipelineContext) -> Any:
     """Build the knowledge graph from the context's resolved graph outputs.
 
@@ -81,7 +93,7 @@ def _build_knowledge_graph(context: PipelineContext) -> Any:
     a resumed run restored only the cached entities, relationships and claims
     (the graph itself is neither cached nor kept in the run metadata).
     """
-    claims = context.resolved_claims or context.claims
+    claims = _resolved_claims(context)
     return GraphBuilder(
         context.resolved_entities, context.resolved_relationships, claims
     ).build()
@@ -371,16 +383,18 @@ class DocumentLoadingStage(PipelineStage):
 
         incremental = self._doc_status is not None or self.config.doc_status_enabled
         if self.config.processing.deduplicate:
-            keep = None
+            keep = avoid = None
             if incremental and not self.config.indexing.reset:
-                keep = indexed_documents(
+                keep, avoid = dedup_preferences(
                     documents,
                     context,
                     self.config,
                     self._build_doc_status_store,
                     self.loader.source_directory,
                 )
-            documents = self.loader.deduplicate_documents(documents, keep=keep)
+            documents = self.loader.deduplicate_documents(
+                documents, keep=keep, avoid=avoid
+            )
 
         # Incremental indexing: when a doc-status registry is injected or the
         # DynamoDB one is enabled, diff against it, stash the delta/fingerprints
@@ -1003,6 +1017,9 @@ class ClaimResolutionStage(PipelineStage):
         logger.info("=" * 60)
 
         if not context.claims or not context.resolved_entities:
+            # Nothing can resolve: say so explicitly, so no later stage reads a
+            # stale (resumed) result or the unresolved claims.
+            context.resolved_claims = []
             logger.warning(
                 "Skipping claim-entity resolution due to missing claims or "
                 "resolved entities."
@@ -1059,7 +1076,7 @@ class GraphAnalysisStage(PipelineStage):
 
         entities = context.resolved_entities
         relationships = context.resolved_relationships
-        claims = context.resolved_claims or context.claims
+        claims = _resolved_claims(context)
 
         context.knowledge_graph = _build_knowledge_graph(context)
         self.analyzer.graph = context.knowledge_graph
@@ -1343,7 +1360,13 @@ class IndexingStage(PipelineStage):
         relationships = context.resolved_relationships
         communities = context.communities or []
         community_reports = context.community_reports or []
-        claims = context.resolved_claims or context.claims or []
+        claims = _resolved_claims(context)
+        if context.claims and not claims:
+            logger.info(
+                "Indexing no claims: none of the %s extracted claims resolved to "
+                "an entity (or claim resolution did not run)",
+                len(context.claims),
+            )
 
         input_count = (
             len(text_units)

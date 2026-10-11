@@ -1063,6 +1063,12 @@ class GraphGleaner(BaseProcessor):
         entities: list[Entity],
     ) -> tuple[list[Entity], dict[str, str]]:
         entities_map: dict[str, Entity] = {}
+        # Id -> the entities_map key of the entity holding it. An
+        # ENTITY_CORRECTION renames an entity and keeps its id, so a later
+        # proposal of the old name carries that id under another name key: it
+        # merges into the renamed entity instead of becoming a second entity
+        # with the same id.
+        key_by_id: dict[str, str] = {}
         id_remap: dict[str, str] = {}
         type_counts: dict[str, dict[str, int]] = {}
         merged_names = []
@@ -1070,7 +1076,8 @@ class GraphGleaner(BaseProcessor):
         for entity in entities:
             # Same identity key as the entity id, so display variants
             # ("Acme Corp" / "ACME Corp.") merge while "C++" / "C#" do not.
-            key = entity_key(entity.name)
+            key = key_by_id.get(entity.id) or entity_key(entity.name)
+            key_by_id.setdefault(entity.id, key)
             if key not in entities_map:
                 entities_map[key] = entity
                 type_counts[key] = {}
@@ -1078,7 +1085,8 @@ class GraphGleaner(BaseProcessor):
                 type_counts[key][entity_type] = 1
             else:
                 master_entity = entities_map[key]
-                id_remap[entity.id] = master_entity.id
+                if entity.id != master_entity.id:
+                    id_remap[entity.id] = master_entity.id
                 merged_names.append(entity.name)
                 entity_type = entity.type.lower() if entity.type else ""
                 type_counts[key][entity_type] = type_counts[key].get(entity_type, 0) + 1
@@ -1122,6 +1130,11 @@ class GraphGleaner(BaseProcessor):
         id_remap: dict[str, str],
     ) -> list[Relationship]:
         relationships_map: dict[tuple, Relationship] = {}
+        # Id -> key of the kept edge holding it: a RELATIONSHIP_CORRECTION
+        # retypes or reverses an edge and keeps its id, so a re-proposal of
+        # the old edge merges into it rather than adding a second edge with
+        # the same id.
+        key_by_id: dict[str, tuple] = {}
         dropped = 0
 
         for rel in relationships:
@@ -1135,7 +1148,8 @@ class GraphGleaner(BaseProcessor):
             ):
                 rel.source_id = source_id
                 rel.target_id = target_id
-                key = GraphGleaner._relationship_key(rel)
+                key = key_by_id.get(rel.id) or GraphGleaner._relationship_key(rel)
+                key_by_id.setdefault(rel.id, key)
 
                 if key not in relationships_map:
                     relationships_map[key] = rel

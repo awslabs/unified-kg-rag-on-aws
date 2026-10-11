@@ -236,19 +236,22 @@ class DirectoryLoader:
         self,
         documents: list[Document],
         keep: Callable[[Document], bool] | None = None,
+        avoid: Callable[[Document], bool] | None = None,
     ) -> list[Document]:
         """MinHash near-duplicate removal for documents loaded elsewhere.
 
         Of two near-duplicates the earlier one is kept, except that a document
         ``keep`` accepts wins over one it rejects (an incremental run keeps
-        the already-indexed copy). The survivors keep their input order.
+        the already-indexed copy) and one ``avoid`` accepts loses to any other
+        (a copy whose indexing failed). The survivors keep their input order.
         """
-        return self._deduplicate_documents(documents, keep)
+        return self._deduplicate_documents(documents, keep, avoid)
 
     def _deduplicate_documents(
         self,
         documents: list[Document],
         keep: Callable[[Document], bool] | None = None,
+        avoid: Callable[[Document], bool] | None = None,
     ) -> list[Document]:
         if len(documents) < 2:
             return documents
@@ -260,9 +263,14 @@ class DirectoryLoader:
             logger.warning("No MinHashes computed, skipping deduplication")
             return documents
 
-        # Rank = keep order: accepted documents first, then input order.
+        # Rank = keep order: kept documents first, avoided ones last, then
+        # input order.
         order = sorted(
-            range(len(documents)), key=lambda i: not (keep and keep(documents[i]))
+            range(len(documents)),
+            key=lambda i: (
+                not (keep and keep(documents[i])),
+                bool(avoid and avoid(documents[i])),
+            ),
         )
         rank = {doc_index: position for position, doc_index in enumerate(order)}
         duplicate_indices = self._find_duplicate_indices(minhashes, rank)

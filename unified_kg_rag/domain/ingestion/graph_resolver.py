@@ -5,7 +5,7 @@ from collections import defaultdict
 from collections.abc import Iterator
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
-from typing import Any
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -28,6 +28,42 @@ from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
+
+_ItemT = TypeVar("_ItemT", Entity, Relationship)
+
+
+def _join_groups_sharing_ids(groups: list[list[_ItemT]]) -> list[list[_ItemT]]:
+    """Join the groups that hold an item with the same id, in first-seen order.
+
+    Grouping keys on names (entities) or endpoints and type (relationships),
+    but an id is what the stores write: a gleaning correction renames an
+    entity or retypes an edge and keeps its id, so a re-proposal of the old
+    name or type groups apart under the same id. Two merged items with one id
+    would be two Neptune vertices or parallel edges for one artifact.
+    """
+    group_of_id: dict[str, int] = {}
+    parent = list(range(len(groups)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    for index, group in enumerate(groups):
+        for item in group:
+            first = group_of_id.setdefault(item.id, index)
+            root_a, root_b = find(first), find(index)
+            if root_a != root_b:
+                parent[max(root_a, root_b)] = min(root_a, root_b)
+
+    joined: dict[int, list[_ItemT]] = {}
+    for index, group in enumerate(groups):
+        joined.setdefault(find(index), []).extend(group)
+    if len(joined) < len(groups):
+        logger.info("Joined %s groups that shared an id", len(groups) - len(joined))
+    return list(joined.values())
+
 
 # Emit a progress log line every N completed items in the resolver's parallel
 # loop. The resolver was historically the stage that could run for hours while
@@ -284,10 +320,12 @@ class EntityResolver(BaseResolver):
         names_by_root: dict[str, list[str]] = defaultdict(list)
         for name in entity_names:
             names_by_root[union_find.find(name)].append(name)
-        groups = [
-            [e for n in group_names for e in entity_map[n]]
-            for group_names in names_by_root.values()
-        ]
+        groups = _join_groups_sharing_ids(
+            [
+                [e for n in group_names for e in entity_map[n]]
+                for group_names in names_by_root.values()
+            ]
+        )
 
         logger.info("Created %s entity groups", len(groups))
         return groups
@@ -476,7 +514,7 @@ class RelationshipResolver(BaseResolver):
             rel_type = (rel.type or "").strip().lower()
             key = (rel.source_id, rel.target_id, rel_type)
             groups_dict[key].append(rel)
-        return list(groups_dict.values())
+        return _join_groups_sharing_ids(list(groups_dict.values()))
 
     def _merge_relationships(self, relationships: list[Relationship]) -> Relationship:
         # Weight is the sum of the extracted strengths per supporting text unit

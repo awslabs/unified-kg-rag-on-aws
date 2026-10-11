@@ -171,6 +171,13 @@ Library API (Python callers and custom backends).
 - Records the direct API wrote without a scope under a caller's own `doc_id`
   survive every reset; remove them through the doc-status store
   (`list_all()`, then `delete_lineage_overflow` and `delete`) (#200).
+- Hidden files and files under a hidden or `__pycache__` subdirectory of the
+  corpus (any path component below the root starting with `.`, such as
+  `docs/.drafts/`) are no longer parsed (#213). The first incremental run
+  after upgrading classifies such files indexed by an earlier build as
+  deleted and removes their artifacts and registry records. Rename them
+  before upgrading to keep them (they are then indexed under their new
+  paths).
 - Roles with a custom IAM policy need `dynamodb:BatchGetItem` and
   `dynamodb:BatchWriteItem` on the registry table (#191, #194).
 
@@ -247,6 +254,24 @@ Library API (Python callers and custom backends).
   descriptions; claims no longer resolve onto a different entity; CJK names
   with a different head character no longer merge; communities no longer
   duplicate singletons across levels (#201-#203, #213, #214).
+- Claims: when no extracted claim resolves to an entity, or claim resolution
+  does not run, no claim is indexed; the unresolved claims (no subject or
+  object id) no longer reach the graph, the claims index or the document
+  lineage (#220).
+- An entity named only inside a relationship is created under the
+  relationship's index suffix and filters, so the edge write no longer fails
+  (and the document is no longer retried forever) when ingesting with
+  `index_value` (#220).
+- Gleaning: a re-proposal of a name or edge type a correction replaced
+  merges into the corrected item instead of producing a second entity or
+  edge with the same id, and graph resolution merges items that share an id,
+  so Neptune no longer gets two vertices or parallel edges for one id (#220).
+- Incremental deduplication prefers only documents indexed successfully: a
+  near-copy of a document that failed indexing is kept instead of it, so the
+  content is indexed even when the failed copy used up its retries (#220).
+- Clearing a Neptune label stops after a bounded number of delete requests
+  and raises instead of looping when the requests keep reporting full
+  batches (#220).
 - Parsing: the LLM XML parser keeps `&`, `<`, repeated siblings and
   sections with a missing closing tag; truncated responses fail instead of
   parsing as partial successes (#165, #174, #182, #213).

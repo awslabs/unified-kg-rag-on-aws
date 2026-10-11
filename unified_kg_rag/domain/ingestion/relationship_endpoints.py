@@ -20,7 +20,18 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from unified_kg_rag.domain.models import Entity, Relationship
+from unified_kg_rag.domain.models import Constants, Entity, Relationship
+
+# Relationship attributes a stub endpoint inherits: the ones that place an item
+# in an index (its suffix) and scope it by filter. Without them a stub lands in
+# the default index while its edge is written under the relationship's suffix,
+# where the edge's endpoint vertex does not exist.
+_PLACEMENT_ATTRIBUTES = (Constants.INDEX.value, Constants.FILTERS.value)
+
+
+def _placement_attributes(rel: Relationship) -> dict[str, object]:
+    attributes = rel.attributes or {}
+    return {key: attributes[key] for key in _PLACEMENT_ATTRIBUTES if key in attributes}
 
 
 def cite_relationship_endpoints(
@@ -32,7 +43,9 @@ def cite_relationship_endpoints(
     Endpoint ids are name-derived, so an endpoint no entity in ``entities``
     has (the model named it only inside a relationship, or another chunk
     extracted it) becomes a minimal stub entity rather than leaving an orphan
-    edge for the graph builder to drop. Entities sharing an id each gain the
+    edge for the graph builder to drop. A stub takes the relationship's index
+    and filter attributes, so it is written under the same suffix as its edge.
+    Entities sharing an id each gain the
     endpoint citations, so a later duplicate merge keeps their own text units.
 
     Pure: inputs are not mutated; an entity whose text units change is copied
@@ -56,9 +69,14 @@ def cite_relationship_endpoints(
             if ent_id not in known_ids and ent_id not in stubs:
                 if not name:
                     continue
-                stubs[ent_id] = Entity.model_validate(
-                    {"id": ent_id, "name": name, "text_unit_ids": []}
-                )
+                stub: dict[str, object] = {
+                    "id": ent_id,
+                    "name": name,
+                    "text_unit_ids": [],
+                }
+                if placement := _placement_attributes(rel):
+                    stub["attributes"] = placement
+                stubs[ent_id] = Entity.model_validate(stub)
             cited_by_edges.setdefault(ent_id, {}).update(
                 dict.fromkeys(rel.text_unit_ids or [])
             )
