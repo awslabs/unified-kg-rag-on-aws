@@ -36,7 +36,11 @@ from unified_kg_rag.domain.prompts import (
     GraphExtractionPrompt,
 )
 from unified_kg_rag.shared import LanguageModelError, get_logger
-from unified_kg_rag.shared.utils import generate_stable_id, parse_llm_json
+from unified_kg_rag.shared.utils import (
+    generate_stable_id,
+    parse_llm_json,
+    text_digest,
+)
 
 logger = get_logger(__name__)
 
@@ -134,9 +138,13 @@ class PromptTuner:
             payload = parse_llm_json(raw, strict=True)
         except json.JSONDecodeError as e:
             # A default profile here would yield generic prompts presented as
-            # tuned ones; fail so the user can retry or fix the model.
+            # tuned ones; fail so the user can retry or fix the model. The
+            # model output stays out of the message (it is logged at ERROR)
+            # and is logged only at DEBUG.
+            logger.debug("Unparseable corpus profile output: %r", raw)
             raise LanguageModelError(
-                f"Corpus profiling returned no JSON profile: {str(raw)[:200]!r}"
+                "Corpus profiling returned no JSON profile (model output "
+                f"{text_digest(str(raw))}; logged at DEBUG)"
             ) from e
         if not payload:
             logger.warning("Corpus profile is empty; using the default profile")

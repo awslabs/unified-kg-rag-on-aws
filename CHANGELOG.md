@@ -321,6 +321,10 @@ Library API (Python callers and custom backends).
   records its new and changed documents FAILED, so
   `indexing.max_document_failures` ends the retries of a document that always
   fails; before, nothing was recorded and every run retried it (#PR).
+- `run-prompt-tuning` no longer puts up to 200 characters of model output in
+  the ERROR it logs when the corpus profile is not JSON: the message carries
+  the output's length and digest, and the output itself is logged at DEBUG,
+  as the logging policy (user guide §2.7) states (#PR).
 - Queries on Ollama retry a transient error (HTTP 408/429/5xx, dropped
   connection, timeout) instead of failing on the first one: the Ollama client
   never retries, so query chains and Ollama embedding calls now get the
