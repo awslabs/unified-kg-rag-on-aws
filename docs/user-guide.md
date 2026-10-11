@@ -597,6 +597,69 @@ table is IaC-managed and the task role cannot create tables), `LOG_FORMAT`, and,
 when a guardrail is deployed, `BEDROCK_GUARDRAIL_IDENTIFIER`. Incremental
 indexing still needs `aws.dynamodb.enabled: true` in the config file.
 
+### 2.11 `observability` — OpenTelemetry tracing
+
+Tracing is off by default. When it is on, every ingestion run and every query
+becomes an OpenTelemetry trace that any OTLP-capable backend (Jaeger, Grafana
+Tempo, an OpenTelemetry Collector, ...) can show. It needs the `otel` extra:
+
+```bash
+uv sync --extra otel          # or: pip install "unified-kg-rag-on-aws[otel]"
+```
+
+Enabling tracing without the extra fails at start-up with a
+`ConfigurationError` that names the extra; with tracing off nothing
+OpenTelemetry-related is imported.
+
+| Key | Default | What it does / when to change |
+|---|---|---|
+| `observability.enabled` | `false` | Emit spans. `OTEL_SDK_DISABLED=true` turns it off regardless. |
+| `observability.backend` | `"none"` | `none`: spans go to the process's global tracer provider, which a host application or `opentelemetry-instrument` sets up. `otlp`: the package installs an OTLP exporter. |
+| `observability.capture_content` | `false` | Also record prompt and completion text on model spans. Leave off for confidential corpora. |
+| `observability.redact_patterns` | `[]` | Regular expressions replaced with `[REDACTED]` in captured content. |
+| `observability.sample_rate` | `1.0` | Fraction of root traces kept (`otlp`); child spans follow their root. |
+| `observability.service_name` | `"unified-kg-rag"` | `service.name` resource attribute; `OTEL_SERVICE_NAME` wins when set. |
+
+The exporter is configured by the standard OpenTelemetry environment
+variables, never by the config file, so a collector API key never lands in it:
+`OTEL_EXPORTER_OTLP_ENDPOINT` (default `http://localhost:4318`),
+`OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TIMEOUT` and
+`OTEL_EXPORTER_OTLP_PROTOCOL` (`http/protobuf` by default, `grpc` for port
+4317). Inject headers that carry credentials from Secrets Manager or task
+secrets at run time.
+
+**Trace shape.**
+
+- Ingestion: `kg_rag.ingestion.run` → `kg_rag.ingestion.stage` (one per stage,
+  with input/output counts and status) → `kg_rag.batch` / `kg_rag.batch.chunk`
+  (item and failure counts) → one `chat <model>` span per model call and
+  `embeddings <model>` spans.
+- Query: `kg_rag.query` → `kg_rag.strategy` → `kg_rag.retrieve` (hit counts per
+  result type and up to 50 source ids) → `kg_rag.fusion` (in/out counts) →
+  `kg_rag.rerank` (`kg_rag.rerank.status` = `ok`, `empty` or `error`, document
+  counts) → `kg_rag.context_build` (tokens used vs the token budget) → the
+  answer's `chat <model>` span.
+- Model spans follow the OpenTelemetry GenAI semantic conventions:
+  `gen_ai.request.model`, `gen_ai.usage.input_tokens` / `output_tokens`,
+  `gen_ai.usage.cache_read.input_tokens` / `cache_creation.input_tokens` when
+  Bedrock reports prompt-cache use, finish reasons and
+  `aws.bedrock.guardrail.intervened`. Cost is not recorded.
+
+Log records written while a span is active carry its `trace_id` and `span_id`,
+so a log line can be found from its trace and the other way round.
+
+**What is never captured.** Spans carry counts, ids, model names, timings and
+token usage. Query text, retrieved passages and model output are recorded only
+with `capture_content: true` (and then only on model spans, after
+`redact_patterns`). Treat a trace backend that receives captured content like
+`DEBUG` logs: it holds user and corpus data.
+
+Known limits: the streamed answer of `stream` / `astream` is traced as its own
+trace (retrieval and context building are in the `kg_rag.query` trace), and
+the async batch path records one span per batch, not per chunk. Langfuse,
+Phoenix and CloudWatch (ADOT) backends are planned
+([#92](https://github.com/awslabs/unified-kg-rag-on-aws/issues/92)).
+
 ---
 
 ## 3. Ingestion (`run-ingestion`)

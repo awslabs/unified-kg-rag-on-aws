@@ -253,6 +253,58 @@ unreachable fails at the first connection; the retrievers report such
 authentication, configuration and connection errors instead of returning empty
 results.
 
+## Observability
+
+Tracing is off by default (`observability.enabled: false`). To send traces to
+a local Jaeger, which accepts OTLP on port 4318:
+
+```bash
+docker run --rm -d --name jaeger -p 16686:16686 -p 4318:4318 \
+  jaegertracing/all-in-one:latest
+uv sync --extra otel
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+```
+
+```yaml
+observability:
+  enabled: true
+  backend: "otlp"
+```
+
+Run a query (`run-rag --config-path config.yaml --query "..."`) and open
+<http://localhost:16686>: the service `unified-kg-rag` shows one
+`kg_rag.query` trace per query and one `kg_rag.ingestion.run` trace per
+ingestion run. For an OpenTelemetry Collector or a vendor endpoint, point
+`OTEL_EXPORTER_OTLP_ENDPOINT` at it and pass any credential in
+`OTEL_EXPORTER_OTLP_HEADERS` from Secrets Manager or task secrets, never in the
+config file. Set `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` for a gRPC endpoint (port
+4317).
+
+To check it works:
+
+- The start-up log has `Observability enabled (backend: 'otlp', ...)`.
+- Log records written inside a span carry `trace_id` and `span_id`; search the
+  trace backend for that id.
+- A query trace has `kg_rag.retrieve`, `kg_rag.fusion`, `kg_rag.context_build`
+  and `chat <model>` children; `gen_ai.usage.input_tokens` on the model spans
+  is the token usage of the run.
+- `kg_rag.rerank.status` on the `kg_rag.rerank` span is `error` when the
+  Rerank call failed and the query fell back to the fused order, and `empty`
+  when the model returned nothing usable.
+
+Spans are exported from a background thread, so an unreachable collector does
+not slow runs down; the exporter logs its failures, and the final flush at
+exit is bounded by `OTEL_EXPORTER_OTLP_TIMEOUT` (10 s by default). In a
+private VPC the collector endpoint must be reachable from the tasks. The
+data-plane image includes the extra only when built with
+`--build-arg UV_EXTRAS="--extra otel"`.
+
+Privacy defaults: spans carry counts, ids, model names and token usage only.
+`capture_content: true` adds prompt and completion text to model spans (after
+`redact_patterns`); enable it only where the trace backend may hold corpus
+data. With LangSmith tracing also on (`LANGSMITH_TRACING=true`), LangChain
+uploads content to LangSmith independently of this setting.
+
 ## Common errors
 
 | Message (abridged) | Meaning | Action |
@@ -270,6 +322,7 @@ results.
 | `Incremental indexing is enabled but no document delta was computed` | The indexing stage ran without a registry diff (the loading stage failed under `continue_on_error`) | Re-run from `document_loading` once the registry is reachable |
 | `CacheSyncError` | The S3 stage-cache download or upload failed | Check bucket permissions and `aws.s3.encryption`, then resume with the same `--pipeline-id` |
 | `Pipeline failed at stage(s): ...` | A stage failed; the CLI exits 1 | Read the stage's log lines, fix, resume with the same `--pipeline-id` |
+| `observability.enabled is true but OpenTelemetry is not installed` | Tracing is on but the `otel` extra is missing | `uv sync --extra otel`, or set `observability.enabled: false` |
 | Bedrock calls hang in a private VPC | Bedrock is called in a region the VPC endpoint does not serve | Keep `aws.bedrock.region_name` unset or equal to the VPC's region |
 
 More messages and their fixes are in the

@@ -582,6 +582,64 @@ IaC가 관리하며 태스크 역할에는 테이블 생성 권한이 없음), `
 가드레일을 배포했다면 `BEDROCK_GUARDRAIL_IDENTIFIER`도 주입합니다. 증분 인덱싱을
 쓰려면 설정 파일에 `aws.dynamodb.enabled: true`가 있어야 합니다.
 
+### 2.11 `observability` — OpenTelemetry 추적
+
+추적은 기본적으로 꺼져 있습니다. 켜면 수집 실행과 질의가 각각 하나의
+OpenTelemetry 트레이스가 되며, OTLP를 받는 백엔드(Jaeger, Grafana Tempo,
+OpenTelemetry Collector 등)에서 볼 수 있습니다. `otel` extra가 필요합니다.
+
+```bash
+uv sync --extra otel          # 또는: pip install "unified-kg-rag-on-aws[otel]"
+```
+
+extra 없이 추적을 켜면 시작할 때 extra 이름을 알려 주는 `ConfigurationError`로
+실패합니다. 추적이 꺼져 있으면 OpenTelemetry 관련 모듈을 전혀 불러오지 않습니다.
+
+| 키 | 기본값 | 역할과 변경 시점 |
+|---|---|---|
+| `observability.enabled` | `false` | 스팬을 기록합니다. `OTEL_SDK_DISABLED=true`이면 이 값과 관계없이 꺼집니다. |
+| `observability.backend` | `"none"` | `none`: 호스트 애플리케이션이나 `opentelemetry-instrument`가 설정한 프로세스 전역 트레이서 프로바이더로 스팬을 보냅니다. `otlp`: 패키지가 OTLP 익스포터를 직접 설치합니다. |
+| `observability.capture_content` | `false` | 모델 스팬에 프롬프트와 응답 본문도 기록합니다. 기밀 코퍼스에서는 끈 채로 두세요. |
+| `observability.redact_patterns` | `[]` | 기록하는 본문에서 `[REDACTED]`로 바꿀 정규식 목록입니다. |
+| `observability.sample_rate` | `1.0` | 남길 루트 트레이스의 비율입니다(`otlp`). 하위 스팬은 루트의 결정을 따릅니다. |
+| `observability.service_name` | `"unified-kg-rag"` | `service.name` 리소스 속성입니다. `OTEL_SERVICE_NAME`이 설정되어 있으면 그 값이 우선합니다. |
+
+익스포터는 설정 파일이 아니라 OpenTelemetry 표준 환경 변수로 설정하므로 수집기 API
+키가 설정 파일에 들어가지 않습니다. `OTEL_EXPORTER_OTLP_ENDPOINT`(기본값
+`http://localhost:4318`), `OTEL_EXPORTER_OTLP_HEADERS`,
+`OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_PROTOCOL`(기본값
+`http/protobuf`, 4317 포트는 `grpc`)을 씁니다. 자격 증명이 담긴 헤더는 실행 시점에
+Secrets Manager나 태스크 시크릿에서 주입하세요.
+
+**트레이스 구조**
+
+- 수집: `kg_rag.ingestion.run` → `kg_rag.ingestion.stage`(단계마다 하나, 입력·출력
+  수와 상태) → `kg_rag.batch` / `kg_rag.batch.chunk`(항목 수와 실패 수) → 모델
+  호출마다 `chat <model>` 스팬, 임베딩 호출마다 `embeddings <model>` 스팬
+- 질의: `kg_rag.query` → `kg_rag.strategy` → `kg_rag.retrieve`(결과 유형별 적중 수와
+  최대 50개의 소스 ID) → `kg_rag.fusion`(입력·출력 수) → `kg_rag.rerank`
+  (`kg_rag.rerank.status` = `ok`, `empty`, `error`와 문서 수) →
+  `kg_rag.context_build`(사용한 토큰과 토큰 예산) → 답변 생성의 `chat <model>` 스팬
+- 모델 스팬은 OpenTelemetry GenAI 시맨틱 규약을 따릅니다.
+  `gen_ai.request.model`, `gen_ai.usage.input_tokens` / `output_tokens`, Bedrock이
+  프롬프트 캐시 사용량을 알려 주면 `gen_ai.usage.cache_read.input_tokens` /
+  `cache_creation.input_tokens`, 종료 사유, `aws.bedrock.guardrail.intervened`를
+  기록합니다. 비용은 기록하지 않습니다.
+
+스팬이 활성 상태일 때 남긴 로그 레코드에는 그 스팬의 `trace_id`와 `span_id`가
+들어가므로, 트레이스에서 로그를 찾거나 로그에서 트레이스를 찾을 수 있습니다.
+
+**기록하지 않는 것.** 스팬에는 개수, ID, 모델 이름, 소요 시간, 토큰 사용량만
+들어갑니다. 질의 본문, 검색된 문단, 모델 출력은 `capture_content: true`일 때만,
+그것도 `redact_patterns`를 적용한 뒤 모델 스팬에만 기록합니다. 본문을 기록한
+트레이스 백엔드는 `DEBUG` 로그와 마찬가지로 사용자·코퍼스 데이터를 담고 있다고
+보세요.
+
+알려진 제한: `stream` / `astream`의 스트리밍 답변은 별도 트레이스로 기록됩니다(검색과
+컨텍스트 구성은 `kg_rag.query` 트레이스에 있음). 비동기 배치 경로는 청크가 아니라
+배치마다 스팬을 하나 기록합니다. Langfuse, Phoenix, CloudWatch(ADOT) 백엔드는
+계획되어 있습니다([#92](https://github.com/awslabs/unified-kg-rag-on-aws/issues/92)).
+
 ---
 
 ## 3. 수집 (`run-ingestion`)
