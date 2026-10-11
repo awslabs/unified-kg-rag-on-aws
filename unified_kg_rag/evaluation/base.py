@@ -108,10 +108,9 @@ class BaseEvaluator(ABC):
             query_id = queries[original_index].query_id
 
             if error:
-                if not self.config.processing.ignore_errors:
-                    for task in tasks:
-                        task.cancel()
-                    raise error
+                # Scoring runs after every answer is generated, so an error
+                # here is recorded as failed metrics (and counted against
+                # --max-failure-rate) instead of discarding the run.
                 logger.error("Failed to evaluate query '%s': %s", query_id, error)
                 final_reports[original_index] = self._create_empty_report(
                     query_id, reason=f"Evaluation failed: {error}"

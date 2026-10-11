@@ -387,26 +387,13 @@ class TestAevaluateBatch:
         await ev.aevaluate_batch([_query()], [_result(contexts=["c1"])], ["truth"])
         assert evaluate.call_count == 1
 
-    async def test_failure_reraises_when_not_ignore_errors(self, mocker) -> None:
-        # ignore_errors=False (strict): a batch failure must propagate.
+    async def test_failure_returns_failed_reports(self, mocker) -> None:
+        # Even with ignore_errors=False, a RAGAS failure after every answer is
+        # generated becomes failed metrics instead of aborting the run.
         ev, _ = _make_evaluator(
             mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
         )
-        ev.ignore_errors = False
-        mocker.patch.object(
-            rg_module, "evaluate", side_effect=RuntimeError("ragas down")
-        )
-        with pytest.raises(RuntimeError):
-            await ev.aevaluate_batch([_query()], [_result()], [""])
-
-    async def test_failure_returns_empty_reports_when_ignore_errors(
-        self, mocker
-    ) -> None:
-        # ignore_errors=True (tolerant): degrade to empty reports, don't abort.
-        ev, _ = _make_evaluator(
-            mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
-        )
-        ev.ignore_errors = True
+        assert ev.config.processing.ignore_errors is False
         mocker.patch.object(
             rg_module, "evaluate", side_effect=RuntimeError("ragas down")
         )

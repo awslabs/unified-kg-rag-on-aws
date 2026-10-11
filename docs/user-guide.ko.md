@@ -1162,10 +1162,10 @@ DynamoDB 항목 하나에 저장하며, 항목 크기 한도는 400KB(ID 약 10,
 `evaluation.enabled_evaluators`로 고릅니다. 켠 평가기를 만들 수 없거나(예: 판정
 모델에 쓸 Bedrock 액세스가 없음) 평가기가 설정을 거부하면 실행이 멈춥니다.
 `processing.ignore_errors: true`이면 그 평가기를 빼고 `run_manifest.dropped_evaluators`에
-기록합니다. 채점 중에도 같습니다. 평가기 오류(예: 판정 모델 호출 실패)는
-`ignore_errors`가 `true`가 아니면 실행을 멈추고, `true`이면 그 지표를 실패로
-기록합니다. 판정 모델 응답에 쓸 수 있는 점수가 없으면 0이 아니라 항상 실패로
-기록합니다. 기본으로 다섯 개가 모두 켜져 있습니다. LLM을 쓰지 않는 결정적
+기록합니다. 채점은 모든 답변을 생성한 뒤에 시작하므로, 채점 중 평가기 오류(예: 판정
+모델 호출 실패)가 나도 실행 결과를 버리지 않습니다. 그 질의의 지표를 실패로 기록하고
+결과를 저장하며, 종료 코드는 `--max-failure-rate`로 정합니다. 판정 모델 응답에 쓸 수
+있는 점수가 없을 때도 0이 아니라 실패로 기록합니다. 기본으로 다섯 개가 모두 켜져 있습니다. LLM을 쓰지 않는 결정적
 평가기(`answer_match`, `retrieval`, `graph_aware`)는 비용이 없으며, 필요한 데이터셋
 필드가 없는 질의는 건너뜁니다. 판정 모델 없이 실행하려면
 `enabled_evaluators: [answer_match, retrieval, graph_aware]`로 설정하세요.

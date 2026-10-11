@@ -1220,10 +1220,11 @@ chunks counts as a failed removal (its registry row is kept for a retry).
 Selected via `evaluation.enabled_evaluators`. An enabled evaluator that cannot
 be built (e.g. no Bedrock access for the judge) or rejects its configuration
 stops the run; with `processing.ignore_errors: true` it is dropped instead and
-listed in `run_manifest.dropped_evaluators`. The same applies while scoring:
-an evaluator error (e.g. a judge call that fails) stops the run unless
-`ignore_errors` is `true`, in which case the metric is recorded as failed. A
-judge reply without a usable score is always recorded as failed, never as 0.
+listed in `run_manifest.dropped_evaluators`. Scoring starts only after every
+answer is generated, so an evaluator error there (e.g. a judge call that
+fails) never discards the run: the metric is recorded as failed for that
+query, the results are saved, and `--max-failure-rate` decides the exit code.
+A judge reply without a usable score is likewise recorded as failed, never as 0.
 By default all five are enabled:
 the deterministic, LLM-free ones (`answer_match`, `retrieval`, `graph_aware`)
 are free and skip a query that lacks their dataset fields; for a judge-free run

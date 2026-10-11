@@ -503,6 +503,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   being reported as an unknown key that is ignored (#151).
 
 ### Removed
+- `LangChainEvaluator.evaluate_single` and `_evaluate_with_metric`, a
+  synchronous path only the tests called; the evaluation manager always scores
+  through `aevaluate_single` (#PR).
 - Gleaning config keys `convergence_threshold`, `quality_threshold`,
   `min_improvement_threshold`, `quality_completeness_weight`,
   `initial_quality_entity_scale`, `initial_quality_relationship_scale` and
@@ -560,6 +563,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- `run-eval` no longer discards a whole run when one judge call fails after
+  every answer has been generated. Scoring errors (a judge call, a RAGAS run
+  or an evaluator crash) are now recorded as failed metrics for the affected
+  queries whatever `processing.ignore_errors` says, the results files are
+  written, and `--max-failure-rate` decides the exit code. `ignore_errors`
+  still governs answer generation and evaluator construction (#PR).
 - `answer_match` no longer counts a different number or name as contained.
   Normalization keeps a decimal point or comma between digits ("1.5 million"
   no longer matches "15 million", nor "3.5" "35 percent") and a trailing

@@ -104,7 +104,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             config.evaluation.evaluation_model_id,
             api_supported=eval_model_info.supports_count_tokens,
         )
-        self.ignore_errors = config.processing.ignore_errors
         super().__init__(
             config=config,
             evaluator_type=EvaluatorType.RAGAS,
@@ -327,10 +326,9 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 judge_inputs,
             )
         except Exception as e:
-            if not self.ignore_errors:
-                raise
-
-            logger.error("Ragas async evaluation failed for batch: %s", e)
+            # Every answer is already generated: record the failure as failed
+            # metrics; --max-failure-rate decides the exit code.
+            logger.error("Ragas evaluation failed for batch: %s", e)
             return [
                 self._create_empty_report(
                     q.query_id, reason=f"Ragas batch evaluation failed: {e}"

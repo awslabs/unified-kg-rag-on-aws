@@ -38,9 +38,8 @@ logger = get_logger(__name__)
 class UnscoredJudgeOutputError(EvaluationException):
     """The judge answered, but its output carries no usable score.
 
-    Like a RAGAS NaN, this is a measurement outcome rather than an
-    infrastructure error: the metric is recorded under ``failed_metrics``
-    whatever ``processing.ignore_errors`` says.
+    Like a RAGAS NaN (or any judge-call error), the metric is recorded under
+    ``failed_metrics``, never as 0.0.
     """
 
 
@@ -114,7 +113,6 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             evaluator_type=EvaluatorType.LANGCHAIN,
             **kwargs,
         )
-        self.ignore_errors = config.processing.ignore_errors
 
     def _initialize_evaluator(self, **kwargs: Any) -> None:
         try:
@@ -266,55 +264,6 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         """
         return self._requires_reference(metric_type) and not ground_truth.strip()
 
-    def evaluate_single(
-        self,
-        query: EvaluationQuery,
-        result: EvaluationResult,
-        ground_truth: str,
-        **kwargs: Any,
-    ) -> EvaluationReport:
-        metrics = []
-        failed: dict[str, str] = {}
-        skipped: dict[str, str] = {}
-        for metric_type in self.config.evaluation.langchain_metrics:
-            if metric_type not in self.evaluators:
-                continue
-            if self._should_skip(metric_type, ground_truth):
-                skipped[metric_type.value] = SKIP_REASON_EMPTY_REFERENCE
-                continue
-            try:
-                metric = self._evaluate_with_metric(
-                    self.evaluators[metric_type],
-                    metric_type,
-                    query.question,
-                    result.generated_answer,
-                    ground_truth,
-                )
-                metrics.append(metric)
-            except UnscoredJudgeOutputError as e:
-                failed[metric_type.value] = self._handle_evaluation_error(
-                    metric_type, query.query_id, e
-                )
-            except Exception as e:
-                if not self.ignore_errors:
-                    raise
-                failed[metric_type.value] = self._handle_evaluation_error(
-                    metric_type, query.query_id, e
-                )
-        return self._create_report(query.query_id, metrics, result, failed, skipped)
-
-    def _evaluate_with_metric(
-        self,
-        evaluator: Any,
-        metric_type: EvaluationMetricType,
-        question: str,
-        answer: str,
-        ground_truth: str,
-    ) -> EvaluationMetric:
-        eval_args = self._prepare_eval_args(metric_type, question, answer, ground_truth)
-        eval_result = evaluator.evaluate_strings(**eval_args)
-        return self._to_metric(metric_type, eval_result)
-
     def _to_metric(
         self, metric_type: EvaluationMetricType, eval_result: dict[str, Any]
     ) -> EvaluationMetric:
@@ -357,10 +306,6 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         for i, res in enumerate(results):
             metric_type = metric_types_to_run[i]
             if isinstance(res, Exception):
-                if not self.ignore_errors and not isinstance(
-                    res, UnscoredJudgeOutputError
-                ):
-                    raise res
                 failed[metric_type.value] = self._handle_evaluation_error(
                     metric_type, query.query_id, res
                 )
