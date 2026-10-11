@@ -298,16 +298,16 @@ Library API (Python callers and custom backends).
   `No indices found for suffix '<suffix>'` again, as documented, instead of
   logging an ERROR and answering "could not find" with exit code 0: the async
   OpenSearch client reports the 404 body as raw JSON text, which the
-  `index_not_found_exception` check did not read (#PR).
+  `index_not_found_exception` check did not read (#227).
 - `DataIngestionPipeline.run(source_directory)` ingests the directory it is
   given. The parsing and loading stages kept the constructor's directory (or
   the configured default), so a run over another directory read the old
-  corpus and diffed the incremental registry under the old source scope (#PR).
+  corpus and diffed the incremental registry under the old source scope (#227).
 - Local mode: one chain serves queries from successive event loops (a second
   `asyncio.run(chain.ainvoke(...))`, or `stream` and then `astream`). The
   Ollama chat and embedding models kept one async HTTP client, bound to the
   first loop, and failed later calls with "Event loop is closed"; they now
-  get one client per loop (#PR).
+  get one client per loop (#227).
 - IaC: a zone-aware OpenSearch domain spans as many AZs as it has data
   nodes, up to 3 and up to the VPC's AZs, so `opensearch_count=3` with
   `max_azs=3` uses three zones instead of two. `bedrock_model_arns` that
@@ -315,28 +315,28 @@ Library API (Python callers and custom backends).
   offered only through a profile stay callable (the profile call is still
   authorized against the listed models). The README documents both, and
   its cross-region guardrail example now sets `network_mode=public`, which
-  a `bedrock_region` other than the deploy region requires (#PR).
+  a `bedrock_region` other than the deploy region requires (#227).
 - An incremental run that an artifact stage stops before indexing (every
   text unit of a document failing extraction, without `--continue-on-error`)
   records its new and changed documents FAILED, so
   `indexing.max_document_failures` ends the retries of a document that always
-  fails; before, nothing was recorded and every run retried it (#PR).
+  fails; before, nothing was recorded and every run retried it (#227).
 - `run-prompt-tuning` no longer puts up to 200 characters of model output in
   the ERROR it logs when the corpus profile is not JSON: the message carries
   the output's length and digest, and the output itself is logged at DEBUG,
-  as the logging policy (user guide §2.7) states (#PR).
+  as the logging policy (user guide §2.7) states (#227).
 - `run-eval` reports an unreadable or invalid dataset as
   `Error: invalid evaluation dataset: ...` with exit code 2 instead of "An
   unexpected error occurred" and a traceback, and rejects an `answer_aliases`
   that is not a string or a list of strings at load instead of failing every
-  query. The random part of the result file names is documented (#PR).
+  query. The random part of the result file names is documented (#227).
 - The `run-ingestion` performance summary of a resumed run counts the stages
   restored from the stage cache under "Stages from Cache" instead of
-  reporting 0 and every completed stage as executed (#PR).
+  reporting 0 and every completed stage as executed (#227).
 - `run-ingestion` with a `--target-directory` (or
   `document_parsing.target_directory`) equal to the source directory exits 1
   with a one-line error instead of "An unexpected error occurred" and a
-  traceback (#PR).
+  traceback (#227).
 - Queries on Ollama retry a transient error (HTTP 408/429/5xx, dropped
   connection, timeout) instead of failing on the first one: the Ollama client
   never retries, so query chains and Ollama embedding calls now get the
