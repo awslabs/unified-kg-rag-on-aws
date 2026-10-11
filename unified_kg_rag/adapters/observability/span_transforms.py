@@ -25,9 +25,11 @@ request path, and applies, in order:
 2. redaction: every ``redact_patterns`` match in a string attribute (string
    list items included), event attribute (an exception message can quote a
    query) and status description becomes ``[REDACTED]``, whatever code set
-   it, including the vendor copies made in step 1. Captured content is
-   redacted here only: capture-time redaction applies just where no exporter
-   of this package runs (backend ``none``).
+   it, including the vendor copies made in step 1. This is the second layer
+   for captured content: the callback handler already redacts prompt and
+   completion text at capture, as raw text, on every backend, because here it
+   is JSON-encoded and a pattern that uses ``\\b``, ``\\s`` or ``^...$``
+   can miss a match next to an encoded newline.
 
 The mappings are plain functions over attribute dicts, testable without an
 exporter.

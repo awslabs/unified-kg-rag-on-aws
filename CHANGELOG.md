@@ -181,7 +181,8 @@ Library API (Python callers and custom backends).
   stages, batches and each query step, GenAI model-call spans with token
   usage, log/trace correlation, `session.id` / `user.id`
   (`RAGInput.user_id`), opt-in content capture with `redact_patterns`
-  applied at export, and `export_timeout_seconds` (#207, #208, #211).
+  applied at capture and again at export, and `export_timeout_seconds`
+  (#207, #208, #211, #PR).
 - Incremental-indexing controls: `indexing.max_document_failures` (#175),
   `indexing.retire_source_scopes` / `--retire-source-scope` (#192) and
   `processing.document_parsing.source_scope` (#134).
@@ -287,6 +288,10 @@ Library API (Python callers and custom backends).
 - INFO-level logs no longer carry query text, entity names or model output;
   `run-rag` strips terminal control characters from output; the CLIs warn
   when LangSmith tracing is on (#156, #173).
+- Captured prompt and completion text is redacted as raw text on every
+  tracing backend: with `otlp`, `langfuse` or `phoenix` it was redacted only
+  at export, JSON-encoded, where a `\b` or `\s` pattern next to a newline
+  missed the match (#PR).
 - `pipeline_id` must be a single path segment (#173).
 - The persisted embedding cache honours `aws.s3.encryption` (#173).
 - Metadata filters are documented as relevance filters, not an
