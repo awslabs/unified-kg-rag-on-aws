@@ -7,7 +7,6 @@ from datetime import datetime
 from importlib.metadata import version
 from pathlib import Path
 
-from dotenv import load_dotenv
 from rich.panel import Panel
 from rich.prompt import Confirm
 
@@ -36,13 +35,13 @@ from unified_kg_rag.shared import (
     get_logger,
     setup_logging,
 )
+from unified_kg_rag.shared.config import load_cli_dotenv
 from unified_kg_rag.shared.utils.display import (
     console,
     display_ascii_art,
     display_pipeline_results,
 )
 
-load_dotenv()
 logger = get_logger(__name__)
 
 
@@ -546,6 +545,7 @@ class IngestionPipelineRunner:
 
 
 def main() -> None:
+    load_cli_dotenv()
     try:
         cli = CommandLineInterface()
         args = cli.parse_args()
