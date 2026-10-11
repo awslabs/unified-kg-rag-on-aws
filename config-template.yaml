@@ -769,6 +769,29 @@ logging:
     botocore: "WARNING"
     urllib3: "WARNING"
 
+# Observability (OpenTelemetry tracing). Off by default; needs the `otel` extra
+# (`uv sync --extra otel`). Spans cover the ingestion run/stages/batches and
+# each query (strategy, retrieval, fusion, rerank, context build) plus every
+# model call with its token usage. The OTLP endpoint, headers (e.g. a collector
+# API key) and timeout come from the standard environment variables
+# (OTEL_EXPORTER_OTLP_ENDPOINT / _HEADERS / _TIMEOUT / _PROTOCOL), never from
+# this file. OTEL_SDK_DISABLED=true turns tracing off regardless.
+observability:
+  enabled: false
+  # none: send spans to the process's global OpenTelemetry tracer provider
+  #       (set up by a host application or `opentelemetry-instrument`).
+  # otlp: export over OTLP (http/protobuf; grpc with
+  #       OTEL_EXPORTER_OTLP_PROTOCOL=grpc).
+  backend: "none"
+  # Record prompt and completion text on model spans. Off: spans carry counts,
+  # ids, timings and token usage only.
+  capture_content: false
+  # Fraction of root traces kept (backend otlp); child spans follow the root.
+  sample_rate: 1.0
+  service_name: "unified-kg-rag"  # OTEL_SERVICE_NAME wins when set
+  # Regular expressions replaced with [REDACTED] in captured content.
+  redact_patterns: []
+
 # Evaluation Configuration
 evaluation:
   outputs_directory: "outputs/evaluation"
