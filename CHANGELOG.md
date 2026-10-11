@@ -221,6 +221,9 @@ Library API (Python callers and custom backends).
   longer holds fails and asks for `indexing.reset: true` (#214).
 - Querying a suffix nothing was ingested under raises `IndexNotFoundError`
   (#178).
+- `config-template.yaml` shows the `providers` section, the Neptune and
+  OpenSearch connection keys and the embedding and rerank model ids as
+  comments, so a copy of it switches with `backend: local` alone.
 - Performance: shared MinHash permutations, float32 embedding cache,
   reused query chains, batched registry reads and writes, and in-process
   claim resolution and gleaning preparation (#176, #191, #194, #213).
