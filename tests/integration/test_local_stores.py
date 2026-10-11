@@ -254,6 +254,13 @@ def test_graph_round_trip(local_config: Config, graph_indexer) -> None:
     (vendor,) = graph_indexer.read_entities(["e-vendor"])
     assert vendor.description == "Vendor sells widgets"
     assert sorted(vendor.text_unit_ids or []) == ["t1", "t2"]
+    # A list property is replaced, not merged: an upsert that cites fewer
+    # text units drops the others.
+    shrunk = updated.model_copy(update={"text_unit_ids": ["t1"]})
+    assert graph_indexer.upsert_entities([shrunk]).failed_items == 0
+    (vendor,) = graph_indexer.read_entities(["e-vendor"])
+    assert vendor.text_unit_ids == ["t1"]
+    assert vendor.description == "Vendor sells widgets"
 
     assert len(graph_indexer.read_relationships(["r-supplies"])) == 1
 

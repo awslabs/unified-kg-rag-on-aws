@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """AWS-free unit tests for NeptuneIndexer write-side logic.
 
-Complements ``test_neptune_upsert.py`` (which covers upsert fold/coalesce,
-edge JSON serialization, and delete_by_id label scoping). Here we cover the
-non-upsert paths and pure helpers:
+Complements ``test_neptune_upsert.py`` (the upsert path: per-edge failure
+isolation, write concurrency, label scoping and property serialization) and
+``tests/integration/test_local_stores.py`` (the traversal shapes against a
+real Gremlin Server). Here we cover the non-upsert paths and pure helpers:
 
 * ``index_entities`` / ``index_communities`` full-index traversal SHAPE via a
   recording fake traversal (addV per item, label scoping, no fold/coalesce).
