@@ -28,7 +28,10 @@ def add_provider_arguments(parser: argparse.ArgumentParser) -> None:
         "--backend",
         choices=[b.value for b in Backend],
         help="Provider preset: 'aws' (Bedrock, Neptune, OpenSearch, DynamoDB) or "
-        "'local' (Ollama, cross-encoder, Gremlin Server, local OpenSearch, SQLite)",
+        "'local' (Ollama, cross-encoder, Gremlin Server, local OpenSearch, "
+        "SQLite). The preset fills in only keys the config leaves unset: a "
+        "providers.*, aws.neptune.*, aws.opensearch.* or model-id key the "
+        "file sets always wins",
     )
     group.add_argument(
         "--llm-provider",

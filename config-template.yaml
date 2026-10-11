@@ -106,7 +106,7 @@ aws:
     # Retry on transient Bedrock errors that botocore does not retry, such as
     # HTTP 424 ModelErrorException. Applies to every embedding request and to
     # query-time LLM calls (strategy routing, query entity/keyword extraction,
-    # translation, context building, answer generation, global/DRIFT steps).
+    # translation, query rewrite, answer generation, global/DRIFT steps).
     # Validation/access errors still fail fast. Ingestion LLM calls are
     # retried by their batch processor instead (processing.max_attempts).
     transient_retry:
@@ -118,11 +118,13 @@ aws:
   # Neptune Configuration
   neptune:
     endpoint: # Add endpoint here
-    port: 8182
-    use_iam: true
+    # The connection keys below are commented out so that `backend: local` can
+    # fill them in; the values shown are the defaults (Amazon Neptune).
+    # port: 8182
+    # use_iam: true
     # TLS (wss://). Neptune requires it; set false (with use_iam: false) only
     # for a plain TinkerPop Gremlin Server, e.g. docker/compose.local.yaml.
-    use_ssl: true
+    # use_ssl: true
     # Gremlin connection pool size (max concurrent in-flight requests over the
     # websocket). Raised to indexing.neptune.index_concurrency when that is
     # larger, so concurrent write batches are not serialized. Query traversals
@@ -133,14 +135,15 @@ aws:
   # OpenSearch Configuration
   opensearch:
     endpoint: # Add endpoint here
-    port: 443
-    use_ssl: true
-    verify_certs: true
-    use_iam: false
+    # Commented out like the Neptune keys above; the values are the defaults.
+    # port: 443
+    # use_ssl: true
+    # verify_certs: true
+    # use_iam: false
     # Connect with no auth at all, for a local OpenSearch with the security
     # plugin disabled (docker/compose.local.yaml). Cannot be combined with
     # use_iam or username/password.
-    allow_anonymous: false
+    # allow_anonymous: false
     # SigV4 signing service name for IAM auth. "es" for Amazon OpenSearch Service
     # (managed domains); "aoss" for OpenSearch Serverless collections.
     sigv4_service_name: "es"
@@ -168,77 +171,81 @@ aws:
     create_table_if_missing: true
     billing_mode: "PAY_PER_REQUEST"
 
-# Provider preset. "aws" (default) uses the providers below as shown. "local"
-# fills in local providers for every key under providers, aws.neptune and
-# aws.opensearch that this file leaves unset: Ollama models, a cross-encoder
+# Provider preset. "aws" (default): Bedrock, Neptune, OpenSearch, DynamoDB.
+# "local" fills in local providers for every key under providers, aws.neptune
+# and aws.opensearch that this file leaves unset: Ollama models, a cross-encoder
 # reranker, Gremlin Server, a local OpenSearch and a SQLite registry (see the
-# user guide's "Local mode" and docker/config.local.yaml).
+# user guide's "Local mode" and docker/config.local.yaml). A key this file sets
+# always wins over the preset, so the providers section and the Neptune and
+# OpenSearch connection keys are commented out here; uncomment a key only to
+# change it.
 backend: "aws"
 
-# Per-role provider selection. Each kind is resolved through the provider
-# registry, so a custom kind can be registered without code changes here.
-providers:
-  llm:
-    # bedrock | openai_compatible | ollama
-    kind: "bedrock"
-    # Non-Bedrock only: the server endpoint (e.g. http://localhost:11434 for
-    # Ollama, http://localhost:8000/v1 for vLLM / llama.cpp / LM Studio) and,
-    # for an OpenAI-compatible server that needs one, an API key.
-    base_url: null
-    api_key: null
-    timeout_seconds: 300.0
-    max_attempts: 3  # per request, including the first (openai_compatible)
-    # Non-Bedrock only: the tier models (they replace aws.bedrock.*_model_id;
-    # default_model_id is required, fast_model_id null = default_model_id).
-    default_model_id: null
-    fast_model_id: null
-    # Non-Bedrock only: model limits (Bedrock models take theirs from the
-    # capability catalog). context_window_size is sent to Ollama as num_ctx.
-    context_window_size: 32768
-    max_output_tokens: 8192
-    temperature: 0.0
-    # Non-Bedrock only: "estimate" (script-aware estimate) or "tiktoken"
-    # ([local] extra; downloads its encoding file on first use).
-    tokenizer: "estimate"
-    tiktoken_encoding: "cl100k_base"
-  embedding:
-    # bedrock | openai_compatible | ollama
-    kind: "bedrock"
-    base_url: null
-    api_key: null
-    timeout_seconds: 300.0
-    max_attempts: 3  # per request, including the first (openai_compatible)
-    # Non-Bedrock only, both required: the model (default of
-    # indexing.opensearch.embedding_model_id and evaluation.embedding_model_id)
-    # and its vector dimension.
-    model_id: null
-    dimension: null
-    max_input_tokens: 8192
-  rerank:
-    # bedrock | cross_encoder (sentence-transformers, [local] extra) | none.
-    # Without a working reranker queries keep the fused order (logged, and
-    # kg_rag.rerank_enabled=false on the fusion span).
-    kind: "bedrock"
-    # cross_encoder only (required): the default of
-    # search.reranking.rerank_model_id.
-    model_id: null
-    device: null
-    max_length: 512
-    batch_size: 16
-  graph:
-    # neptune | gremlin (a TinkerPop Gremlin Server through aws.neptune with
-    # use_iam: false)
-    kind: "neptune"
-  vector:
-    # opensearch (Amazon OpenSearch Service or a local OpenSearch)
-    kind: "opensearch"
-  doc_status:
-    # dynamodb | sqlite
-    kind: "dynamodb"
-    # Incremental indexing on/off; null follows aws.dynamodb.enabled.
-    enabled: null
-    # SQLite registry file (kind: sqlite); relative to this config file.
-    sqlite_path: ".unified-kg-rag/doc-status.sqlite3"
+# Per-role provider selection (defaults shown). Each kind is resolved through
+# the provider registry, so a custom kind can be registered without code
+# changes here.
+# providers:
+#   llm:
+#     # bedrock | openai_compatible | ollama
+#     kind: "bedrock"
+#     # Non-Bedrock only: the server endpoint (e.g. http://localhost:11434 for
+#     # Ollama, http://localhost:8000/v1 for vLLM / llama.cpp / LM Studio) and,
+#     # for an OpenAI-compatible server that needs one, an API key.
+#     base_url: null
+#     api_key: null
+#     timeout_seconds: 300.0
+#     max_attempts: 3  # per request, including the first (openai_compatible)
+#     # Non-Bedrock only: the tier models (they replace aws.bedrock.*_model_id;
+#     # default_model_id is required, fast_model_id null = default_model_id).
+#     default_model_id: null
+#     fast_model_id: null
+#     # Non-Bedrock only: model limits (Bedrock models take theirs from the
+#     # capability catalog). context_window_size is sent to Ollama as num_ctx.
+#     context_window_size: 32768
+#     max_output_tokens: 8192
+#     temperature: 0.0
+#     # Non-Bedrock only: "estimate" (script-aware estimate) or "tiktoken"
+#     # ([local] extra; downloads its encoding file on first use).
+#     tokenizer: "estimate"
+#     tiktoken_encoding: "cl100k_base"
+#   embedding:
+#     # bedrock | openai_compatible | ollama
+#     kind: "bedrock"
+#     base_url: null
+#     api_key: null
+#     timeout_seconds: 300.0
+#     max_attempts: 3  # per request, including the first (openai_compatible)
+#     # Non-Bedrock only, both required: the model (default of
+#     # indexing.opensearch.embedding_model_id and evaluation.embedding_model_id)
+#     # and its vector dimension.
+#     model_id: null
+#     dimension: null
+#     max_input_tokens: 8192
+#   rerank:
+#     # bedrock | cross_encoder (sentence-transformers, [local] extra) | none.
+#     # Without a working reranker queries keep the fused order (logged, and
+#     # kg_rag.rerank_enabled=false on the fusion span).
+#     kind: "bedrock"
+#     # cross_encoder only (required): the default of
+#     # search.reranking.rerank_model_id.
+#     model_id: null
+#     device: null
+#     max_length: 512
+#     batch_size: 16
+#   graph:
+#     # neptune | gremlin (a TinkerPop Gremlin Server through aws.neptune with
+#     # use_iam: false)
+#     kind: "neptune"
+#   vector:
+#     # opensearch (Amazon OpenSearch Service or a local OpenSearch)
+#     kind: "opensearch"
+#   doc_status:
+#     # dynamodb | sqlite
+#     kind: "dynamodb"
+#     # Incremental indexing on/off; null follows aws.dynamodb.enabled.
+#     enabled: null
+#     # SQLite registry file (kind: sqlite); relative to this config file.
+#     sqlite_path: ".unified-kg-rag/doc-status.sqlite3"
 
 # Global Output Fixing Configuration (auto-repair malformed model responses)
 fixing:
@@ -553,7 +560,9 @@ indexing:
 
   # OpenSearch Indexing
   opensearch:
-    embedding_model_id: "amazon.titan-embed-text-v2:0"
+    # Unset = providers.embedding.model_id, or amazon.titan-embed-text-v2:0
+    # with Bedrock embeddings.
+    # embedding_model_id: "amazon.titan-embed-text-v2:0"
     embedding_dimension: null
     refresh_after_batch: true
     # Persist the content-hash embedding cache to S3 so unchanged text is not
@@ -690,7 +699,9 @@ search:
   # Reranking Configuration
   reranking:
     enabled: true
-    rerank_model_id: "cohere.rerank-v3-5:0"
+    # Unset = providers.rerank.model_id, or cohere.rerank-v3-5:0
+    # with Bedrock reranking.
+    # rerank_model_id: "cohere.rerank-v3-5:0"
     top_k: 100
 
   # LightRAG dual-level keyword search (mix/hybrid/naive modes)
@@ -895,7 +906,9 @@ observability:
 # Evaluation Configuration
 evaluation:
   outputs_directory: "outputs/evaluation"
-  embedding_model_id: "amazon.titan-embed-text-v2:0"
+  # Unset = providers.embedding.model_id, or amazon.titan-embed-text-v2:0
+  # with Bedrock embeddings.
+  # embedding_model_id: "amazon.titan-embed-text-v2:0"
   # The deterministic, LLM-free evaluators cost nothing and skip a query
   # that lacks their dataset fields, so they are on by default.
   enabled_evaluators:
