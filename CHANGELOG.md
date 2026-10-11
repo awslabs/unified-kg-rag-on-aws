@@ -294,6 +294,11 @@ Library API (Python callers and custom backends).
   to clarify ("I'm sorry, could you clarify which contract?") is discarded
   like any other refusal; the question mark no longer lets it replace the
   user's query (#226).
+- A query against an index suffix nothing was ingested under fails with
+  `No indices found for suffix '<suffix>'` again, as documented, instead of
+  logging an ERROR and answering "could not find" with exit code 0: the async
+  OpenSearch client reports the 404 body as raw JSON text, which the
+  `index_not_found_exception` check did not read (#PR).
 - Queries on Ollama retry a transient error (HTTP 408/429/5xx, dropped
   connection, timeout) instead of failing on the first one: the Ollama client
   never retries, so query chains and Ollama embedding calls now get the

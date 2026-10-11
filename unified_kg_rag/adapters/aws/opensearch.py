@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import json
 import time
 from collections.abc import Callable
 from functools import cached_property, wraps
@@ -79,6 +80,48 @@ def _bulk_item_status(result: dict[str, Any]) -> int | None:
     item: Any = next(iter(result.values()), {})
     status = item.get("status") if isinstance(item, dict) else None
     return status if isinstance(status, int) else None
+
+
+INDEX_NOT_FOUND_TYPE = "index_not_found_exception"
+
+
+def _error_types(payload: Any) -> set[str]:
+    """Collect ``error.type`` and ``error.root_cause[].type`` from an error body."""
+    if isinstance(payload, bytes | bytearray):
+        payload = payload.decode("utf-8", errors="replace")
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except ValueError:
+            # Already the extracted type name (the sync client's ``exc.error``).
+            return {payload}
+    if not isinstance(payload, dict):
+        return set()
+    error = payload.get("error", payload)
+    if isinstance(error, str):
+        return {error}
+    if not isinstance(error, dict):
+        return set()
+    types = {error["type"]} if isinstance(error.get("type"), str) else set()
+    for cause in error.get("root_cause") or []:
+        if isinstance(cause, dict) and isinstance(cause.get("type"), str):
+            types.add(cause["type"])
+    return types
+
+
+def is_index_not_found(exc: BaseException) -> bool:
+    """True when ``exc`` is OpenSearch's 404 ``index_not_found_exception``.
+
+    The connection classes shape the exception differently. The sync
+    ``RequestsHttpConnection``/``Urllib3HttpConnection`` pass the response
+    content type, so ``exc.error`` is the extracted type name and ``exc.info``
+    the parsed body. ``AsyncHttpConnection`` passes none, so ``exc.error`` is
+    the raw JSON text and ``exc.info`` is ``None``. Both shapes match.
+    """
+    if not isinstance(exc, NotFoundError) or exc.status_code != 404:
+        return False
+    payloads = exc.args[1:3]
+    return any(INDEX_NOT_FOUND_TYPE in _error_types(p) for p in payloads if p)
 
 
 def _handle_opensearch_errors(func: Callable) -> Callable:

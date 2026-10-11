@@ -6,9 +6,7 @@ from collections import OrderedDict
 from collections.abc import Coroutine
 from typing import Any, ClassVar
 
-from opensearchpy.exceptions import NotFoundError
-
-from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
+from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient, is_index_not_found
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     is_fatal_retrieval_error,
@@ -37,14 +35,6 @@ from unified_kg_rag.shared.utils import (
 from unified_kg_rag.shared.utils.scripts import has_dense_script
 
 logger = get_logger(__name__)
-
-
-def _is_index_not_found(exc: BaseException) -> bool:
-    """True when ``exc`` is OpenSearch's 404 ``index_not_found_exception``.
-
-    ``OpenSearchClient`` re-raises ``NotFoundError`` unwrapped.
-    """
-    return isinstance(exc, NotFoundError) and exc.error == "index_not_found_exception"
 
 
 class OpenSearchRetriever(BaseGraphRAGRetriever):
@@ -657,7 +647,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             if is_fatal_retrieval_error(e):
                 logger.error("Fatal search error on indices %s: %s", aliases, e)
                 raise
-            if _is_index_not_found(e):
+            if is_index_not_found(e):
                 await self._require_ingested_suffix(suffix, e)
                 # A missing alias is a config/index mismatch (the index was
                 # never built), not a transient failure.
