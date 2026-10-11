@@ -322,13 +322,41 @@ async def test_retrieve_community_context_caps_top_k_at_max_text_units() -> None
 # --------------------------------------------------------------------------- #
 
 
-async def test_augment_empty_selection_returns_fallback() -> None:
-    strat = _bare_strategy()
-    fallback = _communities(3)
+async def test_augment_empty_selection_post_processes_the_fallback() -> None:
+    # Dynamic selection that keeps nothing used to return the raw retrieved
+    # list: no max_communities cap, no text units, no rerank.
+    strat = _bare_strategy(max_communities=2)
+    fallback = [_community(i, score=i / 10) for i in range(5)]
+    fused: list[dict] = []
+    contexts: list[list[str]] = []
+
+    async def _context(communities, _query):
+        contexts.append([c.source for c in communities])
+        return []
+
+    async def _fuse(results, **_kw):
+        fused.append(results)
+        return results["opensearch_community_reports"]
+
+    strat._retrieve_community_context = _context  # type: ignore[method-assign]
+    strat._fuse_and_rerank = _fuse  # type: ignore[method-assign]
+
     out = await strat._augment_and_rerank_communities(
         [], fallback, SearchQuery(query="q")
     )
-    assert out is fallback
+
+    best_two = ["c4", "c3"]
+    assert [c.source for c in out] == best_two
+    assert contexts == [best_two]
+    assert len(fused) == 1
+
+
+async def test_augment_empty_selection_and_no_fallback_is_empty() -> None:
+    strat = _bare_strategy()
+    assert (
+        await strat._augment_and_rerank_communities([], [], SearchQuery(query="q"))
+        == []
+    )
 
 
 # --------------------------------------------------------------------------- #

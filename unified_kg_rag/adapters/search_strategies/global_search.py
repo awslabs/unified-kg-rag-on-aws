@@ -238,23 +238,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         *,
         config: RunnableConfig | None = None,
     ) -> list[RetrievalResult]:
-        max_communities = (
-            self.global_search_config.max_communities * query.retrieval_multiplier
-        )
+        max_communities = self._max_communities(query)
         if not self.global_search_config.use_dynamic_selection:
-            # Without per-query LLM scoring, keep the reports most relevant to
-            # the query (retrieval score); the community-report `rank`
-            # (graph importance, set at indexing time) and then the
-            # LLM-assigned `rating` only break ties. Both missing sort last.
-            return sorted(
-                all_communities,
-                key=lambda c: (
-                    c.score or 0.0,
-                    float(c.metadata.get("rank", 0.0) or 0.0),
-                    float(c.metadata.get("rating", 0.0) or 0.0),
-                ),
-                reverse=True,
-            )[:max_communities]
+            return self._top_by_retrieval(all_communities, max_communities)
 
         async def score_item(item: RetrievalResult) -> tuple[RetrievalResult, float]:
             # Return the relevance on a 0-1 scale so it is comparable to
@@ -317,6 +303,29 @@ class GlobalSearchStrategy(BaseSearchStrategy):
 
         return relevant_items[:max_communities]
 
+    def _max_communities(self, query: SearchQuery) -> int:
+        return self.global_search_config.max_communities * query.retrieval_multiplier
+
+    @staticmethod
+    def _top_by_retrieval(
+        communities: list[RetrievalResult], limit: int
+    ) -> list[RetrievalResult]:
+        """The ``limit`` reports most relevant to the query by retrieval score.
+
+        The community-report `rank` (graph importance, set at indexing time)
+        and then the LLM-assigned `rating` only break ties; both missing sort
+        last.
+        """
+        return sorted(
+            communities,
+            key=lambda c: (
+                c.score or 0.0,
+                float(c.metadata.get("rank", 0.0) or 0.0),
+                float(c.metadata.get("rating", 0.0) or 0.0),
+            ),
+            reverse=True,
+        )[:limit]
+
     async def _augment_and_rerank_communities(
         self,
         selected: list[RetrievalResult],
@@ -324,7 +333,13 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         query: SearchQuery,
     ) -> list[RetrievalResult]:
         if not selected:
-            return fallback
+            # Dynamic selection kept nothing: fall back to the retrieved reports,
+            # chosen and post-processed as without dynamic selection (capped at
+            # max_communities, with their text units, fused and reranked) rather
+            # than passed through raw.
+            selected = self._top_by_retrieval(fallback, self._max_communities(query))
+            if not selected:
+                return []
 
         context = await self._retrieve_community_context(selected, query)
         return await self._fuse_and_rerank(
