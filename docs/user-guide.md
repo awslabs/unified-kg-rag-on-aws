@@ -494,7 +494,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | Token budget for the entity/relationship context in one report prompt. |
 | `graph.community_detection.report_generation.content_length` | `"medium"` | Report length: `short`, `medium`, `long`. |
 | `graph.analysis.centrality.calculate_betweenness` | `true` | Betweenness centrality. On graphs larger than `betweenness_auto_sample_threshold` (`2000`) nodes it is sampled instead of computed exactly. |
-| `graph.visualization.enabled` | `true` | Export visualization data during ingestion. |
+| `graph.visualization.enabled` | `false` | Render visualizations and export visualization data during ingestion (one embedding call per node plus a layout reduction per ingest). |
 | `graph.visualization.outputs_directory` | `null` | Unset writes to `<cache dir>/<pipeline_id>/visualization`, so the data syncs to S3 with the cache. |
 | `graph.visualization.layout_method` | `"umap"` | `umap`, `tsne`, or `pca`. |
 | `graph.visualization.interactive.max_nodes` | `2000` | Top-N nodes by degree kept in `interactive_graph.html`; `0` or `null` disables the cap. Setting `interactive` replaces its default dict, so also set `physics_enabled: false` to keep physics off. |
@@ -1220,10 +1220,11 @@ chunks counts as a failed removal (its registry row is kept for a retry).
 Selected via `evaluation.enabled_evaluators`. An enabled evaluator that cannot
 be built (e.g. no Bedrock access for the judge) or rejects its configuration
 stops the run; with `processing.ignore_errors: true` it is dropped instead and
-listed in `run_manifest.dropped_evaluators`. The same applies while scoring:
-an evaluator error (e.g. a judge call that fails) stops the run unless
-`ignore_errors` is `true`, in which case the metric is recorded as failed. A
-judge reply without a usable score is always recorded as failed, never as 0.
+listed in `run_manifest.dropped_evaluators`. Scoring starts only after every
+answer is generated, so an evaluator error there (e.g. a judge call that
+fails) never discards the run: the metric is recorded as failed for that
+query, the results are saved, and `--max-failure-rate` decides the exit code.
+A judge reply without a usable score is likewise recorded as failed, never as 0.
 By default all five are enabled:
 the deterministic, LLM-free ones (`answer_match`, `retrieval`, `graph_aware`)
 are free and skip a query that lacks their dataset fields; for a judge-free run
@@ -1274,21 +1275,30 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   but none is attributable; a query that retrieved no sources at all scores 0
   (a miss).
 - **`answer_match`** — deterministic, LLM-free answer scores against `answer`
-  and optional `metadata.answer_aliases`, taking the max over them.
+  and optional `answer_aliases` (a string or list, top level or under
+  `metadata`; `metadata` wins when both are set), taking the max over them.
   **`answer_contains`** (1.0 when the gold answer or an alias appears in the
   generated answer as a whole-word phrase) is the headline deterministic
   metric: long-form RAG answers rarely equal a short gold span, so it tracks
   correctness far better than exact match. Korean particles are tolerated
-  after any word, including Latin words and numbers (gold `서울 특별시`
-  matches `서울 특별시는`, `AWS` matches `AWS는`, `2024` matches `2024년에`),
-  and spacing next to CJK letters is ignored (`3억 원` = `3억원`,
+  after any word except a bare number (gold `서울 특별시` matches
+  `서울 특별시는`, `AWS` matches `AWS는`, but `3` does not match `3억` or `2`
+  `2개월`: Hangul after a number is usually a unit, so put the unit in the gold
+  or an alias), and spacing next to CJK letters is ignored (`3억 원` = `3억원`,
   `가나다 상사` = `가나다상사`). A single-word CJK gold is matched as a
   substring, but not inside a longer number or Latin word (`2년` does not
-  match `12년`). SQuAD-style `exact_match` and `token_f1` are also
-  emitted for comparison with published benchmarks. Text is NFKC-normalized, then normalized as in the official SQuAD
-  v1.1 script: lowercase, punctuation deleted (`1,000` = `1000`), English
-  articles dropped, whitespace collapsed. Token F1 splits on whitespace, so for
-  Chinese/Japanese text it degrades to exact match; Korean particles
+  match `12년`). A `yes`/`no` gold is scored by the answer's leading polarity
+  (the first `yes`/`no` in its first sentence), as in HotpotQA, since almost
+  any long answer contains the word "no". SQuAD-style `exact_match` and
+  `token_f1` are also emitted. Text is NFKC-normalized, then lowercased,
+  punctuation deleted, English articles dropped and whitespace collapsed, as
+  in the SQuAD v1.1 script, except that Unicode punctuation is deleted too and
+  punctuation that changes meaning is kept: a decimal point or comma between
+  digits (`1.5` is not `15`; thousands separators are dropped, so `1,000` =
+  `1000`) and a trailing `+`/`#` (`C++`, `C#`). A gold that is only an article
+  (`A`) is kept as is. Scores are therefore close to, but not comparable with,
+  leaderboard numbers from the official scripts. Token F1 splits on whitespace,
+  so for Chinese/Japanese text it degrades to exact match; Korean particles
   (`서울은`) make both metrics under-count.
 
 ### Eval data format
@@ -1389,8 +1399,9 @@ order, the file names it is attributed to (`[]` when unattributable).
 This is a **standalone** renderer that draws from an already-exported
 visualization-data JSON. It does **not** re-run ingestion or touch AWS.
 
-When `graph.visualization.enabled` is `true`, the community-detection stage of
-`run-ingestion` renders the visualizations and also writes
+When `graph.visualization.enabled` is `true` (default `false`, since it adds
+an embedding call per node and a layout reduction to every ingest), the
+community-detection stage of `run-ingestion` renders the visualizations and also writes
 `visualization_data.json` into `graph.visualization.outputs_directory`. When
 that is unset (the default), ingestion writes to
 `<cache.local_directory>/<pipeline_id>/visualization/`, so with S3 cache sync
@@ -1406,7 +1417,7 @@ Layout and error behaviour:
 
 - `embedding_method: "none"` uses a spring layout and never constructs a
   Bedrock embedding client.
-- `embedding_method: "node2vec"` embeds each node's `name: description` with
+- `embedding_method: "description"` embeds each node's `name: description` with
   Bedrock and reduces it with `layout_method`. If embedding fails, the
   visualization step fails when `processing.ignore_errors` is `false` (ingestion
   itself continues and logs the failure). With `ignore_errors: true` it logs an

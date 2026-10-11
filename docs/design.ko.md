@@ -409,7 +409,7 @@ Neptune 그래프 확장은 `local`과 `drift`에 포함되어 있고, `mix`/`hy
 - **LangChain 평가기**: correctness / partial_correctness(LLM 기반 채점 기준)
 - **RAGAS 평가기**: answer_correctness/relevancy, context_precision/recall, faithfulness
 - **검색 평가기**(`retrieval_evaluator.py`): 순위대로 보고된 출처를 데이터셋의 `reference_sources`와 비교해 `hit_at_k`, `recall_at_k`(k = `evaluation.retrieval_k`), `mrr`를 계산합니다. 대소문자를 무시한 파일 이름 stem이나 문서 id로 매칭합니다. 결정적이고 LLM이 필요 없으며, 참조나 출처 정보가 없는 질의는 건너뜁니다.
-- **답변 일치 평가기**(`answer_match_evaluator.py`): `answer`와 선택 항목 `metadata.answer_aliases`에 대해 SQuAD 방식으로 정규화한 `exact_match`와 `token_f1`을 계산합니다(참조 중 최댓값). 결정적이고 LLM이 필요 없습니다. 공백 기준으로 토큰을 나누므로, 띄어쓰기가 없는 문자 체계에서는 token F1이 exact match와 같아집니다.
+- **답변 일치 평가기**(`answer_match_evaluator.py`): `answer`와 선택 항목 `metadata.answer_aliases`에 대해 대표 지표인 `answer_contains`와, SQuAD 방식으로 정규화한 `exact_match`·`token_f1`을 계산합니다(정규화에서 소수점과 `C++` 같은 접미 기호를 남기므로 리더보드 수치와 직접 비교할 수 없음)(참조 중 최댓값). 결정적이고 LLM이 필요 없습니다. 공백 기준으로 토큰을 나누므로, 띄어쓰기가 없는 문자 체계에서는 token F1이 exact match와 같아집니다.
 - **그래프 인식 평가기**(`graph_aware_evaluator.py`): 정답의 `expected_entities`/`expected_relationships`가 생성된 답변에 나오는 비율(= 커버리지 = 재현율)을 `ENTITY_COVERAGE`/`RELATIONSHIP_COVERAGE`로 계산합니다. 결정적이고 LLM이 필요 없습니다. precision과 F1은 답변 속 엔티티를 열거해야 하는데(자유 텍스트에서는 불가능) 그렇게 하지 않으면 재현율을 중복한 값이 되어 신호를 부풀리므로 계산하지 않습니다. 라틴 문자는 단어 경계를 지키는 연속 토큰으로 매칭하고("AI"는 "airport" 안에서 매칭되지 않음), 공백이 없는 CJK는 부분 문자열 매칭을 씁니다. 매니저가 기대값을 `result.metadata`로 넣어 주므로 추상 시그니처는 바뀌지 않습니다.
 
 CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
@@ -421,7 +421,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 `visualization/` — `BaseRenderer` ABC + `@register_renderer` 레지스트리 + `RenderContext`.
 
 - `InteractiveRenderer`(pyvis 네트워크 + 커뮤니티 계층), `StaticRenderer`(Bokeh degree/centrality/community-size)
-- 레이아웃: Bedrock Node2Vec 임베딩 + UMAP 차원 축소(실패하면 spring layout)
+- 레이아웃: 노드별 `name: description` 임베딩 + UMAP 차원 축소(실패하면 spring layout)
 - **독립 실행**(`application/cli/run_visualization.py`): 수집 없이 내보낸 그래프 JSON(`export_visualization_data` 출력 형식: `nodes`/`edges`/`layout`/`communities.hierarchy`)을 읽어 타입이 있는 객체로 되살린 뒤 등록된 렌더러로 렌더링합니다.
 
 ---

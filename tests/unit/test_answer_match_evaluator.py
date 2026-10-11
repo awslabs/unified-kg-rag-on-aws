@@ -43,8 +43,51 @@ class TestNormalization:
     def test_squad_equivalences(self, prediction: str, reference: str) -> None:
         assert exact_match(prediction, reference) == 1.0
 
-    def test_decimal_point_deleted_like_squad(self) -> None:
-        assert normalize_answer("3.5 days") == "35 days"
+    @pytest.mark.parametrize(
+        ("text", "normalized"),
+        [
+            ("3.5 days", "3.5 days"),  # decimal point kept: 3.5 is not 35
+            ("1,000,000.", "1000000"),  # thousands separators dropped
+            ("1,5", "1,5"),  # a decimal comma is kept
+            ("C++ and C#!", "c++ and c#"),
+            ("#1 vendor", "1 vendor"),
+            ("A", "a"),  # only articles: kept rather than emptied
+            ("The.", "the"),
+        ],
+    )
+    def test_meaningful_punctuation_kept(self, text: str, normalized: str) -> None:
+        assert normalize_answer(text) == normalized
+
+    @pytest.mark.parametrize(
+        ("prediction", "reference"),
+        [
+            ("about 1.5 million users", "15 million"),
+            ("The rate is 3.5.", "35 percent"),
+            ("Written in C++.", "C"),
+        ],
+    )
+    def test_different_numbers_and_names_not_contained(
+        self, prediction: str, reference: str
+    ) -> None:
+        assert answer_contains(prediction, reference) == 0.0
+        assert exact_match(prediction, reference) == 0.0
+
+    @pytest.mark.parametrize(
+        ("prediction", "reference", "expected"),
+        [
+            ("Yes, the Buyer may terminate.", "yes", 1.0),
+            ("No. There is no such clause.", "no", 1.0),
+            # the gold appears, but the answer's polarity is the opposite
+            ("Yes, although no notice is required.", "no", 0.0),
+            ("There is no clause. Yes, it was signed.", "yes", 0.0),
+            ("The contract does not say.", "no", 0.0),
+            ("Based on the context, no.", "No", 1.0),
+        ],
+    )
+    def test_yes_no_gold_scored_by_leading_polarity(
+        self, prediction: str, reference: str, expected: float
+    ) -> None:
+        assert answer_contains(prediction, reference) == expected
 
     def test_answer_contains_korean_particle(self) -> None:
         assert (
@@ -67,7 +110,7 @@ class TestNormalization:
         )
         assert token_f1("unrelated", "vendor") == 0.0
         assert token_f1("", "") == 1.0
-        assert token_f1("a", "vendor") == 0.0  # "a" normalizes to empty
+        assert token_f1("a", "vendor") == 0.0
 
 
 def _report(config: Config, answer: str, ground_truth: str, metadata: dict):
@@ -111,6 +154,11 @@ class TestEvaluator:
             "exact_match",
             "token_f1",
         }
+
+    def test_article_only_gold_is_scored(self, config: Config) -> None:
+        report = _report(config, "A.", "A", {})
+        values = {m.metric_type.value: m.value for m in report.metrics}
+        assert values == {"answer_contains": 1.0, "exact_match": 1.0, "token_f1": 1.0}
 
     def test_long_answer_contains_gold(self, config: Config) -> None:
         report = _report(

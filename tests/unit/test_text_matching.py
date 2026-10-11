@@ -34,12 +34,14 @@ class TestPhraseInText:
             ("works at", "she works at acme"),
             ("net 30 days", "Payment: Net-30 days? no, net 30 days."),
             ("1000", "a fee of USD 1,000 applies"),
+            ("1.5 million", "about 1.5 million users"),
+            ("C++", "written in C++."),
             ("서울 특별시", "본사는 서울 특별시에 있다"),  # particle on last word
             ("서울", "본사는 서울은 아니다"),  # single word: substring
             ("東京電力", "本契約は東京電力と締結された"),
-            # Latin/digit gold answers followed by an attached Korean particle
-            ("2024", "계약은 2024년에 체결되었다"),
+            # Latin gold answers followed by an attached Korean particle
             ("AWS", "AWS는 클라우드 사업자이다"),
+            ("2024년", "계약은 2024년에 체결되었다"),
             ("Acme Corp", "공급자는 Acme Corp입니다"),
             # spacing variants of Korean phrases, in both directions
             ("가나다 상사", "공급자는 가나다상사이다"),
@@ -70,6 +72,14 @@ class TestPhraseInText:
             ("3억원", "계약 금액은 13억원이다"),
             ("AWS", "XAWS는 별개 회사이다"),
             ("2024", "20245년에"),  # digits continue the token
+            # Hangul after a bare number is a unit or magnitude, not a particle
+            ("2", "기간은 2개월이다"),
+            ("3", "금액은 3억이다"),
+            # a decimal point or comma between digits is part of the number
+            ("15 million", "about 1.5 million users"),
+            ("5", "rate of 1.5 percent"),
+            ("2년", "기간은 1.2년이다"),
+            ("C", "written in C++"),
             ("AWS", "AWS클라우드서비스는"),  # more than a particle
         ],
     )

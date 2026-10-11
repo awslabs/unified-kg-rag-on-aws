@@ -14,7 +14,7 @@ import pytest
 
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import EmbeddingModelError
-from unified_kg_rag.visualization.embeddings.node2vec import (
+from unified_kg_rag.visualization.embeddings.node_embedder import (
     BedrockNodeEmbedder,
     NodeEmbeddings,
 )

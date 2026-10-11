@@ -54,14 +54,12 @@ class PipelineStateManager:
     # metadata file — rewritten after each stage and synced to S3 — must not
     # duplicate it. The rest are derived graph payloads, equally heavy.
     EXCLUDED_DATA_FIELDS = {
-        "centrality_metrics",
         "claims",
         "communities",
         "community_reports",
         "documents",
         "entities",
         "graph",
-        "graph_statistics",
         "knowledge_graph",
         "rejected_entities",
         "relationships",

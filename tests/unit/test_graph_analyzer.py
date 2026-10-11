@@ -191,6 +191,17 @@ class TestStatistics:
         analyzer.graph = _star_graph()
         assert analyzer.centrality_cache == {}
         assert analyzer._statistics_cache is None
+        assert set(analyzer.calculate_centrality()) == set(_star_graph().nodes)
+
+    def test_centrality_computed_once_per_graph(self, mocker) -> None:
+        analyzer = GraphAnalyzer(Config(), graph=_triangle_graph())
+        pagerank = mocker.patch(
+            "unified_kg_rag.domain.ingestion.graph_analyzer.nx.pagerank",
+            wraps=nx.pagerank,
+        )
+        first = analyzer.calculate_centrality()
+        assert analyzer.calculate_centrality() is first
+        assert pagerank.call_count == 1
 
 
 class TestExportGraphData:

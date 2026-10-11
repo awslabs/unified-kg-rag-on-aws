@@ -1248,9 +1248,6 @@ class GraphAnalysisStage(PipelineStage):
         centrality_data = self.analyzer.calculate_centrality()
         graph_stats = self.analyzer.get_graph_statistics()
 
-        context.graph_statistics = graph_stats
-        context.centrality_metrics = list(centrality_data.values())
-
         metrics = {
             "entities_analyzed": len(entities),
             "relationships_analyzed": len(relationships),

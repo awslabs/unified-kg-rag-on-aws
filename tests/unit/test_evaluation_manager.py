@@ -150,6 +150,25 @@ class TestLoadData:
         queries, _ = EvaluationManager.load_data(path)
         assert queries[0].metadata["answer_aliases"] == ["x"]
 
+    def test_top_level_answer_aliases_accepted(self, tmp_path) -> None:
+        path = tmp_path / "data.json"
+        path.write_text(
+            json.dumps(
+                [
+                    {"question": "q", "answer": "a", "answer_aliases": ["x"]},
+                    {
+                        "question": "r",
+                        "answer_aliases": ["top"],
+                        "metadata": {"answer_aliases": ["nested"]},
+                    },
+                ]
+            ),
+            encoding="utf-8",
+        )
+        queries, _ = EvaluationManager.load_data(path)
+        assert queries[0].metadata["answer_aliases"] == ["x"]
+        assert queries[1].metadata["answer_aliases"] == ["nested"]
+
     def test_numeric_zero_answer_is_a_ground_truth(self, tmp_path) -> None:
         path = tmp_path / "eval.json"
         path.write_text(json.dumps([{"question": "How many?", "answer": 0}]))
@@ -350,45 +369,11 @@ class TestEvaluateResults:
         assert result.ground_truth == ""  # no GT for this id
         assert reports  # still produced a report
 
-    async def test_evaluator_crash_raises_without_ignore_errors(
-        self, config: Config
-    ) -> None:
-        manager = _graph_aware_manager(config)
+    async def test_per_query_error_recorded_not_raised(self, config: Config) -> None:
+        # Scoring runs after every answer is generated: an evaluator error is a
+        # failed metric (counted by --max-failure-rate), even with the default
+        # ignore_errors=False, so the generated answers are never discarded.
         assert config.processing.ignore_errors is False
-
-        async def _boom(*a, **k):
-            raise RuntimeError("eval down")
-
-        manager.evaluators[EvaluatorType.GRAPH_AWARE].aevaluate_batch = _boom
-        query = EvaluationQuery(query_id="q1", question="?")
-        result = EvaluationResult(
-            query_id="q1", question="?", generated_answer="x", ground_truth=""
-        )
-        gt = EvaluationGroundTruth(query_id="q1", ground_truth="ref")
-        with pytest.raises(RuntimeError, match="eval down"):
-            await manager._evaluate_results([query], [result], [gt])
-
-    async def test_per_query_error_raises_without_ignore_errors(
-        self, config: Config
-    ) -> None:
-        manager = _graph_aware_manager(config)
-        evaluator = manager.evaluators[EvaluatorType.GRAPH_AWARE]
-
-        async def _boom(*a, **k):
-            raise RuntimeError("judge down")
-
-        evaluator.aevaluate_single = _boom
-        query = EvaluationQuery(query_id="q1", question="?")
-        result = EvaluationResult(
-            query_id="q1", question="?", generated_answer="x", ground_truth=""
-        )
-        with pytest.raises(RuntimeError, match="judge down"):
-            await evaluator.aevaluate_batch([query], [result], [""])
-
-    async def test_per_query_error_recorded_with_ignore_errors(
-        self, config: Config
-    ) -> None:
-        config.processing.ignore_errors = True
         manager = _graph_aware_manager(config)
         evaluator = manager.evaluators[EvaluatorType.GRAPH_AWARE]
 
@@ -403,8 +388,8 @@ class TestEvaluateResults:
         reports = await evaluator.aevaluate_batch([query], [result], [""])
         assert reports[0].metadata["evaluation_failed"] is True
 
-    async def test_evaluator_failure_isolated(self, config: Config, mocker) -> None:
-        config.processing.ignore_errors = True
+    async def test_evaluator_crash_recorded_not_raised(self, config: Config) -> None:
+        assert config.processing.ignore_errors is False
         manager = _graph_aware_manager(config)
 
         async def _boom(*a, **k):
@@ -596,6 +581,38 @@ class TestErroredQueries:
         # One batch attempt, then the per-item sequential fallback answers it.
         assert _FailingBatchChain.batch_calls == 1
         assert results[0].generated_answer == "Vendor ships."
+
+    async def test_judge_error_keeps_answers_and_breaches_budget(
+        self, config: Config
+    ) -> None:
+        from unified_kg_rag.application.cli.run_evaluation import (
+            failure_budget_breaches,
+        )
+
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        manager = EvaluationManager(
+            config, rag_chain=_FakeChain({"Who ships?": _rag_output("Vendor", {})})
+        )
+
+        async def _boom(*a, **k):
+            raise RuntimeError("judge down")
+
+        manager.evaluators[EvaluatorType.ANSWER_MATCH].aevaluate_single = _boom
+        results, reports, summary = await manager.evaluate_dataset(
+            [EvaluationQuery(query_id="q1", question="Who ships?")],
+            [EvaluationGroundTruth(query_id="q1", ground_truth="Vendor")],
+            show_progress=False,
+        )
+        # The generated answer survives for save_results ...
+        assert results[0].generated_answer == "Vendor"
+        assert reports[0].metadata["evaluation_failed"] is True
+        # ... and the failed metrics decide the exit code.
+        assert summary.metric_outcomes["answer_match"]["answer_contains"] == {
+            "scored": 0,
+            "failed": 1,
+            "skipped": 0,
+        }
+        assert failure_budget_breaches(summary, max_failure_rate=1.0)
 
     async def test_rag_error_fallback_flagged_counted_failed_and_not_scored(
         self, config: Config

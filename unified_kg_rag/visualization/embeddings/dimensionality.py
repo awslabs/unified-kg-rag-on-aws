@@ -10,7 +10,7 @@ from sklearn.manifold import TSNE
 
 from unified_kg_rag.shared import get_logger
 
-from .node2vec import NodeEmbeddings
+from .node_embedder import NodeEmbeddings
 
 logger = get_logger(__name__)
 
@@ -21,7 +21,9 @@ class ReducerConfig(BaseModel):
         "euclidean", description="Metric used for distance calculation."
     )
     random_state: int | None = Field(
-        default=None, description="Random seed for reproducible results"
+        default=42,
+        description="Random seed, so a re-render gives the same layout; None "
+        "for a random one (UMAP then runs in parallel)",
     )
 
 

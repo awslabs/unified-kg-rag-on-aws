@@ -3,7 +3,7 @@
 """AWS-free unit tests for the renderer registry / RenderContext and the pure
 ``DimensionalityReducer`` (PCA/t-SNE/fallback paths).
 
-The node2vec embedder is Bedrock-coupled and excluded here; the reducer itself
+The node embedder is Bedrock-coupled and excluded here; the reducer itself
 operates on plain numpy arrays so its PCA/t-SNE/fallback paths are AWS-free.
 """
 
@@ -27,7 +27,7 @@ from unified_kg_rag.adapters.renderers import (
 from unified_kg_rag.visualization.embeddings.dimensionality import (
     DimensionalityReducer,
 )
-from unified_kg_rag.visualization.embeddings.node2vec import NodeEmbeddings
+from unified_kg_rag.visualization.embeddings.node_embedder import NodeEmbeddings
 
 pytestmark = pytest.mark.unit
 
@@ -151,6 +151,21 @@ class TestDimensionalityReducer:
         out = reducer.reduce_dimensions(_embeddings(20), method="tsne")
         assert len(out) == 20
         assert all(len(coord) == 2 for coord in out.values())
+
+    def test_reducers_seeded_by_default(self, mocker) -> None:
+        # Unseeded UMAP gives a different layout on every re-render.
+        from unified_kg_rag.visualization.embeddings import dimensionality
+
+        umap = mocker.patch.object(dimensionality.umap, "UMAP")
+        umap.return_value.fit_transform.return_value = np.zeros((10, 2))
+        reducer = DimensionalityReducer({})
+        reducer.reduce_dimensions(_embeddings(10), method="umap")
+        assert umap.call_args.kwargs["random_state"] == 42
+        assert reducer.tsne_config.random_state == 42
+        assert reducer.pca_config.random_state == 42
+        assert (
+            DimensionalityReducer({"umap": {"random_state": None}}).umap_config
+        ).random_state is None
 
     def test_too_few_points_falls_back_to_pca(self, mocker) -> None:
         # With < n_components+1 points (n_components=2, so 2 points) the

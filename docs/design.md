@@ -409,7 +409,7 @@ Each retriever build opens a Neptune WebSocket + thread pool and OpenSearch (a)s
 - **LangChain evaluators**: correctness / partial_correctness (LLM-based rubric)
 - **RAGAS evaluators**: answer_correctness/relevancy, context_precision/recall, faithfulness
 - **Retrieval evaluator** (`retrieval_evaluator.py`): `hit_at_k`, `recall_at_k` (k = `evaluation.retrieval_k`) and `mrr` of the rank-ordered reported sources against the dataset's `reference_sources`, matched by case-insensitive file-name stem or document id. Deterministic, no LLM; skipped for queries without references or source provenance.
-- **Answer-match evaluator** (`answer_match_evaluator.py`): SQuAD-style normalized `exact_match` and `token_f1` against `answer` plus optional `metadata.answer_aliases` (max over references). Deterministic, no LLM; whitespace tokens, so for scripts without spaces token F1 degrades to exact match.
+- **Answer-match evaluator** (`answer_match_evaluator.py`): `answer_contains` (headline) plus SQuAD-style normalized `exact_match` and `token_f1` (normalization keeps decimals and `C++`-style suffixes, so not leaderboard-comparable) against `answer` plus optional `metadata.answer_aliases` (max over references). Deterministic, no LLM; whitespace tokens, so for scripts without spaces token F1 degrades to exact match.
 - **Graph-aware evaluator** (`graph_aware_evaluator.py`): Computes the rate at which the ground truth's `expected_entities`/`expected_relationships` appear in the generated answer (= coverage = recall) as `ENTITY_COVERAGE`/`RELATIONSHIP_COVERAGE`. Deterministic, no LLM required. Precision/F1 are not produced because they would require enumerating the entities in the answer (impossible from free text) — to avoid exaggerating the signal as a duplicate of recall. Latin characters use word-boundary contiguous token matching ("AI" does not match inside "airport"); CJK without whitespace falls back to substring matching. The manager injects the expectations via `result.metadata`, so the abstract signature is unchanged.
 
 CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
@@ -421,7 +421,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 `visualization/` — `BaseRenderer` ABC + `@register_renderer` registry + `RenderContext`.
 
 - `InteractiveRenderer` (pyvis network + community hierarchy), `StaticRenderer` (Bokeh degree/centrality/community-size)
-- Layout: Bedrock Node2Vec embeddings + UMAP dimensionality reduction (spring layout on failure)
+- Layout: embeddings of each node's `name: description` + UMAP dimensionality reduction (spring layout on failure)
 - **Standalone execution** (`application/cli/run_visualization.py`): Reads exported graph JSON without ingestion (`export_visualization_data` output format: `nodes`/`edges`/`layout`/`communities.hierarchy`), rehydrates it into typed objects, and renders with the registered renderers.
 
 ---

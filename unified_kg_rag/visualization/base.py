@@ -20,7 +20,7 @@ from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import strip_embedding_fields
 
 from .embeddings.dimensionality import DimensionalityReducer
-from .embeddings.node2vec import BedrockNodeEmbedder
+from .embeddings.node_embedder import BedrockNodeEmbedder
 from .exporters.html_exporter import HTMLExporter
 
 logger = get_logger(__name__)
@@ -85,10 +85,8 @@ class GraphVisualizationManager:
         return self._embedder
 
     def run(self) -> None:
-        if not self.viz_config.enabled:
-            logger.info("Visualization pipeline is disabled in the configuration.")
-            return
-
+        # ``graph.visualization.enabled`` gates the ingestion call site; a
+        # caller that builds the manager directly asked for the output.
         if not self.analyzer.graph:
             logger.warning("No graph is available for visualization. Skipping.")
             return
@@ -106,8 +104,8 @@ class GraphVisualizationManager:
 
         layout = self._generate_layout()
 
-        self._generate_visualizations(self.outputs_dir, layout)
-        self._export_summary_report(self.outputs_dir)
+        written = self._generate_visualizations(self.outputs_dir, layout)
+        self._export_summary_report(self.outputs_dir, written)
         self.export_visualization_data(
             self.outputs_dir / VISUALIZATION_DATA_FILENAME, layout=layout
         )
@@ -156,9 +154,10 @@ class GraphVisualizationManager:
 
     def _generate_visualizations(
         self, outputs_dir: Path, layout: dict[str, Any]
-    ) -> None:
+    ) -> list[Path]:
+        """Run every registered renderer; return the files they wrote."""
         if not self.analyzer.graph:
-            return
+            return []
 
         # Drive the registered renderers through the shared registry so the
         # manager and the standalone CLI use one rendering path.
@@ -183,12 +182,14 @@ class GraphVisualizationManager:
                 logger.warning("Renderer '%s' failed: %s", name, e)
         if not written:
             logger.warning("No visualization files were rendered.")
+        return written
 
-    def _export_summary_report(self, outputs_dir: Path) -> None:
+    def _export_summary_report(self, outputs_dir: Path, written: list[Path]) -> None:
         report_data = {
             "graph_stats": self.analyzer.get_graph_statistics(),
             "centrality_data": self.analyzer.calculate_centrality(),
             "community_metrics": self.community_detector.get_community_metrics(),
+            "visualizations": written,
         }
         self.html_exporter.create_report(outputs_dir, report_data)
 

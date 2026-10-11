@@ -1386,7 +1386,11 @@ def _coerce_visualization_embeddings(value: dict[str, Any]) -> dict[str, Any]:
 
 class VisualizationConfig(BaseModel):
     enabled: bool = Field(
-        default=True, description="Enable or disable the entire visualization pipeline."
+        default=False,
+        description="Render visualizations during ingestion. Off by default: it "
+        "adds an embedding call per node (embedding_method) and a "
+        "dimensionality reduction to every ingest; render on demand with "
+        "run-visualization instead.",
     )
     outputs_directory: str | Path | None = Field(
         default=None,
@@ -1396,9 +1400,11 @@ class VisualizationConfig(BaseModel):
         "fall back to 'outputs/visualization'.",
     )
     embedding_method: str = Field(
-        default="node2vec",
-        pattern="^(node2vec|none)$",
-        description="Method for node embedding ('node2vec' or 'none').",
+        default="description",
+        pattern="^(description|none)$",
+        description="Node embedding for the layout: 'description' embeds each "
+        "node's 'name: description' with the embedding model; 'none' uses a "
+        "spring layout from the graph topology.",
     )
     layout_method: str = Field(
         default="umap",

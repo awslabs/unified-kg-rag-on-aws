@@ -173,39 +173,39 @@ class TestInitialization:
 
 
 class TestEvaluateWithMetric:
-    def test_correctness_reads_score_field_directly(self, mocker) -> None:
+    async def test_correctness_reads_score_field_directly(self, mocker) -> None:
         ev = _make_evaluator(mocker)
         fake = _FakeEvaluator({"score": 0.9, "reasoning": "great"})
-        metric = ev._evaluate_with_metric(
+        metric = await ev._aevaluate_with_metric(
             fake, EvaluationMetricType.CORRECTNESS, "q", "a", "gt"
         )
         assert metric.metric_type == EvaluationMetricType.CORRECTNESS
         assert metric.value == 0.9
         assert metric.explanation == "great"
 
-    def test_correctness_missing_score_is_unscored(self, mocker) -> None:
+    async def test_correctness_missing_score_is_unscored(self, mocker) -> None:
         ev = _make_evaluator(mocker)
         fake = _FakeEvaluator({"reasoning": "no score"})
         with pytest.raises(lc_module.UnscoredJudgeOutputError):
-            ev._evaluate_with_metric(
+            await ev._aevaluate_with_metric(
                 fake, EvaluationMetricType.CORRECTNESS, "q", "a", "gt"
             )
 
-    def test_partial_correctness_reads_json_from_reasoning(self, mocker) -> None:
+    async def test_partial_correctness_reads_json_from_reasoning(self, mocker) -> None:
         ev = _make_evaluator(mocker)
         fake = _FakeEvaluator(
             {"reasoning": json.dumps({"score": 0.75, "reasoning": "partial"})}
         )
-        metric = ev._evaluate_with_metric(
+        metric = await ev._aevaluate_with_metric(
             fake, EvaluationMetricType.PARTIAL_CORRECTNESS, "q", "a", "gt"
         )
         assert metric.value == 0.75
         assert metric.explanation == "partial"
 
-    def test_eval_args_passed_through(self, mocker) -> None:
+    async def test_eval_args_passed_through(self, mocker) -> None:
         ev = _make_evaluator(mocker)
         fake = _FakeEvaluator({"score": 1.0})
-        ev._evaluate_with_metric(
+        await ev._aevaluate_with_metric(
             fake, EvaluationMetricType.CORRECTNESS, "the q", "the a", "the gt"
         )
         assert fake.last_kwargs == {
@@ -224,110 +224,8 @@ class TestHandleEvaluationError:
         assert "nope" in reason
 
 
-class TestEvaluateSingle:
-    def test_scores_metric(self, mocker) -> None:
-        ev = _make_evaluator(
-            mocker, langchain_metrics=[EvaluationMetricType.CORRECTNESS]
-        )
-        ev.evaluators = {
-            EvaluationMetricType.CORRECTNESS: _FakeEvaluator(
-                {"score": 0.8, "reasoning": "ok"}
-            )
-        }
-        report = ev.evaluate_single(_query(), _result(), ground_truth="gt")
-        assert report.evaluator_type == EvaluatorType.LANGCHAIN
-        assert [m.value for m in report.metrics] == [pytest.approx(0.8)]
-        assert report.overall_score is None
-
-    def test_skips_metric_without_evaluator(self, mocker) -> None:
-        ev = _make_evaluator(
-            mocker, langchain_metrics=[EvaluationMetricType.CORRECTNESS]
-        )
-        ev.evaluators = {}  # nothing registered
-        report = ev.evaluate_single(_query(), _result(), ground_truth="gt")
-        assert report.metrics == []
-
-    def test_error_swallowed_when_ignore_errors(self, mocker) -> None:
-        ev = _make_evaluator(
-            mocker, langchain_metrics=[EvaluationMetricType.CORRECTNESS]
-        )
-        ev.ignore_errors = True
-        boom = _FakeEvaluator({})
-        boom.evaluate_strings = mocker.Mock(side_effect=RuntimeError("x"))
-        ev.evaluators = {EvaluationMetricType.CORRECTNESS: boom}
-        report = ev.evaluate_single(_query(), _result(), ground_truth="gt")
-        # A judge failure is recorded as failed, NOT scored 0.0.
-        assert report.metrics == []
-        assert "correctness" in report.metadata["failed_metrics"]
-
-    def test_failed_metric_not_scored(self, mocker) -> None:
-        ev = _make_evaluator(
-            mocker,
-            langchain_metrics=[
-                EvaluationMetricType.CORRECTNESS,
-                EvaluationMetricType.PARTIAL_CORRECTNESS,
-            ],
-        )
-        ev.ignore_errors = True
-        boom = _FakeEvaluator({})
-        boom.evaluate_strings = mocker.Mock(side_effect=RuntimeError("x"))
-        ev.evaluators = {
-            EvaluationMetricType.CORRECTNESS: boom,
-            EvaluationMetricType.PARTIAL_CORRECTNESS: _FakeEvaluator(
-                {"reasoning": '{"score": 0.8}'}
-            ),
-        }
-        report = ev.evaluate_single(_query(), _result(), ground_truth="gt")
-        assert [m.metric_type for m in report.metrics] == [
-            EvaluationMetricType.PARTIAL_CORRECTNESS
-        ]
-        assert report.metrics[0].value == pytest.approx(0.8)
-
-    def test_empty_reference_skips_reference_metrics(self, mocker) -> None:
-        ev = _make_evaluator(
-            mocker,
-            langchain_metrics=[
-                EvaluationMetricType.CORRECTNESS,
-                EvaluationMetricType.PARTIAL_CORRECTNESS,
-            ],
-        )
-        judge = _FakeEvaluator({"score": 1.0})
-        ev.evaluators = {
-            EvaluationMetricType.CORRECTNESS: judge,
-            EvaluationMetricType.PARTIAL_CORRECTNESS: judge,
-        }
-        report = ev.evaluate_single(_query(), _result(), ground_truth="  ")
-        # Both metrics are reference-based: skipped, judge never called.
-        assert report.metrics == []
-        assert judge.last_kwargs is None
-        assert report.metadata["skipped_metrics"] == {
-            "correctness": "empty_reference",
-            "partial_correctness": "empty_reference",
-        }
-        assert "failed_metrics" not in report.metadata
-
-    def test_error_reraised_when_not_ignore_errors(self, mocker) -> None:
-        ev = _make_evaluator(
-            mocker, langchain_metrics=[EvaluationMetricType.CORRECTNESS]
-        )
-        ev.ignore_errors = False
-        boom = _FakeEvaluator({})
-        boom.evaluate_strings = mocker.Mock(side_effect=RuntimeError("x"))
-        ev.evaluators = {EvaluationMetricType.CORRECTNESS: boom}
-        with pytest.raises(RuntimeError):
-            ev.evaluate_single(_query(), _result(), ground_truth="gt")
-
-    def test_unparseable_judge_output_is_failed_even_without_ignore_errors(
-        self, mocker
-    ) -> None:
-        # A malformed judge reply is a measurement outcome (like a RAGAS NaN):
-        # recorded as failed, never as 0.0, and it does not abort the run.
-        ev = _make_evaluator(mocker, langchain_metrics=[_PC])
-        ev.ignore_errors = False
-        ev.evaluators = {_PC: _FakeEvaluator({"reasoning": "Score: 8/10"})}
-        report = ev.evaluate_single(_query(), _result(), ground_truth="gt")
-        assert report.metrics == []
-        assert "partial_correctness" in report.metadata["failed_metrics"]
+async def _raise(**kwargs):
+    raise RuntimeError("async boom")
 
 
 class TestAevaluateSingle:
@@ -341,42 +239,64 @@ class TestAevaluateSingle:
             )
         }
         report = await ev.aevaluate_single(_query(), _result(), ground_truth="gt")
+        assert report.evaluator_type == EvaluatorType.LANGCHAIN
         assert [m.value for m in report.metrics] == [pytest.approx(0.6)]
+        assert report.overall_score is None
 
-    async def test_async_error_handled_when_ignore_errors(self, mocker) -> None:
+    async def test_skips_metric_without_evaluator(self, mocker) -> None:
         ev = _make_evaluator(
             mocker, langchain_metrics=[EvaluationMetricType.CORRECTNESS]
         )
-        ev.ignore_errors = True
+        ev.evaluators = {}  # nothing registered
+        report = await ev.aevaluate_single(_query(), _result(), ground_truth="gt")
+        assert report.metrics == []
+
+    async def test_judge_error_is_failed_metric_not_raised(self, mocker) -> None:
+        ev = _make_evaluator(
+            mocker, langchain_metrics=[EvaluationMetricType.CORRECTNESS]
+        )
+        assert ev.config.processing.ignore_errors is False
         boom = _FakeEvaluator({})
-
-        async def _raise(**kwargs):
-            raise RuntimeError("async boom")
-
         boom.aevaluate_strings = _raise
         ev.evaluators = {EvaluationMetricType.CORRECTNESS: boom}
         report = await ev.aevaluate_single(_query(), _result(), ground_truth="gt")
+        # A judge failure is recorded as failed, NOT scored 0.0, and not raised.
         assert report.metrics == []
         assert "async boom" in report.metadata["failed_metrics"]["correctness"]
 
+    async def test_failed_metric_does_not_drop_the_others(self, mocker) -> None:
+        ev = _make_evaluator(mocker, langchain_metrics=[_C, _PC])
+        boom = _FakeEvaluator({})
+        boom.aevaluate_strings = _raise
+        ev.evaluators = {
+            _C: boom,
+            _PC: _FakeEvaluator({"reasoning": '{"score": 0.8}'}),
+        }
+        report = await ev.aevaluate_single(_query(), _result(), ground_truth="gt")
+        assert [m.metric_type for m in report.metrics] == [_PC]
+        assert report.metrics[0].value == pytest.approx(0.8)
+        assert set(report.metadata["failed_metrics"]) == {"correctness"}
+
     async def test_async_unparseable_judge_output_is_failed(self, mocker) -> None:
         ev = _make_evaluator(mocker, langchain_metrics=[_PC])
-        ev.ignore_errors = False
         ev.evaluators = {_PC: _FakeEvaluator({"reasoning": "scored 2 of 5"})}
         report = await ev.aevaluate_single(_query(), _result(), ground_truth="gt")
         assert report.metrics == []
         assert "partial_correctness" in report.metadata["failed_metrics"]
 
     async def test_async_empty_reference_skips(self, mocker) -> None:
-        ev = _make_evaluator(
-            mocker, langchain_metrics=[EvaluationMetricType.CORRECTNESS]
-        )
+        ev = _make_evaluator(mocker, langchain_metrics=[_C, _PC])
         judge = _FakeEvaluator({"score": 1.0})
-        ev.evaluators = {EvaluationMetricType.CORRECTNESS: judge}
-        report = await ev.aevaluate_single(_query(), _result(), ground_truth="")
+        ev.evaluators = {_C: judge, _PC: judge}
+        report = await ev.aevaluate_single(_query(), _result(), ground_truth="  ")
+        # Both metrics are reference-based: skipped, judge never called.
         assert report.metrics == []
         assert judge.last_kwargs is None
-        assert report.metadata["skipped_metrics"] == {"correctness": "empty_reference"}
+        assert report.metadata["skipped_metrics"] == {
+            "correctness": "empty_reference",
+            "partial_correctness": "empty_reference",
+        }
+        assert "failed_metrics" not in report.metadata
 
 
 class TestValidateConfig:

@@ -274,6 +274,9 @@ class EvaluationManager:
             )
 
         final_metadata = {**base_metadata, **item_metadata}
+        # Aliases sit next to ``answer`` as naturally as under ``metadata``.
+        if "answer_aliases" in item:
+            final_metadata.setdefault("answer_aliases", item["answer_aliases"])
         rag_fields = {
             k: v for k, v in final_metadata.items() if k in RAGInput.model_fields
         }
@@ -709,14 +712,13 @@ class EvaluationManager:
                 )
                 all_reports.extend(reports)
             except Exception as e:
-                if not self.config.processing.ignore_errors:
-                    raise
                 logger.error(
                     "Failed to run '%s' evaluation: %s", evaluator_type.value, e
                 )
-                # Record the crash per query (as the per-query path in
-                # BaseEvaluator does) so the summary counts the metrics as
-                # failed instead of silently reporting nothing.
+                # Every answer is already generated: record the crash per query
+                # (as the per-query path in BaseEvaluator does) so the results
+                # are still saved and the summary counts the metrics as failed;
+                # --max-failure-rate then decides the exit code.
                 all_reports.extend(
                     evaluator._create_empty_report(
                         query.query_id, reason=f"Evaluator crashed: {e}"

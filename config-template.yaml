@@ -464,13 +464,15 @@ graph:
 
   # Graph Visualization
   visualization:
-    enabled: true
+    # Off by default: rendering during ingestion embeds every node and reduces
+    # the embeddings to a layout on each run.
+    enabled: false
     # Unset (default): ingestion writes to <cache dir>/<pipeline_id>/visualization,
     # so visualization_data.json is uploaded with the S3 cache sync (the sync
     # copies .json only; re-render the HTML with run-visualization). Set a path
     # to write elsewhere.
     # outputs_directory: "outputs/visualization"
-    embedding_method: "node2vec"
+    embedding_method: "description"
     layout_method: "umap"
 
     # Node embeddings come from Bedrock (the model determines dimensionality).
@@ -481,7 +483,9 @@ graph:
     # embeddings:
     #   bedrock_model_id: "amazon.titan-embed-text-v2:0"
 
-    # Dimensionality-reduction layout hyperparameters, keyed by method.
+    # Dimensionality-reduction layout hyperparameters, keyed by method. Each
+    # also takes random_state (default 42, so a re-render gives the same
+    # layout; null for a random one, which lets UMAP run in parallel).
     layout:
       umap:
         n_neighbors: 15

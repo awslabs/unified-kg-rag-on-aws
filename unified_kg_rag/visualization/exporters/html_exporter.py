@@ -85,16 +85,9 @@ class HTMLExporter:
     def _generate_body(self, data: dict[str, Any]) -> str:
         stats_html = self._render_stats(
             data.get("graph_stats") or GraphStatistics(num_nodes=0, num_edges=0),
-            data.get("community_metrics")
-            or CommunityMetrics(
-                modularity=0.0,
-                num_communities=0,
-                average_community_size=0.0,
-                largest_community_size=0,
-                smallest_community_size=0,
-                community_size_distribution={},
-            ),
+            data.get("community_metrics"),
         )
+        links_html = self._render_links(data.get("visualizations") or [])
         centrality_html, centrality_js = self._render_centrality(
             data.get("centrality_data") or {}
         )
@@ -117,13 +110,7 @@ class HTMLExporter:
 
                 <section>
                     <h2>Visualizations</h2>
-                    <div class="viz-links">
-                        <a href="interactive_graph.html" class="viz-link" target="_blank">{self._get_icon('network')} Interactive Network</a>
-                        <a href="community_hierarchy.html" class="viz-link" target="_blank">{self._get_icon('hierarchy')} Community Hierarchy</a>
-                        <a href="degree_distribution.html" class="viz-link" target="_blank">{self._get_icon('bar_chart')} Degree Distribution</a>
-                        <a href="centrality_comparison.html" class="viz-link" target="_blank">{self._get_icon('bar_chart')} Centrality Comparison</a>
-                        <a href="community_size_distribution.html" class="viz-link" target="_blank">{self._get_icon('pie_chart')} Community Sizes</a>
-                    </div>
+                    {links_html}
                 </section>
 
                 <section>
@@ -137,6 +124,18 @@ class HTMLExporter:
         </body>
         """
 
+    def _render_links(self, paths: list[Path]) -> str:
+        """Links to the files the renderers wrote (siblings of the report)."""
+        if not paths:
+            return "<p>No visualizations were rendered.</p>"
+        links = "".join(
+            f'<a href="{_html_escape(path.name)}" class="viz-link" '
+            f'target="_blank">{self._get_icon("bar_chart")} '
+            f'{_html_escape(path.stem.replace("_", " ").title())}</a>'
+            for path in paths
+        )
+        return f'<div class="viz-links">{links}</div>'
+
     def _render_stats(
         self,
         stats: GraphStatistics,
@@ -148,11 +147,14 @@ class HTMLExporter:
         cards_data = {
             "Nodes": (f"{stats.num_nodes:,}", "nodes"),
             "Edges": (f"{stats.num_edges:,}", "edges"),
-            "Density": (f"{stats.density:.4f}" if stats.density else "N/A", "density"),
+            "Density": (
+                f"{stats.density:.4f}" if stats.density is not None else "N/A",
+                "density",
+            ),
             "Avg. Clustering": (
                 (
                     f"{stats.average_clustering:.4f}"
-                    if stats.average_clustering
+                    if stats.average_clustering is not None
                     else "N/A"
                 ),
                 "clustering",
@@ -265,9 +267,6 @@ class HTMLExporter:
             "components": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7.5a2.5 2.5 0 0 0-4.16-1.9L13 9.44l-1.84-1.84a2.5 2.5 0 1 0-3.32 0l-1.84 1.84-3.16-3.84a2.5 2.5 0 1 0-1.6 4.34l3.16 3.84-1.84 1.84a2.5 2.5 0 1 0 0 3.32l1.84-1.84 3.84 3.16a2.5 2.5 0 1 0 4.34-1.6L14.56 13l1.84-1.84 3.84 3.16a2.5 2.5 0 1 0 1.6-4.34L18.16 13l3.84-3.16A2.5 2.5 0 0 0 21 7.5z"></path></svg>',
             "communities": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>',
             "modularity": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s-8-4.5-8-12V5l8-3 8 3v5"></path><path d="m22 12-4.2 2.1"></path><path d="M16 22V12"></path><path d="M22 17h-6"></path><path d="M12 2v20"></path></svg>',
-            "network": '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>',
-            "hierarchy": '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12v4m0-8v2m-4 4h8m-8-4h8m-8-4h8"></path><rect x="3" y="3" width="18" height="18" rx="2"></rect></svg>',
             "bar_chart": '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V10M18 20V4M6 20V16"></path></svg>',
-            "pie_chart": '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8.11 2.99"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path></svg>',
         }
         return icons.get(name, "")

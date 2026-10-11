@@ -26,7 +26,7 @@ from unified_kg_rag.visualization.base import (
     VISUALIZATION_DATA_FILENAME,
     GraphVisualizationManager,
 )
-from unified_kg_rag.visualization.embeddings.node2vec import NodeEmbeddings
+from unified_kg_rag.visualization.embeddings.node_embedder import NodeEmbeddings
 
 pytestmark = pytest.mark.unit
 
@@ -185,7 +185,7 @@ def test_embedding_layout_uses_injected_embedder_once(
     config: Config, tmp_path: Path
 ) -> None:
     embedder = _FakeEmbedder()
-    _manager(config, tmp_path, embedder=embedder, embedding_method="node2vec").run()
+    _manager(config, tmp_path, embedder=embedder, embedding_method="description").run()
     # The export reuses the run's layout instead of embedding a second time.
     assert embedder.calls == 1
     data = _export(tmp_path)
@@ -200,7 +200,7 @@ def test_degraded_embeddings_mark_layout_degraded(
         config,
         tmp_path,
         embedder=_FakeEmbedder(degraded=True),
-        embedding_method="node2vec",
+        embedding_method="description",
     )
     manager.run()
     assert manager.layout_degraded is True
@@ -222,7 +222,7 @@ def test_failed_reduction_marks_layout_degraded_and_is_deterministic(
             config,
             tmp_path / str(attempt),
             embedder=_FakeEmbedder(),
-            embedding_method="node2vec",
+            embedding_method="description",
         )
         monkeypatch.setattr(manager.reducer, "_apply_pca", _boom)
         layouts.append(manager._generate_layout())

@@ -175,6 +175,17 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#157).
 
 ### Changed
+- **Breaking**: `graph.visualization.embedding_method: "node2vec"` is renamed
+  to `"description"`, and `visualization/embeddings/node2vec.py` to
+  `node_embedder.py`. The layout never used node2vec random walks; it embeds
+  each node's `name: description` with the embedding model. Replace
+  `node2vec` with `description` in existing configs (#210).
+- **Breaking**: `graph.visualization.enabled` defaults to `false`. Rendering
+  during ingestion embedded every node and reduced the embeddings to a layout
+  on each ingest, and the image preset already turned it off; set it to `true`
+  to keep the previous behaviour, or render on demand with
+  `run-visualization`. `GraphVisualizationManager.run()` no longer re-checks
+  the flag, so a caller that builds the manager directly gets its output (#210).
 - `indexing.opensearch.embedding_model_id`, `evaluation.embedding_model_id`
   and `search.reranking.rerank_model_id` accept any model name when a
   non-Bedrock provider serves the role; with the Bedrock providers (the
@@ -503,6 +514,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   being reported as an unknown key that is ignored (#151).
 
 ### Removed
+- `PipelineContext.graph_statistics` and `PipelineContext.centrality_metrics`,
+  written by the graph-analysis stage but never read (and excluded from the
+  pipeline metadata file) (#210).
+- `LangChainEvaluator.evaluate_single` and `_evaluate_with_metric`, a
+  synchronous path only the tests called; the evaluation manager always scores
+  through `aevaluate_single` (#210).
 - Gleaning config keys `convergence_threshold`, `quality_threshold`,
   `min_improvement_threshold`, `quality_completeness_weight`,
   `initial_quality_entity_scale`, `initial_quality_relationship_scale` and
@@ -560,6 +577,50 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- `interactive_graph.html` centres the layout and scales it to a fixed canvas
+  extent: UMAP/t-SNE/PCA coordinates were multiplied by a constant as if they
+  spanned [-1, 1], which clumped or scattered the nodes. The bars of the
+  static centrality comparison plot are centred on their node instead of
+  shifted left by a bar width (#210).
+- Visualization layouts are reproducible: UMAP, t-SNE and PCA take
+  `random_state` 42 by default (`graph.visualization.layout.<method>.random_state`;
+  `null` restores a random layout and UMAP's parallel run), so re-rendering
+  the same graph no longer moves every node (#210).
+- `graph_analysis_report.html` shows a density or average clustering of 0 as
+  `0.0000` instead of `N/A`, shows `N/A` instead of a fabricated 0 for
+  communities and modularity when community detection produced no metrics,
+  and links only the visualizations the renderers actually wrote (a skipped
+  or failed renderer used to leave a dead link) (#210).
+- Node centrality (exact or sampled betweenness is O(V*E)) is computed once
+  per graph instead of up to four times per ingest: `GraphAnalyzer` memoizes
+  `calculate_centrality` until its graph is replaced, so the visualization
+  layout, summary report and data export share one result (#210).
+- Evaluation datasets may put `answer_aliases` at the top level of an item,
+  next to `answer`; it was silently ignored there and only read from
+  `metadata.answer_aliases`, which still wins when both are set (#210).
+- The `ragas` evaluator no longer pays judge calls for reference-based
+  metrics (`answer_correctness`, `context_precision`, `context_recall`) on
+  rows without a reference answer, whose scores were then discarded as
+  skipped: such rows are scored in a separate run without those metrics. Its
+  context truncation also keeps `BUFFER_TOKENS` free, so the judge's contexts
+  no longer exceed `evaluation.max_context_tokens - 128` (#210).
+- `run-eval` no longer discards a whole run when one judge call fails after
+  every answer has been generated. Scoring errors (a judge call, a RAGAS run
+  or an evaluator crash) are now recorded as failed metrics for the affected
+  queries whatever `processing.ignore_errors` says, the results files are
+  written, and `--max-failure-rate` decides the exit code. `ignore_errors`
+  still governs answer generation and evaluator construction (#210).
+- `answer_match` no longer counts a different number or name as contained.
+  Normalization keeps a decimal point or comma between digits ("1.5 million"
+  no longer matches "15 million", nor "3.5" "35 percent") and a trailing
+  `+`/`#` ("C" no longer matches "C++"); thousands separators are still
+  dropped. A bare-number gold no longer takes the Korean particle tolerance,
+  which accepted a unit or magnitude ("3" matched "3억", "2" "2개월"). A
+  `yes`/`no` gold is scored by the answer's leading polarity, HotpotQA-style,
+  instead of matching the "no" in almost any long answer. A gold that is only
+  an article ("A") is scored instead of skipped. The docs no longer claim
+  SQuAD v1.1 normalization: scores are not comparable with leaderboard
+  numbers (#210).
 - With `entity_grounding` enabled, the check whether a gleaned
   relationship's endpoint name occurs in its unit (#202) now accepts common
   spelling variants and no longer accepts partial words. Both sides drop
