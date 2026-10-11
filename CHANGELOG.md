@@ -189,21 +189,21 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   adapters no application/evaluation/visualization, evaluation the
   application layer only through the chain), with the two type-only
   exceptions checked to stay under `TYPE_CHECKING`. `delta_detector` imports
-  `DocStatusPort` for annotations only (#PR).
+  `DocStatusPort` for annotations only (#216).
 - **Breaking** (import path): `HierarchicalCommunity` moved from
-  `adapters.ingestion.community_detector` to `domain.models` (#PR).
+  `adapters.ingestion.community_detector` to `domain.models` (#216).
 - `merge_descriptions` moved from `domain.ingestion.merge.merger` to
   `domain.ingestion.descriptions`, which breaks the merger ↔ base_resolver
-  import cycle (#PR).
+  import cycle (#216).
 - **Breaking:** `providers.llm.max_retries` and `providers.embedding.max_retries`
   (retries after the first try, default 2) are renamed `max_attempts` (total
   attempts, default 3), like every other attempt count in the config. The old
-  key is reported as unknown and ignored (#PR).
+  key is reported as unknown and ignored (#216).
 - The incremental-registry steps of the document_loading and indexing stages
   (run scope, dedup preference, delta filter, reset namespaces and registry
   clearing, delta indexing) live in `application/ingestion/incremental.py`
   as functions; the stages only delegate to them. Behaviour is unchanged
-  (#PR).
+  (#216).
 - **Breaking:** one injection path per component. `DataIngestionPipeline`'s
   `doc_status=`, `vector_indexer=` and `graph_indexer=`, and `GraphRAGChain`'s
   `model_factory=` and `retriever_builders=`, are shorthand for a bundle built
@@ -212,7 +212,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   incremental indexing on wherever it is injected (`Providers.doc_status_enabled`;
   before, `Providers(doc_status=...)` alone did not). `IndexingStage` no longer
   takes `vector_indexer` / `graph_indexer`: its indexers come from the bundle
-  (#PR).
+  (#216).
 - **Breaking:** the AWS session is created only when an AWS client needs it, so
   a local run with `aws.profile_name` naming a missing profile no longer fails
   with `ProfileNotFound` while building the pipeline. The pipeline stages no
@@ -222,17 +222,17 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   OpenSearch clients create their default session on first use (IAM auth
   only), and the bundle hands a store client its session only when that store
   signs requests (`use_iam`) or, for OpenSearch, keeps the S3 embedding cache.
-  `run-ingestion` no longer creates its own session (#PR).
+  `run-ingestion` no longer creates its own session (#216).
 - **Breaking:** `OpenSearchIndexer`, `OpenSearchRetriever` and
   `BedrockNodeEmbedder` require `embedding_factory=` instead of building a
   second provider bundle of their own; `NeptuneIndexer` takes the bundle's
   `boto_session`. `BaseGraphRAGRetriever`, `NeptuneRetriever` and
-  `OpenSearchRetriever` no longer take `boto_session` (unused) (#PR).
+  `OpenSearchRetriever` no longer take `boto_session` (unused) (#216).
 - The pipeline decides which stages run from one table
   (`DataIngestionPipeline.CONFIG_ENABLED`) instead of membership sets and
   `if`/`elif` branches; `BOTO_REQUIRED_STAGES`, `PROVIDER_STAGES`,
   `DOC_STATUS_STAGES` and `INPUT_DIR_REQUIRED_STAGES` are gone and every stage
-  receives the bundle (#PR).
+  receives the bundle (#216).
 - **Breaking** (import paths): provider-neutral LLM code no longer lives in
   `adapters/aws/`. `LanguageModelInfo`, `EmbeddingModelInfo`,
   `RerankModelInfo` and `effective_max_output_tokens` moved from
@@ -245,7 +245,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `is_transient=` (`adapters.aws.bedrock_retry` keeps
   `is_transient_bedrock_error`). `adapters.aws` no longer re-exports its
   adapters; import each from its module (`adapters.aws.bedrock`,
-  `adapters.aws.neptune`, ...) (#PR).
+  `adapters.aws.neptune`, ...) (#216).
 - **Breaking** for custom model factories: the ports are typed by the record
   `get_model_info` returns. `LLMFactoryPort.get_model_info` must return a
   `LanguageModelInfo` for every id; `Providers.llm_model_info` no longer falls
@@ -253,11 +253,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   language-model factory opts into the chain-level transient retry of query
   chains by defining `is_transient_error(exc)` and `transient_retry` (the
   Bedrock factory does) instead of `setup_chain` checking for the Bedrock
-  class (#PR).
+  class (#216).
 - Building the provider bundle no longer imports boto3 or any store client:
   the Bedrock builders and the Bedrock token-counter factory import their
   adapters on first use, like the local ones, so a `backend: local` bootstrap
-  loads no AWS SDK (#PR).
+  loads no AWS SDK (#216).
 - **Breaking** (import paths): the evaluator base classes moved from
   `unified_kg_rag.evaluation.base` to `unified_kg_rag.adapters.evaluators.base`,
   and `unified_kg_rag.evaluation` no longer re-exports `BaseEvaluator`,
@@ -265,11 +265,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `unified_kg_rag.adapters.evaluators`). Import the langchain and ragas
   evaluators from `adapters.evaluators.langchain_evaluator` /
   `ragas_evaluator`. This removes the evaluation ↔ adapter import cycle and
-  its lazy-export shim (#PR).
+  its lazy-export shim (#216).
 - The ingestion `BatchProcessor`s are built from `config.processing` once
   (`BatchProcessor.from_processing`). `execute_with_fallback` and
   `aexecute_with_fallback` no longer take `run_config`, which overwrote the
-  processor's settings on every call (#PR).
+  processor's settings on every call (#216).
 - **Breaking**: `graph.visualization.embedding_method: "node2vec"` is renamed
   to `"description"`, and `visualization/embeddings/node2vec.py` to
   `node_embedder.py`. The layout never used node2vec random walks; it embeds
@@ -657,31 +657,31 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - **Breaking** (import path): `unified_kg_rag.ports.CachePort`
   (`ports/cache.py`). It had one implementation, no injection point, and
   `S3CacheManager` did not conform to it; the pipeline uses
-  `shared.cache_manager.CacheManager` directly (#PR).
+  `shared.cache_manager.CacheManager` directly (#216).
 - Fields and helpers that were never set or only tests read:
   `CommunityReport.summary_embedding` / `full_content_embedding` (always
   null; the indexer embeds the report itself), `PipelineStageResult.cache_path`,
   `CacheStats.s3_entries`, the deprecated always-null
   `EvaluationReport.overall_score`, `run_evaluation.exceeds_failure_budget`
   (use `failure_budget_breaches`) and `PipelineStage._stats_to_dict`. Stored
-  JSON with these keys still loads (#PR).
+  JSON with these keys still loads (#216).
 - **Breaking:** the `"NONE"` alias of `aws.s3.encryption.encryption_type`; use
-  `BUCKET_DEFAULT` (#PR).
+  `BUCKET_DEFAULT` (#216).
 - **Breaking** for code that builds `Document`s: the page-element model
   (`ElementContent`, `ElementType`, `DocumentElement`, `Document.elements`,
   `Page.elements` / `raw_data` / `height` / `width`) and
   `Document.detected_language`. No loader filled them; parsed JSON written
   with them still loads. `DocumentContent.html` / `markdown` stay (the chunker
-  reads them for `content_type`) (#PR).
+  reads them for `content_type`) (#216).
 - `DocStatusRecord.content_summary` and `content_length`, which nothing
   wrote, and the `DocStatus.PARSING` / `PROCESSING` states, which no run
-  set. Records stored with the two attributes still load (#PR).
+  set. Records stored with the two attributes still load (#216).
 - **Breaking:** the renamed-key shim. `search.llm_retry`,
   `aws.bedrock.effort`, `processing.max_retries`,
   `indexing.neptune.max_retries` and `evaluation.ragas_max_retries` (renamed
   in #120, #128 and #151) are no longer mapped to their replacements; each is
   reported as an unknown key and ignored. Use `aws.bedrock.transient_retry`,
-  `aws.bedrock.default_effort` and the `max_attempts` keys (#PR).
+  `aws.bedrock.default_effort` and the `max_attempts` keys (#216).
 - `PipelineContext.graph_statistics` and `PipelineContext.centrality_metrics`,
   written by the graph-analysis stage but never read (and excluded from the
   pipeline metadata file) (#210).
