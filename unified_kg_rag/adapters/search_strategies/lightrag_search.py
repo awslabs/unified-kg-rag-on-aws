@@ -385,8 +385,12 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
     ) -> dict[str, list[RetrievalResult]]:
         """Opt-in Neptune neighbourhood of the entity hits + relationship endpoints.
 
-        Seeds keep rank order (entity hits first, then endpoints in first-seen
-        order) because the graph retriever caps the seed count.
+        Every seed (entity hits, then endpoints in first-seen order, deduped)
+        is expanded and kept. The graph retriever splits its fetch budget
+        (``top_k * retrieval_multiplier * traversal_fetch_multiplier``) across
+        the seeds, so with many seeds each fetches as few as one neighbour,
+        but together they still fetch at least that budget for the
+        ``top_k * retrieval_multiplier`` neighbour slots it keeps.
         """
         entity_ids = [
             str((hit.metadata or {}).get("id") or hit.source or "")
