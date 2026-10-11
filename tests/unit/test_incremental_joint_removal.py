@@ -18,7 +18,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     build_document_lineage,
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
-from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
+from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id, detect_delta
 from unified_kg_rag.domain.models import (
     Config,
     Document,
@@ -71,7 +71,7 @@ def _meets(doc: Document, unit_id: str, other: str):
 
 
 def _commit(inc, docs, text_units, entities, relationships) -> None:
-    _, fingerprints = inc.plan(docs)
+    _, fingerprints = detect_delta(docs, inc.doc_status)
     lineages = build_document_lineage(
         documents=docs,
         text_units=text_units,
@@ -117,7 +117,7 @@ def test_artifacts_shared_only_by_a_changed_and_a_deleted_doc_are_removed(
 
     # Next run: a.txt now says "Vendor meets Carrier.", b.txt is gone.
     a2 = _doc("/a.txt", "Vendor meets Carrier.")
-    delta, _ = inc.plan([a2])
+    delta, _ = detect_delta([a2], inc.doc_status)
     assert delta.changed == [compute_doc_id("/a.txt")]
     assert delta.deleted == [compute_doc_id("/b.txt")]
     assert inc.remove_changed_and_deleted(delta)
@@ -154,7 +154,7 @@ def test_a_survivor_keeps_its_text_units_on_shared_artifacts(harness) -> None:
     _commit(inc, [a, b, c], units, entities, [edge])
 
     a2 = _doc("/a.txt", "Vendor meets Carrier.")
-    delta, _ = inc.plan([a2, c])
+    delta, _ = detect_delta([a2, c], inc.doc_status)
     assert inc.remove_changed_and_deleted(delta)
     _commit(inc, [a2], *_meets(a2, "tu-a2", "Carrier"))
 

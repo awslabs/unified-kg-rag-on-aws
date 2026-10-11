@@ -17,6 +17,7 @@ from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
 from unified_kg_rag.application.storage.indexing_manager import CrossRunMergeResult
 from unified_kg_rag.domain.ingestion.delta_detector import (
     compute_doc_id,
+    detect_delta,
     filter_documents_to_process,
 )
 from unified_kg_rag.domain.models import Document, DocumentLineage, Entity
@@ -87,7 +88,7 @@ def test_first_run_marks_all_new_and_records_registry(indexer) -> None:
     inc, store, manager = indexer
     docs = [_doc("/a.txt", "A"), _doc("/b.txt", "B")]
 
-    delta, fingerprints = inc.plan(docs)
+    delta, fingerprints = detect_delta(docs, inc.doc_status)
     assert set(delta.new) == set(fingerprints)
     assert not delta.deleted
 
@@ -106,10 +107,10 @@ def test_first_run_marks_all_new_and_records_registry(indexer) -> None:
 def test_second_run_unchanged_is_noop_delta(indexer) -> None:
     inc, store, manager = indexer
     docs = [_doc("/a.txt", "A")]
-    _, fps = inc.plan(docs)
+    _, fps = detect_delta(docs, inc.doc_status)
     inc.commit([_lineage("/a.txt", ["e1"])], fps, entities=[Entity(id="e1", name="A")])
 
-    delta2, _ = inc.plan(docs)
+    delta2, _ = detect_delta(docs, inc.doc_status)
     assert delta2.is_empty
     assert filter_documents_to_process(docs, delta2) == []
 
@@ -117,11 +118,11 @@ def test_second_run_unchanged_is_noop_delta(indexer) -> None:
 def test_changed_document_is_reprocessed(indexer) -> None:
     inc, store, manager = indexer
     docs = [_doc("/a.txt", "original")]
-    _, fps = inc.plan(docs)
+    _, fps = detect_delta(docs, inc.doc_status)
     inc.commit([_lineage("/a.txt", ["e1"])], fps, entities=[Entity(id="e1", name="A")])
 
     edited = [_doc("/a.txt", "EDITED")]
-    delta, _ = inc.plan(edited)
+    delta, _ = detect_delta(edited, inc.doc_status)
     assert delta.changed == [compute_doc_id("/a.txt")]
     assert len(filter_documents_to_process(edited, delta)) == 1
 
@@ -129,7 +130,7 @@ def test_changed_document_is_reprocessed(indexer) -> None:
 def test_changed_document_prunes_stale_artifacts(indexer) -> None:
     inc, store, manager = indexer
     # First run: doc a produced entities e1, e2.
-    _, fps = inc.plan([_doc("/a.txt", "v1")])
+    _, fps = detect_delta([_doc("/a.txt", "v1")], inc.doc_status)
     inc.commit(
         [_lineage("/a.txt", ["e1", "e2"])],
         fps,
@@ -138,8 +139,8 @@ def test_changed_document_prunes_stale_artifacts(indexer) -> None:
 
     # Edit: re-extraction will produce only e1; e2 must be pruned.
     edited = [_doc("/a.txt", "v2")]
-    delta, _ = inc.plan(edited)
-    inc.prune_changed(delta)
+    delta, _ = detect_delta(edited, inc.doc_status)
+    inc.remove_changed_and_deleted(delta)
 
     assert manager.delete_calls
     pruned = manager.delete_calls[0]["default"]
@@ -152,7 +153,7 @@ def test_changed_document_does_not_prune_entity_shared_with_survivor(indexer) ->
     # referenced by the survivor), or the survivor's graph loses a reference.
     inc, store, manager = indexer
     a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
-    _, fps = inc.plan([a, b])
+    _, fps = detect_delta([a, b], inc.doc_status)
     inc.commit(
         [_lineage("/a.txt", ["shared", "only_a"])],
         fps,
@@ -164,8 +165,8 @@ def test_changed_document_does_not_prune_entity_shared_with_survivor(indexer) ->
 
     # Edit /a.txt -> prune its stale artifacts before re-extraction.
     edited = [_doc("/a.txt", "EDITED"), b]
-    delta, _ = inc.plan(edited)
-    inc.prune_changed(delta)
+    delta, _ = detect_delta(edited, inc.doc_status)
+    inc.remove_changed_and_deleted(delta)
 
     pruned = [i for call in manager.delete_calls for ids in call.values() for i in ids]
     assert "only_a" in pruned  # exclusive to the changed doc -> pruned
@@ -175,14 +176,14 @@ def test_changed_document_does_not_prune_entity_shared_with_survivor(indexer) ->
 def test_deleted_document_removes_exclusive_artifacts(indexer) -> None:
     inc, store, manager = indexer
     a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
-    _, fps = inc.plan([a, b])
+    _, fps = detect_delta([a, b], inc.doc_status)
     inc.commit([_lineage("/a.txt", ["ea"])], fps, entities=[Entity(id="ea", name="A")])
     inc.commit([_lineage("/b.txt", ["eb"])], fps, entities=[Entity(id="eb", name="B")])
 
-    delta, _ = inc.plan([a])
+    delta, _ = detect_delta([a], inc.doc_status)
     assert delta.deleted == [compute_doc_id("/b.txt")]
 
-    inc.remove_deleted(delta)
+    inc.remove_changed_and_deleted(delta)
     assert {r.doc_id for r in store.list_all()} == {compute_doc_id("/a.txt")}
     assert manager.delete_calls
     deleted_ids = manager.delete_calls[0]["default"]
@@ -195,7 +196,7 @@ def test_deleted_document_removes_claim_artifacts(indexer) -> None:
     # and removed on deletion like entities, or they leak as orphans.
     inc, store, manager = indexer
     a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
-    _, fps = inc.plan([a, b])
+    _, fps = detect_delta([a, b], inc.doc_status)
     inc.commit(
         [DocumentLineage(doc_id=compute_doc_id("/a.txt"), claim_ids=["ca"])],
         fps,
@@ -211,8 +212,8 @@ def test_deleted_document_removes_claim_artifacts(indexer) -> None:
     rec_b = store.get(compute_doc_id("/b.txt"))
     assert rec_b is not None and rec_b.claim_ids == ["cb"]
 
-    delta, _ = inc.plan([a])  # delete b
-    inc.remove_deleted(delta)
+    delta, _ = detect_delta([a], inc.doc_status)  # delete b
+    inc.remove_changed_and_deleted(delta)
     deleted_ids = manager.delete_calls[0]["default"]
     assert "cb" in deleted_ids
     assert "ca" not in deleted_ids
@@ -221,7 +222,7 @@ def test_deleted_document_removes_claim_artifacts(indexer) -> None:
 def test_shared_artifacts_are_not_deleted(indexer) -> None:
     inc, store, manager = indexer
     a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
-    _, fps = inc.plan([a, b])
+    _, fps = detect_delta([a, b], inc.doc_status)
     # Both docs reference the SAME shared entity id.
     inc.commit(
         [_lineage("/a.txt", ["shared"])], fps, entities=[Entity(id="shared", name="S")]
@@ -230,8 +231,8 @@ def test_shared_artifacts_are_not_deleted(indexer) -> None:
         [_lineage("/b.txt", ["shared"])], fps, entities=[Entity(id="shared", name="S")]
     )
 
-    delta, _ = inc.plan([a])  # delete b
-    inc.remove_deleted(delta)
+    delta, _ = detect_delta([a], inc.doc_status)  # delete b
+    inc.remove_changed_and_deleted(delta)
     # Shared entity is still referenced by a -> must never be deleted. The
     # assertion must hold whether or not a delete batch was emitted: collect all
     # ids ever passed to delete_documents and require "shared" is absent.
@@ -257,14 +258,14 @@ def test_a_document_failing_every_run_stops_being_retried(indexer) -> None:
     docs = [_doc("/a.txt", "A")]
     doc_id = compute_doc_id("/a.txt")
     for attempt in (1, 2):
-        delta, fps = inc.plan(docs, max_failures=2)
+        delta, fps = detect_delta(docs, inc.doc_status, max_failures=2)
         assert doc_id in delta.to_process
         _fail(inc, fps, "/a.txt")
         record = store.get(doc_id)
         assert record is not None
         assert record.failure_count == attempt
 
-    delta, _ = inc.plan(docs, max_failures=2)
+    delta, _ = detect_delta(docs, inc.doc_status, max_failures=2)
 
     assert delta.unchanged == [doc_id]
     assert not delta.to_process
@@ -275,12 +276,12 @@ def test_a_document_failing_every_run_stops_being_retried(indexer) -> None:
 def test_failure_count_resets_on_success_and_on_new_content(indexer) -> None:
     inc, store, _ = indexer
     doc_id = compute_doc_id("/a.txt")
-    _, fps = inc.plan([_doc("/a.txt", "A")])
+    _, fps = detect_delta([_doc("/a.txt", "A")], inc.doc_status)
     _fail(inc, fps, "/a.txt")
     _fail(inc, fps, "/a.txt")
 
     # New content is a new document version: its count starts again.
-    _, edited = inc.plan([_doc("/a.txt", "EDITED")])
+    _, edited = detect_delta([_doc("/a.txt", "EDITED")], inc.doc_status)
     _fail(inc, edited, "/a.txt")
     record = store.get(doc_id)
     assert record is not None and record.failure_count == 1

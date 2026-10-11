@@ -234,7 +234,7 @@ def test_failed_read_back_keeps_a_deleted_docs_registry_row(mocker) -> None:
         graph, "read_entities", side_effect=RuntimeError("connection reset")
     )
 
-    removed = incremental.remove_deleted(DocumentDelta(deleted=["doc-b"]))
+    removed = incremental.remove_changed_and_deleted(DocumentDelta(deleted=["doc-b"]))
 
     assert removed is False
     assert store.get("doc-b") is not None

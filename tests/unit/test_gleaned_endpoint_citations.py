@@ -24,7 +24,7 @@ from unified_kg_rag.application.ingestion.incremental import (
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
-from unified_kg_rag.domain.ingestion.delta_detector import document_doc_id
+from unified_kg_rag.domain.ingestion.delta_detector import detect_delta, document_doc_id
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
@@ -103,7 +103,7 @@ def _glean(gleaner: GraphGleaner, mocker, corpus: dict[str, list[str]]):
 
 def _index(inc: IncrementalIndexer, gleaner, mocker, corpus) -> None:
     documents = [_document(path) for path in corpus]
-    delta, fingerprints = inc.plan(documents)
+    delta, fingerprints = detect_delta(documents, inc.doc_status)
     assert inc.remove_changed_and_deleted(delta)
     extracted = set(delta.new + delta.changed)
     batch = {

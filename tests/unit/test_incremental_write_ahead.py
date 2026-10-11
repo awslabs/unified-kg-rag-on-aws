@@ -25,7 +25,7 @@ from tests.fixtures.incremental_runs import (
     expected_state,
 )
 from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
-from unified_kg_rag.domain.ingestion.delta_detector import document_doc_id
+from unified_kg_rag.domain.ingestion.delta_detector import detect_delta, document_doc_id
 from unified_kg_rag.domain.models import (
     PENDING_CONTENT_HASH,
     DocStatus,
@@ -217,7 +217,7 @@ def test_write_ahead_does_not_count_toward_max_document_failures() -> None:
     # The run fails a again: the count continues from the record stored
     # before the write-ahead one, not from the PENDING record.
     inc = IncrementalIndexer(harness.store, harness.manager)
-    delta, fingerprints = inc.plan([a], max_failures=3)
+    delta, fingerprints = detect_delta([a], inc.doc_status, max_failures=3)
     assert delta.changed == [doc_id]
     lineage = DocumentLineage(doc_id=doc_id, file_path=a.file_path)
     inc.write_ahead(delta, [lineage])
@@ -232,9 +232,7 @@ def test_write_ahead_does_not_count_toward_max_document_failures() -> None:
     # An interrupted run is no failure: the PENDING record is retried even
     # though the count had reached the limit.
     harness.store.put(pending)
-    delta, _ = IncrementalIndexer(harness.store, harness.manager).plan(
-        [a], max_failures=3
-    )
+    delta, _ = detect_delta([a], harness.store, max_failures=3)
     assert delta.changed == [doc_id]
 
 
@@ -314,7 +312,7 @@ def test_retried_shared_strip_repairs_the_store_an_earlier_one_missed(
     for name in originals:
         setattr(harness.vector, name, broken(name))
     inc = IncrementalIndexer(harness.store, harness.manager)
-    delta, _ = inc.plan([document(p, c) for p, c in after.items()])
+    delta, _ = detect_delta([document(p, c) for p, c in after.items()], inc.doc_status)
     try:
         assert inc.remove_changed_and_deleted(delta) is False
     except Killed:

@@ -28,7 +28,7 @@ from unified_kg_rag.application.ingestion.incremental import (
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
-from unified_kg_rag.domain.ingestion.delta_detector import document_doc_id
+from unified_kg_rag.domain.ingestion.delta_detector import detect_delta, document_doc_id
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
     sum_weights,
@@ -198,7 +198,7 @@ class IncrementalRun:
 
     def _run(self, inc: IncrementalIndexer, corpus: Corpus) -> None:
         documents = [document(path, content) for path, content in corpus.items()]
-        delta, fingerprints = inc.plan(documents)
+        delta, fingerprints = detect_delta(documents, inc.doc_status)
         to_extract = set(delta.to_process)
         extracted = [d for d in documents if document_doc_id(d) in to_extract]
         self.extracted = sorted(d.file_path for d in extracted)

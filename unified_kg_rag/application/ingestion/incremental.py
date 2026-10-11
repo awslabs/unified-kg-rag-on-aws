@@ -34,7 +34,6 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.domain.ingestion.delta_detector import (
-    detect_delta,
     document_doc_id,
     scope_namespace,
 )
@@ -417,21 +416,6 @@ class IncrementalIndexer:
         self._pending: dict[str, DocStatusRecord] = {}
         self._overflow: dict[str, DocumentLineage] = {}
         self._in_flight: set[str] = set()
-
-    def plan(
-        self,
-        documents: list[Document],
-        failed_doc_ids: list[str] | None = None,
-        max_failures: int | None = None,
-    ) -> tuple[DocumentDelta, dict[str, str]]:
-        """Compute the delta for ``documents`` without mutating any store."""
-        return detect_delta(
-            documents,
-            self.doc_status,
-            self.scope,
-            failed_doc_ids or (),
-            max_failures=max_failures,
-        )
 
     def check_graph_holds_registry(self, delta: DocumentDelta) -> None:
         """Raise before any write when the graph lost the registry's documents.
@@ -953,33 +937,6 @@ class IncrementalIndexer:
         )
         return owners
 
-    def remove_deleted(self, delta: DocumentDelta) -> bool:
-        """Remove artifacts and registry records for deleted documents.
-
-        The registry record is only deleted when artifact removal fully
-        succeeded. If removal partially failed, the record is kept so the next
-        run retries the removal — deleting the record first would strand the
-        still-live artifacts with no lineage to ever clean them up (permanent
-        orphans).
-
-        Returns True when every artifact was removed (or nothing was deleted).
-        The caller must report False as a failed run: the stores still hold
-        the deleted documents' content. A delta that also changes documents
-        must use :meth:`remove_changed_and_deleted` instead.
-        """
-        if not delta.deleted:
-            return True
-        removed = self.remove_obsolete_artifacts(delta.deleted)
-        if not removed:
-            logger.warning(
-                "Keeping %d deleted-doc registry records because artifact "
-                "removal did not fully succeed; will retry next run.",
-                len(delta.deleted),
-            )
-            return False
-        self._delete_records(delta.deleted)
-        return True
-
     def _delete_records(self, doc_ids: list[str]) -> None:
         """Delete removed documents' records, their lineage overflow first: an
         interruption in between leaves the record, listing artifacts that
@@ -988,44 +945,25 @@ class IncrementalIndexer:
         for doc_id in doc_ids:
             self.doc_status.delete(doc_id)
 
-    def prune_changed(self, delta: DocumentDelta) -> bool:
-        """Remove the now-stale artifacts of changed docs before re-extraction.
-
-        A changed document's old entities/edges are dropped first (unless shared
-        with surviving docs) so a re-extraction that no longer produces some
-        artifact does not leave it orphaned in the graph. Call this before
-        re-running extraction + :meth:`commit` on the changed documents.
-
-        Returns True when every stale artifact was removed (or there was nothing
-        to remove). The caller MUST NOT :meth:`commit` on False: commit replaces
-        the changed docs' registry lineage with the new artifacts, so the old
-        ids that failed to delete would no longer be referenced anywhere and
-        could never be cleaned up (permanent orphans). Not committing keeps the
-        old lineage (inside the PENDING record when :meth:`write_ahead` ran),
-        so the next run re-detects the docs as changed and retries the prune.
-
-        A delta that also deletes documents must use
-        :meth:`remove_changed_and_deleted` instead: pruning and deleting in
-        separate passes keeps what only a changed and a deleted doc share.
-        """
-        if not delta.changed:
-            return True
-        return self.remove_obsolete_artifacts(delta.changed)
-
     def remove_changed_and_deleted(self, delta: DocumentDelta) -> bool:
         """Remove the stale artifacts of changed AND deleted docs in one pass.
 
+        A changed document's old entities/edges are dropped (unless shared
+        with surviving docs) before its re-extraction is committed, so an
+        artifact the new extraction no longer produces is not left orphaned.
         The removal is planned once over changed + deleted, so an artifact only
         those documents reference is removed even when it is referenced by one
-        changed and one deleted document. Planning the two sets separately
-        (:meth:`prune_changed` then :meth:`remove_deleted`) treats each set as
-        a survivor of the other and leaves such artifacts behind as orphans
-        with no text units.
+        changed and one deleted document; planning the two sets separately
+        would treat each as a survivor of the other.
 
         The deleted documents' registry records are deleted only when the
-        removal fully succeeded (see :meth:`remove_deleted`). Returns False on
-        a partial failure; the caller MUST NOT :meth:`commit` changed
-        documents on False, for the reason given in :meth:`prune_changed`.
+        removal fully succeeded: deleting them first would strand the
+        still-live artifacts with no lineage to clean them up. Returns False
+        on a partial failure. The caller MUST NOT :meth:`commit` changed
+        documents on False: commit replaces their lineage with the new
+        artifacts, so the old ids that failed to delete would never be
+        cleaned up. Not committing keeps the old lineage (inside the PENDING
+        record :meth:`write_ahead` wrote), so the next run retries.
         """
         doc_ids = list(dict.fromkeys(delta.changed + delta.deleted))
         if not doc_ids:

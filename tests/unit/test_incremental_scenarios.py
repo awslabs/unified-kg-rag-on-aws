@@ -25,7 +25,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     build_document_lineage,
 )
 from unified_kg_rag.application.storage.indexing_manager import CrossRunMergeResult
-from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
+from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id, detect_delta
 from unified_kg_rag.domain.ingestion.merge import (
     merge_entities,
     merge_relationships,
@@ -137,7 +137,7 @@ class TestAdd:
     def test_new_docs_only_all_classified_new(self, rig) -> None:
         inc, _store, _manager = rig
         docs = [_doc("/a.txt", "A"), _doc("/b.txt", "B"), _doc("/c.txt", "C")]
-        delta, fps = inc.plan(docs)
+        delta, fps = detect_delta(docs, inc.doc_status)
         assert set(delta.new) == set(fps)
         assert not delta.changed and not delta.deleted and not delta.unchanged
 
@@ -179,7 +179,7 @@ class TestModify:
     def test_content_change_classified_changed(self, rig) -> None:
         inc, _store, _manager = rig
         docs = [_doc("/a.txt", "original")]
-        _, fps = inc.plan(docs)
+        _, fps = detect_delta(docs, inc.doc_status)
         inc.commit(
             [_lineage("/a.txt", entity_ids=["e1"])],
             fps,
@@ -187,14 +187,14 @@ class TestModify:
         )
 
         edited = [_doc("/a.txt", "EDITED CONTENT")]
-        delta, _ = inc.plan(edited)
+        delta, _ = detect_delta(edited, inc.doc_status)
         assert delta.changed == [compute_doc_id("/a.txt")]
         assert not delta.new and not delta.deleted
 
     def test_modify_prunes_old_exclusive_keeps_shared(self, rig) -> None:
         inc, _store, manager = rig
         a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
-        _, fps = inc.plan([a, b])
+        _, fps = detect_delta([a, b], inc.doc_status)
         inc.commit(
             [_lineage("/a.txt", entity_ids=["shared", "only_a"])],
             fps,
@@ -207,8 +207,8 @@ class TestModify:
         )
 
         edited = [_doc("/a.txt", "EDITED"), b]
-        delta, _ = inc.plan(edited)
-        inc.prune_changed(delta)
+        delta, _ = detect_delta(edited, inc.doc_status)
+        inc.remove_changed_and_deleted(delta)
 
         pruned = _all_deleted_ids(manager)
         assert "only_a" in pruned  # exclusive to changed doc -> pruned
@@ -216,10 +216,12 @@ class TestModify:
 
     def test_modify_drops_an_entity_it_used_to_mention(self, rig) -> None:
         # A doc that previously produced e1+e2 is edited to mention only e1.
-        # prune_changed removes BOTH old artifacts; commit then re-adds only e1,
+        # the removal drops BOTH old artifacts; commit then re-adds only e1,
         # so e2 does not leak as an orphan after re-extraction.
         inc, _store, manager = rig
-        _, fps = inc.plan([_doc("/a.txt", "v1 mentions Bob and Carol")])
+        _, fps = detect_delta(
+            [_doc("/a.txt", "v1 mentions Bob and Carol")], inc.doc_status
+        )
         inc.commit(
             [_lineage("/a.txt", entity_ids=["e1", "e2"])],
             fps,
@@ -227,8 +229,8 @@ class TestModify:
         )
 
         edited = [_doc("/a.txt", "v2 mentions only Bob")]
-        delta, fps2 = inc.plan(edited)
-        inc.prune_changed(delta)
+        delta, fps2 = detect_delta(edited, inc.doc_status)
+        inc.remove_changed_and_deleted(delta)
         pruned = _all_deleted_ids(manager)
         assert "e1" in pruned and "e2" in pruned
 
@@ -248,7 +250,7 @@ class TestModify:
         # hash change that folds metadata in doesn't silently regress it.
         inc, _store, _manager = rig
         original = _doc("/a.txt", "same text", metadata={"author": "alice"})
-        _, fps = inc.plan([original])
+        _, fps = detect_delta([original], inc.doc_status)
         inc.commit(
             [_lineage("/a.txt", entity_ids=["e1"])],
             fps,
@@ -256,7 +258,7 @@ class TestModify:
         )
 
         touched = _doc("/a.txt", "same text", metadata={"author": "BOB", "tag": "x"})
-        delta, _ = inc.plan([touched])
+        delta, _ = detect_delta([touched], inc.doc_status)
         assert delta.is_empty
         assert delta.unchanged == [compute_doc_id("/a.txt")]
 
@@ -267,7 +269,7 @@ class TestModify:
         # collision must not collapse two files into one registry entry.
         inc, _store, _manager = rig
         a, b = _doc("/a.txt", "unique A"), _doc("/b.txt", "unique B")
-        _, fps = inc.plan([a, b])
+        _, fps = detect_delta([a, b], inc.doc_status)
         inc.commit(
             [
                 _lineage("/a.txt", entity_ids=["ea"]),
@@ -279,7 +281,7 @@ class TestModify:
 
         # Edit b to be textually identical to a.
         b2 = _doc("/b.txt", "unique A")
-        delta, fps2 = inc.plan([a, b2])
+        delta, fps2 = detect_delta([a, b2], inc.doc_status)
         assert compute_doc_id("/a.txt") in delta.unchanged
         assert compute_doc_id("/b.txt") in delta.changed
         # Same content hash for the two distinct docs, but two registry entries.
@@ -294,7 +296,7 @@ class TestDelete:
     def test_delete_removes_exclusive_entities_relationships_claims(self, rig) -> None:
         inc, store, manager = rig
         a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
-        _, fps = inc.plan([a, b])
+        _, fps = detect_delta([a, b], inc.doc_status)
         inc.commit(
             [
                 _lineage(
@@ -321,9 +323,9 @@ class TestDelete:
             entities=[_entity("eb", "B")],
         )
 
-        delta, _ = inc.plan([a])  # b deleted
+        delta, _ = detect_delta([a], inc.doc_status)  # b deleted
         assert delta.deleted == [compute_doc_id("/b.txt")]
-        inc.remove_deleted(delta)
+        inc.remove_changed_and_deleted(delta)
 
         deleted = _all_deleted_ids(manager)
         for exclusive in ("eb", "rb", "clb", "crb"):
@@ -335,7 +337,7 @@ class TestDelete:
     def test_delete_preserves_shared_artifacts(self, rig) -> None:
         inc, store, manager = rig
         a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
-        _, fps = inc.plan([a, b])
+        _, fps = detect_delta([a, b], inc.doc_status)
         inc.commit(
             [_lineage("/a.txt", entity_ids=["shared"])],
             fps,
@@ -347,8 +349,8 @@ class TestDelete:
             entities=[_entity("shared", "S")],
         )
 
-        delta, _ = inc.plan([a])  # delete b
-        inc.remove_deleted(delta)
+        delta, _ = detect_delta([a], inc.doc_status)  # delete b
+        inc.remove_changed_and_deleted(delta)
         assert "shared" not in _all_deleted_ids(manager)
         assert {r.doc_id for r in store.list_all()} == {compute_doc_id("/a.txt")}
 
@@ -358,7 +360,7 @@ class TestDelete:
         # one referrer between the two deletes.
         inc, store, manager = rig
         a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
-        _, fps = inc.plan([a, b])
+        _, fps = detect_delta([a, b], inc.doc_status)
         inc.commit(
             [_lineage("/a.txt", entity_ids=["shared"])],
             fps,
@@ -371,27 +373,27 @@ class TestDelete:
         )
 
         # Delete a first: 'shared' still referenced by b -> preserved.
-        d1, _ = inc.plan([b])
-        inc.remove_deleted(d1)
+        d1, _ = detect_delta([b], inc.doc_status)
+        inc.remove_changed_and_deleted(d1)
         assert "shared" not in _all_deleted_ids(manager)
 
         # Delete b (the last referrer): now 'shared' is exclusive -> removed.
-        d2, _ = inc.plan([])
-        inc.remove_deleted(d2)
+        d2, _ = detect_delta([], inc.doc_status)
+        inc.remove_changed_and_deleted(d2)
         assert "shared" in _all_deleted_ids(manager)
         assert store.list_all() == []
 
     def test_delete_empty_corpus_removes_everything(self, rig) -> None:
         inc, store, manager = rig
-        _, fps = inc.plan([_doc("/a.txt", "A")])
+        _, fps = detect_delta([_doc("/a.txt", "A")], inc.doc_status)
         inc.commit(
             [_lineage("/a.txt", entity_ids=["ea"])],
             fps,
             entities=[_entity("ea", "A")],
         )
-        delta, _ = inc.plan([])  # entire corpus gone
+        delta, _ = detect_delta([], inc.doc_status)  # entire corpus gone
         assert delta.deleted == [compute_doc_id("/a.txt")]
-        inc.remove_deleted(delta)
+        inc.remove_changed_and_deleted(delta)
         assert store.list_all() == []
         assert "ea" in _all_deleted_ids(manager)
 
@@ -403,7 +405,7 @@ class TestCombinations:
     def test_add_modify_delete_in_one_delta(self, rig) -> None:
         inc, store, manager = rig
         a, b, c = _doc("/a.txt", "A"), _doc("/b.txt", "B"), _doc("/c.txt", "C")
-        _, fps = inc.plan([a, b, c])
+        _, fps = detect_delta([a, b, c], inc.doc_status)
         for path, eid in (("/a.txt", "ea"), ("/b.txt", "eb"), ("/c.txt", "ec")):
             inc.commit(
                 [_lineage(path, entity_ids=[eid])], fps, entities=[_entity(eid, eid)]
@@ -413,7 +415,7 @@ class TestCombinations:
         a2 = _doc("/a.txt", "A")  # unchanged
         b2 = _doc("/b.txt", "B EDITED")  # modified
         d = _doc("/d.txt", "D")  # new
-        delta, fps2 = inc.plan([a2, b2, d])
+        delta, fps2 = detect_delta([a2, b2, d], inc.doc_status)
 
         assert delta.unchanged == [compute_doc_id("/a.txt")]
         assert delta.changed == [compute_doc_id("/b.txt")]
@@ -421,8 +423,7 @@ class TestCombinations:
         assert delta.deleted == [compute_doc_id("/c.txt")]
 
         # Apply: prune changed, remove deleted, commit new+changed re-extraction.
-        inc.prune_changed(delta)
-        inc.remove_deleted(delta)
+        inc.remove_changed_and_deleted(delta)
         deleted = _all_deleted_ids(manager)
         assert "eb" in deleted  # b's stale artifact pruned
         assert "ec" in deleted  # c deleted
@@ -441,7 +442,7 @@ class TestCombinations:
 
     def test_delete_then_readd_same_doc_id(self, rig) -> None:
         inc, store, manager = rig
-        _, fps = inc.plan([_doc("/a.txt", "v1")])
+        _, fps = detect_delta([_doc("/a.txt", "v1")], inc.doc_status)
         inc.commit(
             [_lineage("/a.txt", entity_ids=["e_old"])],
             fps,
@@ -449,13 +450,13 @@ class TestCombinations:
         )
 
         # Delete it.
-        del_delta, _ = inc.plan([])
-        inc.remove_deleted(del_delta)
+        del_delta, _ = detect_delta([], inc.doc_status)
+        inc.remove_changed_and_deleted(del_delta)
         assert store.get(compute_doc_id("/a.txt")) is None
 
         # Re-add the same path with new content -> classified new again (clean
         # slate), and its registry record reflects only the new artifacts.
-        readd, fps2 = inc.plan([_doc("/a.txt", "v2")])
+        readd, fps2 = detect_delta([_doc("/a.txt", "v2")], inc.doc_status)
         assert readd.new == [compute_doc_id("/a.txt")]
         inc.commit(
             [_lineage("/a.txt", entity_ids=["e_new"])],
@@ -481,7 +482,7 @@ class TestCombinations:
         alice = _entity("e_alice", "Alice", text_unit_ids=["t1", "t2"])
         bob = _entity("e_bob", "Bob", text_unit_ids=["t1"])
         lineages = build_document_lineage(docs, text_units, [alice, bob], [], [], [])
-        _, fps = inc.plan(docs)
+        _, fps = detect_delta(docs, inc.doc_status)
         inc.commit(lineages, fps, entities=[alice, bob])
 
         # Both docs recorded 'alice' in their lineage.
@@ -490,8 +491,8 @@ class TestCombinations:
             assert rec is not None and "e_alice" in rec.entity_ids
 
         # Delete /a.txt -> bob exclusive (removed), alice shared (kept).
-        delta, _ = inc.plan([d2])
-        inc.remove_deleted(delta)
+        delta, _ = detect_delta([d2], inc.doc_status)
+        inc.remove_changed_and_deleted(delta)
         deleted = _all_deleted_ids(manager)
         assert "e_bob" in deleted
         assert "e_alice" not in deleted
@@ -512,7 +513,7 @@ class TestCombinations:
         # is NOT removed (current behaviour: orphan edge can occur).
         inc, store, manager = rig
         a, b = _doc("/a.txt", "A"), _doc("/b.txt", "B")
-        _, fps = inc.plan([a, b])
+        _, fps = detect_delta([a, b], inc.doc_status)
         # Doc a owns entity 'e_target' exclusively. Doc b owns edge 'r1' that
         # points AT e_target. (Plausible when an extraction in b references an
         # entity first seen in a.)
@@ -530,8 +531,8 @@ class TestCombinations:
             ],
         )
 
-        delta, _ = inc.plan([b])  # delete a
-        inc.remove_deleted(delta)
+        delta, _ = detect_delta([b], inc.doc_status)  # delete a
+        inc.remove_changed_and_deleted(delta)
         deleted = _all_deleted_ids(manager)
         # e_target is removed (exclusive to deleted doc a)...
         assert "e_target" in deleted
@@ -547,7 +548,7 @@ class TestCombinations:
     def test_empty_delta_is_clean_noop(self, rig) -> None:
         inc, _store, manager = rig
         docs = [_doc("/a.txt", "A")]
-        _, fps = inc.plan(docs)
+        _, fps = detect_delta(docs, inc.doc_status)
         inc.commit(
             [_lineage("/a.txt", entity_ids=["e1"])],
             fps,
@@ -555,10 +556,9 @@ class TestCombinations:
         )
         before = len(manager.delete_calls)
 
-        delta, _ = inc.plan(docs)  # identical corpus
+        delta, _ = detect_delta(docs, inc.doc_status)  # identical corpus
         assert delta.is_empty
-        inc.prune_changed(delta)
-        inc.remove_deleted(delta)
+        inc.remove_changed_and_deleted(delta)
         # No prune/remove side effects when nothing changed.
         assert len(manager.delete_calls) == before
 
@@ -568,7 +568,7 @@ class TestCombinations:
         # of idempotency here.
         inc, store, _manager = rig
         docs = [_doc("/a.txt", "A")]
-        _, fps = inc.plan(docs)
+        _, fps = detect_delta(docs, inc.doc_status)
         inc.commit(
             [_lineage("/a.txt", entity_ids=["e1"])],
             fps,
@@ -661,10 +661,12 @@ class TestMergeLaws:
         # union: both lineages carry 'shared'
         assert all("shared" in ln.entity_ids for ln in lineages)
 
-        _, fps = inc.plan(docs)
+        _, fps = detect_delta(docs, inc.doc_status)
         inc.commit(lineages, fps, entities=[shared])
-        delta, _ = inc.plan([b])  # delete a; trim shared from removal set
-        inc.remove_deleted(delta)
+        delta, _ = detect_delta(
+            [b], inc.doc_status
+        )  # delete a; trim shared from removal set
+        inc.remove_changed_and_deleted(delta)
         assert "shared" not in _all_deleted_ids(manager)
 
 

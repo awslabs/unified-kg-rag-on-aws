@@ -588,6 +588,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `export_timeout_millis` passed to the batch span processor, which ignores
   it. Captured content is no longer redacted twice: with an exporting
   backend the exporter alone redacts it (#211).
+- **Breaking:** `IncrementalIndexer.plan`, `prune_changed` and
+  `remove_deleted`, which only tests called. Use `detect_delta` and
+  `remove_changed_and_deleted` (one removal plan over changed and deleted
+  documents) (#PR).
 - `merge_communities`, `merge_community_reports` and `DeltaMergeResult`
   from `domain.ingestion.merge`: nothing called them, since content-derived
   community ids let a delta run upsert its communities and reports (#PR).
