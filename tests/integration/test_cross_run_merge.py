@@ -255,6 +255,39 @@ def test_failed_read_back_fails_the_commit_before_any_write(mocker) -> None:
     assert store.get("doc-b") is None
 
 
+def test_a_remapped_entity_rewrites_only_the_edges_the_delta_touches() -> None:
+    # "Acme Inc" merges into the stored hub "Acme": its incident edges are
+    # read to find a match, but only the delta's edge (new here) is written.
+    incremental, graph, _ = _harness(cross_run_merge=True)
+    spokes = [f"e-{i}" for i in range(3)]
+    incremental.commit(
+        lineages=[DocumentLineage(doc_id="doc-a", entity_ids=["e-hub", *spokes])],
+        fingerprints={"doc-a": "h-a"},
+        entities=[
+            Entity(id="e-hub", name="Acme", text_unit_ids=["t1"]),
+            *(Entity(id=s, name=s, text_unit_ids=["t1"]) for s in spokes),
+        ],
+        relationships=[
+            Relationship(id=f"r-{s}", source_id="e-hub", target_id=s, type="SUPPLIES")
+            for s in spokes
+        ],
+    )
+    merged = incremental.indexing_manager.merge_with_existing_graph(
+        [
+            Entity(id="e-new", name="Acme Inc", text_unit_ids=["t2"]),
+            Entity(id="e-bank", name="Bank", text_unit_ids=["t2"]),
+        ],
+        [Relationship(id="r-bank", source_id="e-new", target_id="e-bank", type="PAYS")],
+    )
+
+    (edge,) = merged.relationships or []
+    assert (edge.id, edge.source_id) == ("r-bank", "e-hub")
+    # The hub's rank still counts its stored edges.
+    ranks = {e.id: e.rank for e in merged.entities or []}
+    assert ranks == {"e-hub": 4, "e-bank": 1}
+    assert graph.ids("relationships") == {f"r-{s}" for s in spokes}
+
+
 def test_communities_and_claims_follow_the_merge_remap() -> None:
     # "Acme Inc" merges into the stored "Acme" (another id), and its edge into
     # the stored edge: the delta's community and claim must reference the

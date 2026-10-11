@@ -820,6 +820,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   that the filter removed (they named a filtered entity) is dropped with them.
   Merged extraction entities list their text units in first-seen order instead
   of set order (#213).
+- A delta entity that merged into a stored one under another id no longer
+  rewrites (and re-summarizes) every edge of the stored entity: its incident
+  edges are still read to find matches, but only the edges a delta edge
+  became or merged into are written (#PR).
 - Removing a changed or deleted document's text units from the entities and
   relationships it shares with other documents no longer re-embeds them: the
   OpenSearch copies get a partial update of `text_unit_ids` (and `weight`)

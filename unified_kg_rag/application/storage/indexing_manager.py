@@ -446,13 +446,16 @@ class IndexingManager:
                     relationships,
                     entity_id_remap=entity_id_remap or None,
                 )
-                merged_relationships = (
-                    self.description_summarizer.summarize_relationships(
-                        merged_relationships
-                    )
-                )
                 relationship_remap = relationship_id_remap(
                     relationships, merged_relationships, entity_id_remap
+                )
+                # The incident edges were read only to find matches: write
+                # back just the edges a delta edge became or merged into.
+                written = {relationship_remap.get(r.id, r.id) for r in relationships}
+                merged_relationships = (
+                    self.description_summarizer.summarize_relationships(
+                        [r for r in merged_relationships if r.id in written]
+                    )
                 )
         merged_entities, merged_relationships = self._rank_with_stored_graph(
             suffix, merged_entities, merged_relationships
