@@ -152,6 +152,21 @@ class TestDimensionalityReducer:
         assert len(out) == 20
         assert all(len(coord) == 2 for coord in out.values())
 
+    def test_reducers_seeded_by_default(self, mocker) -> None:
+        # Unseeded UMAP gives a different layout on every re-render.
+        from unified_kg_rag.visualization.embeddings import dimensionality
+
+        umap = mocker.patch.object(dimensionality.umap, "UMAP")
+        umap.return_value.fit_transform.return_value = np.zeros((10, 2))
+        reducer = DimensionalityReducer({})
+        reducer.reduce_dimensions(_embeddings(10), method="umap")
+        assert umap.call_args.kwargs["random_state"] == 42
+        assert reducer.tsne_config.random_state == 42
+        assert reducer.pca_config.random_state == 42
+        assert (
+            DimensionalityReducer({"umap": {"random_state": None}}).umap_config
+        ).random_state is None
+
     def test_too_few_points_falls_back_to_pca(self, mocker) -> None:
         # With < n_components+1 points (n_components=2, so 2 points) the
         # reducer downgrades UMAP to PCA but still lays out every node in 2D.

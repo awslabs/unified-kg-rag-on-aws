@@ -572,6 +572,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- Visualization layouts are reproducible: UMAP, t-SNE and PCA take
+  `random_state` 42 by default (`graph.visualization.layout.<method>.random_state`;
+  `null` restores a random layout and UMAP's parallel run), so re-rendering
+  the same graph no longer moves every node (#PR).
 - `graph_analysis_report.html` shows a density or average clustering of 0 as
   `0.0000` instead of `N/A`, shows `N/A` instead of a fabricated 0 for
   communities and modularity when community detection produced no metrics,

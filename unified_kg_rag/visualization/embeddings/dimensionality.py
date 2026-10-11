@@ -21,7 +21,9 @@ class ReducerConfig(BaseModel):
         "euclidean", description="Metric used for distance calculation."
     )
     random_state: int | None = Field(
-        default=None, description="Random seed for reproducible results"
+        default=42,
+        description="Random seed, so a re-render gives the same layout; None "
+        "for a random one (UMAP then runs in parallel)",
     )
 
 
