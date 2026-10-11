@@ -560,6 +560,17 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- `answer_match` no longer counts a different number or name as contained.
+  Normalization keeps a decimal point or comma between digits ("1.5 million"
+  no longer matches "15 million", nor "3.5" "35 percent") and a trailing
+  `+`/`#` ("C" no longer matches "C++"); thousands separators are still
+  dropped. A bare-number gold no longer takes the Korean particle tolerance,
+  which accepted a unit or magnitude ("3" matched "3억", "2" "2개월"). A
+  `yes`/`no` gold is scored by the answer's leading polarity, HotpotQA-style,
+  instead of matching the "no" in almost any long answer. A gold that is only
+  an article ("A") is scored instead of skipped. The docs no longer claim
+  SQuAD v1.1 normalization: scores are not comparable with leaderboard
+  numbers (#PR).
 - With `entity_grounding` enabled, the check whether a gleaned
   relationship's endpoint name occurs in its unit (#202) now accepts common
   spelling variants and no longer accepts partial words. Both sides drop

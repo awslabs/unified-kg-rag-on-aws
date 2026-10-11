@@ -3,16 +3,18 @@
 """Answer-match evaluator: answer containment, SQuAD-style exact match and token F1.
 
 Deterministic and LLM-free, so scores are reproducible across runs and judge
-models. Both the generated answer and each reference are normalized as in the
-official SQuAD v1.1 script, after Unicode NFKC (``text_matching.normalize_answer``:
-lowercase, delete punctuation, drop the English articles ``a``/``an``/``the``,
-collapse whitespace), then:
+models. Both the generated answer and each reference are normalized SQuAD-style after
+Unicode NFKC (``text_matching.normalize_answer``: lowercase, delete punctuation
+except decimal points and "C++"-style suffixes, drop the English articles
+``a``/``an``/``the``, collapse whitespace; not identical to the official SQuAD
+v1.1 script, so scores are not leaderboard-comparable), then:
 
 - ``answer_contains``: 1.0 if the gold answer appears in the generated answer
   as a whole-word phrase (``text_matching.phrase_in_text``: Korean particles
   tolerated, substring match for single-word CJK phrases). Long-form RAG
   answers rarely equal a short gold span, so this is the headline
-  deterministic answer metric.
+  deterministic answer metric. A "yes"/"no" gold is instead compared with the
+  first "yes"/"no" in the answer's first sentence.
 - ``exact_match``: 1.0 if the normalized strings are equal.
 - ``token_f1``: harmonic mean of token precision/recall over whitespace tokens
   (multiset overlap).
@@ -28,6 +30,7 @@ under-count for Korean.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from datetime import datetime
 from typing import Any
@@ -62,7 +65,26 @@ def exact_match(prediction: str, reference: str) -> float:
     return float(normalize_answer(prediction) == normalize_answer(reference))
 
 
+_POLARITY = frozenset({"yes", "no"})
+_SENTENCE_END = re.compile(r"[.!?](?=\s|$)|[\n。！？]")
+
+
+def _leading_polarity(prediction: str) -> str | None:
+    """First "yes"/"no" token of the prediction's first sentence, if any."""
+    first_sentence = _SENTENCE_END.split(prediction.strip(), maxsplit=1)[0]
+    return next(
+        (t for t in normalize_answer(first_sentence).split() if t in _POLARITY),
+        None,
+    )
+
+
 def answer_contains(prediction: str, reference: str) -> float:
+    # A yes/no gold appears in almost any long answer ("no" in "there is no
+    # ..."), so it is scored by the answer's leading polarity instead, as
+    # HotpotQA does for its comparison questions.
+    gold = normalize_answer(reference)
+    if gold in _POLARITY:
+        return float(_leading_polarity(prediction) == gold)
     return float(phrase_in_text(reference, prediction))
 
 

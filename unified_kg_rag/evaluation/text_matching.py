@@ -17,28 +17,45 @@ from unified_kg_rag.shared.utils.scripts import (
 
 _ARTICLES = re.compile(r"\b(a|an|the)\b")
 _ASCII_PUNCTUATION = frozenset(string.punctuation)
+# A comma followed by exactly three digits inside a number ("1,000,000").
+_THOUSANDS_SEPARATOR = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
+# Punctuation that carries meaning and is kept: a decimal point or comma
+# between digits ("1.5" is not "15") and "+"/"#" ending a word ("C++", "C#").
+_KEPT_PUNCTUATION = re.compile(r"(?<=\d)[.,](?=\d)|(?<=\w)[+#]+")
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 
 
 def _is_punctuation(ch: str) -> bool:
-    # SQuAD removes ASCII string.punctuation (which includes symbols such as
-    # "$" and "%"); Unicode punctuation (category P*) covers CJK and fullwidth
+    # ASCII string.punctuation (which includes symbols such as "$" and "%")
+    # plus Unicode punctuation (category P*), which covers CJK and fullwidth
     # marks such as 「」 and 。.
     return ch in _ASCII_PUNCTUATION or unicodedata.category(ch).startswith("P")
 
 
 def normalize_answer(text: str) -> str:
-    """SQuAD v1.1 answer normalization, preceded by Unicode NFKC.
+    """SQuAD-style answer normalization, preceded by Unicode NFKC.
 
     NFKC folds compatibility forms (fullwidth digits/letters, ligatures, the
-    "…" ellipsis) to their canonical characters; then, as in the official
-    SQuAD script: lowercase, delete punctuation, drop the English articles
-    ``a``/``an``/``the``, and collapse whitespace. Punctuation is deleted, not
-    replaced by a space, so "1,000" equals "1000" (and "3.5" becomes "35").
+    "…" ellipsis) to their canonical characters; then: lowercase, delete
+    punctuation, drop the English articles ``a``/``an``/``the``, and collapse
+    whitespace. Unlike the official SQuAD v1.1 script, Unicode punctuation is
+    deleted too, and punctuation that changes meaning is kept: a decimal point
+    or comma between digits ("1.5" stays distinct from "15") and a trailing
+    "+"/"#" ("C++", "C#"). Thousands separators are deleted, so "1,000"
+    equals "1000". Scores are therefore not comparable with leaderboard
+    numbers computed by the official script.
+
+    A text consisting only of articles ("A", "The") keeps them rather than
+    normalizing to an empty string.
     """
     text = unicodedata.normalize("NFKC", text).lower()
-    text = "".join(ch for ch in text if not _is_punctuation(ch))
-    text = _ARTICLES.sub(" ", text)
-    return " ".join(text.split())
+    text = _THOUSANDS_SEPARATOR.sub("", text)
+    kept = {i for m in _KEPT_PUNCTUATION.finditer(text) for i in range(*m.span())}
+    text = "".join(
+        ch for i, ch in enumerate(text) if i in kept or not _is_punctuation(ch)
+    )
+    without_articles = " ".join(_ARTICLES.sub(" ", text).split())
+    return without_articles or " ".join(text.split())
 
 
 def tokenize(text: str) -> list[str]:
@@ -66,7 +83,12 @@ def _continues_word(a: str, b: str) -> bool:
     """
 
     def wordlike(ch: str) -> bool:
-        return ch.isnumeric() or (ch.isalpha() and not is_dense_script_char(ch))
+        # A "." or "," survives normalization only between digits ("1.5").
+        return (
+            ch.isnumeric()
+            or ch in ".,"
+            or (ch.isalpha() and not is_dense_script_char(ch))
+        )
 
     return wordlike(a) and wordlike(b)
 
@@ -90,9 +112,13 @@ _MAX_KOREAN_SUFFIX = 3
 
 
 def _token_matches(expected: str, actual: str) -> bool:
-    # Any token may carry an attached particle: "서울은", "2024년에", "AWS는".
+    # A word may carry an attached particle: "서울은", "AWS는". A bare number
+    # may not, since Hangul after a number is usually a unit or magnitude
+    # ("2개월", "3억"), which changes the value.
     if expected == actual:
         return True
+    if _NUMBER.fullmatch(expected):
+        return False
     suffix = actual[len(expected) :]
     return (
         actual.startswith(expected)
@@ -123,15 +149,16 @@ def phrase_in_text(phrase: str, text: str) -> bool:
     """True if ``phrase`` appears in ``text`` after normalization.
 
     Space-delimited phrases match a contiguous run of whole word tokens, so
-    "AI" does not match inside "airport". Any token also matches a token that
-    extends it by up to three Hangul syllables, so "서울 특별시" matches
-    "서울 특별시는" and "AWS" matches "AWS는" (attached particles). A phrase
+    "AI" does not match inside "airport". Any token except a bare number also
+    matches a token that extends it by up to three Hangul syllables, so
+    "서울 특별시" matches "서울 특별시는" and "AWS" matches "AWS는" (attached
+    particles), but "3" does not match "3억" (a unit changes the value). A phrase
     containing CJK is also compared with the spaces next to CJK letters
     removed, so "가나다 상사" matches "가나다상사이다" and "3억 원" matches
     "3억원". A phrase that is a single CJK run (``is_spaceless_script``) is
     matched as a substring of the normalized text (spacing ignored), but not
-    where a digit or Latin letter continues it on either side: "2년" does
-    not match "12년", nor "二年" "十二年".
+    where a digit, decimal point or Latin letter continues it on either side:
+    "2년" does not match "12년" or "1.2년", nor "二年" "十二年".
 
     LIMITATION (CJK): without a morphological segmenter there is no morpheme
     boundary, so a short expected word can match inside a longer one ("가나"
