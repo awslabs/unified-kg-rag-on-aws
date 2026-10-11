@@ -9,7 +9,7 @@ from typing import Any, ClassVar
 import boto3
 from opensearchpy.exceptions import NotFoundError
 
-from unified_kg_rag.adapters.aws import OpenSearchClient
+from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,

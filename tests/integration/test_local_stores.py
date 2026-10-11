@@ -39,7 +39,8 @@ from tests.integration.test_incremental_source_scopes import (
     scope_test_config,
     write_corpus,
 )
-from unified_kg_rag.adapters.aws import NeptuneClient, OpenSearchClient
+from unified_kg_rag.adapters.aws.neptune import NeptuneClient
+from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 from unified_kg_rag.adapters.retrievers import NeptuneRetriever, OpenSearchRetriever
 from unified_kg_rag.adapters.storage import NeptuneIndexer, OpenSearchIndexer
 from unified_kg_rag.domain.models import (

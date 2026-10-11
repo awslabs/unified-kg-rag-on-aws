@@ -22,8 +22,7 @@ from tests.fixtures.incremental_runs import (
     document,
     expected_state,
 )
-from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
-from unified_kg_rag.adapters.aws.dynamodb import _overflow_item
+from unified_kg_rag.adapters.aws.dynamodb import DynamoDBDocStatusStore, _overflow_item
 from unified_kg_rag.domain.ingestion.delta_detector import document_doc_id
 from unified_kg_rag.domain.models import (
     Config,

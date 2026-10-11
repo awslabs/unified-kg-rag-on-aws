@@ -46,7 +46,7 @@ def live_config():
 
 def test_bedrock_embedding_roundtrip(live_config) -> None:
     """A real embedding call returns a non-empty vector of the configured dim."""
-    from unified_kg_rag.adapters.aws import BedrockEmbeddingModelFactory
+    from unified_kg_rag.adapters.aws.bedrock import BedrockEmbeddingModelFactory
 
     factory = BedrockEmbeddingModelFactory(
         config=live_config,

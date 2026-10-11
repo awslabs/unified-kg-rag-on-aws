@@ -10,7 +10,7 @@ import boto3
 from pydantic import BaseModel
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
-from unified_kg_rag.adapters.aws import S3CacheManager
+from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.bootstrap import build_providers

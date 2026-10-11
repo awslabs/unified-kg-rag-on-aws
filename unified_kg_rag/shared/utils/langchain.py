@@ -1155,5 +1155,5 @@ class RobustXMLOutputParser(XMLOutputParser):
 
 # NOTE: the Bedrock-coupled chain builders (`setup_chain`,
 # `create_robust_xml_output_parser`) moved to
-# `unified_kg_rag.adapters.aws.chain_factory` so this kernel module stays free of
+# `unified_kg_rag.adapters.llm.chain_factory` so this kernel module stays free of
 # any adapter dependency (hexagonal dependency rule). Import them from there.

@@ -10,9 +10,12 @@ via its ``StrategySpec.required_roles`` and injects them keyed by role value.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from tests.fixtures.fakes.chat_models import fake_model_info
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import Config, RetrieverRole, SearchStrategy
 from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
@@ -88,8 +91,8 @@ class _FakeModelFactory:
     def get_model(self, model_id, **kwargs):  # noqa: ANN001, ANN003
         return object()
 
-    def get_model_info(self, model_id):  # noqa: ANN001
-        return None
+    def get_model_info(self, model_id: Any) -> Any:
+        return fake_model_info(model_id)
 
 
 def test_injected_model_factory_replaces_bedrock(config: Config) -> None:

@@ -20,6 +20,7 @@ from langchain_core.messages import AIMessage
 from structlog.contextvars import get_contextvars
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from tests.fixtures.fakes.chat_models import fake_model_info
 from unified_kg_rag.application.retrieval.rag_chain import (
     DEFAULT_ERROR_MESSAGE,
     ChainMode,
@@ -66,7 +67,7 @@ class _StreamingModelFactory:
         return cls(messages=itertools.repeat(AIMessage(content=_ANSWER)))
 
     def get_model_info(self, model_id: Any) -> Any:
-        return None
+        return fake_model_info(model_id)
 
 
 class _FakeRetriever:

@@ -184,6 +184,31 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#157).
 
 ### Changed
+- **Breaking** (import paths): provider-neutral LLM code no longer lives in
+  `adapters/aws/`. `LanguageModelInfo`, `EmbeddingModelInfo`,
+  `RerankModelInfo` and `effective_max_output_tokens` moved from
+  `adapters.aws.bedrock_models` to `ports.model_factory`;
+  `adapters.aws.chain_factory` moved to `adapters.llm.chain_factory`;
+  `estimate_token_count` moved from `adapters.aws.token_counter` to
+  `adapters.llm.token_estimate`; the backoff helpers (`backoff_delay`,
+  `call_with_transient_retry`, ...) moved from `adapters.aws.bedrock_retry` to
+  `adapters.llm.retry` and take the transient-error predicate as
+  `is_transient=` (`adapters.aws.bedrock_retry` keeps
+  `is_transient_bedrock_error`). `adapters.aws` no longer re-exports its
+  adapters; import each from its module (`adapters.aws.bedrock`,
+  `adapters.aws.neptune`, ...) (#PR).
+- **Breaking** for custom model factories: the ports are typed by the record
+  `get_model_info` returns. `LLMFactoryPort.get_model_info` must return a
+  `LanguageModelInfo` for every id; `Providers.llm_model_info` no longer falls
+  back to the Bedrock catalog when a factory returns something else. A
+  language-model factory opts into the chain-level transient retry of query
+  chains by defining `is_transient_error(exc)` and `transient_retry` (the
+  Bedrock factory does) instead of `setup_chain` checking for the Bedrock
+  class (#PR).
+- Building the provider bundle no longer imports boto3 or any store client:
+  the Bedrock builders and the Bedrock token-counter factory import their
+  adapters on first use, like the local ones, so a `backend: local` bootstrap
+  loads no AWS SDK (#PR).
 - **Breaking** (import paths): the evaluator base classes moved from
   `unified_kg_rag.evaluation.base` to `unified_kg_rag.adapters.evaluators.base`,
   and `unified_kg_rag.evaluation` no longer re-exports `BaseEvaluator`,

@@ -18,7 +18,7 @@ import pytest
 from langchain_core.messages import BaseMessage
 
 import unified_kg_rag.domain.prompts as prompts_pkg
-from unified_kg_rag.adapters.aws.chain_factory import (
+from unified_kg_rag.adapters.llm.chain_factory import (
     PromptCacheMarker,
     _build_chat_prompt,
 )

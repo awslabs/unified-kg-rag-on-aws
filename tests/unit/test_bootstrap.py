@@ -10,6 +10,9 @@ DynamoDB store or boto3 client: those constructors are patched to fail.
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -20,7 +23,6 @@ import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from unified_kg_rag.adapters import provider_registry
-from unified_kg_rag.adapters import providers as providers_module
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.aws import dynamodb as dynamodb_module
 from unified_kg_rag.adapters.aws import token_counter as token_counter_module
@@ -83,13 +85,6 @@ def no_aws(mocker) -> None:
     forbid(token_counter_module.BedrockTokenCounter, "__init__")
     forbid(dynamodb_module.DynamoDBDocStatusStore, "__init__")
     forbid(boto3.Session, "client")
-    for name in (
-        "BedrockLanguageModelFactory",
-        "BedrockEmbeddingModelFactory",
-        "BedrockRerankModelFactory",
-        "BedrockTokenCounter",
-    ):
-        forbid(providers_module, name)
 
 
 @pytest.fixture
@@ -156,7 +151,7 @@ def test_a_custom_kind_is_selected_without_code_changes(custom_kind: str) -> Non
 
 
 def test_default_config_builds_the_bedrock_providers(mocker) -> None:
-    llm = mocker.patch.object(providers_module, "BedrockLanguageModelFactory")
+    llm = mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     store = mocker.patch.object(dynamodb_module, "DynamoDBDocStatusStore")
     providers = build_providers(Config(), boto_session=MagicMock())
     assert providers.llm_factory is llm.return_value
@@ -183,7 +178,7 @@ def test_injected_components_win_over_the_configured_kind(no_aws, tmp_path) -> N
 
 
 def test_llm_model_info_reads_the_catalog_without_a_client(mocker) -> None:
-    llm = mocker.patch.object(providers_module, "BedrockLanguageModelFactory")
+    llm = mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     config = Config()
     info = Providers(config).llm_model_info(config.search.answer_generation_model_id)
     assert info.context_window_size >= 200000
@@ -203,14 +198,12 @@ def test_llm_model_info_comes_from_a_local_factory() -> None:
     assert Providers(config).llm_model_info("m").context_window_size == 4096
 
 
-def test_llm_model_info_falls_back_to_the_catalog_for_untyped_fakes() -> None:
+def test_llm_model_info_comes_from_an_injected_factory() -> None:
     fake = MagicMock()
-    fake.get_model_info.return_value = None
     config = Config()
-    info = Providers(config, llm_factory=fake).llm_model_info(
-        config.search.answer_generation_model_id
-    )
-    assert info.context_window_size >= 200000
+    info = Providers(config, llm_factory=fake).llm_model_info("m")
+    assert info is fake.get_model_info.return_value
+    fake.get_model_info.assert_called_once_with("m")
 
 
 # --- with backend: local nothing AWS is built --------------------------------
@@ -396,3 +389,26 @@ def test_the_guard_catches_the_aws_defaults(no_aws) -> None:
         providers.token_counter("anthropic.claude-sonnet-5-5")
     with pytest.raises(AssertionError):
         providers.build_doc_status()
+
+
+def test_local_bootstrap_loads_no_aws_or_store_sdk(tmp_path) -> None:
+    # Building the local bundle must not import the AWS SDK or the store
+    # clients: a local install may not even have credentials configured.
+    script = (
+        "import json, sys\n"
+        "from unified_kg_rag.application.bootstrap import build_providers\n"
+        "from unified_kg_rag.domain.models import Config\n"
+        "build_providers(Config(backend='local', providers={'doc_status': "
+        f"{{'sqlite_path': {str(tmp_path / 'r.sqlite3')!r}}}}}))\n"
+        "heavy = ('boto3', 'botocore', 'opensearchpy', 'gremlin_python', "
+        "'langchain_aws')\n"
+        "print(json.dumps(sorted({m.split('.')[0] for m in sys.modules} & set(heavy))))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
+    )
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == []

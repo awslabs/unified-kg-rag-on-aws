@@ -16,7 +16,7 @@ import logging
 import pytest
 
 import unified_kg_rag.adapters.ingestion.graph_extractor as ge_module
-from unified_kg_rag.adapters import providers as providers_module
+from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.ingestion.graph_extractor import (
     ExtractionStats,
     GraphExtractor,
@@ -48,7 +48,7 @@ def processor(config: Config) -> BaseProcessor:
 def extractor(config: Config, mocker) -> GraphExtractor:
     """A real GraphExtractor with all AWS/Bedrock wiring stubbed out."""
     mocker.patch.object(ge_module, "boto3")
-    mocker.patch.object(providers_module, "BedrockLanguageModelFactory")
+    mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     mocker.patch.object(ge_module, "create_robust_xml_output_parser")
     mocker.patch.object(ge_module, "setup_chain")
     return GraphExtractor(config)

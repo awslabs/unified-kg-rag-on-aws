@@ -20,13 +20,10 @@ from botocore.exceptions import (
     ReadTimeoutError,
 )
 
-from unified_kg_rag.adapters.aws import bedrock_retry
 from unified_kg_rag.adapters.aws.bedrock import BedrockEmbeddingsWrapper
-from unified_kg_rag.adapters.aws.bedrock_retry import (
-    backoff_delay,
-    call_with_transient_retry,
-    is_transient_bedrock_error,
-)
+from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
+from unified_kg_rag.adapters.llm import retry as llm_retry
+from unified_kg_rag.adapters.llm.retry import backoff_delay, call_with_transient_retry
 from unified_kg_rag.domain.models import Config, EmbeddingModelId
 from unified_kg_rag.domain.models.config import TransientRetryConfig
 
@@ -61,7 +58,7 @@ class _FakeRuntimeClient:
 @pytest.fixture
 def sleeps(monkeypatch) -> list[float]:
     recorded: list[float] = []
-    monkeypatch.setattr(bedrock_retry, "_sleep", recorded.append)
+    monkeypatch.setattr(llm_retry, "_sleep", recorded.append)
     return recorded
 
 
@@ -182,7 +179,15 @@ async def test_async_aembed_query_retries(sleeps: list[float]) -> None:
 
 def test_call_with_transient_retry_passthrough(sleeps: list[float]) -> None:
     policy = TransientRetryConfig()
-    assert call_with_transient_retry(lambda: 42, operation="noop", policy=policy) == 42
+    assert (
+        call_with_transient_retry(
+            lambda: 42,
+            is_transient=is_transient_bedrock_error,
+            operation="noop",
+            policy=policy,
+        )
+        == 42
+    )
     assert sleeps == []
 
 

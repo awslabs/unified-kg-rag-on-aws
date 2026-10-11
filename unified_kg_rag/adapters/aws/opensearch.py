@@ -18,7 +18,7 @@ from opensearchpy import (
 from opensearchpy.exceptions import NotFoundError, TransportError
 from opensearchpy.helpers import streaming_bulk
 
-from unified_kg_rag.adapters.aws.bedrock_retry import backoff_delay
+from unified_kg_rag.adapters.llm.retry import backoff_delay
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import AWSServiceError, get_logger
 

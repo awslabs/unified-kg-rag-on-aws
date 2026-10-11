@@ -1,11 +1,11 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Bedrock-coupled LangChain assembly helpers (adapters layer).
+"""LangChain chain assembly for any ``LLMFactoryPort`` (adapters layer).
 
-These build ``prompt | llm | parser`` chains from a concrete
-``BedrockLanguageModelFactory``, so they live in the adapters layer rather than
-the shared kernel — keeping ``shared/`` free of any adapter dependency. The
-backend-agnostic ``RobustXMLOutputParser`` stays in ``shared.utils.langchain``.
+These build ``prompt | llm | parser`` chains from a language-model factory,
+so they live in the adapters layer rather than the shared kernel — keeping
+``shared/`` free of any adapter dependency. The backend-agnostic
+``RobustXMLOutputParser`` stays in ``shared.utils.langchain``.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import time
 from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING, Any, Literal
 
-from langchain_aws import ChatBedrockConverse
 from langchain_classic.output_parsers import OutputFixingParser
 from langchain_core.messages import BaseMessage
 from langchain_core.output_parsers import BaseOutputParser
@@ -26,13 +25,13 @@ from langchain_core.prompts import (
 )
 from langchain_core.runnables import Runnable, RunnableConfig
 
-from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
-from unified_kg_rag.adapters.aws.bedrock_retry import (
+from unified_kg_rag.adapters.llm.retry import (
+    TransientErrorPredicate,
     acall_with_transient_retry,
     call_with_transient_retry,
     next_transient_retry_delay,
 )
-from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.domain.models import ModelPurpose
 from unified_kg_rag.domain.prompts import BasePrompt, ResolvedPrompt
 from unified_kg_rag.domain.prompts.delimiters import (
@@ -78,6 +77,10 @@ def _prompt_cache_marker(
     minimum = getattr(model_info, "min_cache_tokens", 0)
     if estimate_token_count(resolved.system_prompt_template) < minimum:
         return None
+    # Only Bedrock records support prompt caching, so this import only runs
+    # for a Bedrock model: provider-neutral callers never load langchain-aws.
+    from langchain_aws import ChatBedrockConverse
+
     if isinstance(llm, ChatBedrockConverse):
         return "cache_point"
     return "cache_control"
@@ -250,15 +253,15 @@ class TruncationGuard(Runnable[Any, Any]):
 
 
 class TransientRetryRunnable(Runnable[Any, Any]):
-    """Retry a chain on transient Bedrock errors (predicate-based ``with_retry``).
+    """Retry a chain on transient errors (predicate-based ``with_retry``).
 
     LangChain's ``Runnable.with_retry`` only matches exception *types*, but a
     transient Bedrock fault is a ``botocore.exceptions.ClientError`` whose
     error code decides retryability (424 ``ModelErrorException`` yes,
-    ``ValidationException`` no). This wrapper applies the same
-    :mod:`~unified_kg_rag.adapters.aws.bedrock_retry` policy as the embedding
-    path. Non-transient errors and exhausted retries re-raise the original
-    exception unchanged.
+    ``ValidationException`` no), so the factory supplies the predicate
+    (``is_transient_error``) and :mod:`~unified_kg_rag.adapters.llm.retry`
+    applies the same policy as the embedding path. Non-transient errors and
+    exhausted retries re-raise the original exception unchanged.
 
     ``batch``/``abatch`` use the base-class per-input ``invoke``/``ainvoke``, so
     each input is retried independently. Streaming retries only while no chunk
@@ -271,10 +274,12 @@ class TransientRetryRunnable(Runnable[Any, Any]):
         *,
         operation: str,
         retry: TransientRetryConfig,
+        is_transient: TransientErrorPredicate,
     ) -> None:
         self.bound = bound
         self.operation = operation
         self.retry = retry
+        self.is_transient = is_transient
 
     @property
     def InputType(self) -> Any:  # noqa: N802 - LangChain API name
@@ -289,6 +294,7 @@ class TransientRetryRunnable(Runnable[Any, Any]):
     ) -> float | None:
         return next_transient_retry_delay(
             exc,
+            is_transient=self.is_transient,
             operation=self.operation,
             attempt=attempt,
             started_at=started_at,
@@ -300,6 +306,7 @@ class TransientRetryRunnable(Runnable[Any, Any]):
     ) -> Any:
         return call_with_transient_retry(
             lambda: self.bound.invoke(input, config, **kwargs),
+            is_transient=self.is_transient,
             operation=self.operation,
             policy=self.retry,
         )
@@ -309,6 +316,7 @@ class TransientRetryRunnable(Runnable[Any, Any]):
     ) -> Any:
         return await acall_with_transient_retry(
             lambda: self.bound.ainvoke(input, config, **kwargs),
+            is_transient=self.is_transient,
             operation=self.operation,
             policy=self.retry,
         )
@@ -359,11 +367,14 @@ def with_transient_retry(
     *,
     operation: str,
     retry: TransientRetryConfig | None,
+    is_transient: TransientErrorPredicate | None = None,
 ) -> Runnable[Any, Any]:
     """Wrap ``runnable`` in :class:`TransientRetryRunnable` unless retry is off."""
-    if retry is None or retry.max_attempts <= 1:
+    if retry is None or retry.max_attempts <= 1 or is_transient is None:
         return runnable
-    return TransientRetryRunnable(runnable, operation=operation, retry=retry)
+    return TransientRetryRunnable(
+        runnable, operation=operation, retry=retry, is_transient=is_transient
+    )
 
 
 class XMLOutputFixingParser(OutputFixingParser[dict[str, Any]]):
@@ -440,12 +451,13 @@ def setup_chain(
 
     ``QUERY`` (the default, so an unmarked call site stays on the guarded,
     conservative side) gets the query guardrail scope (``guardrail.apply_to``,
-    applied by the factory) and, on a Bedrock factory, a transient-error retry
-    around the whole chain. Ingestion and evaluation call sites pass their
+    applied by the factory) and, when the factory classifies transient errors
+    (``is_transient_error``, the Bedrock factory), a transient-error retry
+    around the whole chain under its ``transient_retry`` policy. Ingestion and evaluation call sites pass their
     purpose explicitly: they run unguarded under ``apply_to: query`` and get no
     chain-level retry, because ``BatchProcessor`` already retries them and a
-    second layer would multiply the attempts. A non-Bedrock factory owns its
-    own retry policy. ``min_output_tokens`` overrides the prompt's static
+    second layer would multiply the attempts. A factory without the hook
+    (the local ones) owns its own retry policy. ``min_output_tokens`` overrides the prompt's static
     floor with one derived from the config (``BasePrompt.output_floor``).
     """
     try:
@@ -471,13 +483,15 @@ def setup_chain(
             run_name=prompt_class.__name__
         )
         logger.debug("Successfully created LLM chain with model: '%s'", model_id)
-        retry = (
-            factory.config.aws.bedrock.transient_retry
-            if model_purpose is ModelPurpose.QUERY
-            and isinstance(factory, BedrockLanguageModelFactory)
-            else None
+        is_transient = getattr(factory, "is_transient_error", None)
+        if model_purpose is not ModelPurpose.QUERY or is_transient is None:
+            return chain
+        return with_transient_retry(
+            chain,
+            operation=prompt_class.__name__,
+            retry=getattr(factory, "transient_retry", None),
+            is_transient=is_transient,
         )
-        return with_transient_retry(chain, operation=prompt_class.__name__, retry=retry)
     except Exception as e:
         logger.error("Failed to setup LLM chain with model '%s': %s", model_id, e)
         raise GraphRAGException(

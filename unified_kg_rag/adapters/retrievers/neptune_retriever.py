@@ -16,8 +16,7 @@ from gremlin_python.process.graph_traversal import (
 )
 from gremlin_python.process.traversal import Order, P, TextP, Traversal
 
-from unified_kg_rag.adapters.aws import NeptuneClient
-from unified_kg_rag.adapters.aws.neptune import neptune_pool_size
+from unified_kg_rag.adapters.aws.neptune import NeptuneClient, neptune_pool_size
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     is_fatal_retrieval_error,

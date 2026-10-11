@@ -20,8 +20,9 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from tests.fixtures.fakes.chat_models import fake_model_info
 from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
-from unified_kg_rag.adapters.aws.chain_factory import (
+from unified_kg_rag.adapters.llm.chain_factory import (
     TransientRetryRunnable,
     setup_chain,
     with_transient_retry,
@@ -133,7 +134,7 @@ class _FakeBedrockFactory(BedrockLanguageModelFactory):
         return self.model
 
     def get_model_info(self, model_id: Any) -> Any:
-        return None
+        return fake_model_info(model_id)
 
 
 def _config(retry: TransientRetryConfig = _NO_WAIT) -> Config:

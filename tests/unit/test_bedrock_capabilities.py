@@ -26,7 +26,6 @@ from unified_kg_rag.adapters.aws.bedrock import (
     BedrockRerankModelFactory,
     get_assumed_role_boto_session,
 )
-from unified_kg_rag.adapters.aws.bedrock_models import LanguageModelInfo
 from unified_kg_rag.domain.models import (
     Config,
     EmbeddingModelId,
@@ -34,6 +33,7 @@ from unified_kg_rag.domain.models import (
     ModelPurpose,
     RerankModelId,
 )
+from unified_kg_rag.ports.model_factory import LanguageModelInfo
 from unified_kg_rag.shared import (
     AWSServiceError,
     EmbeddingModelError,

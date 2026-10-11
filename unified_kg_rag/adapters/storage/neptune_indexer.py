@@ -13,8 +13,10 @@ from gremlin_python.process.graph_traversal import (
 )
 from gremlin_python.process.traversal import Cardinality, P
 
-from unified_kg_rag.adapters.aws import NeptuneClient
-from unified_kg_rag.adapters.aws.neptune import is_permanent_neptune_error
+from unified_kg_rag.adapters.aws.neptune import (
+    NeptuneClient,
+    is_permanent_neptune_error,
+)
 from unified_kg_rag.adapters.storage.neptune_codec import (
     entity_from_vertex,
     entity_properties,

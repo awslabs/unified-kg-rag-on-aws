@@ -19,9 +19,7 @@ and the model-id defaults as if the file had set them.
 
 from __future__ import annotations
 
-from typing import Any
-
-import boto3
+from typing import TYPE_CHECKING, Any
 
 from unified_kg_rag.adapters.provider_registry import (
     ProviderRole,
@@ -31,6 +29,9 @@ from unified_kg_rag.adapters.provider_registry import (
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError, get_logger
+
+if TYPE_CHECKING:
+    import boto3
 
 logger = get_logger(__name__)
 

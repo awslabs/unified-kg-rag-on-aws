@@ -16,8 +16,9 @@ from typing import Any
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
-from unified_kg_rag.adapters.aws import chain_factory
+from tests.fixtures.fakes.chat_models import fake_model_info
 from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
+from unified_kg_rag.adapters.llm import chain_factory
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config
 
@@ -34,7 +35,7 @@ class _OfflineFactory(BedrockLanguageModelFactory):
         return FakeListChatModel(responses=["{}"])
 
     def get_model_info(self, model_id: Any) -> Any:
-        return None
+        return fake_model_info(model_id)
 
 
 _INGESTION = "unified_kg_rag.adapters.ingestion"

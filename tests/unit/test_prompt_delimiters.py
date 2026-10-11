@@ -10,7 +10,7 @@ import pytest
 from langchain_core.output_parsers import StrOutputParser
 
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
-from unified_kg_rag.adapters.aws.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.domain.models import ModelPurpose
 from unified_kg_rag.domain.prompts import (
     AnswerGenerationPrompt,

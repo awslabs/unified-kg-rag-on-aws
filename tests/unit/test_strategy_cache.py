@@ -18,6 +18,7 @@ import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from tests.fixtures.fakes.chat_models import fake_model_info
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, ProcessedQuery
 from unified_kg_rag.domain.models import (
@@ -36,7 +37,7 @@ class _LLMFactory:
         return FakeListChatModel(responses=["ok"])
 
     def get_model_info(self, model_id: Any) -> Any:
-        return None
+        return fake_model_info(model_id)
 
 
 class _TokenCounter:

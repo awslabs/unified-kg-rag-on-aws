@@ -17,7 +17,7 @@ import pytest
 
 import unified_kg_rag.adapters.ingestion.gleaner as gleaner_module
 import unified_kg_rag.adapters.ingestion.graph_extractor as extractor_module
-from unified_kg_rag.adapters import providers as providers_module
+from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.ingestion.gleaner import GleaningIndex, GraphGleaner
 from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
@@ -43,7 +43,7 @@ PHANTOM = BaseProcessor._generate_entity_id("Phantom Holdings")
 @pytest.fixture
 def gleaner(config: Config, mocker) -> GraphGleaner:
     mocker.patch.object(gleaner_module, "boto3")
-    mocker.patch.object(providers_module, "BedrockLanguageModelFactory")
+    mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     mocker.patch.object(gleaner_module, "create_robust_xml_output_parser")
     mocker.patch.object(gleaner_module, "setup_chain")
     return GraphGleaner(config, show_progress=False)
@@ -207,7 +207,7 @@ def test_grounding_off_keeps_the_stub(gleaner) -> None:
 @pytest.fixture
 def extractor(config: Config, mocker) -> GraphExtractor:
     mocker.patch.object(extractor_module, "boto3")
-    mocker.patch.object(providers_module, "BedrockLanguageModelFactory")
+    mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     mocker.patch.object(extractor_module, "create_robust_xml_output_parser")
     mocker.patch.object(extractor_module, "setup_chain")
     return GraphExtractor(config)

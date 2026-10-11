@@ -17,11 +17,8 @@ from langchain_core.output_parsers import StrOutputParser
 
 from tests.fixtures.fakes.boto import FakeBotoSession
 from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
-from unified_kg_rag.adapters.aws.bedrock_models import (
-    effective_max_output_tokens,
-    get_language_model_info,
-)
-from unified_kg_rag.adapters.aws.chain_factory import (
+from unified_kg_rag.adapters.aws.bedrock_models import get_language_model_info
+from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
@@ -37,6 +34,7 @@ from unified_kg_rag.domain.prompts.graph_extraction import (
     CommunityReportPrompt,
     GraphRefinementPrompt,
 )
+from unified_kg_rag.ports.model_factory import effective_max_output_tokens
 
 pytestmark = pytest.mark.unit
 

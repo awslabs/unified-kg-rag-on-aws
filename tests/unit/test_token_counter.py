@@ -13,9 +13,9 @@ from botocore.exceptions import ClientError
 from unified_kg_rag.adapters.aws import token_counter
 from unified_kg_rag.adapters.aws.token_counter import (
     BedrockTokenCounter,
-    estimate_token_count,
     is_count_tokens_known_unsupported,
 )
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 
 pytestmark = pytest.mark.unit
 

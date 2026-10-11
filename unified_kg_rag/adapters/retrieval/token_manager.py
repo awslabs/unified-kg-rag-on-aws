@@ -7,15 +7,15 @@ from typing import Any, ClassVar
 import boto3
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.adapters.aws.bedrock_models import (
-    LanguageModelInfo,
-    effective_max_output_tokens,
-)
 from unified_kg_rag.adapters.aws.token_counter import is_count_tokens_known_unsupported
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, RetrievalResult
 from unified_kg_rag.domain.prompts import AnswerGenerationPrompt
 from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
+from unified_kg_rag.ports.model_factory import (
+    LanguageModelInfo,
+    effective_max_output_tokens,
+)
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 

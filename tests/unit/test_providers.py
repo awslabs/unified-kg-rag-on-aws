@@ -18,7 +18,8 @@ import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
-from unified_kg_rag.adapters import providers as providers_module
+from tests.fixtures.fakes.chat_models import fake_model_info
+from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.memory_manager import MemoryManager
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
@@ -38,7 +39,7 @@ class FakeLLMFactory:
         return FakeListChatModel(responses=["ok"])
 
     def get_model_info(self, model_id: Any) -> Any:
-        return None
+        return fake_model_info(model_id)
 
 
 class FakeRerankFactory:
@@ -68,7 +69,7 @@ def no_bedrock(mocker) -> dict[str, MagicMock]:
 
     def _forbid(name: str) -> MagicMock:
         return mocker.patch.object(
-            providers_module,
+            bedrock_module,
             name,
             side_effect=AssertionError(f"{name} must not be constructed"),
         )
@@ -99,8 +100,8 @@ def _fake_providers(config: Config) -> Providers:
 
 
 def test_defaults_are_lazy_and_built_once(mocker) -> None:
-    llm_cls = mocker.patch.object(providers_module, "BedrockLanguageModelFactory")
-    rerank_cls = mocker.patch.object(providers_module, "BedrockRerankModelFactory")
+    llm_cls = mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
+    rerank_cls = mocker.patch.object(bedrock_module, "BedrockRerankModelFactory")
     providers = Providers(Config(), boto_session=MagicMock())
 
     llm_cls.assert_not_called()
@@ -110,7 +111,7 @@ def test_defaults_are_lazy_and_built_once(mocker) -> None:
 
 
 def test_default_session_comes_from_the_profile(mocker) -> None:
-    session_cls = mocker.patch.object(providers_module.boto3, "Session")
+    session_cls = mocker.patch.object(bedrock_module.boto3, "Session")
     config = Config()
     providers = Providers(config)
     assert providers.boto_session is providers.boto_session
@@ -133,7 +134,7 @@ def test_injected_providers_are_returned_verbatim(no_bedrock) -> None:
 
 
 def test_default_token_counters_share_one_client(mocker) -> None:
-    counter_cls = mocker.patch.object(providers_module, "BedrockTokenCounter")
+    counter_cls = mocker.patch.object(bedrock_module, "BedrockTokenCounter")
     session = MagicMock()
     providers = Providers(Config(), boto_session=session)
 
@@ -299,7 +300,7 @@ def test_strategy_without_providers_still_constructs(mocker) -> None:
     # Backward compatibility: direct construction builds a default bundle.
     from unified_kg_rag.adapters.search_strategies import LocalSearchStrategy
 
-    mocker.patch.object(providers_module, "BedrockTokenCounter")
+    mocker.patch.object(bedrock_module, "BedrockTokenCounter")
     session = MagicMock()
     strategy = LocalSearchStrategy(config=Config(), retrievers={}, boto_session=session)
     assert strategy.boto_session is session
@@ -357,7 +358,7 @@ async def test_memory_save_reuses_query_step_entities(
 def test_default_token_counter_takes_the_models_estimate_multiplier(mocker) -> None:
     from unified_kg_rag.domain.models import LanguageModelId
 
-    counter_cls = mocker.patch.object(providers_module, "BedrockTokenCounter")
+    counter_cls = mocker.patch.object(bedrock_module, "BedrockTokenCounter")
     config = Config(
         aws={
             "bedrock": {

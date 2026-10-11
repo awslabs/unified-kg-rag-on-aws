@@ -21,7 +21,7 @@ import pytest
 from moto import mock_aws
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
-from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
+from unified_kg_rag.adapters.aws.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
     build_document_lineage,

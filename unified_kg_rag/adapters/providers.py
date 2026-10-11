@@ -25,21 +25,6 @@ import threading
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
-import boto3
-from botocore.config import Config as BotoConfig
-
-from unified_kg_rag.adapters.aws.bedrock import (
-    BaseBedrockModelFactory,
-    BedrockEmbeddingModelFactory,
-    BedrockLanguageModelFactory,
-    BedrockRerankModelFactory,
-    get_assumed_role_boto_session,
-)
-from unified_kg_rag.adapters.aws.bedrock_models import (
-    LanguageModelInfo,
-    get_language_model_info,
-)
-from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.adapters.provider_registry import (
     ProviderRole,
     get_provider_builder,
@@ -61,12 +46,15 @@ from unified_kg_rag.domain.models.provider_config import (
 )
 from unified_kg_rag.ports.model_factory import (
     EmbeddingFactoryPort,
+    LanguageModelInfo,
     LLMFactoryPort,
     RerankFactoryPort,
     TokenCounterPort,
 )
 
 if TYPE_CHECKING:
+    import boto3
+
     from unified_kg_rag.adapters.retrieval.base import BaseGraphRAGRetriever
     from unified_kg_rag.ports.doc_status import DocStatusPort
     from unified_kg_rag.ports.indexer import GraphIndexer, VectorIndexer
@@ -127,7 +115,6 @@ class Providers:
         self._vector_indexer_factory = vector_indexer_factory
         self._retriever_builders = dict(retriever_builders or {})
         self._doc_status = doc_status
-        self._bedrock_runtime_client: Any = None
         # Re-entrant: building a factory reads ``boto_session`` under the lock.
         self._lock = threading.RLock()
 
@@ -152,6 +139,8 @@ class Providers:
     def boto_session(self) -> boto3.Session:
         with self._lock:
             if self._boto_session is None:
+                import boto3
+
                 self._boto_session = boto3.Session(
                     profile_name=self.config.aws.profile_name
                 )
@@ -196,22 +185,20 @@ class Providers:
         )
 
     def llm_model_info(self, model_id: str) -> LanguageModelInfo:
-        """Capability record of the language model ``model_id``.
+        """Capability record of the language model ``model_id`` (the LLM factory's).
 
-        From the LLM factory when it returns one; the Bedrock catalog
-        otherwise. With the Bedrock provider and no injected factory the
-        catalog is read directly, so sizing a budget never builds a client.
+        With the Bedrock provider and no injected factory the catalog is read
+        directly, so sizing a budget never builds a client.
         """
         if self._llm_factory is None and self.kind(ProviderRole.LLM) == BEDROCK:
+            from unified_kg_rag.adapters.aws.bedrock_models import (
+                get_language_model_info,
+            )
+
             return get_language_model_info(
                 model_id, self.config.aws.bedrock.model_overrides
             )
-        info = self.llm_factory.get_model_info(model_id)
-        if isinstance(info, LanguageModelInfo):
-            return info
-        return get_language_model_info(
-            model_id, self.config.aws.bedrock.model_overrides
-        )
+        return self.llm_factory.get_model_info(model_id)
 
     # --- stores --------------------------------------------------------------
 
@@ -255,77 +242,46 @@ class Providers:
         store: DocStatusPort = self._build(ProviderRole.DOC_STATUS)
         return store
 
-    # --- Bedrock token counting ----------------------------------------------
-
-    def _bedrock_token_counter(
-        self, model_id: str, *, cache_maxsize: int = 1024, api_supported: bool = True
-    ) -> TokenCounterPort:
-        info = get_language_model_info(
-            model_id, self.config.aws.bedrock.model_overrides
-        )
-        return BedrockTokenCounter(
-            model_id=model_id,
-            client=self._count_tokens_client() if api_supported else None,
-            cache_maxsize=cache_maxsize,
-            api_supported=api_supported,
-            estimate_multiplier=info.token_estimate_multiplier,
-        )
-
-    def _count_tokens_client(self) -> Any:
-        with self._lock:
-            if self._bedrock_runtime_client is None:
-                session = get_assumed_role_boto_session(
-                    self.boto_session,
-                    assumed_role_arn=self.config.aws.bedrock.assumed_role_arn,
-                )
-                self._bedrock_runtime_client = session.client(
-                    "bedrock-runtime",
-                    region_name=self.config.aws.bedrock_region,
-                    # Sized like the model clients: every query's
-                    # count_tokens_many sends several counts at once.
-                    config=BotoConfig(
-                        retries={"max_attempts": 3},
-                        max_pool_connections=(
-                            BaseBedrockModelFactory.max_pool_connections(self.config)
-                        ),
-                    ),
-                )
-            return self._bedrock_runtime_client
-
 
 # --- built-in providers -------------------------------------------------------
-# The Bedrock builders read the factory classes from this module's globals, so
-# a test can patch them here. Every other builder imports its adapter on first
-# use: selecting a provider never imports another provider's dependencies.
+# Every builder imports its adapter on first use: selecting a provider never
+# imports another provider's dependencies (a local run loads no boto3).
 
 
 @register_provider(ProviderRole.LLM, BEDROCK)
 def _bedrock_llm(providers: Providers) -> LLMFactoryPort:
+    from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
+
     return BedrockLanguageModelFactory(
-        config=providers.config,
-        boto_session=providers.boto_session,
+        config=providers.config, boto_session=providers.boto_session
     )
 
 
 @register_provider(ProviderRole.EMBEDDING, BEDROCK)
 def _bedrock_embedding(providers: Providers) -> EmbeddingFactoryPort:
+    from unified_kg_rag.adapters.aws.bedrock import BedrockEmbeddingModelFactory
+
     return BedrockEmbeddingModelFactory(
-        config=providers.config,
-        boto_session=providers.boto_session,
+        config=providers.config, boto_session=providers.boto_session
     )
 
 
 @register_provider(ProviderRole.RERANK, BEDROCK)
 def _bedrock_rerank(providers: Providers) -> RerankFactoryPort:
+    from unified_kg_rag.adapters.aws.bedrock import BedrockRerankModelFactory
+
     return BedrockRerankModelFactory(
-        config=providers.config,
-        boto_session=providers.boto_session,
+        config=providers.config, boto_session=providers.boto_session
     )
 
 
 @register_provider(ProviderRole.TOKEN_COUNTER, BEDROCK)
 def _bedrock_token_counter(providers: Providers) -> TokenCounterFactory:
-    return providers._bedrock_token_counter
+    from unified_kg_rag.adapters.aws.bedrock import bedrock_token_counter_factory
+
+    return bedrock_token_counter_factory(
+        providers.config, lambda: providers.boto_session
+    )
 
 
 @register_provider(ProviderRole.LLM, OPENAI_COMPATIBLE)

@@ -21,8 +21,8 @@ from typing import Any
 import boto3
 from langchain_core.output_parsers import StrOutputParser
 
-from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
+from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Config,

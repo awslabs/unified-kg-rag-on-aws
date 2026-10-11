@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import boto3
 
-from unified_kg_rag.adapters.aws import OpenSearchClient
+from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Claim,

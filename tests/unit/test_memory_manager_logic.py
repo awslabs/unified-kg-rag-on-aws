@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from unified_kg_rag.adapters import providers as providers_module
+from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.retrieval import memory_manager as mm
 from unified_kg_rag.domain.models import Config
 
@@ -33,7 +33,7 @@ def patched_history(mocker):
     """
     mocker.patch.object(mm.boto3, "Session", return_value=object())
     mocker.patch.object(
-        providers_module, "BedrockLanguageModelFactory", return_value=object()
+        bedrock_module, "BedrockLanguageModelFactory", return_value=object()
     )
 
     extractor = mocker.MagicMock()

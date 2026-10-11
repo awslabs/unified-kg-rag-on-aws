@@ -23,14 +23,14 @@ from typing import Any, ClassVar
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from unified_kg_rag.adapters.aws.bedrock_models import (
-    LanguageModelInfo,
-    effective_max_output_tokens,
-)
 from unified_kg_rag.domain.models import Config, ModelPurpose
 from unified_kg_rag.domain.models.provider_config import (
     EndpointConfig,
     LLMProviderConfig,
+)
+from unified_kg_rag.ports.model_factory import (
+    LanguageModelInfo,
+    effective_max_output_tokens,
 )
 from unified_kg_rag.shared import ConfigurationError, get_logger, observability
 

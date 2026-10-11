@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 import unified_kg_rag.adapters.ingestion.description_summarizer as ds_module
-from unified_kg_rag.adapters import providers as providers_module
+from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.ingestion.description_summarizer import (
     DescriptionSummarizer,
 )
@@ -35,7 +35,7 @@ LONG_DESCRIPTION = "fact " * 1000
 def summarizer(config: Config, mocker) -> DescriptionSummarizer:
     """A real DescriptionSummarizer with all AWS/Bedrock wiring stubbed out."""
     mocker.patch.object(ds_module, "boto3")
-    mocker.patch.object(providers_module, "BedrockLanguageModelFactory")
+    mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     mocker.patch.object(ds_module, "setup_chain")
     return DescriptionSummarizer(config)
 

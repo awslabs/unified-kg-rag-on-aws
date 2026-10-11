@@ -4,7 +4,7 @@ import contextlib
 import contextvars
 import threading
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager
 from typing import Any, ClassVar, Generic, Literal, TypeVar
 from uuid import UUID
@@ -29,15 +29,12 @@ from pydantic import Field, PrivateAttr
 from unified_kg_rag.adapters.aws.bedrock_models import (
     _EMBEDDING_MODEL_INFO,
     _RERANK_MODEL_INFO,
-    EmbeddingModelInfo,
-    LanguageModelInfo,
-    RerankModelInfo,
     base_model_id,
-    effective_max_output_tokens,
     get_language_model_info,
 )
-from unified_kg_rag.adapters.aws.bedrock_retry import call_with_transient_retry
+from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
+from unified_kg_rag.adapters.llm.retry import call_with_transient_retry
 from unified_kg_rag.domain.models import (
     Config,
     EmbeddingModelId,
@@ -49,6 +46,12 @@ from unified_kg_rag.domain.models.config import (
     EFFORT_LEVELS,
     ModelTier,
     TransientRetryConfig,
+)
+from unified_kg_rag.ports.model_factory import (
+    EmbeddingModelInfo,
+    LanguageModelInfo,
+    RerankModelInfo,
+    effective_max_output_tokens,
 )
 from unified_kg_rag.shared import (
     AWSServiceError,
@@ -383,6 +386,7 @@ class BedrockEmbeddingsWrapper(BaseBedrockWrapper, BedrockEmbeddings):
             lambda: super(BedrockEmbeddingsWrapper, self)._invoke_model(
                 input_body=body
             ),
+            is_transient=is_transient_bedrock_error,
             operation=f"embed:{self.model_id}",
             policy=self.transient_retry,
         )
@@ -619,6 +623,16 @@ class BedrockLanguageModelFactory(
 
     def _get_boto_service_name(self) -> str:
         return "bedrock-runtime"
+
+    @staticmethod
+    def is_transient_error(exc: BaseException) -> bool:
+        """Whether ``exc`` is worth a retry (query chains, ``setup_chain``)."""
+        return is_transient_bedrock_error(exc)
+
+    @property
+    def transient_retry(self) -> TransientRetryConfig:
+        """The retry policy ``setup_chain`` applies to query chains."""
+        return self.config.aws.bedrock.transient_retry
 
     def get_model_info(self, model_id: str) -> LanguageModelInfo:
         """Capability record for any model id (see get_language_model_info)."""
@@ -1151,3 +1165,52 @@ def get_assumed_role_boto_session(
         RoleSessionName=role_session_name,
         DurationSeconds=duration_seconds,
     )
+
+
+def bedrock_token_counter_factory(
+    config: Config, boto_session: Callable[[], boto3.Session]
+) -> Callable[..., BedrockTokenCounter]:
+    """The Bedrock token-counter factory of one provider bundle.
+
+    Its counters share one ``bedrock-runtime`` client, created on the first
+    counter that may call the API (``boto_session`` is read then), and scale
+    their local estimate by the model's ``token_estimate_multiplier``.
+    """
+    lock = threading.Lock()
+    client: Any = None
+
+    def runtime_client() -> Any:
+        nonlocal client
+        with lock:
+            if client is None:
+                session = get_assumed_role_boto_session(
+                    boto_session(),
+                    assumed_role_arn=config.aws.bedrock.assumed_role_arn,
+                )
+                client = session.client(
+                    "bedrock-runtime",
+                    region_name=config.aws.bedrock_region,
+                    # Sized like the model clients: every query's
+                    # count_tokens_many sends several counts at once.
+                    config=BotoConfig(
+                        retries={"max_attempts": 3},
+                        max_pool_connections=(
+                            BaseBedrockModelFactory.max_pool_connections(config)
+                        ),
+                    ),
+                )
+            return client
+
+    def build(
+        model_id: str, *, cache_maxsize: int = 1024, api_supported: bool = True
+    ) -> BedrockTokenCounter:
+        info = get_language_model_info(model_id, config.aws.bedrock.model_overrides)
+        return BedrockTokenCounter(
+            model_id=model_id,
+            client=runtime_client() if api_supported else None,
+            cache_maxsize=cache_maxsize,
+            api_supported=api_supported,
+            estimate_multiplier=info.token_estimate_multiplier,
+        )
+
+    return build
