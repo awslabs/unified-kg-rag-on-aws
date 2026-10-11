@@ -30,6 +30,8 @@ dependencies = [
     "aws-assume-role-lib>=2.10.0",
     "bokeh>=3.9.2",
     "boto3>=1.43.66",
+    # Imported directly (exceptions, Config, retries); boto3 pins its line.
+    "botocore>=1.43.66",
     # Encoding detection for non-UTF-8 text sources (parser + Document loader).
     "charset-normalizer>=3.4.0",
     # Only used for `Dataset.from_dict` in the ragas evaluator. The previous
@@ -37,9 +39,9 @@ dependencies = [
     # langchain-community removed in 0.4 — see the ragas floor below.
     "datasets>=4.0.0",
     "datasketch>=2.0.0",
-    "graspologic>=3.4.1",
-    # Leiden is called here directly: importing graspologic loads its embed
-    # stack (and boto3 through gensim/smart_open).
+    # Leiden is called here directly, as graspologic's wrapper does; graspologic
+    # itself is not a dependency (its import loads its embed stack, and boto3
+    # through gensim/smart_open).
     "graspologic-native>=1.2.1",
     # Pinned below 3.8: that release added the `discard()` step and routes
     # `Cardinality.single` property writes through it, which Neptune (engine
@@ -66,6 +68,8 @@ dependencies = [
     "langchain-community>=0.3.27,<0.4.0",
     "langchain-core>=1.5.3,<2.0.0",
     "langchain-text-splitters>=1.1.2,<2.0.0",
+    # Imported directly to warn when LangSmith tracing is on (shared/logging.py).
+    "langsmith>=0.3.45,<1.0.0",
     "llvmlite>=0.48.0",
     "lxml>=6.0.0",
     "nest-asyncio>=1.6.0",
@@ -274,12 +278,11 @@ markers = [
 ]
 # Silence only known third-party deprecations so new ones (including our own)
 # stay visible. gremlin_python: camelCase step aliases kept for Neptune's
-# TinkerPop line; numba/hyppo: transitive via umap/graspologic; ragas: the
+# TinkerPop line; numba: transitive via umap; ragas: the
 # metric imports and LangchainLLMWrapper are deprecated in the pinned 0.x line.
 filterwarnings = [
     "ignore::DeprecationWarning:gremlin_python",
     "ignore::DeprecationWarning:numba",
-    "ignore::DeprecationWarning:hyppo",
     "ignore:Importing .* from 'ragas.metrics' is deprecated:DeprecationWarning",
     "ignore:LangchainLLMWrapper is deprecated:DeprecationWarning",
 ]

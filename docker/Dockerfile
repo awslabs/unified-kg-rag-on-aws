@@ -12,7 +12,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.6@sha256:88bc6eb1ccd4b82efd0e1b530caffabdd
 
 # Runtime deps: the AWS CLI is used by the entrypoint to sync the source corpus
 # from S3 (the loader only reads a local Path). libgomp1 is needed by the
-# scientific stack (graspologic/numpy) used in community detection.
+# scientific stack (numpy/scikit-learn).
 # Versions are pinned (reproducible builds + satisfies SAST). Bump these when
 # the python:3.12-slim base advances and the pinned version is dropped from the
 # apt repo (check with `apt-cache policy awscli libgomp1` in the base image).

@@ -261,6 +261,12 @@ Library API (Python callers and custom backends).
   claim resolution and gleaning preparation (#176, #191, #194, #213).
 - The CloudWatch EMF sink publishes dimensionless aggregate series only
   (#158). Development tools live in the `dev` dependency group (#119).
+- `graspologic` is no longer a dependency: Leiden runs on
+  `graspologic-native` directly (#225), so the install drops graspologic and
+  the packages only it pulled in (gensim, matplotlib, seaborn, statsmodels,
+  POT, hyppo and others), and the license check no longer needs an LGPL
+  exception for gensim. `botocore` and `langsmith`, imported directly but
+  previously only transitive, are now declared (#PR).
 
 ### Fixed
 - Attaching, rotating or toggling a Bedrock guardrail under the default
