@@ -101,13 +101,21 @@ def test_order_matches_the_list_based_rule(seed: int) -> None:
 
 
 def test_high_degree_entity_is_linear() -> None:
-    # One entity on 20k edges, each from its own unit: the list-based
-    # membership checks took ~5 s here; the bound only catches that regression.
-    hub = Entity(id="hub", name="Hub", text_unit_ids=["t-own"])
-    rels = [_rel("hub", f"leaf{i}", [f"t{i}"]) for i in range(20_000)]
-    start = time.perf_counter()
-    out, stubs = cite_relationship_endpoints([hub], rels)
-    elapsed = time.perf_counter() - start
-    assert stubs == 20_000
-    assert out[0].text_unit_ids == ["t-own"] + [f"t{i}" for i in range(20_000)]
-    assert elapsed < 2.0
+    # One entity on n edges, each from its own unit: the list-based membership
+    # checks were quadratic (~5 s at 20k). Compare 16x the edges on the same
+    # machine instead of a wall-clock bound: quadratic work grows ~256x, the
+    # current code ~30x (allocation makes it slightly superlinear). Best of
+    # three runs each keeps scheduler noise out of the ratio.
+    def best_time(n: int) -> float:
+        hub = Entity(id="hub", name="Hub", text_unit_ids=["t-own"])
+        rels = [_rel("hub", f"leaf{i}", [f"t{i}"]) for i in range(n)]
+        times = []
+        for _ in range(3):
+            start = time.perf_counter()
+            out, stubs = cite_relationship_endpoints([hub], rels)
+            times.append(time.perf_counter() - start)
+        assert stubs == n
+        assert out[0].text_unit_ids == ["t-own"] + [f"t{i}" for i in range(n)]
+        return min(times)
+
+    assert best_time(16_000) < 100 * best_time(1_000)
