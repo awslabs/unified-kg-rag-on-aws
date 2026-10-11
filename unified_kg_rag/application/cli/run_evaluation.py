@@ -107,7 +107,7 @@ class CommandLineInterface:
     def _setup_arguments() -> argparse.ArgumentParser:
         parser = argparse.ArgumentParser(
             description="GraphRAG Evaluation System - Assess retrieval and generation performance",
-            formatter_class=argparse.RawTextHelpFormatter,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=doc_epilog(
                 "6-evaluation-run-eval",
                 "run-eval --eval-data-path eval_data.json --config-path config.yaml",
@@ -119,8 +119,8 @@ class CommandLineInterface:
             type=_eval_data_path,
             required=True,
             help=(
-                "Path to the unified evaluation data file (JSON format), containing\n"
-                "both questions and ground truths. Accepts a local path or an\n"
+                "Path to the unified evaluation data file (JSON format), containing "
+                "both questions and ground truths. Accepts a local path or an "
                 "s3://bucket/key URI (downloaded before the run)."
             ),
         )
@@ -128,9 +128,9 @@ class CommandLineInterface:
             "--outputs-directory",
             type=str,
             help=(
-                "Directory to save evaluation results (default:\n"
-                "evaluation.outputs_directory). Accepts a local path or an\n"
-                "s3://bucket/prefix/ URI (results are uploaded after the run;\n"
+                "Directory to save evaluation results (default: "
+                "evaluation.outputs_directory). Accepts a local path or an "
+                "s3://bucket/prefix/ URI (results are uploaded after the run; "
                 "a failed upload exits non-zero)."
             ),
         )
@@ -140,10 +140,10 @@ class CommandLineInterface:
             type=_failure_rate,
             default=1.0,
             help=(
-                "Exit non-zero when the fraction of queries whose answer generation\n"
-                "failed, or the fraction of attempted values of any metric that\n"
-                "failed, exceeds this value (0.0-1.0). Skipped metrics do not count.\n"
-                "Default 1.0 = fail only when all queries, or all attempts of a\n"
+                "Exit non-zero when the fraction of queries whose answer generation "
+                "failed, or the fraction of attempted values of any metric that "
+                "failed, exceeds this value (0.0-1.0). Skipped metrics do not count. "
+                "Default 1.0 = fail only when all queries, or all attempts of a "
                 "metric, failed."
             ),
         )
