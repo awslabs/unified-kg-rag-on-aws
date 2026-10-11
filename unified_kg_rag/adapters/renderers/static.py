@@ -133,7 +133,12 @@ class StaticRenderer:
         dodge_width = 0.2
         for i, (metric, color) in enumerate(zip(metrics, colors, strict=True)):
             p.vbar(
-                x=dodge("nodes", i * dodge_width - dodge_width * 1.5, range=p.x_range),
+                # Bars centred on the category: offsets -w, 0, +w for three.
+                x=dodge(
+                    "nodes",
+                    (i - (len(metrics) - 1) / 2) * dodge_width,
+                    range=p.x_range,
+                ),
                 top=metric,
                 width=dodge_width * 0.95,
                 source=source,

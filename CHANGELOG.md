@@ -572,6 +572,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- `interactive_graph.html` centres the layout and scales it to a fixed canvas
+  extent: UMAP/t-SNE/PCA coordinates were multiplied by a constant as if they
+  spanned [-1, 1], which clumped or scattered the nodes. The bars of the
+  static centrality comparison plot are centred on their node instead of
+  shifted left by a bar width (#PR).
 - Visualization layouts are reproducible: UMAP, t-SNE and PCA take
   `random_state` 42 by default (`graph.visualization.layout.<method>.random_state`;
   `null` restores a random layout and UMAP's parallel run), so re-rendering

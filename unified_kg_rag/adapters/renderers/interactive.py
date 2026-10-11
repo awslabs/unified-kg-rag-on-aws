@@ -22,6 +22,8 @@ class InteractiveRenderer:
     MIN_EDGE_OPACITY: ClassVar[float] = 0.3
     MAX_EDGE_OPACITY: ClassVar[float] = 0.8
     DEFAULT_MAX_NODES: ClassVar[int] = 2000
+    # Largest distance of a node from the layout centre, in canvas pixels.
+    LAYOUT_EXTENT: ClassVar[float] = 1200
 
     def __init__(self, config: dict[str, Any]) -> None:
         self.height = config.get("height", "900px")
@@ -92,6 +94,7 @@ class InteractiveRenderer:
         }
         colors = self._generate_palette(len(community_ids))
         color_map = dict(zip(sorted(community_ids), colors, strict=True))
+        positions = self._scaled_positions(layout)
 
         degrees = dict(graph.degree())
         # At least 1: an edgeless graph would divide log1p(0) by log1p(0) (NaN).
@@ -111,8 +114,7 @@ class InteractiveRenderer:
                 degree
             ) / np.log1p(max_degree)
 
-            pos = layout.get(node_id)
-            node_x, node_y = (pos[0] * 1200, pos[1] * 1200) if pos else (None, None)
+            node_x, node_y = positions.get(node_id, (None, None))
 
             if attrs.get("node_type") == "claim":
                 title_parts = [
@@ -148,6 +150,27 @@ class InteractiveRenderer:
                 },
                 shadow=True,
             )
+
+    @classmethod
+    def _scaled_positions(
+        cls, layout: dict[str, tuple[float, float]]
+    ) -> dict[str, tuple[float, float]]:
+        """Centre the layout and scale its largest half-extent to LAYOUT_EXTENT.
+
+        A spring layout spans [-1, 1], but UMAP/t-SNE/PCA coordinates have an
+        arbitrary scale and offset, so multiplying them by a constant gave a
+        clumped or sprawling page.
+        """
+        if not layout:
+            return {}
+        coords = np.array([pos[:2] for pos in layout.values()], dtype=float)
+        center = (coords.min(axis=0) + coords.max(axis=0)) / 2
+        half_extent = float(np.abs(coords - center).max()) or 1.0
+        scaled = (coords - center) * (cls.LAYOUT_EXTENT / half_extent)
+        return {
+            str(node): (float(x), float(y))
+            for node, (x, y) in zip(layout, scaled, strict=True)
+        }
 
     @staticmethod
     def _escape_titles_for_html_popup(net: Network) -> None:

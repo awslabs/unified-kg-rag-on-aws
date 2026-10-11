@@ -34,6 +34,24 @@ def _graph() -> nx.Graph:
     return g
 
 
+class TestScaledPositions:
+    def test_centred_and_scaled_to_extent(self) -> None:
+        # Reducer output has an arbitrary offset and scale.
+        positions = InteractiveRenderer._scaled_positions(
+            {"a": (10.0, 20.0), "b": (14.0, 22.0)}
+        )
+        extent = InteractiveRenderer.LAYOUT_EXTENT
+        assert positions == {"a": (-extent, -extent / 2), "b": (extent, extent / 2)}
+
+    def test_single_point_at_origin(self) -> None:
+        assert InteractiveRenderer._scaled_positions({"a": [3.0, 4.0]}) == {
+            "a": (0.0, 0.0)
+        }
+
+    def test_empty_layout(self) -> None:
+        assert InteractiveRenderer._scaled_positions({}) == {}
+
+
 class TestInit:
     def test_defaults(self) -> None:
         r = InteractiveRenderer({})
