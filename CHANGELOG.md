@@ -320,6 +320,11 @@ Library API (Python callers and custom backends).
   run whose spelling the registry does not hold, but the other one, keys its
   documents by the stored spelling instead of re-indexing the corpus beside
   the stored copy, and `--retire-source-scope` reaches either spelling (#PR).
+- IaC: `-c bedrock_model_arns=arn:...,arn:...` is accepted as a
+  comma-separated list; a misspelled boolean (`use_cmk=ture`), a zero or
+  out-of-range count, timeout or retention, and a CPU/memory pair Fargate
+  does not offer fail synth with an error naming the key, instead of reading
+  as `false` or failing at deploy (#PR).
 - An incremental run that skips unchanged documents no longer replaces
   `visualization_data.json` with a graph of its delta only: it skips the
   export and the render and logs how to visualize the whole graph (a full

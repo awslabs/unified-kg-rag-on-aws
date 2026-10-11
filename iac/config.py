@@ -60,7 +60,8 @@ Context keys (all optional; sensible defaults shown):
                                        DynamoDB table (OpenSearch has none; it
                                        is only retained via removal_destroy)
   bedrock_model_arns  None             scope Bedrock IAM to specific model ARNs
-                                       (list); None => account/region foundation
+                                       (list, or a comma-separated string with
+                                       -c); None => account/region foundation
                                        + inference-profile ARNs
   alarm_email         None             subscribe an email to the alarm topic
   enable_cdk_nag      False            run cdk-nag AwsSolutions checks at synth
@@ -84,6 +85,92 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+
+_TRUE = frozenset(("1", "true", "yes", "on"))
+_FALSE = frozenset(("0", "false", "no", "off"))
+
+# Fargate task sizes: CPU units -> valid memory (MiB) values.
+_FARGATE_MEMORY: dict[int, frozenset[int]] = {
+    256: frozenset((512, 1024, 2048)),
+    512: frozenset(range(1024, 4097, 1024)),
+    1024: frozenset(range(2048, 8193, 1024)),
+    2048: frozenset(range(4096, 16385, 1024)),
+    4096: frozenset(range(8192, 30721, 1024)),
+    8192: frozenset(range(16384, 61441, 4096)),
+    16384: frozenset(range(32768, 122881, 8192)),
+}
+
+
+def _as_bool(key: str, value: Any, default: bool) -> bool:
+    """A boolean context value: a JSON boolean, or a ``-c key=...`` string.
+
+    Anything else is rejected rather than read as false, so a typo such as
+    ``-c use_cmk=ture`` cannot silently turn a security setting off.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in _TRUE:
+            return True
+        if text in _FALSE:
+            return False
+    raise ValueError(
+        f"{key} must be a boolean (true/false, yes/no, on/off, 1/0), got {value!r}"
+    )
+
+
+def _as_int(
+    key: str, value: Any, minimum: int | None = None, maximum: int | None = None
+) -> int:
+    """An integer context value within ``[minimum, maximum]``."""
+    if isinstance(value, bool):
+        raise ValueError(f"{key} must be an integer, got {value!r}")
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be an integer, got {value!r}") from None
+    if minimum is not None and number < minimum:
+        raise ValueError(f"{key} must be at least {minimum}, got {number}")
+    if maximum is not None and number > maximum:
+        raise ValueError(f"{key} must be at most {maximum}, got {number}")
+    return number
+
+
+def _as_arn_list(key: str, value: Any) -> list[str] | None:
+    """A list of ARNs: a JSON list, or a comma-separated ``-c key=...`` string."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        items = value.split(",")
+    elif isinstance(value, (list, tuple)):
+        items = list(value)
+    else:
+        raise ValueError(
+            f"{key} must be a list of ARNs or a comma-separated string, got {value!r}"
+        )
+    arns = [str(item).strip() for item in items if str(item).strip()]
+    bad = [arn for arn in arns if not arn.startswith("arn:")]
+    if bad:
+        raise ValueError(f"{key}: not an ARN: {', '.join(bad)}")
+    return arns or None
+
+
+def _check_fargate_size(cpu: int, memory: int) -> None:
+    if cpu not in _FARGATE_MEMORY:
+        raise ValueError(
+            f"fargate_cpu must be one of {sorted(_FARGATE_MEMORY)}, got {cpu}"
+        )
+    if memory not in _FARGATE_MEMORY[cpu]:
+        allowed = sorted(_FARGATE_MEMORY[cpu])
+        raise ValueError(
+            f"fargate_memory {memory} is not valid with fargate_cpu {cpu}: use "
+            f"{allowed[0]}-{allowed[-1]} MiB in steps of "
+            f"{allowed[1] - allowed[0]} MiB"
+        )
+
 
 # Retention values CloudWatch Logs accepts (AWS::Logs::LogGroup RetentionInDays).
 _LOG_RETENTION_DAYS = frozenset(
@@ -190,12 +277,13 @@ class DeploymentConfig:
             value = scope.node.try_get_context(key)
             return default if value is None else value
 
-        def as_bool(value: Any, default: bool) -> bool:
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, str):
-                return value.strip().lower() in ("1", "true", "yes", "on")
-            return default
+        def as_bool(key: str, default: bool) -> bool:
+            return _as_bool(key, ctx(key), default)
+
+        def as_int(
+            key: str, default: int, minimum: int = 1, maximum: int | None = None
+        ) -> int:
+            return _as_int(key, ctx(key, default), minimum, maximum)
 
         env_name = str(ctx("env_name", "dev"))
         # Destructive defaults are env-aware: a dev stack stays convenient
@@ -210,18 +298,21 @@ class DeploymentConfig:
             raise ValueError(
                 f"network_mode must be 'private' or 'public', got '{network_mode}'"
             )
-        flow_log_retention_days = int(ctx("flow_log_retention_days", 731))
+        flow_log_retention_days = as_int("flow_log_retention_days", 731)
         if flow_log_retention_days not in _LOG_RETENTION_DAYS:
             raise ValueError(
                 "flow_log_retention_days must be a CloudWatch Logs retention value "
                 f"{sorted(_LOG_RETENTION_DAYS)}, got {flow_log_retention_days}"
             )
+        fargate_cpu = as_int("fargate_cpu", 2048)
+        fargate_memory = as_int("fargate_memory", 8192)
+        _check_fargate_size(fargate_cpu, fargate_memory)
         return cls(
             env_name=env_name,
             bedrock_region=ctx("bedrock_region"),
             vpc_id=ctx("vpc_id"),
             network_mode=network_mode,
-            max_azs=int(ctx("max_azs", 2)),
+            max_azs=as_int("max_azs", 2),
             cache_bucket_name=ctx("cache_bucket_name"),
             corpus_bucket_name=ctx("corpus_bucket_name"),
             neptune_instance=str(ctx("neptune_instance", "db.r6g.large")),
@@ -230,13 +321,16 @@ class DeploymentConfig:
             # non-dev env defaults to 2 (Neptune reader in another AZ; OpenSearch
             # zone-aware multi-node with dedicated masters). Explicit
             # `-c neptune_instances=`/`-c opensearch_count=` always override.
-            neptune_instances=int(ctx("neptune_instances", 1 if is_dev else 2)),
+            # Neptune: one writer plus up to 15 read replicas.
+            neptune_instances=as_int(
+                "neptune_instances", 1 if is_dev else 2, maximum=16
+            ),
             opensearch_instance=str(ctx("opensearch_instance", "r6g.large.search")),
-            opensearch_count=int(ctx("opensearch_count", 1 if is_dev else 2)),
+            opensearch_count=as_int("opensearch_count", 1 if is_dev else 2),
             opensearch_master_instance=str(
                 ctx("opensearch_master_instance", "m6g.large.search")
             ),
-            opensearch_volume_gib=int(ctx("opensearch_volume_gib", 50)),
+            opensearch_volume_gib=as_int("opensearch_volume_gib", 50, minimum=10),
             # Default DDB table name follows the same env-scoped prefix as the
             # other physical names (dev: "graphrag-doc-status";
             # non-dev: "<env>-graphrag-doc-status") so environments don't share a
@@ -251,23 +345,27 @@ class DeploymentConfig:
                     ),
                 )
             ),
-            backup_retention_days=int(ctx("backup_retention_days", 7)),
-            fargate_cpu=int(ctx("fargate_cpu", 2048)),
-            fargate_memory=int(ctx("fargate_memory", 8192)),
+            # Neptune keeps 1-35 days of automated backups.
+            backup_retention_days=as_int("backup_retention_days", 7, maximum=35),
+            fargate_cpu=fargate_cpu,
+            fargate_memory=fargate_memory,
             image_tag=ctx("image_tag", "latest") or "latest",
-            sfn_timeout_hours=int(ctx("sfn_timeout_hours", 6)),
-            create_guardrail=as_bool(ctx("create_guardrail"), default=True),
+            # A Standard state machine runs for up to one year.
+            sfn_timeout_hours=as_int("sfn_timeout_hours", 6, maximum=8760),
+            create_guardrail=as_bool("create_guardrail", default=True),
             guardrail_identifier=ctx("guardrail_identifier"),
             guardrail_version=ctx("guardrail_version"),
-            use_cmk=as_bool(ctx("use_cmk"), default=False),
-            vpc_flow_logs=as_bool(ctx("vpc_flow_logs"), default=not is_dev),
+            use_cmk=as_bool("use_cmk", default=False),
+            vpc_flow_logs=as_bool("vpc_flow_logs", default=not is_dev),
             flow_log_retention_days=flow_log_retention_days,
-            deletion_protection=as_bool(ctx("deletion_protection"), default=not is_dev),
-            bedrock_model_arns=ctx("bedrock_model_arns"),
+            deletion_protection=as_bool("deletion_protection", default=not is_dev),
+            bedrock_model_arns=_as_arn_list(
+                "bedrock_model_arns", ctx("bedrock_model_arns")
+            ),
             alarm_email=ctx("alarm_email"),
-            enable_cdk_nag=as_bool(ctx("enable_cdk_nag"), default=False),
+            enable_cdk_nag=as_bool("enable_cdk_nag", default=False),
             owner=str(ctx("owner", "aws-proserve")),
             cost_center=str(ctx("cost_center", "unified-kg-rag-on-aws")),
-            removal_destroy=as_bool(ctx("removal_destroy"), default=is_dev),
+            removal_destroy=as_bool("removal_destroy", default=is_dev),
             create_guardrail_explicit=ctx("create_guardrail") is not None,
         )
