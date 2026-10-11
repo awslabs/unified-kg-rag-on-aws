@@ -25,6 +25,7 @@ from langchain_core.runnables import (
     RunnableLambda,
     RunnablePassthrough,
 )
+from langchain_core.runnables.config import merge_configs
 from pydantic import BaseModel, Field, field_validator
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
@@ -1297,7 +1298,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 "kg_rag.query", self._query_span_attributes(rag_input)
             ) as span,
         ):
-            result = await self._ainvoke(rag_input, input_dict, config)
+            result = await self._ainvoke(rag_input, input_dict, config, span)
             span.set_attributes(self._query_outcome_attributes(result))
             return result
 
@@ -1308,6 +1309,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         return observability.bind_identity(
             session_id=rag_input.conversation_id, user_id=rag_input.user_id
         )
+
+    @staticmethod
+    def _identity_metadata(rag_input: RAGInput) -> dict[str, str]:
+        """Run-config metadata naming the query's session and user."""
+        identity = {
+            "session_id": rag_input.conversation_id,
+            "user_id": rag_input.user_id,
+        }
+        return {key: value for key, value in identity.items() if value}
 
     def _query_span_attributes(self, rag_input: RAGInput) -> dict[str, Any]:
         """Query-span attributes: the request's settings, never its text."""
@@ -1342,6 +1352,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         rag_input: RAGInput,
         input_dict: dict[str, Any],
         config: RunnableConfig | None,
+        span: observability.SpanHandle,
     ) -> RAGOutput | dict[str, Any]:
         tokens = bind_contextvars(
             query_id=uuid.uuid4().hex[:12], conversation_id=rag_input.conversation_id
@@ -1368,6 +1379,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 text_digest(rag_input.query),
                 e,
             )
+            # The degraded answer is still a failed query: mark its span so.
+            span.record_exception(e)
+            span.set_error(type(e).__name__)
             processing_time = time.time() - input_dict["start_time"]
 
             search_result = SearchResult(
@@ -1532,7 +1546,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             finally:
                 reset_contextvars(**tokens)
             answer_runnable = self._answer_generation_step(state)
-            async for chunk in answer_runnable.astream(state, config):
+            # The answer's model span starts after the query span has ended,
+            # in a trace of its own; its run metadata carries the session and
+            # user so the tracing callback can still group it.
+            answer_config = merge_configs(
+                config, {"metadata": self._identity_metadata(rag_input)}
+            )
+            async for chunk in answer_runnable.astream(state, answer_config):
                 text = str(chunk)
                 if not text:
                     continue

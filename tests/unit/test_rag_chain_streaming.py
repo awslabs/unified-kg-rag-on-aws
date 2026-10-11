@@ -307,3 +307,33 @@ def test_sync_stream_binds_and_releases_the_query_id(config: Config) -> None:
     retriever = chain._retriever_builders_override[RetrieverRole.DOCUMENT]()
     assert "".join(chain.stream(_input())) == _ANSWER
     assert "query_id" in retriever.log_contexts[0]
+
+
+async def test_streamed_answer_run_carries_the_session_and_user(config: Config) -> None:
+    # The streamed answer's model span lands in a trace of its own, after the
+    # query span has ended; its run metadata names the session and user so the
+    # tracing callback can still group it.
+    from langchain_core.callbacks import AsyncCallbackHandler
+
+    class _Metadata(AsyncCallbackHandler):
+        def __init__(self) -> None:
+            self.seen: list[dict] = []
+
+        async def on_chat_model_start(self, serialized, messages, **kwargs) -> None:
+            self.seen.append(kwargs.get("metadata") or {})
+
+    chain, _, _ = _make_chain(config)
+    handler = _Metadata()
+    chunks = [
+        c
+        async for c in chain.astream(
+            _input(conversation_id="conv-9", user_id="user-3"),
+            {"callbacks": [handler], "metadata": {"caller": "x"}},
+        )
+    ]
+
+    assert "".join(chunks) == _ANSWER
+    answer = handler.seen[-1]
+    assert answer["session_id"] == "conv-9"
+    assert answer["user_id"] == "user-3"
+    assert answer["caller"] == "x"

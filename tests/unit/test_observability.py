@@ -551,6 +551,46 @@ async def test_query_spans_carry_the_conversation_as_session_and_the_user(
     )
 
 
+async def test_a_query_degraded_under_ignore_errors_is_an_error_span(
+    tracing: Tracing,
+) -> None:
+    # ignore_errors turns the failure into a fallback answer; the query span
+    # must still say the query failed instead of staying UNSET.
+    exporter = tracing()
+    config = Config()
+    config.processing.ignore_errors = True
+
+    def _broken() -> Any:
+        raise RuntimeError("synthetic store failure")
+
+    chain = GraphRAGChain(
+        config=config,
+        model_factory=_FakeModelFactory(),
+        memory_manager=_FakeMemoryManager(),  # type: ignore[arg-type]
+        retriever_builders={
+            RetrieverRole.DOCUMENT: _broken,
+            RetrieverRole.GRAPH: _broken,
+        },
+    )
+    try:
+        output = await chain.ainvoke(
+            RAGInput(
+                query="What does Vendor supply?",
+                search_strategy=SearchStrategy.SIMPLE,
+                enable_query_processing=False,
+            )
+        )
+    finally:
+        await chain.aclose()
+
+    assert output.metadata["error"] is True  # type: ignore[union-attr]
+    query = _one(exporter, "kg_rag.query")
+    assert query.status.status_code == StatusCode.ERROR
+    assert query.status.description == "RuntimeError"
+    assert [e.name for e in query.events] == ["exception"]
+    assert _attrs(query)["kg_rag.error"] is True
+
+
 # --- GenAI callback handler ---------------------------------------------------------
 
 

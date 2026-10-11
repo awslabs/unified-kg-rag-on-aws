@@ -1825,6 +1825,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - `RAGInput` and `SearchQuery` accepted `top_k: 0`, `retrieval_multiplier: 0`
   and a negative `max_tokens`, which ran a query that could return nothing.
   All three must now be at least 1 (#PR).
+- Tracing: a query that failed under `processing.ignore_errors` left its
+  `kg_rag.query` span UNSET; it now records the exception and ends with ERROR
+  status. The streamed answer's model call, which runs after the query span
+  has ended, carries `session_id` and `user_id` in its run metadata so the
+  tracing callback can attach the conversation and user (#PR, #92).
 
 ### Security
 - The task role drops the unused `neptune-db:GetEngineStatus`,
