@@ -12,6 +12,7 @@ asserted elsewhere.
 from __future__ import annotations
 
 import pytest
+from langchain_core.runnables import RunnableLambda
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from unified_kg_rag.adapters.retrieval.token_manager import EMPTY_CONTEXT_PLACEHOLDER
@@ -234,56 +235,32 @@ def test_query_processing_branch_simple_query_passthrough(
     assert result.entities == []
 
 
-# --- _context_building_step history branch -------------------------------
+# --- context building and the follow-up rewrite ----------------------------
 
 
 def _ctx_state(history: str) -> dict:
     return {
+        "query": "what about its price?",
         "processed_query": ProcessedQuery(original_query="q", final_query="q"),
         "search_results": _search_result(),
         "history": history,
     }
 
 
-async def test_context_building_no_history_returns_raw_context(
-    config: Config,
-) -> None:
-    chain = GraphRAGChain(config=config)
-    out = await chain._context_building_step(_ctx_state(""))
-    # No history -> the raw (token-optimized) search context is returned as-is,
-    # with no ContextBuildingPrompt LLM call.
-    assert isinstance(out, str)
-    assert out  # non-empty (the one result's content)
-
-
-async def test_context_building_with_history_invokes_llm_async(
-    config: Config,
-) -> None:
+def test_context_building_returns_the_budgeted_context(config: Config) -> None:
     chain = GraphRAGChain(config=config)
 
-    class _FakeBuilder:
-        # Only the async entry point exists: a blocking .invoke inside the
-        # async chain would stall the event loop.
-        async def ainvoke(self, _inputs, config=None):
-            return "FOLDED-WITH-HISTORY"
+    def _no_llm(*a, **k):
+        raise AssertionError("context building makes no LLM call")
 
-    chain._get_chain_for_prompt = lambda *a, **k: _FakeBuilder()  # type: ignore[assignment]
-    out = await chain._context_building_step(_ctx_state("earlier turn"))
-    assert out == "FOLDED-WITH-HISTORY"
+    chain._get_chain_for_prompt = _no_llm  # type: ignore[assignment]
+    # History no longer reaches context building: it shaped the question.
+    out = chain._context_building_step(_ctx_state("earlier turn"))
+    assert out and out != EMPTY_CONTEXT_PLACEHOLDER
 
 
-async def test_context_building_empty_retrieval_with_history_skips_builder(
-    config: Config,
-) -> None:
-    # Empty retrieval + conversation history must NOT reach the builder LLM:
-    # it could synthesize a narrative from the history alone, which would pass
-    # the empty-context guard and be answered as if it were evidence.
+def test_context_building_empty_retrieval_answers_no_data(config: Config) -> None:
     chain = GraphRAGChain(config=config)
-
-    def _must_not_build(*a, **k):
-        raise AssertionError("context builder must not run on empty retrieval")
-
-    chain._get_chain_for_prompt = _must_not_build  # type: ignore[assignment]
     state = _ctx_state("earlier turn about the Vendor")
     state["search_results"] = SearchResult(
         query=SearchQuery(query="q"),
@@ -292,26 +269,110 @@ async def test_context_building_empty_retrieval_with_history_skips_builder(
         search_strategy="local",
         processing_time=0.0,
     )
-    context = await chain._context_building_step(state)
+    context = chain._context_building_step(state)
     assert context == EMPTY_CONTEXT_PLACEHOLDER
 
-    # ...and the answer step short-circuits to the standard no-data answer.
     answer = chain._answer_generation_step({"context": context}).invoke({})
     assert answer.startswith("I could not find relevant information")
 
 
-async def test_context_building_ignore_errors_degrades_to_empty(
-    config: Config,
-) -> None:
+class _FakeRewriter:
+    def __init__(self, output: str = "What is the price of the Widget?") -> None:
+        self.output = output
+        self.inputs: list[dict] = []
+
+    async def ainvoke(self, inputs, config=None):
+        self.inputs.append(inputs)
+        return self.output
+
+
+async def test_rewrite_skips_the_llm_without_history(config: Config) -> None:
     chain = GraphRAGChain(config=config)
-    chain.ignore_errors = True
+
+    def _no_llm(*a, **k):
+        raise AssertionError("no rewrite without history")
+
+    chain._get_chain_for_prompt = _no_llm  # type: ignore[assignment]
+    assert await chain._rewrite_query_step(_ctx_state("")) is None
+
+
+async def test_rewrite_resolves_a_follow_up_from_history(config: Config) -> None:
+    chain = GraphRAGChain(config=config)
+    rewriter = _FakeRewriter(" What is the price of the Widget? \n")
+    chain._get_chain_for_prompt = lambda *a, **k: rewriter  # type: ignore[assignment]
+
+    out = await chain._rewrite_query_step(_ctx_state("Human: Tell me about the Widget"))
+
+    assert out == "What is the price of the Widget?"
+    assert rewriter.inputs == [
+        {
+            "query": "what about its price?",
+            "conversation_history": "Human: Tell me about the Widget",
+        }
+    ]
+
+
+async def test_rewrite_failure_degrades_under_ignore_errors(config: Config) -> None:
+    chain = GraphRAGChain(config=config)
 
     def _boom(*a, **k):
-        raise RuntimeError("context builder down")
+        raise RuntimeError("rewriter down")
 
     chain._get_chain_for_prompt = _boom  # type: ignore[assignment]
-    out = await chain._context_building_step(_ctx_state("earlier turn"))
-    assert out == ""
+    with pytest.raises(RuntimeError):
+        await chain._rewrite_query_step(_ctx_state("earlier turn"))
+    chain.ignore_errors = True
+    assert await chain._rewrite_query_step(_ctx_state("earlier turn")) is None
+
+
+async def test_follow_up_is_searched_and_answered_as_the_standalone_question(
+    config: Config, mocker
+) -> None:
+    chain = GraphRAGChain(config=config)
+    rewriter = _FakeRewriter()
+    answers: list[dict] = []
+
+    def _answer(inputs: dict) -> str:
+        answers.append(inputs)
+        return "It costs 10."
+
+    def _chain_for(prompt_class, *a, **k):
+        if prompt_class.__name__ == "QueryRewritePrompt":
+            return rewriter
+        return RunnableLambda(_answer)
+
+    chain._get_chain_for_prompt = _chain_for  # type: ignore[assignment]
+    mocker.patch.object(
+        chain.memory_manager,
+        "load_context",
+        mocker.AsyncMock(return_value=("Human: Tell me about the Widget", [])),
+    )
+    mocker.patch.object(chain.memory_manager, "add_turn", mocker.AsyncMock())
+    searched: list[str] = []
+
+    async def _search(state, config=None):
+        searched.append(state["processed_query"].final_query)
+        return _search_result()
+
+    mocker.patch.object(chain, "_search_step", _search)
+    chain.chain = chain._build_chain()
+
+    output = await chain.ainvoke(
+        {
+            "query": "what about its price?",
+            "search_strategy": "simple",
+            "use_memory": True,
+            "conversation_id": "c-1",
+            "enable_query_processing": False,
+        }
+    )
+
+    assert searched == ["What is the price of the Widget?"]
+    assert answers[0]["query"] == "What is the price of the Widget?"
+    assert output.processed_query.original_query == "what about its price?"
+    assert output.processed_query.standalone_query == (
+        "What is the price of the Widget?"
+    )
 
 
 # --- _load_memory_step ---------------------------------------------------

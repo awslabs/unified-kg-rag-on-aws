@@ -71,9 +71,9 @@ from unified_kg_rag.domain.models.config import SearchConfig
 from unified_kg_rag.domain.prompts import (
     AnswerGenerationPrompt,
     BasePrompt,
-    ContextBuildingPrompt,
     EntityExtractionPrompt,
     KeywordsExtractionPrompt,
+    QueryRewritePrompt,
     StrategySelectionPrompt,
     TranslationPrompt,
 )
@@ -118,6 +118,11 @@ class ChainMode(str, Enum):
 class ProcessedQuery(BaseModel):
     original_query: str = Field(
         description="The original user query before any processing"
+    )
+    standalone_query: str | None = Field(
+        default=None,
+        description="The follow-up rewritten as a standalone question from the "
+        "conversation history (memory queries with history only)",
     )
     translated_query: str | None = Field(
         default=None,
@@ -357,12 +362,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         self.chain = self._build_chain()
 
     def _build_chain(self) -> Runnable:
+        # Memory is loaded first: a follow-up is rewritten as a standalone
+        # question from the history, and routing, query processing and
+        # retrieval all work on that question.
         base_chain: Runnable = (
-            RunnableLambda(self._resolve_strategy)
+            RunnableLambda(self._load_memory_step)
+            | RunnablePassthrough.assign(standalone_query=self._rewrite_query_step)
+            | RunnableLambda(self._resolve_strategy)
             | RunnablePassthrough.assign(
                 processed_query=self._query_processing_branch()
             )
-            | RunnableLambda(self._load_memory_step)
             | RunnablePassthrough.assign(search_results=self._search_step)
         )
 
@@ -400,7 +409,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             router = self._get_chain_for_prompt(
                 StrategySelectionPrompt, StrOutputParser()
             )
-            query = state.get("query", "")
+            query = self._question(state)
             routable = tuple(self.config.search.auto_routable_strategies)
             selected_strategy_str = await router.ainvoke(
                 {
@@ -459,7 +468,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             KeywordsExtractionPrompt: self.config.search.entity_extraction_model_id,
             TranslationPrompt: self.config.search.translation_model_id,
             StrategySelectionPrompt: self.config.search.strategy_selection_model_id,
-            ContextBuildingPrompt: self.config.search.context_building_model_id,
+            QueryRewritePrompt: self.config.search.query_rewrite_model_id,
             AnswerGenerationPrompt: self.config.search.answer_generation_model_id,
         }
         model_id = model_id_map.get(prompt_class)
@@ -486,8 +495,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
     def _query_processing_branch(self) -> Runnable:
         def _simple_query(inputs: dict[str, Any]) -> ProcessedQuery:
-            query = inputs["query"]
-            return ProcessedQuery(original_query=query, final_query=query)
+            return ProcessedQuery(
+                original_query=inputs["query"],
+                standalone_query=inputs.get("standalone_query"),
+                final_query=self._question(inputs),
+            )
 
         return RunnableBranch(
             (
@@ -505,6 +517,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         self, inputs: dict[str, Any], config: RunnableConfig | None = None
     ) -> ProcessedQuery:
         original_query = inputs.get("query", "")
+        standalone_query = inputs.get("standalone_query")
+        question = standalone_query or original_query
 
         try:
             requested_language = inputs.get("target_language")
@@ -536,7 +550,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                     EntityExtractionPrompt, CommaSeparatedListOutputParser()
                 )
                 tasks["entities"] = entity_extractor.ainvoke(
-                    {"query": original_query, "target_language": target_language},
+                    {"query": question, "target_language": target_language},
                     config,
                 )
             # Keyword extraction runs on the final (possibly translated) query.
@@ -544,14 +558,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             # run concurrently with entity extraction instead of after it.
             if needs_keywords and skip_translation:
                 tasks["keywords"] = self._extract_dual_keywords(
-                    original_query, target_language, config
+                    question, target_language, config
                 )
             if not skip_translation:
                 translator = self._get_chain_for_prompt(
                     TranslationPrompt, StrOutputParser()
                 )
                 tasks["translation"] = translator.ainvoke(
-                    {"query": original_query, "target_language": target_language},
+                    {"query": question, "target_language": target_language},
                     config,
                 )
 
@@ -569,7 +583,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                     else:
                         raise translated_query
                 translated_query = None
-            elif self._looks_like_translation_refusal(translated_query, original_query):
+            elif self._looks_like_translation_refusal(translated_query, question):
                 # The translator returned prose about the request instead of a
                 # translation (common when the query is already in the target
                 # language). Fall back to the original query rather than searching
@@ -589,7 +603,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                         raise entity_data
                 entity_data = []
 
-            final_query = translated_query or original_query
+            final_query = translated_query or question
             hl_keywords: list[str] = []
             ll_keywords: list[str] = []
             if "keywords" in results_map:
@@ -606,6 +620,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
 
             return ProcessedQuery(
                 original_query=original_query,
+                standalone_query=standalone_query,
                 translated_query=translated_query,
                 final_query=final_query,
                 entities=entity_data,
@@ -617,7 +632,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 raise
             logger.warning("Query processing failed: %s", e)
             return ProcessedQuery(
-                original_query=original_query, final_query=original_query, entities=[]
+                original_query=original_query,
+                standalone_query=standalone_query,
+                final_query=question,
             )
 
     @staticmethod
@@ -740,6 +757,36 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         state["history"] = history
         state["relevant_entities"] = entities
         return state
+
+    async def _rewrite_query_step(
+        self, state: dict[str, Any], config: RunnableConfig | None = None
+    ) -> str | None:
+        """The follow-up as a standalone question, or None without history.
+
+        A follow-up such as "what about its price?" retrieves nothing useful on
+        its own. One LLM call resolves its references from the conversation
+        history, and routing, query processing, retrieval and the answer then
+        all read the standalone question.
+        """
+        history = state.get("history")
+        if not history:
+            return None
+        try:
+            rewriter = self._get_chain_for_prompt(QueryRewritePrompt, StrOutputParser())
+            rewritten = await rewriter.ainvoke(
+                {"query": state["query"], "conversation_history": history}, config
+            )
+        except Exception as e:
+            if not self.ignore_errors:
+                raise
+            logger.warning("Follow-up rewrite failed; using the query as is: %s", e)
+            return None
+        return str(rewritten).strip() or None
+
+    @staticmethod
+    def _question(state: dict[str, Any]) -> str:
+        """The question to answer: the standalone rewrite, else the query."""
+        return str(state.get("standalone_query") or state.get("query", ""))
 
     async def _search_step(
         self, state: dict[str, Any], config: RunnableConfig | None = None
@@ -1024,41 +1071,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 sections_excluded=len(state["search_results"].results),
             )
 
-    async def _context_building_step(
-        self, state: dict[str, Any], config: RunnableConfig | None = None
-    ) -> str:
-        try:
-            query: ProcessedQuery = state["processed_query"]
-            optimized: OptimizedContext | None = state.get("optimized_context")
-            if optimized is None:
-                optimized = await asyncio.to_thread(self._optimize_context, state)
-            search_context = self.token_manager.build_context_string(optimized)
-            history = state.get("history")
-
-            # Decide emptiness on what retrieval actually produced, BEFORE the
-            # history-aware rewrite: the builder LLM can turn an empty context
-            # plus conversation history into a plausible narrative that would
-            # slip past the answer step's empty-context guard.
-            if not history or not optimized.sections:
-                return search_context
-
-            context_builder = self._get_chain_for_prompt(
-                ContextBuildingPrompt, StrOutputParser()
-            )
-            result = await context_builder.ainvoke(
-                {
-                    "query": query.original_query,
-                    "search_results": search_context,
-                    "conversation_history": history,
-                },
-                config,
-            )
-            return str(result)
-        except Exception as e:
-            if not self.ignore_errors:
-                raise
-            logger.warning("Context building failed: %s", e, exc_info=True)
-            return ""
+    def _context_building_step(self, state: dict[str, Any]) -> str:
+        optimized: OptimizedContext | None = state.get("optimized_context")
+        if optimized is None:
+            optimized = self._optimize_context(state)
+        return self.token_manager.build_context_string(optimized)
 
     def _answer_generation_step(self, state: dict[str, Any]) -> Runnable:
         # Never ask the LLM to answer from an empty/placeholder context: retrieval
@@ -1069,10 +1086,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             return RunnableLambda(lambda _: NO_CONTEXT_ANSWER)
 
         enable_thinking = state.get("enable_thinking", False)
-        return self._get_chain_for_prompt(
+        answer_chain = self._get_chain_for_prompt(
             AnswerGenerationPrompt,
             StrOutputParser(),
             enable_thinking=enable_thinking,
+        )
+        # The answer reads the standalone question: the conversation history
+        # reaches it only through that rewrite.
+        return (
+            RunnableLambda(
+                lambda s: {"query": self._question(s), "context": s.get("context")}
+            )
+            | answer_chain
         )
 
     @staticmethod

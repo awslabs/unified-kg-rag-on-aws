@@ -286,15 +286,15 @@ flowchart LR
 
 ## 6. 검색: 두 방법론
 
-`application/retrieval/rag_chain.py`의 `GraphRAGChain`(LCEL Runnable)이 전략 결정 → 질의 처리(번역, 엔티티·키워드 추출) → 메모리 → 검색 → (RAG) 컨텍스트 구성과 답변 생성을 수행합니다. 방법론은 `RAGInput.search_strategy`로 고릅니다.
+`application/retrieval/rag_chain.py`의 `GraphRAGChain`(LCEL Runnable)이 메모리(대화 이력이 있는 후속 질문을 독립된 질문으로 다시 씀, `QueryRewritePrompt`) → 전략 결정 → 질의 처리(번역, 엔티티·키워드 추출) → 검색 → (RAG) 컨텍스트 구성과 답변 생성을 수행합니다. 라우팅, 검색, 답변 모두 다시 쓴 질문을 사용합니다. 방법론은 `RAGInput.search_strategy`로 고릅니다.
 
 ```mermaid
 flowchart TD
-    input["RAGInput: query, search_strategy, suffix, filters"] --> resolve["Resolve strategy (auto: LLM router over search.auto_routable_strategies)"]
+    input["RAGInput: query, search_strategy, suffix, filters"] --> memory["Conversation memory (use_memory): a follow-up is rewritten as a standalone question"]
+    memory --> resolve["Resolve strategy (auto: LLM router over search.auto_routable_strategies)"]
     resolve --> qp["Query processing: translation, then entities or dual-level keywords as the strategy declares"]
-    qp --> memory["Conversation memory (use_memory)"]
-    memory --> graphrag
-    memory --> lightrag
+    qp --> graphrag
+    qp --> lightrag
     subgraph graphrag["GraphRAG strategies"]
         simple["simple: OpenSearch vector + BM25"]
         local["local: entities, Neptune expansion, text units, reports, relationships, claims"]
@@ -311,7 +311,7 @@ flowchart TD
     fuse --> mode{"ChainMode"}
     mode -- SEARCH --> results["Fused retrieval results"]
     mode -- RAG --> budget["TokenManager: per-section token budget"]
-    budget --> answer["Context building + answer generation"]
+    budget --> answer["Answer generation"]
     answer --> output["RAGOutput: answer + sources the model saw"]
 ```
 

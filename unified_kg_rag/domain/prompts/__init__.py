@@ -16,7 +16,6 @@ from .graph_extraction import (
 from .retrieval import (
     AnswerGenerationPrompt,
     CommunityRelevancePrompt,
-    ContextBuildingPrompt,
     ConvergenceAssessmentPrompt,
     DriftPrimerPrompt,
     EntityExtractionPrompt,
@@ -25,6 +24,7 @@ from .retrieval import (
     KeywordsExtractionPrompt,
     MapReduceSummaryPrompt,
     QueryRefinementPrompt,
+    QueryRewritePrompt,
     StrategySelectionPrompt,
     TranslationPrompt,
 )
@@ -36,7 +36,6 @@ __all__ = [
     "ClaimExtractionPrompt",
     "CommunityRelevancePrompt",
     "CommunityReportPrompt",
-    "ContextBuildingPrompt",
     "ConvergenceAssessmentPrompt",
     "CorpusProfilePrompt",
     "DescriptionSummarizationPrompt",
@@ -49,6 +48,7 @@ __all__ = [
     "KeywordsExtractionPrompt",
     "MapReduceSummaryPrompt",
     "QueryRefinementPrompt",
+    "QueryRewritePrompt",
     "ResolvedPrompt",
     "StrategySelectionPrompt",
     "TextChunkingPrompt",

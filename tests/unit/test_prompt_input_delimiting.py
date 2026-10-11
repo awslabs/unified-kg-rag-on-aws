@@ -24,11 +24,11 @@ from unified_kg_rag.domain.prompts.graph_extraction import (
 from unified_kg_rag.domain.prompts.retrieval import (
     AnswerGenerationPrompt,
     CommunityRelevancePrompt,
-    ContextBuildingPrompt,
     DriftPrimerPrompt,
     GlobalMapPrompt,
     MapReduceSummaryPrompt,
     QueryRefinementPrompt,
+    QueryRewritePrompt,
 )
 
 pytestmark = pytest.mark.unit
@@ -47,12 +47,12 @@ _WRAPPED: list[tuple[type[BasePrompt], str, str]] = [
     (DescriptionSummarizationPrompt, "descriptions", "descriptions"),
     (AnswerGenerationPrompt, "context", "context"),
     (CommunityRelevancePrompt, "community_summary", "community_summary"),
-    (ContextBuildingPrompt, "search_results", "search_results"),
-    (ContextBuildingPrompt, "conversation_history", "conversation_history"),
     (GlobalMapPrompt, "reports", "community_reports"),
     (MapReduceSummaryPrompt, "summaries", "summaries"),
     (DriftPrimerPrompt, "community_reports", "community_reports"),
     (QueryRefinementPrompt, "results_summary", "results_summary"),
+    (QueryRewritePrompt, "conversation_history", "conversation_history"),
+    (QueryRewritePrompt, "query", "query"),
 ]
 
 

@@ -2345,9 +2345,13 @@ class SearchConfig(BaseModel):
             "index. Every strategy stays selectable explicitly."
         ),
     )
-    context_building_model_id: BedrockModelId = role_model_field(
-        "default",
-        description="Language model identifier used for building and structuring contextual information",
+    query_rewrite_model_id: BedrockModelId = role_model_field(
+        "fast",
+        description=(
+            "Language model identifier used for rewriting a follow-up message "
+            "as a standalone question from the conversation history, before "
+            "retrieval (memory queries with history only)"
+        ),
     )
     answer_generation_model_id: BedrockModelId = role_model_field(
         "default",
@@ -2595,14 +2599,6 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for generating answers from knowledge graph",
     )
-    context_building_system: str | None = Field(
-        default=None,
-        description="Custom system prompt for building context from knowledge graph",
-    )
-    context_building_human: str | None = Field(
-        default=None,
-        description="Custom human prompt for building context from knowledge graph",
-    )
     entity_extraction_system: str | None = Field(
         default=None,
         description="Custom system prompt for extracting named entities from user queries",
@@ -2650,6 +2646,16 @@ class CustomPromptConfig(BaseModel):
     query_refinement_human: str | None = Field(
         default=None,
         description="Custom human prompt for refining queries based on intermediate results",
+    )
+    query_rewrite_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for rewriting a follow-up message as a "
+        "standalone question from the conversation history",
+    )
+    query_rewrite_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for rewriting a follow-up message as a "
+        "standalone question from the conversation history",
     )
     strategy_selection_system: str | None = Field(
         default=None,
@@ -2735,7 +2741,6 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "answer_generation": frozenset({"query", "context"}),
     "claim_extraction": frozenset({"input_text"}),
     "community_report": frozenset({"entities", "relationships"}),
-    "context_building": frozenset({"query", "search_results"}),
     "corpus_profile": frozenset({"corpus_sample"}),
     "description_summarization": frozenset({"descriptions"}),
     "drift_primer": frozenset({"query", "community_reports"}),
@@ -2746,6 +2751,7 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "keyword_expansion": frozenset({"query"}),
     "keywords_extraction": frozenset({"query"}),
     "query_refinement": frozenset({"original_query", "results_summary"}),
+    "query_rewrite": frozenset({"query", "conversation_history"}),
     "strategy_selection": frozenset({"query", "strategies"}),
 }
 

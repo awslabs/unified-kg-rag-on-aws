@@ -18,7 +18,7 @@ from unified_kg_rag.domain.models.config import CustomPromptConfig
 from unified_kg_rag.domain.prompts import (
     AnswerGenerationPrompt,
     CommunityReportPrompt,
-    ContextBuildingPrompt,
+    EntityExtractionPrompt,
     GraphExtractionPrompt,
 )
 from unified_kg_rag.domain.prompts.base import BasePrompt
@@ -62,14 +62,14 @@ def test_partial_human_only_override_does_not_crash() -> None:
     # The crux of the old "all-or-nothing" trap: overriding only the human
     # template (which need not contain every built-in input variable) must not
     # fail the strict missing-variable validation. Only the data variables are
-    # required (custom_prompts load-time check); {conversation_history} is not.
-    human = "answer {query} from {search_results}"
-    cp = CustomPromptConfig(context_building_human=human)
-    resolved = ContextBuildingPrompt.resolve(cp)
+    # required (custom_prompts load-time check); {target_language} is not.
+    human = "list the entities in {query}"
+    cp = CustomPromptConfig(entity_extraction_human=human)
+    resolved = EntityExtractionPrompt.resolve(cp)
     assert resolved.human_prompt_template == human
     # System stays the shipped default.
     assert (
-        resolved.system_prompt_template == ContextBuildingPrompt.system_prompt_template
+        resolved.system_prompt_template == EntityExtractionPrompt.system_prompt_template
     )
 
 

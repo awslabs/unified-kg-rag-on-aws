@@ -286,15 +286,15 @@ Enable with: `config.aws.dynamodb.enabled = true`.
 
 ## 6. Retrieval: Two Methodologies
 
-The `GraphRAGChain` (an LCEL Runnable) in `application/retrieval/rag_chain.py` performs strategy resolution → query processing (translation, entity/keyword extraction) → memory → retrieval → (RAG) context build + answer generation. The methodology is selected via `RAGInput.search_strategy`.
+The `GraphRAGChain` (an LCEL Runnable) in `application/retrieval/rag_chain.py` performs memory (a follow-up with conversation history is rewritten as a standalone question, `QueryRewritePrompt`) → strategy resolution → query processing (translation, entity/keyword extraction) → retrieval → (RAG) context build + answer generation. Routing, retrieval and the answer all read the standalone question. The methodology is selected via `RAGInput.search_strategy`.
 
 ```mermaid
 flowchart TD
-    input["RAGInput: query, search_strategy, suffix, filters"] --> resolve["Resolve strategy (auto: LLM router over search.auto_routable_strategies)"]
+    input["RAGInput: query, search_strategy, suffix, filters"] --> memory["Conversation memory (use_memory): a follow-up is rewritten as a standalone question"]
+    memory --> resolve["Resolve strategy (auto: LLM router over search.auto_routable_strategies)"]
     resolve --> qp["Query processing: translation, then entities or dual-level keywords as the strategy declares"]
-    qp --> memory["Conversation memory (use_memory)"]
-    memory --> graphrag
-    memory --> lightrag
+    qp --> graphrag
+    qp --> lightrag
     subgraph graphrag["GraphRAG strategies"]
         simple["simple: OpenSearch vector + BM25"]
         local["local: entities, Neptune expansion, text units, reports, relationships, claims"]
@@ -311,7 +311,7 @@ flowchart TD
     fuse --> mode{"ChainMode"}
     mode -- SEARCH --> results["Fused retrieval results"]
     mode -- RAG --> budget["TokenManager: per-section token budget"]
-    budget --> answer["Context building + answer generation"]
+    budget --> answer["Answer generation"]
     answer --> output["RAGOutput: answer + sources the model saw"]
 ```
 

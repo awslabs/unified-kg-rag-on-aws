@@ -512,6 +512,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   as always on, incremental merges by name only); the Mermaid diagrams in the
   Design Doc replace them. `CLAUDE.md` now points to Design Doc §15 for
   extension recipes instead of repeating them (#205).
+- **Behaviour change:** a memory query with conversation history is rewritten
+  as a standalone question before retrieval (new `QueryRewritePrompt`,
+  `search.query_rewrite_model_id` on the fast tier, override key
+  `custom_prompts.query_rewrite_*`). Routing, translation, entity and keyword
+  extraction, retrieval and the answer read the rewritten question;
+  `ProcessedQuery.standalone_query` records it and `original_query` keeps the
+  user's text. Follow-ups such as "what about its price?" were searched
+  verbatim before, and the history reached only the post-retrieval context
+  builder (#PR).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
@@ -596,6 +605,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `GraphRAGChatMessageHistory.get_context_summary` and `add_messages`, and the
   `MessageRole` and `ConversationContext` models, which nothing outside the
   memory read. **Breaking** for code that used them (#PR).
+- The post-retrieval context-building LLM call (`ContextBuildingPrompt`),
+  `search.context_building_model_id` and `custom_prompts.context_building_*`:
+  it used the history only to interpret the query, which the standalone
+  rewrite now does before retrieval, so the answer model reads the budgeted
+  retrieval context directly. The old keys are ignored with an unknown-key
+  warning. **Breaking** for configs that set them (#PR).
 
 ### Fixed
 - `interactive_graph.html` centres the layout and scales it to a fixed canvas
