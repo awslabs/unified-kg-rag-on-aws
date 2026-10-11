@@ -268,6 +268,8 @@ Library API (Python callers and custom backends).
 - Global search: when dynamic selection keeps no community, the fallback
   reports are capped at `max_communities` and get their text units and the
   rerank, instead of the raw retrieved list (#PR).
+- A shared query-embedding call that fails after all its waiters were
+  cancelled no longer logs "Task exception was never retrieved" (#PR).
 - Evaluation: `answer_match` no longer counts a different number or name as
   a match; judge failures are recorded per query instead of discarding the
   run; non-zero exit codes on failed scoring (#158, #210).

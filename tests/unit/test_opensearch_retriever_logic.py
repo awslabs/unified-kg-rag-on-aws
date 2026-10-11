@@ -609,6 +609,52 @@ async def test_concurrent_sub_queries_share_one_embedding_call(retriever) -> Non
     assert retriever._pending_embeddings == {}
 
 
+async def test_failed_embedding_with_every_waiter_cancelled_is_not_logged(
+    retriever,
+) -> None:
+    # The shared call is shielded, so cancelling its only waiter leaves it
+    # running; its failure then had no one to retrieve it and asyncio logged
+    # "Task exception was never retrieved" when the task was collected.
+    import asyncio
+    import gc
+    from collections import OrderedDict
+
+    from unified_kg_rag.domain.models import SearchType
+
+    started = asyncio.Event()
+
+    class _FailingEmbedder:
+        async def aembed_query(self, text: str) -> list[float]:
+            started.set()
+            await asyncio.sleep(0.01)
+            raise RuntimeError("embedding failed")
+
+    object.__setattr__(retriever, "_embedding_model", _FailingEmbedder())
+    object.__setattr__(retriever, "_query_embedding_cache", OrderedDict())
+    object.__setattr__(retriever, "_pending_embeddings", {})
+    loop = asyncio.get_running_loop()
+    reported: list[dict] = []
+    previous = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: reported.append(context))
+    try:
+        waiter = asyncio.ensure_future(
+            retriever._get_query_vector("Vendor", SearchType.VECTOR, ["v"])
+        )
+        await started.wait()
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        while retriever._pending_embeddings:
+            await asyncio.sleep(0.005)
+        del waiter
+        gc.collect()
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(previous)
+
+    assert reported == []
+
+
 async def test_query_embedding_cache_is_bounded(retriever, monkeypatch) -> None:
     from collections import OrderedDict
 
