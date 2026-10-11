@@ -304,7 +304,6 @@ def _bedrock_llm(providers: Providers) -> LLMFactoryPort:
     return BedrockLanguageModelFactory(
         config=providers.config,
         boto_session=providers.boto_session,
-        region_name=providers.config.aws.bedrock_region,
     )
 
 
@@ -313,7 +312,6 @@ def _bedrock_embedding(providers: Providers) -> EmbeddingFactoryPort:
     return BedrockEmbeddingModelFactory(
         config=providers.config,
         boto_session=providers.boto_session,
-        region_name=providers.config.aws.bedrock_region,
     )
 
 
@@ -322,7 +320,6 @@ def _bedrock_rerank(providers: Providers) -> RerankFactoryPort:
     return BedrockRerankModelFactory(
         config=providers.config,
         boto_session=providers.boto_session,
-        region_name=providers.config.aws.bedrock_region,
     )
 
 

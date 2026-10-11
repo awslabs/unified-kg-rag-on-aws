@@ -155,7 +155,6 @@ def test_create_result_populates_fields() -> None:
     assert result.input_count == 3
     assert result.output_count == 9
     assert result.metrics == {"k": "v"}
-    assert result.cache_path is None
 
 
 def test_create_result_defaults_metrics_to_empty_dict() -> None:
@@ -166,35 +165,6 @@ def test_create_result_defaults_metrics_to_empty_dict() -> None:
     )
     assert result.metrics == {}
     assert result.error_message == "boom"
-
-
-# --- _stats_to_dict ------------------------------------------------------
-
-
-def test_stats_to_dict_none_returns_empty() -> None:
-    from unified_kg_rag.application.ingestion.pipeline_stages import PipelineStage
-
-    assert PipelineStage._stats_to_dict(None) == {}
-
-
-def test_stats_to_dict_uses_to_dict_when_available() -> None:
-    from unified_kg_rag.application.ingestion.pipeline_stages import PipelineStage
-
-    class _Stats:
-        def to_dict(self) -> dict[str, Any]:
-            return {"a": 1}
-
-    assert PipelineStage._stats_to_dict(_Stats()) == {"a": 1}
-
-
-def test_stats_to_dict_falls_back_to_dunder_dict() -> None:
-    from unified_kg_rag.application.ingestion.pipeline_stages import PipelineStage
-
-    class _Stats:
-        def __init__(self) -> None:
-            self.x = 7
-
-    assert PipelineStage._stats_to_dict(_Stats()) == {"x": 7}
 
 
 # --- IndexingStage metric aggregation + backend validation ---------------

@@ -189,10 +189,9 @@ def test_default_encryption_is_bucket_default() -> None:
     assert Config().aws.s3.encryption.encryption_type is S3EncryptionType.BUCKET_DEFAULT
 
 
-@pytest.mark.parametrize("value", ["BUCKET_DEFAULT", "NONE"])
-def test_bucket_default_and_legacy_none_both_validate(value: str) -> None:
+def test_bucket_default_validates() -> None:
     cfg = Config.model_validate(
-        {"aws": {"s3": {"encryption": {"encryption_type": value}}}}
+        {"aws": {"s3": {"encryption": {"encryption_type": "BUCKET_DEFAULT"}}}}
     )
     assert cfg.aws.s3.encryption.encryption_type is S3EncryptionType.BUCKET_DEFAULT
 
@@ -202,8 +201,6 @@ def test_bucket_default_and_legacy_none_both_validate(value: str) -> None:
     [
         # No header => the bucket's default encryption (e.g. its CMK) applies.
         (S3EncryptionType.BUCKET_DEFAULT, None, {}),
-        # Legacy alias: same behaviour as BUCKET_DEFAULT.
-        (S3EncryptionType("NONE"), None, {}),
         (S3EncryptionType.AES256, None, {"ServerSideEncryption": "AES256"}),
         (
             S3EncryptionType.KMS,

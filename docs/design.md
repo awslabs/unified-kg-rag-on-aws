@@ -90,14 +90,14 @@ unified_kg_rag/
 │                       #   cache/pipeline manager, utils)
 ├─ evaluation/          # real logic package: evaluation_manager / base / graph_aware /
 │                       #   retrieval / answer_match
-└─ visualization/       # real logic package: render loop + embeddings/exporters/renderers
+└─ visualization/       # real logic package: render loop + embeddings/exporters
 ```
 
 > Layout note: `evaluation/` and `visualization/` are **real logic packages** —
 > `evaluation/` holds `evaluation_manager` / `base` and the LLM-free
 > `graph_aware_evaluator` / `retrieval_evaluator` / `answer_match_evaluator`;
-> `visualization/` holds the render loop plus the `embeddings/`, `exporters/`,
-> and `renderers/` subpackages. Everything else is imported from its real
+> `visualization/` holds the render loop plus the `embeddings/` and
+> `exporters/` subpackages (the renderers are in `adapters/renderers/`). Everything else is imported from its real
 > location (`application.retrieval.rag_chain`,
 > `application.storage.indexing_manager`, `application.ingestion.pipeline`,
 > `adapters.*`, `domain.*`).

@@ -241,7 +241,6 @@ class TestAevaluateSingle:
         report = await ev.aevaluate_single(_query(), _result(), ground_truth="gt")
         assert report.evaluator_type == EvaluatorType.LANGCHAIN
         assert [m.value for m in report.metrics] == [pytest.approx(0.6)]
-        assert report.overall_score is None
 
     async def test_skips_metric_without_evaluator(self, mocker) -> None:
         ev = _make_evaluator(

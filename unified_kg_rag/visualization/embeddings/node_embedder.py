@@ -5,7 +5,7 @@ import time
 import boto3
 import networkx as nx
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, model_id_value
@@ -23,8 +23,7 @@ class NodeEmbeddings(BaseModel):
         description="Mapping of node identifiers to their corresponding high-dimensional embedding vectors"
     )
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class BedrockNodeEmbedder:

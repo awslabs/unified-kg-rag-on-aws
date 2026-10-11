@@ -572,6 +572,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `--top-k` and `--retrieval-multiplier` below 1 now fail at parse time (#212).
 
 ### Removed
+- Fields and helpers that were never set or only tests read:
+  `CommunityReport.summary_embedding` / `full_content_embedding` (always
+  null; the indexer embeds the report itself), `PipelineStageResult.cache_path`,
+  `CacheStats.s3_entries`, the deprecated always-null
+  `EvaluationReport.overall_score`, `run_evaluation.exceeds_failure_budget`
+  (use `failure_budget_breaches`) and `PipelineStage._stats_to_dict`. Stored
+  JSON with these keys still loads (#PR).
+- **Breaking:** the `"NONE"` alias of `aws.s3.encryption.encryption_type`; use
+  `BUCKET_DEFAULT` (#PR).
 - **Breaking** for code that builds `Document`s: the page-element model
   (`ElementContent`, `ElementType`, `DocumentElement`, `Document.elements`,
   `Page.elements` / `raw_data` / `height` / `width`) and

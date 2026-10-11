@@ -189,14 +189,6 @@ class EvaluationReport(BaseModel):
     metrics: list[EvaluationMetric] = Field(
         description="List of calculated evaluation metrics for this query."
     )
-    overall_score: float | None = Field(
-        default=None,
-        description=(
-            "Deprecated, always null: averaging unrelated metrics (e.g. exact "
-            "match with MRR) has no meaning. Kept so existing report JSON keeps "
-            "its shape; read the per-metric values in `metrics`."
-        ),
-    )
     evaluation_time: datetime = Field(
         default_factory=datetime.now,
         description="Timestamp when the evaluation was performed.",

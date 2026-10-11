@@ -1326,8 +1326,8 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
   매니페스트를 만들므로 라이브러리 호출자도 얻을 수 있습니다(기록하려면
   `dataset_path=` / `cli_args=`를 넘기세요).
 
-질의별 리포트에는 평가기마다 `metrics`가 있습니다. `overall_score`는 JSON 호환성을
-위해 남겨 두었지만 항상 `null`입니다(서로 무관한 지표의 평균은 의미가 없음). 각
+질의별 리포트에는 평가기마다 `metrics`가 있습니다. 서로 무관한 지표의 평균은
+의미가 없으므로 종합 점수는 두지 않습니다. 각
 결과에는 `retrieved_source_ids`도 기록됩니다. 보고된 출처마다 순위 순으로, 그 출처가
 귀속된 파일 이름 목록입니다(귀속할 수 없으면 `[]`).
 

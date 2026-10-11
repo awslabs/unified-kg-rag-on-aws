@@ -344,7 +344,7 @@ def test_eval_exceeds_failure_budget(total, failed, budget, expected) -> None:
         evaluation_start_time=datetime(2026, 1, 1),
         evaluation_end_time=datetime(2026, 1, 1),
     )
-    assert run_evaluation.exceeds_failure_budget(summary, budget) is expected
+    assert bool(run_evaluation.failure_budget_breaches(summary, budget)) is expected
 
 
 @pytest.mark.parametrize(
@@ -373,7 +373,7 @@ def test_eval_metric_failures_count_against_budget(outcomes, budget, expected) -
         evaluation_start_time=datetime(2026, 1, 1),
         evaluation_end_time=datetime(2026, 1, 1),
     )
-    assert run_evaluation.exceeds_failure_budget(summary, budget) is expected
+    assert bool(run_evaluation.failure_budget_breaches(summary, budget)) is expected
 
 
 class _DictChain:

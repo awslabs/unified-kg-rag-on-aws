@@ -39,7 +39,7 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   from `shared.utils.langchain` / `shared.utils.document_converter` (and rich
   helpers from `shared.utils.display`), not from the package root.
 - **`evaluation/` and `visualization/`**: real logic packages (evaluators +
-  manager; render loop + `embeddings/`/`exporters/`/`renderers/`). Import
+  manager; render loop + `embeddings/`/`exporters/`). Import
   everything else from its real location (`application.retrieval.rag_chain`,
   `application.storage.indexing_manager`, `application.ingestion.pipeline`,
   `adapters.*`, `domain.*`).
@@ -86,7 +86,7 @@ The two rules to keep in mind:
   (hit@k/recall@k/MRR against `reference_sources`) and `answer_match` (exact
   match/token F1 against `answer` + `metadata.answer_aliases`).
 - **Visualization**: renderers register via `@register_renderer`
-  (`visualization/renderers/`); the manager and the standalone CLI drive them
+  (`adapters/renderers/`); the manager and the standalone CLI drive them
   through one registry + `RenderContext`.
 
 ## Code standards

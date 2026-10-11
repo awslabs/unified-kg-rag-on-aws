@@ -26,13 +26,7 @@ class CommunityReport(Named):
         description="The ID of the community this report is associated with"
     )
     summary: str = Field("", description="Summary of the report")
-    summary_embedding: list[float] | None = Field(
-        None, description="The semantic embedding of the summary"
-    )
     full_content: str = Field("", description="Full content of the report")
-    full_content_embedding: list[float] | None = Field(
-        None, description="The semantic embedding of the full report content"
-    )
     findings: list[CommunityFinding] = Field(
         default_factory=list,
         description="Structured insights (MS GraphRAG parity). ``full_content`` "

@@ -185,7 +185,6 @@ class TestParseRagasReports:
             EvaluationMetricType.ANSWER_CORRECTNESS: 0.8,
             EvaluationMetricType.FAITHFULNESS: 0.6,
         }
-        assert report.overall_score is None
 
     def test_nan_value_is_skipped_not_zeroed(self, mocker) -> None:
         # NaN means "uncomputable" — it must be skipped, not coerced to 0.0

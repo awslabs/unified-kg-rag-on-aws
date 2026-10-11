@@ -115,9 +115,6 @@ class CacheStats(BaseModel):
     local_entries: int = Field(
         default=0, description="Number of cache entries stored locally"
     )
-    s3_entries: int = Field(
-        default=0, description="Number of cache entries stored in S3"
-    )
 
     @property
     def hit_rate(self) -> float:

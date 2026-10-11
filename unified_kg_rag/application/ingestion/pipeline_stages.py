@@ -290,23 +290,7 @@ class PipelineStage(ABC):
             output_count=output_count,
             metrics=metrics or {},
             error_message=error_message,
-            cache_path=None,
         )
-
-    @staticmethod
-    def _stats_to_dict(stats_obj: Any) -> dict[str, Any]:
-        if not stats_obj:
-            return {}
-        if hasattr(stats_obj, "to_dict") and callable(stats_obj.to_dict):
-            result = stats_obj.to_dict()
-            if isinstance(result, dict):
-                return result
-        if hasattr(stats_obj, "__dict__"):
-            return dict(stats_obj.__dict__)
-        logger.warning(
-            "Could not convert stats object of type %s to dict", type(stats_obj)
-        )
-        return {"stats": str(stats_obj)}
 
 
 class DocumentLoadingStage(PipelineStage):
@@ -927,7 +911,7 @@ class TranslationStage(PipelineStage):
             list(stats.failed_text_unit_ids) if stats else []
         )
 
-        translation_stats = self._stats_to_dict(stats)
+        translation_stats = stats.model_dump() if stats else {}
 
         units_translated_count = len(
             [
@@ -994,7 +978,7 @@ class GraphExtractionStage(PipelineStage):
             "entities_extracted": entities_count,
             "relationships_extracted": relationships_count,
             "failed_units": stats.num_failed_extractions if stats else 0,
-            "extraction_stats": self._stats_to_dict(stats),
+            "extraction_stats": stats.model_dump(),
         }
 
         logger.info("=" * 60)
@@ -1070,7 +1054,7 @@ class GleaningStage(PipelineStage):
                 gleaning_stats.total_refinement_calls if gleaning_stats else 0
             ),
             "failed_units": gleaning_stats.num_failed_units if gleaning_stats else 0,
-            "gleaning_stats": self._stats_to_dict(gleaning_stats),
+            "gleaning_stats": gleaning_stats.model_dump(),
         }
 
         logger.info("=" * 60)
@@ -1149,7 +1133,7 @@ class GraphResolutionStage(PipelineStage):
                 if original_relationships_count
                 else 0
             ),
-            "resolution_stats": self._stats_to_dict(stats),
+            "resolution_stats": stats.model_dump(),
         }
 
         logger.info("=" * 60)
@@ -1201,7 +1185,7 @@ class ClaimExtractionStage(PipelineStage):
             "failed_units": (
                 extraction_stats.num_failed_extractions if extraction_stats else 0
             ),
-            "extraction_stats": self._stats_to_dict(extraction_stats),
+            "extraction_stats": extraction_stats.model_dump(),
         }
 
         logger.info("=" * 60)
@@ -1249,7 +1233,7 @@ class ClaimResolutionStage(PipelineStage):
                 if original_claims_count > 0
                 else 0.0
             ),
-            "resolution_stats": self._stats_to_dict(stats),
+            "resolution_stats": stats.model_dump(),
         }
 
         logger.info("=" * 60)

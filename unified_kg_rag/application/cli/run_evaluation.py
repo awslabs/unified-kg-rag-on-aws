@@ -99,11 +99,6 @@ def failure_budget_breaches(
     return breaches
 
 
-def exceeds_failure_budget(summary: EvaluationSummary, max_failure_rate: float) -> bool:
-    """True when the run must exit non-zero (see ``failure_budget_breaches``)."""
-    return bool(failure_budget_breaches(summary, max_failure_rate))
-
-
 class CommandLineInterface:
     def __init__(self) -> None:
         self.parser = self._setup_arguments()

@@ -92,14 +92,14 @@ unified_kg_rag/
 │                       #   cache/pipeline manager, utils)
 ├─ evaluation/          # 실제 로직 패키지: evaluation_manager / base / graph_aware /
 │                       #   retrieval / answer_match
-└─ visualization/       # 실제 로직 패키지: 렌더 루프 + embeddings/exporters/renderers
+└─ visualization/       # 실제 로직 패키지: 렌더 루프 + embeddings/exporters
 ```
 
 > 레이아웃 참고: `evaluation/`과 `visualization/`은 **실제 로직 패키지**입니다.
 > `evaluation/`에는 `evaluation_manager`, `base`와 LLM을 쓰지 않는
 > `graph_aware_evaluator`, `retrieval_evaluator`, `answer_match_evaluator`가 있고,
-> `visualization/`에는 렌더 루프와 `embeddings/`, `exporters/`, `renderers/`
-> 하위 패키지가 있습니다. 그 밖의 모듈은 모두 실제 위치
+> `visualization/`에는 렌더 루프와 `embeddings/`, `exporters/` 하위 패키지가
+> 있습니다(렌더러는 `adapters/renderers/`에 있습니다). 그 밖의 모듈은 모두 실제 위치
 > (`application.retrieval.rag_chain`, `application.storage.indexing_manager`,
 > `application.ingestion.pipeline`, `adapters.*`, `domain.*`)에서 import합니다.
 

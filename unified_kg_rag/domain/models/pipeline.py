@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import networkx as nx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .community import Community
 from .community_report import CommunityReport
@@ -123,9 +123,6 @@ class PipelineStageResult(BaseModel):
     error_message: str | None = Field(
         default=None, description="Error message if stage failed"
     )
-    cache_path: Path | None = Field(
-        default=None, description="Path to cached stage results"
-    )
     metrics: dict[str, Any] = Field(
         default_factory=dict, description="Stage-specific performance metrics"
     )
@@ -240,8 +237,7 @@ class PipelineContext(BaseModel):
         "so the next run re-extracts them.",
     )
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def add_stage_result(self, result: PipelineStageResult) -> None:
         self.stage_results = [
