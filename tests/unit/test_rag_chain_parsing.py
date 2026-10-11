@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import pytest
 from langchain_core.runnables import RunnableLambda
+from pydantic import ValidationError
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from unified_kg_rag.adapters.retrieval.token_manager import EMPTY_CONTEXT_PLACEHOLDER
@@ -78,6 +79,16 @@ def test_rag_input_defaults() -> None:
     assert ri.use_memory is False
     assert ri.enable_query_processing is True
     assert ri.conversation_id is None
+
+
+@pytest.mark.parametrize(
+    "field", [{"top_k": 0}, {"retrieval_multiplier": 0}, {"max_tokens": -5}]
+)
+@pytest.mark.parametrize("model", [RAGInput, SearchQuery])
+def test_query_sizes_must_be_positive(model, field: dict) -> None:
+    # 0 results, a 0x depth or a negative budget are not a query.
+    with pytest.raises(ValidationError):
+        model(query="q", **field)
 
 
 def test_rag_input_composes_decomposed_hangul() -> None:

@@ -172,13 +172,17 @@ class RAGInput(BaseModel):
         default=SearchType.HYBRID,
         description="The type of search to perform (hybrid, lexical, vector)",
     )
-    top_k: int = Field(default=10, description="Maximum number of results to retrieve")
+    top_k: int = Field(
+        default=10, ge=1, description="Maximum number of results to retrieve"
+    )
     retrieval_multiplier: int = Field(
         default=1,
+        ge=1,
         description="Multiplier for retrieval operations to increase search depth",
     )
     max_tokens: int | None = Field(
         default=None,
+        ge=1,
         description="Retrieval context budget in tokens for this query, capped "
         "at search.token_manager.max_context_tokens (the answer's output cap is "
         "aws.bedrock.default_max_output_tokens)",

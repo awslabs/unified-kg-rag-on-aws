@@ -1807,6 +1807,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   that quota. `search.local_search.entity_frequency_threshold` now drops the
   over-frequent entities from the context as documented; they were only left
   out of the text-unit fan-out (#PR).
+- `RAGInput` and `SearchQuery` accepted `top_k: 0`, `retrieval_multiplier: 0`
+  and a negative `max_tokens`, which ran a query that could return nothing.
+  All three must now be at least 1 (#PR).
 
 ### Security
 - The task role drops the unused `neptune-db:GetEngineStatus`,
