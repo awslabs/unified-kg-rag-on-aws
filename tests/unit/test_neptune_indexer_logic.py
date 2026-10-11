@@ -222,6 +222,29 @@ def test_upsert_communities_does_not_clear_label(indexer, mocker) -> None:
     assert "coalesce" in vertex_calls
 
 
+def test_membership_is_not_re_added_when_its_drop_failed(indexer, mocker) -> None:
+    # Re-adding the MemberOf edges next to the old ones would duplicate them.
+    from unified_kg_rag.ports.indexer import IndexingStats
+
+    mocker.patch.object(
+        indexer, "_execute_batch_traversal", return_value=IndexingStats()
+    )
+    add_edges = mocker.patch.object(indexer, "_execute_with_retries")
+    g = mocker.MagicMock()
+    g.V.return_value.hasLabel.return_value.has.return_value.inE.return_value.drop.return_value.iterate.side_effect = RuntimeError(
+        "drop timed out"
+    )
+    indexer.neptune_client.g = g
+    comm = Community(
+        id="c1", name="C", level="0", parent="", children=[], entity_ids=["e1"]
+    )
+
+    stats = indexer.upsert_communities([comm])
+
+    add_edges.assert_not_called()
+    assert stats.failed_ids == ["c1"]
+
+
 def test_index_communities_empty_returns_empty_stats(indexer) -> None:
     stats = indexer.index_communities([])
     assert stats.total_items == 0
@@ -533,8 +556,29 @@ def test_find_incident_relationship_ids_coerces_and_drops_none(indexer, mocker) 
     assert out == ["1", "r3"]
 
 
-def test_find_incident_relationship_ids_swallows_errors(indexer, mocker) -> None:
+def test_find_incident_relationship_ids_raises_on_a_failed_read(
+    indexer, mocker
+) -> None:
+    # [] would read as "no incident edges": their vector documents would be
+    # orphaned for good.
+    from unified_kg_rag.shared import AWSServiceError
+
     g = mocker.MagicMock()
     g.V.side_effect = RuntimeError("neptune down")
     indexer.neptune_client.g = g
-    assert indexer.find_incident_relationship_ids(["e1"]) == []
+    with pytest.raises(AWSServiceError, match="neptune down"):
+        indexer.find_incident_relationship_ids(["e1"])
+
+
+def test_find_incident_relationship_ids_batches_the_ids(indexer, mocker) -> None:
+    indexer.neptune_config.batch_size = 2
+    g = mocker.MagicMock()
+    has = g.V.return_value.has
+    has.return_value.bothE.return_value.values.return_value.dedup.return_value.toList.side_effect = [
+        ["r1"],
+        ["r1", "r2"],
+    ]
+    indexer.neptune_client.g = g
+
+    assert indexer.find_incident_relationship_ids(["e1", "e2", "e3"]) == ["r1", "r2"]
+    assert [c.args[1].value for c in has.call_args_list] == [["e1", "e2"], ["e3"]]

@@ -304,7 +304,8 @@ class GraphIndexer(BaseIndexer):
         Used to find relationship documents orphaned when an entity vertex is
         dropped (the edge is owned in lineage by a surviving document, so it is
         not in the exclusive id-set). Default returns ``[]`` for backends that
-        cannot answer this; adapters that can (Neptune) override it.
+        cannot answer this; adapters that can (Neptune) override it and raise
+        when the read fails.
         """
         return []
 

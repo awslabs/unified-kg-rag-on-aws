@@ -354,17 +354,20 @@ class NeptuneIndexer(GraphIndexer):
                     continue
                 if upsert:
                     # Drop this community's existing membership edges so re-adding
-                    # does not create duplicate MemberOf edges on an incremental run.
+                    # does not create duplicate MemberOf edges on an incremental
+                    # run; re-adding after a failed drop would duplicate them.
                     try:
                         self.neptune_client.g.V().hasLabel(community_label).has(
                             "id", comm.id
                         ).inE("MemberOf").drop().iterate()
                     except Exception as e:
+                        stats.add_error(str(e), ids=[comm.id])
                         logger.warning(
                             "Failed clearing MemberOf edges for community '%s': %s",
                             comm.id,
                             e,
                         )
+                        continue
                 for entity_id_batch in self._batch_iterator(comm.entity_ids):
                     try:
                         edge_traversal = (
@@ -473,10 +476,12 @@ class NeptuneIndexer(GraphIndexer):
         """Write relationship edges one small traversal per edge (idempotent).
 
         For each suffix group: drop existing edges by id in batches (so re-runs
-        don't duplicate parallel edges), then add each edge as its own traversal.
-        Emits a progress log every ``_PROGRESS_LOG_EVERY`` edges so a large run is
-        distinguishable from a hang. A single failed edge is recorded and skipped
-        (does not abort the batch).
+        don't duplicate parallel edges), then add each edge as its own
+        traversal, ``index_concurrency`` at a time. An edge whose drop failed
+        is not re-added (that would duplicate it) and counts as failed, as does
+        a single failed write; neither aborts the others. Emits a progress log
+        every ``_PROGRESS_LOG_EVERY`` edges so a large run is distinguishable
+        from a hang.
         """
         if not relationships:
             return IndexingStats()
@@ -503,42 +508,57 @@ class NeptuneIndexer(GraphIndexer):
             # source vertex carries THIS suffix's entity label (the scope
             # delete_by_id uses); unscoped, indexing one tenant would drop
             # another tenant's identical edges.
-            for id_batch in self._batch_iterator([rel.id for rel in rels]):
+            writable: list[Relationship] = []
+            for batch in self._batch_iterator(rels):
                 try:
-                    self.neptune_client.g.E().has("id", P.within(id_batch)).where(
-                        __.outV().hasLabel(entity_label)
-                    ).drop().iterate()
+                    self.neptune_client.g.E().has(
+                        "id", P.within([rel.id for rel in batch])
+                    ).where(__.outV().hasLabel(entity_label)).drop().iterate()
+                    writable.extend(batch)
                 except Exception as e:
+                    stats.add_error(
+                        f"dropping existing edges failed: {e}",
+                        len(batch),
+                        ids=[rel.id for rel in batch],
+                    )
                     logger.warning("Failed dropping existing edge batch: %s", e)
 
-            for index, rel in enumerate(rels, start=1):
+            def write(
+                rel: Relationship, entity_label: str = entity_label
+            ) -> str | None:
+                """Write one edge; the error, or None once it is written."""
                 try:
                     traversal = self._build_add_edge_traversal(
                         self.neptune_client.g, rel, entity_label
                     )
-                    written = self._execute_with_retries(
+                    if self._execute_with_retries(
                         traversal, "Relationship indexing", results=True
-                    )
-                    if written:
+                    ):
+                        return None
+                    return f"source entity '{rel.source_id}' not found"
+                except Exception as e:
+                    return str(e)
+
+            workers = max(1, min(self.neptune_config.index_concurrency, len(writable)))
+            with ContextThreadPoolExecutor(max_workers=workers) as executor:
+                for index, (rel, error) in enumerate(
+                    zip(writable, executor.map(write, writable), strict=True),
+                    start=1,
+                ):
+                    if error is None:
                         stats.add_success(1)
                     else:
-                        stats.add_error("source entity vertex not found", ids=[rel.id])
+                        stats.add_error(error, ids=[rel.id])
                         logger.warning(
-                            "Relationship '%s' not written: source entity '%s' "
-                            "not found",
-                            rel.id,
-                            rel.source_id,
+                            "Relationship '%s' not written: %s", rel.id, error
                         )
-                except Exception as e:
-                    stats.add_error(str(e), ids=[rel.id])
-                    logger.warning("Failed indexing relationship '%s': %s", rel.id, e)
-                if index % self._PROGRESS_LOG_EVERY == 0:
-                    logger.info(
-                        "  ...%s/%s relationships written for '%s'",
-                        index,
-                        len(rels),
-                        entity_label,
-                    )
+                    if index % self._PROGRESS_LOG_EVERY == 0:
+                        logger.info(
+                            "  ...%s/%s relationships written for '%s'",
+                            index,
+                            len(writable),
+                            entity_label,
+                        )
 
             stats.processing_time = time.time() - start_time
             total_stats.merge(stats)
@@ -557,31 +577,38 @@ class NeptuneIndexer(GraphIndexer):
         relationship index survives (it is keyed by its own id, attributed to a
         *different*, still-present document's lineage). We query the incident
         edge ids here so the caller can also remove those orphaned relationship
-        documents from OpenSearch. Best-effort: returns [] on any failure (the
-        caller still performs the id-set based deletion).
+        documents from OpenSearch.
+
+        Raises:
+            AWSServiceError: The read failed. An empty result would leave the
+                orphaned relationship documents behind, or miss the stored
+                edges a remapped delta edge must merge into.
         """
         if not entity_ids:
             return []
+        label = (
+            self._get_label(self.neptune_config.entity_label_prefix, suffix)
+            if suffix is not None
+            else None
+        )
         try:
             g = self.neptune_client.g
-            base = (
-                g.V().hasLabel(
-                    self._get_label(self.neptune_config.entity_label_prefix, suffix)
+            rel_ids: set[str] = set()
+            for id_batch in self._batch_iterator(entity_ids):
+                base = g.V().hasLabel(label) if label is not None else g.V()
+                rows = (
+                    base.has("id", P.within(id_batch))
+                    .bothE()
+                    .values("id")
+                    .dedup()
+                    .toList()
                 )
-                if suffix is not None
-                else g.V()
-            )
-            rel_ids = (
-                base.has("id", P.within(entity_ids))
-                .bothE()
-                .values("id")
-                .dedup()
-                .toList()
-            )
-            return [str(rid) for rid in rel_ids if rid is not None]
-        except Exception as e:  # noqa: BLE001 - best-effort orphan cleanup
-            logger.warning("find_incident_relationship_ids failed: %s", e)
-            return []
+                rel_ids.update(str(rid) for rid in rows if rid is not None)
+            return sorted(rel_ids)
+        except Exception as e:
+            raise AWSServiceError(
+                f"Neptune find_incident_relationship_ids failed: {e}"
+            ) from e
 
     def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
         """Delete vertices and edges by their ``id`` property (delta removals).

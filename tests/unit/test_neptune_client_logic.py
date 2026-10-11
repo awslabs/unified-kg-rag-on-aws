@@ -5,7 +5,7 @@
 No real Neptune/Gremlin connection is opened. ``DriverRemoteConnection`` is
 patched and the traversal source ``g`` is faked, so we exercise: SigV4 auth-header
 assembly, ``_create_connection`` URL/header wiring, the missing-endpoint guard,
-the ``delete_vertices_in_batches`` no-progress guard, and the
+the ``delete_vertices_in_batches`` batching, and the
 ``_handle_neptune_errors`` wrapping.
 """
 
@@ -229,11 +229,11 @@ def test_create_connection_wraps_failure(mocker) -> None:
 
 
 class _FakeTraversal:
-    """A fake GraphTraversalSource where V().hasLabel().count().next() returns
-    successive scripted values; labels, limit(n) and drop() calls are recorded."""
+    """A fake GraphTraversalSource whose drop requests return scripted counts
+    of dropped vertices; labels, limit(n) and drop requests are recorded."""
 
-    def __init__(self, counts: list[int]) -> None:
-        self._counts = list(counts)
+    def __init__(self, dropped: list[int]) -> None:
+        self._dropped = list(dropped)
         self.labels: list[str] = []
         self.limits: list[int] = []
         self.drops = 0
@@ -250,57 +250,46 @@ class _FakeTraversal:
         self.limits.append(n)
         return self
 
-    def drop(self):
+    def sideEffect(self, traversal):  # noqa: N802
         self.drops += 1
         return self
 
     def count(self):
         return self
 
-    def iterate(self):
-        return None
-
     def next(self):
-        return self._counts.pop(0)
+        return self._dropped.pop(0)
 
 
 def _client_and_fake_g(
-    monkeypatch, counts: list[int]
+    monkeypatch, dropped: list[int]
 ) -> tuple[NeptuneClient, _FakeTraversal]:
     client = _client(_config_with_neptune())
-    fake = _FakeTraversal(counts)
+    fake = _FakeTraversal(dropped)
     # Bypass the connection property by injecting _g directly.
     monkeypatch.setattr(type(client), "g", property(lambda self: fake))
     return client, fake
 
 
-def test_delete_batches_stops_when_count_zero(monkeypatch) -> None:
-    client, fake = _client_and_fake_g(monkeypatch, counts=[0])
-    # No vertices -> returns immediately without dropping anything.
-    client.delete_vertices_in_batches("MyLabel", delay=0.0)
-    assert fake.drops == 0
+def test_delete_batches_of_an_empty_label_send_one_request(monkeypatch) -> None:
+    client, fake = _client_and_fake_g(monkeypatch, dropped=[0])
+    client.delete_vertices_in_batches("MyLabel")
+    assert fake.drops == 1
 
 
-def test_delete_batches_progresses_to_zero(monkeypatch) -> None:
-    client, fake = _client_and_fake_g(monkeypatch, counts=[10, 5, 0])
-    client.delete_vertices_in_batches("MyLabel", batch_size=5, delay=0.0)
-    # One bounded drop per non-zero count, each scoped to the label.
-    assert fake.drops == 2
-    assert fake.limits == [5, 5]
+def test_delete_batches_stop_after_a_short_batch(monkeypatch) -> None:
+    client, fake = _client_and_fake_g(monkeypatch, dropped=[5, 5, 2])
+    client.delete_vertices_in_batches("MyLabel", batch_size=5)
+    # One bounded drop per request, each scoped to the label, no recount.
+    assert fake.drops == 3
+    assert fake.limits == [5, 5, 5]
     assert set(fake.labels) == {"MyLabel"}
 
 
-def test_delete_batches_no_progress_raises(monkeypatch) -> None:
-    # Count stays stuck at 7 -> guard aborts (wrapped as AWSServiceError).
-    client, _ = _client_and_fake_g(monkeypatch, counts=[7, 7])
-    with pytest.raises(AWSServiceError, match="made no progress"):
-        client.delete_vertices_in_batches("MyLabel", delay=0.0)
-
-
-def test_delete_batches_count_increases_raises(monkeypatch) -> None:
-    client, _ = _client_and_fake_g(monkeypatch, counts=[5, 9])
-    with pytest.raises(AWSServiceError, match="made no progress"):
-        client.delete_vertices_in_batches("MyLabel", delay=0.0)
+def test_delete_batches_stop_after_an_empty_batch(monkeypatch) -> None:
+    client, fake = _client_and_fake_g(monkeypatch, dropped=[5, 0])
+    client.delete_vertices_in_batches("MyLabel", batch_size=5)
+    assert fake.drops == 2
 
 
 # --- _handle_neptune_errors decorator ------------------------------------
@@ -315,4 +304,4 @@ def test_handle_neptune_errors_wraps_exceptions(monkeypatch) -> None:
 
     monkeypatch.setattr(type(client), "g", property(lambda self: _BoomTraversal()))
     with pytest.raises(AWSServiceError, match="delete_vertices_in_batches.*failed"):
-        client.delete_vertices_in_batches("MyLabel", delay=0.0)
+        client.delete_vertices_in_batches("MyLabel")

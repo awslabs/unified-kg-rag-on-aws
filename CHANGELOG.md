@@ -820,6 +820,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   that the filter removed (they named a filtered entity) is dropped with them.
   Merged extraction entities list their text units in first-seen order instead
   of set order (#213).
+- Neptune writes: a relationship edge or a community's `MemberOf` edges whose
+  drop failed are no longer re-added next to the old ones (duplicates); they
+  count as failed writes, so the documents are retried. Relationship edges
+  are written `indexing.neptune.index_concurrency` at a time (they ignored
+  it). Clearing a label drops bounded batches until one comes back short,
+  without recounting the label and sleeping 0.5 s per batch.
+  `find_incident_relationship_ids` batches its ids and raises on a failed
+  read instead of returning none, which left orphaned relationship documents
+  in OpenSearch; the removal then fails and is retried (#PR).
 - **Behaviour change:** a relative `providers.doc_status.sqlite_path` is
   resolved against the config file's directory instead of the working
   directory, so a run started elsewhere no longer opens a new, empty registry;

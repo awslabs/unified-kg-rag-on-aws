@@ -625,7 +625,8 @@ indexing:
     entity_label_prefix: "Entity"
     community_label_prefix: "Community"
     batch_size: 100
-    # Concurrent write batches submitted to Neptune. 1 (default) = sequential
+    # Concurrent write batches (and relationship edges, one per request)
+    # submitted to Neptune. 1 (default) = sequential
     # indexing; >1 fans batches over a thread pool, multiplexed across the
     # Gremlin connection pool (aws.neptune.pool_size, raised to at least this
     # value). Each batch accumulates its own stats, merged on completion.

@@ -31,6 +31,11 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# Texts per embedding request, and requests in flight at once (Bedrock
+# embedding calls are IO-bound).
+_EMBED_BATCH_SIZE = 50
+_EMBED_WORKERS = 8
+
 
 class OpenSearchIndexer(VectorIndexer):
     def __init__(
@@ -863,7 +868,7 @@ class OpenSearchIndexer(VectorIndexer):
         return list(zip(*all_embeddings, strict=True))
 
     def _batch_embed(
-        self, texts: list[str], batch_size: int = 50
+        self, texts: list[str], batch_size: int = _EMBED_BATCH_SIZE
     ) -> list[list[float] | None]:
         result: list[list[float] | None] = [None] * len(texts)
 
@@ -937,7 +942,7 @@ class OpenSearchIndexer(VectorIndexer):
             for start in range(0, len(unique), batch_size)
         ]
         if batches:
-            max_workers = min(8, len(batches))
+            max_workers = min(_EMBED_WORKERS, len(batches))
             failed_keys = 0
             with ContextThreadPoolExecutor(max_workers=max_workers) as executor:
                 for pairs in executor.map(_embed_batch, batches):

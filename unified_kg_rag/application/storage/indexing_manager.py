@@ -626,9 +626,18 @@ class IndexingManager:
             # but its OpenSearch relationship document would survive as a
             # dangling edge. Collect those incident edge ids BEFORE the Neptune
             # drop, then fold them into the relationship-index deletion below.
-            incident_rel_ids = self.neptune_indexer.find_incident_relationship_ids(
-                ids, suffix=suffix
-            )
+            try:
+                incident_rel_ids = self.neptune_indexer.find_incident_relationship_ids(
+                    ids, suffix=suffix
+                )
+            except Exception as e:  # noqa: BLE001 - reported as failed items
+                # Deleting without them would orphan their vector documents
+                # for good; fail the removal so the registry rows are kept.
+                logger.error("Reading incident edges in '%s' failed: %s", suffix, e)
+                stats = IndexingStats(total_items=len(ids))
+                stats.add_error(str(e), count=len(ids))
+                results[f"neptune_read_{suffix}"] = stats
+                continue
             results[f"neptune_delete_{suffix}"] = self.neptune_indexer.delete_by_id(
                 ids, suffix=suffix
             )

@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import functools
 import threading
-import time
 from collections.abc import Callable
 from typing import Any
 
@@ -12,7 +11,7 @@ from botocore.awsrequest import AWSRequest
 from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
 from gremlin_python.driver.protocol import GremlinServerError
 from gremlin_python.process.anonymous_traversal import traversal
-from gremlin_python.process.graph_traversal import GraphTraversalSource
+from gremlin_python.process.graph_traversal import GraphTraversalSource, __
 
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import AWSServiceError, get_logger
@@ -167,41 +166,27 @@ class NeptuneClient:
             raise AWSServiceError("Failed to create SigV4 signature for Neptune") from e
 
     @_handle_neptune_errors
-    def delete_vertices_in_batches(
-        self, label: str, batch_size: int = 500, delay: float = 0.5
-    ) -> None:
-        logger.info(
-            "Starting batch deletion for label '%s' with batch size %s.",
-            label,
-            batch_size,
-        )
-        previous_count: int | None = None
+    def delete_vertices_in_batches(self, label: str, batch_size: int = 500) -> None:
+        """Drop every vertex of ``label``, ``batch_size`` per request.
+
+        Bounded requests keep each drop's transaction small. A request returns
+        how many vertices it dropped, so a short one is the last: no count of
+        the label per pass and no pause between requests.
+        """
+        total = 0
         while True:
-            remaining_count = self.g.V().hasLabel(label).count().next()
-            if remaining_count == 0:
-                logger.info("No more vertices with label '%s' to delete.", label)
-                break
-
-            # Guard against an infinite loop: if a drop pass does not reduce the
-            # count (e.g. undeletable vertices, or a stale count), stop rather
-            # than spin forever sleeping `delay` each pass.
-            if previous_count is not None and remaining_count >= previous_count:
-                raise AWSServiceError(
-                    f"Batch deletion for label '{label}' made no progress "
-                    f"({remaining_count} vertices remain); aborting to avoid an "
-                    "infinite loop."
-                )
-            previous_count = remaining_count
-
-            logger.info(
-                "Deleting batch of %s from %s vertices with label '%s'...",
-                min(remaining_count, batch_size),
-                remaining_count,
-                label,
+            dropped = int(
+                self.g.V()
+                .hasLabel(label)
+                .limit(batch_size)
+                .sideEffect(__.drop())
+                .count()
+                .next()
             )
-            self.g.V().hasLabel(label).limit(batch_size).drop().iterate()
-            time.sleep(delay)
-        logger.info("Finished batch deletion for label '%s'.", label)
+            total += dropped
+            if dropped < batch_size:
+                break
+        logger.info("Deleted %s vertices with label '%s'", total, label)
 
     def close(self) -> None:
         with self._lock:

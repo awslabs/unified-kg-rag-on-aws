@@ -1522,7 +1522,8 @@ class NeptuneIndexingConfig(BaseModel):
         default=1,
         ge=1,
         description=(
-            "Number of Neptune write batches to submit concurrently. 1 (default) "
+            "Number of Neptune write batches (and relationship edges, written "
+            "one per request) to submit concurrently. 1 (default) "
             "preserves sequential indexing; >1 fans batches over a thread pool, "
             "multiplexed across the Gremlin connection pool (sized to at least "
             "this value). Each batch accumulates its own stats, merged "

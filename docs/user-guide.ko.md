@@ -500,7 +500,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `indexing.opensearch.vector_search.engine` | `"lucene"` | HNSW 엔진입니다. `lucene`은 1024차원까지 `cosinesimil`을 지원합니다. `faiss`는 템플릿을 참고하세요. |
 | `indexing.opensearch.index_settings.refresh_interval` | `"1s"` | 대량 적재를 빠르게 하려면 늘리거나 `"-1"`로 두고, 실제 질의 전에 되돌리세요. |
 | `indexing.neptune.batch_size` | `100` | Neptune 쓰기 배치당 항목 수입니다. |
-| `indexing.neptune.index_concurrency` | `1` | 동시에 보내는 쓰기 배치 수입니다. `aws.neptune.pool_size`가 이보다 작으면 Gremlin 연결 풀이 이 값에 맞춰 늘어납니다. |
+| `indexing.neptune.index_concurrency` | `1` | 동시에 보내는 쓰기 배치(와 관계 간선) 수입니다. `aws.neptune.pool_size`가 이보다 작으면 Gremlin 연결 풀이 이 값에 맞춰 늘어납니다. |
 | `indexing.neptune.max_attempts` | `4` | 첫 시도를 포함한 Neptune 쓰기당 시도 횟수입니다. 실패하면 `retry_delay_seconds`(`2`)에서 시작하는 지터 포함 지수 백오프로 재시도합니다. 단, 재시도로 해결되지 않는 오류(잘못된 쿼리, 액세스 거부, 잘못된 파라미터)는 첫 시도에서 실패합니다. `1`이면 재시도하지 않습니다. |
 | `indexing.neptune.max_hops` | `3` | 검색 시점의 이웃 확장 깊이입니다. |
 | `indexing.neptune.property_max_length` | `4000` | Neptune 속성 값당 최대 문자 수입니다. 다시 요약되지 않는 가장 긴 설명보다 크게 두세요(요약은 600토큰, 약 2,400자를 넘으면 실행). 다시 수집해야 반영됩니다. |
