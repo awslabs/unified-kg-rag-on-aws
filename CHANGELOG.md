@@ -71,7 +71,10 @@ ignored, so check the start-up warnings after upgrading.
 
 Defaults. Set the old value explicitly to keep the previous behaviour.
 - `graph.visualization.enabled` defaults to `false`; set it to `true` or
-  render on demand with `run-visualization` (#210).
+  render on demand with `run-visualization` from the `visualization_data.json`
+  that ingestion still writes (`graph.visualization.export_data`, default
+  `true`: graph and communities, no model call; `run-visualization` computes
+  a spring layout and centrality) (#210, #PR).
 - Entity resolution merges only names equal after normalization, legal-form
   removal and dense-script spacing. Similarity matching is opt-in
   (`processing.fuzzy_entity_resolution: true`), and

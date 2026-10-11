@@ -524,7 +524,8 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | Token budget for the entity/relationship context in one report prompt. |
 | `graph.community_detection.report_generation.content_length` | `"medium"` | Report length as findings per report: `short` (5-7), `medium` (7-10), `long` (10-15). |
 | `graph.analysis.centrality.calculate_betweenness` | `true` | Betweenness centrality. On graphs larger than `betweenness_auto_sample_threshold` (`2000`) nodes it is sampled instead of computed exactly. |
-| `graph.visualization.enabled` | `false` | Render visualizations and export visualization data during ingestion (one embedding call per node plus a layout reduction per ingest). |
+| `graph.visualization.enabled` | `false` | Render visualizations during ingestion and export their data with the layout (one embedding call per node plus a layout reduction per ingest). |
+| `graph.visualization.export_data` | `true` | With `enabled: false`, still write `visualization_data.json` (graph and communities, no layout or centrality; one pass over the graph, no model call) so `run-visualization` can render on demand. |
 | `graph.visualization.outputs_directory` | `null` | Unset writes to `<cache dir>/<pipeline_id>/visualization`, so the data syncs to S3 with the cache. |
 | `graph.visualization.layout_method` | `"umap"` | `umap`, `tsne`, or `pca`. |
 | `graph.visualization.interactive.max_nodes` | `2000` | Top-N nodes by degree kept in `interactive_graph.html`; `0` or `null` disables the cap. Setting `interactive` replaces its default dict, so also set `physics_enabled: false` to keep physics off. |
@@ -1447,18 +1448,25 @@ order, the file names it is attributed to (`[]` when unattributable).
 This is a **standalone** renderer that draws from an already-exported
 visualization-data JSON. It does **not** re-run ingestion or touch AWS.
 
-When `graph.visualization.enabled` is `true` (default `false`, since it adds
-an embedding call per node and a layout reduction to every ingest), the
-community-detection stage of `run-ingestion` renders the visualizations and also writes
-`visualization_data.json` into `graph.visualization.outputs_directory`. When
+The community-detection stage of `run-ingestion` writes
+`visualization_data.json` into `graph.visualization.outputs_directory` on
+every run. By default (`graph.visualization.export_data: true`) it holds the
+graph and the community hierarchy only: writing it is one pass over the graph,
+with no embedding or model call, and `run-visualization` computes a seeded
+spring layout from the graph topology and the configured centrality metrics
+when it renders. With `graph.visualization.enabled: true` (default `false`,
+since it adds an embedding call per node and a layout reduction to every
+ingest) the stage also renders the visualizations, and the file carries the
+embedding-based layout and centrality. When
 that is unset (the default), ingestion writes to
 `<cache.local_directory>/<pipeline_id>/visualization/`, so with S3 cache sync
 enabled `visualization_data.json` is uploaded with the cache (the sync copies
 `.json` files only; re-render the HTML locally with `run-visualization`). That
 file is the `--data-path` input. The interactive graph keeps only the top
 `interactive.max_nodes` nodes by degree (default 2000) so large graphs still
-render in a browser. It holds the graph nodes/edges, the computed `layout`, the
-community hierarchy, and centrality; vector attributes (`embedding`,
+render in a browser. It holds the graph nodes/edges, the community hierarchy
+and, when rendered at ingestion, the computed `layout` and centrality; vector
+attributes (`embedding`,
 `*_embedding`) are omitted to keep the file small.
 
 Layout and error behaviour:

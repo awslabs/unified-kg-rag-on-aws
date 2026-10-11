@@ -1,0 +1,61 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""The visualization-data JSON that ``run-visualization`` renders from.
+
+Ingestion writes it after community detection. With
+``graph.visualization.enabled`` the visualization manager adds the computed
+layout and centrality; otherwise (``export_data``, the default) it holds the
+graph and the community hierarchy only, built here in one pass over the nodes
+and edges (no embedding or model call, no centrality, no layout), and
+``run-visualization`` computes the missing parts when it renders.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import networkx as nx
+
+from unified_kg_rag.shared.utils import strip_embedding_fields
+
+__all__ = [
+    "DEFAULT_OUTPUTS_DIRECTORY",
+    "VISUALIZATION_DATA_FILENAME",
+    "graph_data",
+    "strip_heavy_attributes",
+]
+
+# File written into the visualization outputs directory; it is the input
+# ``run-visualization --data-path`` re-renders from without ingestion.
+VISUALIZATION_DATA_FILENAME = "visualization_data.json"
+DEFAULT_OUTPUTS_DIRECTORY = "outputs/visualization"
+
+
+def strip_heavy_attributes(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop vector attributes from exported items: they are large, unused by any
+    renderer, and dominate file size."""
+    return [
+        {**item, "attributes": strip_embedding_fields(item.get("attributes") or {})}
+        for item in items
+    ]
+
+
+def graph_data(graph: nx.Graph, communities: dict[str, Any]) -> dict[str, Any]:
+    """Nodes, edges and ``communities`` (``export_community_data`` output),
+    without a layout or centrality."""
+    return {
+        "nodes": strip_heavy_attributes(
+            [
+                {"id": str(node_id), "attributes": attrs}
+                for node_id, attrs in graph.nodes(data=True)
+            ]
+        ),
+        "edges": strip_heavy_attributes(
+            [
+                {"source": str(u), "target": str(v), "attributes": attrs}
+                for u, v, attrs in graph.edges(data=True)
+            ]
+        ),
+        "layout": {},
+        "communities": communities,
+    }

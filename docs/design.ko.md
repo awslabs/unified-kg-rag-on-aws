@@ -433,7 +433,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 - `InteractiveRenderer`(pyvis 네트워크 + 커뮤니티 계층), `StaticRenderer`(Bokeh degree/centrality/community-size)
 - 레이아웃: 노드별 `name: description` 임베딩 + UMAP 차원 축소(실패하면 spring layout)
-- **독립 실행**(`application/cli/run_visualization.py`): 수집 없이 내보낸 그래프 JSON(`export_visualization_data` 출력 형식: `nodes`/`edges`/`layout`/`communities.hierarchy`)을 읽어 타입이 있는 객체로 되살린 뒤 등록된 렌더러로 렌더링합니다.
+- **독립 실행**(`application/cli/run_visualization.py`): 수집 없이 내보낸 그래프 JSON(`export_visualization_data` 출력 형식: `nodes`/`edges`/`layout`/`communities.hierarchy`)을 읽어 타입이 있는 객체로 되살린 뒤 등록된 렌더러로 렌더링합니다. 렌더링을 끈 수집이 쓰는 데이터 전용 파일(`graph.visualization.export_data`, `domain/ingestion/visualization_data.py`)은 `layout`이 비어 있고 중심성이 없으므로, CLI가 시드를 고정한 spring 레이아웃과 설정한 중심성을 계산합니다.
 
 ---
 

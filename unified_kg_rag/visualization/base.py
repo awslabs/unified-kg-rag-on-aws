@@ -15,9 +15,13 @@ from unified_kg_rag.adapters.renderers import (
     registered_renderers,
 )
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
+from unified_kg_rag.domain.ingestion.visualization_data import (
+    DEFAULT_OUTPUTS_DIRECTORY,
+    VISUALIZATION_DATA_FILENAME,
+    strip_heavy_attributes,
+)
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import strip_embedding_fields
 
 from .embeddings.dimensionality import DimensionalityReducer
 from .embeddings.node_embedder import BedrockNodeEmbedder
@@ -25,21 +29,12 @@ from .exporters.html_exporter import HTMLExporter
 
 logger = get_logger(__name__)
 
-# File written into the visualization outputs directory on every run; it is the
-# input ``run-visualization --data-path`` re-renders from without ingestion.
-VISUALIZATION_DATA_FILENAME = "visualization_data.json"
-
-
-def _strip_heavy_attributes(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop vector attributes from exported items: they are large, unused by any
-    renderer, and dominate file size."""
-    return [
-        {**item, "attributes": strip_embedding_fields(item.get("attributes") or {})}
-        for item in items
-    ]
-
-
-DEFAULT_OUTPUTS_DIRECTORY = "outputs/visualization"
+# Re-exported: callers import them from here as well.
+__all__ = [
+    "DEFAULT_OUTPUTS_DIRECTORY",
+    "VISUALIZATION_DATA_FILENAME",
+    "GraphVisualizationManager",
+]
 
 
 class GraphVisualizationManager:
@@ -206,8 +201,8 @@ class GraphVisualizationManager:
         output_path = Path(output_path)
         logger.info("Exporting visualization data to '%s'...", output_path)
         data = self.analyzer.export_graph_data()
-        data["nodes"] = _strip_heavy_attributes(data.get("nodes", []))
-        data["edges"] = _strip_heavy_attributes(data.get("edges", []))
+        data["nodes"] = strip_heavy_attributes(data.get("nodes", []))
+        data["edges"] = strip_heavy_attributes(data.get("edges", []))
         data["layout"] = layout if layout is not None else self._generate_layout()
         data["layout_degraded"] = self.layout_degraded
         data["communities"] = self.community_detector.export_community_data()

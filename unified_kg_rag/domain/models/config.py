@@ -1427,7 +1427,15 @@ class VisualizationConfig(BaseModel):
         description="Render visualizations during ingestion. Off by default: it "
         "adds an embedding call per node (embedding_method) and a "
         "dimensionality reduction to every ingest; render on demand with "
-        "run-visualization instead.",
+        "run-visualization from the data export_data writes instead.",
+    )
+    export_data: bool = Field(
+        default=True,
+        description="Write visualization_data.json (graph nodes, edges and the "
+        "community hierarchy) at ingestion when enabled is false, so "
+        "run-visualization can render on demand. One pass over the graph: no "
+        "embedding or model call, no layout or centrality (run-visualization "
+        "computes them). enabled: true always writes the file, with its layout.",
     )
     outputs_directory: str | Path | None = Field(
         default=None,
