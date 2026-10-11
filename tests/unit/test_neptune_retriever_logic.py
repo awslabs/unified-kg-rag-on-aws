@@ -253,25 +253,35 @@ def test_build_content_community(retriever) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_calculate_relevance_is_mean_of_importance_and_proximity(
-    retriever,
-) -> None:
+def test_calculate_relevance_bands_by_distance(retriever) -> None:
+    # Path length L scores in (1 / (L + 1), 1 / L], importance places it inside
+    # (the upper half of the band, so the open lower edge never ties).
     seed = retriever._calculate_relevance(
         {"importance": 1.0}, [{"name": ["a"]}], is_community=False
+    )
+    weak_seed = retriever._calculate_relevance(
+        {"importance": 0.0}, [{"name": ["a"]}], is_community=False
     )
     one_hop = retriever._calculate_relevance(
         {"importance": 1.0}, [{"name": ["a"]}, {"name": ["b"]}], is_community=False
     )
     assert seed == pytest.approx(1.0)
-    assert one_hop == pytest.approx(0.75)
+    assert weak_seed == pytest.approx(0.75)
+    assert one_hop == pytest.approx(0.5)
 
 
 def test_calculate_relevance_nearer_node_outranks_more_important_far_one(
     retriever,
 ) -> None:
-    near = retriever._calculate_relevance({"importance": 0.2}, [{}], False)
-    far = retriever._calculate_relevance({"importance": 0.6}, [{}, {}], False)
+    near = retriever._calculate_relevance({"importance": 0.0}, [{}], False)
+    far = retriever._calculate_relevance({"importance": 1.0}, [{}, {}], False)
     assert near > far
+
+
+def test_calculate_relevance_importance_orders_within_a_distance(retriever) -> None:
+    low = retriever._calculate_relevance({"importance": 0.2}, [{}, {}], False)
+    high = retriever._calculate_relevance({"importance": 0.8}, [{}, {}], False)
+    assert high > low
 
 
 def test_calculate_relevance_community_size_relative_to_largest(retriever) -> None:
@@ -282,7 +292,7 @@ def test_calculate_relevance_community_size_relative_to_largest(retriever) -> No
         {"size": 25}, [{}], is_community=True, max_community_size=50
     )
     assert largest == pytest.approx(1.0)
-    assert half == pytest.approx(0.75)
+    assert half == pytest.approx(0.5 + 0.5 * (1.0 + 0.5) / 2)
     assert 0.0 <= retriever._calculate_relevance({"size": 5}, [], True) <= 1.0
 
 
@@ -470,8 +480,9 @@ def test_rank_is_normalized_within_the_result(retriever) -> None:
     results = retriever._process_traversal_results(items, SearchQuery(query="x"))
     by_id = {r.source: r.score for r in results}
     assert [r.source for r in results] == ["high", "low"]
-    assert by_id["high"] == pytest.approx((1.0 + 0.5) / 2)
-    assert by_id["low"] == pytest.approx((0.25 + 0.5) / 2)
+    # One hop out: the (1/3, 1/2] band, importance rank / max rank inside it.
+    assert by_id["high"] == pytest.approx(1 / 3 + (1 / 6) * (1.0 + 1.0) / 2)
+    assert by_id["low"] == pytest.approx(1 / 3 + (1 / 6) * (1.0 + 0.25) / 2)
 
 
 def test_degree_source_uses_the_projected_edge_count(retriever, config) -> None:
@@ -486,7 +497,8 @@ def test_none_source_keeps_the_neutral_importance(retriever, config) -> None:
     config.indexing.neptune.entity_importance_source = "none"
     items = [_entity_item("a", 1, rank=1), _entity_item("b", 1, rank=9)]
     results = retriever._process_traversal_results(items, SearchQuery(query="x"))
-    assert [r.score for r in results] == pytest.approx([0.5, 0.5])
+    neutral = 1 / 3 + (1 / 6) * (1.0 + 0.5) / 2
+    assert [r.score for r in results] == pytest.approx([neutral, neutral])
 
 
 def test_overfetched_entities_are_cut_after_ranking(retriever, config) -> None:
@@ -499,6 +511,33 @@ def test_overfetched_entities_are_cut_after_ranking(retriever, config) -> None:
     ]
     results = retriever._process_traversal_results(items, query)
     assert [r.source for r in results] == ["near0", "near1"]
+
+
+@pytest.mark.parametrize("source", ["rank", "degree", "none"])
+def test_cut_keeps_every_seed_over_higher_ranked_hubs(
+    retriever, config, source
+) -> None:
+    # 10 low-degree seeds and 30 one-hop hubs: averaging importance and
+    # proximity let the hubs push 8 of the 10 seeds out of the cut.
+    config.indexing.neptune.entity_importance_source = source
+    config.indexing.neptune.traversal_fetch_multiplier = 3
+    seeds = [
+        _entity_item(f"seed{i}", 0, rank=1 + i % 3, degree=1 + i % 3) for i in range(10)
+    ]
+    hubs = [
+        _entity_item(f"hub{i}", 1, rank=4 + i % 7, degree=4 + i % 7) for i in range(30)
+    ]
+    results = retriever._process_traversal_results(
+        hubs + seeds, SearchQuery(query="x", top_k=10)
+    )
+    sources = [r.source for r in results]
+    assert set(sources[:10]) == {f"seed{i}" for i in range(10)}
+    # The expansion still gets its own top_k slots, best hubs first.
+    assert len(sources) == 20
+    assert all(s.startswith("hub") for s in sources[10:])
+    if source != "none":
+        kept = {int(s[3:]) % 7 for s in sources[10:]}
+        assert min(kept) >= 4  # degrees 8-10 outrank the weaker hubs
 
 
 def test_fetch_multiplier_one_keeps_every_traversed_entity(retriever, config) -> None:
@@ -606,7 +645,9 @@ def test_a_node_reached_from_two_seeds_keeps_its_shortest_path(retriever) -> Non
     ]
     results = retriever._process_traversal_results(items, SearchQuery(query="x"))
     by_id = {r.source: r.score for r in results}
-    assert by_id == {"seed": pytest.approx(1.0), "shared": pytest.approx(0.75)}
+    # One hop (the shorter path) tops the (1/3, 1/2] band; two hops would cap
+    # at 1/3.
+    assert by_id == {"seed": pytest.approx(1.0), "shared": pytest.approx(0.5)}
 
 
 # --------------------------------------------------------------------------- #

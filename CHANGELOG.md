@@ -247,6 +247,10 @@ Library API (Python callers and custom backends).
 - Retrieval: graph expansion returns every seed and its neighbourhood;
   Korean BM25 recall, CJK fuzziness and NFC normalization; fatal errors
   surface instead of reading as no results (#102, #161, #175, #177, #212).
+- Retrieval: graph expansion ranks by distance from the seeds first, so
+  high-degree neighbours no longer push the query's own seed entities out of
+  the cut; the seeds are always kept and the neighbourhood gets its own
+  `top_k * retrieval_multiplier` slots (#PR).
 - Evaluation: `answer_match` no longer counts a different number or name as
   a match; judge failures are recorded per query instead of discarding the
   run; non-zero exit codes on failed scoring (#158, #210).
