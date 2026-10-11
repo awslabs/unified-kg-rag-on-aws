@@ -150,6 +150,25 @@ class TestLoadData:
         queries, _ = EvaluationManager.load_data(path)
         assert queries[0].metadata["answer_aliases"] == ["x"]
 
+    def test_top_level_answer_aliases_accepted(self, tmp_path) -> None:
+        path = tmp_path / "data.json"
+        path.write_text(
+            json.dumps(
+                [
+                    {"question": "q", "answer": "a", "answer_aliases": ["x"]},
+                    {
+                        "question": "r",
+                        "answer_aliases": ["top"],
+                        "metadata": {"answer_aliases": ["nested"]},
+                    },
+                ]
+            ),
+            encoding="utf-8",
+        )
+        queries, _ = EvaluationManager.load_data(path)
+        assert queries[0].metadata["answer_aliases"] == ["x"]
+        assert queries[1].metadata["answer_aliases"] == ["nested"]
+
     def test_numeric_zero_answer_is_a_ground_truth(self, tmp_path) -> None:
         path = tmp_path / "eval.json"
         path.write_text(json.dumps([{"question": "How many?", "answer": 0}]))

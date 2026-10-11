@@ -563,6 +563,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- Evaluation datasets may put `answer_aliases` at the top level of an item,
+  next to `answer`; it was silently ignored there and only read from
+  `metadata.answer_aliases`, which still wins when both are set (#PR).
 - The `ragas` evaluator no longer pays judge calls for reference-based
   metrics (`answer_correctness`, `context_precision`, `context_recall`) on
   rows without a reference answer, whose scores were then discarded as

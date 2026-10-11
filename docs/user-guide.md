@@ -1275,7 +1275,8 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   but none is attributable; a query that retrieved no sources at all scores 0
   (a miss).
 - **`answer_match`** — deterministic, LLM-free answer scores against `answer`
-  and optional `metadata.answer_aliases`, taking the max over them.
+  and optional `answer_aliases` (a string or list, top level or under
+  `metadata`; `metadata` wins when both are set), taking the max over them.
   **`answer_contains`** (1.0 when the gold answer or an alias appears in the
   generated answer as a whole-word phrase) is the headline deterministic
   metric: long-form RAG answers rarely equal a short gold span, so it tracks

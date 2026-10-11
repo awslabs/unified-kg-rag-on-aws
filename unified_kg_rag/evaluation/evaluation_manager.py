@@ -274,6 +274,9 @@ class EvaluationManager:
             )
 
         final_metadata = {**base_metadata, **item_metadata}
+        # Aliases sit next to ``answer`` as naturally as under ``metadata``.
+        if "answer_aliases" in item:
+            final_metadata.setdefault("answer_aliases", item["answer_aliases"])
         rag_fields = {
             k: v for k, v in final_metadata.items() if k in RAGInput.model_fields
         }
