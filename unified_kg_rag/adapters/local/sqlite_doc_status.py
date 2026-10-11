@@ -91,6 +91,10 @@ class SQLiteDocStatusStore:
                 with self._registry_errors("open the database"):
                     if self.path != ":memory:":
                         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+                        logger.info(
+                            "Doc-status registry: SQLite database '%s'",
+                            Path(self.path).resolve(),
+                        )
                     connection = sqlite3.connect(
                         self.path, check_same_thread=False, isolation_level=None
                     )

@@ -820,6 +820,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   that the filter removed (they named a filtered entity) is dropped with them.
   Merged extraction entities list their text units in first-seen order instead
   of set order (#213).
+- **Behaviour change:** a relative `providers.doc_status.sqlite_path` is
+  resolved against the config file's directory instead of the working
+  directory, so a run started elsewhere no longer opens a new, empty registry;
+  the SQLite store logs the database's absolute path, and
+  `docker/config.local.yaml` keeps it in the repository's `.unified-kg-rag/`.
+  An incremental run whose registry lists indexed documents of its namespace
+  that the graph store no longer holds (an in-memory Gremlin Server
+  restarted) now fails before writing anything and asks for
+  `indexing.reset: true`, instead of treating them as unchanged (#PR).
 - A delta entity that merged into a stored one under another id no longer
   rewrites (and re-summarizes) every edge of the stored entity: its incident
   edges are still read to find matches, but only the edges a delta edge

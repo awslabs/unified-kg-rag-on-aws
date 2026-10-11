@@ -239,6 +239,7 @@ providers:
     kind: "dynamodb"
     # Incremental indexing on/off; null follows aws.dynamodb.enabled.
     enabled: null
+    # SQLite registry file (kind: sqlite); relative to this config file.
     sqlite_path: ".unified-kg-rag/doc-status.sqlite3"
 
 # Global Output Fixing Configuration (auto-repair malformed model responses)

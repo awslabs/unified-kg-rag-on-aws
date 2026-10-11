@@ -247,6 +247,34 @@ def test_local_backend_from_yaml(tmp_path: Path) -> None:
     assert config.search.answer_generation_model_id == "synthetic-llm"
 
 
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        (None, "conf/.unified-kg-rag/doc-status.sqlite3"),
+        ("../registry.sqlite3", "registry.sqlite3"),
+        (":memory:", ":memory:"),
+    ],
+)
+def test_a_relative_sqlite_path_follows_the_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured, expected
+) -> None:
+    # The registry must not depend on the directory a run starts in.
+    (tmp_path / "conf").mkdir()
+    path = tmp_path / "conf" / "config.yaml"
+    line = f"    sqlite_path: '{configured}'\n" if configured else ""
+    path.write_text(
+        f"providers:\n  doc_status:\n    kind: sqlite\n{line}", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    loader = ConfigLoader(Path("conf/config.yaml"))
+    sqlite_path = loader.load_config().providers.doc_status.sqlite_path
+
+    assert sqlite_path == (
+        expected if expected == ":memory:" else str(tmp_path.resolve() / expected)
+    )
+
+
 def test_api_key_is_masked() -> None:
     config = Config(
         providers={

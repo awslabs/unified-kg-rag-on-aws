@@ -19,7 +19,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     build_document_lineage,
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
-from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
+from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id, detect_delta
 from unified_kg_rag.domain.models import (
     Config,
     DocStatusRecord,
@@ -29,6 +29,7 @@ from unified_kg_rag.domain.models import (
     Relationship,
     TextUnit,
 )
+from unified_kg_rag.shared import DataProcessingError
 
 pytestmark = pytest.mark.integration
 
@@ -422,3 +423,24 @@ def test_a_removed_scopeless_record_of_no_known_namespace_is_retained_for(
 
     assert removal.shared_entity_ids == ["e-vendor"]
     assert "tu-a" in removal.exclusive_ids
+
+
+def test_a_graph_that_lost_the_registrys_documents_fails_fast(harness) -> None:
+    # An in-memory Gremlin Server restarted: the registry still lists the
+    # document, so the diff calls it unchanged, but the graph is empty.
+    inc, store, graph, _ = harness
+    a = _doc("/a.txt", "x")
+    tus, ents = _artifacts_for(a, ["e-vendor"])
+    _commit(inc, [a], tus, ents)
+    delta, _ = detect_delta([a, _doc("/b.txt", "y")], store)
+
+    inc.check_graph_holds_registry(delta)
+
+    graph.clear(["default"])
+    with pytest.raises(DataProcessingError, match="indexing.reset"):
+        inc.check_graph_holds_registry(delta)
+
+
+def test_the_graph_probe_skips_a_registry_without_indexed_documents(harness) -> None:
+    inc, store, _, _ = harness
+    inc.check_graph_holds_registry(detect_delta([_doc("/a.txt", "x")], store)[0])

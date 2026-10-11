@@ -230,7 +230,8 @@ Bedrock models:
 - **Incremental indexing** uses the SQLite registry when
   `providers.doc_status.enabled: true` (or `aws.dynamodb.enabled: true`, the
   original switch); [`docker/config.local.yaml`](../docker/config.local.yaml)
-  turns it on.
+  turns it on. A relative `sqlite_path` is resolved against the config file's
+  directory, and the run logs the database's absolute path.
 - **Token counting** uses the script-aware estimate (the same one Bedrock falls
   back to); `providers.llm.tokenizer: tiktoken` counts with a BPE encoding
   instead, which downloads its encoding file on first use.
@@ -277,7 +278,10 @@ hashing embedding provider and a fake model server:
 `LOCAL_STORES=1 uv run pytest tests/integration/test_local_stores.py`.
 
 Known differences from Neptune: TinkerGraph keeps the graph in memory only,
-and a list property written when a vertex is created keeps duplicate values
+so restarting Gremlin Server empties it while the SQLite registry keeps its
+records. An incremental run then stops before writing anything and asks for
+`indexing.reset: true` (or deleting the registry), instead of treating the
+lost documents as unchanged. A list property written when a vertex is created keeps duplicate values
 (Neptune stores them once). Nothing in the compose file is hardened; it binds
 to `127.0.0.1` only.
 

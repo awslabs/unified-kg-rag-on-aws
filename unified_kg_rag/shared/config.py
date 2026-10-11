@@ -12,6 +12,7 @@ from pydantic import BaseModel, SecretStr, ValidationError
 
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.config import LEGACY_CONFIG_KEYS
+from unified_kg_rag.domain.models.provider_config import SQLITE
 
 # Stdlib logger (not get_logger): this module is imported by the logging setup,
 # so reaching back through get_logger -> get_config would risk a circular import.
@@ -85,12 +86,31 @@ class ConfigLoader:
             warn_unknown_keys(config_data, Config)
             self._config = Config(**config_data)
             self._apply_environment_overrides()
+            self._resolve_relative_paths()
             return self._config
 
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML in configuration file: {e}") from e
         except ValidationError as e:
             raise ValueError(f"Configuration validation error: {e}") from e
+
+    def _resolve_relative_paths(self) -> None:
+        """Anchor a relative SQLite registry path at the config file's directory.
+
+        The registry must be the same file on every run against the same
+        stores; relative to the working directory, a run started elsewhere
+        would silently use an empty registry.
+        """
+        if self._config is None or self.config_path is None:
+            return
+        doc_status = self._config.providers.doc_status
+        path = Path(doc_status.sqlite_path)
+        if (
+            doc_status.kind == SQLITE
+            and doc_status.sqlite_path != ":memory:"
+            and not path.is_absolute()
+        ):
+            doc_status.sqlite_path = str((self.config_path.parent / path).resolve())
 
     def _apply_environment_overrides(self) -> None:
         if self._config is None:

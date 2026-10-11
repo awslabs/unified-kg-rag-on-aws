@@ -1812,6 +1812,7 @@ class IndexingStage(PipelineStage):
         # interrupted from here on is repaired by the next one (the docs
         # read as changed, or as deleted when gone, and every artifact this
         # run may write is found by their lineage).
+        incremental.check_graph_holds_registry(delta)
         incremental.write_ahead(delta, lineages)
 
         # Drop the stale artifacts of changed and deleted docs in ONE removal

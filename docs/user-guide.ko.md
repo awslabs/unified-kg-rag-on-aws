@@ -227,6 +227,8 @@ docker compose -f docker/compose.local.yaml down -v
 - **증분 인덱싱**은 `providers.doc_status.enabled: true`(또는 기존 스위치인
   `aws.dynamodb.enabled: true`)일 때 SQLite 레지스트리를 씁니다.
   [`docker/config.local.yaml`](../docker/config.local.yaml)은 이를 켭니다.
+  상대 경로 `sqlite_path`는 설정 파일 디렉터리를 기준으로 해석하며, 실행 로그에
+  데이터베이스의 절대 경로를 남깁니다.
 - **토큰 계산**은 문자 체계를 고려한 추정치(Bedrock이 대체 수단으로 쓰는 것과 같음)를
   씁니다. `providers.llm.tokenizer: tiktoken`이면 BPE 인코딩으로 세며, 처음 쓸 때 인코딩
   파일을 내려받습니다.
@@ -268,8 +270,10 @@ Ollama를 실행합니다. OpenSearch는 보안 플러그인을 끄고 `analysis
 모델 없이 저장소만 확인하려면 해싱 임베딩 공급자와 가짜 모델 서버를 쓰는 스모크 테스트를
 실행하세요: `LOCAL_STORES=1 uv run pytest tests/integration/test_local_stores.py`.
 
-Neptune과 다른 점이 있습니다. TinkerGraph는 그래프를 메모리에만 두며, 정점을 만들 때
-쓴 리스트 속성에 중복 값을 그대로 저장합니다(Neptune은 한 번만 저장). compose 파일에는
+Neptune과 다른 점이 있습니다. TinkerGraph는 그래프를 메모리에만 두므로 Gremlin Server를
+다시 시작하면 그래프는 비지만 SQLite 레지스트리의 레코드는 남습니다. 이때 증분 실행은 잃어버린
+문서를 변경 없음으로 처리하지 않고, 아무것도 쓰기 전에 멈추며 `indexing.reset: true`(또는
+레지스트리 삭제)를 안내합니다. 또 정점을 만들 때 쓴 리스트 속성에 중복 값을 그대로 저장합니다(Neptune은 한 번만 저장). compose 파일에는
 보안 강화 설정이 없으며 `127.0.0.1`에만 바인딩합니다.
 
 ---

@@ -170,6 +170,11 @@ class _SuffixRemoval(BaseModel):
     removed_text_unit_ids: list[str] = Field(default_factory=list)
 
 
+# Indexed documents, and entities of them, probed in the graph store before
+# a delta run writes (IncrementalIndexer.check_graph_holds_registry).
+_PROBE_DOCUMENTS = 20
+_PROBE_ENTITIES = 100
+
 _EXTRACTION_FAILED = "extraction failed on some text units"
 _WRITE_FAILED = "writing some of its artifacts to the stores failed"
 _WRITE_AHEAD_INFO = (
@@ -426,6 +431,39 @@ class IncrementalIndexer:
             self.scope,
             failed_doc_ids or (),
             max_failures=max_failures,
+        )
+
+    def check_graph_holds_registry(self, delta: DocumentDelta) -> None:
+        """Raise before any write when the graph lost the registry's documents.
+
+        The registry and the stores must describe the same corpus: with a
+        registry of indexed documents over an emptied graph (an in-memory
+        Gremlin Server restarted, say), the diff calls those documents
+        unchanged and they would never be indexed again. Probes the entities
+        of a few indexed documents of the run's namespace; when the graph
+        holds none of them, raises :class:`DataProcessingError`.
+        """
+        stored = [*delta.unchanged, *delta.changed][:_PROBE_DOCUMENTS]
+        ids_by_suffix: dict[str, list[str]] = defaultdict(list)
+        for record in _read_many(self.doc_status, stored).values():
+            if record.status is DocStatus.PROCESSED:
+                ids_by_suffix[record.suffix].extend(record.entity_ids)
+        probes = {
+            suffix: sorted(set(ids))[:_PROBE_ENTITIES]
+            for suffix, ids in ids_by_suffix.items()
+            if ids
+        }
+        if not probes or any(
+            self.indexing_manager.neptune_indexer.read_entities(ids, suffix=suffix)
+            for suffix, ids in probes.items()
+        ):
+            return
+        raise DataProcessingError(
+            "The doc-status registry lists indexed documents of this namespace "
+            "whose entities the graph store does not hold (an in-memory Gremlin "
+            "Server loses its graph on restart). Re-run with indexing.reset: "
+            "true to rebuild the stores and the registry, or delete the "
+            "registry's records of this namespace."
         )
 
     def write_ahead(

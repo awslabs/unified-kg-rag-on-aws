@@ -18,6 +18,7 @@ AWS-free: an in-memory registry plus a recording indexing manager.
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -54,6 +55,10 @@ class _RecordingManager:
         self.config = Config()
         self.calls: list[tuple[str, Any]] = []
         self._delete_failures = delete_failures
+        # The graph still holds what the registry lists.
+        self.neptune_indexer = SimpleNamespace(
+            read_entities=lambda ids, suffix=None: ids
+        )
 
     def index_all_data(self, **kwargs: Any) -> dict[str, IndexingStats]:
         self.calls.append(("index_all_data", kwargs))
