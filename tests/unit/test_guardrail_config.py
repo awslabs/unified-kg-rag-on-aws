@@ -308,7 +308,7 @@ class _RecordingFactory(BedrockLanguageModelFactory):
 def test_setup_chain_forwards_purpose_and_defaults_to_query() -> None:
     from langchain_core.output_parsers import StrOutputParser
 
-    from unified_kg_rag.adapters.aws.chain_factory import setup_chain
+    from unified_kg_rag.adapters.llm.chain_factory import setup_chain
     from unified_kg_rag.domain.models import LanguageModelId
     from unified_kg_rag.domain.prompts import TextTranslationPrompt
 
@@ -328,7 +328,7 @@ def test_setup_chain_forwards_purpose_and_defaults_to_query() -> None:
 
 
 def test_output_fixing_llm_inherits_purpose() -> None:
-    from unified_kg_rag.adapters.aws.chain_factory import (
+    from unified_kg_rag.adapters.llm.chain_factory import (
         create_robust_xml_output_parser,
     )
     from unified_kg_rag.domain.models import LanguageModelId

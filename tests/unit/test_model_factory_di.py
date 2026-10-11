@@ -78,7 +78,7 @@ def test_opensearch_indexer_uses_injected_embedding_factory(mocker) -> None:
         return_value=mocker.MagicMock(),
     )
     bedrock_factory = mocker.patch(
-        "unified_kg_rag.adapters.providers.BedrockEmbeddingModelFactory"
+        "unified_kg_rag.adapters.aws.bedrock.BedrockEmbeddingModelFactory"
     )
     fake = FakeEmbeddingFactory()
 

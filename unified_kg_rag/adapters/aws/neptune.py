@@ -3,6 +3,7 @@
 import functools
 import threading
 from collections.abc import Callable
+from functools import cached_property
 from typing import Any
 
 import boto3
@@ -74,14 +75,24 @@ class NeptuneClient:
     def __init__(self, config: Config, boto_session: boto3.Session | None = None):
         self.config = config
         self.neptune_config = config.aws.neptune
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=config.aws.profile_name,
-            region_name=config.aws.region_name,
-        )
+        if boto_session is not None:
+            self.boto_session = boto_session
         self._connection: DriverRemoteConnection | None = None
         self._g: GraphTraversalSource | None = None
         self._lock = threading.RLock()  # Reentrant lock for thread safety
         logger.debug("Neptune client initialized")
+
+    @cached_property
+    def boto_session(self) -> boto3.Session:
+        """The session IAM auth signs with (a default one unless given).
+
+        Created on first use, so a client of a store without IAM auth (a
+        local Gremlin Server or OpenSearch) never resolves an AWS profile.
+        """
+        return boto3.Session(
+            profile_name=self.config.aws.profile_name,
+            region_name=self.config.aws.region_name,
+        )
 
     @property
     def g(self) -> GraphTraversalSource:

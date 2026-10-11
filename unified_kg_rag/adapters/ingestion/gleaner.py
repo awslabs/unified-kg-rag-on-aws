@@ -9,7 +9,7 @@ import boto3
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
-from unified_kg_rag.adapters.aws.chain_factory import (
+from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
@@ -19,11 +19,11 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     coerce_llm_text,
     group_by_text_unit,
 )
+from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.entity_grounding import (
     is_grounded,
     is_name_grounded,
 )
-from unified_kg_rag.domain.ingestion.merge.merger import merge_descriptions
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     cite_relationship_endpoints,
 )
@@ -262,7 +262,6 @@ class GraphGleaner(BaseProcessor):
     ) -> None:
         super().__init__(config)
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
         self.gleaning_config = self.config.processing.gleaning
         self.ignore_errors = self.config.processing.ignore_errors
         self.show_progress = show_progress
@@ -279,8 +278,8 @@ class GraphGleaner(BaseProcessor):
         self._dropped_ungrounded_endpoint_name = 0
 
         self.factory = self.providers.llm_factory
-        self.batch_processor = BatchProcessor(
-            is_transient_error=is_transient_bedrock_error
+        self.batch_processor = BatchProcessor.from_processing(
+            self.config.processing, is_transient_error=is_transient_bedrock_error
         )
 
         self.max_entities_per_prompt = self.gleaning_config.max_entities_per_prompt
@@ -575,7 +574,6 @@ class GraphGleaner(BaseProcessor):
                 prepare_inputs_func=prepare_inputs_for_chunk,
                 sequential_func=self.graph_refiner.invoke,
                 task_name="Graph Refinement",
-                run_config=self.config.processing.model_dump(),
                 show_progress=self.show_progress,
             )
         except Exception as e:

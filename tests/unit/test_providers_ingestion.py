@@ -18,7 +18,8 @@ from unittest.mock import MagicMock
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
-from unified_kg_rag.adapters import providers as providers_module
+from tests.fixtures.fakes.chat_models import fake_model_info
+from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import Config, PipelineStageType
@@ -42,7 +43,7 @@ class _FakeLLMFactory:
         return FakeListChatModel(responses=["ok"])
 
     def get_model_info(self, model_id: Any) -> Any:
-        return None
+        return fake_model_info(model_id)
 
 
 @pytest.fixture
@@ -53,7 +54,7 @@ def no_bedrock(mocker) -> None:
         "BedrockRerankModelFactory",
     ):
         mocker.patch.object(
-            providers_module,
+            bedrock_module,
             name,
             side_effect=AssertionError(f"{name} must not be constructed"),
         )
@@ -81,8 +82,8 @@ def test_injected_providers_reach_every_ingestion_stage(
     stages = {pipeline.name_to_type_map[s.name]: s for s in pipeline.stages}
 
     assert pipeline.providers is providers
-    for stage_type in DataIngestionPipeline.PROVIDER_STAGES:
-        assert stages[stage_type].providers is providers, stage_type
+    for stage_type, stage in stages.items():
+        assert stage.providers is providers, stage_type
 
     T = PipelineStageType
     assert stages[T.TEXT_CHUNKING].chunker.factory is llm
@@ -116,17 +117,16 @@ def test_translator_and_visualization_use_the_bundle(no_bedrock) -> None:
 
     assert translator.factory is llm
     assert viz.providers is providers
-    assert viz.boto_session is providers.boto_session
 
 
 def test_pipeline_without_providers_builds_one_default_bundle(
     tmp_path: Path, mocker
 ) -> None:
     llm_cls = mocker.patch.object(
-        providers_module, "BedrockLanguageModelFactory", return_value=_FakeLLMFactory()
+        bedrock_module, "BedrockLanguageModelFactory", return_value=_FakeLLMFactory()
     )
     mocker.patch.object(
-        providers_module,
+        bedrock_module,
         "BedrockEmbeddingModelFactory",
         return_value=_FakeEmbeddingFactory(),
     )
@@ -142,11 +142,7 @@ def test_pipeline_without_providers_builds_one_default_bundle(
 
     # Every LLM-using stage shares one default factory: built exactly once.
     llm_cls.assert_called_once()
-    assert all(
-        stage.providers is pipeline.providers
-        for stage in pipeline.stages
-        if pipeline.name_to_type_map[stage.name] in pipeline.PROVIDER_STAGES
-    )
+    assert all(stage.providers is pipeline.providers for stage in pipeline.stages)
 
 
 def test_evaluation_manager_hands_the_chain_bundle_to_evaluators(

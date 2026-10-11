@@ -10,39 +10,25 @@ and lookups: no boto3 or LangChain clients are constructed here.
 
 import re
 import threading
-from typing import Any, ClassVar, Literal
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ValidationError
 
 from unified_kg_rag.domain.models import (
     EmbeddingModelId,
     LanguageModelId,
     RerankModelId,
 )
-from unified_kg_rag.domain.models.config import EFFORT_LEVELS, BedrockConfig
+from unified_kg_rag.domain.models.config import EFFORT_LEVELS
+from unified_kg_rag.ports.model_factory import (
+    EmbeddingModelInfo,
+    LanguageModelInfo,
+    RerankModelInfo,
+)
 from unified_kg_rag.shared import LanguageModelError, get_logger
 
 logger = get_logger(__name__)
 
-
-class EmbeddingModelInfo(BaseModel):
-    dimensions: int | list[int] | None = Field(
-        default=None,
-        description="The embedding dimensions. Can be a single value or list of supported dimensions.",
-    )
-    max_sequence_length: int | None = Field(
-        default=None,
-        description="Maximum sequence length in characters that the model can process.",
-    )
-    max_sequence_tokens: int | None = Field(
-        default=None,
-        description="Maximum number of tokens the model can process in a single sequence.",
-    )
-
-
-# "other" is any provider without provider-specific request shaping: it goes
-# through Converse with no reasoning block, sampling params or cache markers.
-ModelProvider = Literal["anthropic", "openai", "other"]
 
 # Effort levels each model family accepts on bedrock-runtime, as reported by
 # the service's own validation errors. Anthropic levels are sent as
@@ -60,188 +46,6 @@ _OPENAI_EFFORTS: frozenset[str] = EFFORT_LEVELS
 # "~30% more tokens" (Sonnet 5 vs 4.6; Haiku 5.5 vs 4.5). CountTokens rejects
 # all of them on bedrock-runtime, so the local estimate is scaled by this.
 _CLAUDE_4_7_TOKENIZER_MULTIPLIER = 1.3
-
-
-class LanguageModelInfo(BaseModel):
-    # Forbid unknown keys so a typo in aws.bedrock.model_overrides fails fast.
-    model_config = ConfigDict(extra="forbid")
-
-    provider: ModelProvider = Field(
-        default="anthropic",
-        description=(
-            "Model provider. Selects the provider-specific request shape: "
-            "Anthropic thinking/output_config, anthropic_beta headers and the "
-            "legacy stop sequence for 'anthropic'; reasoning.effort for 'openai'; "
-            "a plain Converse request for 'other'."
-        ),
-    )
-    context_window_size: int = Field(
-        description="Maximum context window size in tokens that the model can handle."
-    )
-    max_output_tokens: int = Field(
-        description="Maximum number of tokens the model can generate in a single response."
-    )
-    supports_prompt_caching: bool = Field(
-        default=False,
-        description="Whether the model supports prompt caching to improve performance.",
-    )
-    min_cache_tokens: int = Field(
-        default=1024,
-        ge=0,
-        description=(
-            "Minimum prompt-prefix tokens for a cache checkpoint. A shorter "
-            "system prompt gets no cache marker: Bedrock would accept it but "
-            "cache nothing."
-        ),
-    )
-    supports_thinking: bool = Field(
-        default=False,
-        description="Whether the model supports thinking/reasoning capabilities.",
-    )
-    supports_1m_context_window: bool = Field(
-        default=False,
-        description=(
-            "Whether the model can reach a 1M context window via the "
-            "'context-1m-2025-08-07' beta opt-in. Requires "
-            "aws.bedrock.enable_1m_context; without it the effective window is "
-            "context_window_size. Use native_1m_context_window for models where "
-            "1M needs no opt-in."
-        ),
-    )
-    adaptive_thinking_only: bool = Field(
-        default=False,
-        description=(
-            "Whether the model accepts only adaptive thinking. Claude 4.7+ rejects "
-            "the manual {'type': 'enabled', 'budget_tokens': N} shape with a 400; "
-            "thinking depth is steered by 'effort' instead of a token budget. "
-            "These models also think by default — Sonnet 5 / 5.5 and Opus 5.5 "
-            "cannot be turned off at all — so their requests always carry the "
-            "adaptive config, which is what lets 'effort' through."
-        ),
-    )
-    supports_sampling_params: bool = Field(
-        default=True,
-        description=(
-            "Whether temperature/top_p/top_k are accepted. Claude 4.7+ removed "
-            "them and returns a 400 for non-default values; the documented "
-            "migration path is to omit them and steer behaviour by prompting."
-        ),
-    )
-    native_1m_context_window: bool = Field(
-        default=False,
-        description=(
-            "Whether the 1M context window is the default and needs no beta "
-            "opt-in header. True for Claude 5, where 1M is both default and max."
-        ),
-    )
-    requires_inference_profile: bool = Field(
-        default=False,
-        description=(
-            "Whether the model is INFERENCE_PROFILE-only (no ON_DEMAND). Newer "
-            "Claude models ship without on-demand throughput, so invoking the "
-            "bare model id fails — a cross-region profile must resolve."
-        ),
-    )
-    supports_adaptive_thinking: bool = Field(
-        default=False,
-        description=(
-            "Whether the model accepts Anthropic adaptive thinking "
-            "({'type': 'adaptive'} + output_config.effort). Claude 4.6 accepts it "
-            "alongside the deprecated budget_tokens shape, so an opt-in thinking "
-            "request uses adaptive there; adaptive_thinking_only implies it."
-        ),
-    )
-    supported_efforts: frozenset[str] | None = Field(
-        default=None,
-        description=(
-            "Effort levels the model card documents. A configured effort outside "
-            "this set fails fast instead of surfacing as a Bedrock 400. None means "
-            "the levels are not documented and the value is passed through."
-        ),
-    )
-    supports_streaming: bool | None = Field(
-        default=None,
-        description=(
-            "Whether the model streams through ConverseStream. None leaves it "
-            "to langchain-aws, which streams only model ids on its own "
-            "allowlist; set it for a model the allowlist does not know yet "
-            "(otherwise it falls back to non-streaming Converse with a "
-            "warning on every model construction)."
-        ),
-    )
-    token_estimate_multiplier: float = Field(
-        default=1.0,
-        gt=0,
-        description=(
-            "Factor applied to the local token estimate (~4 characters per "
-            "token for Latin text) when CountTokens is not used for this model. "
-            "The estimate is calibrated to the older Claude tokenizer; the "
-            "tokenizer introduced with Claude Opus 4.7 counts more tokens for "
-            "the same text, so those models set 1.3 and context budgets are not "
-            "overfilled. Has no effect on counts the API returns."
-        ),
-    )
-    supports_count_tokens: bool = Field(
-        default=True,
-        description=(
-            "Whether the CountTokens API accepts the model on bedrock-runtime. "
-            "When False, token counting uses the local estimate directly instead "
-            "of issuing a call that is guaranteed to fail."
-        ),
-    )
-
-    BETA_1M_CONTEXT_WINDOW_SIZE: ClassVar[int] = 1000000
-
-    @property
-    def uses_adaptive_thinking(self) -> bool:
-        """Whether thinking requests take the adaptive + effort shape."""
-        return self.provider == "anthropic" and (
-            self.supports_adaptive_thinking or self.adaptive_thinking_only
-        )
-
-    @property
-    def always_reasons(self) -> bool:
-        """Whether every request carries the reasoning config.
-
-        Adaptive-only Claude models think by default (and Sonnet 5 / 5.5 and
-        Opus 5.5 cannot turn it off); OpenAI GPT models are reasoning models
-        whose depth is set per request. In both cases the reasoning block is what carries
-        the configured effort, so it is sent regardless of the caller's flag.
-        """
-        if not self.supports_thinking:
-            return False
-        return self.adaptive_thinking_only or self.provider == "openai"
-
-    def effective_context_window(self, enable_1m_context: bool = False) -> int:
-        """Context window the model will actually honour for a request.
-
-        ``context_window_size`` is the baseline. Models that reach 1M only
-        through the beta opt-in report that baseline until the opt-in is on, so
-        a caller sizing a token budget must ask here rather than reading the
-        field directly — otherwise the budget ignores an enabled 1M window.
-        """
-        if enable_1m_context and self.supports_1m_context_window:
-            return max(self.context_window_size, self.BETA_1M_CONTEXT_WINDOW_SIZE)
-        return self.context_window_size
-
-
-class RerankModelInfo(BaseModel):
-    max_documents: int = Field(
-        default=1000,
-        description="Maximum number of documents that can be reranked in a single request.",
-    )
-    max_query_length: int | None = Field(
-        default=None, description="Maximum query length in characters."
-    )
-    max_query_tokens: int | None = Field(
-        default=None, description="Maximum number of tokens allowed in the query."
-    )
-    max_document_length: int | None = Field(
-        default=None, description="Maximum document length in characters."
-    )
-    max_document_tokens: int | None = Field(
-        default=None, description="Maximum number of tokens allowed per document."
-    )
 
 
 _EMBEDDING_MODEL_INFO: dict[EmbeddingModelId, EmbeddingModelInfo] = {
@@ -807,19 +611,3 @@ def get_language_model_info(
         raise LanguageModelError(
             f"Invalid aws.bedrock.model_overrides entry for '{model_id}': {e}"
         ) from e
-
-
-def effective_max_output_tokens(
-    model_info: LanguageModelInfo,
-    bedrock_config: BedrockConfig,
-    min_output_tokens: int = 0,
-) -> int:
-    """max_tokens for a request that does not set one explicitly.
-
-    The configured default cap, raised to the prompt's output floor, never
-    above the model maximum; an unset cap means the model maximum.
-    """
-    cap = bedrock_config.default_max_output_tokens
-    if cap is None:
-        return model_info.max_output_tokens
-    return min(max(cap, min_output_tokens), model_info.max_output_tokens)

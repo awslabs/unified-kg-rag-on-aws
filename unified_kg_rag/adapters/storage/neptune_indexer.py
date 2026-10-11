@@ -6,6 +6,7 @@ from collections.abc import Callable, Collection, Iterator
 from concurrent.futures import as_completed
 from typing import Any, cast
 
+import boto3
 from gremlin_python.process.graph_traversal import (
     GraphTraversal,
     GraphTraversalSource,
@@ -13,8 +14,10 @@ from gremlin_python.process.graph_traversal import (
 )
 from gremlin_python.process.traversal import Cardinality, P
 
-from unified_kg_rag.adapters.aws import NeptuneClient
-from unified_kg_rag.adapters.aws.neptune import is_permanent_neptune_error
+from unified_kg_rag.adapters.aws.neptune import (
+    NeptuneClient,
+    is_permanent_neptune_error,
+)
 from unified_kg_rag.adapters.storage.neptune_codec import (
     entity_from_vertex,
     entity_properties,
@@ -47,10 +50,14 @@ class NeptuneIndexer(GraphIndexer):
     # so a large run (tens of thousands of edges) is distinguishable from a hang.
     _PROGRESS_LOG_EVERY: int = 2000
 
-    def __init__(self, config: Config) -> None:
+    def __init__(
+        self, config: Config, boto_session: boto3.Session | None = None
+    ) -> None:
         super().__init__(config)
         self.neptune_config = self.config.indexing.neptune
-        self.neptune_client = NeptuneClient(config=self.config)
+        self.neptune_client = NeptuneClient(
+            config=self.config, boto_session=boto_session
+        )
 
     def close(self) -> None:
         """Close the underlying Neptune websocket + thread pool (best-effort)."""

@@ -167,6 +167,14 @@ async def test_local_backend_ingests_and_answers_without_aws(
         ),
         graph_indexer_factory=lambda: graph,
         vector_indexer_factory=lambda: vectors,
+        retriever_builders={
+            RetrieverRole.DOCUMENT: lambda: StoreRetriever(
+                vectors,
+                providers.embedding_factory.get_model(
+                    config.indexing.opensearch.embedding_model_id
+                ),
+            )
+        },
     )
     source = tmp_path / "corpus"
     source.mkdir()
@@ -203,18 +211,7 @@ async def test_local_backend_ingests_and_answers_without_aws(
     assert len(records) == 2 and {r.status for r in records} == {DocStatus.PROCESSED}
     assert Path(config.providers.doc_status.sqlite_path).exists()
 
-    chain = GraphRAGChain(
-        config,
-        providers=providers,
-        retriever_builders={
-            RetrieverRole.DOCUMENT: lambda: StoreRetriever(
-                vectors,
-                providers.embedding_factory.get_model(
-                    config.indexing.opensearch.embedding_model_id
-                ),
-            )
-        },
-    )
+    chain = GraphRAGChain(config, providers=providers)
     try:
         out = await chain.ainvoke(
             RAGInput(

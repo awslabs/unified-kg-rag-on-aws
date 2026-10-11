@@ -632,18 +632,15 @@ class DynamoDBDocStatusStore:
                 else {"NULL": True}
             ),
         }
-        # Optional scalar string/int attributes.
+        # Optional scalar string attributes.
         for attr in (
             "file_path",
-            "content_summary",
             "error_info",
             "created_at",
             "updated_at",
         ):
             value = getattr(record, attr)
             item[attr] = {"S": value} if value is not None else {"NULL": True}
-        if record.content_length is not None:
-            item["content_length"] = {"N": str(record.content_length)}
         item["failure_count"] = {"N": str(record.failure_count)}
         return item
 
@@ -659,13 +656,6 @@ class DynamoDBDocStatusStore:
             # same on every scan (and compares equal to its written copy).
             return sorted(cell["SS"]) if cell and "SS" in cell else []
 
-        content_length_cell = item.get("content_length")
-        content_length = (
-            int(content_length_cell["N"])
-            if content_length_cell and "N" in content_length_cell
-            else None
-        )
-
         failure_count_cell = item.get("failure_count")
         return DocStatusRecord(
             doc_id=item[_PARTITION_KEY]["S"],
@@ -674,8 +664,6 @@ class DynamoDBDocStatusStore:
             suffix=_str("suffix") or "default",
             scope=_str(_SCOPE_ATTRIBUTE),
             file_path=_str("file_path"),
-            content_summary=_str("content_summary"),
-            content_length=content_length,
             entity_ids=_str_set("entity_ids"),
             relationship_ids=_str_set("relationship_ids"),
             text_unit_ids=_str_set("text_unit_ids"),

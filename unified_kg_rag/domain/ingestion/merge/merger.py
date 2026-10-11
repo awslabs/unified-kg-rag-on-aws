@@ -10,9 +10,14 @@ graph references stay stable.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable
-from typing import TYPE_CHECKING, Any
+from collections.abc import Collection
+from typing import Any
 
+from unified_kg_rag.domain.ingestion.base_resolver import (
+    FuzzyMatcher,
+    entity_types_compatible,
+)
+from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
     overlay_weights,
@@ -21,9 +26,6 @@ from unified_kg_rag.domain.ingestion.relationship_weights import (
 from unified_kg_rag.domain.models import Constants, Entity, Relationship
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils.common import entity_key
-
-if TYPE_CHECKING:
-    from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
 
 logger = get_logger(__name__)
 
@@ -36,29 +38,6 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
             seen.add(value)
             result.append(value)
     return result
-
-
-def merge_descriptions(descriptions: Iterable[str | None]) -> str | None:
-    """Combine descriptions, dropping duplicate and blank lines (order kept).
-
-    The one description-merge rule of every build path (extraction,
-    full-build resolution, cross-run merge), so a full build and an
-    incremental build of the same corpus converge on the same text.
-
-    A stored description is the newline join of earlier merges, so the dedupe
-    compares lines: comparing whole strings would append a re-applied delta's
-    description again on every run.
-    """
-    lines = [
-        line
-        for part in descriptions
-        if part
-        for line in part.split("\n")
-        if line.strip()
-    ]
-    if not lines:
-        return None
-    return "\n".join(_dedupe_preserve_order(lines))
 
 
 def _merge_attributes(
@@ -201,10 +180,6 @@ def _find_fuzzy_old_match(
     skipped, matching the full-build resolver's grouping guard (identifier
     conflicts are already filtered by ``find_all_matches``).
     """
-    from unified_kg_rag.domain.ingestion.base_resolver import (
-        entity_types_compatible,
-    )
-
     matches = [
         (name, score)
         for name, score in fuzzy_matcher.find_all_matches(entity.name)

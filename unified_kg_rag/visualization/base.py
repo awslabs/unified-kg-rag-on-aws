@@ -62,7 +62,6 @@ class GraphVisualizationManager:
             self.viz_config.outputs_directory or DEFAULT_OUTPUTS_DIRECTORY
         )
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
 
         # Built lazily: with embedding_method == "none" no Bedrock embedding
         # client is ever constructed.
@@ -78,9 +77,7 @@ class GraphVisualizationManager:
     def embedder(self) -> BedrockNodeEmbedder:
         if self._embedder is None:
             self._embedder = BedrockNodeEmbedder(
-                self.config,
-                self.boto_session,
-                embedding_factory=self.providers.embedding_factory,
+                self.config, embedding_factory=self.providers.embedding_factory
             )
         return self._embedder
 

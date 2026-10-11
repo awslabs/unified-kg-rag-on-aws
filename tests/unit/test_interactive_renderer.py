@@ -16,8 +16,8 @@ from pathlib import Path
 import networkx as nx
 import pytest
 
-from unified_kg_rag.adapters.ingestion.community_detector import HierarchicalCommunity
 from unified_kg_rag.adapters.renderers.interactive import InteractiveRenderer
+from unified_kg_rag.domain.models import HierarchicalCommunity
 
 pytestmark = pytest.mark.unit
 

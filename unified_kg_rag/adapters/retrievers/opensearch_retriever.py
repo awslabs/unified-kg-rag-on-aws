@@ -6,11 +6,9 @@ from collections import OrderedDict
 from collections.abc import Coroutine
 from typing import Any, ClassVar
 
-import boto3
 from opensearchpy.exceptions import NotFoundError
 
-from unified_kg_rag.adapters.aws import OpenSearchClient
-from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     is_fatal_retrieval_error,
@@ -60,11 +58,11 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         self,
         config: Config,
         opensearch_client: OpenSearchClient,
-        boto_session: boto3.Session | None = None,
-        embedding_factory: EmbeddingFactoryPort | None = None,
+        *,
+        embedding_factory: EmbeddingFactoryPort,
         **kwargs: Any,
     ):
-        super().__init__(config, boto_session, **kwargs)
+        super().__init__(config, **kwargs)
         self._opensearch_client = opensearch_client
         self._opensearch_config = config.indexing.opensearch
         # Clause-budget knobs are config-driven so they can track the cluster's
@@ -81,9 +79,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         self._max_result_window = self._opensearch_config.index_settings.get(
             "max_result_window", 10000
         )
-        self._embedding_factory = (
-            embedding_factory or Providers(config, boto_session).embedding_factory
-        )
+        self._embedding_factory = embedding_factory
         self._embedding_model = self._embedding_factory.get_model(
             self._opensearch_config.embedding_model_id
         )

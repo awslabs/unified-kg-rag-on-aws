@@ -9,7 +9,7 @@ import boto3
 from pydantic import BaseModel
 
 from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
-from unified_kg_rag.adapters.aws.chain_factory import (
+from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
@@ -109,12 +109,11 @@ class ClaimExtractor(BaseProcessor):
     ):
         super().__init__(config)
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
         self.claim_extraction_config = self.config.processing.claim_extraction
         self.ignore_errors = self.config.processing.ignore_errors
         self.show_progress = show_progress
-        self.batch_processor = BatchProcessor(
-            is_transient_error=is_transient_bedrock_error
+        self.batch_processor = BatchProcessor.from_processing(
+            self.config.processing, is_transient_error=is_transient_bedrock_error
         )
 
         self.factory = self.providers.llm_factory
@@ -179,7 +178,6 @@ class ClaimExtractor(BaseProcessor):
                 prepare_inputs_func=prepare_inputs_for_chunk,
                 sequential_func=self.claim_extractor.invoke,
                 task_name="Claim Extraction",
-                run_config=self.config.processing.model_dump(),
                 show_progress=self.show_progress,
             )
         except Exception as e:

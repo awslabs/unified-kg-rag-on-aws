@@ -12,15 +12,19 @@ replaced with lightweight stubs so no adapters/boto sessions are built.
 
 from __future__ import annotations
 
+import inspect
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import (
     Config,
+    PipelineConfig,
     PipelineStageResult,
     PipelineStageStatus,
     PipelineStageType,
@@ -76,11 +80,7 @@ def _pipeline_for_init(config: Config) -> DataIngestionPipeline:
     )
     pipe.source_directory = Path("/tmp/src")
     pipe.target_directory = Path("/tmp/out")
-    pipe.boto_session = None
-    pipe.providers = None
-    pipe._doc_status = None
-    pipe._vector_indexer = None
-    pipe._graph_indexer = None
+    pipe.providers = Providers(config, MagicMock())
     pipe.STAGE_CLASSES = _stub_stage_classes()
     return pipe
 
@@ -182,27 +182,36 @@ def test_initialize_stages_injects_directories_and_config() -> None:
 def test_initialize_stages_doc_status_not_injected_when_dynamodb_disabled() -> None:
     _StubStage.instances = []
     cfg = Config()
-    # DynamoDB disabled by default -> _build_doc_status_store returns None ->
-    # no doc_status kwarg on DOC_STATUS_STAGES.
+    # Incremental indexing off by default: the registry stages get none.
     pipe = _pipeline_for_init(cfg)
     stages, _ = pipe._initialize_stages()
     by_name = {s.name: s for s in stages}
-    assert "doc_status" not in by_name["indexing"].kwargs
-    assert "doc_status" not in by_name["document_loading"].kwargs
+    assert by_name["indexing"].kwargs["doc_status"] is None
+    assert by_name["document_loading"].kwargs["doc_status"] is None
 
 
-def test_initialize_stages_threads_injected_backends() -> None:
+def test_initialize_stages_threads_the_bundle_and_its_registry() -> None:
     _StubStage.instances = []
     pipe = _pipeline_for_init(Config())  # DynamoDB disabled
-    store, vectors, graph = object(), object(), object()
-    pipe._doc_status = store
-    pipe._vector_indexer, pipe._graph_indexer = vectors, graph
+    store = object()
+    pipe.providers = Providers(pipe.config, MagicMock(), doc_status=store)
     stages, _ = pipe._initialize_stages()
     by_name = {s.name: s for s in stages}
+    # An injected registry turns incremental indexing on.
     assert by_name["document_loading"].kwargs["doc_status"] is store
     assert by_name["indexing"].kwargs["doc_status"] is store
-    assert by_name["indexing"].kwargs["vector_indexer"] is vectors
-    assert by_name["indexing"].kwargs["graph_indexer"] is graph
+    assert all(s.kwargs["providers"] is pipe.providers for s in stages)
+
+
+def test_pipeline_rejects_components_given_twice(tmp_path) -> None:
+    config = Config()
+    with pytest.raises(ValueError, match="not both"):
+        DataIngestionPipeline(
+            config,
+            PipelineConfig(local_directory=tmp_path),
+            providers=Providers(config, MagicMock()),
+            doc_status=object(),  # type: ignore[arg-type]
+        )
 
 
 # --- _resolve_pipeline_id / _generate_pipeline_id ------------------------
@@ -527,37 +536,26 @@ def _ctx_with_results(results: list[PipelineStageResult]):
 
 
 # --------------------------------------------------------------------------- #
-# Stage __init__ signature contract (regression: real-AWS E2E caught a
-# GraphResolutionStage that didn't accept boto_session while pipeline._
-# initialize_stages passed it because GRAPH_RESOLUTION is in BOTO_REQUIRED_STAGES).
-# The stub-based tests above can't catch this, so introspect the REAL stage
-# classes' __init__ signatures against the kwargs the pipeline injects.
+# Stage __init__ signature contract (regression: real-AWS E2E caught a stage
+# whose __init__ did not accept a kwarg the pipeline passed). The stub-based
+# tests above can't catch this, so bind the kwargs the pipeline really passes
+# to the REAL stage classes' signatures.
 # --------------------------------------------------------------------------- #
-def test_real_stage_init_signatures_accept_injected_kwargs() -> None:
-    import inspect
+def _binding_stub(stage_type: PipelineStageType, cls: type):
+    """A stub factory that first binds its kwargs to ``cls``'s signature."""
 
-    pipe = DataIngestionPipeline
-    for stage_type, stage_cls in pipe.STAGE_CLASSES.items():
-        params = inspect.signature(stage_cls.__init__).parameters
-        accepts_kwargs = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-        )
-        # config is always injected.
-        assert (
-            "config" in params or accepts_kwargs
-        ), f"{stage_cls.__name__} must accept 'config'"
-        if stage_type in pipe.BOTO_REQUIRED_STAGES:
-            assert "boto_session" in params or accepts_kwargs, (
-                f"{stage_cls.__name__} is in BOTO_REQUIRED_STAGES but its "
-                f"__init__ does not accept 'boto_session'"
-            )
-        if stage_type in pipe.INPUT_DIR_REQUIRED_STAGES:
-            assert "source_directory" in params or accepts_kwargs, (
-                f"{stage_cls.__name__} is in INPUT_DIR_REQUIRED_STAGES but its "
-                f"__init__ does not accept 'source_directory'"
-            )
-        if stage_type in pipe.DOC_STATUS_STAGES:
-            assert "doc_status" in params or accepts_kwargs, (
-                f"{stage_cls.__name__} is in DOC_STATUS_STAGES but its "
-                f"__init__ does not accept 'doc_status'"
-            )
+    def factory(**kwargs):
+        inspect.signature(cls).bind(**kwargs)
+        return _StubStage(_stage_type=stage_type, **kwargs)
+
+    return factory
+
+
+def test_real_stage_init_signatures_accept_injected_kwargs() -> None:
+    cfg = Config()
+    cfg.processing.claim_extraction.enabled = True
+    pipe = _pipeline_for_init(cfg)
+    real = DataIngestionPipeline.STAGE_CLASSES
+    pipe.STAGE_CLASSES = {st: _binding_stub(st, cls) for st, cls in real.items()}
+    stages, _ = pipe._initialize_stages()
+    assert len(stages) == len(real)

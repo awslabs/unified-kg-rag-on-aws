@@ -35,9 +35,8 @@ def convert_langchain_to_document(
     # the single source of both the id and the stored content.
     combined_text = combined_text.lstrip("\ufeff")
 
-    # Copy rather than alias the loader's metadata dict: page 0's raw_data below
-    # holds the same object as langchain_docs[0].metadata, so mutating the
-    # top-level metadata (e.g. the INDEX key) would otherwise leak into page 0.
+    # Copy rather than alias the loader's metadata dict, so setting the INDEX
+    # key does not mutate the loader's document.
     metadata = dict(langchain_docs[0].metadata) if langchain_docs else {}
     if index_value is not None:
         metadata[Constants.INDEX.value] = index_value
@@ -50,18 +49,11 @@ def convert_langchain_to_document(
     )
 
     pages = [
-        Page(
-            page_number=i + 1,
-            text_content=page_text,
-            elements=[],
-            raw_data=doc.metadata,
-        )
-        for i, (doc, page_text) in enumerate(
-            zip(langchain_docs, page_texts, strict=True)
-        )
+        Page(page_number=i + 1, text_content=page_text)
+        for i, page_text in enumerate(page_texts)
     ]
 
-    content = DocumentContent(text=combined_text, html=None, markdown=None)
+    content = DocumentContent(text=combined_text)
 
     file_type = path.suffix.lower().lstrip(".")
 
@@ -70,10 +62,8 @@ def convert_langchain_to_document(
         file_name=path.name,
         file_path=str(path),
         file_type=file_type,
-        detected_language="Unknown",
         total_pages=len(langchain_docs),
         pages=pages,
-        elements=[],
         content=content,
         metadata=metadata,
         page_content=combined_text,

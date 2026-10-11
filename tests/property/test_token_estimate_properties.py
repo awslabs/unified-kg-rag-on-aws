@@ -14,7 +14,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from unified_kg_rag.adapters.aws.token_counter import (
+from unified_kg_rag.adapters.llm.token_estimate import (
     _DENSE_SCRIPT_RANGES,
     estimate_token_count,
 )

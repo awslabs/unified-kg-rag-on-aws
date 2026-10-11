@@ -2,12 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 
-import boto3
 import networkx as nx
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, model_id_value
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import EmbeddingModelError, get_logger
@@ -23,27 +21,17 @@ class NodeEmbeddings(BaseModel):
         description="Mapping of node identifiers to their corresponding high-dimensional embedding vectors"
     )
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class BedrockNodeEmbedder:
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
-        embedding_factory: EmbeddingFactoryPort | None = None,
+        embedding_factory: EmbeddingFactoryPort,
     ) -> None:
         self.config = config
         self.viz_config = self.config.graph.visualization
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=self.config.aws.profile_name
-        )
-
-        embedding_factory = (
-            embedding_factory
-            or Providers(self.config, self.boto_session).embedding_factory
-        )
 
         embedding_model_id = self.viz_config.embeddings.get(
             "bedrock_model_id", self.config.indexing.opensearch.embedding_model_id

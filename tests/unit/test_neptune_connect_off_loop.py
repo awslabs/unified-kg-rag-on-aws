@@ -71,9 +71,7 @@ def retriever(mocker) -> NeptuneRetriever:
     config.aws.neptune.endpoint = "neptune.example.invalid"
     config.aws.neptune.use_iam = False
     client = NeptuneClient(config=config, boto_session=MagicMock())
-    instance = NeptuneRetriever(
-        config=config, neptune_client=client, boto_session=MagicMock()
-    )
+    instance = NeptuneRetriever(config=config, neptune_client=client)
 
     async def no_seeds(g: Any, query: SearchQuery) -> tuple[list, list]:
         return [], []

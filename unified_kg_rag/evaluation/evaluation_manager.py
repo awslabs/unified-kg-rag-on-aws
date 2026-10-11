@@ -16,6 +16,11 @@ from typing import Any
 from langchain_core.runnables import Runnable
 from pydantic import ValidationError
 
+from unified_kg_rag.adapters.evaluators.base import (
+    FAILED_METRICS_KEY,
+    SKIPPED_METRICS_KEY,
+    BaseEvaluator,
+)
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.application.bootstrap import build_providers
@@ -40,7 +45,6 @@ from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 from .answer_match_evaluator import AnswerMatchEvaluator
-from .base import FAILED_METRICS_KEY, SKIPPED_METRICS_KEY, BaseEvaluator
 from .graph_aware_evaluator import GraphAwareEvaluator
 from .retrieval_evaluator import RetrievalEvaluator
 from .source_resolver import SourceFileResolver, TextUnitFileResolver, file_name_of
@@ -60,14 +64,11 @@ class EvaluationManager:
     def _resolve_evaluator_class(
         evaluator_type: EvaluatorType,
     ) -> Callable[..., BaseEvaluator] | None:
-        """Resolve an evaluator class lazily (registry, but import-on-use).
+        """The evaluator class for ``evaluator_type``.
 
-        The langchain/ragas adapter evaluators import `evaluation.base`, which
-        runs this package's __init__; importing them at module load here would
-        create a circular import (manager -> adapter -> evaluation.base ->
-        __init__ -> manager). Resolving inside the method defers the import to
-        instantiation time, when the package is fully initialized — while
-        keeping the declarative type->class registry.
+        The langchain and ragas evaluators are imported here, on use: ragas
+        alone takes seconds to import, and every CLI imports this module
+        (``application.cli`` exports ``EvaluationRunner``).
         """
         if evaluator_type is EvaluatorType.LANGCHAIN:
             from unified_kg_rag.adapters.evaluators.langchain_evaluator import (

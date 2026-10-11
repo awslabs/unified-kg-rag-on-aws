@@ -28,35 +28,58 @@ stays storage-focused and is exercised end-to-end with in-memory fakes.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Collection
+from collections.abc import Callable, Collection
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.domain.ingestion.delta_detector import (
+    assign_registry_source,
+    detect_delta,
     document_doc_id,
+    filter_documents_to_process,
+    fingerprint_documents,
+    legacy_doc_id,
+    other_local_scopes,
+    registry_scope,
     scope_namespace,
+    validate_retired_scopes,
 )
 from unified_kg_rag.domain.models import (
     PENDING_CONTENT_HASH,
     Claim,
     Community,
     CommunityReport,
+    Config,
+    Constants,
     DocStatus,
     DocStatusRecord,
     Document,
     DocumentDelta,
     DocumentLineage,
     Entity,
+    PipelineContext,
     Relationship,
     TextUnit,
 )
 from unified_kg_rag.ports import DocStatusPort
 from unified_kg_rag.ports.indexer import BaseIndexer
-from unified_kg_rag.shared import DataProcessingError, get_logger
+from unified_kg_rag.shared import (
+    ConfigurationError,
+    DataProcessingError,
+    DocStatusRegistryError,
+    PipelineStageError,
+    get_logger,
+)
 from unified_kg_rag.shared.utils.document_identity import (
+    DEFAULT_NAMESPACE,
     RELATIVE_PATH_KEY,
     compute_doc_id,
+    normalize_source_path,
+    normalize_source_scope,
+    registry_namespace,
+    relative_source_path,
 )
 
 if TYPE_CHECKING:
@@ -1100,3 +1123,487 @@ class IncrementalIndexer:
                     for doc_id in unrecorded[:10]
                 ),
             )
+
+
+# --- the pipeline's incremental steps -----------------------------------------
+# The document_loading stage diffs the corpus (``filter_to_delta``) and the
+# indexing stage writes the delta (``index_delta``) or clears the registry of a
+# reset (``clear_registry_namespaces``); both stages only delegate here.
+
+
+def run_registry_scope(
+    config: Config, source_directory: Path, failed_source_files: list[str]
+) -> tuple[str, str, str, dict[str, str]]:
+    """The run's registry scope, namespace, source scope and failed files.
+
+    The scope is the index namespace the run writes (``index_value`` +
+    ``indexing.additional_suffix``) and the corpus source
+    (``document_parsing.source_scope``, else the resolved source
+    directory), so a run never deletes another tenant's or another
+    corpus's documents. The source scope is also part of every document's
+    registry key, so two corpora written to one namespace never share a
+    record. Failed files are keyed the same way their documents would have
+    been, mapped to their legacy key (see ``legacy_doc_id``).
+    """
+    parsing = config.processing.document_parsing
+    namespace = registry_namespace(
+        parsing.index_value, config.indexing.additional_suffix
+    )
+    root = source_directory
+    source_scope = parsing.source_scope or root.as_posix()
+    failed_doc_ids: dict[str, str] = {}
+    for path in failed_source_files:
+        relative = relative_source_path(path, root) or normalize_source_path(path)
+        failed_doc_ids[compute_doc_id(relative, namespace, source_scope)] = (
+            compute_doc_id(relative, namespace)
+        )
+    return (
+        registry_scope(namespace, source_scope),
+        namespace,
+        source_scope,
+        failed_doc_ids,
+    )
+
+
+def indexed_documents(
+    documents: list[Document],
+    context: PipelineContext,
+    config: Config,
+    doc_status: Callable[[], DocStatusPort],
+    source_directory: Path,
+) -> Callable[[Document], bool]:
+    """Which of ``documents`` the registry already holds (dedup preference).
+
+    The incremental diff treats a dropped document as deleted, so a new
+    near-copy that happened to be kept would delete the indexed original
+    and index itself instead. A document the registry already holds (under
+    its key or its legacy key) is therefore kept over one it does not.
+    """
+    _, _, source_scope, _ = run_registry_scope(
+        config, source_directory, context.failed_source_files
+    )
+    keys: dict[int, tuple[str, str]] = {}
+    for document in documents:
+        assign_registry_source(document, source_scope)
+        keys[id(document)] = (
+            document_doc_id(document),
+            legacy_doc_id(document),
+        )
+    try:
+        stored = doc_status().get_many({key for pair in keys.values() for key in pair})
+    except Exception as e:
+        raise DocStatusRegistryError(
+            f"Doc-status registry: could not read it to deduplicate the "
+            f"corpus ({type(e).__name__}: {e})"
+        ) from e
+    return lambda doc: any(key in stored for key in keys[id(doc)])
+
+
+def filter_to_delta(
+    documents: list[Document],
+    context: PipelineContext,
+    config: Config,
+    doc_status: Callable[[], DocStatusPort],
+    source_directory: Path,
+) -> tuple[list[Document], int]:
+    """Keep only new/changed documents per the DynamoDB doc-status registry.
+
+    Also stashes the computed delta + fingerprints on the context so the
+    IndexingStage can prune stale artifacts, propagate deletions, and record
+    per-document lineage (the full incremental commit path).
+
+    Raises :class:`DocStatusRegistryError` when the registry cannot be
+    read. There is no safe fallback: without a delta the indexing stage
+    takes the full-rebuild path, which replaces the suffix's live index
+    content with this run's documents and never records them, so other
+    scopes' documents would be lost and every later run would rebuild.
+    """
+    scope, namespace, source_scope, failed_doc_ids = run_registry_scope(
+        config, source_directory, context.failed_source_files
+    )
+    # Fails before any registry read or write when the run would retire
+    # its own scope.
+    retired = validate_retired_scopes(
+        config.indexing.retire_source_scopes, source_scope, namespace
+    )
+    for document in documents:
+        assign_registry_source(document, source_scope)
+    if config.indexing.reset:
+        # A reset clears the stores and the registry before indexing, so
+        # every document is new: diffing against the registry here would
+        # rebuild from the delta alone and lose the unchanged documents.
+        fingerprints = fingerprint_documents(documents)
+        context.incremental_delta = DocumentDelta(new=list(fingerprints))
+        context.incremental_fingerprints = fingerprints
+        context.incremental_scope = scope
+        logger.info(
+            "Incremental filter skipped (indexing.reset): processing all "
+            "%d documents",
+            len(documents),
+        )
+        if retired:
+            logger.info(
+                "indexing.retire_source_scopes ignored: the reset clears "
+                "every record"
+            )
+        return documents, 0
+
+    try:
+        store = doc_status()
+        delta, fingerprints = detect_delta(
+            documents,
+            store,
+            scope=scope,
+            failed_doc_ids=list(failed_doc_ids),
+            max_failures=config.indexing.max_document_failures,
+            legacy_doc_ids={
+                **failed_doc_ids,
+                **{
+                    document_doc_id(document): legacy_doc_id(document)
+                    for document in documents
+                },
+            },
+            retired_scopes=retired,
+        )
+    except (DocStatusRegistryError, ConfigurationError):
+        raise
+    except Exception as e:
+        raise DocStatusRegistryError(
+            f"Doc-status registry: could not diff the corpus against the "
+            f"registry ({type(e).__name__}: {e}). Incremental indexing needs "
+            "the registry; fix it and re-run, or turn incremental indexing off "
+            "(aws.dynamodb.enabled / providers.doc_status.enabled: false) to "
+            "run without it."
+        ) from e
+    context.incremental_delta = delta
+    context.incremental_fingerprints = fingerprints
+    context.incremental_scope = scope
+    context.incremental_retired_scopes = list(config.indexing.retire_source_scopes)
+    if delta.new and not config.processing.document_parsing.source_scope:
+        _warn_about_other_local_scopes(delta, scope, namespace, retired)
+    if delta.is_empty:
+        logger.info("Incremental: no new/changed documents detected")
+    to_process = filter_documents_to_process(documents, delta)
+    skipped = len(documents) - len(to_process)
+    logger.info(
+        "Incremental filter: %d to process, %d unchanged (skipped), %d deleted",
+        len(to_process),
+        skipped,
+        len(delta.deleted),
+    )
+    return to_process, skipped
+
+
+def _warn_about_other_local_scopes(
+    delta: DocumentDelta, scope: str, namespace: str, retired: list[str]
+) -> None:
+    """Name the other local source directories of the run's namespace.
+
+    Only a run whose scope defaulted to its source directory and that has
+    new documents gets here: that is what a moved corpus looks like. The
+    records stay: a directory that is missing here may be another host's
+    corpus sharing the registry, so only the user can tell a move from a
+    second corpus. Uses the scopes the diff already read.
+    """
+    others = other_local_scopes(delta, scope, namespace, retired)
+    if not others:
+        return
+    logger.warning(
+        "The doc-status registry also holds records of index namespace %r "
+        "under other local source directories: %s. If this corpus was "
+        "moved from one of them, its old records keep the previous "
+        "content indexed: run once with --retire-source-scope <old "
+        "directory> (indexing.retire_source_scopes) to remove it. If they "
+        "are other corpora, set document_parsing.source_scope to a stable "
+        "name per corpus.",
+        namespace,
+        ", ".join(others),
+    )
+
+
+def reset_suffixes(config: Config, text_units: list[TextUnit]) -> set[str]:
+    """The item suffixes whose stores a reset clears.
+
+    ``clear_all_data`` clears the suffixes of the run's text units; the
+    run's own suffix (``index_value``, ``default`` when unset) is always
+    included, as in ``reset_namespaces``.
+    """
+    suffixes = {BaseIndexer.get_suffix(unit) for unit in text_units}
+    suffixes.add(config.processing.document_parsing.index_value or DEFAULT_NAMESPACE)
+    return suffixes
+
+
+def reset_namespaces(
+    config: Config, context: PipelineContext, text_units: list[TextUnit]
+) -> set[str]:
+    """The registry namespaces whose stores a reset clears.
+
+    ``clear_all_data`` clears the suffixes of the run's text units under
+    ``indexing.additional_suffix``; the run's own namespace (its registry
+    scope, else the configured ``index_value``) is always included.
+    """
+    additional = config.indexing.additional_suffix
+    namespaces = {
+        registry_namespace(BaseIndexer.get_suffix(unit), additional)
+        for unit in text_units
+    }
+    namespaces.add(
+        scope_namespace(context.incremental_scope)
+        or registry_namespace(
+            config.processing.document_parsing.index_value, additional
+        )
+    )
+    return namespaces
+
+
+def record_in_namespaces(
+    record: DocStatusRecord, namespaces: set[str], suffixes: set[str]
+) -> bool:
+    """Whether a reset of ``namespaces`` (item ``suffixes``) clears ``record``.
+
+    A scoped record belongs to its scope's namespace. A record without a
+    scope that stores its ``file_path`` belongs to the namespace whose
+    legacy key ``compute_doc_id(file_path, namespace)`` is its key (even
+    if its ``suffix`` field does not match), so a reset of one namespace
+    keeps such a record of another namespace on the same suffix. A record
+    without a scope or ``file_path`` (the initial release, keyed by the
+    file path alone) names no namespace: it is cleared with its suffix,
+    since removal planning treats it as a survivor in every namespace of
+    its suffix and would otherwise never delete the entities it lists.
+    """
+    if record.scope is not None:
+        return scope_namespace(record.scope) in namespaces
+    if record.file_path is None:
+        return record.suffix in suffixes
+    return any(
+        record.doc_id == compute_doc_id(record.file_path, namespace)
+        for namespace in namespaces
+    )
+
+
+def clear_registry_namespaces(
+    doc_status: Callable[[], DocStatusPort], namespaces: set[str], suffixes: set[str]
+) -> None:
+    """Delete the registry records of ``namespaces`` (reset path).
+
+    Only the namespaces whose stores the reset cleared: other index
+    suffixes sharing the table keep their records, which still describe
+    their intact stores. A record without a scope is cleared when its key
+    is a cleared namespace's legacy key for its ``file_path``, or, with no
+    ``file_path``, when its suffix is one of the cleared ``suffixes`` (see
+    ``record_in_namespaces``); else it is kept.
+
+    Uses the port's list_all + delete so no new port method is needed.
+    Best-effort: a registry-clear failure should not abort the reset run
+    (the graph/index were already cleared).
+    """
+    try:
+        store = doc_status()
+        records = [
+            record
+            for record in store.list_all()
+            if record_in_namespaces(record, namespaces, suffixes)
+        ]
+        # Write-ahead lineage overflow is not listed as records.
+        store.delete_lineage_overflow([record.doc_id for record in records])
+        for record in records:
+            store.delete(record.doc_id)
+        logger.info(
+            "Cleared %s doc-status registry records of namespaces %s on reset",
+            len(records),
+            ", ".join(sorted(namespaces)),
+        )
+    except Exception as e:  # noqa: BLE001 - reset cleanup is best-effort
+        logger.warning("Failed to clear doc-status registry on reset: %s", e)
+
+
+def warn_about_unapplied_retired_scopes(
+    config: Config, context: PipelineContext
+) -> None:
+    """Warn about ``indexing.retire_source_scopes`` the delta did not apply.
+
+    Scopes are retired when the document_loading stage computes the
+    delta. A run resumed after it indexes the delta an earlier run
+    computed, so scopes added since then are not removed by this run.
+    """
+    if context.incremental_retired_scopes is None:
+        # Saved before the delta recorded its retired scopes: whether
+        # they were applied is unknown.
+        if config.indexing.retire_source_scopes:
+            logger.warning(
+                "indexing.retire_source_scopes / --retire-source-scope %s may "
+                "not have been applied: this run resumed after the "
+                "document_loading stage from a pipeline context that does "
+                "not record which scopes its delta retired. Re-run from "
+                "document_loading (--resume-from-stage document_loading) to "
+                "make sure they are retired.",
+                ", ".join(repr(s) for s in config.indexing.retire_source_scopes),
+            )
+        return
+    applied = {normalize_source_scope(s) for s in context.incremental_retired_scopes}
+    ignored = [
+        scope
+        for scope in config.indexing.retire_source_scopes
+        if normalize_source_scope(scope) not in applied
+    ]
+    if ignored:
+        logger.warning(
+            "indexing.retire_source_scopes / --retire-source-scope %s NOT "
+            "applied: this run resumed after the document_loading stage and "
+            "indexes the delta an earlier run computed without them, so "
+            "their records and exclusive artifacts are kept. Re-run from "
+            "document_loading (--resume-from-stage document_loading) to "
+            "retire them.",
+            ", ".join(repr(s) for s in ignored),
+        )
+
+
+def documents_with_failed_units(
+    context: PipelineContext, text_units: list[TextUnit]
+) -> set[str]:
+    """Registry ids of the documents an extraction stage failed on."""
+    failed_units = {
+        unit_id for ids in context.failed_text_unit_ids.values() for unit_id in ids
+    }
+    run_document_ids = {
+        document_id
+        for unit in text_units
+        if unit.id in failed_units
+        for document_id in unit.document_ids or []
+    }
+    return {
+        document_doc_id(document)
+        for document in context.documents
+        if document.document_id in run_document_ids
+    }
+
+
+def run_incremental_indexer(
+    doc_status: DocStatusPort,
+    indexing_manager: IndexingManager,
+    context: PipelineContext,
+    text_units: list[TextUnit],
+) -> IncrementalIndexer:
+    """The incremental indexer of a run, on the run's suffix and scope."""
+    # Artifacts carry their own index suffix (multi-tenant/version aware);
+    # derive the run's suffix from the text units the same way the indexers do.
+    suffix = (
+        BaseIndexer.get_suffix(text_units[0])
+        if text_units
+        else Constants.DEFAULT_SUFFIX.value
+    )
+    return IncrementalIndexer(
+        doc_status,
+        indexing_manager,
+        suffix=suffix,
+        scope=context.incremental_scope,
+    )
+
+
+def context_lineages(
+    context: PipelineContext,
+    suffix: str,
+    text_units: list[TextUnit],
+    entities: list[Entity],
+    relationships: list[Relationship],
+    communities: list[Community],
+    community_reports: list[CommunityReport],
+    claims: list[Claim],
+) -> list[DocumentLineage]:
+    """Per-document lineage of the run's documents (``build_document_lineage``)."""
+    return build_document_lineage(
+        documents=context.documents,
+        text_units=text_units,
+        entities=entities,
+        relationships=relationships,
+        communities=communities,
+        claims=claims,
+        community_reports=community_reports,
+        suffix=suffix,
+    )
+
+
+def index_delta(
+    doc_status: Callable[[], DocStatusPort],
+    indexing_manager: IndexingManager,
+    context: PipelineContext,
+    text_units: list[TextUnit],
+    entities: list[Entity],
+    relationships: list[Relationship],
+    communities: list[Community],
+    community_reports: list[CommunityReport],
+    claims: list[Claim],
+) -> dict[str, IndexingStats]:
+    """Idempotent delta indexing + stale-artifact pruning + registry write-back.
+
+    Routed to when a doc-status delta is present (incremental mode). The new
+    and changed documents are first recorded PENDING (write-ahead), then
+    the stale artifacts of changed/deleted documents are removed, the
+    freshly extracted delta is upserted and the PENDING records replaced
+    with per-document lineage so subsequent runs diff correctly.
+    """
+    delta = context.incremental_delta
+    if delta is None:  # defensive; caller already guards
+        return indexing_manager.index_all_data(
+            text_units=text_units,
+            entities=entities,
+            relationships=relationships,
+            communities=communities,
+            community_reports=community_reports,
+            claims=claims,
+        )
+    incremental = run_incremental_indexer(
+        doc_status(), indexing_manager, context, text_units
+    )
+    lineages = context_lineages(
+        context,
+        incremental.suffix,
+        text_units,
+        entities,
+        relationships,
+        communities,
+        community_reports,
+        claims,
+    )
+    # Write ahead before any store write: the new and changed docs are
+    # recorded PENDING with their stored + planned lineage, so a run
+    # interrupted from here on is repaired by the next one (the docs
+    # read as changed, or as deleted when gone, and every artifact this
+    # run may write is found by their lineage).
+    incremental.check_graph_holds_registry(delta)
+    incremental.write_ahead(delta, lineages)
+
+    # Drop the stale artifacts of changed and deleted docs in ONE removal
+    # plan (before re-upsert): planning them separately keeps whatever a
+    # changed and a deleted doc share, orphaning it. A failed removal must
+    # stop the run before commit when docs changed: committing would
+    # overwrite their lineage and orphan the stale artifacts. A failure
+    # that only concerns deleted docs keeps their registry rows for a
+    # retry and need not hold back the delta, so it fails the stage only
+    # after the commit.
+    removed = incremental.remove_changed_and_deleted(delta)
+    if not removed and delta.changed:
+        raise PipelineStageError(
+            "Removing stale artifacts of changed or deleted documents "
+            "failed; not committing the delta so the registry keeps their "
+            "PENDING records (old + planned lineage) and the next run "
+            "retries the removal"
+        )
+
+    results = incremental.commit(
+        lineages=lineages,
+        fingerprints=context.incremental_fingerprints,
+        failed_doc_ids=documents_with_failed_units(context, text_units),
+        text_units=text_units,
+        entities=entities,
+        relationships=relationships,
+        communities=communities,
+        community_reports=community_reports,
+        claims=claims,
+    )
+    if not removed:
+        raise PipelineStageError(
+            "Removing the artifacts of deleted documents failed; their "
+            "registry records are kept so the next run retries the removal"
+        )
+    return results

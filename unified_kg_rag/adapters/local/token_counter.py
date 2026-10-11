@@ -16,7 +16,7 @@ import threading
 from functools import lru_cache
 from typing import Any
 
-from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.local.embeddings import truncate_to_estimate
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import get_logger

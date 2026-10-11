@@ -151,9 +151,7 @@ async def test_neptune_retriever_logs_no_query_text(
     config.aws.neptune.endpoint = "neptune.example.invalid"
     config.aws.neptune.use_iam = False
     client = NeptuneClient(config=config, boto_session=MagicMock())
-    retriever = NeptuneRetriever(
-        config=config, neptune_client=client, boto_session=MagicMock()
-    )
+    retriever = NeptuneRetriever(config=config, neptune_client=client)
 
     async def no_rows(_traversal: Any) -> list:
         return []

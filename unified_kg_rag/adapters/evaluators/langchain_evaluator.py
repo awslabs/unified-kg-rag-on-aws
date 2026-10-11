@@ -11,6 +11,13 @@ from langchain_classic.evaluation.schema import EvaluatorType as LCEvaluatorType
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.prompts import PromptTemplate
 
+from unified_kg_rag.adapters.evaluators.base import (
+    FAILED_METRICS_KEY,
+    SKIP_REASON_EMPTY_REFERENCE,
+    SKIPPED_METRICS_KEY,
+    BaseGraphRAGEvaluator,
+    judge_model_kwargs,
+)
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Config,
@@ -21,13 +28,6 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluatorType,
     ModelPurpose,
-)
-from unified_kg_rag.evaluation.base import (
-    FAILED_METRICS_KEY,
-    SKIP_REASON_EMPTY_REFERENCE,
-    SKIPPED_METRICS_KEY,
-    BaseGraphRAGEvaluator,
-    judge_model_kwargs,
 )
 from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.utils import parse_llm_json, text_digest
@@ -107,7 +107,6 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         # The judge LLM comes from the shared provider bundle
         # (EvaluationManager passes the chain's).
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
         super().__init__(
             config=config,
             evaluator_type=EvaluatorType.LANGCHAIN,

@@ -3,7 +3,7 @@
 import asyncio
 import time
 from collections.abc import Callable
-from functools import wraps
+from functools import cached_property, wraps
 from typing import Any
 
 import boto3
@@ -18,7 +18,7 @@ from opensearchpy import (
 from opensearchpy.exceptions import NotFoundError, TransportError
 from opensearchpy.helpers import streaming_bulk
 
-from unified_kg_rag.adapters.aws.bedrock_retry import backoff_delay
+from unified_kg_rag.adapters.llm.retry import backoff_delay
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import AWSServiceError, get_logger
 
@@ -37,6 +37,11 @@ RETRYABLE_BULK_ITEM_STATUSES = frozenset({429, 502, 503, 504})
 # Bounds for one delete-index request. The names are joined into the URL
 # path, and OpenSearch's default max request line is 4 KB; staying well under
 # it leaves room for the host, URL encoding and query string.
+# Per-request timeout and transport retries of both OpenSearch clients.
+_REQUEST_TIMEOUT_SECONDS = 180
+_CLIENT_MAX_RETRIES = 5
+_CLIENT_RETRY_STATUSES = (429, 502, 503, 504)
+
 _DELETE_BATCH_MAX_NAMES = 20
 _DELETE_BATCH_MAX_CHARS = 3000
 # How many undeleted names a delete_indices error message lists.
@@ -160,16 +165,26 @@ class OpenSearchClient:
     def __init__(self, config: Config, boto_session: boto3.Session | None = None):
         self.config = config
         self.opensearch_config = config.aws.opensearch
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=config.aws.profile_name,
-            region_name=config.aws.region_name,
-        )
+        if boto_session is not None:
+            self.boto_session = boto_session
         self._client: OpenSearch | None = None
         self._async_client: AsyncOpenSearch | None = None
         self._bound_loop_id: int | None = None
         # The loop object itself: keeps its id from being reused while bound,
         # and lets a rotated client be closed (awaited) on its own loop.
         self._bound_loop: asyncio.AbstractEventLoop | None = None
+
+    @cached_property
+    def boto_session(self) -> boto3.Session:
+        """The session IAM auth signs with (a default one unless given).
+
+        Created on first use, so a client of a store without IAM auth (a
+        local Gremlin Server or OpenSearch) never resolves an AWS profile.
+        """
+        return boto3.Session(
+            profile_name=self.config.aws.profile_name,
+            region_name=self.config.aws.region_name,
+        )
 
     @property
     def client(self) -> OpenSearch:
@@ -316,14 +331,7 @@ class OpenSearchClient:
 
     def _create_client(self) -> OpenSearch:
         params = self._get_base_connection_params(async_mode=False)
-        params.update(
-            {
-                "connection_class": RequestsHttpConnection,
-                "max_retries": 5,
-                "retry_on_timeout": True,
-                "retry_on_status": (429, 502, 503, 504),
-            }
-        )
+        params["connection_class"] = RequestsHttpConnection
 
         try:
             client = OpenSearch(**params)
@@ -345,19 +353,6 @@ class OpenSearchClient:
         # so an AWSV4SignerAsyncAuth still breaks. AsyncHttpConnection invokes a
         # callable http_auth as a per-request SigV4 signer instead.
         params["connection_class"] = AsyncHttpConnection
-        # Match the sync client's retry policy: the async client serves the whole
-        # query hot path (every retriever fans several index queries out
-        # concurrently). Without this, opensearch-py defaults to
-        # retry_on_timeout=False and retry_on_status=(502,503,504) — a 429
-        # (throttling) would surface as a TransportError and silently degrade
-        # that index to zero results instead of being retried.
-        params.update(
-            {
-                "max_retries": 5,
-                "retry_on_timeout": True,
-                "retry_on_status": (429, 502, 503, 504),
-            }
-        )
         return AsyncOpenSearch(**params)
 
     def _get_base_connection_params(self, async_mode: bool) -> dict[str, Any]:
@@ -374,7 +369,15 @@ class OpenSearchClient:
             "http_auth": self._get_auth(async_mode=async_mode),
             "use_ssl": self.opensearch_config.use_ssl,
             "verify_certs": self.opensearch_config.verify_certs,
-            "timeout": 180,
+            "timeout": _REQUEST_TIMEOUT_SECONDS,
+            # One retry policy for the sync and async clients. The async client
+            # serves the whole query hot path; without it opensearch-py
+            # defaults to retry_on_timeout=False and retry_on_status=(502, 503,
+            # 504), so a 429 (throttling) would surface as a TransportError and
+            # silently degrade that index to zero results.
+            "max_retries": _CLIENT_MAX_RETRIES,
+            "retry_on_timeout": True,
+            "retry_on_status": _CLIENT_RETRY_STATUSES,
         }
 
     def _get_auth(

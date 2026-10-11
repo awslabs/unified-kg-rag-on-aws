@@ -46,7 +46,7 @@ Imports point **inward** (left imports right, never the reverse). `shared/` is a
 flowchart TB
     application["<b>application/</b> - orchestration and entry points<br/>cli (run-*) · DataIngestionPipeline + stages · IndexingManager · GraphRAGChain"]
     adapters["<b>adapters/</b> - technology bindings<br/>aws (Bedrock, Neptune, OpenSearch, DynamoDB, S3) · search_strategies (GraphRAG + LightRAG)<br/>storage · retrievers · retrieval · ingestion · renderers · evaluators"]
-    ports["<b>ports/</b> - abstract interfaces<br/>DocStatusPort · CachePort · model factory and TokenCounter ports · BaseIndexer / GraphIndexer / VectorIndexer"]
+    ports["<b>ports/</b> - abstract interfaces<br/>DocStatusPort · model factory and TokenCounter ports · BaseIndexer / GraphIndexer / VectorIndexer"]
     domain["<b>domain/</b> - technology-agnostic core<br/>models · ingestion (delta, merge, resolve, analyze) · retrieval (strategy_registry) · prompts"]
     shared["<b>shared/</b> - cross-cutting kernel<br/>config · logging · exceptions · metrics · cache and pipeline managers · utils"]
     application --> adapters --> ports --> domain
@@ -67,10 +67,11 @@ unified_kg_rag/
 │  ├─ retrieval/        #   strategy_registry, MetricsMixin
 │  └─ prompts/          #   version-controlled prompt templates
 ├─ ports/               # abstract interfaces the domain depends on (DocStatusPort,
-│                       #   BaseIndexer/GraphIndexer/VectorIndexer, CachePort,
+│                       #   BaseIndexer/GraphIndexer/VectorIndexer,
 │                       #   ModelFactoryPort — ports/__init__ is the port catalog)
 ├─ adapters/            # concrete technology bindings
 │  ├─ aws/              #   Bedrock, Neptune, OpenSearch, DynamoDB, S3 clients
+│  ├─ llm/              #   provider-neutral chain assembly, transient retry, token estimate
 │  ├─ storage/          #   Neptune/OpenSearch indexers (write-side port implementations)
 │  ├─ retrievers/       #   Neptune/OpenSearch retrievers
 │  ├─ search_strategies/#   simple/local/global/drift + lightrag(mix/hybrid/naive)
@@ -78,7 +79,7 @@ unified_kg_rag/
 │  ├─ ingestion/        #   LLM/IO coupled: chunker, *_extractor, loader, parser,
 │  │                    #   translator, gleaner, community_detector
 │  ├─ renderers/        #   graph visualization renderers
-│  └─ evaluators/       #   langchain/ragas evaluators (the LLM-free graph_aware,
+│  └─ evaluators/       #   evaluator bases + langchain/ragas evaluators (the LLM-free graph_aware,
 │                       #   retrieval and answer_match evaluators live in evaluation/)
 ├─ application/         # orchestration + entry points
 │  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning
@@ -88,16 +89,16 @@ unified_kg_rag/
 │  └─ prompts/          #   PromptTuner (LLM-based corpus profiling)
 ├─ shared/              # cross-cutting kernel (config, logging, exceptions, metrics,
 │                       #   cache/pipeline manager, utils)
-├─ evaluation/          # real logic package: evaluation_manager / base / graph_aware /
+├─ evaluation/          # real logic package: evaluation_manager / graph_aware /
 │                       #   retrieval / answer_match
-└─ visualization/       # real logic package: render loop + embeddings/exporters/renderers
+└─ visualization/       # real logic package: render loop + embeddings/exporters
 ```
 
 > Layout note: `evaluation/` and `visualization/` are **real logic packages** —
-> `evaluation/` holds `evaluation_manager` / `base` and the LLM-free
+> `evaluation/` holds `evaluation_manager` and the LLM-free
 > `graph_aware_evaluator` / `retrieval_evaluator` / `answer_match_evaluator`;
-> `visualization/` holds the render loop plus the `embeddings/`, `exporters/`,
-> and `renderers/` subpackages. Everything else is imported from its real
+> `visualization/` holds the render loop plus the `embeddings/` and
+> `exporters/` subpackages (the renderers are in `adapters/renderers/`). Everything else is imported from its real
 > location (`application.retrieval.rag_chain`,
 > `application.storage.indexing_manager`, `application.ingestion.pipeline`,
 > `adapters.*`, `domain.*`).
@@ -107,13 +108,12 @@ unified_kg_rag/
 | Port | Location | Adapter | Notes |
 |---|---|---|---|
 | `DocStatusPort` | `ports/doc_status.py` | `adapters/aws/dynamodb.py` (`DynamoDBDocStatusStore`), `adapters/local/sqlite_doc_status.py` (`SQLiteDocStatusStore`), `FakeDocStatusStore` for tests | Persists incremental-indexing document status/lineage |
-| `CachePort` | `ports/cache.py` (`Protocol`) | `shared/cache_manager.py` (local) + `adapters/aws/s3_cache.py` (S3) | Stage-result persistence boundary |
 | `GraphIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py` | Single contract for full + delta (`upsert_*`/`delete_by_id`) |
 | `VectorIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` | Same |
 | `BaseGraphRAGRetriever` (read-side) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch}_retriever.py` | Retrieval adapters |
-| LLM/Embedding/Rerank factories, token counter | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`) | `adapters/aws/bedrock.py`, `adapters/aws/bedrock_models.py`, `adapters/aws/token_counter.py`; local: `adapters/local/{models,embeddings,rerank,token_counter}.py` | Carried by one `Providers` bundle (`adapters/providers.py`, built by `application/bootstrap.py`) that each orchestrator builds once and passes to every component; each role's adapter is the one `providers.<role>.kind` selects through `adapters/provider_registry.py` (default Bedrock; §15) |
+| LLM/Embedding/Rerank factories, token counter | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`, and the `LanguageModelInfo` / `EmbeddingModelInfo` / `RerankModelInfo` records `get_model_info` returns) | `adapters/aws/bedrock.py`, `adapters/aws/bedrock_models.py`, `adapters/aws/token_counter.py`; local: `adapters/local/{models,embeddings,rerank,token_counter}.py` | Carried by one `Providers` bundle (`adapters/providers.py`, built by `application/bootstrap.py`) that each orchestrator builds once and passes to every component; each role's adapter is the one `providers.<role>.kind` selects through `adapters/provider_registry.py` (default Bedrock; §15) |
 
-> Design note: Pure ports (`DocStatusPort`, the write-side indexer ABCs) are gathered in `ports/`. The read-side abstract bases (`BaseGraphRAGRetriever`/`BaseSearchStrategy`) are "adapter bases" that construct infrastructure (HybridScorer/TokenManager) in `__init__`, so they live in `adapters/retrieval/base.py` and are imported from there; `ports/__init__` does not export them and only names them in its catalog docstring (no duplicate Protocol definition is kept). `BaseGraphRAGEvaluator` (`evaluation/base.py`) is an adapter base of the same kind.
+> Design note: Pure ports (`DocStatusPort`, the write-side indexer ABCs) are gathered in `ports/`. The read-side abstract bases (`BaseGraphRAGRetriever`/`BaseSearchStrategy`) are "adapter bases" that construct infrastructure (HybridScorer/TokenManager) in `__init__`, so they live in `adapters/retrieval/base.py` and are imported from there; `ports/__init__` does not export them and only names them in its catalog docstring (no duplicate Protocol definition is kept). `BaseGraphRAGEvaluator` (`adapters/evaluators/base.py`) is an adapter base of the same kind.
 
 ### 2.2 Role-Based Retriever Injection
 
@@ -153,7 +153,7 @@ This pattern follows the same philosophy as the existing `ParserFactory._loader_
 
 ### 2.4 Dependency Rule Verification Status
 
-`domain/` does not import `adapters`/`application` at runtime, and neither does `ports/`. One compile-time-only exception exists — `domain/retrieval/strategy_registry.py` references `adapters.retrieval.base.BaseSearchStrategy` under `TYPE_CHECKING` (because the registry stores strategy subclasses). Extracting pure strategy/retriever ports would also remove this type-level reference; it is left in place as a deliberate boundary (see "Deliberate Design Boundaries" at the end of this document).
+`domain/` imports no `ports`/`adapters`/`application` module at runtime, `ports/` and `shared/` import no other layer, and `adapters/` import no `application`, `evaluation` or `visualization` module; `evaluation/` reaches the application layer only through the chain (`application.retrieval`, `application.bootstrap`). `tests/unit/test_domain_purity.py` enforces these contracts on every import, including `TYPE_CHECKING` ones. Two compile-time-only exceptions exist, and the test checks that both stay under `TYPE_CHECKING`: `domain/retrieval/strategy_registry.py` references `adapters.retrieval.base.BaseSearchStrategy` (the registry stores strategy subclasses), and `domain/ingestion/delta_detector.py` annotates its parameters with `DocStatusPort` (the port module imports the domain models, so a runtime import would be a cycle). Extracting pure strategy/retriever ports would also remove the first type-level reference; it is left in place as a deliberate boundary (see "Deliberate Design Boundaries" at the end of this document).
 
 Code imports from real layer locations (`application.retrieval.rag_chain`, `application.storage.indexing_manager`, `application.ingestion.pipeline`, and the `adapters.*` / `domain.*` modules). `evaluation/` and `visualization/` are real logic packages (see the layout note in §2).
 
@@ -166,7 +166,7 @@ The `domain/models/` package contains pure Pydantic models with no infrastructur
 - `Entity` (`name`, `description`, `type`, `text_unit_ids`, `community_ids`, `rank`, `frequency`, `confidence`, embedding fields)
 - `Relationship` (`source_id`/`target_id`, `description`, `weight`, `text_unit_ids`, `description_embedding`)
 - `Community` / `CommunityReport`, `TextUnit`, `Covariate` (claim)
-- `DocStatus` (state machine: PENDING→PARSING→PROCESSING→PROCESSED|FAILED), `DocStatusRecord` (content hash + artifact lineage + suffix), `DocumentDelta` (new/changed/unchanged/deleted), `DocumentLineage` (per-document artifact attribution)
+- `DocStatus` (PENDING write-ahead record → PROCESSED|FAILED), `DocStatusRecord` (content hash + artifact lineage + suffix), `DocumentDelta` (new/changed/unchanged/deleted), `DocumentLineage` (per-document artifact attribution)
 - `SearchQuery`/`SearchResult`/`RetrievalResult`, `SearchStrategy`/`SearchType`/`RetrieverRole`
 
 **Rank (MS GraphRAG parity)**: an entity's `rank` is its degree (the number of distinct entities it is related to) and a relationship's `rank` the sum of its endpoints' degrees (`domain/ingestion/graph_rank.py`). Graph resolution sets them for a full build; an incremental merge recomputes them for every entity and relationship it writes, over the stored graph's neighbours (`GraphIndexer.read_neighbor_ids`) plus the delta's relationships. A stored entity the delta does not write keeps its rank until the next full build, including when a removed document dropped one of its edges.
@@ -384,7 +384,7 @@ Per-source behavior:
 | **S3** | `adapters/aws/s3_cache.py` | Pipeline cache sync (encryption defaults to `BUCKET_DEFAULT` — the bucket's default encryption, e.g. a CMK; `AES256`/`aws:kms` force per-object SSE) |
 | **DynamoDB** | `adapters/aws/dynamodb.py` | Incremental-indexing document-status registry |
 
-All adapters can be injected with a `boto_session` (by default created from `config.aws.profile_name`), so a fake/moto session can be injected during testing.
+The AWS session is the bundle's (`Providers(boto_session=...)`, by default created from `config.aws.profile_name` on first use), so a fake/moto session can be injected during testing. Only an AWS client asks for it: a local run, or a store without IAM auth, never resolves the profile.
 
 ### 8.5 Retrieval Error Visibility
 
@@ -498,10 +498,9 @@ subclassing or editing dispatch code. The ports, their default
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` (`LocalTokenCounter`: estimate or tiktoken; follows the LLM kind) | `Providers(token_counter_factory=...)` |
 | `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` (`gremlin`: the same adapter on Gremlin Server) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` or `IndexingManager(vector_indexer=..., graph_indexer=...)` |
 | retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `Providers(retriever_builders=...)` or `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
-| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `delete` / `list_all` / `diff` (`get_many` / `put_many` optional: without them each record is read or written on its own; `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow` optional: without them a record has no size limit and no overflow) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (the latter turns incremental indexing on); conform structurally and pass `tests/integration/test_doc_status_conformance.py` |
-| `CachePort` (`ports/cache.py`, `Protocol`) | get/set pipeline state | filesystem `CacheManager` | structural — no AWS needed by default |
+| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `delete` / `list_all` / `diff` (`get_many` / `put_many` optional: without them each record is read or written on its own; `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow` optional: without them a record has no size limit and no overflow) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (either turns incremental indexing on); conform structurally and pass `tests/integration/test_doc_status_conformance.py` |
 
-Because the model-factory and doc-status/cache ports are `runtime_checkable`
+Because the model-factory and doc-status ports are `runtime_checkable`
 `Protocol`s, a custom class only needs the right **method shapes** — no base
 class to import. Example (a local LLM provider):
 
@@ -554,7 +553,10 @@ pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
 The stores follow the same bundle: without `retriever_builders` the chain
 reads, and without `doc_status`/`vector_indexer`/`graph_indexer` the pipeline
 writes to, the stores `providers.graph` / `providers.vector` /
-`providers.doc_status` select (see the table above).
+`providers.doc_status` select (see the table above). Those orchestrator
+arguments (and `GraphRAGChain(model_factory=...)`) are shorthand for a bundle
+built with them: with a `providers=` bundle, set them on the bundle instead
+(passing both raises `ValueError`).
 
 Anything not supplied is built lazily by the builder registered for the
 configured kind (Bedrock, Neptune, OpenSearch and DynamoDB by default); the

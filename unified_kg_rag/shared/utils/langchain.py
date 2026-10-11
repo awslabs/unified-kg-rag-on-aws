@@ -25,7 +25,7 @@ from unified_kg_rag.shared.utils.common import text_digest
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 if TYPE_CHECKING:
-    pass
+    from unified_kg_rag.domain.models.config import ProcessingConfig
 
 logger = get_logger(__name__)
 
@@ -154,6 +154,19 @@ class BatchProcessor(BaseModel):
         "None retries every error, for callers that span several backends.",
     )
 
+    @classmethod
+    def from_processing(
+        cls, processing: "ProcessingConfig", **settings: Any
+    ) -> "BatchProcessor":
+        """A processor sized by ``config.processing`` (the ingestion stages)."""
+        return cls(
+            max_concurrency=processing.max_concurrency,
+            batch_size=processing.batch_size,
+            chunk_concurrency=processing.chunk_concurrency,
+            max_attempts=processing.max_attempts,
+            **settings,
+        )
+
     @staticmethod
     def _run_with_timeout(
         func: Callable[[], Any], timeout_seconds: int, label: str
@@ -206,10 +219,9 @@ class BatchProcessor(BaseModel):
         prepare_inputs_func: Callable[[list[Any]], list[dict[str, Any]]],
         sequential_func: Callable[[dict[str, Any]], Any],
         task_name: str,
-        run_config: dict[str, Any] | None = None,
         show_progress: bool = True,
     ) -> list[Any]:
-        """Call ``sequential_func`` once per item, in chunks, and retry failures.
+        """Call ``sequential_func once per item, in chunks, and retry failures.
 
         Each item is its own call under its own ``call_timeout_seconds``, run
         ``max_concurrency`` at a time within a chunk, so a slow or failed item
@@ -226,7 +238,6 @@ class BatchProcessor(BaseModel):
                 prepare_inputs_func,
                 sequential_func,
                 task_name,
-                run_config,
                 show_progress,
             )
             span.set_attributes(_chunk_outcome(items_to_process, results))
@@ -238,21 +249,10 @@ class BatchProcessor(BaseModel):
         prepare_inputs_func: Callable[[list[Any]], list[dict[str, Any]]],
         sequential_func: Callable[[dict[str, Any]], Any],
         task_name: str,
-        run_config: dict[str, Any] | None,
         show_progress: bool,
     ) -> list[Any]:
         if not items_to_process:
             return []
-
-        if run_config:
-            self.max_concurrency = run_config.get(
-                "max_concurrency", self.max_concurrency
-            )
-            self.batch_size = run_config.get("batch_size", self.batch_size)
-            self.chunk_concurrency = run_config.get(
-                "chunk_concurrency", self.chunk_concurrency
-            )
-            self.max_attempts = run_config.get("max_attempts", self.max_attempts)
 
         # Bound every item call by the wall-clock ceiling so a hung item
         # aborts and is retried instead of blocking.
@@ -512,7 +512,6 @@ class BatchProcessor(BaseModel):
         batch_func: Callable[..., Any],
         sequential_func: Callable[..., Any],
         task_name: str,
-        run_config: dict[str, Any] | None = None,
         show_progress: bool = True,
     ) -> list[Any]:
         with observability.span(
@@ -524,7 +523,6 @@ class BatchProcessor(BaseModel):
                 batch_func,
                 sequential_func,
                 task_name,
-                run_config,
                 show_progress,
             )
             span.set_attributes(_chunk_outcome(items_to_process, results))
@@ -537,18 +535,10 @@ class BatchProcessor(BaseModel):
         batch_func: Callable[..., Any],
         sequential_func: Callable[..., Any],
         task_name: str,
-        run_config: dict[str, Any] | None,
         show_progress: bool,
     ) -> list[Any]:
         if not items_to_process:
             return []
-
-        if run_config:
-            self.max_concurrency = run_config.get(
-                "max_concurrency", self.max_concurrency
-            )
-            self.batch_size = run_config.get("batch_size", self.batch_size)
-            self.max_attempts = run_config.get("max_attempts", self.max_attempts)
 
         prepared_batch_func = self._create_async_batch_func(batch_func)
         retrying_sequential_func = self._create_retry_decorator(task_name)(
@@ -1165,5 +1155,5 @@ class RobustXMLOutputParser(XMLOutputParser):
 
 # NOTE: the Bedrock-coupled chain builders (`setup_chain`,
 # `create_robust_xml_output_parser`) moved to
-# `unified_kg_rag.adapters.aws.chain_factory` so this kernel module stays free of
+# `unified_kg_rag.adapters.llm.chain_factory` so this kernel module stays free of
 # any adapter dependency (hexagonal dependency rule). Import them from there.

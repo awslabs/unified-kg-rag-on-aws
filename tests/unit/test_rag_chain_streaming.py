@@ -20,6 +20,7 @@ from langchain_core.messages import AIMessage
 from structlog.contextvars import get_contextvars
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from tests.fixtures.fakes.chat_models import fake_model_info
 from unified_kg_rag.application.retrieval.rag_chain import (
     DEFAULT_ERROR_MESSAGE,
     ChainMode,
@@ -66,7 +67,7 @@ class _StreamingModelFactory:
         return cls(messages=itertools.repeat(AIMessage(content=_ANSWER)))
 
     def get_model_info(self, model_id: Any) -> Any:
-        return None
+        return fake_model_info(model_id)
 
 
 class _FakeRetriever:
@@ -290,7 +291,7 @@ async def test_stream_sync_works_inside_running_event_loop(config: Config) -> No
 
 async def test_astream_binds_a_query_id_for_retrieval_logs(config: Config) -> None:
     chain, _, _ = _make_chain(config)
-    retriever = chain._retriever_builders_override[RetrieverRole.DOCUMENT]()
+    retriever = chain.providers._retriever_builders[RetrieverRole.DOCUMENT]()
     _ = [c async for c in chain.astream(_input(conversation_id="conv-1"))]
 
     assert retriever.log_contexts
@@ -304,7 +305,7 @@ def test_sync_stream_binds_and_releases_the_query_id(config: Config) -> None:
     # stream() resumes the generator in a new task per step; the binding must
     # be released in the step that made it.
     chain, _, _ = _make_chain(config)
-    retriever = chain._retriever_builders_override[RetrieverRole.DOCUMENT]()
+    retriever = chain.providers._retriever_builders[RetrieverRole.DOCUMENT]()
     assert "".join(chain.stream(_input())) == _ANSWER
     assert "query_id" in retriever.log_contexts[0]
 

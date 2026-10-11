@@ -19,17 +19,19 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   imports every domain module in a clean interpreter and checks
   `sys.modules`).
 - **`ports/`**: the abstract interfaces the domain depends on — `DocStatusPort`,
-  `CachePort`, `ModelFactoryPort`/`TokenCounterPort` (`Protocol`s) and the
+  `ModelFactoryPort`/`TokenCounterPort` (`Protocol`s) and the
   write-side indexer ABCs `BaseIndexer`/`GraphIndexer`/`VectorIndexer`
   (+ `IndexingStats`). `ports/__init__` is the port catalog. The
   retrieval/evaluation abstract bases are *adapter bases* (they construct infra
   in `__init__`): `ports/__init__` names them but does not export them; import
-  them from `adapters.retrieval.base` / `evaluation.base`.
+  them from `adapters.retrieval.base` / `adapters.evaluators.base`.
 - **`adapters/`**: concrete technology bindings — `aws/` (Bedrock, Neptune,
-  OpenSearch, DynamoDB, S3), `storage/` (indexers), `retrievers/`,
+  OpenSearch, DynamoDB, S3), `local/` (Ollama/OpenAI-compatible, SQLite),
+  `llm/` (provider-neutral chain assembly, retry, token estimate),
+  `storage/` (indexers), `retrievers/`,
   `search_strategies/`, `retrieval/` (base + hybrid scorer + token/memory
   managers), `ingestion/` (LLM/IO-coupled chunker/extractor/loader/parser/
-  translator), `renderers/`, `evaluators/`.
+  translator), `renderers/`, `evaluators/` (incl. the evaluator bases).
 - **`application/`**: orchestration + entry points — `cli/` (pyproject scripts
   resolve to `unified_kg_rag.application.cli.*`), `ingestion/` (pipeline + stages),
   `storage/indexing_manager`, `retrieval/rag_chain`.
@@ -39,7 +41,7 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   from `shared.utils.langchain` / `shared.utils.document_converter` (and rich
   helpers from `shared.utils.display`), not from the package root.
 - **`evaluation/` and `visualization/`**: real logic packages (evaluators +
-  manager; render loop + `embeddings/`/`exporters/`/`renderers/`). Import
+  manager; render loop + `embeddings/`/`exporters/`). Import
   everything else from its real location (`application.retrieval.rag_chain`,
   `application.storage.indexing_manager`, `application.ingestion.pipeline`,
   `adapters.*`, `domain.*`).
@@ -86,7 +88,7 @@ The two rules to keep in mind:
   (hit@k/recall@k/MRR against `reference_sources`) and `answer_match` (exact
   match/token F1 against `answer` + `metadata.answer_aliases`).
 - **Visualization**: renderers register via `@register_renderer`
-  (`visualization/renderers/`); the manager and the standalone CLI drive them
+  (`adapters/renderers/`); the manager and the standalone CLI drive them
   through one registry + `RenderContext`.
 
 ## Code standards

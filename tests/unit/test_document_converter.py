@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from langchain_core.documents import Document as LangChainDocument
 
+from unified_kg_rag.domain.models import Document, Page
 from unified_kg_rag.shared.utils.document_converter import (
     convert_langchain_to_document,
 )
@@ -59,3 +62,29 @@ def test_compatibility_characters_are_kept() -> None:
     # NFC, not NFKC: full-width letters and circled designators stay as written.
     doc = convert_langchain_to_document(_lc("ＡＢＣ ㈜"), "a.txt")
     assert doc.content.text == "ＡＢＣ ㈜"
+
+
+def test_parsed_json_with_removed_element_fields_still_loads(tmp_path) -> None:
+    # Parsed exports written while Document carried page elements, page sizes,
+    # loader raw_data and detected_language.
+    doc = convert_langchain_to_document(_lc("Vendor ships to Buyer"), "a.txt")
+    data = doc.model_dump(mode="json")
+    data |= {"detected_language": "Unknown", "elements": []}
+    data["pages"][0] |= {"elements": [], "raw_data": {}, "height": 10, "width": 5}
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    loaded = Document.from_json_file(path)
+    assert loaded == doc
+
+
+def test_content_defaults_to_the_page_text() -> None:
+    doc = Document(
+        document_id="d",
+        file_name="a.txt",
+        file_path="a.txt",
+        file_type="txt",
+        total_pages=2,
+        pages=[Page(page_number=1, text_content="one"), Page(page_number=2)],
+        page_content="one",
+    )
+    assert doc.content is not None and doc.content.text == "one"

@@ -45,9 +45,7 @@ def _incremental_indexing_stage(mocker, store: FakeDocStatusStore, manager):
     mocker.patch.object(ps, "IndexingManager", return_value=manager)
     cfg = Config()
     cfg.indexing.reset = False
-    return ps.IndexingStage(
-        config=cfg, boto_session=mocker.MagicMock(), doc_status=store
-    )
+    return ps.IndexingStage(config=cfg, doc_status=store)
 
 
 # --- the commit gate and the pipeline gate agree -----------------------------

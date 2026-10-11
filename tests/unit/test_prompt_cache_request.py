@@ -23,8 +23,8 @@ from unified_kg_rag.adapters.aws.bedrock import (
     BedrockCrossRegionModelHelper,
     BedrockLanguageModelFactory,
 )
-from unified_kg_rag.adapters.aws.chain_factory import setup_chain
-from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
+from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.domain.models import Config, LanguageModelId, ModelPurpose
 from unified_kg_rag.domain.prompts import BasePrompt
 from unified_kg_rag.domain.prompts.data_processing import (

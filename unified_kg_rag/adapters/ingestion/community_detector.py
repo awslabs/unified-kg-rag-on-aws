@@ -8,14 +8,13 @@ from typing import Any
 
 import boto3
 import networkx as nx
-from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
-from unified_kg_rag.adapters.aws.chain_factory import (
+from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
-from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.graph_builder import edge_relationships
@@ -25,6 +24,7 @@ from unified_kg_rag.domain.models import (
     CommunityMetrics,
     CommunityReport,
     Config,
+    HierarchicalCommunity,
     ModelPurpose,
     TextUnit,
 )
@@ -34,34 +34,6 @@ from unified_kg_rag.shared.utils import generate_stable_id
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 logger = get_logger(__name__)
-
-
-class HierarchicalCommunity(BaseModel):
-    community_id: str = Field(
-        description="Unique string identifier for this community within the hierarchical structure"
-    )
-    level: int = Field(
-        description="Depth level in the community hierarchy where 0 represents the base level with finest granularity"
-    )
-    nodes: set[str] = Field(
-        description="Collection of graph node identifiers that are members of this community"
-    )
-    parent_id: str | None = Field(
-        None,
-        description="Identifier of the parent community at the next higher hierarchical level, if any",
-    )
-    children_ids: list[str] = Field(
-        default_factory=list,
-        description="Ordered list of child community identifiers at the next lower hierarchical level",
-    )
-    label: str = Field(
-        default="",
-        description="Human-readable positional label (e.g. 'L0_C3') for display; "
-        "unlike community_id it is not stable across runs",
-    )
-
-    def __hash__(self) -> int:
-        return hash(self.community_id)
 
 
 def community_content_id(level: int, nodes: Any) -> str:
@@ -120,7 +92,6 @@ class CommunityDetector(BaseProcessor):
     ) -> None:
         super().__init__(config)
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
         self.community_detection_config = self.config.graph.community_detection
         self.ignore_errors = self.config.processing.ignore_errors
 
@@ -131,8 +102,8 @@ class CommunityDetector(BaseProcessor):
         self.show_progress = show_progress
 
         self.factory = self.providers.llm_factory
-        self.batch_processor = BatchProcessor(
-            is_transient_error=is_transient_bedrock_error
+        self.batch_processor = BatchProcessor.from_processing(
+            self.config.processing, is_transient_error=is_transient_bedrock_error
         )
 
         if self.community_detection_config.report_generation.enabled:
@@ -876,7 +847,6 @@ class CommunityDetector(BaseProcessor):
             prepare_inputs_func=self._create_report_chain_inputs,
             sequential_func=self.report_generator.invoke,
             task_name="Community report generation",
-            run_config=self.config.processing.model_dump(),
             show_progress=self.show_progress,
         )
 
@@ -1192,9 +1162,7 @@ class CommunityDetector(BaseProcessor):
             name_embedding=None,
             community_id=community.id,
             summary=summary,
-            summary_embedding=None,
             full_content="",
-            full_content_embedding=None,
             findings=findings,
             rating=rating,
             rating_explanation=rating_explanation,

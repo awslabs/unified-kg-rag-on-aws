@@ -113,7 +113,6 @@ class TestEvaluateSingle:
             "entity_coverage": 1.0,
             "relationship_coverage": 1.0,
         }
-        assert report.overall_score is None  # deprecated, never averaged
         assert report.metadata["matched_entity_count"] == 1
         assert report.metadata["matched_relationship_count"] == 1
         assert "skipped_metrics" not in report.metadata

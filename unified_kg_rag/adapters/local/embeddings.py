@@ -18,11 +18,11 @@ from typing import Any, ClassVar
 
 from langchain_core.embeddings import Embeddings
 
-from unified_kg_rag.adapters.aws.bedrock_models import EmbeddingModelInfo
-from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.local.models import api_key_value, import_optional
 from unified_kg_rag.domain.models import Config, model_id_value
 from unified_kg_rag.domain.models.provider_config import EmbeddingProviderConfig
+from unified_kg_rag.ports.model_factory import EmbeddingModelInfo
 from unified_kg_rag.shared import EmbeddingModelError, get_logger, observability
 
 logger = get_logger(__name__)
@@ -165,7 +165,8 @@ class OpenAICompatibleEmbeddingFactory(_LocalEmbeddingFactory):
             base_url=self.settings.base_url,
             api_key=api_key_value(self.settings),
             timeout=self.settings.timeout_seconds,
-            max_retries=self.settings.max_retries,
+            # The OpenAI client counts retries after the first attempt.
+            max_retries=self.settings.max_attempts - 1,
             # Send text, not tiktoken ids: only OpenAI's own servers accept
             # pre-tokenized input, and the estimate already truncated it.
             check_embedding_ctx_length=False,

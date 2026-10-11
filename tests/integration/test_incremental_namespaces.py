@@ -28,7 +28,7 @@ from tests.integration.test_incremental_source_scopes import (
     scope_test_config,
     write_corpus,
 )
-from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
+from unified_kg_rag.adapters.aws.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.domain.ingestion.delta_detector import (
     compute_doc_id,
     scope_namespace,

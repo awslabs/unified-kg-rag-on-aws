@@ -28,7 +28,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
-from unified_kg_rag.adapters.aws.chain_factory import (
+from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )

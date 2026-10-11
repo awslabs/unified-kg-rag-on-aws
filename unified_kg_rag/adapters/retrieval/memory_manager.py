@@ -13,7 +13,7 @@ from langchain_core.messages.utils import get_buffer_string
 from langchain_core.output_parsers import CommaSeparatedListOutputParser
 from langchain_core.runnables import Runnable
 
-from unified_kg_rag.adapters.aws.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, language_name
 from unified_kg_rag.domain.prompts import EntityExtractionPrompt
@@ -48,7 +48,6 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
     ):
         self.config = config
         providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = providers.boto_session
         self.conversation_id = conversation_id
         self.max_messages = max_messages
         self.ttl = timedelta(hours=ttl_hours)

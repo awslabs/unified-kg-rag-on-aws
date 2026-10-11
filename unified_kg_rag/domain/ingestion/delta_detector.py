@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from unified_kg_rag.domain.models import (
     Constants,
@@ -44,7 +45,6 @@ from unified_kg_rag.domain.models import (
     Document,
     DocumentDelta,
 )
-from unified_kg_rag.ports import DocStatusPort
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.utils.document_identity import (
     REGISTRY_NAMESPACE_KEY,
@@ -77,6 +77,10 @@ __all__ = [
     "scope_namespace",
     "validate_retired_scopes",
 ]
+
+if TYPE_CHECKING:
+    # Type only: the port module imports the domain models.
+    from unified_kg_rag.ports import DocStatusPort
 
 logger = get_logger(__name__)
 

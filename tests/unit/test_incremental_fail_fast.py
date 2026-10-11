@@ -20,7 +20,7 @@ import pytest
 from moto import mock_aws
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
-from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
+from unified_kg_rag.adapters.aws.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.domain.models import (
     Config,
@@ -88,9 +88,7 @@ def _indexing_stage(config: Config, store, mocker):
     manager.config = config
     manager.initialize.return_value = True
     mocker.patch.object(ps, "IndexingManager", return_value=manager)
-    stage = ps.IndexingStage(
-        config=config, boto_session=mocker.MagicMock(), doc_status=store
-    )
+    stage = ps.IndexingStage(config=config, doc_status=store)
     return stage, manager
 
 

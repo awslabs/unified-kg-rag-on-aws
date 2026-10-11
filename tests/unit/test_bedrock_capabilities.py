@@ -26,7 +26,6 @@ from unified_kg_rag.adapters.aws.bedrock import (
     BedrockRerankModelFactory,
     get_assumed_role_boto_session,
 )
-from unified_kg_rag.adapters.aws.bedrock_models import LanguageModelInfo
 from unified_kg_rag.domain.models import (
     Config,
     EmbeddingModelId,
@@ -34,6 +33,7 @@ from unified_kg_rag.domain.models import (
     ModelPurpose,
     RerankModelId,
 )
+from unified_kg_rag.ports.model_factory import LanguageModelInfo
 from unified_kg_rag.shared import (
     AWSServiceError,
     EmbeddingModelError,
@@ -734,23 +734,6 @@ def test_same_model_on_both_tiers_uses_default_effort() -> None:
         }
     )
     assert config.aws.bedrock.model_tier(_THINKING_FAST) == "default"
-
-
-def test_legacy_effort_key_aliases_default_effort(monkeypatch, recorded_chat) -> None:
-    config = _tiered_config(effort="medium")
-    bedrock = config.aws.bedrock
-    assert bedrock.default_effort == "medium"
-    assert bedrock.tier_effort("default") == "medium"
-    assert bedrock.tier_effort("fast") == "low"
-    assert "effort" not in config.aws.bedrock.model_dump()
-    _resolve_to(monkeypatch, f"global.{LanguageModelId.CLAUDE_V5_5_SONNET.value}")
-    _lang_factory(config).get_model(bedrock.default_model_id)
-    assert _sent_effort(recorded_chat) == "medium"
-
-
-def test_default_effort_wins_over_legacy_effort() -> None:
-    bedrock = _tiered_config(effort="medium", default_effort="max").aws.bedrock
-    assert bedrock.tier_effort("default") == "max"
 
 
 def test_unsupported_tier_effort_fails_fast(monkeypatch, recorded_chat) -> None:

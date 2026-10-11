@@ -8,7 +8,6 @@ import weakref
 from collections.abc import Coroutine
 from typing import Any, ClassVar
 
-import boto3
 from gremlin_python.process.graph_traversal import (
     GraphTraversal,
     GraphTraversalSource,
@@ -16,8 +15,7 @@ from gremlin_python.process.graph_traversal import (
 )
 from gremlin_python.process.traversal import Order, P, TextP, Traversal
 
-from unified_kg_rag.adapters.aws import NeptuneClient
-from unified_kg_rag.adapters.aws.neptune import neptune_pool_size
+from unified_kg_rag.adapters.aws.neptune import NeptuneClient, neptune_pool_size
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     is_fatal_retrieval_error,
@@ -43,10 +41,9 @@ class NeptuneRetriever(BaseGraphRAGRetriever):
         self,
         config: Config,
         neptune_client: NeptuneClient,
-        boto_session: boto3.Session | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(config, boto_session, **kwargs)
+        super().__init__(config, **kwargs)
         self._neptune_client = neptune_client
         self._neptune_config = config.indexing.neptune
         self._max_hops = self._neptune_config.max_hops

@@ -139,9 +139,7 @@ def test_reset_records_the_full_corpus_after_rebuilding(mocker) -> None:
         "neptune_entities": IndexingStats(total_items=1, successful_items=1)
     }
     mocker.patch.object(ps, "IndexingManager", return_value=manager)
-    stage = ps.IndexingStage(
-        config=config, boto_session=mocker.MagicMock(), doc_status=store
-    )
+    stage = ps.IndexingStage(config=config, doc_status=store)
 
     loading = _loading_stage(config, store)
     context = _context()
@@ -187,9 +185,7 @@ def test_failed_reset_rebuild_does_not_record_documents(mocker) -> None:
         "neptune_entities": IndexingStats(total_items=1, failed_items=1)
     }
     mocker.patch.object(ps, "IndexingManager", return_value=manager)
-    stage = ps.IndexingStage(
-        config=config, boto_session=mocker.MagicMock(), doc_status=store
-    )
+    stage = ps.IndexingStage(config=config, doc_status=store)
     context = _context()
     context.documents, _ = _loading_stage(config, store)._apply_incremental_filter(
         [a], context
@@ -220,9 +216,7 @@ def _reset_stage(mocker, config: Config, store: FakeDocStatusStore):
         "neptune_entities": IndexingStats(total_items=1, successful_items=1)
     }
     mocker.patch.object(ps, "IndexingManager", return_value=manager)
-    return ps.IndexingStage(
-        config=config, boto_session=mocker.MagicMock(), doc_status=store
-    )
+    return ps.IndexingStage(config=config, doc_status=store)
 
 
 def test_reset_clears_initial_release_records_of_cleared_suffixes(mocker) -> None:

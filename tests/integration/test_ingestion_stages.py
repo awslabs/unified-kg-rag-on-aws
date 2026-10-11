@@ -247,14 +247,17 @@ def test_whole_pipeline_runs_without_aws_through_the_public_constructor(
     source.mkdir()
     (source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
     (source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
+    store = FakeDocStatusStore()
+    graph, vectors = FakeGraphStore(), FakeVectorStore(config.indexing.opensearch)
     providers = Providers(
         config,
         boto_session=MagicMock(),
         llm_factory=ScriptedLLMFactory(_respond),
         embedding_factory=HashingEmbeddingFactory(),
+        doc_status=store,
+        vector_indexer_factory=lambda: vectors,
+        graph_indexer_factory=lambda: graph,
     )
-    store = FakeDocStatusStore()
-    graph, vectors = FakeGraphStore(), FakeVectorStore(config.indexing.opensearch)
 
     pipeline = DataIngestionPipeline(
         config,
@@ -264,9 +267,6 @@ def test_whole_pipeline_runs_without_aws_through_the_public_constructor(
         ),
         source_directory=source,
         providers=providers,
-        doc_status=store,
-        vector_indexer=vectors,
-        graph_indexer=graph,
     )
     for stage in pipeline.stages:
         if isinstance(stage, ps.GraphResolutionStage):
@@ -317,14 +317,17 @@ def test_failed_community_reports_mark_documents_failed_and_are_regenerated(
     source.mkdir()
     (source / "supply.txt").write_text("Vendor supplies widgets to Buyer.")
     (source / "freight.txt").write_text("Carrier pays Bank monthly.")
+    store = FakeDocStatusStore()
+    graph, vectors = FakeGraphStore(), FakeVectorStore(config.indexing.opensearch)
     providers = Providers(
         config,
         boto_session=MagicMock(),
         llm_factory=ScriptedLLMFactory(respond),
         embedding_factory=HashingEmbeddingFactory(),
+        doc_status=store,
+        vector_indexer_factory=lambda: vectors,
+        graph_indexer_factory=lambda: graph,
     )
-    store = FakeDocStatusStore()
-    graph, vectors = FakeGraphStore(), FakeVectorStore(config.indexing.opensearch)
 
     def run(pipeline_id: str) -> PipelineContext:
         pipeline = DataIngestionPipeline(
@@ -335,9 +338,6 @@ def test_failed_community_reports_mark_documents_failed_and_are_regenerated(
             ),
             source_directory=source,
             providers=providers,
-            doc_status=store,
-            vector_indexer=vectors,
-            graph_indexer=graph,
         )
         for stage in pipeline.stages:
             if isinstance(stage, ps.GraphResolutionStage):

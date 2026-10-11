@@ -8,7 +8,7 @@ import networkx as nx
 import numpy as np
 from pyvis.network import Network
 
-from unified_kg_rag.adapters.ingestion.community_detector import HierarchicalCommunity
+from unified_kg_rag.domain.models import HierarchicalCommunity
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)

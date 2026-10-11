@@ -27,8 +27,8 @@ import boto3
 from langchain_core.output_parsers import StrOutputParser
 
 from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
-from unified_kg_rag.adapters.aws.chain_factory import setup_chain
-from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
+from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, Entity, ModelPurpose, Relationship
 from unified_kg_rag.domain.prompts import DescriptionSummarizationPrompt
@@ -63,10 +63,9 @@ class DescriptionSummarizer:
         )
         self.target_language = self.config.processing.translation.target_language.value
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
         self.factory = self.providers.llm_factory
-        self.batch_processor = BatchProcessor(
-            is_transient_error=is_transient_bedrock_error
+        self.batch_processor = BatchProcessor.from_processing(
+            self.config.processing, is_transient_error=is_transient_bedrock_error
         )
         self.summarizer = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
@@ -160,7 +159,6 @@ class DescriptionSummarizer:
                 prepare_inputs_func=lambda chunk: chunk,
                 sequential_func=self.summarizer.invoke,
                 task_name="Description Summarization",
-                run_config=self.config.processing.model_dump(),
                 show_progress=False,
             )
         except Exception as e:

@@ -90,9 +90,7 @@ class _RecordingManager:
 
 def _stage(mocker, store: FakeDocStatusStore, manager: _RecordingManager):
     mocker.patch.object(ps, "IndexingManager", return_value=manager)
-    return ps.IndexingStage(
-        config=Config(), boto_session=mocker.MagicMock(), doc_status=store
-    )
+    return ps.IndexingStage(config=Config(), doc_status=store)
 
 
 def _document(run_id: str, path: str) -> Document:

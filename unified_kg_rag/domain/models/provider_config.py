@@ -72,12 +72,12 @@ class EndpointConfig(BaseModel):
         gt=0,
         description="HTTP timeout per request to the model server, in seconds.",
     )
-    max_retries: int = Field(
-        default=2,
-        ge=0,
+    max_attempts: int = Field(
+        default=3,
+        ge=1,
         description=(
-            "Client-side retries per request (OpenAI-compatible servers; the "
-            "Ollama client does not retry)."
+            "Attempts per request, including the first (OpenAI-compatible "
+            "servers; the Ollama client does not retry). 1 disables the retry."
         ),
     )
 

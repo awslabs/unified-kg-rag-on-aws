@@ -9,7 +9,7 @@ import boto3
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
-from unified_kg_rag.adapters.aws.chain_factory import (
+from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
@@ -131,11 +131,10 @@ class GraphExtractor(BaseProcessor):
     ) -> None:
         super().__init__(config)
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
         self.ignore_errors = self.config.processing.ignore_errors
         self.factory = self.providers.llm_factory
-        self.batch_processor = BatchProcessor(
-            is_transient_error=is_transient_bedrock_error
+        self.batch_processor = BatchProcessor.from_processing(
+            self.config.processing, is_transient_error=is_transient_bedrock_error
         )
 
         robust_xml_output_parser = create_robust_xml_output_parser(
@@ -180,7 +179,6 @@ class GraphExtractor(BaseProcessor):
                 prepare_inputs_func=self._prepare_extraction_inputs,
                 sequential_func=self.graph_extractor.invoke,
                 task_name="Graph Extraction",
-                run_config=self.config.processing.model_dump(),
                 show_progress=self.show_progress,
             )
         except Exception as e:

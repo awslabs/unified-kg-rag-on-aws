@@ -16,7 +16,15 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
+from unified_kg_rag.adapters.aws.bedrock_models import get_language_model_info
+from unified_kg_rag.ports.model_factory import LanguageModelInfo
+
 Responder = Callable[[str, str], str]
+
+
+def fake_model_info(model_id: Any) -> LanguageModelInfo:
+    """A fake LLM factory's capability record: the catalog's for ``model_id``."""
+    return get_language_model_info(str(model_id))
 
 
 class ScriptedChatModel(BaseChatModel):
@@ -46,5 +54,5 @@ class ScriptedLLMFactory:
     def get_model(self, model_id: Any, **kwargs: Any) -> ScriptedChatModel:
         return ScriptedChatModel(respond=self.respond)
 
-    def get_model_info(self, model_id: Any) -> None:
-        return None
+    def get_model_info(self, model_id: Any) -> LanguageModelInfo:
+        return fake_model_info(model_id)

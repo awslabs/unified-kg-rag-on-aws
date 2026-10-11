@@ -14,8 +14,8 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
 from unified_kg_rag.adapters.aws import dynamodb as dynamodb_module
+from unified_kg_rag.adapters.aws.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.domain.models import (
     PENDING_CONTENT_HASH,
     Config,
@@ -56,19 +56,17 @@ def test_roundtrip_all_empty_lists_and_none_scalars(
     assert fetched.status is DocStatus.PENDING
     assert fetched.entity_ids == []
     assert fetched.relationship_ids == []
-    assert fetched.content_length is None
     assert fetched.file_path is None
     assert fetched.suffix == "default"
 
 
-def test_roundtrip_failed_status_and_zero_length(
+def test_roundtrip_failed_status(
     ddb_store: DynamoDBDocStatusStore,
 ) -> None:
     record = DocStatusRecord(
         doc_id="f1",
         content_hash="h",
         status=DocStatus.FAILED,
-        content_length=0,
         error_info="boom",
         suffix="tenant-a",
     )
@@ -76,7 +74,6 @@ def test_roundtrip_failed_status_and_zero_length(
     fetched = ddb_store.get("f1")
     assert fetched is not None
     assert fetched.status is DocStatus.FAILED
-    assert fetched.content_length == 0
     assert fetched.error_info == "boom"
     assert fetched.suffix == "tenant-a"
 

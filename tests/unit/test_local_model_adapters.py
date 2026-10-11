@@ -18,8 +18,8 @@ import pytest
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
 
-from unified_kg_rag.adapters.aws.chain_factory import setup_chain
-from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
+from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.local.embeddings import (
     OllamaEmbeddingFactory,
     OpenAICompatibleEmbeddingFactory,

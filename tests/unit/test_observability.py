@@ -37,6 +37,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 from opentelemetry.trace import SpanKind, StatusCode
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from tests.fixtures.fakes.chat_models import fake_model_info
 from unified_kg_rag.adapters.observability.langchain_callback import (
     GenAITracingCallbackHandler,
 )
@@ -445,7 +446,7 @@ class _FakeModelFactory:
         )
 
     def get_model_info(self, model_id: Any) -> Any:
-        return None
+        return fake_model_info(model_id)
 
 
 class _FakeMemoryManager:

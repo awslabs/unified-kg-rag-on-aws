@@ -108,8 +108,7 @@ aws:
     # query-time LLM calls (strategy routing, query entity/keyword extraction,
     # translation, context building, answer generation, global/DRIFT steps).
     # Validation/access errors still fail fast. Ingestion LLM calls are
-    # retried by their batch processor instead (processing.max_attempts). The
-    # former search.llm_retry key is still accepted and maps here.
+    # retried by their batch processor instead (processing.max_attempts).
     transient_retry:
       max_attempts: 5  # total attempts per call; 1 disables the retry
       base_delay_seconds: 2.0  # first backoff ceiling; doubles with jitter
@@ -154,7 +153,6 @@ aws:
       #   encryption applies (e.g. the CDK stack's KMS CMK with use_cmk=true).
       # AES256: force SSE-S3 per object (overrides a bucket CMK default).
       # aws:kms: force SSE-KMS with kms_key_id (required).
-      # NONE: legacy alias of BUCKET_DEFAULT (S3 always encrypts new objects).
       encryption_type: "BUCKET_DEFAULT"
       kms_key_id: null
   # DynamoDB document-status registry for incremental indexing. When enabled,
@@ -189,7 +187,7 @@ providers:
     base_url: null
     api_key: null
     timeout_seconds: 300.0
-    max_retries: 2
+    max_attempts: 3  # per request, including the first (openai_compatible)
     # Non-Bedrock only: the tier models (they replace aws.bedrock.*_model_id;
     # default_model_id is required, fast_model_id null = default_model_id).
     default_model_id: null
@@ -209,7 +207,7 @@ providers:
     base_url: null
     api_key: null
     timeout_seconds: 300.0
-    max_retries: 2
+    max_attempts: 3  # per request, including the first (openai_compatible)
     # Non-Bedrock only, both required: the model (default of
     # indexing.opensearch.embedding_model_id and evaluation.embedding_model_id)
     # and its vector dimension.
@@ -633,8 +631,7 @@ indexing:
     # Attempts per Neptune write, including the first (1 = no retry). Only
     # transient errors (throttling, ConcurrentModificationException, connection
     # loss, timeouts) are retried, with jittered exponential backoff from
-    # retry_delay_seconds. The former max_retries key counted retries after the
-    # first try: max_retries: N is read as max_attempts: N+1.
+    # retry_delay_seconds.
     max_attempts: 4
     retry_delay_seconds: 2
     # Max characters per Neptune property value. Keep it above the longest
@@ -931,7 +928,7 @@ evaluation:
   # timed-out job yields NaN for that metric. RAGAS' own default (180s) is too
   # tight for thinking judges. Lower ragas_max_workers if Bedrock throttles the
   # judge (throttled calls burn the per-job timeout). ragas_max_attempts is the
-  # total attempts per judge call (the former ragas_max_retries key).
+  # total attempts per judge call.
   ragas_timeout: 300
   # Top-ranked contexts per sample scored by RAGAS context_precision (applied
   # before max_context_tokens), which makes one judge call PER context, so

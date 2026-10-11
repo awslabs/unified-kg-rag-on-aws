@@ -19,7 +19,6 @@ from typing import Any
 
 import networkx as nx
 
-from unified_kg_rag.adapters.ingestion.community_detector import HierarchicalCommunity
 from unified_kg_rag.adapters.renderers import (
     RenderContext,
     get_renderer_class,
@@ -27,7 +26,7 @@ from unified_kg_rag.adapters.renderers import (
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.domain.ingestion.graph_analyzer import CentralityMetrics
-from unified_kg_rag.domain.models import Community
+from unified_kg_rag.domain.models import Community, HierarchicalCommunity
 from unified_kg_rag.shared import get_config, get_logger, setup_logging
 
 logger = get_logger(__name__)

@@ -21,6 +21,13 @@ from ragas.metrics import (
 )
 from ragas.run_config import RunConfig
 
+from unified_kg_rag.adapters.evaluators.base import (
+    FAILED_METRICS_KEY,
+    SKIP_REASON_EMPTY_REFERENCE,
+    SKIPPED_METRICS_KEY,
+    BaseGraphRAGEvaluator,
+    judge_model_kwargs,
+)
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Config,
@@ -31,13 +38,6 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluatorType,
     ModelPurpose,
-)
-from unified_kg_rag.evaluation.base import (
-    FAILED_METRICS_KEY,
-    SKIP_REASON_EMPTY_REFERENCE,
-    SKIPPED_METRICS_KEY,
-    BaseGraphRAGEvaluator,
-    judge_model_kwargs,
 )
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import EvaluationException, get_logger
@@ -96,7 +96,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         # Judge LLM, embeddings and token counter come from the shared
         # provider bundle (EvaluationManager passes the chain's).
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
         eval_model_info = self.providers.llm_model_info(
             config.evaluation.evaluation_model_id
         )

@@ -1,25 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-from .bedrock import (
-    BedrockEmbeddingModelFactory,
-    BedrockLanguageModelFactory,
-    BedrockRerankModelFactory,
-)
-from .bedrock_models import EmbeddingModelInfo
-from .dynamodb import DynamoDBDocStatusStore
-from .neptune import NeptuneClient
-from .opensearch import OpenSearchClient
-from .s3_cache import S3CacheManager
-from .token_counter import BedrockTokenCounter
+"""AWS adapters (Bedrock, Neptune, OpenSearch, DynamoDB, S3).
 
-__all__ = [
-    "BedrockEmbeddingModelFactory",
-    "BedrockLanguageModelFactory",
-    "BedrockRerankModelFactory",
-    "BedrockTokenCounter",
-    "DynamoDBDocStatusStore",
-    "EmbeddingModelInfo",
-    "NeptuneClient",
-    "OpenSearchClient",
-    "S3CacheManager",
-]
+Import each from its module: nothing is re-exported, so importing one adapter
+does not load the SDKs of the others.
+"""

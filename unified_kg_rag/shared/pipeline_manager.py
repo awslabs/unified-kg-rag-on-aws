@@ -27,7 +27,7 @@ from .logging import get_logger
 from .utils.cache_keys import stage_cache_key
 
 if TYPE_CHECKING:
-    from unified_kg_rag.ports.cache import CachePort
+    from .cache_manager import CacheManager
 
 
 logger = get_logger(__name__)
@@ -70,7 +70,7 @@ class PipelineStateManager:
         "translated_units",
     }
 
-    def __init__(self, cache_manager: "CachePort") -> None:
+    def __init__(self, cache_manager: "CacheManager") -> None:
         self.cache_manager = cache_manager
 
     def create_context_from_metadata(self, metadata: dict) -> PipelineContext:

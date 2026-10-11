@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from .base import Identified, Named
 from .cache import CacheEntry, CacheIndex, CacheStats, CacheStrategy
-from .community import Community, CommunityMetrics
+from .community import Community, CommunityMetrics, HierarchicalCommunity
 from .community_report import CommunityFinding, CommunityReport
 from .config import (
     ChunkingStrategy,
@@ -32,10 +32,7 @@ from .document import (
     Document,
     DocumentContent,
     DocumentDelta,
-    DocumentElement,
     DocumentLineage,
-    ElementContent,
-    ElementType,
     Page,
 )
 from .entity import Entity, RejectedEntity
@@ -90,10 +87,7 @@ __all__ = [
     "Document",
     "DocumentContent",
     "DocumentDelta",
-    "DocumentElement",
     "DocumentLineage",
-    "ElementContent",
-    "ElementType",
     "EmbeddingModelId",
     "Entity",
     "EvaluationGroundTruth",
@@ -105,6 +99,7 @@ __all__ = [
     "EvaluationSummary",
     "EvaluatorType",
     "FusionMethod",
+    "HierarchicalCommunity",
     "Identified",
     "LanguageCode",
     "language_name",

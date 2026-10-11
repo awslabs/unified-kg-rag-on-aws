@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, SecretStr, ValidationError
 
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.domain.models.config import LEGACY_CONFIG_KEYS
 from unified_kg_rag.domain.models.provider_config import SQLITE
 
 # Stdlib logger (not get_logger): this module is imported by the logging setup,
@@ -36,8 +35,6 @@ def warn_unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> No
     for key, value in data.items():
         path = f"{prefix}{key}"
         field = model.model_fields.get(key)
-        if path in LEGACY_CONFIG_KEYS:
-            continue  # Config maps it to its replacement and warns itself.
         if field is None:
             _logger.warning("Unknown config key '%s' is ignored", path)
             continue

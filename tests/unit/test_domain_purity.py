@@ -110,3 +110,89 @@ def test_domain_import_loads_no_infra_packages() -> None:
         f"importing unified_kg_rag.domain.* loaded {leaked}; find the chain with "
         "`python -X importtime -c 'import <module>'`"
     )
+
+
+# --- layer contracts (design.md §2.0) ----------------------------------------
+
+_PACKAGE_ROOT = _DOMAIN_ROOT.parent
+
+# Packages each layer must not import, at runtime or under TYPE_CHECKING
+# (``application -> adapters -> ports -> domain``; ``shared`` is the kernel
+# every layer uses, so it imports none of them). ``evaluation`` drives the RAG
+# chain, so it sits between the chain (``application.retrieval``, built from
+# ``application.bootstrap``) and the CLIs; ``visualization`` renders over the
+# adapters and is driven by the ingestion stages and a CLI.
+_LAYER_FORBIDDEN: dict[str, tuple[str, ...]] = {
+    "domain": ("ports", "adapters", "application", "evaluation", "visualization"),
+    "ports": ("adapters", "application", "evaluation", "visualization"),
+    "shared": ("ports", "adapters", "application", "evaluation", "visualization"),
+    "adapters": ("application", "evaluation", "visualization"),
+    "evaluation": (
+        "application.cli",
+        "application.ingestion",
+        "application.prompts",
+        "application.storage",
+        "visualization",
+    ),
+    "visualization": ("application", "evaluation"),
+}
+
+# Deliberate type-only exceptions (TYPE_CHECKING imports), documented in
+# design.md §2.4.
+_ALLOWED: set[tuple[str, str]] = {
+    # The strategy registry stores BaseSearchStrategy subclasses.
+    (
+        "domain/retrieval/strategy_registry.py",
+        "unified_kg_rag.adapters.retrieval.base",
+    ),
+    # The delta functions take the DocStatusPort they diff against.
+    ("domain/ingestion/delta_detector.py", "unified_kg_rag.ports"),
+}
+
+
+def _layer_violations() -> list[str]:
+    violations = []
+    for layer, forbidden in _LAYER_FORBIDDEN.items():
+        for py_file in sorted((_PACKAGE_ROOT / layer).rglob("*.py")):
+            rel = py_file.relative_to(_PACKAGE_ROOT).as_posix()
+            for mod in _imported_modules(py_file):
+                inner = mod.removeprefix("unified_kg_rag.")
+                if (
+                    inner != mod
+                    and any(
+                        inner == banned or inner.startswith(f"{banned}.")
+                        for banned in forbidden
+                    )
+                    and (rel, mod) not in _ALLOWED
+                ):
+                    violations.append(f"{rel} imports '{mod}'")
+    return violations
+
+
+def test_layers_import_only_inward() -> None:
+    violations = _layer_violations()
+    assert not violations, "layer rule violated:\n" + "\n".join(violations)
+
+
+def test_layer_scan_reaches_every_layer() -> None:
+    for layer in _LAYER_FORBIDDEN:
+        assert any((_PACKAGE_ROOT / layer).rglob("*.py")), layer
+
+
+def _type_checking_imports(py_file: Path) -> set[str]:
+    tree = ast.parse(py_file.read_text(encoding="utf-8"))
+    mods: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and ast.unparse(node.test) in (
+            "TYPE_CHECKING",
+            "typing.TYPE_CHECKING",
+        ):
+            for child in node.body:
+                if isinstance(child, ast.ImportFrom) and child.module:
+                    mods.add(child.module)
+    return mods
+
+
+@pytest.mark.parametrize(("rel", "module"), sorted(_ALLOWED))
+def test_allowed_exceptions_are_type_only(rel: str, module: str) -> None:
+    assert module in _type_checking_imports(_PACKAGE_ROOT / rel)

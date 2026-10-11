@@ -30,7 +30,7 @@ from .event_loop import configure_event_loop
 # console helpers from `.display`.
 #
 # `setup_chain` / `create_robust_xml_output_parser` are Bedrock-coupled and
-# now live in `unified_kg_rag.adapters.aws.chain_factory` (the shared kernel must
+# now live in `unified_kg_rag.adapters.llm.chain_factory` (the shared kernel must
 # not depend on adapters). Import them from there.
 
 __all__ = [

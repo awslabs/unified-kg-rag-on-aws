@@ -48,7 +48,7 @@ import는 **안쪽을 향합니다**(왼쪽이 오른쪽을 import하며 반대 
 flowchart TB
     application["<b>application/</b> - orchestration and entry points<br/>cli (run-*) · DataIngestionPipeline + stages · IndexingManager · GraphRAGChain"]
     adapters["<b>adapters/</b> - technology bindings<br/>aws (Bedrock, Neptune, OpenSearch, DynamoDB, S3) · search_strategies (GraphRAG + LightRAG)<br/>storage · retrievers · retrieval · ingestion · renderers · evaluators"]
-    ports["<b>ports/</b> - abstract interfaces<br/>DocStatusPort · CachePort · model factory and TokenCounter ports · BaseIndexer / GraphIndexer / VectorIndexer"]
+    ports["<b>ports/</b> - abstract interfaces<br/>DocStatusPort · model factory and TokenCounter ports · BaseIndexer / GraphIndexer / VectorIndexer"]
     domain["<b>domain/</b> - technology-agnostic core<br/>models · ingestion (delta, merge, resolve, analyze) · retrieval (strategy_registry) · prompts"]
     shared["<b>shared/</b> - cross-cutting kernel<br/>config · logging · exceptions · metrics · cache and pipeline managers · utils"]
     application --> adapters --> ports --> domain
@@ -69,10 +69,11 @@ unified_kg_rag/
 │  ├─ retrieval/        #   strategy_registry, MetricsMixin
 │  └─ prompts/          #   버전 관리되는 프롬프트 템플릿
 ├─ ports/               # 도메인이 의존하는 추상 인터페이스 (DocStatusPort,
-│                       #   BaseIndexer/GraphIndexer/VectorIndexer, CachePort,
+│                       #   BaseIndexer/GraphIndexer/VectorIndexer,
 │                       #   ModelFactoryPort — ports/__init__이 포트 카탈로그)
 ├─ adapters/            # 구체적인 기술 바인딩
 │  ├─ aws/              #   Bedrock, Neptune, OpenSearch, DynamoDB, S3 클라이언트
+│  ├─ llm/              #   공급자 중립 체인 조립, 일시적 오류 재시도, 토큰 추정
 │  ├─ storage/          #   Neptune/OpenSearch 인덱서 (쓰기 측 포트 구현)
 │  ├─ retrievers/       #   Neptune/OpenSearch 리트리버
 │  ├─ search_strategies/#   simple/local/global/drift + lightrag(mix/hybrid/naive)
@@ -80,7 +81,7 @@ unified_kg_rag/
 │  ├─ ingestion/        #   LLM/IO 결합: chunker, *_extractor, loader, parser,
 │  │                    #   translator, gleaner, community_detector
 │  ├─ renderers/        #   그래프 시각화 렌더러
-│  └─ evaluators/       #   langchain/ragas 평가기 (LLM을 쓰지 않는 graph_aware,
+│  └─ evaluators/       #   평가기 베이스 + langchain/ragas 평가기 (LLM을 쓰지 않는 graph_aware,
 │                       #   retrieval, answer_match 평가기는 evaluation/에 있음)
 ├─ application/         # 오케스트레이션 + 진입점
 │  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning
@@ -90,16 +91,16 @@ unified_kg_rag/
 │  └─ prompts/          #   PromptTuner (LLM 기반 코퍼스 프로파일링)
 ├─ shared/              # 공통 커널 (config, logging, exceptions, metrics,
 │                       #   cache/pipeline manager, utils)
-├─ evaluation/          # 실제 로직 패키지: evaluation_manager / base / graph_aware /
+├─ evaluation/          # 실제 로직 패키지: evaluation_manager / graph_aware /
 │                       #   retrieval / answer_match
-└─ visualization/       # 실제 로직 패키지: 렌더 루프 + embeddings/exporters/renderers
+└─ visualization/       # 실제 로직 패키지: 렌더 루프 + embeddings/exporters
 ```
 
 > 레이아웃 참고: `evaluation/`과 `visualization/`은 **실제 로직 패키지**입니다.
-> `evaluation/`에는 `evaluation_manager`, `base`와 LLM을 쓰지 않는
+> `evaluation/`에는 `evaluation_manager`와 LLM을 쓰지 않는
 > `graph_aware_evaluator`, `retrieval_evaluator`, `answer_match_evaluator`가 있고,
-> `visualization/`에는 렌더 루프와 `embeddings/`, `exporters/`, `renderers/`
-> 하위 패키지가 있습니다. 그 밖의 모듈은 모두 실제 위치
+> `visualization/`에는 렌더 루프와 `embeddings/`, `exporters/` 하위 패키지가
+> 있습니다(렌더러는 `adapters/renderers/`에 있습니다). 그 밖의 모듈은 모두 실제 위치
 > (`application.retrieval.rag_chain`, `application.storage.indexing_manager`,
 > `application.ingestion.pipeline`, `adapters.*`, `domain.*`)에서 import합니다.
 
@@ -108,13 +109,12 @@ unified_kg_rag/
 | 포트 | 위치 | 어댑터 | 비고 |
 |---|---|---|---|
 | `DocStatusPort` | `ports/doc_status.py` | `adapters/aws/dynamodb.py` (`DynamoDBDocStatusStore`), `adapters/local/sqlite_doc_status.py` (`SQLiteDocStatusStore`), 테스트용 `FakeDocStatusStore` | 증분 인덱싱의 문서 상태와 계보 저장 |
-| `CachePort` | `ports/cache.py` (`Protocol`) | `shared/cache_manager.py`(로컬) + `adapters/aws/s3_cache.py`(S3) | 단계 결과 저장 경계 |
 | `GraphIndexer` (쓰기 측) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py` | 전체 인덱싱과 델타(`upsert_*`/`delete_by_id`)를 하나의 계약으로 처리 |
 | `VectorIndexer` (쓰기 측) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` | 위와 같음 |
 | `BaseGraphRAGRetriever` (읽기 측) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch}_retriever.py` | 검색 어댑터 |
-| LLM/임베딩/재순위화 팩토리, 토큰 카운터 | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`) | `adapters/aws/bedrock.py`, `adapters/aws/bedrock_models.py`, `adapters/aws/token_counter.py`. 로컬: `adapters/local/{models,embeddings,rerank,token_counter}.py` | 오케스트레이터마다 한 번 만드는 `Providers` 묶음(`adapters/providers.py`, `application/bootstrap.py`가 생성)에 담아 모든 구성 요소에 전달. 역할별 어댑터는 `adapters/provider_registry.py`를 거쳐 `providers.<역할>.kind`가 고름(기본값 Bedrock. §15) |
+| LLM/임베딩/재순위화 팩토리, 토큰 카운터 | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`, 그리고 `get_model_info`가 돌려주는 `LanguageModelInfo` / `EmbeddingModelInfo` / `RerankModelInfo` 레코드) | `adapters/aws/bedrock.py`, `adapters/aws/bedrock_models.py`, `adapters/aws/token_counter.py`. 로컬: `adapters/local/{models,embeddings,rerank,token_counter}.py` | 오케스트레이터마다 한 번 만드는 `Providers` 묶음(`adapters/providers.py`, `application/bootstrap.py`가 생성)에 담아 모든 구성 요소에 전달. 역할별 어댑터는 `adapters/provider_registry.py`를 거쳐 `providers.<역할>.kind`가 고름(기본값 Bedrock. §15) |
 
-> 설계 참고: 순수 포트(`DocStatusPort`, 쓰기 측 인덱서 ABC)는 `ports/`에 모았습니다. 읽기 측 추상 베이스(`BaseGraphRAGRetriever`/`BaseSearchStrategy`)는 `__init__`에서 인프라(HybridScorer/TokenManager)를 생성하는 "어댑터 베이스"이므로 `adapters/retrieval/base.py`에 두고 그곳에서 import합니다. `ports/__init__`은 이들을 export하지 않고 카탈로그 docstring에 이름만 적습니다(중복 Protocol 정의는 두지 않습니다). `BaseGraphRAGEvaluator`(`evaluation/base.py`)도 같은 종류의 어댑터 베이스입니다.
+> 설계 참고: 순수 포트(`DocStatusPort`, 쓰기 측 인덱서 ABC)는 `ports/`에 모았습니다. 읽기 측 추상 베이스(`BaseGraphRAGRetriever`/`BaseSearchStrategy`)는 `__init__`에서 인프라(HybridScorer/TokenManager)를 생성하는 "어댑터 베이스"이므로 `adapters/retrieval/base.py`에 두고 그곳에서 import합니다. `ports/__init__`은 이들을 export하지 않고 카탈로그 docstring에 이름만 적습니다(중복 Protocol 정의는 두지 않습니다). `BaseGraphRAGEvaluator`(`adapters/evaluators/base.py`)도 같은 종류의 어댑터 베이스입니다.
 
 ### 2.2 역할 기반 리트리버 주입
 
@@ -153,7 +153,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 
 ### 2.4 의존성 규칙 검증 상태
 
-`domain/`은 런타임에 `adapters`/`application`을 import하지 않으며 `ports/`도 마찬가지입니다. 컴파일 타임에만 해당하는 예외가 하나 있습니다. `domain/retrieval/strategy_registry.py`는 레지스트리가 전략 하위 클래스를 저장하므로 `TYPE_CHECKING` 아래에서 `adapters.retrieval.base.BaseSearchStrategy`를 참조합니다. 순수한 전략·리트리버 포트를 분리하면 이 타입 수준 참조도 없어지지만, 의도적인 경계로 남겨 둡니다(이 문서 끝의 "의도적 설계 경계" 참고).
+`domain/`은 런타임에 `ports`/`adapters`/`application` 모듈을 import하지 않고, `ports/`와 `shared/`는 다른 레이어를 import하지 않으며, `adapters/`는 `application`, `evaluation`, `visualization` 모듈을 import하지 않습니다. `evaluation/`은 체인(`application.retrieval`, `application.bootstrap`)을 통해서만 애플리케이션 레이어에 닿습니다. `tests/unit/test_domain_purity.py`가 `TYPE_CHECKING` import까지 포함해 이 규칙을 검사합니다. 컴파일 타임에만 해당하는 예외가 두 개 있고, 테스트는 둘 다 `TYPE_CHECKING` 아래에 있는지 확인합니다. `domain/retrieval/strategy_registry.py`는 레지스트리가 전략 하위 클래스를 저장하므로 `adapters.retrieval.base.BaseSearchStrategy`를 참조하고, `domain/ingestion/delta_detector.py`는 매개변수 타입으로 `DocStatusPort`를 씁니다(포트 모듈이 도메인 모델을 import하므로 런타임 import는 순환이 됩니다). 순수한 전략·리트리버 포트를 분리하면 첫 번째 타입 수준 참조도 없어지지만, 의도적인 경계로 남겨 둡니다(이 문서 끝의 "의도적 설계 경계" 참고).
 
 코드는 실제 레이어 위치(`application.retrieval.rag_chain`, `application.storage.indexing_manager`, `application.ingestion.pipeline`, `adapters.*` / `domain.*` 모듈)에서 import합니다. `evaluation/`과 `visualization/`은 실제 로직 패키지입니다(§2의 레이아웃 참고).
 
@@ -166,7 +166,7 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 - `Entity`(`name`, `description`, `type`, `text_unit_ids`, `community_ids`, `rank`, `frequency`, `confidence`, 임베딩 필드)
 - `Relationship`(`source_id`/`target_id`, `description`, `weight`, `text_unit_ids`, `description_embedding`)
 - `Community` / `CommunityReport`, `TextUnit`, `Covariate`(주장)
-- `DocStatus`(상태 머신: PENDING→PARSING→PROCESSING→PROCESSED|FAILED), `DocStatusRecord`(콘텐츠 해시 + 산출물 계보 + 접미사), `DocumentDelta`(new/changed/unchanged/deleted), `DocumentLineage`(문서별 산출물 귀속)
+- `DocStatus`(PENDING 선기록 → PROCESSED|FAILED), `DocStatusRecord`(콘텐츠 해시 + 산출물 계보 + 접미사), `DocumentDelta`(new/changed/unchanged/deleted), `DocumentLineage`(문서별 산출물 귀속)
 - `SearchQuery`/`SearchResult`/`RetrievalResult`, `SearchStrategy`/`SearchType`/`RetrieverRole`
 
 **Rank(MS GraphRAG와 동등)**: 엔티티의 `rank`는 degree(관계로 이어진 서로 다른 엔티티 수)이고, 관계의 `rank`는 두 끝점 degree의 합입니다(`domain/ingestion/graph_rank.py`). 전체 빌드에서는 그래프 해석이 값을 정하고, 증분 병합은 쓰는 엔티티와 관계마다 저장된 그래프의 이웃(`GraphIndexer.read_neighbor_ids`)과 델타의 관계를 합쳐 다시 계산합니다. 델타가 쓰지 않는 저장된 엔티티는 다음 전체 빌드까지 rank를 유지하며, 삭제된 문서가 그 간선을 없앤 경우도 마찬가지입니다.
@@ -384,7 +384,7 @@ Neptune 그래프 확장은 `local`과 `drift`에 포함되어 있고, `mix`/`hy
 | **S3** | `adapters/aws/s3_cache.py` | 파이프라인 캐시 동기화(암호화 기본값 `BUCKET_DEFAULT`는 버킷의 기본 암호화(예: CMK)를 따르고, `AES256`/`aws:kms`는 객체별 SSE를 강제) |
 | **DynamoDB** | `adapters/aws/dynamodb.py` | 증분 인덱싱용 문서 상태 레지스트리 |
 
-모든 어댑터는 `boto_session`을 주입받을 수 있으므로(기본값은 `config.aws.profile_name`으로 생성) 테스트에서 fake나 moto 세션을 넣을 수 있습니다.
+AWS 세션은 묶음의 세션(`Providers(boto_session=...)`, 기본값은 처음 쓸 때 `config.aws.profile_name`으로 생성)이므로 테스트에서 fake나 moto 세션을 넣을 수 있습니다. 세션은 AWS 클라이언트만 요청하므로 로컬 실행이나 IAM 인증을 쓰지 않는 저장소는 프로필을 읽지 않습니다.
 
 ### 8.5 검색 오류 가시성
 
@@ -497,10 +497,9 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter`(`LocalTokenCounter`: 추정치 또는 tiktoken. LLM kind를 따름) | `Providers(token_counter_factory=...)` |
 | `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer`(`gremlin`: 같은 어댑터로 Gremlin Server 사용) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` 또는 `IndexingManager(vector_indexer=..., graph_indexer=...)` |
 | 리트리버(역할별 빌더) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `Providers(retriever_builders=...)` 또는 `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
-| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `delete` / `list_all` / `diff` (`get_many` / `put_many`는 선택. 없으면 레코드를 하나씩 읽고 씀. `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow`도 선택. 없으면 레코드 크기 한도와 초과분이 없음) | `DynamoDBDocStatusStore`(`SQLiteDocStatusStore`) | `Providers(doc_status=...)` 또는 `DataIngestionPipeline(..., doc_status=...)`(후자는 증분 인덱싱이 켜짐). 구조를 맞추고 `tests/integration/test_doc_status_conformance.py`를 통과해야 함 |
-| `CachePort` (`ports/cache.py`, `Protocol`) | 파이프라인 상태 get/set | 파일 시스템 `CacheManager` | 구조만 맞으면 됨. 기본적으로 AWS가 필요 없음 |
+| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `delete` / `list_all` / `diff` (`get_many` / `put_many`는 선택. 없으면 레코드를 하나씩 읽고 씀. `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow`도 선택. 없으면 레코드 크기 한도와 초과분이 없음) | `DynamoDBDocStatusStore`(`SQLiteDocStatusStore`) | `Providers(doc_status=...)` 또는 `DataIngestionPipeline(..., doc_status=...)`(어느 쪽이든 증분 인덱싱이 켜짐). 구조를 맞추고 `tests/integration/test_doc_status_conformance.py`를 통과해야 함 |
 
-모델 팩토리, 문서 상태, 캐시 포트는 `runtime_checkable` `Protocol`이므로 커스텀
+모델 팩토리와 문서 상태 포트는 `runtime_checkable` `Protocol`이므로 커스텀
 클래스는 **메서드 형태만** 맞으면 되고, import할 베이스 클래스가 없습니다. 예시(로컬
 LLM 공급자):
 
@@ -548,6 +547,9 @@ pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
 저장소도 같은 묶음을 따릅니다. `retriever_builders`가 없으면 체인은, `doc_status`/
 `vector_indexer`/`graph_indexer`가 없으면 파이프라인은 `providers.graph` /
 `providers.vector` / `providers.doc_status`가 고른 저장소를 씁니다(위 표 참고).
+이 오케스트레이터 인자(와 `GraphRAGChain(model_factory=...)`)는 그 값으로 만든 묶음의
+줄임 표현입니다. `providers=` 묶음을 넘길 때는 묶음에 지정하세요(둘 다 넘기면
+`ValueError`).
 
 넘기지 않은 공급자는 처음 쓸 때 설정된 kind에 등록된 빌더로 만듭니다(기본값은 Bedrock,
 Neptune, OpenSearch, DynamoDB). 모델 팩토리는 묶음마다 한 번만 만들므로 체인은 모델

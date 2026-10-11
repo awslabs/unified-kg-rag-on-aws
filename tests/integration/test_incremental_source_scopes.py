@@ -35,7 +35,7 @@ from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
-from unified_kg_rag.adapters.aws import DynamoDBDocStatusStore
+from unified_kg_rag.adapters.aws.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
@@ -148,6 +148,9 @@ class ScopeStack:
             boto_session=MagicMock(),
             llm_factory=ScriptedLLMFactory(self.model.respond),
             embedding_factory=HashingEmbeddingFactory(),
+            doc_status=self.registry,
+            vector_indexer_factory=lambda: self.vectors,
+            graph_indexer_factory=lambda: self.graph,
         )
 
     def run(self, source: Path) -> PipelineContext:
@@ -161,9 +164,6 @@ class ScopeStack:
             ),
             source_directory=source,
             providers=self.providers,
-            doc_status=self.registry,
-            vector_indexer=self.vectors,
-            graph_indexer=self.graph,
         )
         for stage in pipeline.stages:
             if isinstance(stage, ps.GraphResolutionStage):

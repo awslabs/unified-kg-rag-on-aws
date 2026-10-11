@@ -28,8 +28,8 @@ from unified_kg_rag.adapters.aws.bedrock import (
     BedrockLanguageModelFactory,
 )
 from unified_kg_rag.adapters.aws.bedrock_models import get_language_model_info
-from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
+from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.domain.models import Config, LanguageModelId
 from unified_kg_rag.domain.prompts.graph_extraction import GraphRefinementPrompt
 from unified_kg_rag.shared import LanguageModelError
@@ -381,10 +381,10 @@ def test_token_counter_skips_api_when_unsupported() -> None:
 
 
 def test_token_manager_disables_count_tokens_for_gpt(mocker) -> None:
-    from unified_kg_rag.adapters import providers as providers_module
+    from unified_kg_rag.adapters.aws import bedrock as bedrock_module
     from unified_kg_rag.adapters.retrieval import token_manager as tm_module
 
-    counter_cls = mocker.patch.object(providers_module, "BedrockTokenCounter")
+    counter_cls = mocker.patch.object(bedrock_module, "BedrockTokenCounter")
     config = Config()
     config.search.answer_generation_model_id = LanguageModelId.GPT_V6_1_SOL
     tm_module.TokenManager(config, boto_session=mocker.MagicMock())
