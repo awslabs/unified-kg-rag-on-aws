@@ -280,6 +280,19 @@ def corpus_manifest_fingerprint(
 # relationships).
 _EXTRACTION_THROUGH = PipelineStageType.GRAPH_RESOLUTION
 
+# Later per-document stages that run only while switched on. A document's
+# claims are its own output too, so while claim extraction is on its settings
+# and prompts join the fingerprint (switching it on re-extracts the corpus);
+# while it is off they are left out, so a configuration with it off keeps the
+# fingerprint it had before claims counted. Claim resolution reuses the
+# resolution knobs and graph analysis, community detection and indexing are
+# not per-document extraction, so no other later stage is listed.
+_EXTRACTION_SWITCHED_STAGES: dict[PipelineStageType, Callable[[Config], bool]] = {
+    PipelineStageType.CLAIM_EXTRACTION: lambda config: (
+        config.processing.claim_extraction.enabled
+    ),
+}
+
 # Inputs of those stages that do not change what a document produces: the
 # corpus location and naming (the registry key already holds the document's
 # identity), and switches that only change which documents run or whether a
@@ -368,8 +381,9 @@ def extraction_fingerprint(config: Config) -> str:
 
     The output-determining inputs of every stage from parsing through graph
     resolution (models, prompts, entity types, chunking, translation,
-    gleaning, resolution), the same paths the stage cache keys use, minus the
-    corpus location and the switches that do not change a document's output
+    gleaning, resolution) and, while it is on, claim extraction (see
+    ``_EXTRACTION_SWITCHED_STAGES``), the same paths the stage cache keys
+    use, minus the corpus location and the switches that do not change a document's output
     (see ``_EXTRACTION_NON_OUTPUT_PATHS``), a guardrail that does not guard
     ingestion, and the settings only a switched-off block reads. Recorded on
     each document's doc-status record by an incremental run, so a later run with other
@@ -383,6 +397,9 @@ def extraction_fingerprint(config: Config) -> str:
         for path in _input_paths_through(_EXTRACTION_THROUGH)
         if path not in _EXTRACTION_NON_OUTPUT_PATHS
     ]
+    for stage, is_on in _EXTRACTION_SWITCHED_STAGES.items():
+        if is_on(config):
+            paths.extend(_STAGE_INPUT_PATHS[stage])
     projection = _projection(config, paths, _EXTRACTION_NON_OUTPUT_SUBFIELDS)
     payload = json.dumps(projection, sort_keys=True, default=str)
     return compute_hash(payload, length=FINGERPRINT_LENGTH)

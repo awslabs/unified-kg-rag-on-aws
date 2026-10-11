@@ -269,6 +269,12 @@ Library API (Python callers and custom backends).
   previously only transitive, are now declared (#226).
 
 ### Fixed
+- Switching `processing.claim_extraction` on, or changing its model, limits
+  or claim prompts while it is on, now re-extracts an incrementally indexed
+  corpus: the extraction fingerprint stopped at graph resolution, so such a
+  run reported 0 changed documents and indexed no claims, without a warning.
+  With claim extraction off the fingerprint is unchanged, so default
+  configurations are not re-extracted on upgrade (#PR).
 - Attaching, rotating or toggling a Bedrock guardrail under the default
   `apply_to: query` no longer re-keys the stage caches or re-extracts the
   whole corpus on the next incremental run: ingestion runs unguarded then, so

@@ -187,6 +187,44 @@ def test_grounding_settings_count_only_while_grounding_is_on() -> None:
     assert extraction_fingerprint(config) != before
 
 
+# The default configuration's fingerprint, as recorded on doc-status records
+# by released versions. It must not move, or upgrading re-extracts every
+# incrementally indexed corpus.
+_RELEASED_DEFAULT_FINGERPRINT = "0b3882fff6d2"
+
+
+def test_default_fingerprint_is_unchanged() -> None:
+    assert extraction_fingerprint(Config()) == _RELEASED_DEFAULT_FINGERPRINT
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        _set("processing.claim_extraction.max_entities_per_prompt", 5),
+        _set("processing.claim_extraction.extraction_model_id", "amazon.nova-pro"),
+        _set("custom_prompts.claim_extraction_system", "tuned"),
+        _set("custom_prompts.claim_extraction_human", "tuned {input_text}"),
+    ],
+)
+def test_claim_settings_count_only_while_claim_extraction_is_on(
+    change: Callable[[Config], None],
+) -> None:
+    # Claims are a document's own output: switching extraction on, or changing
+    # what it produces, re-extracts documents whose content did not change.
+    disabled = Config()
+    enabled = Config()
+    enabled.processing.claim_extraction.enabled = True
+    assert extraction_fingerprint(enabled) != extraction_fingerprint(disabled)
+
+    before = extraction_fingerprint(disabled)
+    change(disabled)
+    assert extraction_fingerprint(disabled) == before
+
+    before = extraction_fingerprint(enabled)
+    change(enabled)
+    assert extraction_fingerprint(enabled) != before
+
+
 def test_is_stable_for_an_equal_configuration() -> None:
     assert extraction_fingerprint(Config()) == extraction_fingerprint(Config())
 

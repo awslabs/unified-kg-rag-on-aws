@@ -53,10 +53,13 @@ class _Harness:
         self.store = FakeDocStatusStore()
         self.graph = FakeGraphStore()
         self.extractions: list[str] = []
+        self.claim_calls = 0
 
     def _respond(self, system: str, human: str) -> str:
         if "knowledge graph extraction expert" in system:
             self.extractions.append("tuned" if _TUNED in system else "builtin")
+        if "claim extraction specialist" in system:
+            self.claim_calls += 1
         return _respond(system, human)
 
     def run(self, config: Config, pipeline_id: str) -> PipelineContext:
@@ -138,6 +141,32 @@ def test_changed_extraction_settings_reextract_unchanged_documents(
     harness.extractions.clear()
     harness.run(tuned, "tuned-again")
     assert harness.extractions == []
+
+
+def test_switching_claim_extraction_on_reextracts_unchanged_documents(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = _Harness(tmp_path)
+    without_claims = _base_config()
+    harness.run(without_claims, "first")
+    assert harness.claim_calls == 0
+
+    # Claims are per-document output: documents extracted without them are
+    # stale once claim extraction is on, although their content is unchanged.
+    with_claims = without_claims.model_copy(deep=True)
+    with_claims.processing.claim_extraction.enabled = True
+    harness.extractions.clear()
+    with caplog.at_level("WARNING"):
+        harness.run(with_claims, "claims")
+    assert harness.extractions == ["builtin", "builtin"]
+    assert harness.claim_calls > 0
+    assert "Re-extracting 2 documents" in caplog.text
+    assert _fingerprints(harness.store) == {extraction_fingerprint(with_claims)}
+
+    # A tuned claim prompt shapes the claims too.
+    tuned_claims = with_claims.model_copy(deep=True)
+    tuned_claims.custom_prompts.claim_extraction_system = "tuned claims"
+    assert extraction_fingerprint(tuned_claims) != extraction_fingerprint(with_claims)
 
 
 def test_records_without_a_fingerprint_are_not_reextracted(tmp_path: Path) -> None:
