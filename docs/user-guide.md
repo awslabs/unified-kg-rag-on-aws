@@ -1325,21 +1325,26 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   generated answer as a whole-word phrase) is the headline deterministic
   metric: long-form RAG answers rarely equal a short gold span, so it tracks
   correctness far better than exact match. Korean particles are tolerated
-  after any word except a bare number (gold `서울 특별시` matches
-  `서울 특별시는`, `AWS` matches `AWS는`, but `3` does not match `3억` or `2`
-  `2개월`: Hangul after a number is usually a unit, so put the unit in the gold
-  or an alias), and spacing next to CJK letters is ignored (`3억 원` = `3억원`,
+  after a word (gold `서울 특별시` matches `서울 특별시는`, `AWS` matches
+  `AWS는`); a bare number may also carry a Korean unit (`2024` matches
+  `2024년에`, `2` matches `2개월`) but not a magnitude numeral (`3` does not
+  match `3억`, `5` does not match `5천만`, since that changes the value), and
+  spacing next to CJK letters is ignored (`3억 원` = `3억원`,
   `가나다 상사` = `가나다상사`). A single-word CJK gold is matched as a
   substring, but not inside a longer number or Latin word (`2년` does not
-  match `12년`). A `yes`/`no` gold is scored by the answer's leading polarity
-  (the first `yes`/`no` in its first sentence), as in HotpotQA, since almost
-  any long answer contains the word "no". SQuAD-style `exact_match` and
+  match `12년`). A `yes`/`no` gold is scored by the answer's polarity, as in
+  HotpotQA, since almost any long answer contains the word "no": the first
+  `yes`/`no` that answers the question, skipping Markdown headings and a `no`
+  followed by a word (`there is no clause`) or a number (`No. 5`). SQuAD-style `exact_match` and
   `token_f1` are also emitted. Text is NFKC-normalized, then lowercased,
   punctuation deleted, English articles dropped and whitespace collapsed, as
   in the SQuAD v1.1 script, except that Unicode punctuation is deleted too and
-  punctuation that changes meaning is kept: a decimal point or comma between
-  digits (`1.5` is not `15`; thousands separators are dropped, so `1,000` =
-  `1000`) and a trailing `+`/`#` (`C++`, `C#`). A gold that is only an article
+  punctuation that changes meaning is kept: a leading minus (`-5` is not
+  `5`), a decimal point or comma between digits (`1.5` is not `15`;
+  thousands separators are dropped, so `1,000` = `1000`), a percent sign after
+  a number (`3.5%` is not `3.5` or `35%`) and a trailing `+`/`#` (`C++`,
+  `C#`). A dash between two words or numbers is a space, so `1990-1995` is two
+  numbers and `5-year` = `5 year`. A gold that is only an article
   (`A`) is kept as is. Scores are therefore close to, but not comparable with,
   leaderboard numbers from the official scripts. Token F1 splits on whitespace,
   so for Chinese/Japanese text it degrades to exact match; Korean particles

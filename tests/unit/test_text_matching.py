@@ -50,6 +50,22 @@ class TestPhraseInText:
             ("3억원", "계약 금액은 3억 원이다"),
             ("2년", "보증 기간은 2년이다"),
             ("二年", "保証期間は二年である"),
+            # a bare number followed by a Korean unit (and a particle) keeps
+            # its value
+            ("2024", "계약은 2024년에 체결되었다"),
+            ("2", "기간은 2개월이다"),
+            ("3", "참석자는 3명이었다"),
+            ("5000", "수수료는 5,000원이다"),
+            ("12", "총 12회"),
+            # separators and dashes
+            ("2,000", "a fee of 2000 applies"),
+            ("1990", "from 1990-1995"),
+            ("1995", "from 1990–1995"),
+            ("5 year", "a 5-year term"),
+            ("5-year", "a 5 year term"),
+            ("-5", "the balance is -5 units"),
+            ("-5", "the balance is (−5) units"),
+            ("3.5%", "a rate of 3.5% applies"),
         ],
     )
     def test_match(self, phrase: str, text: str) -> None:
@@ -72,9 +88,20 @@ class TestPhraseInText:
             ("3억원", "계약 금액은 13억원이다"),
             ("AWS", "XAWS는 별개 회사이다"),
             ("2024", "20245년에"),  # digits continue the token
-            # Hangul after a bare number is a unit or magnitude, not a particle
-            ("2", "기간은 2개월이다"),
+            # a magnitude numeral after a bare number changes its value
             ("3", "금액은 3억이다"),
+            ("3", "금액은 3억원이다"),
+            ("5", "금액은 5천만 원이다"),
+            ("2", "인원은 2만 명이다"),
+            ("2년", "변동폭은 -2년이다"),
+            # sign, ranges and percent signs are part of the value
+            ("5", "the balance is -5 units"),
+            ("-5", "the balance is 5 units"),
+            ("19901995", "from 1990-1995"),
+            ("3.5%", "about 3.5 million users"),
+            ("3.5%", "a rate of 35% applies"),
+            ("3.5", "a rate of 3.5% applies"),
+            ("1.5", "about 15 users"),
             # a decimal point or comma between digits is part of the number
             ("15 million", "about 1.5 million users"),
             ("5", "rate of 1.5 percent"),
@@ -85,6 +112,10 @@ class TestPhraseInText:
     )
     def test_no_match(self, phrase: str, text: str) -> None:
         assert phrase_in_text(phrase, text) is False
+
+    def test_ranges_and_compounds_tokenize_apart(self) -> None:
+        assert tokenize("1990-1995") == ["1990", "1995"]
+        assert tokenize("5-year, 3.5% and -2") == ["5", "year", "3.5%", "and", "-2"]
 
     def test_spaceless_script_detection(self) -> None:
         assert is_spaceless_script("東京電力")

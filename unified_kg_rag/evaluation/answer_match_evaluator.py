@@ -5,7 +5,8 @@
 Deterministic and LLM-free, so scores are reproducible across runs and judge
 models. Both the generated answer and each reference are normalized SQuAD-style after
 Unicode NFKC (``text_matching.normalize_answer``: lowercase, delete punctuation
-except decimal points and "C++"-style suffixes, drop the English articles
+except a number's sign, decimal point and percent sign and "C++"-style
+suffixes, split dashed ranges and compounds, drop the English articles
 ``a``/``an``/``the``, collapse whitespace; not identical to the official SQuAD
 v1.1 script, so scores are not leaderboard-comparable), then:
 
@@ -14,7 +15,8 @@ v1.1 script, so scores are not leaderboard-comparable), then:
   tolerated, substring match for single-word CJK phrases). Long-form RAG
   answers rarely equal a short gold span, so this is the headline
   deterministic answer metric. A "yes"/"no" gold is instead compared with the
-  first "yes"/"no" in the answer's first sentence.
+  first "yes"/"no" that answers the question (not a heading, not the
+  determiner in "there is no clause").
 - ``exact_match``: 1.0 if the normalized strings are equal.
 - ``token_f1``: harmonic mean of token precision/recall over whitespace tokens
   (multiset overlap).
@@ -31,6 +33,7 @@ under-count for Korean.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import Counter
 from datetime import datetime
 from typing import Any
@@ -66,16 +69,36 @@ def exact_match(prediction: str, reference: str) -> float:
 
 
 _POLARITY = frozenset({"yes", "no"})
-_SENTENCE_END = re.compile(r"[.!?](?=\s|$)|[\n。！？]")
+_POLARITY_WORD = re.compile(r"(?<![\w-])(yes|no)(?![\w-])")
+# "no" answers a question only when punctuation or the line end follows it
+# ("No, it may not.", "..., no."); before a word it is a determiner ("there
+# is no clause").
+_ANSWERING_NO = re.compile(r"\s*(?:$|[^\w\s])")
+# "No." before a number abbreviates "number" ("Clause No. 5").
+_NUMBER_ABBREVIATION = re.compile(r"\.\s*\d")
+_MARKDOWN_HEADING = re.compile(r"\s*#{1,6}(?:\s|$)")
 
 
 def _leading_polarity(prediction: str) -> str | None:
-    """First "yes"/"no" token of the prediction's first sentence, if any."""
-    first_sentence = _SENTENCE_END.split(prediction.strip(), maxsplit=1)[0]
-    return next(
-        (t for t in normalize_answer(first_sentence).split() if t in _POLARITY),
-        None,
-    )
+    """The first "yes"/"no" in the prediction that answers the question.
+
+    Markdown heading lines are skipped, a "no" followed by a word ("there is
+    no evidence") is a determiner, not an answer, and "No." before a number
+    is the abbreviation. The search runs over whole lines, so an
+    abbreviation such as "U.S." cannot cut the answer short.
+    """
+    text = unicodedata.normalize("NFKC", prediction).lower()
+    for line in text.splitlines():
+        if _MARKDOWN_HEADING.match(line):
+            continue
+        for match in _POLARITY_WORD.finditer(line):
+            word = match.group(1)
+            if word == "yes":
+                return word
+            rest = line[match.end() :]
+            if _ANSWERING_NO.match(rest) and not _NUMBER_ABBREVIATION.match(rest):
+                return word
+    return None
 
 
 def answer_contains(prediction: str, reference: str) -> float:

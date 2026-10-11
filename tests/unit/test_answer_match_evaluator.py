@@ -38,6 +38,9 @@ class TestNormalization:
             ("\uff11\uff10\uff10\uff10", "1000"),  # fullwidth digits (NFKC)
             ("Vendor\u2019s", "Vendors"),
             ("the U.S.", "US"),
+            ("2,000", "2000"),
+            ("a 5-year term", "5 year term"),
+            ("3.5%", "3.5 %"),
         ],
     )
     def test_squad_equivalences(self, prediction: str, reference: str) -> None:
@@ -64,6 +67,11 @@ class TestNormalization:
             ("about 1.5 million users", "15 million"),
             ("The rate is 3.5.", "35 percent"),
             ("Written in C++.", "C"),
+            ("The balance is -5.", "5"),
+            ("A rate of 3.5% applies.", "3.5 million"),
+            ("A rate of 3.5% applies.", "35%"),
+            ("From 1990-1995.", "19901995"),
+            ("금액은 3억이다.", "3"),
         ],
     )
     def test_different_numbers_and_names_not_contained(
@@ -79,15 +87,34 @@ class TestNormalization:
             ("No. There is no such clause.", "no", 1.0),
             # the gold appears, but the answer's polarity is the opposite
             ("Yes, although no notice is required.", "no", 0.0),
-            ("There is no clause. Yes, it was signed.", "yes", 0.0),
+            # "there is no X" is a determiner, not the answer
+            ("There is no clause. Yes, it was signed.", "yes", 1.0),
+            ("There is no evidence. So, yes.", "yes", 1.0),
+            ("There is no evidence. So, yes.", "no", 0.0),
             ("The contract does not say.", "no", 0.0),
             ("Based on the context, no.", "No", 1.0),
+            ("No, the Buyer may not.", "no", 1.0),
+            ("**No**", "no", 1.0),
+            # a markdown heading before the answer, or an abbreviation in it
+            ("## Summary\nYes, it is.", "yes", 1.0),
+            ("## Summary\nNo.\nThe clause was removed.", "no", 1.0),
+            ("The U.S. law says yes.", "yes", 1.0),
+            ("Clause No. 5 says yes.", "yes", 1.0),
+            ("Clause No. 5 says yes.", "no", 0.0),
         ],
     )
     def test_yes_no_gold_scored_by_leading_polarity(
         self, prediction: str, reference: str, expected: float
     ) -> None:
         assert answer_contains(prediction, reference) == expected
+
+    def test_korean_number_with_a_unit_is_contained(self) -> None:
+        assert answer_contains("계약은 2024년에 체결되었다", "2024") == 1.0
+        assert answer_contains("계약 금액은 3억 원이다", "3") == 0.0
+
+    def test_range_is_two_numbers(self) -> None:
+        assert token_f1("1990-1995", "1990 1995") == 1.0
+        assert answer_contains("It ran from 1990-1995.", "1995") == 1.0
 
     def test_answer_contains_korean_particle(self) -> None:
         assert (

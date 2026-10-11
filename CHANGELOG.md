@@ -274,6 +274,13 @@ Library API (Python callers and custom backends).
 - Evaluation: `answer_match` no longer counts a different number or name as
   a match; judge failures are recorded per query instead of discarding the
   run; non-zero exit codes on failed scoring (#158, #210).
+- `answer_match` and `graph_aware`: a bare number matches it followed by a
+  Korean unit (`2024` in `2024년에`) but still not a magnitude (`3` is not
+  `3억`); a minus sign and a percent sign stay part of a number (`-5` is not
+  `5`, `3.5%` is not `3.5 million`); a dash between words is a space
+  (`1990-1995` is two numbers, `5-year` = `5 year`); a yes/no gold reads the
+  first yes/no that answers the question, past Markdown headings,
+  abbreviations and "there is no ..." (#PR).
 - CLIs and config: an empty config loads the defaults; `custom_prompts`
   overrides are validated at load; `run-rag` exits cleanly on usage errors;
   importing the package no longer configures logging (#158, #178).
