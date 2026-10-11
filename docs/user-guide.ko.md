@@ -1678,8 +1678,13 @@ finally:
 - 패키지를 import해도 로깅 핸들러는 설정하지 않습니다. CLI와 같은 로깅을 쓰려면
   `unified_kg_rag.shared.setup_logging(config)`를 호출하세요.
 
-두 생성자 모두 백엔드 주입(`providers`, `retriever_builders`, `doc_status`,
-`vector_indexer`, `graph_indexer`)을 받습니다.
+두 생성자 모두 `providers=` 번들로 백엔드를 주입받습니다
+(`Providers(config, llm_factory=..., doc_status=..., vector_indexer_factory=...,
+graph_indexer_factory=..., retriever_builders=...)`). 번들 없이 쓸 때
+`DataIngestionPipeline`은 `doc_status`, `vector_indexer`, `graph_indexer`도 받고,
+`GraphRAGChain`은 `model_factory`, `retriever_builders`를 받습니다. 이 중 하나를
+`providers=`와 함께 넘기면 `ValueError`가 납니다. `GraphRAGChain(memory_manager=...)`는
+어느 쪽과도 함께 쓸 수 있습니다.
 [설계 문서 §15](./design.ko.md#15-확장-가이드)를 참고하세요.
 
 ---

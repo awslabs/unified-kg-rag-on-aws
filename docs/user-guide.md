@@ -1781,8 +1781,13 @@ finally:
 - Importing the package configures no logging handler; call
   `unified_kg_rag.shared.setup_logging(config)` to get the CLI's logging.
 
-Both constructors accept injected backends (`providers`, `retriever_builders`,
-`doc_status`, `vector_indexer`, `graph_indexer`); see
+Both constructors accept injected backends through a `providers=` bundle
+(`Providers(config, llm_factory=..., doc_status=..., vector_indexer_factory=...,
+graph_indexer_factory=..., retriever_builders=...)`). Without a bundle,
+`DataIngestionPipeline` also takes `doc_status`, `vector_indexer` and
+`graph_indexer`, and `GraphRAGChain` takes `model_factory` and
+`retriever_builders`; passing one of these together with `providers=` raises
+`ValueError`. `GraphRAGChain(memory_manager=...)` combines with either. See
 [Design Doc §15](./design.md#15-extension-guide).
 
 ---

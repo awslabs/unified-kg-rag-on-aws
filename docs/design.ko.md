@@ -596,8 +596,11 @@ def _build(providers):
 
 `tests/fixtures/fakes/`의 인메모리 fake(예: `FakeGraphStore`, `FakeVectorStore`)는
 인덱서 포트의 동작하는 참조 구현입니다. 수집과 인덱싱 파이프라인 전체가 AWS 없이 이
-fake로 실행되며(`DataIngestionPipeline(cfg, pipeline_config, providers=..., doc_status=...,
-vector_indexer=..., graph_indexer=...)`, `tests/integration/test_ingestion_stages.py`에서
+fake로 실행되며(`DataIngestionPipeline(cfg, pipeline_config, providers=Providers(cfg,
+llm_factory=..., embedding_factory=..., doc_status=FakeDocStatusStore(),
+vector_indexer_factory=lambda: vectors, graph_indexer_factory=lambda: graph))`, 또는
+번들 없이 `DataIngestionPipeline(cfg, pipeline_config, doc_status=..., vector_indexer=...,
+graph_indexer=...)`, `tests/integration/test_ingestion_stages.py`에서
 검증), 커스텀 저장소를 만들 때 출발점으로 권장합니다. 이 프레임워크는 AWS 어댑터 외에 로컬
 어댑터도 저장소 안에 제공합니다(`adapters/local/`: OpenAI 호환·Ollama 모델, 크로스 인코더
 재순위화, 로컬 토큰 카운터, SQLite 레지스트리). 내장형 저장소(NetworkX/Kùzu 그래프,

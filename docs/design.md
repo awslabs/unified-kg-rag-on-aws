@@ -612,8 +612,11 @@ Bedrock catalog only while the Bedrock provider serves that role.
 The in-memory fakes in `tests/fixtures/fakes/` (e.g. `FakeGraphStore`,
 `FakeVectorStore`) are working reference implementations of the indexer ports —
 the whole ingestion+indexing pipeline runs against them with no AWS
-(`DataIngestionPipeline(cfg, pipeline_config, providers=..., doc_status=...,
-vector_indexer=..., graph_indexer=...)`, exercised in
+(`DataIngestionPipeline(cfg, pipeline_config, providers=Providers(cfg,
+llm_factory=..., embedding_factory=..., doc_status=FakeDocStatusStore(),
+vector_indexer_factory=lambda: vectors, graph_indexer_factory=lambda: graph))`,
+or without a bundle `DataIngestionPipeline(cfg, pipeline_config,
+doc_status=..., vector_indexer=..., graph_indexer=...)`, exercised in
 `tests/integration/test_ingestion_stages.py`). They are
 the recommended starting point for a custom store. Besides the AWS adapters the
 framework ships the local ones in-tree (`adapters/local/`: OpenAI-compatible
