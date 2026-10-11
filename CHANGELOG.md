@@ -567,15 +567,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `--retrieval-multiplier`) once, in `application/cli/query_args.py`;
   `--top-k` and `--retrieval-multiplier` below 1 now fail at parse time (#212).
 
-### Deprecated
-- `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
-- `aws.bedrock.effort`; use `aws.bedrock.default_effort` (#128).
-- `processing.max_retries`, `indexing.neptune.max_retries` and
-  `evaluation.ragas_max_retries`; use the `max_attempts` keys. A renamed key
-  (including `search.llm_retry`) now logs a deprecation WARNING instead of
-  being reported as an unknown key that is ignored (#151).
-
 ### Removed
+- **Breaking:** the renamed-key shim. `search.llm_retry`,
+  `aws.bedrock.effort`, `processing.max_retries`,
+  `indexing.neptune.max_retries` and `evaluation.ragas_max_retries` (renamed
+  in #120, #128 and #151) are no longer mapped to their replacements; each is
+  reported as an unknown key and ignored. Use `aws.bedrock.transient_retry`,
+  `aws.bedrock.default_effort` and the `max_attempts` keys (#PR).
 - `PipelineContext.graph_statistics` and `PipelineContext.centrality_metrics`,
   written by the graph-analysis stage but never read (and excluded from the
   pipeline metadata file) (#210).

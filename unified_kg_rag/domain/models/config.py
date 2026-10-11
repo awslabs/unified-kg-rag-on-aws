@@ -2952,83 +2952,6 @@ class EvaluationConfig(BaseModel):
     )
 
 
-_MISSING = object()
-
-
-def _get_path(tree: Any, keys: list[str]) -> Any:
-    for key in keys:
-        if isinstance(tree, BaseModel):
-            # A section passed as a model instance: its fields are all set.
-            return getattr(tree, key, _MISSING)
-        if not isinstance(tree, dict) or key not in tree:
-            return _MISSING
-        tree = tree[key]
-    return tree
-
-
-def _with_path(tree: dict[str, Any], keys: list[str], value: Any) -> dict[str, Any]:
-    """Copy of ``tree`` with ``value`` at ``keys`` (``_MISSING`` deletes it)."""
-    head, *rest = keys
-    out = dict(tree)
-    if rest:
-        child = out.get(head)
-        out[head] = _with_path(child if isinstance(child, dict) else {}, rest, value)
-    elif value is _MISSING:
-        out.pop(head, None)
-    else:
-        out[head] = value
-    return out
-
-
-def _retries_to_attempts(value: Any) -> Any:
-    # The old key counted retries after the first try; attempts include it.
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value + 1
-    return value
-
-
-# Renamed config keys: legacy dotted path -> (replacement path, value mapping).
-# Still accepted so existing YAML keeps working, with a deprecation WARNING.
-# Every *max_attempts knob counts total attempts, including the first.
-LEGACY_CONFIG_KEYS: dict[str, tuple[str, Callable[[Any], Any]]] = {
-    "search.llm_retry": ("aws.bedrock.transient_retry", lambda value: value),
-    "aws.bedrock.effort": ("aws.bedrock.default_effort", lambda value: value),
-    "processing.max_retries": ("processing.max_attempts", lambda value: value),
-    "indexing.neptune.max_retries": (
-        "indexing.neptune.max_attempts",
-        _retries_to_attempts,
-    ),
-    "evaluation.ragas_max_retries": (
-        "evaluation.ragas_max_attempts",
-        lambda value: value,
-    ),
-}
-
-
-def _migrate_legacy_key(
-    data: dict[str, Any], old: str, new: str, convert: Callable[[Any], Any]
-) -> dict[str, Any]:
-    old_keys, new_keys = old.split("."), new.split(".")
-    value = _get_path(data, old_keys)
-    if value is _MISSING:
-        return data
-    data = _with_path(data, old_keys, _MISSING)
-    if _get_path(data, new_keys) is not _MISSING:
-        _logger.warning(
-            "Deprecated config key '%s' is ignored because '%s' is set", old, new
-        )
-        return data
-    mapped = convert(value)
-    _logger.warning(
-        "Config key '%s' is deprecated; applied as '%s: %s'. Rename it in your "
-        "config.",
-        old,
-        new,
-        mapped,
-    )
-    return _with_path(data, new_keys, mapped)
-
-
 class Config(BaseModel):
     backend: Backend = Field(
         default=Backend.AWS,
@@ -3080,20 +3003,6 @@ class Config(BaseModel):
     custom_prompts: CustomPromptConfig = Field(
         default_factory=CustomPromptConfig, description="Custom prompt configuration"
     )
-
-    @model_validator(mode="before")
-    @classmethod
-    def _accept_legacy_keys(cls, data: Any) -> Any:
-        """Map each key in ``LEGACY_CONFIG_KEYS`` to its replacement.
-
-        An explicitly set replacement wins over the legacy key. Either way the
-        legacy key is dropped with a WARNING naming the replacement.
-        """
-        if not isinstance(data, dict):
-            return data
-        for old, (new, convert) in LEGACY_CONFIG_KEYS.items():
-            data = _migrate_legacy_key(data, old, new, convert)
-        return data
 
     @model_validator(mode="before")
     @classmethod

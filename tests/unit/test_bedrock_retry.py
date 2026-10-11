@@ -199,16 +199,3 @@ def test_embedding_factory_applies_configured_policy(mocker) -> None:
     )
     model = factory.get_model(EmbeddingModelId.TITAN_EMBED_V2)
     assert model.transient_retry.max_attempts == 2
-
-
-def test_legacy_search_llm_retry_key_still_configures_the_policy() -> None:
-    legacy = Config.model_validate({"search": {"llm_retry": {"max_attempts": 2}}})
-    assert legacy.aws.bedrock.transient_retry.max_attempts == 2
-
-    both = Config.model_validate(
-        {
-            "search": {"llm_retry": {"max_attempts": 2}},
-            "aws": {"bedrock": {"transient_retry": {"max_attempts": 4}}},
-        }
-    )
-    assert both.aws.bedrock.transient_retry.max_attempts == 4

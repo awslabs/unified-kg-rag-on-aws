@@ -307,17 +307,12 @@ YAML 값은 파일을 읽을 때 검증합니다. 타입이 틀리거나 지원�
 새 릴리스에서 제거된 키)는 실행을 멈추지 않습니다. `Unknown config key '<path>' is ignored`
 WARNING을 남기고 버리므로, 파일을 고치거나 업그레이드한 뒤에는 로그를 확인하세요.
 
-폐기 예정 키도 받아들입니다. 각 키의 값은 대체 키에 적용되고
-`Config key '<old>' is deprecated; applied as '<new>: <value>'` WARNING이 남습니다.
-대체 키도 함께 지정했다면 폐기 예정 키는 무시합니다.
-
-| 폐기 예정 키 | 대체 키 |
-|---|---|
-| `search.llm_retry` | `aws.bedrock.transient_retry` |
-| `aws.bedrock.effort` | `aws.bedrock.default_effort`(값 그대로) |
-| `processing.max_retries` | `processing.max_attempts`(값 그대로) |
-| `indexing.neptune.max_retries` | `indexing.neptune.max_attempts`, 값에 1을 더함(폐기 예정 키는 첫 시도 뒤의 재시도만 셉니다) |
-| `evaluation.ragas_max_retries` | `evaluation.ragas_max_attempts`(값 그대로) |
+첫 릴리스 전에 이름이 바뀐 키(`search.llm_retry`, `aws.bedrock.effort`,
+`processing.max_retries`, `indexing.neptune.max_retries`,
+`evaluation.ragas_max_retries`)는 읽지 않으며 알 수 없는 키로 보고됩니다.
+`aws.bedrock.transient_retry`, `aws.bedrock.default_effort`,
+`processing.max_attempts`, `indexing.neptune.max_attempts`,
+`evaluation.ragas_max_attempts`를 사용하세요.
 
 `max_attempts` 키는 모두 첫 시도를 포함한 총 시도 횟수이며, `1`이면 재시도하지
 않습니다.

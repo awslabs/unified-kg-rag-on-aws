@@ -322,17 +322,12 @@ value stops the CLI with `Configuration validation error: ...`. An unknown key
 logged at WARNING as `Unknown config key '<path>' is ignored` and dropped, so
 check the log after editing the file or upgrading.
 
-Deprecated keys are accepted: each is applied to its replacement with a
-WARNING `Config key '<old>' is deprecated; applied as '<new>: <value>'`, and is
-ignored if the replacement is also set.
-
-| Deprecated key | Replacement |
-|---|---|
-| `search.llm_retry` | `aws.bedrock.transient_retry` |
-| `aws.bedrock.effort` | `aws.bedrock.default_effort` (same value) |
-| `processing.max_retries` | `processing.max_attempts` (same value) |
-| `indexing.neptune.max_retries` | `indexing.neptune.max_attempts`, plus one: the former key counted retries after the first try |
-| `evaluation.ragas_max_retries` | `evaluation.ragas_max_attempts` (same value) |
+Keys renamed before the first release (`search.llm_retry`,
+`aws.bedrock.effort`, `processing.max_retries`, `indexing.neptune.max_retries`,
+`evaluation.ragas_max_retries`) are not read; each is reported as an unknown
+key. Use `aws.bedrock.transient_retry`, `aws.bedrock.default_effort`,
+`processing.max_attempts`, `indexing.neptune.max_attempts` and
+`evaluation.ragas_max_attempts`.
 
 Every `max_attempts` key counts total attempts, including the first; `1`
 disables the retry.

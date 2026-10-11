@@ -321,10 +321,6 @@ class TestFingerprintScope:
             return stage_input_fingerprint(config, stage)
 
         baseline = fingerprint({})
-        # The legacy key and default_effort are the same input.
-        assert fingerprint({"effort": "medium"}) == fingerprint(
-            {"default_effort": "medium"}
-        )
         assert fingerprint({"default_effort": "medium"}) != baseline
         assert fingerprint({"fast_effort": "low"}) == baseline
         assert fingerprint({"fast_effort": "medium"}) != baseline
