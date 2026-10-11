@@ -757,6 +757,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   line-deduplicating rule as every other path instead of a `"; "` join, and an
   edge a unit restates adds no strength for a text unit it already cites
   (each re-proposal used to add 1.0) (#PR).
+- An extraction answer whose last section lacks its closing tag (a missing
+  `</relationships>`) no longer loses that section. The XML parser counted the
+  section's inner `<relationship>` elements as top-level sections, rejected the
+  correct lxml recovery for not having them, and fell back to a result keyed
+  `relationship`, which the extractor never reads. Only the expected
+  top-level tags now count as sections (#PR).
 - With `entity_grounding` enabled, the check whether a gleaned
   relationship's endpoint name occurs in its unit (#202) now accepts common
   spelling variants and no longer accepts partial words. Both sides drop
