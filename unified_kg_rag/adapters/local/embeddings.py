@@ -29,6 +29,7 @@ from unified_kg_rag.adapters.local.models import (
     api_key_value,
     import_optional,
     local_transient_retry,
+    per_loop_async_client,
 )
 from unified_kg_rag.domain.models import Config, model_id_value
 from unified_kg_rag.domain.models.config import TransientRetryConfig
@@ -239,9 +240,15 @@ class OllamaEmbeddingFactory(_LocalEmbeddingFactory):
         client_kwargs: dict[str, Any] = {"timeout": self.settings.timeout_seconds}
         if self.transport is not None:
             client_kwargs["transport"] = self.transport
-        embeddings: Embeddings = module.OllamaEmbeddings(
-            model=model_id,
-            base_url=self.settings.base_url,
-            client_kwargs=client_kwargs,
-        )
+
+        def build() -> Embeddings:
+            built: Embeddings = module.OllamaEmbeddings(
+                model=model_id,
+                base_url=self.settings.base_url,
+                client_kwargs=client_kwargs,
+            )
+            return built
+
+        # One async client per event loop (see PerLoopAsyncClient).
+        embeddings: Embeddings = per_loop_async_client(build(), build)
         return embeddings

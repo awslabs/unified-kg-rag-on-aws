@@ -303,6 +303,11 @@ Library API (Python callers and custom backends).
   given. The parsing and loading stages kept the constructor's directory (or
   the configured default), so a run over another directory read the old
   corpus and diffed the incremental registry under the old source scope (#PR).
+- Local mode: one chain serves queries from successive event loops (a second
+  `asyncio.run(chain.ainvoke(...))`, or `stream` and then `astream`). The
+  Ollama chat and embedding models kept one async HTTP client, bound to the
+  first loop, and failed later calls with "Event loop is closed"; they now
+  get one client per loop (#PR).
 - Queries on Ollama retry a transient error (HTTP 408/429/5xx, dropped
   connection, timeout) instead of failing on the first one: the Ollama client
   never retries, so query chains and Ollama embedding calls now get the
