@@ -168,12 +168,9 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             for context in result.retrieved_contexts[:max_contexts]:
                 context_token_count = self._token_counter.count_tokens(context)
 
-                if (
-                    current_tokens + context_token_count
-                    > max_tokens - self.BUFFER_TOKENS
-                ):
-                    remaining_tokens = max_tokens - current_tokens
-                    if remaining_tokens > self.BUFFER_TOKENS:
+                remaining_tokens = max_tokens - self.BUFFER_TOKENS - current_tokens
+                if context_token_count > remaining_tokens:
+                    if remaining_tokens > 0:
                         truncated_context, used = (
                             self._token_counter.truncate_to_token_limit(
                                 context, remaining_tokens
@@ -254,24 +251,53 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         ground_truths: list[str],
         **kwargs: Any,
     ) -> list[EvaluationReport]:
+        """Score rows with a reference on every metric, the rest without the
+        reference-based ones (no judge calls for metrics that would be skipped).
+
+        A RAGAS failure marks that run's metrics as failed for its rows rather
+        than aborting the evaluation; ``--max-failure-rate`` decides the exit.
+        """
         metric_types = self.metric_types()
         if not metric_types:
             logger.warning("No valid Ragas metrics found in configuration")
             return []
-        # If no row has a reference, reference-based metrics would be skipped
-        # for every row anyway — don't pay for the judge calls.
-        if not any(gt.strip() for gt in ground_truths):
-            metric_types = [m for m in metric_types if m not in self.REFERENCE_METRICS]
-        if not metric_types:
-            logger.warning(
-                "Only reference-based Ragas metrics are configured and no row has "
-                "a ground-truth answer; all Ragas metrics are skipped"
-            )
-            return [
-                self._create_skipped_report(q.query_id, r)
-                for q, r in zip(queries, results, strict=True)
-            ]
+        with_reference = [i for i, gt in enumerate(ground_truths) if gt.strip()]
+        without_reference = [i for i, gt in enumerate(ground_truths) if not gt.strip()]
+        partitions = (
+            (with_reference, metric_types),
+            (
+                without_reference,
+                [m for m in metric_types if m not in self.REFERENCE_METRICS],
+            ),
+        )
+        reports: dict[int, EvaluationReport] = {}
+        for rows, partition_metrics in partitions:
+            if not rows:
+                continue
+            row_queries = [queries[i] for i in rows]
+            row_results = [results[i] for i in rows]
+            if partition_metrics:
+                scored = await self._score_rows(
+                    row_queries,
+                    row_results,
+                    [ground_truths[i] for i in rows],
+                    partition_metrics,
+                )
+            else:
+                scored = [
+                    self._create_skipped_report(q.query_id, r)
+                    for q, r in zip(row_queries, row_results, strict=True)
+                ]
+            reports.update(zip(rows, scored, strict=True))
+        return [reports[i] for i in range(len(queries))]
 
+    async def _score_rows(
+        self,
+        queries: list[EvaluationQuery],
+        results: list[EvaluationResult],
+        ground_truths: list[str],
+        metric_types: list[EvaluationMetricType],
+    ) -> list[EvaluationReport]:
         # Context precision makes one judge call per context, so only it gets
         # the count cap (``context_precision@N``). Faithfulness and context
         # recall judge whether the answer / reference is supported by the
@@ -318,23 +344,23 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                 )
                 for m_types, contexts in groups
             ]
-            return self._parse_ragas_reports(
-                pd.concat(frames, axis=1),
-                queries,
-                results,
-                ground_truths,
-                judge_inputs,
-            )
         except Exception as e:
-            # Every answer is already generated: record the failure as failed
-            # metrics; --max-failure-rate decides the exit code.
             logger.error("Ragas evaluation failed for batch: %s", e)
             return [
                 self._create_empty_report(
-                    q.query_id, reason=f"Ragas batch evaluation failed: {e}"
+                    q.query_id,
+                    reason=f"Ragas batch evaluation failed: {e}",
+                    metric_types=metric_types,
                 )
                 for q in queries
             ]
+        return self._parse_ragas_reports(
+            pd.concat(frames, axis=1),
+            queries,
+            results,
+            ground_truths,
+            judge_inputs,
+        )
 
     async def _run_ragas(
         self,

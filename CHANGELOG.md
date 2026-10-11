@@ -563,6 +563,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- The `ragas` evaluator no longer pays judge calls for reference-based
+  metrics (`answer_correctness`, `context_precision`, `context_recall`) on
+  rows without a reference answer, whose scores were then discarded as
+  skipped: such rows are scored in a separate run without those metrics. Its
+  context truncation also keeps `BUFFER_TOKENS` free, so the judge's contexts
+  no longer exceed `evaluation.max_context_tokens - 128` (#PR).
 - `run-eval` no longer discards a whole run when one judge call fails after
   every answer has been generated. Scoring errors (a judge call, a RAGAS run
   or an evaluator crash) are now recorded as failed metrics for the affected

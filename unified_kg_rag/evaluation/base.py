@@ -121,8 +121,12 @@ class BaseEvaluator(ABC):
         return [report for report in final_reports if report is not None]
 
     def _create_empty_report(
-        self, query_id: str, reason: str = "evaluation failed"
+        self,
+        query_id: str,
+        reason: str = "evaluation failed",
+        metric_types: list[EvaluationMetricType] | None = None,
     ) -> EvaluationReport:
+        """A report whose metrics (default: all of ``metric_types()``) failed."""
         return EvaluationReport(
             query_id=query_id,
             evaluator_type=self.evaluator_type,
@@ -130,7 +134,9 @@ class BaseEvaluator(ABC):
             evaluation_time=datetime.now(),
             metadata={
                 "evaluation_failed": True,
-                FAILED_METRICS_KEY: {m.value: reason for m in self.metric_types()},
+                FAILED_METRICS_KEY: {
+                    m.value: reason for m in metric_types or self.metric_types()
+                },
             },
         )
 

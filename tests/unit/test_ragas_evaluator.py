@@ -97,8 +97,8 @@ class TestTruncateContexts:
         assert out == [["alpha beta", "gamma delta"]]
 
     def test_overflowing_context_is_truncated_with_ellipsis(self, mocker) -> None:
-        # BUFFER_TOKENS=128; pick a budget so the 2nd context overflows but
-        # leaves > buffer remaining tokens to truncate into.
+        # BUFFER_TOKENS=128, so 72 tokens are usable: the 2nd context
+        # overflows and is truncated into the 22 left.
         ev, _ = _make_evaluator(mocker, max_context_tokens=200)
         first = " ".join(["w"] * 50)  # 50 tokens
         second = " ".join(["x"] * 100)  # would overflow
@@ -110,12 +110,9 @@ class TestTruncateContexts:
         assert len(contexts) == 2
 
     def test_overflow_with_too_little_remaining_drops_context(self, mocker) -> None:
-        # After the first context, remaining budget <= BUFFER_TOKENS so the
-        # overflowing context is dropped entirely (no truncated fragment added).
+        # first=72 fills the usable budget (max - buffer = 72) exactly, so
+        # the overflowing second context is dropped with no truncated fragment.
         ev, _ = _make_evaluator(mocker, max_context_tokens=200)
-        # first=72 fits exactly (0+72 == max-buffer == 72, not strictly over).
-        # After it, remaining = 200-72 = 128, which is NOT > buffer(128) -> the
-        # overflowing second context is dropped with no truncated fragment.
         first = " ".join(["w"] * 72)
         second = " ".join(["x"] * 50)
         out = _contexts(ev, [_result(contexts=[first, second])])
@@ -161,8 +158,9 @@ class TestTruncateContexts:
         [(contexts, tokens)] = ev._truncate_contexts(
             [_result(contexts=[first, second])]
         )
-        # 50 whole + the second truncated into the remaining 150 tokens.
-        assert len(contexts) == 2 and tokens == 200
+        # 50 whole + the second truncated into the 22 tokens left after the
+        # buffer: the total stays within max_context_tokens - BUFFER_TOKENS.
+        assert len(contexts) == 2 and tokens == 200 - ev.BUFFER_TOKENS
 
     def test_default_cap_is_twenty(self) -> None:
         assert Config().evaluation.ragas_max_contexts == 20
@@ -430,6 +428,63 @@ class TestAevaluateBatch:
         ]
         assert reports[0].metadata["skipped_metrics"] == {
             "answer_correctness": "empty_reference"
+        }
+
+    async def test_rows_without_reference_run_without_reference_metrics(
+        self, mocker
+    ) -> None:
+        # Judge calls for a reference metric on a row without a reference
+        # would be thrown away, so those rows get their own run without it.
+        ev, _ = _make_evaluator(
+            mocker,
+            ragas_metrics=[
+                EvaluationMetricType.ANSWER_CORRECTNESS,
+                EvaluationMetricType.FAITHFULNESS,
+            ],
+        )
+        runs: list[tuple[list[str], list]] = []
+
+        class _FakeRagasResult:
+            def __init__(self, dataset, metrics) -> None:
+                self.frame = pd.DataFrame(
+                    {m.name: [0.5] * len(dataset["question"]) for m in metrics}
+                )
+
+            def to_pandas(self):
+                return self.frame
+
+        def fake_evaluate(*, dataset, metrics, **kwargs):
+            runs.append((dataset["question"], metrics))
+            return _FakeRagasResult(dataset, metrics)
+
+        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
+        queries = [
+            EvaluationQuery(query_id="no-ref", question="A?"),
+            EvaluationQuery(query_id="ref", question="B?"),
+        ]
+        reports = await ev.aevaluate_batch(
+            queries, [_result(), _result()], ["", "truth"]
+        )
+        metrics = rg_module.RagasEvaluator.RAGAS_METRICS
+        assert runs == [
+            (
+                ["B?"],
+                [
+                    metrics[EvaluationMetricType.ANSWER_CORRECTNESS],
+                    metrics[EvaluationMetricType.FAITHFULNESS],
+                ],
+            ),
+            (["A?"], [metrics[EvaluationMetricType.FAITHFULNESS]]),
+        ]
+        assert [r.query_id for r in reports] == ["no-ref", "ref"]
+        assert [m.metric_type.value for m in reports[0].metrics] == ["faithfulness"]
+        assert reports[0].metadata["skipped_metrics"] == {
+            "answer_correctness": "empty_reference"
+        }
+        assert {m.metric_type.value for m in reports[1].metrics} == {
+            "answer_correctness",
+            "faithfulness",
         }
 
     async def test_only_reference_metrics_and_no_reference_skips_all(
