@@ -332,7 +332,9 @@ Library API (Python callers and custom backends).
   own loop, and the clients of closed loops are dropped (#PR).
 - IaC: a zone-aware OpenSearch domain spans as many AZs as it has data
   nodes, up to 3 and up to the VPC's AZs, so `opensearch_count=3` with
-  `max_azs=3` uses three zones instead of two. `bedrock_model_arns` that
+  `max_azs=3` uses three zones instead of two; on an existing domain the
+  first deploy is a blue/green deployment (see the IaC README).
+  `bedrock_model_arns` that
   list only foundation models keep the inference-profile grants, so models
   offered only through a profile stay callable (the profile call is still
   authorized against the listed models). The README documents both, and
