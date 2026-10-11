@@ -175,6 +175,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#157).
 
 ### Changed
+- **Breaking**: `graph.visualization.enabled` defaults to `false`. Rendering
+  during ingestion embedded every node and reduced the embeddings to a layout
+  on each ingest, and the image preset already turned it off; set it to `true`
+  to keep the previous behaviour, or render on demand with
+  `run-visualization`. `GraphVisualizationManager.run()` no longer re-checks
+  the flag, so a caller that builds the manager directly gets its output (#PR).
 - `indexing.opensearch.embedding_model_id`, `evaluation.embedding_model_id`
   and `search.reranking.rerank_model_id` accept any model name when a
   non-Bedrock provider serves the role; with the Bedrock providers (the

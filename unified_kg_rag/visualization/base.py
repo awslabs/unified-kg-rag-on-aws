@@ -85,10 +85,8 @@ class GraphVisualizationManager:
         return self._embedder
 
     def run(self) -> None:
-        if not self.viz_config.enabled:
-            logger.info("Visualization pipeline is disabled in the configuration.")
-            return
-
+        # ``graph.visualization.enabled`` gates the ingestion call site; a
+        # caller that builds the manager directly asked for the output.
         if not self.analyzer.graph:
             logger.warning("No graph is available for visualization. Skipping.")
             return

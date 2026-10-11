@@ -464,7 +464,9 @@ graph:
 
   # Graph Visualization
   visualization:
-    enabled: true
+    # Off by default: rendering during ingestion embeds every node and reduces
+    # the embeddings to a layout on each run.
+    enabled: false
     # Unset (default): ingestion writes to <cache dir>/<pipeline_id>/visualization,
     # so visualization_data.json is uploaded with the S3 cache sync (the sync
     # copies .json only; re-render the HTML with run-visualization). Set a path

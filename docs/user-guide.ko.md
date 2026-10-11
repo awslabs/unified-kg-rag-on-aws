@@ -473,7 +473,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | 리포트 프롬프트 하나에 넣는 엔티티·관계 컨텍스트의 토큰 예산입니다. |
 | `graph.community_detection.report_generation.content_length` | `"medium"` | 리포트 길이입니다. `short`, `medium`, `long` 중 하나입니다. |
 | `graph.analysis.centrality.calculate_betweenness` | `true` | 매개 중심성을 계산합니다. 노드가 `betweenness_auto_sample_threshold`(`2000`)보다 많은 그래프에서는 정확히 계산하지 않고 샘플링합니다. |
-| `graph.visualization.enabled` | `true` | 수집 중에 시각화 데이터를 내보냅니다. |
+| `graph.visualization.enabled` | `false` | 수집 중에 시각화를 렌더링하고 시각화 데이터를 내보냅니다(수집마다 노드당 임베딩 호출 한 번과 레이아웃 차원 축소가 추가됨). |
 | `graph.visualization.outputs_directory` | `null` | 지정하지 않으면 `<cache dir>/<pipeline_id>/visualization`에 기록하므로 데이터가 캐시와 함께 S3로 동기화됩니다. |
 | `graph.visualization.layout_method` | `"umap"` | `umap`, `tsne`, `pca` 중 하나입니다. |
 | `graph.visualization.interactive.max_nodes` | `2000` | `interactive_graph.html`에 남길 차수 기준 상위 N개 노드입니다. `0`이나 `null`이면 제한하지 않습니다. `interactive`를 지정하면 기본 딕셔너리가 통째로 대체되므로, physics를 끈 상태로 두려면 `physics_enabled: false`도 함께 지정하세요. |
@@ -1327,7 +1327,8 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
 이미 내보낸 시각화 데이터 JSON으로 그림을 그리는 **독립** 렌더러입니다. 수집을 다시
 실행하거나 AWS에 접근하지 **않습니다**.
 
-`graph.visualization.enabled`가 `true`이면 `run-ingestion`의 커뮤니티 탐지 단계가
+`graph.visualization.enabled`가 `true`이면(기본값은 `false`. 수집마다 노드당 임베딩
+호출과 레이아웃 차원 축소가 추가되기 때문) `run-ingestion`의 커뮤니티 탐지 단계가
 시각화를 렌더링하고 `visualization_data.json`도 `graph.visualization.outputs_directory`에
 씁니다. 이 값을 지정하지 않으면(기본값) `<cache.local_directory>/<pipeline_id>/visualization/`에
 쓰므로, S3 캐시 동기화를 켜면 `visualization_data.json`이 캐시와 함께 업로드됩니다(동기화는

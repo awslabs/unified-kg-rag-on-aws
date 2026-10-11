@@ -494,7 +494,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | Token budget for the entity/relationship context in one report prompt. |
 | `graph.community_detection.report_generation.content_length` | `"medium"` | Report length: `short`, `medium`, `long`. |
 | `graph.analysis.centrality.calculate_betweenness` | `true` | Betweenness centrality. On graphs larger than `betweenness_auto_sample_threshold` (`2000`) nodes it is sampled instead of computed exactly. |
-| `graph.visualization.enabled` | `true` | Export visualization data during ingestion. |
+| `graph.visualization.enabled` | `false` | Render visualizations and export visualization data during ingestion (one embedding call per node plus a layout reduction per ingest). |
 | `graph.visualization.outputs_directory` | `null` | Unset writes to `<cache dir>/<pipeline_id>/visualization`, so the data syncs to S3 with the cache. |
 | `graph.visualization.layout_method` | `"umap"` | `umap`, `tsne`, or `pca`. |
 | `graph.visualization.interactive.max_nodes` | `2000` | Top-N nodes by degree kept in `interactive_graph.html`; `0` or `null` disables the cap. Setting `interactive` replaces its default dict, so also set `physics_enabled: false` to keep physics off. |
@@ -1399,8 +1399,9 @@ order, the file names it is attributed to (`[]` when unattributable).
 This is a **standalone** renderer that draws from an already-exported
 visualization-data JSON. It does **not** re-run ingestion or touch AWS.
 
-When `graph.visualization.enabled` is `true`, the community-detection stage of
-`run-ingestion` renders the visualizations and also writes
+When `graph.visualization.enabled` is `true` (default `false`, since it adds
+an embedding call per node and a layout reduction to every ingest), the
+community-detection stage of `run-ingestion` renders the visualizations and also writes
 `visualization_data.json` into `graph.visualization.outputs_directory`. When
 that is unset (the default), ingestion writes to
 `<cache.local_directory>/<pipeline_id>/visualization/`, so with S3 cache sync
