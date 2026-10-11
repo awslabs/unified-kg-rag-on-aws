@@ -278,6 +278,14 @@ class EvaluationManager:
         # Aliases sit next to ``answer`` as naturally as under ``metadata``.
         if "answer_aliases" in item:
             final_metadata.setdefault("answer_aliases", item["answer_aliases"])
+        aliases = final_metadata.get("answer_aliases")
+        if aliases is not None and not (
+            isinstance(aliases, str)
+            or (isinstance(aliases, list) and all(isinstance(a, str) for a in aliases))
+        ):
+            raise EvaluationException(
+                f"{where}: 'answer_aliases' must be a string or a list of strings."
+            )
         rag_fields = {
             k: v for k, v in final_metadata.items() if k in RAGInput.model_fields
         }

@@ -272,3 +272,34 @@ def test_s3_client_uses_configured_region() -> None:
     config = Config()
     config.aws.region_name = "eu-west-1"
     assert s3_transfer.s3_client_for(config).meta.region_name == "eu-west-1"
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        ("not json", "is not valid JSON"),
+        ("[]", "contains no queries"),
+        ('[{"id": "a", "question": "x", "answer_aliases": 5}]', "answer_aliases"),
+    ],
+)
+def test_main_reports_an_invalid_dataset_and_exits_2(
+    eval_config, mocker, monkeypatch, capsys, tmp_path, content, message
+) -> None:
+    # An input error, like a usage error: a clear message, no traceback.
+    import sys
+
+    dataset = tmp_path / "eval.json"
+    dataset.write_text(content, encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["run-eval", "--eval-data-path", str(dataset)])
+    mocker.patch.object(run_evaluation, "missing_endpoints_error", return_value=None)
+    chain = mocker.MagicMock()
+    chain.aclose = mocker.AsyncMock()
+    mocker.patch.object(run_evaluation, "GraphRAGChain", return_value=chain)
+    with pytest.raises(SystemExit) as exc:
+        run_evaluation.main()
+    assert exc.value.code == 2
+    out = capsys.readouterr().out
+    assert "invalid evaluation dataset" in out
+    assert message in out
+    assert "unexpected error" not in out
+    assert "Traceback" not in out

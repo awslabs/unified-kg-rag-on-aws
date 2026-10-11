@@ -1446,9 +1446,20 @@ directory and uploaded under the prefix when the run ends, with the
 S3 calls use `aws.profile_name` and `aws.region_name`. The principal needs
 `s3:GetObject` on the dataset and `s3:PutObject` on the outputs prefix.
 
+A dataset that cannot be read (missing file, invalid JSON) or fails
+validation (an empty array, a missing `question`, a duplicate id, a field of
+the wrong type such as a non-list `expected_entities` or an `answer_aliases`
+that is not a string or a list of strings, metadata the RAG chain rejects)
+stops `run-eval` before any query with `Error: invalid evaluation dataset:`,
+the item index and query id, and exit code 2.
+
 Results are written to the outputs directory as
 `evaluation_{results,reports,summary}_<timestamp>.json`; when every answered
 query used the same strategy the name becomes `..._<strategy>_<timestamp>.json`.
+`<timestamp>` is `YYYYMMDD_HHMMSS_<8 hex characters>`: the random part keeps
+runs started in the same second (parallel strategies, CI matrices) from
+overwriting each other's files, so a script finds the latest run by sorting
+the names or by file time, not by building the name.
 The summary holds, per metric, mean/median/stdev/min/max/count
 (`metric_statistics`) and scored/failed/skipped counts (`metric_outcomes`), plus:
 

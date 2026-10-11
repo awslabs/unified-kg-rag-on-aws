@@ -325,6 +325,11 @@ Library API (Python callers and custom backends).
   the ERROR it logs when the corpus profile is not JSON: the message carries
   the output's length and digest, and the output itself is logged at DEBUG,
   as the logging policy (user guide §2.7) states (#PR).
+- `run-eval` reports an unreadable or invalid dataset as
+  `Error: invalid evaluation dataset: ...` with exit code 2 instead of "An
+  unexpected error occurred" and a traceback, and rejects an `answer_aliases`
+  that is not a string or a list of strings at load instead of failing every
+  query. The random part of the result file names is documented (#PR).
 - Queries on Ollama retry a transient error (HTTP 408/429/5xx, dropped
   connection, timeout) instead of failing on the first one: the Ollama client
   never retries, so query chains and Ollama embedding calls now get the
