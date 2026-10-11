@@ -229,17 +229,22 @@ def test_create_connection_wraps_failure(mocker) -> None:
 
 
 class _FakeTraversal:
-    """A fake GraphTraversalSource whose drop requests return scripted counts
-    of dropped vertices; labels, limit(n) and drop requests are recorded."""
+    """A fake GraphTraversalSource: the label count returns ``initial`` and
+    each drop request the next scripted count of dropped vertices; labels,
+    limit(n), count and drop requests are recorded."""
 
-    def __init__(self, dropped: list[int]) -> None:
+    def __init__(self, dropped: list[int], initial: int | None = None) -> None:
         self._dropped = list(dropped)
+        self._initial = sum(dropped) if initial is None else initial
+        self._limited = False
         self.labels: list[str] = []
         self.limits: list[int] = []
+        self.counts = 0
         self.drops = 0
 
     # Chainable no-op steps.
     def V(self):  # noqa: N802
+        self._limited = False
         return self
 
     def hasLabel(self, label):  # noqa: N802
@@ -247,6 +252,7 @@ class _FakeTraversal:
         return self
 
     def limit(self, n):
+        self._limited = True
         self.limits.append(n)
         return self
 
@@ -258,14 +264,17 @@ class _FakeTraversal:
         return self
 
     def next(self):
+        if not self._limited:
+            self.counts += 1
+            return self._initial
         return self._dropped.pop(0)
 
 
 def _client_and_fake_g(
-    monkeypatch, dropped: list[int]
+    monkeypatch, dropped: list[int], initial: int | None = None
 ) -> tuple[NeptuneClient, _FakeTraversal]:
     client = _client(_config_with_neptune())
-    fake = _FakeTraversal(dropped)
+    fake = _FakeTraversal(dropped, initial)
     # Bypass the connection property by injecting _g directly.
     monkeypatch.setattr(type(client), "g", property(lambda self: fake))
     return client, fake
@@ -274,13 +283,15 @@ def _client_and_fake_g(
 def test_delete_batches_of_an_empty_label_send_one_request(monkeypatch) -> None:
     client, fake = _client_and_fake_g(monkeypatch, dropped=[0])
     client.delete_vertices_in_batches("MyLabel")
-    assert fake.drops == 1
+    assert (fake.counts, fake.drops) == (1, 1)
 
 
 def test_delete_batches_stop_after_a_short_batch(monkeypatch) -> None:
     client, fake = _client_and_fake_g(monkeypatch, dropped=[5, 5, 2])
     client.delete_vertices_in_batches("MyLabel", batch_size=5)
-    # One bounded drop per request, each scoped to the label, no recount.
+    # One count up front, then one bounded drop per request, each scoped to
+    # the label, no recount.
+    assert fake.counts == 1
     assert fake.drops == 3
     assert fake.limits == [5, 5, 5]
     assert set(fake.labels) == {"MyLabel"}
@@ -290,6 +301,21 @@ def test_delete_batches_stop_after_an_empty_batch(monkeypatch) -> None:
     client, fake = _client_and_fake_g(monkeypatch, dropped=[5, 0])
     client.delete_vertices_in_batches("MyLabel", batch_size=5)
     assert fake.drops == 2
+
+
+def test_delete_batches_allow_vertices_added_meanwhile(monkeypatch) -> None:
+    # 10 counted, 15 dropped (writers added some): within the slack.
+    client, fake = _client_and_fake_g(monkeypatch, dropped=[5, 5, 5, 0], initial=10)
+    client.delete_vertices_in_batches("MyLabel", batch_size=5)
+    assert fake.drops == 4
+
+
+def test_delete_batches_fail_instead_of_looping_forever(monkeypatch) -> None:
+    # Every request reports a full batch: the passes stop at the bound.
+    client, fake = _client_and_fake_g(monkeypatch, dropped=[5] * 100, initial=10)
+    with pytest.raises(AWSServiceError, match="did not finish"):
+        client.delete_vertices_in_batches("MyLabel", batch_size=5)
+    assert fake.drops == 2 + neptune_mod._EXTRA_DELETE_PASSES
 
 
 # --- _handle_neptune_errors decorator ------------------------------------

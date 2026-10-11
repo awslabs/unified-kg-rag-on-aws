@@ -262,6 +262,9 @@ Library API (Python callers and custom backends).
 - Incremental deduplication prefers only documents indexed successfully: a
   near-copy of a document that failed indexing is kept instead of it, so the
   content is indexed even when the failed copy used up its retries (#PR).
+- Clearing a Neptune label stops after a bounded number of delete requests
+  and raises instead of looping when the requests keep reporting full
+  batches (#PR).
 - Parsing: the LLM XML parser keeps `&`, `<`, repeated siblings and
   sections with a missing closing tag; truncated responses fail instead of
   parsing as partial successes (#165, #174, #182, #213).

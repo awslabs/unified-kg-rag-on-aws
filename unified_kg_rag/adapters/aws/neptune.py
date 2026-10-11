@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import functools
+import math
 import threading
 from collections.abc import Callable
 from functools import cached_property
@@ -18,6 +19,9 @@ from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import AWSServiceError, get_logger
 
 logger = get_logger(__name__)
+
+# Passes delete_vertices_in_batches allows beyond what the label's count needs.
+_EXTRA_DELETE_PASSES = 3
 
 # Neptune engine error codes for requests that fail the same way on every try
 # (Neptune user guide, "Graph Engine Error Messages and Codes"). Retrying
@@ -182,10 +186,20 @@ class NeptuneClient:
 
         Bounded requests keep each drop's transaction small. A request returns
         how many vertices it dropped, so a short one is the last: no count of
-        the label per pass and no pause between requests.
+        the label per pass and no pause between requests. The label is counted
+        once up front to bound the passes: if requests keep reporting full
+        batches past that bound (a backend whose count does not reflect the
+        drop, or writers adding vertices meanwhile) the delete fails instead of
+        looping forever.
+
+        Raises:
+            AWSServiceError: The label still reported full batches after
+                ``ceil(count / batch_size) + _EXTRA_DELETE_PASSES`` passes.
         """
+        initial = int(self.g.V().hasLabel(label).count().next())
+        max_passes = math.ceil(initial / batch_size) + _EXTRA_DELETE_PASSES
         total = 0
-        while True:
+        for _ in range(max_passes):
             dropped = int(
                 self.g.V()
                 .hasLabel(label)
@@ -197,6 +211,12 @@ class NeptuneClient:
             total += dropped
             if dropped < batch_size:
                 break
+        else:
+            raise AWSServiceError(
+                f"Deleting vertices with label '{label}' did not finish: "
+                f"{max_passes} passes of {batch_size} each dropped a full batch "
+                f"({total} reported dropped, {initial} counted before)"
+            )
         logger.info("Deleted %s vertices with label '%s'", total, label)
 
     def close(self) -> None:
