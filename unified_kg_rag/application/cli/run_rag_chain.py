@@ -15,6 +15,10 @@ import nest_asyncio
 from rich.markup import escape
 from rich.panel import Panel
 
+from unified_kg_rag.application.cli.config_args import (
+    config_path_arg,
+    exit_on_config_error,
+)
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
@@ -137,7 +141,7 @@ class CommandLineInterface:
         )
         parser.add_argument(
             "--config-path",
-            type=str,
+            type=config_path_arg,
             help="Path to custom configuration file",
         )
         add_provider_arguments(parser)
@@ -158,9 +162,11 @@ class CommandLineInterface:
 class RAGChainRunner:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
-        self.config = apply_provider_arguments(
-            get_config(Path(args.config_path) if args.config_path else None), args
-        )
+        with exit_on_config_error():
+            self.config = apply_provider_arguments(
+                get_config(Path(args.config_path) if args.config_path else None),
+                args,
+            )
         # JSON mode keeps stdout machine-parseable (pipeable to jq): the banner,
         # status lines and logs all go to stderr; only the JSON goes to stdout.
         json_output = args.output_format == "json"

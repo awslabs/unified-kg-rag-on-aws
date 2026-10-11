@@ -12,6 +12,7 @@ from pydantic import BaseModel, SecretStr, ValidationError
 
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.models.provider_config import SQLITE
+from unified_kg_rag.shared.exceptions import ConfigurationError
 
 # Stdlib logger (not get_logger): this module is imported by the logging setup,
 # so reaching back through get_logger -> get_config would risk a circular import.
@@ -116,7 +117,7 @@ class ConfigLoader:
             with open(self.config_path, encoding="utf-8") as file:
                 config_data = yaml.safe_load(file) or {}
             if not isinstance(config_data, dict):
-                raise ValueError(
+                raise ConfigurationError(
                     f"Configuration file '{self.config_path}' must be a YAML "
                     f"mapping, got {type(config_data).__name__}"
                 )
@@ -128,9 +129,15 @@ class ConfigLoader:
             return self._config
 
         except yaml.YAMLError as e:
-            raise ValueError(f"Invalid YAML in configuration file: {e}") from e
+            # One line: the YAML error names the file, line and column.
+            raise ConfigurationError(
+                f"Invalid YAML in configuration file: {' '.join(str(e).split())}"
+            ) from e
         except ValidationError as e:
-            raise ValueError(f"Configuration validation error: {e}") from e
+            raise ConfigurationError(
+                f"Configuration validation error: {validation_summary(e)} "
+                f"(in '{self.config_path}')"
+            ) from e
 
     def _resolve_relative_paths(self) -> None:
         """Resolve a relative SQLite registry path against the config file's
@@ -247,6 +254,19 @@ class ConfigLoader:
 
 
 _config_loader = ConfigLoader()
+
+
+def validation_summary(error: ValidationError) -> str:
+    """One line naming each invalid key and why, without the rejected values.
+
+    The values are left out: a misplaced secret (a password under the wrong
+    key) would otherwise be echoed to the terminal and the logs.
+    """
+    return "; ".join(
+        f"{'.'.join(str(part) for part in detail['loc']) or '<root>'}: "
+        f"{detail['msg']}"
+        for detail in error.errors(include_url=False, include_input=False)
+    )
 
 
 def get_config(config_path: str | Path | None = None) -> Config:

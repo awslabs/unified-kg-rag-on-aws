@@ -23,6 +23,10 @@ from unified_kg_rag.adapters.aws.s3_transfer import (
     s3_client_for,
     upload_directory_to_s3,
 )
+from unified_kg_rag.application.cli.config_args import (
+    config_path_arg,
+    exit_on_config_error,
+)
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
@@ -163,7 +167,7 @@ class CommandLineInterface:
         )
         parser.add_argument(
             "--config-path",
-            type=str,
+            type=config_path_arg,
             help="Path to custom configuration file",
         )
         add_provider_arguments(parser)
@@ -416,9 +420,11 @@ def main() -> None:
         cli = CommandLineInterface()
         args = cli.parse_args()
 
-        config = apply_provider_arguments(
-            get_config(Path(args.config_path) if args.config_path else None), args
-        )
+        with exit_on_config_error():
+            config = apply_provider_arguments(
+                get_config(Path(args.config_path) if args.config_path else None),
+                args,
+            )
         setup_logging(config)
         if args.verbose:
             logging.getLogger("unified_kg_rag").setLevel(logging.DEBUG)

@@ -26,6 +26,10 @@ from unified_kg_rag.adapters.renderers import (
     get_renderer_class,
     registered_renderers,
 )
+from unified_kg_rag.application.cli.config_args import (
+    config_path_arg,
+    exit_on_config_error,
+)
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.domain.ingestion.graph_analyzer import (
     CentralityMetrics,
@@ -197,7 +201,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Renderers to run. Available: {', '.join(registered_renderers())}",
     )
     parser.add_argument(
-        "--config-path", type=str, default=None, help="Config YAML path"
+        "--config-path", type=config_path_arg, default=None, help="Config YAML path"
     )
     return parser
 
@@ -206,7 +210,8 @@ def main() -> int:
     load_cli_dotenv()
     args = _build_parser().parse_args()
     try:
-        config = get_config(args.config_path)
+        with exit_on_config_error():
+            config = get_config(args.config_path)
         setup_logging(config)
         written = run_visualization(
             args.data_path, args.output_dir, args.renderers, config

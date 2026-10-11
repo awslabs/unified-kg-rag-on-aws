@@ -353,7 +353,10 @@ Values are resolved in three layers, each overriding the one before:
 3. **Environment variables** (§2.10): applied last, on top of both.
 
 YAML values are validated when the file loads: a wrong type or an unsupported
-value stops the CLI with `Configuration validation error: ...`. An unknown key
+value stops the CLI with `Configuration validation error: ...`, naming each
+invalid key. That, a file that is not valid YAML, and a missing
+`--config-path` file are usage errors: every CLI prints one error line and
+exits with code 2. An unknown key
 (a typo, or a key removed in a newer release) does not stop the run. It is
 logged at WARNING as `Unknown config key '<path>' is ignored` and dropped, so
 check the log after editing the file or upgrading.

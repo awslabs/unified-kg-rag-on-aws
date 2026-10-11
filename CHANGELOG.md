@@ -269,6 +269,13 @@ Library API (Python callers and custom backends).
   previously only transitive, are now declared (#226).
 
 ### Fixed
+- A configuration file with a value of the wrong type, invalid YAML or a
+  missing `--config-path` file no longer makes `run-ingestion`, `run-rag` or
+  `run-eval` print "An unexpected error occurred" with a traceback. All five
+  CLIs treat it as a usage error: one `<cli>: error: ...` line and exit code
+  2 (`run-prompt-tuning` and `run-visualization` exited 1). A validation
+  error now fits on one line, naming each invalid key without echoing its
+  value (#PR).
 - A `local` query against a missing index (for example a wrong `--suffix`)
   no longer also logs "_GatheringFuture exception was never retrieved" with
   a second traceback: the community-report, relationship and claim sections
