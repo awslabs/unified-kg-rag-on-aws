@@ -106,6 +106,16 @@ run-prompt-tuning = "unified_kg_rag.application.cli.run_prompt_tuning:main"
 unstructured = [
     "unstructured[md]>=0.24.0; python_version >= '3.11'",
 ]
+# Optional: OpenTelemetry tracing (`observability.enabled: true`). The core
+# package imports none of these; the OTel adapter loads them only when
+# observability is enabled, and fails fast naming this extra when they are
+# missing. The OTLP exporter speaks http/protobuf by default and gRPC when
+# OTEL_EXPORTER_OTLP_(TRACES_)PROTOCOL=grpc.
+otel = [
+    "opentelemetry-api>=1.30.0",
+    "opentelemetry-sdk>=1.30.0",
+    "opentelemetry-exporter-otlp>=1.30.0",
+]
 
 [tool.uv]
 # Ragas pulls in this package transitively; earlier releases allow SSRF through
@@ -223,6 +233,8 @@ module = [
     "tqdm.*",
     "yaml.*",
     "bokeh.*",
+    # [otel] extra only; the dev group installs the SDK but no exporter.
+    "opentelemetry.exporter.*",
 ]
 ignore_missing_imports = true
 
@@ -283,6 +295,9 @@ dev = [
     "isort>=5.12.0",
     "moto[dynamodb,s3]>=5.2.2",
     "mypy>=2.3.0",
+    # In-memory span exporter for the observability tests (the [otel] extra
+    # without its exporters).
+    "opentelemetry-sdk>=1.30.0",
     "pre-commit>=4.6.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.0.0",

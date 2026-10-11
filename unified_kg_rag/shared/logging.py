@@ -9,13 +9,31 @@ from typing import Any, TextIO
 import structlog
 from structlog.stdlib import LoggerFactory, ProcessorFormatter
 
+from . import observability
 from .config import Config
+
+
+def add_trace_ids(
+    _logger: Any, _method: str, event_dict: structlog.types.EventDict
+) -> structlog.types.EventDict:
+    """Add ``trace_id``/``span_id`` of the active span, so logs join traces.
+
+    One check and nothing added while tracing is off or no span is active.
+    """
+    ids = observability.current_trace_ids()
+    if ids is not None:
+        event_dict.setdefault("trace_id", ids[0])
+        event_dict.setdefault("span_id", ids[1])
+    return event_dict
+
 
 # Shared by structlog-native and foreign (stdlib: botocore, langchain_aws, ...)
 # records so both carry the same keys, including context bound with
-# structlog.contextvars (pipeline_id / stage / query_id / conversation_id).
+# structlog.contextvars (pipeline_id / stage / query_id / conversation_id) and
+# the active trace ids.
 _SHARED_PROCESSORS: list[structlog.types.Processor] = [
     structlog.contextvars.merge_contextvars,
+    add_trace_ids,
     structlog.stdlib.add_logger_name,
     structlog.stdlib.add_log_level,
     structlog.processors.TimeStamper(fmt="ISO"),

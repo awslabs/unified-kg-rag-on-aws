@@ -37,6 +37,8 @@ _FORBIDDEN_PREFIXES = (
     "opensearchpy",
     "gremlin_python",
     "tqdm",
+    # Tracing goes through shared.observability; the OTel adapter is opt-in.
+    "opentelemetry",
 )
 
 # Top-level packages that must not be in sys.modules after importing the

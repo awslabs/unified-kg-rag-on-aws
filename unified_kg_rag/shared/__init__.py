@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from typing import TYPE_CHECKING
 
+from . import observability
 from .config import ConfigLoader, get_config
 from .exceptions import (
     AWSServiceError,
@@ -65,5 +66,6 @@ __all__ = [
     "get_cache_manager",
     "get_config",
     "get_logger",
+    "observability",
     "setup_logging",
 ]

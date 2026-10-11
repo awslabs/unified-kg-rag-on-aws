@@ -25,7 +25,7 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
-from unified_kg_rag.shared import IndexNotFoundError, get_logger
+from unified_kg_rag.shared import IndexNotFoundError, get_logger, observability
 from unified_kg_rag.shared.utils.store_names import graph_label, store_name
 
 logger = get_logger(__name__)
@@ -68,6 +68,26 @@ def is_fatal_retrieval_error(exc: BaseException) -> bool:
         return True
     message = str(exc).lower()
     return any(marker in message for marker in _FATAL_ERROR_MARKERS)
+
+
+# Source ids recorded per retrieval span; the hit count is always complete.
+_MAX_SPAN_SOURCE_IDS = 50
+
+
+def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
+    by_type: dict[str, int] = {}
+    for result in results:
+        key = str(result.retriever_type or "unknown")
+        by_type[key] = by_type.get(key, 0) + 1
+    attributes: dict[str, Any] = {
+        "kg_rag.hits": len(results),
+        "kg_rag.source_ids": [
+            str(r.source) for r in results[:_MAX_SPAN_SOURCE_IDS] if r.source
+        ],
+    }
+    for result_type, count in by_type.items():
+        attributes[f"kg_rag.hits.{result_type}"] = count
+    return attributes
 
 
 class BaseGraphRAGRetriever(BaseRetriever, MetricsMixin, ABC):
@@ -197,33 +217,74 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         ``timeout`` (seconds) bounds the call via `asyncio.wait_for`; hitting it
         is treated as transient.
         """
-        try:
-            if timeout is None:
-                return await retriever.aretrieve(query)
-            return await asyncio.wait_for(retriever.aretrieve(query), timeout=timeout)
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.error(
-                "%s: %s failed (degrading to empty results): %s",
-                type(self).__name__,
-                label,
-                e,
-            )
-            return []
+        with observability.span(
+            "kg_rag.retrieve",
+            retriever=type(retriever).__name__,
+            label=label,
+            search_type=query.search_type,
+            top_k=query.top_k,
+        ) as span:
+            try:
+                if timeout is None:
+                    results = await retriever.aretrieve(query)
+                else:
+                    results = await asyncio.wait_for(
+                        retriever.aretrieve(query), timeout=timeout
+                    )
+            except Exception as e:
+                if is_fatal_retrieval_error(e):
+                    raise
+                logger.error(
+                    "%s: %s failed (degrading to empty results): %s",
+                    type(self).__name__,
+                    label,
+                    e,
+                )
+                span.record_exception(e)
+                span.set_attributes({"kg_rag.degraded": True, "kg_rag.hits": 0})
+                return []
+            # Hit counts and source ids only: never the retrieved text.
+            if observability.is_enabled():
+                span.set_attributes(_retrieval_attributes(results))
+            return results
 
     async def _fuse_and_rerank(
-        self, *args: Any, **kwargs: Any
+        self, results_dict: dict[str, list[RetrievalResult]], **kwargs: Any
     ) -> list[RetrievalResult]:
         """``HybridScorer.fuse_and_rerank_results`` off the event-loop thread.
 
         Reranking is a blocking model call (a Bedrock round trip by default),
         so running it inline would stall every other query on the loop.
         """
-        results: list[RetrievalResult] = await asyncio.to_thread(
-            self.hybrid_scorer.fuse_and_rerank_results, *args, **kwargs
-        )
-        return results
+        tracing = observability.is_enabled()
+        with observability.span(
+            "kg_rag.fusion",
+            self._fusion_span_attributes(results_dict) if tracing else None,
+        ) as span:
+            # to_thread copies the context, so the rerank span nests here.
+            results: list[RetrievalResult] = await asyncio.to_thread(
+                self.hybrid_scorer.fuse_and_rerank_results, results_dict, **kwargs
+            )
+            if tracing:
+                span.set_attributes(
+                    {
+                        "kg_rag.results_out": len(results),
+                        "kg_rag.reranked": sum(
+                            bool((r.metadata or {}).get("reranked")) for r in results
+                        ),
+                    }
+                )
+            return results
+
+    def _fusion_span_attributes(
+        self, results_dict: dict[str, list[RetrievalResult]]
+    ) -> dict[str, Any]:
+        return {
+            "kg_rag.fusion.method": self.config.search.fusion.method,
+            "kg_rag.streams": sorted(results_dict),
+            "kg_rag.results_in": sum(len(v) for v in results_dict.values()),
+            "kg_rag.rerank_enabled": self.hybrid_scorer.rerank_model is not None,
+        }
 
     def _per_type_quota(self, top_k: int) -> dict[str, int]:
         """Reserved fusion slots per section type, from configured shares of top_k.

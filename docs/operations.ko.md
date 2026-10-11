@@ -239,6 +239,57 @@ Error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoi
 엔드포인트는 첫 연결에서 실패하며, 검색기는 인증·설정·연결 오류를 빈 결과로
 감추지 않고 그대로 보고합니다.
 
+## 관측성
+
+추적은 기본적으로 꺼져 있습니다(`observability.enabled: false`). 4318 포트로 OTLP를
+받는 로컬 Jaeger로 트레이스를 보내려면 다음과 같이 합니다.
+
+```bash
+docker run --rm -d --name jaeger -p 16686:16686 -p 4318:4318 \
+  jaegertracing/all-in-one:latest
+uv sync --extra otel
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+```
+
+```yaml
+observability:
+  enabled: true
+  backend: "otlp"
+```
+
+질의를 실행하고(`run-rag --config-path config.yaml --query "..."`)
+<http://localhost:16686>을 열면 `unified-kg-rag` 서비스에서 질의마다
+`kg_rag.query` 트레이스, 수집 실행마다 `kg_rag.ingestion.run` 트레이스를 볼 수
+있습니다. OpenTelemetry Collector나 상용 엔드포인트를 쓸 때는
+`OTEL_EXPORTER_OTLP_ENDPOINT`를 그 주소로 지정하고, 자격 증명은 설정 파일이 아니라
+Secrets Manager나 태스크 시크릿에서 `OTEL_EXPORTER_OTLP_HEADERS`로 넘기세요. gRPC
+엔드포인트(4317 포트)는 `OTEL_EXPORTER_OTLP_PROTOCOL=grpc`를 설정합니다.
+
+동작 확인:
+
+- 시작 로그에 `Observability enabled (backend: 'otlp', ...)`가 나옵니다.
+- 스팬 안에서 남긴 로그 레코드에는 `trace_id`와 `span_id`가 있습니다. 이 ID로
+  트레이스 백엔드를 검색하세요.
+- 질의 트레이스 아래에 `kg_rag.retrieve`, `kg_rag.fusion`, `kg_rag.context_build`,
+  `chat <model>` 스팬이 있고, 모델 스팬의 `gen_ai.usage.input_tokens`가 해당 실행의
+  토큰 사용량입니다.
+- `kg_rag.rerank` 스팬의 `kg_rag.rerank.status`는 Rerank 호출이 실패해 질의가 융합
+  순서로 대체되었으면 `error`, 모델이 쓸 수 있는 결과를 돌려주지 않았으면
+  `empty`입니다.
+
+스팬은 백그라운드 스레드에서 내보내므로 수집기에 연결할 수 없어도 실행이 느려지지
+않습니다. 익스포터는 실패를 로그로 남기며, 종료 시 마지막 전송은
+`OTEL_EXPORTER_OTLP_TIMEOUT`(기본 10초)으로 제한됩니다. 프라이빗 VPC에서는
+태스크가 수집기 엔드포인트에 연결할 수 있어야 합니다. 데이터
+플레인 이미지에는 `--build-arg UV_EXTRAS="--extra otel"`로 빌드했을 때만 extra가
+들어갑니다.
+
+개인정보 기본값: 스팬에는 개수, ID, 모델 이름, 토큰 사용량만 들어갑니다.
+`capture_content: true`로 설정하면 모델 스팬에 프롬프트와 응답 본문이
+(`redact_patterns` 적용 후) 추가되므로, 트레이스 백엔드가 코퍼스 데이터를 보관해도
+되는 환경에서만 켜세요. LangSmith 추적(`LANGSMITH_TRACING=true`)도 켜져 있으면
+LangChain이 이 설정과 관계없이 본문을 LangSmith로 업로드합니다.
+
 ## 자주 보는 오류
 
 | 메시지(요약) | 의미 | 조치 |
@@ -256,6 +307,7 @@ Error: Missing endpoint configuration for the indexing stage: aws.neptune.endpoi
 | `Incremental indexing is enabled but no document delta was computed` | 레지스트리 비교 없이 인덱싱 단계가 실행됨(`continue_on_error`로 로딩 단계 실패 뒤 진행) | 레지스트리에 접근할 수 있게 한 뒤 `document_loading`부터 다시 실행 |
 | `CacheSyncError` | S3 단계 캐시 다운로드나 업로드가 실패함 | 버킷 권한과 `aws.s3.encryption`을 확인한 뒤 같은 `--pipeline-id`로 재개 |
 | `Pipeline failed at stage(s): ...` | 단계가 실패해 CLI가 1로 종료함 | 해당 단계 로그를 확인해 고친 뒤 같은 `--pipeline-id`로 재개 |
+| `observability.enabled is true but OpenTelemetry is not installed` | 추적을 켰지만 `otel` extra가 설치되지 않음 | `uv sync --extra otel`을 실행하거나 `observability.enabled: false` 설정 |
 | 프라이빗 VPC에서 Bedrock 호출이 멈춤 | VPC 엔드포인트가 처리하지 않는 리전으로 Bedrock을 호출함 | `aws.bedrock.region_name`을 비우거나 VPC 리전과 같게 설정 |
 
 다른 메시지와 해결 방법은 [사용자 가이드](./user-guide.ko.md) §10에 있습니다.

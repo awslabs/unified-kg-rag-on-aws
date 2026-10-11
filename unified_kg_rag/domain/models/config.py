@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
 import math
+import re
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
@@ -2355,6 +2356,74 @@ class LoggingConfig(BaseModel):
     )
 
 
+class ObservabilityBackend(str, Enum):
+    """Where trace spans go when ``observability.enabled`` is true.
+
+    ``none`` installs no exporter: spans go to the process's global
+    OpenTelemetry tracer provider, which a host application or
+    ``opentelemetry-instrument`` configures. ``otlp`` installs an OTLP
+    exporter configured by the standard ``OTEL_EXPORTER_OTLP_*`` environment
+    variables. Vendor backends are added here as they land.
+    """
+
+    NONE = "none"
+    OTLP = "otlp"
+
+
+class ObservabilityConfig(BaseModel):
+    """OpenTelemetry tracing of ingestion and query runs (off by default).
+
+    Needs the ``otel`` extra (``uv sync --extra otel``). The exporter endpoint,
+    headers and timeouts come from the ``OTEL_EXPORTER_OTLP_*`` environment
+    variables, never from this file, so no credential lands in a config file.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="Emit OpenTelemetry spans for ingestion and query runs",
+    )
+    backend: ObservabilityBackend = Field(
+        default=ObservabilityBackend.NONE,
+        description="'none' uses the process's global tracer provider; 'otlp' "
+        "installs an OTLP exporter configured by OTEL_EXPORTER_OTLP_* variables",
+    )
+    capture_content: bool = Field(
+        default=False,
+        description="Record prompt and completion text on model spans (after "
+        "redact_patterns). Off by default: spans carry counts, ids and token "
+        "usage only",
+    )
+    sample_rate: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Fraction of root traces sampled (backend 'otlp'); child "
+        "spans follow their parent's decision",
+    )
+    service_name: str = Field(
+        default="unified-kg-rag",
+        min_length=1,
+        description="OpenTelemetry service.name (OTEL_SERVICE_NAME wins when set)",
+    )
+    redact_patterns: list[str] = Field(
+        default_factory=list,
+        description="Regular expressions replaced with '[REDACTED]' in captured "
+        "content (only used with capture_content)",
+    )
+
+    @field_validator("redact_patterns")
+    @classmethod
+    def _patterns_compile(cls, patterns: list[str]) -> list[str]:
+        for pattern in patterns:
+            try:
+                re.compile(pattern)
+            except re.error as e:
+                raise ValueError(
+                    f"Invalid observability.redact_patterns entry {pattern!r}: {e}"
+                ) from e
+        return patterns
+
+
 class CustomPromptConfig(BaseModel):
     graph_extraction_system: str | None = Field(
         default=None,
@@ -2818,6 +2887,10 @@ class Config(BaseModel):
     )
     logging: LoggingConfig = Field(
         default_factory=LoggingConfig, description="Logging system configuration"
+    )
+    observability: ObservabilityConfig = Field(
+        default_factory=ObservabilityConfig,
+        description="OpenTelemetry tracing configuration",
     )
     evaluation: EvaluationConfig = Field(
         default_factory=EvaluationConfig, description="Evaluation configuration"

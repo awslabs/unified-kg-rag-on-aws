@@ -18,6 +18,22 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `aws.s3.encryption` SSE settings; a failed upload exits non-zero and keeps
   the local files), so it runs as a one-off ECS task on the CDK stack. Malformed
   URIs fail before the run with a `ConfigurationError` (#206).
+- Optional OpenTelemetry tracing (`observability:` config section, off by
+  default; `otel` extra). Ingestion runs, stages and batches and each query's
+  strategy, retrieval (hit counts and source ids), fusion, rerank (status and
+  counts) and context build (tokens used vs budget) become spans, exported
+  over OTLP (`backend: otlp`, configured by the `OTEL_EXPORTER_OTLP_*`
+  environment variables) or sent to the process's global tracer provider
+  (`backend: none`). Enabling it without the extra fails at start-up. With
+  tracing off nothing OpenTelemetry-related is imported (#PR, #92).
+- Every Bedrock chat model carries a GenAI tracing callback when tracing is
+  on: one `chat <model>` span per call with OpenTelemetry GenAI attributes
+  (`gen_ai.request.model`, input/output and prompt-cache token usage, finish
+  reasons, guardrail intervention). Prompt and completion text is recorded
+  only with `observability.capture_content: true`, after
+  `observability.redact_patterns` (#PR, #92).
+- Log records written inside a span carry its `trace_id` and `span_id` (#PR,
+  #92).
 - Each `run-*` CLI's `--help` ends with one example invocation and a link to
   its user-guide section.
 - `indexing.max_document_failures` (default `3`): an incremental run stops

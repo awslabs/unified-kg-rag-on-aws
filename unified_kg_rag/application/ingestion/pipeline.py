@@ -28,6 +28,7 @@ from unified_kg_rag.application.ingestion.pipeline_stages import (
     TextChunkingStage,
     TranslationStage,
 )
+from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.domain.ingestion.delta_detector import validate_retired_scopes
 from unified_kg_rag.domain.models import (
     Config,
@@ -51,6 +52,7 @@ from unified_kg_rag.shared import (
     PipelineStateManager,
     get_cache_manager,
     get_logger,
+    observability,
 )
 from unified_kg_rag.shared.cache_manager import CacheStrategy
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
@@ -152,6 +154,9 @@ class DataIngestionPipeline:
             graph_indexer: Graph writer (default Neptune).
         """
         self.config = config
+        # Before any stage builds a model, so the factories attach the tracing
+        # callback (no-op unless observability.enabled).
+        configure_observability(config.observability)
         self._doc_status = doc_status
         self._vector_indexer = vector_indexer
         self._graph_indexer = graph_indexer
@@ -330,6 +335,30 @@ class DataIngestionPipeline:
         source_directory: str | Path,
         pipeline_id: str | None = None,
         resume_from_stage: str | None = None,
+    ) -> PipelineContext:
+        # The root span of an ingestion trace: stages, batches and model calls
+        # nest under it. A failure leaving the block is recorded on it.
+        with observability.span(
+            "kg_rag.ingestion.run", resume_from_stage=resume_from_stage
+        ) as span:
+            context = self._run(source_directory, pipeline_id, resume_from_stage)
+            span.set_attributes(
+                {
+                    "kg_rag.pipeline_id": context.pipeline_id,
+                    "kg_rag.pipeline.status": context.status,
+                    "kg_rag.stages_completed": sum(
+                        r.status == PipelineStageStatus.COMPLETED
+                        for r in context.stage_results
+                    ),
+                }
+            )
+            return context
+
+    def _run(
+        self,
+        source_directory: str | Path,
+        pipeline_id: str | None,
+        resume_from_stage: str | None,
     ) -> PipelineContext:
         log_context: Mapping[str, Any] = {}
         try:
