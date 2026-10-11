@@ -28,7 +28,6 @@ from langchain_core.runnables import (
 from pydantic import BaseModel, Field, field_validator
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
-from unified_kg_rag.adapters.aws import NeptuneClient, OpenSearchClient
 from unified_kg_rag.adapters.aws.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
@@ -46,7 +45,6 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
     SectionType,
     TokenManager,
 )
-from unified_kg_rag.adapters.retrievers import NeptuneRetriever, OpenSearchRetriever
 
 # Importing the package executes each strategy module's @register_strategy
 # decorator, populating the strategy registry used by _get_strategy_instance.
@@ -58,6 +56,7 @@ from unified_kg_rag.adapters.search_strategies import (  # noqa: F401
     SimpleSearchStrategy,
 )
 from unified_kg_rag.adapters.storage.filter_schema import union_filter_fields
+from unified_kg_rag.application.bootstrap import build_providers
 from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.domain.models import (
     Config,
@@ -295,8 +294,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # injected) and passed explicitly to every component the chain builds
         # (strategies, scorer, token manager, memory, retrievers). An injected
         # factory, e.g. a local Ollama-backed LLMFactoryPort, therefore
-        # reaches all of them; anything not injected defaults to Bedrock.
-        self.providers = providers or Providers(
+        # reaches all of them; anything not injected is what config.providers
+        # selects (Bedrock by default).
+        self.providers = providers or build_providers(
             config, boto_session, llm_factory=model_factory
         )
         self.boto_session = self.providers.boto_session
@@ -313,7 +313,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         self.factory: LLMFactoryPort = self.providers.llm_factory
         # Backend seam: inject custom retriever builders keyed by abstract role
         # ("graph"/"document") to swap Neptune/OpenSearch for another store
-        # without subclassing. Unspecified roles fall back to the AWS defaults.
+        # without subclassing. Unspecified roles fall back to the bundle's.
         self._retriever_builders_override = retriever_builders or {}
         # Retrievers and strategy instances are built once per event loop and
         # reused across queries: retrievers hold loop-bound async clients, and a
@@ -843,25 +843,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             return strategy
 
     def _build_graph_retriever(self) -> BaseGraphRAGRetriever:
-        neptune_client = NeptuneClient(
-            config=self.config, boto_session=self.boto_session
-        )
-        return NeptuneRetriever(
-            config=self.config,
-            neptune_client=neptune_client,
-            boto_session=self.boto_session,
-        )
+        return self.providers.build_retriever(RetrieverRole.GRAPH)
 
     def _build_document_retriever(self) -> BaseGraphRAGRetriever:
-        opensearch_client = OpenSearchClient(
-            config=self.config, boto_session=self.boto_session
-        )
-        return OpenSearchRetriever(
-            config=self.config,
-            opensearch_client=opensearch_client,
-            boto_session=self.boto_session,
-            embedding_factory=self.providers.embedding_factory,
-        )
+        return self.providers.build_retriever(RetrieverRole.DOCUMENT)
 
     def _get_retriever(self, role: RetrieverRole) -> BaseGraphRAGRetriever:
         cache_key = (role, self._cache_loop())
@@ -873,10 +858,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             return retriever
 
     def _build_retriever(self, role: RetrieverRole) -> BaseGraphRAGRetriever:
-        # Role -> adapter builder. Swapping a backend means changing the builder
-        # bound to a role here, not editing any strategy. Injected
-        # retriever_builders take precedence over the AWS defaults (the backend
-        # seam), so a custom store is wired without subclassing.
+        # Role -> adapter builder. The defaults come from the provider bundle
+        # (the stores config.providers selects); injected retriever_builders
+        # take precedence (the backend seam), so a custom store is wired
+        # without subclassing or editing any strategy.
         builders: dict[RetrieverRole, Callable[[], BaseGraphRAGRetriever]] = {
             RetrieverRole.GRAPH: self._build_graph_retriever,
             RetrieverRole.DOCUMENT: self._build_document_retriever,

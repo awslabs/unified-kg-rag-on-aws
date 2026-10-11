@@ -17,6 +17,10 @@ import yaml
 
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.application.cli.help_text import doc_epilog
+from unified_kg_rag.application.cli.provider_args import (
+    add_provider_arguments,
+    apply_provider_arguments,
+)
 from unified_kg_rag.application.prompts.tuner import PromptTuner
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import get_config, get_logger, setup_logging
@@ -88,13 +92,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config-path", type=str, default=None, help="Config YAML path"
     )
+    add_provider_arguments(parser)
     return parser
 
 
 def main() -> int:
     args = _build_parser().parse_args()
     try:
-        config = get_config(args.config_path)
+        config = apply_provider_arguments(get_config(args.config_path), args)
         setup_logging(config)
 
         texts = load_corpus_texts(args.source_directory, args.max_docs, config)

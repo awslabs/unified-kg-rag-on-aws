@@ -58,10 +58,10 @@ class IndexingManager:
     """Coordinates writes across the vector and graph stores.
 
     The two backends are injected as :class:`VectorIndexer` / :class:`GraphIndexer`
-    ports; the concrete OpenSearch/Neptune adapters are constructed by default
-    only when none are supplied. This keeps the application layer off any
-    concrete backend import and lets tests drive the *real* manager with the
-    in-memory fakes. The per-backend fan-out (entities to both stores;
+    ports; otherwise the provider bundle builds the ones ``config.providers``
+    selects (OpenSearch/Neptune by default). This keeps the application layer
+    off any concrete backend import and lets tests drive the *real* manager
+    with the in-memory fakes. The per-backend fan-out (entities to both stores;
     entities-before-edges phasing; the orphan-edge cascade across stores) is
     deliberate domain knowledge, not arbitrary dispatch, so it stays explicit
     here rather than behind a uniform registry loop.
@@ -76,27 +76,17 @@ class IndexingManager:
         providers: Providers | None = None,
     ) -> None:
         self.config = config
-        # Session + embedding/LLM providers shared with the pipeline (Bedrock
-        # by default), used by the default OpenSearch indexer and the merge
-        # summarizer.
+        # Session, embedding/LLM providers and store builders shared with the
+        # pipeline, used for the default indexers and the merge summarizer.
         self.providers = Providers.resolve(config, providers)
-        if vector_indexer is None or graph_indexer is None:
-            # Import the concrete adapters lazily so the default construction
-            # path does not pull boto3-backed modules into callers that inject
-            # their own (e.g. test fakes).
-            from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
-            from unified_kg_rag.adapters.storage.opensearch_indexer import (
-                OpenSearchIndexer,
-            )
-
-            vector_indexer = vector_indexer or OpenSearchIndexer(
-                config=config,
-                boto_session=self.providers.boto_session,
-                embedding_factory=self.providers.embedding_factory,
-            )
-            graph_indexer = graph_indexer or NeptuneIndexer(config=config)
-        self.opensearch_indexer: VectorIndexer = vector_indexer
-        self.neptune_indexer: GraphIndexer = graph_indexer
+        # The attribute names predate the store-agnostic ports; they hold the
+        # vector and graph writers whatever their backend.
+        self.opensearch_indexer: VectorIndexer = (
+            vector_indexer or self.providers.build_vector_indexer()
+        )
+        self.neptune_indexer: GraphIndexer = (
+            graph_indexer or self.providers.build_graph_indexer()
+        )
         # Built lazily on first cross-run merge so a manager only used for
         # indexing (no incremental read-back) never constructs a Bedrock client.
         self._description_summarizer: DescriptionSummarizer | None = None

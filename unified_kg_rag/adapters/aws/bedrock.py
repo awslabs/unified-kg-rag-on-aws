@@ -43,6 +43,7 @@ from unified_kg_rag.domain.models import (
     EmbeddingModelId,
     ModelPurpose,
     RerankModelId,
+    model_id_value,
 )
 from unified_kg_rag.domain.models.config import (
     EFFORT_LEVELS,
@@ -454,23 +455,29 @@ def _embedding_span_scope(
 
 class BedrockEmbeddingModelFactory(
     BaseBedrockModelFactory[
-        EmbeddingModelId, EmbeddingModelInfo, BedrockEmbeddingsWrapper
+        EmbeddingModelId | str, EmbeddingModelInfo, BedrockEmbeddingsWrapper
     ]
 ):
     def _get_boto_service_name(self) -> str:
         return "bedrock-runtime"
 
-    def get_model_info(self, model_id: EmbeddingModelId) -> EmbeddingModelInfo | None:
-        return _EMBEDDING_MODEL_INFO.get(model_id)
+    def get_model_info(
+        self, model_id: EmbeddingModelId | str
+    ) -> EmbeddingModelInfo | None:
+        try:
+            return _EMBEDDING_MODEL_INFO.get(EmbeddingModelId(model_id))
+        except ValueError:
+            return None
 
     def get_model(
-        self, model_id: EmbeddingModelId, **kwargs: Any
+        self, model_id: EmbeddingModelId | str, **kwargs: Any
     ) -> BedrockEmbeddingsWrapper:
         model_info = self.get_model_info(model_id)
         if not model_info:
             raise EmbeddingModelError(
-                f"Unsupported embedding model ID: '{model_id.value}'"
+                f"Unsupported embedding model ID: '{model_id_value(model_id)}'"
             )
+        model_id = EmbeddingModelId(model_id)
 
         model_kwargs = {}
         dimensions = kwargs.pop("dimensions", None)

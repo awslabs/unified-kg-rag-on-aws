@@ -29,8 +29,10 @@ aws:
         max_output_tokens: 10000
 ```
 
-임베딩 모델 ID와 재순위화 모델 ID는 다르게 동작합니다. 정해진 목록의 값만 받으며
-`model_overrides`도 적용되지 않습니다. `embedding_model_id`는
+임베딩 모델 ID와 재순위화 모델 ID는 다르게 동작합니다. Bedrock 공급자(기본값인
+`providers.embedding.kind` / `providers.rerank.kind`)에서는 정해진 목록의 값만 받으며
+`model_overrides`도 적용되지 않습니다. 로컬 공급자에서는 어떤 모델 이름이든 받습니다(사용자
+가이드의 [로컬 모드](./user-guide.ko.md#로컬-모드-aws-없이) 참고). `embedding_model_id`는
 `amazon.titan-embed-text-v2:0`, `amazon.titan-embed-text-v1`,
 `cohere.embed-v4:0`, `cohere.embed-english-v3`,
 `cohere.embed-multilingual-v3` 중 하나를, `rerank_model_id`는

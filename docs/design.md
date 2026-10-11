@@ -106,12 +106,12 @@ unified_kg_rag/
 
 | Port | Location | Adapter | Notes |
 |---|---|---|---|
-| `DocStatusPort` | `ports/doc_status.py` | `adapters/aws/dynamodb.py` (`DynamoDBDocStatusStore`), `FakeDocStatusStore` for tests | Persists incremental-indexing document status/lineage |
+| `DocStatusPort` | `ports/doc_status.py` | `adapters/aws/dynamodb.py` (`DynamoDBDocStatusStore`), `adapters/local/sqlite_doc_status.py` (`SQLiteDocStatusStore`), `FakeDocStatusStore` for tests | Persists incremental-indexing document status/lineage |
 | `CachePort` | `ports/cache.py` (`Protocol`) | `shared/cache_manager.py` (local) + `adapters/aws/s3_cache.py` (S3) | Stage-result persistence boundary |
 | `GraphIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py` | Single contract for full + delta (`upsert_*`/`delete_by_id`) |
 | `VectorIndexer` (write-side) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` | Same |
 | `BaseGraphRAGRetriever` (read-side) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch}_retriever.py` | Retrieval adapters |
-| LLM/Embedding/Rerank factories, token counter | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`) | `adapters/aws/bedrock.py`, `adapters/aws/bedrock_models.py`, `adapters/aws/token_counter.py` | Carried by one `Providers` bundle (`adapters/providers.py`) that each orchestrator builds once and passes to every component (default Bedrock) |
+| LLM/Embedding/Rerank factories, token counter | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`) | `adapters/aws/bedrock.py`, `adapters/aws/bedrock_models.py`, `adapters/aws/token_counter.py`; local: `adapters/local/{models,embeddings,rerank,token_counter}.py` | Carried by one `Providers` bundle (`adapters/providers.py`, built by `application/bootstrap.py`) that each orchestrator builds once and passes to every component; each role's adapter is the one `providers.<role>.kind` selects through `adapters/provider_registry.py` (default Bedrock; §15) |
 
 > Design note: Pure ports (`DocStatusPort`, the write-side indexer ABCs) are gathered in `ports/`. The read-side abstract bases (`BaseGraphRAGRetriever`/`BaseSearchStrategy`) are "adapter bases" that construct infrastructure (HybridScorer/TokenManager) in `__init__`, so they live in `adapters/retrieval/base.py` and are imported from there; `ports/__init__` does not export them and only names them in its catalog docstring (no duplicate Protocol definition is kept). `BaseGraphRAGEvaluator` (`evaluation/base.py`) is an adapter base of the same kind.
 
@@ -470,7 +470,7 @@ Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 This section is the single reference for extending the framework; the README, user guide and CONTRIBUTING.md link here. Strategies, renderers and parsers extend through registries, evaluators through one branch in their type map, and backends through constructor injection; none needs a change to dispatch code.
 
 - **New search strategy**: Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; strategies are keyed by this closed enum, and the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py`. `query_inputs` declares the query-side LLM extractions the strategy reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. No edit to `rag_chain` is needed; add the strategy to `search.auto_routable_strategies` if `auto` may pick it.
-- **New storage/LLM backend**: Implement the relevant port and pass it to the constructor that uses it (see "Custom backends" below); there is no backend registry. Do not hardcode it into a manager's `__init__`.
+- **New storage/LLM backend**: Implement the relevant port, then either register a builder for a new `providers.<role>.kind` with `@register_provider(ProviderRole.X, "kind")` (`adapters/provider_registry.py`) and select it in config, or pass the port to the constructor that uses it (see "Custom backends" below). Do not hardcode it into a manager's `__init__`.
 - **New evaluator**: Subclass `BaseGraphRAGEvaluator` + add a branch in `EvaluationManager._resolve_evaluator_class` + an `EvaluatorType` enum.
 - **New renderer**: Subclass `BaseRenderer` + `@register_renderer("name")`. Registration happens on import: `GraphVisualizationManager` sees any renderer imported in the process, `run-visualization` only those that `adapters/renderers/__init__.py` imports.
 - **New parser / file format**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — any LangChain `BaseLoader` subclass; no edit to the factory, and the extension is then auto-discovered + parseable. Override a built-in by registering its extension.
@@ -478,18 +478,21 @@ This section is the single reference for extending the framework; the README, us
 
 ### Custom backends (run without AWS)
 
-Every cross-service dependency is behind a port, and the orchestrators accept the
-port via **constructor injection** — so a non-AWS or custom backend is wired in
-without subclassing or editing dispatch code. The ports and their default
-(Bedrock/Neptune/OpenSearch/DynamoDB) adapters:
+Every cross-service dependency is behind a port. Each port has a role in the
+provider bundle, the role's adapter is chosen by `providers.<role>.kind` through
+the provider registry (below), and the orchestrators also accept any port via
+**constructor injection** — so a non-AWS or custom backend is wired in without
+subclassing or editing dispatch code. The ports, their default
+(Bedrock/Neptune/OpenSearch/DynamoDB) adapters and the local ones
+(`adapters/local/`, the `[local]` extra; see the user guide's "Local mode"):
 
-| Port | Contract | Default adapter | Inject via |
+| Port | Contract | Default adapter (local adapters) | Inject via |
 |---|---|---|---|
-| `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | `get_model()` / `get_model_info()` returning a LangChain-compatible model | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory` | a `Providers` bundle (see below): `GraphRAGChain(providers=...)`, `DataIngestionPipeline(..., providers=...)`, `EvaluationManager(..., providers=...)`; `GraphRAGChain(model_factory=...)` is shorthand for an LLM-only bundle |
-| `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` | `Providers(token_counter_factory=...)` |
-| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` | `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` or `IndexingManager(vector_indexer=..., graph_indexer=...)` |
-| retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
-| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `delete` / `list_all` / `diff` (`get_many` / `put_many` optional: without them each record is read or written on its own; `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow` optional: without them a record has no size limit and no overflow) | `DynamoDBDocStatusStore` | `DataIngestionPipeline(..., doc_status=...)` (turns incremental indexing on); conform structurally |
+| `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | `get_model()` / `get_model_info()` returning a LangChain-compatible model | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory` (`openai_compatible`, `ollama`; `cross_encoder`, `none`) | a `Providers` bundle (see below): `GraphRAGChain(providers=...)`, `DataIngestionPipeline(..., providers=...)`, `EvaluationManager(..., providers=...)`; `GraphRAGChain(model_factory=...)` is shorthand for an LLM-only bundle |
+| `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` (`LocalTokenCounter`: estimate or tiktoken; follows the LLM kind) | `Providers(token_counter_factory=...)` |
+| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` (`gremlin`: the same adapter on Gremlin Server) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` or `IndexingManager(vector_indexer=..., graph_indexer=...)` |
+| retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `Providers(retriever_builders=...)` or `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
+| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `delete` / `list_all` / `diff` (`get_many` / `put_many` optional: without them each record is read or written on its own; `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow` optional: without them a record has no size limit and no overflow) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (the latter turns incremental indexing on); conform structurally and pass `tests/integration/test_doc_status_conformance.py` |
 | `CachePort` (`ports/cache.py`, `Protocol`) | get/set pipeline state | filesystem `CacheManager` | structural — no AWS needed by default |
 
 Because the model-factory and doc-status/cache ports are `runtime_checkable`
@@ -505,10 +508,13 @@ chain = GraphRAGChain(config=cfg, model_factory=OllamaModelFactory())
 ```
 
 **One bundle, every component.** `Providers` (`adapters/providers.py`) is a
-plain value object holding the boto3 session and the LLM, embedding, rerank and
-token-counter providers. It is the framework's composition root: each
-orchestrator builds one (or receives one) and passes it explicitly to what it
-constructs, so an injected provider reaches all of them:
+value object holding the boto3 session, the LLM, embedding, rerank and
+token-counter providers, and the builders of the graph and vector indexers and
+retrievers and the doc-status registry. `application/bootstrap.py`
+(`build_providers`) is the framework's composition root: it checks the
+configured kinds and builds the bundle; each orchestrator builds one this way
+(or receives one) and passes it explicitly to what it constructs, so an
+injected or configured provider reaches all of them:
 
 - `GraphRAGChain`: its own prompts, every search strategy (including the
   global map/reduce and DRIFT chains), the hybrid scorer's reranker, both token
@@ -539,16 +545,43 @@ chain = GraphRAGChain(config=cfg, providers=providers)
 pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
 ```
 
-Models are only half of it: without `retriever_builders` the chain still reads
-Neptune and OpenSearch, and without `doc_status`/`vector_indexer`/
-`graph_indexer` the pipeline still writes to them (see the table above).
+The stores follow the same bundle: without `retriever_builders` the chain
+reads, and without `doc_status`/`vector_indexer`/`graph_indexer` the pipeline
+writes to, the stores `providers.graph` / `providers.vector` /
+`providers.doc_status` select (see the table above).
 
-Anything not supplied is built lazily with the Bedrock default, and at most once
-per bundle, so a chain constructs its Bedrock clients once rather than per
-component or per query (strategy instances are also reused per event loop). A
-component constructed directly, without a bundle, still builds a default one,
-so existing direct constructors keep working. There is deliberately no DI
-container: the bundle covers exactly the providers the framework consumes.
+Anything not supplied is built lazily by the builder registered for the
+configured kind (Bedrock, Neptune, OpenSearch and DynamoDB by default); the
+model factories at most once per bundle, so a chain constructs its model
+clients once rather than per component or per query; stores and the
+doc-status registry are built once per consumer, and strategy instances are
+reused per event loop. A component constructed directly, without a
+bundle, still builds a default one from the same config, so existing direct
+constructors keep working and follow `config.providers`. There is deliberately
+no DI container: the bundle covers exactly the providers the framework
+consumes.
+
+**Provider registry.** `adapters/provider_registry.py` maps
+`(ProviderRole, kind)` to a builder that receives the bundle; the built-in
+kinds register at the bottom of `adapters/providers.py`, the local ones import
+their adapter only when built. A new kind needs no edit to the bundle, the
+config model or any call site:
+
+```python
+from unified_kg_rag.adapters.provider_registry import ProviderRole, register_provider
+
+@register_provider(ProviderRole.LLM, "my_server")
+def _build(providers):
+    return MyServerFactory(providers.config)
+```
+
+and `providers.llm.kind: my_server` selects it (a non-Bedrock LLM kind also
+needs a token-counter builder for the same kind, or
+`Providers(token_counter_factory=...)`). `backend: local` is a config preset
+(`domain/models/provider_config.py`), not a code path: it only fills in
+`providers`, `aws.neptune` and `aws.opensearch` keys the config leaves unset.
+Model ids are strings; embedding and rerank ids are validated against the
+Bedrock catalog only while the Bedrock provider serves that role.
 
 > **Accept and ignore unknown kwargs.** Callers pass framework-specific keyword
 > arguments through `get_model(model_id, **kwargs)` — for example
@@ -566,9 +599,11 @@ the whole ingestion+indexing pipeline runs against them with no AWS
 (`DataIngestionPipeline(cfg, pipeline_config, providers=..., doc_status=...,
 vector_indexer=..., graph_indexer=...)`, exercised in
 `tests/integration/test_ingestion_stages.py`). They are
-the recommended starting point for a custom store. This framework ships only the
-AWS adapters; community/local adapters (e.g. NetworkX graph, a local vector DB,
-Ollama) are intended as add-on packages that implement these ports.
+the recommended starting point for a custom store. Besides the AWS adapters the
+framework ships the local ones in-tree (`adapters/local/`: OpenAI-compatible
+and Ollama models, a cross-encoder reranker, a local token counter and the
+SQLite registry); embedded stores (a NetworkX/Kùzu graph, a LanceDB vector
+store) are planned under the same registry.
 
 ### Deliberate Design Boundaries
 

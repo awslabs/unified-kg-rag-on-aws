@@ -21,6 +21,7 @@ from .config import (
     RerankModelId,
     ResolutionMethod,
     S3EncryptionType,
+    model_id_value,
 )
 from .conversation import ConversationContext, MessageRole
 from .covariate import Claim, Covariate
@@ -54,6 +55,7 @@ from .pipeline import (
     PipelineStageResult,
     PipelineStageStatus,
 )
+from .provider_config import Backend, ProvidersConfig
 from .relationship import Relationship
 from .retrieval import (
     RetrievalResult,
@@ -68,6 +70,8 @@ from .retrieval import (
 from .text_unit import TextUnit
 
 __all__ = [
+    "Backend",
+    "ProvidersConfig",
     "CacheEntry",
     "CacheIndex",
     "CacheStats",
@@ -126,6 +130,7 @@ __all__ = [
     "RetrievalResult",
     "RetrieverRole",
     "S3EncryptionType",
+    "model_id_value",
     "SearchQuery",
     "SearchResult",
     "SearchStrategy",

@@ -94,8 +94,9 @@ unified-kg-rag-on-aws는 대규모 다국어 문서 코퍼스로 지식 그래�
 이 프레임워크는 **이미 있는** 서비스에 연결할 뿐 서비스를 만들지 않습니다. 실행
 방법은 세 가지입니다.
 
-- **로컬 저장소(개발용).** Neptune과 OpenSearch 대신 컨테이너를 띄우고 모델은
-  Bedrock을 씁니다. 아래 [로컬 저장소 (개발용)](#로컬-저장소-개발용)를 참고하세요.
+- **로컬 모드(개발용).** 모든 구성 요소(Ollama 모델, Gremlin Server, OpenSearch,
+  SQLite)를 로컬에서 실행하거나, 저장소만 로컬로 두고 모델은 Bedrock을 씁니다. 아래
+  [로컬 모드](#로컬-모드-aws-없이)를 참고하세요.
 
 - **기존 서비스 사용.** Neptune, OpenSearch, S3(필요하면 DynamoDB)가 이미 실행
   중이라면 엔드포인트를 `config.yaml`(아래 §2.1)에 적고 다음 단계로 넘어가면
@@ -180,29 +181,91 @@ optional 'unstructured' extra`). Python 3.11 또는 3.12에서는
    CLI(`run-ingestion`, `run-rag`)는 `.env` 파일을 자동으로 읽습니다.
    `use_iam: true`이면 `.env`가 필요 없습니다.
 
-### 로컬 저장소 (개발용)
+### 로컬 모드 (AWS 없이)
 
-개발할 때는 Neptune과 OpenSearch를 로컬 컨테이너로 대체할 수 있습니다. 모델은
-여전히 Bedrock에서 호출하므로 Bedrock 액세스 권한이 있는 AWS 자격 증명이 필요합니다.
-S3는 `--s3-sync`를 쓸 때만, DynamoDB는 증분 인덱싱을 쓸 때만 필요합니다.
+로컬 모드는 AWS 계정 없이 노트북이나 호스트 한 대에서 수집, 질의, 평가를 실행합니다.
+역할마다 Bedrock, Neptune, OpenSearch, DynamoDB 대신 로컬 구성 요소를 씁니다. 기본값과
+주 대상은 여전히 AWS이며, 로컬 모드는 개발과 평가용입니다.
 
 ```bash
-docker compose -f docker/compose.local.yaml up -d --wait
+uv sync --extra local
+docker compose -f docker/compose.local.yaml --profile models up -d --wait
+docker compose -f docker/compose.local.yaml exec ollama ollama pull qwen2.5:7b-instruct
+docker compose -f docker/compose.local.yaml exec ollama ollama pull bge-m3
 uv run run-ingestion --config-path docker/config.local.yaml --source-directory ./docs-in
 uv run run-rag --config-path docker/config.local.yaml --query "..."
 docker compose -f docker/compose.local.yaml down -v
 ```
 
+`backend: local`([`docker/config.local.yaml`](../docker/config.local.yaml)에 설정되어
+있고, `run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning`에서는 `--backend local`로도
+지정)은 설정에서 비워 둔 모든 키에 아래 공급자를 채웁니다. 역할별 선택은 `providers:`
+아래에 있고(`config-template.yaml`에 설명), 역할을 섞어 쓸 수도 있습니다. 예를 들어 저장소만
+로컬로 두고 모델은 Bedrock을 쓸 수 있습니다.
+
+| 역할 | `providers.<역할>.kind` | 로컬 기본값 |
+|---|---|---|
+| 언어 모델 | `llm`: `bedrock` \| `openai_compatible` \| `ollama` | `ollama`, `http://localhost:11434`의 `qwen2.5:7b-instruct` |
+| 임베딩 | `embedding`: `bedrock` \| `openai_compatible` \| `ollama` | `ollama`, `bge-m3`(1024차원) |
+| 재순위화 | `rerank`: `bedrock` \| `cross_encoder` \| `none` | `cross_encoder`, `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` |
+| 그래프 저장소 | `graph`: `neptune` \| `gremlin` | `gremlin`(`localhost:8182`의 Gremlin Server, SigV4 없음) |
+| 벡터·어휘 저장소 | `vector`: `opensearch` | `localhost:9200`의 로컬 OpenSearch, 인증 없음 |
+| 문서 상태 레지스트리 | `doc_status`: `dynamodb` \| `sqlite` | `providers.doc_status.sqlite_path`의 `sqlite` |
+
+- **모델.** Bedrock이 아닌 LLM을 쓰면 `providers.llm.default_model_id`(필요하면
+  `fast_model_id`도)가 모든 역할의 Bedrock 계층 모델 두 개를 대신합니다. 역할별
+  `*_model_id`를 지정하면 그 값이 우선합니다. `providers.llm.context_window_size`와
+  `max_output_tokens`로 모델 한도를 알려 줍니다(Bedrock 모델은 카탈로그 값을 씁니다).
+  컨텍스트 창은 Ollama에 `num_ctx`로 전달됩니다. OpenAI 호환 서버(vLLM, llama.cpp
+  server, LM Studio)에는 `base_url`(`/v1` 루트)과, 필요하면 `api_key`를 지정합니다.
+- **임베딩.** Bedrock이 아닌 공급자에서는 `providers.embedding.model_id`와 `dimension`이
+  필수입니다. 차원은 OpenSearch 매핑에 고정되므로 둘 중 하나를 바꾸면 전체를 다시
+  인덱싱해야 합니다.
+- **재순위화.** 크로스 인코더는 첫 질의 때 Hugging Face에서 모델을 내려받습니다.
+  `[local]` extra가 없거나 `kind: none`이면 융합 순서를 그대로 씁니다. 이 경우 로그에 한 번
+  남고 융합 스팬에 `kg_rag.rerank_enabled=false`로 보입니다.
+- **증분 인덱싱**은 `providers.doc_status.enabled: true`(또는 기존 스위치인
+  `aws.dynamodb.enabled: true`)일 때 SQLite 레지스트리를 씁니다.
+  [`docker/config.local.yaml`](../docker/config.local.yaml)은 이를 켭니다.
+- **토큰 계산**은 문자 체계를 고려한 추정치(Bedrock이 대체 수단으로 쓰는 것과 같음)를
+  씁니다. `providers.llm.tokenizer: tiktoken`이면 BPE 인코딩으로 세며, 처음 쓸 때 인코딩
+  파일을 내려받습니다.
+- **사용자 정의 kind**는 `adapters.provider_registry.register_provider`로 빌더를 등록합니다.
+  [설계 문서 §15](./design.ko.md#15-확장-가이드)를 참고하세요.
+
+AWS 모드와 다른 점:
+
+- 작은 로컬 모델은 추출 품질이 눈에 띄게 낮습니다. 형식이 잘못된 출력이 많아지고(재시도
+  후 실패한 청크로 기록), 엔티티 해소와 커뮤니티 보고서도 약해집니다. 하드웨어가 감당하는
+  가장 큰 모델을 쓰세요.
+- Bedrock 프롬프트 캐싱과 Guardrails가 없습니다(로컬 공급자는 `aws.bedrock.guardrail`을
+  무시합니다). 추론 노력(effort) 설정도 적용되지 않습니다.
+- 한국어 어휘 분석은 `nori` 플러그인(compose 파일이 설치) 또는 OpenSearch에 있는 동등한
+  분석기에 의존합니다.
+- 토큰 수는 추정치이므로 컨텍스트 예산도 근사치입니다.
+- 로컬 모델의 응답이 출력 한도에서 잘려도 잘림으로 감지하지 못합니다(Bedrock은 중단
+  사유를 알려 줍니다). `max_output_tokens`는 모델이 실제로 생성할 수 있는 값으로 두세요.
+- `run-eval`의 LLM 심사(`langchain`, `ragas`)는 로컬 모델로 실행되어 점수의 신뢰도가
+  낮습니다. 결정적 평가기는 영향을 받지 않습니다.
+
+#### 로컬 저장소와 Bedrock 모델
+
+모델은 Bedrock을 쓰고 저장소만 로컬로 실행하려면 `models` 프로필 없이 저장소만 띄우고
+(`docker compose -f docker/compose.local.yaml up -d --wait`), `docker/config.local.yaml`
+사본에서 `providers.llm.kind`, `providers.embedding.kind`, `providers.rerank.kind`를
+`bedrock`으로 바꾸세요(이때 Bedrock 모델 ID는 카탈로그로 검증합니다). Bedrock 액세스
+권한이 있는 AWS 자격 증명이 필요합니다.
+
 [`docker/compose.local.yaml`](../docker/compose.local.yaml)은 TinkerPop Gremlin
-Server(메모리 기반 TinkerGraph)와 단일 노드 OpenSearch 2.13을 실행합니다.
-OpenSearch는 보안 플러그인을 끄고 `analysis-nori` 플러그인을 설치합니다(한국어
-매핑이 `nori`를 쓰며, Amazon OpenSearch Service에는 기본으로 들어 있습니다).
-[`docker/config.local.yaml`](../docker/config.local.yaml)은
+Server(메모리 기반 TinkerGraph), 단일 노드 OpenSearch 2.13, 그리고 `models` 프로필에서
+Ollama를 실행합니다. OpenSearch는 보안 플러그인을 끄고 `analysis-nori` 플러그인을
+설치합니다(한국어 매핑이 `nori`를 쓰며, Amazon OpenSearch Service에는 기본으로 들어
+있습니다). 모델은 자동으로 내려받지 않습니다. `docker/config.local.yaml`은
 `aws.neptune.use_ssl: false`, `use_iam: false`(SigV4 없는 `ws://`)와
 `aws.opensearch.allow_anonymous: true`, `use_ssl: false`(인증 없는 `http://`)로
 프레임워크를 이 컨테이너에 연결합니다.
 
-Bedrock 없이 저장소만 확인하려면 해싱 임베딩 공급자를 쓰는 스모크 테스트를
+모델 없이 저장소만 확인하려면 해싱 임베딩 공급자와 가짜 모델 서버를 쓰는 스모크 테스트를
 실행하세요: `LOCAL_STORES=1 uv run pytest tests/integration/test_local_stores.py`.
 
 Neptune과 다른 점이 있습니다. TinkerGraph는 그래프를 메모리에만 두며, 정점을 만들 때
@@ -279,11 +342,11 @@ WARNING을 남기고 버리므로, 파일을 고치거나 업그레이드한 뒤
 | `aws.bedrock.transient_retry.max_attempts` | `5` | botocore가 재시도하지 않는 일시적 Bedrock 오류(HTTP 424 등)에 대한 호출당 시도 횟수입니다. 임베딩과 질의 시점 호출에 적용합니다. `1`이면 재시도하지 않습니다. |
 | `aws.neptune.endpoint` | `null` | **필수.** Neptune 클러스터 엔드포인트입니다. |
 | `aws.neptune.use_iam` | `true` | Neptune 요청에 SigV4 서명을 붙입니다. |
-| `aws.neptune.use_ssl` | `true` | `wss://`로 연결합니다. Neptune에서는 필수이며, 로컬 Gremlin Server에서만 `use_iam: false`와 함께 `false`로 둡니다(§1 로컬 저장소). |
+| `aws.neptune.use_ssl` | `true` | `wss://`로 연결합니다. Neptune에서는 필수이며, 로컬 Gremlin Server에서만 `use_iam: false`와 함께 `false`로 둡니다(§1 로컬 모드). |
 | `aws.neptune.pool_size` | `4` | Gremlin 연결 풀 크기입니다. `indexing.neptune.index_concurrency`가 더 크면 클라이언트가 그 값으로 늘립니다. |
 | `aws.opensearch.endpoint` | `null` | **필수.** OpenSearch 도메인 엔드포인트입니다. |
 | `aws.opensearch.use_iam` | `false` | `false`이면 환경 변수 `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD`를 읽습니다(§1 인증). |
-| `aws.opensearch.allow_anonymous` | `false` | 인증 없이 연결합니다. 보안 플러그인을 끈 로컬 OpenSearch용입니다(§1 로컬 저장소). `use_iam`이나 username/password와 함께 쓸 수 없습니다. |
+| `aws.opensearch.allow_anonymous` | `false` | 인증 없이 연결합니다. 보안 플러그인을 끈 로컬 OpenSearch용입니다(§1 로컬 모드). `use_iam`이나 username/password와 함께 쓸 수 없습니다. |
 | `aws.opensearch.sigv4_service_name` | `"es"` | 관리형 도메인은 `es`, OpenSearch Serverless는 `aoss`입니다. 값이 틀리면 검색 결과가 0건으로 나오는 경우가 많습니다. |
 | `aws.s3.bucket_name` | `null` | 캐시 동기화와 임베딩 캐시 저장에 쓰는 버킷입니다. |
 | `aws.s3.encryption.encryption_type` | `"BUCKET_DEFAULT"` | `BUCKET_DEFAULT`는 버킷 기본 암호화를 따릅니다. `AES256`이나 `aws:kms`(`kms_key_id`와 함께)는 객체별 헤더를 강제합니다. 단계 캐시 동기화와 저장된 임베딩 캐시에 적용합니다. |
@@ -975,7 +1038,9 @@ aws:
 ```
 
 이 설정을 켜면 `run-ingestion`은 실행할 때마다 DynamoDB 문서 상태 레지스트리와
-**콘텐츠 해시**로 코퍼스를 비교합니다.
+**콘텐츠 해시**로 코퍼스를 비교합니다. 로컬 모드에서는 레지스트리가 SQLite 파일입니다
+(`providers.doc_status.kind: sqlite`, `providers.doc_status.enabled: true`로 켬.
+[로컬 모드](#로컬-모드-aws-없이) 참고).
 
 ### 작업 흐름
 

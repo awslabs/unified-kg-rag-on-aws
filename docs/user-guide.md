@@ -92,9 +92,9 @@ The [Model Catalog](./models.md) lists every curated model and its limits.
 The framework connects to services that **already exist** — it never creates
 them. Choose one of three ways to run it:
 
-- **Local stores (development).** Run Neptune and OpenSearch stand-ins in
-  containers and use Bedrock for models; see [Local stores](#local-stores-development)
-  below.
+- **Local mode (development).** Run every component locally (Ollama models,
+  Gremlin Server, OpenSearch and SQLite), or only the stores with Bedrock
+  models; see [Local mode](#local-mode-no-aws) below.
 
 - **Bring your own services.** If Neptune, OpenSearch, S3 (and optionally
   DynamoDB) are already running, just record their endpoints in `config.yaml`
@@ -180,31 +180,101 @@ Two independent auth concerns:
    The `.env` file is loaded automatically by the CLIs (`run-ingestion`,
    `run-rag`). When `use_iam: true`, no `.env` is needed.
 
-### Local stores (development)
+### Local mode (no AWS)
 
-For development you can replace Neptune and OpenSearch with local containers.
-Models still come from Bedrock, so you need AWS credentials with Bedrock
-access. S3 is needed only for `--s3-sync`, DynamoDB only for incremental
-indexing.
+Local mode runs ingestion, querying and evaluation on a laptop or a single
+host without an AWS account: each role is served by a local component instead
+of Bedrock, Neptune, OpenSearch or DynamoDB. AWS stays the default and the
+primary target; local mode is for development and evaluation.
 
 ```bash
-docker compose -f docker/compose.local.yaml up -d --wait
+uv sync --extra local
+docker compose -f docker/compose.local.yaml --profile models up -d --wait
+docker compose -f docker/compose.local.yaml exec ollama ollama pull qwen2.5:7b-instruct
+docker compose -f docker/compose.local.yaml exec ollama ollama pull bge-m3
 uv run run-ingestion --config-path docker/config.local.yaml --source-directory ./docs-in
 uv run run-rag --config-path docker/config.local.yaml --query "..."
 docker compose -f docker/compose.local.yaml down -v
 ```
 
-[`docker/compose.local.yaml`](../docker/compose.local.yaml) runs a TinkerPop
-Gremlin Server (in-memory TinkerGraph) and a single-node OpenSearch 2.13 with
-the security plugin disabled and the `analysis-nori` plugin installed (the
-Korean mappings use `nori`; Amazon OpenSearch Service ships it built in).
-[`docker/config.local.yaml`](../docker/config.local.yaml) points the framework
-at them with `aws.neptune.use_ssl: false` and `use_iam: false` (plain `ws://`,
-no SigV4) and `aws.opensearch.allow_anonymous: true` with `use_ssl: false`
-(plain `http://`, no auth).
+`backend: local` (set in [`docker/config.local.yaml`](../docker/config.local.yaml),
+or `--backend local` on `run-ingestion`, `run-rag`, `run-eval` and
+`run-prompt-tuning`) fills in these providers for every key the config leaves
+unset. Each role is chosen under `providers:` (documented in
+`config-template.yaml`), so roles can be mixed, for example local stores with
+Bedrock models:
 
-To check the stores without Bedrock, run the smoke test, which uses a hashing
-embedding provider: `LOCAL_STORES=1 uv run pytest tests/integration/test_local_stores.py`.
+| Role | `providers.<role>.kind` | Local default |
+|---|---|---|
+| Language models | `llm`: `bedrock` \| `openai_compatible` \| `ollama` | `ollama`, `qwen2.5:7b-instruct` at `http://localhost:11434` |
+| Embeddings | `embedding`: `bedrock` \| `openai_compatible` \| `ollama` | `ollama`, `bge-m3` (1024 dimensions) |
+| Reranking | `rerank`: `bedrock` \| `cross_encoder` \| `none` | `cross_encoder`, `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` |
+| Graph store | `graph`: `neptune` \| `gremlin` | `gremlin` (Gremlin Server at `localhost:8182`, no SigV4) |
+| Vector/lexical store | `vector`: `opensearch` | local OpenSearch at `localhost:9200`, no auth |
+| Doc-status registry | `doc_status`: `dynamodb` \| `sqlite` | `sqlite` at `providers.doc_status.sqlite_path` |
+
+- **Models.** With a non-Bedrock LLM, `providers.llm.default_model_id` (and
+  optionally `fast_model_id`) replaces the two Bedrock tiers for every role;
+  a role's own `*_model_id` still wins. `providers.llm.context_window_size`
+  and `max_output_tokens` describe the model (Bedrock models take theirs from
+  the catalog), and the window is sent to Ollama as `num_ctx`. An
+  OpenAI-compatible server (vLLM, llama.cpp server, LM Studio) takes
+  `base_url` (its `/v1` root) and, if it needs one, `api_key`.
+- **Embeddings.** `providers.embedding.model_id` and `dimension` are required
+  with a non-Bedrock provider; the dimension is fixed into the OpenSearch
+  mappings, so changing either needs a full re-index.
+- **Reranking.** The cross-encoder downloads its model from Hugging Face on the
+  first query. Without the `[local]` extra (or with `kind: none`) queries keep
+  the fused order; this is logged once and visible as
+  `kg_rag.rerank_enabled=false` on the fusion span.
+- **Incremental indexing** uses the SQLite registry when
+  `providers.doc_status.enabled: true` (or `aws.dynamodb.enabled: true`, the
+  original switch); [`docker/config.local.yaml`](../docker/config.local.yaml)
+  turns it on.
+- **Token counting** uses the script-aware estimate (the same one Bedrock falls
+  back to); `providers.llm.tokenizer: tiktoken` counts with a BPE encoding
+  instead, which downloads its encoding file on first use.
+- **Custom kinds** register a builder with
+  `adapters.provider_registry.register_provider`; see [design §15](./design.md#15-extension-guide).
+
+Expected differences from AWS mode:
+
+- Extraction with small local models is noticeably weaker: more malformed
+  output (retried, then recorded as failed chunks), weaker entity resolution
+  and thinner community reports. Prefer the largest model the hardware runs.
+- No Bedrock prompt caching and no Guardrails (`aws.bedrock.guardrail` is
+  ignored by the local providers); reasoning effort settings do not apply.
+- Korean lexical analysis depends on the `nori` plugin (installed by the compose
+  file) or an equivalent analyzer in your OpenSearch.
+- Token counts are estimates, so context budgets are approximate.
+- A local model's response cut at its output limit is not detected as
+  truncated (Bedrock reports the stop reason); keep `max_output_tokens` at
+  what the model can generate.
+- LLM judges in `run-eval` (`langchain`, `ragas`) run on the local model and
+  score less reliably; the deterministic evaluators are unaffected.
+
+#### Local stores with Bedrock models
+
+To keep Bedrock for the models and run only the stores locally, start the
+stores alone (`docker compose -f docker/compose.local.yaml up -d --wait`, no
+`models` profile) and set `providers.llm.kind`, `providers.embedding.kind` and
+`providers.rerank.kind` to `bedrock` in a copy of
+`docker/config.local.yaml` (Bedrock model ids then validate against the
+catalog), with AWS credentials that have Bedrock access.
+
+[`docker/compose.local.yaml`](../docker/compose.local.yaml) runs a TinkerPop
+Gremlin Server (in-memory TinkerGraph), a single-node OpenSearch 2.13 with
+the security plugin disabled and the `analysis-nori` plugin installed (the
+Korean mappings use `nori`; Amazon OpenSearch Service ships it built in), and,
+under the `models` profile, Ollama. No model is pulled automatically.
+`docker/config.local.yaml` points the framework at them with
+`aws.neptune.use_ssl: false` and `use_iam: false` (plain `ws://`, no SigV4)
+and `aws.opensearch.allow_anonymous: true` with `use_ssl: false` (plain
+`http://`, no auth).
+
+To check the stores without any model, run the smoke test, which uses a
+hashing embedding provider and a fake model server:
+`LOCAL_STORES=1 uv run pytest tests/integration/test_local_stores.py`.
 
 Known differences from Neptune: TinkerGraph keeps the graph in memory only,
 and a list property written when a vertex is created keeps duplicate values
@@ -288,11 +358,11 @@ the same values.
 | `aws.bedrock.transient_retry.max_attempts` | `5` | Attempts per call for transient Bedrock errors that botocore does not retry (such as HTTP 424), on embeddings and query-time calls. `1` disables the retry. |
 | `aws.neptune.endpoint` | `null` | **Required.** Neptune cluster endpoint. |
 | `aws.neptune.use_iam` | `true` | SigV4-sign Neptune requests. |
-| `aws.neptune.use_ssl` | `true` | Connect over `wss://`. Neptune requires it; set `false` (with `use_iam: false`) only for a local Gremlin Server (§1 Local stores). |
+| `aws.neptune.use_ssl` | `true` | Connect over `wss://`. Neptune requires it; set `false` (with `use_iam: false`) only for a local Gremlin Server (§1 Local mode). |
 | `aws.neptune.pool_size` | `4` | Gremlin connection pool size. The client raises it to `indexing.neptune.index_concurrency` when that is larger. |
 | `aws.opensearch.endpoint` | `null` | **Required.** OpenSearch domain endpoint. |
 | `aws.opensearch.use_iam` | `false` | `false` reads `OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD` from the environment (§1 Authentication). |
-| `aws.opensearch.allow_anonymous` | `false` | Connect with no auth, for a local OpenSearch with the security plugin disabled (§1 Local stores). Cannot be combined with `use_iam` or username/password. |
+| `aws.opensearch.allow_anonymous` | `false` | Connect with no auth, for a local OpenSearch with the security plugin disabled (§1 Local mode). Cannot be combined with `use_iam` or username/password. |
 | `aws.opensearch.sigv4_service_name` | `"es"` | `es` for a managed domain, `aoss` for OpenSearch Serverless. A wrong value often shows up as zero search hits. |
 | `aws.s3.bucket_name` | `null` | Bucket for cache sync and embedding-cache persistence. |
 | `aws.s3.encryption.encryption_type` | `"BUCKET_DEFAULT"` | `BUCKET_DEFAULT` lets the bucket's default encryption apply; `AES256` or `aws:kms` (with `kms_key_id`) force a per-object header. Applies to the stage-cache sync and the persisted embedding cache. |
@@ -1010,7 +1080,9 @@ aws:
 ```
 
 With this on, each `run-ingestion` diffs the corpus against the DynamoDB
-document-status registry by **content hash**.
+document-status registry by **content hash**. In local mode the registry is a
+SQLite file instead (`providers.doc_status.kind: sqlite`, switched on by
+`providers.doc_status.enabled: true`; see [Local mode](#local-mode-no-aws)).
 
 ### Workflows
 

@@ -26,6 +26,10 @@ from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
     strategy_roles,
 )
+from unified_kg_rag.application.cli.provider_args import (
+    add_provider_arguments,
+    apply_provider_arguments,
+)
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
     EvaluationGroundTruth,
@@ -191,6 +195,7 @@ class CommandLineInterface:
             type=str,
             help="Path to custom configuration file",
         )
+        add_provider_arguments(parser)
         return parser
 
     def parse_args(self) -> argparse.Namespace:
@@ -200,7 +205,9 @@ class CommandLineInterface:
 class EvaluationRunner:
     def __init__(self, args: argparse.Namespace, rag_chain: Runnable) -> None:
         self.args = args
-        self.config = get_config(Path(args.config_path) if args.config_path else None)
+        self.config = apply_provider_arguments(
+            get_config(Path(args.config_path) if args.config_path else None), args
+        )
         self.rag_chain = rag_chain
         self.evaluation_manager: EvaluationManager | None = None
         self._validate_args()
@@ -426,7 +433,9 @@ def main() -> None:
         cli = CommandLineInterface()
         args = cli.parse_args()
 
-        config = get_config(Path(args.config_path) if args.config_path else None)
+        config = apply_provider_arguments(
+            get_config(Path(args.config_path) if args.config_path else None), args
+        )
         setup_logging(config)
         if args.verbose:
             logging.getLogger("unified_kg_rag").setLevel(logging.DEBUG)

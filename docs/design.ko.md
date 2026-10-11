@@ -107,12 +107,12 @@ unified_kg_rag/
 
 | 포트 | 위치 | 어댑터 | 비고 |
 |---|---|---|---|
-| `DocStatusPort` | `ports/doc_status.py` | `adapters/aws/dynamodb.py` (`DynamoDBDocStatusStore`), 테스트용 `FakeDocStatusStore` | 증분 인덱싱의 문서 상태와 계보 저장 |
+| `DocStatusPort` | `ports/doc_status.py` | `adapters/aws/dynamodb.py` (`DynamoDBDocStatusStore`), `adapters/local/sqlite_doc_status.py` (`SQLiteDocStatusStore`), 테스트용 `FakeDocStatusStore` | 증분 인덱싱의 문서 상태와 계보 저장 |
 | `CachePort` | `ports/cache.py` (`Protocol`) | `shared/cache_manager.py`(로컬) + `adapters/aws/s3_cache.py`(S3) | 단계 결과 저장 경계 |
 | `GraphIndexer` (쓰기 측) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py` | 전체 인덱싱과 델타(`upsert_*`/`delete_by_id`)를 하나의 계약으로 처리 |
 | `VectorIndexer` (쓰기 측) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` | 위와 같음 |
 | `BaseGraphRAGRetriever` (읽기 측) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch}_retriever.py` | 검색 어댑터 |
-| LLM/임베딩/재순위화 팩토리, 토큰 카운터 | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`) | `adapters/aws/bedrock.py`, `adapters/aws/bedrock_models.py`, `adapters/aws/token_counter.py` | 오케스트레이터마다 한 번 만드는 `Providers` 묶음(`adapters/providers.py`)에 담아 모든 구성 요소에 전달(기본값 Bedrock) |
+| LLM/임베딩/재순위화 팩토리, 토큰 카운터 | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`) | `adapters/aws/bedrock.py`, `adapters/aws/bedrock_models.py`, `adapters/aws/token_counter.py`. 로컬: `adapters/local/{models,embeddings,rerank,token_counter}.py` | 오케스트레이터마다 한 번 만드는 `Providers` 묶음(`adapters/providers.py`, `application/bootstrap.py`가 생성)에 담아 모든 구성 요소에 전달. 역할별 어댑터는 `adapters/provider_registry.py`를 거쳐 `providers.<역할>.kind`가 고름(기본값 Bedrock. §15) |
 
 > 설계 참고: 순수 포트(`DocStatusPort`, 쓰기 측 인덱서 ABC)는 `ports/`에 모았습니다. 읽기 측 추상 베이스(`BaseGraphRAGRetriever`/`BaseSearchStrategy`)는 `__init__`에서 인프라(HybridScorer/TokenManager)를 생성하는 "어댑터 베이스"이므로 `adapters/retrieval/base.py`에 두고 그곳에서 import합니다. `ports/__init__`은 이들을 export하지 않고 카탈로그 docstring에 이름만 적습니다(중복 Protocol 정의는 두지 않습니다). `BaseGraphRAGEvaluator`(`evaluation/base.py`)도 같은 종류의 어댑터 베이스입니다.
 
@@ -470,7 +470,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 프레임워크 확장 방법은 이 절 한 곳에 모았으며, README, 사용자 가이드, CONTRIBUTING.md가 여기를 가리킵니다. 전략, 렌더러, 파서는 레지스트리로, 평가기는 타입 맵의 분기 하나로, 백엔드는 생성자 주입으로 확장하며, 어느 경우에도 디스패치 코드를 고치지 않습니다.
 
 - **새 검색 전략**: `SearchStrategy` enum 멤버 추가(`domain/models/retrieval.py`. 전략은 이 닫힌 enum을 키로 쓰며 CLI 선택지도 이를 따릅니다) + `BaseSearchStrategy` 상속 + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + `adapters/search_strategies/__init__.py`에서 export. `query_inputs`는 전략이 읽는 질의 측 LLM 추출을 선언하며(`entity_focus`용 `ENTITIES`, `hl_keywords`/`ll_keywords`용 `DUAL_KEYWORDS`), 체인은 나머지 추출을 건너뜁니다. `rag_chain`은 고치지 않아도 됩니다. `auto`가 이 전략을 고를 수 있게 하려면 `search.auto_routable_strategies`에 추가하세요.
-- **새 스토리지/LLM 백엔드**: 해당 포트를 구현하고 그 포트를 쓰는 생성자에 넘깁니다(아래 "커스텀 백엔드" 참고). 백엔드 레지스트리는 없습니다. 매니저의 `__init__`에 하드코딩하지 마세요.
+- **새 스토리지/LLM 백엔드**: 해당 포트를 구현한 뒤, `@register_provider(ProviderRole.X, "kind")`(`adapters/provider_registry.py`)로 새 `providers.<역할>.kind`의 빌더를 등록하고 설정에서 고르거나, 그 포트를 쓰는 생성자에 넘깁니다(아래 "커스텀 백엔드" 참고). 매니저의 `__init__`에 하드코딩하지 마세요.
 - **새 평가기**: `BaseGraphRAGEvaluator` 상속 + `EvaluationManager._resolve_evaluator_class`에 분기 추가 + `EvaluatorType` enum 추가.
 - **새 렌더러**: `BaseRenderer` 상속 + `@register_renderer("name")`. 등록은 import할 때 일어납니다. `GraphVisualizationManager`는 프로세스에서 import된 모든 렌더러를 보지만, `run-visualization`은 `adapters/renderers/__init__.py`가 import하는 렌더러만 봅니다.
 - **새 파서 / 파일 형식**: `ParserFactory.register_loader(".ext", MyLangChainLoader, loader_kwargs=..., file_type_name=...)` — LangChain `BaseLoader` 하위 클래스면 무엇이든 됩니다. 팩토리를 고칠 필요가 없고, 등록한 확장자는 자동으로 탐색·파싱 대상이 됩니다. 내장 형식은 같은 확장자를 등록하면 덮어씁니다.
@@ -478,18 +478,20 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 ### 커스텀 백엔드 (AWS 없이 실행)
 
-서비스 간 의존성은 모두 포트 뒤에 있고, 오케스트레이터는 그 포트를 **생성자 주입**으로
-받습니다. 그래서 AWS가 아닌 백엔드나 커스텀 백엔드를 하위 클래스를 만들거나 디스패치
-코드를 고치지 않고 연결할 수 있습니다. 포트와 기본(Bedrock/Neptune/OpenSearch/DynamoDB)
-어댑터는 다음과 같습니다.
+서비스 간 의존성은 모두 포트 뒤에 있습니다. 포트마다 공급자 묶음의 역할이 하나씩 있고,
+역할의 어댑터는 공급자 레지스트리(아래)를 거쳐 `providers.<역할>.kind`로 정해집니다.
+오케스트레이터는 어떤 포트든 **생성자 주입**으로도 받습니다. 그래서 AWS가 아닌 백엔드나
+커스텀 백엔드를 하위 클래스를 만들거나 디스패치 코드를 고치지 않고 연결할 수 있습니다.
+포트와 기본(Bedrock/Neptune/OpenSearch/DynamoDB) 어댑터, 로컬 어댑터(`adapters/local/`,
+`[local]` extra. 사용자 가이드의 "로컬 모드" 참고)는 다음과 같습니다.
 
-| 포트 | 계약 | 기본 어댑터 | 주입 방법 |
+| 포트 | 계약 | 기본 어댑터(로컬 어댑터) | 주입 방법 |
 |---|---|---|---|
-| `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | LangChain 호환 모델을 반환하는 `get_model()` / `get_model_info()` | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory` | `Providers` 묶음(아래 참고): `GraphRAGChain(providers=...)`, `DataIngestionPipeline(..., providers=...)`, `EvaluationManager(..., providers=...)`. `GraphRAGChain(model_factory=...)`는 LLM만 담은 묶음의 줄임 표기 |
-| `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` | `Providers(token_counter_factory=...)` |
-| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` | `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` 또는 `IndexingManager(vector_indexer=..., graph_indexer=...)` |
-| 리트리버(역할별 빌더) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
-| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `delete` / `list_all` / `diff` (`get_many` / `put_many`는 선택. 없으면 레코드를 하나씩 읽고 씀. `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow`도 선택. 없으면 레코드 크기 한도와 초과분이 없음) | `DynamoDBDocStatusStore` | `DataIngestionPipeline(..., doc_status=...)`(증분 인덱싱이 켜짐). 구조만 맞으면 됨 |
+| `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | LangChain 호환 모델을 반환하는 `get_model()` / `get_model_info()` | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory`(`openai_compatible`, `ollama`. `cross_encoder`, `none`) | `Providers` 묶음(아래 참고): `GraphRAGChain(providers=...)`, `DataIngestionPipeline(..., providers=...)`, `EvaluationManager(..., providers=...)`. `GraphRAGChain(model_factory=...)`는 LLM만 담은 묶음의 줄임 표기 |
+| `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter`(`LocalTokenCounter`: 추정치 또는 tiktoken. LLM kind를 따름) | `Providers(token_counter_factory=...)` |
+| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer`(`gremlin`: 같은 어댑터로 Gremlin Server 사용) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` 또는 `IndexingManager(vector_indexer=..., graph_indexer=...)` |
+| 리트리버(역할별 빌더) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `Providers(retriever_builders=...)` 또는 `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
+| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `delete` / `list_all` / `diff` (`get_many` / `put_many`는 선택. 없으면 레코드를 하나씩 읽고 씀. `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow`도 선택. 없으면 레코드 크기 한도와 초과분이 없음) | `DynamoDBDocStatusStore`(`SQLiteDocStatusStore`) | `Providers(doc_status=...)` 또는 `DataIngestionPipeline(..., doc_status=...)`(후자는 증분 인덱싱이 켜짐). 구조를 맞추고 `tests/integration/test_doc_status_conformance.py`를 통과해야 함 |
 | `CachePort` (`ports/cache.py`, `Protocol`) | 파이프라인 상태 get/set | 파일 시스템 `CacheManager` | 구조만 맞으면 됨. 기본적으로 AWS가 필요 없음 |
 
 모델 팩토리, 문서 상태, 캐시 포트는 `runtime_checkable` `Protocol`이므로 커스텀
@@ -505,10 +507,11 @@ chain = GraphRAGChain(config=cfg, model_factory=OllamaModelFactory())
 ```
 
 **묶음 하나가 모든 구성 요소에 전달됩니다.** `Providers`(`adapters/providers.py`)는
-boto3 세션과 LLM, 임베딩, 재순위화, 토큰 카운터 공급자를 담은 단순한 값 객체입니다.
-이 객체가 프레임워크의 composition root입니다. 오케스트레이터마다 하나를 만들거나
-주입받아 자신이 생성하는 구성 요소에 명시적으로 넘기므로, 주입한 공급자가 다음 구성
-요소 모두에 적용됩니다.
+boto3 세션, LLM, 임베딩, 재순위화, 토큰 카운터 공급자, 그리고 그래프·벡터 인덱서와
+리트리버, 문서 상태 레지스트리의 빌더를 담은 값 객체입니다. 프레임워크의 composition
+root는 `application/bootstrap.py`(`build_providers`)로, 설정된 kind를 확인하고 묶음을
+만듭니다. 오케스트레이터마다 이렇게 하나를 만들거나 주입받아 자신이 생성하는 구성 요소에
+명시적으로 넘기므로, 주입하거나 설정한 공급자가 다음 구성 요소 모두에 적용됩니다.
 
 - `GraphRAGChain`: 체인 자체의 프롬프트, 모든 검색 전략(global map/reduce와 DRIFT
   체인 포함), 하이브리드 스코어러의 재순위화 모델, 두 토큰 매니저, 대화 메모리, 기본
@@ -536,15 +539,35 @@ chain = GraphRAGChain(config=cfg, providers=providers)
 pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
 ```
 
-모델은 절반일 뿐입니다. `retriever_builders`가 없으면 체인은 여전히 Neptune과
-OpenSearch에서 읽고, `doc_status`/`vector_indexer`/`graph_indexer`가 없으면 파이프라인은
-여전히 그곳에 씁니다(위 표 참고).
+저장소도 같은 묶음을 따릅니다. `retriever_builders`가 없으면 체인은, `doc_status`/
+`vector_indexer`/`graph_indexer`가 없으면 파이프라인은 `providers.graph` /
+`providers.vector` / `providers.doc_status`가 고른 저장소를 씁니다(위 표 참고).
 
-넘기지 않은 공급자는 처음 쓸 때 Bedrock 기본값으로 묶음마다 한 번만 만듭니다. 그래서
-체인은 Bedrock 클라이언트를 구성 요소나 질의마다 만들지 않고 한 번만 만듭니다(전략
-인스턴스도 이벤트 루프별로 재사용합니다). 묶음 없이 직접 생성한 구성 요소는 기본 묶음을
-스스로 만들므로 기존 생성자 호출도 그대로 동작합니다. DI 컨테이너는 의도적으로 두지
-않았습니다. 묶음은 프레임워크가 실제로 쓰는 공급자만 다룹니다.
+넘기지 않은 공급자는 처음 쓸 때 설정된 kind에 등록된 빌더로 만듭니다(기본값은 Bedrock,
+Neptune, OpenSearch, DynamoDB). 모델 팩토리는 묶음마다 한 번만 만들므로 체인은 모델
+클라이언트를 구성 요소나 질의마다 만들지 않고 한 번만 만듭니다. 저장소와 문서 상태
+레지스트리는 사용하는 쪽마다 한 번 만들고, 전략 인스턴스는 이벤트 루프별로 재사용합니다. 묶음 없이 직접 생성한 구성 요소도 같은 설정으로 기본 묶음을
+만들므로, 기존 생성자 호출이 그대로 동작하면서 `config.providers`를 따릅니다. DI
+컨테이너는 의도적으로 두지 않았습니다. 묶음은 프레임워크가 실제로 쓰는 공급자만 다룹니다.
+
+**공급자 레지스트리.** `adapters/provider_registry.py`는 `(ProviderRole, kind)`를 묶음을
+받는 빌더에 연결합니다. 내장 kind는 `adapters/providers.py` 끝에서 등록되며, 로컬 kind는
+만들 때만 어댑터를 import합니다. 새 kind를 추가할 때 묶음, 설정 모델, 호출부를 고칠
+필요가 없습니다.
+
+```python
+from unified_kg_rag.adapters.provider_registry import ProviderRole, register_provider
+
+@register_provider(ProviderRole.LLM, "my_server")
+def _build(providers):
+    return MyServerFactory(providers.config)
+```
+
+이후 `providers.llm.kind: my_server`로 고릅니다(Bedrock이 아닌 LLM kind에는 같은 kind의
+토큰 카운터 빌더나 `Providers(token_counter_factory=...)`도 필요합니다). `backend: local`은
+코드 경로가 아니라 설정 프리셋(`domain/models/provider_config.py`)이며, 설정에서 비워 둔
+`providers`, `aws.neptune`, `aws.opensearch` 키만 채웁니다. 모델 ID는 문자열이며, 임베딩과
+재순위화 ID는 그 역할을 Bedrock 공급자가 맡을 때만 Bedrock 카탈로그로 검증합니다.
 
 > **알 수 없는 kwargs는 받아서 무시하세요.** 호출 측은 `get_model(model_id, **kwargs)`로
 > 프레임워크 전용 키워드 인자를 넘깁니다. 예를 들어
@@ -559,9 +582,10 @@ OpenSearch에서 읽고, `doc_status`/`vector_indexer`/`graph_indexer`가 없으
 인덱서 포트의 동작하는 참조 구현입니다. 수집과 인덱싱 파이프라인 전체가 AWS 없이 이
 fake로 실행되며(`DataIngestionPipeline(cfg, pipeline_config, providers=..., doc_status=...,
 vector_indexer=..., graph_indexer=...)`, `tests/integration/test_ingestion_stages.py`에서
-검증), 커스텀 저장소를 만들 때 출발점으로 권장합니다. 이 프레임워크는 AWS 어댑터만
-제공하며, 커뮤니티나 로컬 어댑터(예: NetworkX 그래프, 로컬 벡터 DB, Ollama)는 이 포트를
-구현하는 별도 애드온 패키지로 두는 것을 의도합니다.
+검증), 커스텀 저장소를 만들 때 출발점으로 권장합니다. 이 프레임워크는 AWS 어댑터 외에 로컬
+어댑터도 저장소 안에 제공합니다(`adapters/local/`: OpenAI 호환·Ollama 모델, 크로스 인코더
+재순위화, 로컬 토큰 카운터, SQLite 레지스트리). 내장형 저장소(NetworkX/Kùzu 그래프,
+LanceDB 벡터 저장소)는 같은 레지스트리에 추가할 계획입니다.
 
 ### 의도적 설계 경계
 

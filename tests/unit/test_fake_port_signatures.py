@@ -1,10 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The in-memory fakes must keep the exact call shape of the ports they stand in for.
+"""The fakes and the local adapters must keep the exact call shape of their ports.
 
-The fakes are duck-typed (they do not subclass the ports), so nothing else
-stops a port parameter rename from leaving a fake behind: tests would keep
-passing against a call shape the real adapters no longer accept.
+They are duck-typed (they do not subclass the ports), so nothing else stops a
+port parameter rename from leaving one behind: tests would keep passing
+against a call shape the real adapters no longer accept.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from unified_kg_rag.adapters.local.sqlite_doc_status import SQLiteDocStatusStore
 from unified_kg_rag.ports.doc_status import DocStatusPort
 from unified_kg_rag.ports.indexer import GraphIndexer, VectorIndexer
 
@@ -40,6 +41,7 @@ PAIRS = [
     (FakeGraphStore, GraphIndexer),
     (FakeVectorStore, VectorIndexer),
     (FakeDocStatusStore, DocStatusPort),
+    (SQLiteDocStatusStore, DocStatusPort),
 ]
 
 

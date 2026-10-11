@@ -13,6 +13,36 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 **Breaking** change configuration, stored index data, or a public interface.
 
 ### Added
+- Local mode: ingestion, querying and evaluation run without an AWS account.
+  `backend: local` (or `--backend local` on `run-ingestion`, `run-rag`,
+  `run-eval` and `run-prompt-tuning`) fills in local providers for every key
+  the config leaves unset: Ollama models and embeddings, a sentence-transformers
+  cross-encoder reranker, Gremlin Server, a local OpenSearch and a SQLite
+  doc-status registry. `docker/compose.local.yaml` gains an Ollama service
+  (profile `models`; no model is pulled automatically) and
+  `docker/config.local.yaml` becomes the local-mode preset. See the user
+  guide's "Local mode" for the expected differences from AWS mode (#PR, #91).
+- `providers:` config section selecting each role's provider: `llm` and
+  `embedding` (`bedrock`, `openai_compatible`, `ollama`, with `base_url` and
+  model names), `rerank` (`bedrock`, `cross_encoder`, `none`), `graph`
+  (`neptune`, `gremlin`), `vector` (`opensearch`) and `doc_status`
+  (`dynamodb`, `sqlite`). Kinds resolve through a provider registry
+  (`adapters/provider_registry.py`, `@register_provider`), so a custom
+  backend registers a kind without code changes elsewhere;
+  `application/bootstrap.py` builds the bundle and fails fast on an
+  unregistered kind (#PR, #91).
+- `[local]` extra with the OpenAI-compatible and Ollama LangChain
+  integrations, tiktoken and sentence-transformers. The local adapters keep
+  the Bedrock factory's contract, including the GenAI tracing callback; without
+  the cross-encoder, queries keep the fused order (logged once,
+  `kg_rag.rerank_enabled=false` on the fusion span) (#PR, #91).
+- `SQLiteDocStatusStore`, the full `DocStatusPort` (batch reads and writes,
+  lineage overflow, `stored_scopes` / `orphan_overflow`) on one SQLite file.
+  The fake, SQLite and DynamoDB registries now pass one shared conformance
+  suite (#PR, #91).
+- `providers.doc_status.enabled` switches incremental indexing on or off
+  independently of the registry backend; unset, it follows
+  `aws.dynamodb.enabled` (#PR, #91).
 - `run-eval` accepts `s3://` URIs for `--eval-data-path` (downloaded before
   the run) and `--outputs-directory` (results uploaded with the configured
   `aws.s3.encryption` SSE settings; a failed upload exits non-zero and keeps
@@ -145,6 +175,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#157).
 
 ### Changed
+- `indexing.opensearch.embedding_model_id`, `evaluation.embedding_model_id`
+  and `search.reranking.rerank_model_id` accept any model name when a
+  non-Bedrock provider serves the role; with the Bedrock providers (the
+  default) they still validate against the catalog and parse to the same enum
+  members, so existing configs are unchanged (#PR, #91).
+- Components built without a `Providers` bundle (strategies, indexers,
+  retrievers, the token manager, evaluators, the visualization embedder) now
+  build their defaults from `config.providers` instead of always Bedrock; the
+  AWS defaults are unchanged (#PR, #91).
 - **Behaviour change:** relationship weight is the sum of the extracted
   strengths per supporting text unit (MS GraphRAG sums instance strengths) in
   every path: extraction, gleaning, the full-build resolver, the incremental

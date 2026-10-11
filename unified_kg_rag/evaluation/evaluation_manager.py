@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.application.bootstrap import build_providers
 from unified_kg_rag.application.retrieval.rag_chain import (
     NO_CONTEXT_ANSWER,
     GraphRAGChain,
@@ -33,6 +34,7 @@ from unified_kg_rag.domain.models import (
     EvaluationSummary,
     EvaluatorType,
     RetrieverRole,
+    model_id_value,
 )
 from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
@@ -108,7 +110,7 @@ class EvaluationManager:
         chain_providers = getattr(rag_chain, "providers", None)
         if not isinstance(chain_providers, Providers):
             chain_providers = None
-        self.providers = Providers.resolve(config, providers or chain_providers)
+        self.providers = providers or chain_providers or build_providers(config)
         self.source_resolver = source_resolver or self._default_source_resolver(
             config, rag_chain
         )
@@ -851,7 +853,7 @@ class EvaluationManager:
                     evaluation.evaluation_model_id if uses_judge else None
                 ),
                 "evaluation_embedding": (
-                    evaluation.embedding_model_id.value
+                    model_id_value(evaluation.embedding_model_id)
                     if EvaluatorType.RAGAS in enabled
                     else None
                 ),

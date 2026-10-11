@@ -60,14 +60,14 @@ See the [User Guide §4](./docs/user-guide.md#4-querying-run-rag) for per-strate
 
 | Path | Graph and vector stores | Models | Start here |
 |---|---|---|---|
-| **Local stores** (development) | Gremlin Server and OpenSearch in containers ([`docker/compose.local.yaml`](./docker/compose.local.yaml)) | Amazon Bedrock | `docker compose -f docker/compose.local.yaml up -d --wait`, then pass `--config-path docker/config.local.yaml` |
+| **Local mode** (development, no AWS) | Gremlin Server and OpenSearch in containers ([`docker/compose.local.yaml`](./docker/compose.local.yaml)), SQLite for incremental indexing | Ollama (or any OpenAI-compatible server), or Amazon Bedrock | `uv sync --extra local`, `docker compose -f docker/compose.local.yaml --profile models up -d --wait`, then pass `--config-path docker/config.local.yaml` ([Local mode](./docs/user-guide.md#local-mode-no-aws)) |
 | **Existing AWS resources** | Your Neptune cluster and OpenSearch domain (plus an S3 bucket, and DynamoDB for incremental indexing) | Amazon Bedrock | Copy `config-template.yaml` to `config.yaml` and set the endpoints |
 | **Bundled CDK stack** | Created by [`iac/`](./iac/README.md), with a Fargate data plane and a Step Functions ingestion pipeline | Amazon Bedrock | [Deploy on AWS](#deploy-on-aws-optional), then [`iac/README.md` After deploy](./iac/README.md#after-deploy) |
 
-Every path calls Amazon Bedrock, so enable the
-[required models](./docs/user-guide.md#required-models) first. The local
-stores are for development only: they are not hardened and keep the graph in
-memory.
+The AWS paths call Amazon Bedrock, so enable the
+[required models](./docs/user-guide.md#required-models) first. Local mode is
+for development and evaluation only: the stores are not hardened, the graph
+lives in memory, and small local models extract weaker graphs.
 
 ### Prerequisites
 

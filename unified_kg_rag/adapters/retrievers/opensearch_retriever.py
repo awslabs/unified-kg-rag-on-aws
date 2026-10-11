@@ -9,7 +9,8 @@ from typing import Any, ClassVar
 import boto3
 from opensearchpy.exceptions import NotFoundError
 
-from unified_kg_rag.adapters.aws import BedrockEmbeddingModelFactory, OpenSearchClient
+from unified_kg_rag.adapters.aws import OpenSearchClient
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     is_fatal_retrieval_error,
@@ -80,10 +81,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         self._max_result_window = self._opensearch_config.index_settings.get(
             "max_result_window", 10000
         )
-        self._embedding_factory = embedding_factory or BedrockEmbeddingModelFactory(
-            config=config,
-            boto_session=boto_session,
-            region_name=config.aws.bedrock_region,
+        self._embedding_factory = (
+            embedding_factory or Providers(config, boto_session).embedding_factory
         )
         self._embedding_model = self._embedding_factory.get_model(
             self._opensearch_config.embedding_model_id
@@ -316,7 +315,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         if cached is not None:
             cache.move_to_end(query_text)
             return cached
-        vector = await self._embedding_model.aembed_query(query_text)
+        vector: list[float] = await self._embedding_model.aembed_query(query_text)
         cache[query_text] = vector
         if len(cache) > self.QUERY_EMBEDDING_CACHE_SIZE:
             cache.popitem(last=False)
