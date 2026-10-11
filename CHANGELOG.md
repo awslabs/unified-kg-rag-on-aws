@@ -9,2163 +9,266 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial public release preparation: an AWS-native, open-source reference
 framework that unifies the GraphRAG and LightRAG retrieval methodologies on
-Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
-**Breaking** change configuration, stored index data, or a public interface.
+Amazon Bedrock, Neptune, OpenSearch, and DynamoDB, with an optional local mode
+that runs without an AWS account. This section summarizes the changes since
+the first public snapshot by user impact; the linked pull requests hold the
+details.
+
+### Highlights
+- Two selectable retrieval methodologies on one ingestion, indexing, caching
+  and hybrid-search stack: GraphRAG community summaries
+  (`auto`/`drift`/`global`/`local`/`simple`) and LightRAG dual-level keywords
+  (`mix`/`hybrid`/`naive`), with triple-hybrid (lexical + semantic + graph)
+  retrieval, RRF fusion, reranking and multilingual ingestion.
+- Local mode: `backend: local` (or `--backend local`) runs ingestion, queries
+  and evaluation on Ollama, a sentence-transformers cross-encoder, Gremlin
+  Server, a local OpenSearch and a SQLite doc-status registry (#209).
+- Optional OpenTelemetry tracing of ingestion and queries, exported over OTLP
+  or to Langfuse or Arize Phoenix (#207, #208).
+- Incremental indexing that survives interruption: a write-ahead registry
+  record, deletion scoped to the run's namespace and corpus, per-namespace
+  `indexing.reset`, explicit retirement of moved source scopes and a retry
+  limit for documents that keep failing (#175, #186-#199).
+- Conversational follow-ups are rewritten into standalone questions before
+  retrieval (#212).
+- Claude Sonnet 5.5 is the default model and Claude Haiku 5.5 the fast tier
+  (#117, #162, #170).
+- Three LLM-free evaluators (`graph_aware`, `retrieval`, `answer_match`) next
+  to the LangChain and RAGAS judges (#121).
+- A CDK stack (`iac/`) with Well-Architected security defaults, alarms and a
+  Step Functions ingestion pipeline (#157, #211).
+
+### Breaking changes
+Configuration. Removed or renamed keys are reported as unknown keys and
+ignored, so check the start-up warnings after upgrading.
+- `providers.llm.max_retries` / `providers.embedding.max_retries` (retries
+  after the first try) are now `max_attempts` (total attempts, default 3)
+  (#216). Every retry knob counts total attempts (#151).
+- The renamed-key shim is gone (#216). Replace `search.llm_retry` with
+  `aws.bedrock.transient_retry`, `aws.bedrock.effort` with
+  `aws.bedrock.default_effort`, and `processing.max_retries`,
+  `indexing.neptune.max_retries` and `evaluation.ragas_max_retries` with the
+  matching `max_attempts` key (a former `max_retries: N` is
+  `max_attempts: N+1`).
+- The `"NONE"` alias of `aws.s3.encryption.encryption_type` is removed; use
+  `BUCKET_DEFAULT` (#216).
+- `graph.visualization.embedding_method: "node2vec"` is now `"description"`
+  (the layout always embedded each node's description) (#210).
+- The post-retrieval context-building call is removed with
+  `search.context_building_model_id` and `custom_prompts.context_building_*`;
+  the query rewrite takes over its use of the history (#212).
+- Removed keys that no longer did anything: `indexing.cross_run_fuzzy_merge`
+  (the incremental merge follows `processing.fuzzy_entity_resolution`),
+  `graph.community_detection.report_generation.include_statistics` /
+  `include_key_entities` (#214), the score-based gleaning thresholds under
+  `processing.gleaning` (#171), `search.global_search.graph_timeout_seconds`
+  (#161), `indexing.neptune.min_entity_importance` (#155) and the
+  `SearchQuery.metadata["lightrag_mode"]` alias (#212).
+- A filter key that no retriever of the strategy declares raises
+  `InvalidFilterError` (#123).
+- IaC: `create_guardrail` decides whether the stack owns a guardrail; bring
+  your own with `-c create_guardrail=false` (#103).
+
+Defaults. Set the old value explicitly to keep the previous behaviour.
+- `graph.visualization.enabled` defaults to `false`; set it to `true` or
+  render on demand with `run-visualization` (#210).
+- Entity resolution merges only names equal after normalization, legal-form
+  removal and dense-script spacing. Similarity matching is opt-in
+  (`processing.fuzzy_entity_resolution: true`), and
+  `processing.similarity_threshold` defaults to 0.85 (was 0.6) (#214).
+- `processing.chunking.content_type` defaults to `text`; `markdown`/`html`
+  split at headers only for documents with that body (#213).
+- A memory query with conversation history is rewritten as a standalone
+  question (`search.query_rewrite_model_id`, fast tier) and every step reads
+  the rewrite (#212).
+- `aws.region_name` defaults to `us-west-2`, and `aws.bedrock.region_name`
+  defaults to `null` (follow `aws.region_name`); set it to keep Bedrock in
+  another region (#148).
+- Default models: Claude Sonnet 5.5 (`default_model_id`, #117) and Claude
+  Haiku 5.5 (`fast_model_id`; set `anthropic.claude-haiku-4-5-20251001-v1:0`
+  to keep Haiku 4.5) (#170).
+- The Bedrock guardrail applies to the query path only
+  (`aws.bedrock.guardrail.apply_to: all` restores it) (#104).
+- `graph.community_detection.auto_resolution` defaults to `false` (#141).
+- Entity and relationship `rank` are computed from node degree (#214), and
+  relationship weight sums the extracted strengths per text unit (#189).
+
+Index data. Rebuild existing indexes once with `indexing.reset: true` (or a
+full re-index of the affected index type).
+- Entity names keep their display form and ids use a symbol-preserving key
+  (#110); community, document and registry ids hash new inputs (#134).
+- The chunk `text` field uses the source-language analyzer, and
+  `additional_target_languages` translations are indexed in
+  `translated_text_<language>` fields (#177).
+- NFC normalization gives documents that contained decomposed (NFD) text a
+  new id; the next incremental run re-indexes them once (#177).
+- Most stage caches miss once after upgrading (their cache keys changed).
+  A run resumed with an old `--pipeline-id` can still reuse stage outputs
+  written by an earlier build; use `--force-rebuild` or a new
+  `--pipeline-id` to apply the fixes to them (#167, #170, #171, #201, #214).
+
+Library API (Python callers and custom backends).
+- Import paths (#216 unless noted): `HierarchicalCommunity` →
+  `domain.models`; `LanguageModelInfo`, `EmbeddingModelInfo`,
+  `RerankModelInfo`, `effective_max_output_tokens` →
+  `ports.model_factory`; `adapters.aws.chain_factory` →
+  `adapters.llm.chain_factory`; `estimate_token_count` →
+  `adapters.llm.token_estimate`; backoff helpers → `adapters.llm.retry`
+  (take `is_transient=`); `merge_descriptions` →
+  `domain.ingestion.descriptions`; evaluator bases →
+  `adapters.evaluators.base` (no package re-exports); LangChain-coupled and
+  console helpers → `shared.utils.langchain` / `document_converter` /
+  `display` (#164); `visualization/embeddings/node2vec.py` →
+  `node_embedder.py` (#210). `adapters.aws` no longer re-exports its
+  adapters, and `ports.CachePort` is removed (use
+  `shared.cache_manager.CacheManager`).
+- One injection path: `doc_status=`, `vector_indexer=`, `graph_indexer=`,
+  `model_factory=` and `retriever_builders=` cannot be combined with
+  `providers=` (set them on the `Providers` bundle); `IndexingStage` takes
+  its indexers from the bundle (#216).
+- The AWS session is created lazily; stages and adapters no longer take or
+  expose `boto_session` (read `providers.boto_session`).
+  `OpenSearchIndexer`, `OpenSearchRetriever` and `BedrockNodeEmbedder`
+  require `embedding_factory=` (#216).
+- Custom model factories: `get_model_info` must return a
+  `LanguageModelInfo`; opt into the chain-level retry with
+  `is_transient_error(exc)` and `transient_retry` (#216).
+- Custom strategies: `asearch(query, config=None)` must accept `config`
+  (#156). Subclasses that overrode `GraphRAGChain._build_graph_retriever` /
+  `_build_document_retriever` inject `retriever_builders` instead (#212).
+- Custom doc-status stores implement every `DocStatusPort` method
+  (`get_many`, `put_many`, `record_fits`, lineage overflow) (#214).
+- Custom indexers: full-build `index_*` methods take a keyword-only
+  `suffixes`; `get_stats` / `get_entity_count` are gone (#169, #214);
+  `IndexingManager.index_delta` no longer merges with the stored graph
+  (`merge_with_existing_graph`), and `read_entities` /
+  `read_relationships` take the index `suffix` (#163).
+- Removed APIs: `IncrementalIndexer.plan` / `prune_changed` /
+  `remove_deleted` (use `detect_delta` and `remove_changed_and_deleted`)
+  (#214); the LangChain-memory wrapper, `MemoryManager.get_langchain_memory`
+  / `add_message` (use `load_context` / `add_turn`) (#212); the
+  `Document` page-element model and `Document.detected_language` (#216);
+  `OptimizedContext.quality_score` and other unused parameters and
+  test-only methods (#169).
+- `BatchProcessor(max_retries=)` is `max_attempts=` (#151);
+  `execute_with_fallback` no longer takes `batch_func` (sync) or
+  `run_config` (#174, #216); `create_robust_xml_output_parser` requires
+  `output_tags` (#174).
+
+### Upgrading from pre-release builds
+- Doc-status registries written before source scopes existed are migrated in
+  place: the first run of a scope re-keys each legacy record whose file is
+  still in the corpus, without re-extracting it (#188). A record of a file
+  removed before the upgrade is never adopted or deleted, so its artifacts
+  stay: run once with `indexing.reset: true` to clear them (deleting the
+  registry items alone leaves the artifacts) (#190, #197-#199).
+- Records the direct API wrote without a scope under a caller's own `doc_id`
+  survive every reset; remove them through the doc-status store
+  (`list_all()`, then `delete_lineage_overflow` and `delete`) (#200).
+- Roles with a custom IAM policy need `dynamodb:BatchGetItem` and
+  `dynamodb:BatchWriteItem` on the registry table (#191, #194).
 
 ### Added
-- Operations runbook: "Backup and restore" (the three stores' backup
-  windows, restoring all of them to one point inside Neptune's window, and a
-  full `indexing.reset` rebuild outside it) and "OpenSearch replicas" (the
-  one-off `PUT _settings` for indices created before the replica override)
-  (#211).
-- CDK context keys `sfn_timeout_hours` (state machine timeout, default 6),
-  `opensearch_volume_gib` (data-node volume, default 50; the free-storage
-  alarm threshold follows it) and `guardrail_version` (injected as the new
-  `BEDROCK_GUARDRAIL_VERSION` override; unset keeps `DRAFT`) (#211).
-- Local mode: ingestion, querying and evaluation run without an AWS account.
-  `backend: local` (or `--backend local` on `run-ingestion`, `run-rag`,
-  `run-eval` and `run-prompt-tuning`) fills in local providers for every key
-  the config leaves unset: Ollama models and embeddings, a sentence-transformers
-  cross-encoder reranker, Gremlin Server, a local OpenSearch and a SQLite
-  doc-status registry. `docker/compose.local.yaml` gains an Ollama service
-  (profile `models`; no model is pulled automatically) and
-  `docker/config.local.yaml` becomes the local-mode preset. See the user
-  guide's "Local mode" for the expected differences from AWS mode (#PR, #91).
-- `providers:` config section selecting each role's provider: `llm` and
-  `embedding` (`bedrock`, `openai_compatible`, `ollama`, with `base_url` and
-  model names), `rerank` (`bedrock`, `cross_encoder`, `none`), `graph`
-  (`neptune`, `gremlin`), `vector` (`opensearch`) and `doc_status`
-  (`dynamodb`, `sqlite`). Kinds resolve through a provider registry
-  (`adapters/provider_registry.py`, `@register_provider`), so a custom
-  backend registers a kind without code changes elsewhere;
-  `application/bootstrap.py` builds the bundle and fails fast on an
-  unregistered kind (#PR, #91).
-- `[local]` extra with the OpenAI-compatible and Ollama LangChain
-  integrations, tiktoken and sentence-transformers. The local adapters keep
-  the Bedrock factory's contract, including the GenAI tracing callback; without
-  the cross-encoder, queries keep the fused order (logged once,
-  `kg_rag.rerank_enabled=false` on the fusion span) (#PR, #91).
-- `SQLiteDocStatusStore`, the full `DocStatusPort` (batch reads and writes,
-  lineage overflow, `stored_scopes` / `orphan_overflow`) on one SQLite file.
-  The fake, SQLite and DynamoDB registries now pass one shared conformance
-  suite (#PR, #91).
-- `providers.doc_status.enabled` switches incremental indexing on or off
-  independently of the registry backend; unset, it follows
-  `aws.dynamodb.enabled` (#PR, #91).
-- `run-eval` accepts `s3://` URIs for `--eval-data-path` (downloaded before
-  the run) and `--outputs-directory` (results uploaded with the configured
-  `aws.s3.encryption` SSE settings; a failed upload exits non-zero and keeps
-  the local files), so it runs as a one-off ECS task on the CDK stack. Malformed
-  URIs fail before the run with a `ConfigurationError` (#206).
-- Optional OpenTelemetry tracing (`observability:` config section, off by
-  default; `otel` extra). Ingestion runs, stages and batches and each query's
-  strategy, retrieval (hit counts and source ids), fusion, rerank (status and
-  counts) and context build (tokens used vs budget) become spans, exported
-  over OTLP (`backend: otlp`, configured by the `OTEL_EXPORTER_OTLP_*`
-  environment variables) or sent to the process's global tracer provider
-  (`backend: none`). Enabling it without the extra fails at start-up. With
-  tracing off nothing OpenTelemetry-related is imported (#PR, #92).
-- Every Bedrock chat model carries a GenAI tracing callback when tracing is
-  on: one `chat <model>` span per call with OpenTelemetry GenAI attributes
-  (`gen_ai.request.model`, input/output and prompt-cache token usage, finish
-  reasons, guardrail intervention). Prompt and completion text is recorded
-  only with `observability.capture_content: true`, after
-  `observability.redact_patterns` (#PR, #92).
-- Log records written inside a span carry its `trace_id` and `span_id` (#PR,
-  #92).
-- Observability backends `langfuse` and `phoenix` (Arize Phoenix): the `otel`
-  extra's OTLP exporter pointed at the vendor, with no vendor SDK. Endpoints
-  and keys come from the environment only (`OTEL_EXPORTER_OTLP_*` first, then
-  `LANGFUSE_HOST` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` or
-  `PHOENIX_COLLECTOR_ENDPOINT` / `PHOENIX_API_KEY`), and the start-up log
-  shows header names, never values. Spans gain Langfuse observation types or
-  OpenInference span kinds and token counts on export. Langfuse without a host
-  or keys, or over gRPC, fails at start-up (#PR, #92).
-- Query spans carry `session.id` (the conversation id) and `user.id` (new
-  optional `RAGInput.user_id`), which Langfuse and Phoenix group traces by
-  (#PR, #92).
-- `observability.redact_patterns` now also applies at export, for the
-  `otlp`/`langfuse`/`phoenix` backends, to every string attribute, event
-  attribute (exception messages) and status message, not only captured
-  content (#PR, #92).
-- `observability.export_timeout_seconds` (default `10`) bounds each span
-  export and the batch processor's wait for it; `sample_rate` applies to every
-  exporting backend. The runbook adds Langfuse, Phoenix and ADOT/CloudWatch
-  (SigV4) recipes and Bedrock model invocation logging as the account-level
-  backstop (#PR, #92).
-- Each `run-*` CLI's `--help` ends with one example invocation and a link to
-  its user-guide section.
-- `indexing.max_document_failures` (default `3`): an incremental run stops
-  retrying a document recorded FAILED that many consecutive runs with
-  unchanged content. It stays FAILED and is skipped as unchanged with a
-  WARNING until the file changes or the limit is raised; before, a document
-  that failed deterministically was pruned and re-extracted on every run. The
-  count is stored as `failure_count` on the doc-status record; records
-  written before it existed read as `0` (#175).
-- `indexing.retire_source_scopes` and `run-ingestion --retire-source-scope
-  SCOPE` (repeatable, added to the list) retire the registry records of a
-  former source scope. An incremental run treats every record of the run's
-  index suffix stored under a retired scope as deleted: in its one removal
-  pass it removes their exclusive text units, entities and relationships,
-  keeps what surviving documents share, and deletes the records once the
-  removal succeeded. Use it once from a moved corpus's new location with the
-  old source directory (or a former `source_scope` value, `s3://` URIs
-  included). A local path is compared without trailing slashes; retiring the
-  run's own scope fails before the registry is read (new
-  `ConfigurationError`), as does a retire without the doc-status registry.
-  Each retired scope costs one more projected registry scan on the run that
-  names it (#192).
-- `DataIngestionPipeline` accepts `doc_status`, `vector_indexer` and
-  `graph_indexer`, threaded to the loading and indexing stages, so the whole
-  pipeline runs on custom or in-memory backends through its public
-  constructor as `docs/design.md` §15 described. An injected `doc_status`
-  turns incremental indexing on without `aws.dynamodb.enabled` (#178).
-- `aws.bedrock.ingestion_effort` sets the reasoning effort of default-tier
-  ingestion calls (graph extraction, gleaning, claim extraction, community
-  reports; the output fixer only when `fixing.fixing_model_id` is a
-  default-tier model) separately from query-time
-  `default_effort`, so ingestion cost can be lowered on its own. `null` (the
-  default) inherits `default_effort`, so behaviour and stage cache keys are
-  unchanged unless it is set; fast-tier calls keep `fast_effort` (#179).
-- Claude Haiku 5.5 (`anthropic.claude-haiku-5-5`) in the model catalog: 1M
-  context, 128K output, adaptive thinking with `effort` low–max, 512-token
-  cache minimum, served through inference profiles only (#162).
-- Two selectable retrieval methodologies: GraphRAG community-summary
-  (`auto`/`drift`/`global`/`local`/`simple`) and LightRAG dual-level keyword
-  (`mix`/`hybrid`/`naive`) on one ingestion/indexing/caching/hybrid-search stack.
-- Incremental indexing via a DynamoDB document-status registry (content-hash
-  diff, idempotent upserts, per-document lineage for deletion).
-- Triple-hybrid retrieval (lexical + semantic + graph) with RRF fusion and
-  Bedrock reranking; multilingual ingestion and retrieval.
-- CLIs: `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
-  `run-prompt-tuning`.
-- CDK deployment stack (`iac/`) with Well-Architected security defaults.
-- Community reports carry `text_unit_ids`/`document_ids` keyword fields for
-  filtering by source document (membership provenance, not citation support;
-  existing reports stay empty until reports are regenerated and re-indexed).
-- Claude Sonnet/Opus 5.5, Opus 4.6-4.8, Sonnet 4.6 and the OpenAI GPT models on
-  Bedrock, with provider-aware request shaping (#117).
-- `retrieval` (hit@k, recall@k, MRR against `reference_sources`) and
-  `answer_match` (exact match and token F1, with `metadata.answer_aliases`)
-  evaluators; both are LLM-free (#121).
-- Evaluation summaries carry `grouped_statistics` (strategy, category,
-  difficulty) and a `run_manifest` (CLI args, model ids, version, dataset
-  sha256) (#121).
-- `run-prompt-tuning` parses PDF/CSV/JSON and registered loaders like ingestion
-  (#121).
-- Extraction, gleaning and claim-extraction failure counts in
-  `PipelineMetrics`/EMF and an `ExtractionFailures` alarm (#122).
-- Warning per unknown configuration key; `logging.library_levels`; run, stage
-  and query ids bound into log records; periodic INFO progress logs (#122).
-- `evaluation.ragas_timeout`/`ragas_max_workers`/`ragas_max_retries` and
-  `evaluation.judge_effort` for thinking-model judges (#113).
-- Per-tier reasoning effort: `aws.bedrock.default_effort` (default `high`) and
-  `fast_effort` (default `low`, used for calls on `fast_model_id`); a per-call
-  effort such as `evaluation.judge_effort` still wins (#128).
-- Local stores for development: `docker/compose.local.yaml` (Gremlin Server
-  and OpenSearch with nori) with `docker/config.local.yaml`, enabled by
-  `aws.neptune.use_ssl: false` (plain `ws://`) and
-  `aws.opensearch.allow_anonymous: true`; models still use Bedrock. A smoke
-  test runs the graph and vector adapters against them when `LOCAL_STORES=1`
-  (#154).
-- Callbacks, tags and metadata in the `config` passed to `GraphRAGChain`
-  reach every nested LLM call (strategy routing, query processing, context
-  building, and the DRIFT and global search calls). **Breaking** for custom
-  strategies: `GraphRAGChain` calls `asearch(query, config=...)`, so an
-  override must accept `config=None` (and should pass it to its own LLM
-  calls). Every `setup_chain` chain is named
-  after its prompt (e.g. `AnswerGenerationPrompt`) in traces (#156).
-- `iac/`: `opensearch_master_instance` (default `m6g.large.search`) sizes the
-  dedicated master nodes of a multi-node OpenSearch domain separately from
-  the data nodes, which they used to share; and `flow_log_retention_days`
-  (default `731`, unchanged) sets the VPC flow-log retention. The flow-log
-  group is now created by the stack and follows `removal_destroy`, so
-  enabling flow logs on an existing deployment replaces the implicit group
-  (#157).
+- `providers:` config section selecting each role's backend (`llm`,
+  `embedding`, `rerank`, `graph`, `vector`, `doc_status`) through a provider
+  registry (`@register_provider`); a `[local]` extra; `SQLiteDocStatusStore`;
+  an Ollama service in `docker/compose.local.yaml`; and
+  `providers.doc_status.enabled` (#154, #209).
+- `observability:` section (off by default, `otel` extra): spans for runs,
+  stages, batches and each query step, GenAI model-call spans with token
+  usage, log/trace correlation, `session.id` / `user.id`
+  (`RAGInput.user_id`), opt-in content capture with `redact_patterns`
+  applied at export, and `export_timeout_seconds` (#207, #208, #211).
+- Incremental-indexing controls: `indexing.max_document_failures` (#175),
+  `indexing.retire_source_scopes` / `--retire-source-scope` (#192) and
+  `processing.document_parsing.source_scope` (#134).
+- Model catalog: Claude Sonnet/Opus 5.5, Opus 4.6-4.8, Sonnet 4.6, Haiku 5.5
+  and OpenAI GPT models on Bedrock; free-form model ids with
+  `aws.bedrock.model_overrides` (#117, #127, #162).
+- Reasoning effort per tier (`aws.bedrock.default_effort`, `fast_effort`)
+  and for ingestion (`ingestion_effort`) and judges
+  (`evaluation.judge_effort`) (#113, #128, #179).
+- Evaluation: `retrieval` and `answer_match` evaluators, grouped statistics
+  and a run manifest, RAGAS timeout and concurrency knobs, and `s3://`
+  dataset and output paths for `run-eval` (#113, #121, #206).
+- `run-prompt-tuning` reads every format ingestion parses (#121), and each
+  `run-*` `--help` ends with an example and a user-guide link.
+- Operability: per-key warnings for unknown config keys, bound run/stage/
+  query ids in logs, extraction-failure metrics and alarms, endpoint checks
+  at start-up, and runbook sections on backup and restore and OpenSearch
+  replicas (#122, #178, #211).
+- CDK context keys `opensearch_master_instance`, `flow_log_retention_days`
+  (#157), `sfn_timeout_hours`, `opensearch_volume_gib` and
+  `guardrail_version` (#211).
 
 ### Changed
-- `tests/unit/test_domain_purity.py` enforces the layer rule of design.md
-  §2.0 on every import (domain, ports and shared import no other layer,
-  adapters no application/evaluation/visualization, evaluation the
-  application layer only through the chain), with the two type-only
-  exceptions checked to stay under `TYPE_CHECKING`. `delta_detector` imports
-  `DocStatusPort` for annotations only (#216).
-- **Breaking** (import path): `HierarchicalCommunity` moved from
-  `adapters.ingestion.community_detector` to `domain.models` (#216).
-- `merge_descriptions` moved from `domain.ingestion.merge.merger` to
-  `domain.ingestion.descriptions`, which breaks the merger ↔ base_resolver
-  import cycle (#216).
-- **Breaking:** `providers.llm.max_retries` and `providers.embedding.max_retries`
-  (retries after the first try, default 2) are renamed `max_attempts` (total
-  attempts, default 3), like every other attempt count in the config. The old
-  key is reported as unknown and ignored (#216).
-- The incremental-registry steps of the document_loading and indexing stages
-  (run scope, dedup preference, delta filter, reset namespaces and registry
-  clearing, delta indexing) live in `application/ingestion/incremental.py`
-  as functions; the stages only delegate to them. Behaviour is unchanged
-  (#216).
-- **Breaking:** one injection path per component. `DataIngestionPipeline`'s
-  `doc_status=`, `vector_indexer=` and `graph_indexer=`, and `GraphRAGChain`'s
-  `model_factory=` and `retriever_builders=`, are shorthand for a bundle built
-  with them; passing one together with `providers=` raises `ValueError` (set
-  it on the `Providers` bundle instead). An injected doc-status registry turns
-  incremental indexing on wherever it is injected (`Providers.doc_status_enabled`;
-  before, `Providers(doc_status=...)` alone did not). `IndexingStage` no longer
-  takes `vector_indexer` / `graph_indexer`: its indexers come from the bundle
-  (#216).
-- **Breaking:** the AWS session is created only when an AWS client needs it, so
-  a local run with `aws.profile_name` naming a missing profile no longer fails
-  with `ProfileNotFound` while building the pipeline. The pipeline stages no
-  longer take `boto_session` (pass `providers=`), and the `boto_session`
-  attributes of the pipeline, its stages, `GraphRAGChain` and the LLM
-  adapters are gone (read `providers.boto_session`). The Neptune and
-  OpenSearch clients create their default session on first use (IAM auth
-  only), and the bundle hands a store client its session only when that store
-  signs requests (`use_iam`) or, for OpenSearch, keeps the S3 embedding cache.
-  `run-ingestion` no longer creates its own session (#216).
-- **Breaking:** `OpenSearchIndexer`, `OpenSearchRetriever` and
-  `BedrockNodeEmbedder` require `embedding_factory=` instead of building a
-  second provider bundle of their own; `NeptuneIndexer` takes the bundle's
-  `boto_session`. `BaseGraphRAGRetriever`, `NeptuneRetriever` and
-  `OpenSearchRetriever` no longer take `boto_session` (unused) (#216).
-- The pipeline decides which stages run from one table
-  (`DataIngestionPipeline.CONFIG_ENABLED`) instead of membership sets and
-  `if`/`elif` branches; `BOTO_REQUIRED_STAGES`, `PROVIDER_STAGES`,
-  `DOC_STATUS_STAGES` and `INPUT_DIR_REQUIRED_STAGES` are gone and every stage
-  receives the bundle (#216).
-- **Breaking** (import paths): provider-neutral LLM code no longer lives in
-  `adapters/aws/`. `LanguageModelInfo`, `EmbeddingModelInfo`,
-  `RerankModelInfo` and `effective_max_output_tokens` moved from
-  `adapters.aws.bedrock_models` to `ports.model_factory`;
-  `adapters.aws.chain_factory` moved to `adapters.llm.chain_factory`;
-  `estimate_token_count` moved from `adapters.aws.token_counter` to
-  `adapters.llm.token_estimate`; the backoff helpers (`backoff_delay`,
-  `call_with_transient_retry`, ...) moved from `adapters.aws.bedrock_retry` to
-  `adapters.llm.retry` and take the transient-error predicate as
-  `is_transient=` (`adapters.aws.bedrock_retry` keeps
-  `is_transient_bedrock_error`). `adapters.aws` no longer re-exports its
-  adapters; import each from its module (`adapters.aws.bedrock`,
-  `adapters.aws.neptune`, ...) (#216).
-- **Breaking** for custom model factories: the ports are typed by the record
-  `get_model_info` returns. `LLMFactoryPort.get_model_info` must return a
-  `LanguageModelInfo` for every id; `Providers.llm_model_info` no longer falls
-  back to the Bedrock catalog when a factory returns something else. A
-  language-model factory opts into the chain-level transient retry of query
-  chains by defining `is_transient_error(exc)` and `transient_retry` (the
-  Bedrock factory does) instead of `setup_chain` checking for the Bedrock
-  class (#216).
-- Building the provider bundle no longer imports boto3 or any store client:
-  the Bedrock builders and the Bedrock token-counter factory import their
-  adapters on first use, like the local ones, so a `backend: local` bootstrap
-  loads no AWS SDK (#216).
-- **Breaking** (import paths): the evaluator base classes moved from
-  `unified_kg_rag.evaluation.base` to `unified_kg_rag.adapters.evaluators.base`,
-  and `unified_kg_rag.evaluation` no longer re-exports `BaseEvaluator`,
-  `BaseGraphRAGEvaluator`, `LangChainEvaluator` or `RagasEvaluator` (nor does
-  `unified_kg_rag.adapters.evaluators`). Import the langchain and ragas
-  evaluators from `adapters.evaluators.langchain_evaluator` /
-  `ragas_evaluator`. This removes the evaluation ↔ adapter import cycle and
-  its lazy-export shim (#216).
-- The ingestion `BatchProcessor`s are built from `config.processing` once
-  (`BatchProcessor.from_processing`). `execute_with_fallback` and
-  `aexecute_with_fallback` no longer take `run_config`, which overwrote the
-  processor's settings on every call (#216).
-- **Breaking**: `graph.visualization.embedding_method: "node2vec"` is renamed
-  to `"description"`, and `visualization/embeddings/node2vec.py` to
-  `node_embedder.py`. The layout never used node2vec random walks; it embeds
-  each node's `name: description` with the embedding model. Replace
-  `node2vec` with `description` in existing configs (#210).
-- **Breaking**: `graph.visualization.enabled` defaults to `false`. Rendering
-  during ingestion embedded every node and reduced the embeddings to a layout
-  on each ingest, and the image preset already turned it off; set it to `true`
-  to keep the previous behaviour, or render on demand with
-  `run-visualization`. `GraphVisualizationManager.run()` no longer re-checks
-  the flag, so a caller that builds the manager directly gets its output (#210).
-- **Behaviour change:** `processing.chunking.content_type` defaults to
-  `text`, and `markdown`/`html` pre-split a document at headers only when it
-  has that body (built from typed document elements). The built-in file
-  loaders produce plain text only, yet the old `markdown` default ran it
-  through the Markdown header splitter, which dropped blank lines and
-  indentation and made any line starting with `#` a heading. Chunk boundaries
-  of plain-text corpora change, so the chunking stage re-runs (#213).
-- Adopting registry records stored under a legacy key writes them under
-  their new keys in one batched write (`DocStatusPort.put_many`) instead of
-  one request per record (#214).
-- **Breaking:** entity resolution no longer merges names that are only
-  similar by default. Names merge when they are equal after normalization,
-  legal-form removal ("Acme Inc" / "Acme") and dense-script spacing; the new
-  `processing.fuzzy_entity_resolution` (default `false`) adds similarity
-  matching, and `processing.similarity_threshold` now defaults to 0.85 (was
-  0.6; it also bounds claim subject/object matching). At the old defaults
-  MinHash merged different organizations sharing most of their name ("...
-  University" / "... University Hospital"). The incremental merge now matches
-  delta names against the stored names with the same rule, so a full build
-  and an incremental build group the same names, and a merged group takes the
-  name cited by the most text units instead of the first one seen. Stage
-  caches from graph resolution on re-key once (#214).
-- `indexing.opensearch.embedding_model_id`, `evaluation.embedding_model_id`
-  and `search.reranking.rerank_model_id` accept any model name when a
-  non-Bedrock provider serves the role; with the Bedrock providers (the
-  default) they still validate against the catalog and parse to the same enum
-  members, so existing configs are unchanged (#PR, #91).
-- Components built without a `Providers` bundle (strategies, indexers,
-  retrievers, the token manager, evaluators, the visualization embedder) now
-  build their defaults from `config.providers` instead of always Bedrock; the
-  AWS defaults are unchanged (#PR, #91).
-- **Behaviour change:** relationship weight is the sum of the extracted
-  strengths per supporting text unit (MS GraphRAG sums instance strengths) in
-  every path: extraction, gleaning, the full-build resolver, the incremental
-  merge and text-unit removal. Each edge stores the per-text-unit strengths as
-  `attributes.text_unit_weights` (parallel to `text_unit_ids`), so an
-  incremental run gives the same weight as a full build of the same corpus.
-  Before, a single-chunk edge kept its 1-10 strength in a full build while
-  the incremental merge set the weight to the number of supporting text
-  units, so the same final corpus could store weight 8.0 or 1.0 depending on
-  how it was built. Existing graphs keep their current weights until
-  re-indexed: an edge without the stored strengths splits its weight evenly
-  over its text units, and only text units extracted again change it (#189).
-- **Behaviour change:** with incremental indexing on (`aws.dynamodb.enabled`
-  or an injected `doc_status`), a doc-status registry that cannot be read
-  fails the `document_loading` stage with the new `DocStatusRegistryError`,
-  naming the table, the cause and the fix. Before, the stage logged a warning
-  and processed every document with no delta, so the indexing stage took the
-  full-rebuild path: it cleared the suffix's Neptune entities, pointed the
-  OpenSearch aliases at indices holding only this run's documents and never
-  wrote the registry. A missing table, AccessDenied or throttling thus turned
-  every incremental run into a rebuild that dropped other scopes' documents.
-  The DynamoDB client now retries throttling with botocore's standard mode
-  (10 attempts) first; the indexing stage also refuses to rebuild when
-  incremental indexing is on but no delta reached it (e.g. under
-  `continue_on_error`), and the loading stage drops a delta restored from a
-  reused pipeline id's metadata before recomputing it (#186).
-- MinHash entity resolution shares one set of seeded permutations instead of
-  regenerating them for every name and query, hashes each name's shingles in
-  one batch, and reuses the candidates' signatures when they are queried;
-  signatures and matches are unchanged (pinned by a property test). Grouping
-  5,000 names: index 0.7 s instead of 3.4 s, queries 0.3 s instead of
-  3.5 s (#176).
-- The indexer's embedding cache holds vectors as float32 arrays instead of
-  lists of Python floats, and keeps one copy (the S3 tier when
-  `persist_embedding_cache` is on, else the in-process tier) instead of two:
-  5,000 1024-dimension vectors take 43 MB instead of 203 MB. A flush skips
-  re-reading the S3 object while its ETag is unchanged since this process
-  read or wrote it. The S3 object format is unchanged, so existing caches
-  load as before; cached vectors now carry float32 precision, which is what
-  the knn field stores (#176).
-- `GraphRAGChain` builds each query-step LLM chain (router, entity/keyword
-  extraction, translation, context building, answer) once per prompt, model
-  and thinking flag and reuses it; it was rebuilt per query, creating two
-  boto clients and fresh connection pools each time (~6 ms and new TLS
-  connections per step, now a dictionary lookup) (#176).
-- The script-aware token estimate, the only counter for models without
-  CountTokens (the default Claude 5.5 models), uses one compiled regex instead
-  of a per-character Python loop, with identical results; with no CountTokens
-  API, `count_tokens_many` counts inline instead of starting an 8-thread pool
-  per call. Budgeting 300 sections of 1.5 KB takes 24 ms instead of 476 ms,
-  and 32 concurrent queries 0.8 s instead of 16 s (#176).
-- `processing.document_parsing.index_value` is documented in the user guide
-  §2.3 table and `config-template.yaml` as the ingestion-side suffix that
-  `run-rag`/`run-eval --suffix` must match; the multi-tenant guidance no
-  longer suggests a `--suffix` flag for `run-ingestion`, which has none (#178).
-- `iac/README.md` lists the prerequisites: Python 3.10+, Node.js 20+ and
-  AWS CDK CLI 2.1143.0 or later, AWS credentials and Docker (#178).
-- The README quickstart runs the CLIs with `uv run`, which a `uv sync`
-  install needs unless the virtual environment is activated (#178).
-- The `docs/design.md` §15 "run without AWS" example passes a
-  `rerank_factory` (reranking is on by default and called Bedrock) and notes
-  that the retrievers and indexers must be injected too (#178).
-- `CONTRIBUTING.md` and `docs/design.md` §15 describe the real extension
-  mechanisms: a new strategy also needs a `SearchStrategy` enum member,
-  backends are passed to constructors (there is no backend registry), and
-  `run-visualization` only sees renderers imported by
-  `adapters/renderers/__init__.py` (#178).
-- `GraphRAGChain`, `RAGInput` and `RAGOutput` document the library contract:
-  `close()`/`aclose()` when done, which event loop the sync and async
-  methods run on, `RAGOutput` in RAG mode versus a dict in SEARCH mode, and
-  that `stream`/`astream` yield answer text only (use `ainvoke` for the
-  sources) (#178).
-- Graph extraction and gleaning write entity and relationship descriptions in
-  `processing.translation.target_language` (the language queries are
-  translated to, equal to the source language when translation is a no-op).
-  The extraction prompt had no output-language instruction, so descriptions
-  followed whatever language the model chose, while description
-  summarization already wrote in the target language. Entity names and
-  verbatim evidence spans stay in the source text's form. Both prompts take a
-  new `target_language` variable; existing `custom_prompts` overrides without
-  it keep working (#179).
-- The fast tier (`aws.bedrock.fast_model_id`) defaults to Claude Haiku 5.5
-  (`anthropic.claude-haiku-5-5`) instead of Haiku 4.5. In a real-AWS A/B (79
-  documents, 20 questions, 5 strategies, 2 ingests per arm) it matched Haiku
-  4.5 on accuracy (151 vs 150 answers containing the gold) and ingestion time,
-  at roughly 1/10 the per-token price; its tokenizer counts ~30% more tokens
-  for the same text. It thinks adaptively, so `aws.bedrock.fast_effort`
-  (default `low`) now takes effect on fast-tier calls. Cached stage outputs
-  from chunking on miss once after upgrading, since their default-config cache
-  keys include the model id. Set `fast_model_id` back to
-  `anthropic.claude-haiku-4-5-20251001-v1:0` to keep the previous model (#170).
-- Long-output prompts derive their `max_tokens` floor from the configured
-  limits instead of fixed values, so ingestion reserves less of the
-  tokens-per-minute quota: the largest answer the limits allow plus 8192
-  tokens of reasoning headroom. At the defaults, graph extraction, gleaning
-  and their output fixer drop from 32768 to 23192 (100 records x 150
-  tokens), document translation from 65536 to 18992 (8000 characters x 1.35
-  tokens), claim extraction from 32768 to 29792, and community reports from
-  32768 to the 16384 default cap. `setup_chain` takes an optional
-  `min_output_tokens` that overrides the prompt's static floor, and
-  `BasePrompt.output_floor(config)` returns the derived one (#179).
-- Gleaning stops per text unit on what the model returned, not on scores: each
-  unit gets up to `max_rounds` refinement calls and is re-sent only while its
-  previous answer added an entity or relationship the graph did not have (an
-  empty answer, a re-proposed known item, or an ungrounded addition ends that
-  unit). The corpus-wide early stop on the model's self-reported
-  completeness/accuracy and a convergence score is gone, so units that keep
-  gaining now run the full `max_rounds`. The refinement prompt still asks the
-  model to score completeness and accuracy before listing issues: the scores
-  are no longer read, but dropping that self-check cut round-1 additions by
-  about half (+44 vs +89 entities) and final entities by about 5% in an E2E
-  A/B. `gleaning_improvement_rate` in the pipeline metrics is
-  now the gleaned entities plus relationships per extracted one (it was the
-  relative change of the self-reported quality score), and the gleaning stage
-  reports `refinement_calls`. Cached gleaning and later stage outputs miss
-  once after upgrading, since their default-config cache keys change (#171).
-- The output fixer (`fixing.fixing_model_id`) is on the fast tier
-  (`aws.bedrock.fast_model_id`, Claude Haiku 5.5 at `fast_effort` `low`)
-  instead of the default tier at `high` effort: it only re-emits a
-  completion as well-formed XML. `fixing` is an input of every stage cache
-  key, so every cached stage output misses once after upgrading. Set
-  `fixing.fixing_model_id` to `anthropic.claude-sonnet-5-5` to keep the
-  previous model (#179).
-- The AUTO router prompt describes exactly `search.auto_routable_strategies`,
-  built from the configured list in its order. It used to describe SIMPLE
-  (not routable by default) first and steer "simple factual" and "direct
-  lookup" queries to it, and left MIX out of two of its three decision axes;
-  the hardcoded axes are gone, each strategy's own description carries the
-  guidance. `StrategySelectionPrompt` takes a new `strategy_descriptions`
-  variable, and `auto` in `auto_routable_strategies` is now rejected (#179).
-- **Breaking:** `unified_kg_rag.shared.utils` no longer re-exports the
-  LangChain-coupled and console helpers, so importing a `domain` module no
-  longer loads LangChain, LangSmith, lxml, tenacity or tqdm. Import
-  `BatchProcessor`, `BATCH_ITEM_FAILED` and `RobustXMLOutputParser` from
-  `shared.utils.langchain`, `convert_langchain_to_document` from
-  `shared.utils.document_converter`, and `console`/`display_*` from
-  `shared.utils.display`. The domain purity test now also checks transitive
-  imports in a clean interpreter (#164).
-- The claim extraction prompt defines one claim taxonomy: the unused "Claim
-  Categories" list (FACTUAL_ASSERTION, ENTITY_PROPERTY, ...) is removed, so
-  only the CLAIM TYPES that `<claim_type>` takes remain (#179).
-- CI runs the local-store adapter smoke test (`tests/integration/test_local_stores.py`)
-  against the `docker/compose.local.yaml` Gremlin Server and OpenSearch (#168).
-- Tests time out after 120 s each (`pytest-timeout` in the dev group), so a
-  hung test fails fast instead of running until the CI job times out (#168).
-- Model ids are free-form strings; `aws.bedrock.default_model_id` and
-  `fast_model_id` set every role of their tier, `aws.bedrock.model_overrides`
-  describes unknown models, and Claude 4.5 fails fast without an inference
-  profile. Python callers drop `.value` on `*_model_id` (#127).
-- **Breaking:** Claude Sonnet 5 defaults move to Sonnet 5.5; ingestion stage
-  caches built with the old defaults are not reused (#117).
-- **Breaking:** a filter key that no retriever of the strategy declares raises
-  `InvalidFilterError`; filter scoping uses one declared schema, and Neptune
-  `attr_*` filters apply where the property exists (#123).
-- Strategies declare `query_inputs` on `@register_strategy`; source truncation
-  is reported only as `metadata["truncated"]` (#123).
-- **Breaking (index data):** entity names keep their display form and ids are
-  keyed on a symbol-preserving key ("C++" and "C#" no longer collide); fully
-  re-index existing graphs (#110).
-- Entity resolution merges only names with identical identifier tokens and
-  compatible types, grouped order-independently (#109).
-- The Bedrock guardrail applies to the query path only
-  (`aws.bedrock.guardrail.apply_to: all` restores the old scope) (#104).
-- **Breaking (IaC):** `create_guardrail` decides whether the stack owns a
-  guardrail; bring-your-own needs `-c create_guardrail=false` (#103).
-- S3 cache uploads default to the bucket's own encryption (`BUCKET_DEFAULT`)
-  (#105).
-- Queries without `index_prefixes` sweep only the indices the pipeline builds
-  (#111).
-- Query-side entity and keyword extraction run only for strategies that read
-  them (#94).
-- `BatchProcessor` retries only the failed items of a partial batch and only
-  retryable errors (#99, #120).
-- CountTokens is negative-cached for models that reject it (#98).
-- Bedrock client connection pools are sized to ingestion concurrency (#124).
-- RAGAS judges score at most `evaluation.ragas_max_contexts` (20) contexts per
-  sample, so context metrics are @N (#126).
-- `mix`/`hybrid` retrievals run concurrently; multi-hop Neptune expansion is
-  opt-in (`search.lightrag_search.enable_graph_expansion`) (#125).
-- DRIFT searches the original query first and fuses with local's per-type
-  quota; LLM convergence is opt-in (`drift_search.enable_llm_convergence`,
-  threshold 0.8) (#125).
-- Global search skips per-report LLM scoring
-  (`global_search.use_dynamic_selection: true` restores it) and packs 5
-  reports per map call (#125).
-- Retrieval context budget defaults to 30,000 tokens
-  (`token_manager.max_context_tokens: null` derives it from the model) (#125).
-- Chunk defaults fit embedding/rerank limits: `max_chunk_size` 8,000,
-  `fallback_chunk_size` 4,800, `min_chunk_size` 1,000 (were 50,000/50,000/5,000)
-  (#125).
-- Gleaning rounds after the first re-send only units that gained items; short
-  pre-chunks skip the chunking LLM; query embeddings are LRU-cached (#125).
-- AUTO routes among local/mix/global/drift with the fast model
-  (`search.auto_routable_strategies`, `strategy_selection_model_id`) (#125).
-- Ingestion visualization output defaults under the synced cache directory;
-  the interactive renderer keeps the top 2,000 nodes by degree (#122).
-- Graph-aware relationship coverage counts `{"source", "target"}` pairs and
-  `"A -> B"` strings by endpoint mentions (#121).
-- Embedding and query-time LLM calls share `aws.bedrock.transient_retry`
-  (5 attempts, 60 s budget) (#120).
-- Development tools live only in the `dev` dependency group (`uv sync`); the
-  Docker image config is tracked and uv is pinned by digest (#119).
-- One `Providers` bundle (`unified_kg_rag.adapters.providers`) carries the
-  boto3 session and the LLM, embedding, rerank and token-counter providers;
-  `GraphRAGChain`, `DataIngestionPipeline` and `EvaluationManager` build it
-  once (or accept `providers=`) and hand it to every component they construct.
-- `GraphRAGChain` reuses search-strategy instances per event loop instead of
-  building one per query.
-- Conversation memory stays process-wide by default and is created from the
-  first chain's config; `GraphRAGChain(memory_manager=MemoryManager(config))`
-  isolates a chain.
-- Incremental runs merge a touched entity or relationship with its graph
-  state by default (`indexing.cross_run_merge: true`), so an entity shared
-  with unchanged documents keeps their description and lineage (#134).
-- **Breaking (index data):** community ids hash the level and sorted members
-  (Leiden input is sorted), document ids hash the corpus-relative path and the
-  full text, and registry keys hash the index namespace and relative path;
-  rebuild existing indexes (`indexing.reset: true`) (#134).
-- The answer prompt asks the model to chain facts across sources and answer
-  directly before the support; the previous wording can be restored through
-  `custom_prompts.answer_generation_system`/`_human` (#132).
-- Neptune graph expansion fetches `traversal_fetch_multiplier` (3) times the
-  result width and keeps the entities closest to the seeds and most important
-  (`indexing.neptune.entity_importance_source`: `rank`, `degree` or `none`);
-  importance used to read a property no vertex stored (#132).
-- Local search adds the relationships incident to its expanded entities,
-  in-network edges first (`search.local_search.include_bridge_relationships`),
-  and queries its report, relationship and claim sections concurrently (#132).
-- Global search passes the ranked map key points to the answer model without
-  a reduce LLM call (`search.global_search.reduce_with_llm: true` restores it)
-  and reserves fusion slots for community reports
-  (`reserve_report_slots`, `text_unit_slots`) (#132).
-- Fusion's MMR filter is quadratic instead of cubic and is skipped when the
-  cut keeps every candidate; results are unchanged (#132).
-- The CLIs and `GraphRAGChain`'s sync methods size the event loop's default
-  executor to `processing.io_workers` (64). LangChain runs Bedrock `ainvoke`
-  calls there, and Python's default of `min(32, CPUs + 4)` threads let only
-  six run at once on a 2-vCPU task. Async hosts call
-  `unified_kg_rag.shared.utils.configure_event_loop` (#142).
-- The domain `Document` is a plain Pydantic model instead of a LangChain
-  `Document` subclass, so `domain/` imports no LangChain (now enforced by a
-  test). LangChain loader output is converted in
-  `shared.utils.document_converter`; `DirectoryLoader` is no longer a LangChain
-  `BaseLoader`. Field names are unchanged, and JSON written by earlier versions
-  still loads (its `id`/`type` keys are ignored) (#149).
-- The Bedrock model capability catalog (`LanguageModelInfo`,
-  `EmbeddingModelInfo`, `RerankModelInfo`, `get_language_model_info`,
-  `effective_max_output_tokens`) moved from `adapters.aws.bedrock` to
-  `adapters.aws.bedrock_models`; `bedrock.py` keeps the factories, the
-  guardrail handler and the cross-region helper (#150).
-- The user guide and config field descriptions state that embedding and rerank
-  model ids, unlike language-model ids, are a closed list that
-  `aws.bedrock.model_overrides` does not cover: the embedding dimension is
-  fixed into the OpenSearch vector mappings (#150).
-- **Breaking** default: `aws.bedrock.region_name` defaults to `null` and then
-  follows `aws.region_name` (an `AWS_REGION` override moves it too), and the
-  `aws.region_name` default is `us-west-2` instead of `ap-northeast-2`, which
-  offers no Bedrock rerank model. Set `aws.bedrock.region_name` to keep Bedrock
-  in another region (#148).
-- Every retry knob is named `max_attempts` and counts total attempts,
-  including the first: `processing.max_attempts`,
-  `indexing.neptune.max_attempts` and `evaluation.ragas_max_attempts` join
-  `aws.bedrock.transient_retry.max_attempts`. The former Neptune key counted
-  retries after the first try, so `max_retries: N` is read as
-  `max_attempts: N+1` and the default stays 4 attempts. **Breaking** for
-  library callers: `BatchProcessor(max_retries=...)` is now
-  `BatchProcessor(max_attempts=...)`, and the unread
-  `PipelineConfig.max_retries` is removed (#151).
-- LLM JSON responses are parsed by one helper, `parse_llm_json`; its
-  `strict=True` mode raises on unparseable text for LightRAG keyword
-  extraction. LangChain judge scores and `partial_correctness` reasoning now
-  also accept JSON wrapped in prose (#153).
-- The CloudWatch EMF sink publishes only the dimensionless aggregate series
-  (what the alarms and dashboard query) and records `pipeline_id` as a log
-  property: the per-run `pipeline_id` dimension created about 20 new custom
-  metric series per ingestion run. Pass `CloudWatchEMFSink(dimension_keys=...)`
-  for stable dimensions. EMF lines now go to stdout, as the help text and docs
-  already said (they went to stderr) (#158).
-- `aws.bedrock.effort` is migrated to `aws.bedrock.default_effort` with a
-  deprecation WARNING like the other renamed keys, instead of living on as a
-  config field; stage cache keys are unchanged. **Breaking** for library
-  callers: the `BedrockConfig.effort` attribute is removed (#169).
-- Effort levels are declared once, as `EffortLevel` (with `EFFORT_LEVELS`
-  derived from it); `evaluation.judge_effort` and the model catalog use it,
-  and `BedrockLanguageModelFactory.VALID_EFFORTS` is removed (#169).
-- `PipelineStageType` members are declared in pipeline order, and the cache
-  keys and run metadata derive their stage order from it instead of keeping
-  their own copies; iterating the enum now yields the stages in run order
-  (#169).
-- Indexers and retrievers derive OpenSearch alias/index names and Neptune
-  vertex labels from one helper (`shared/utils/store_names.py`) instead of two
-  copies of the naming rule and a repeated `prefix.capitalize()` at every
-  Neptune call site; the names are unchanged (#169).
-- Documentation: concurrent ingestion runs are documented as not supported
-  (Operator Runbook "Concurrent runs", User Guide §12, Design Doc §5). Two
-  runs on the same index suffix race on the alias swap and old-index
-  cleanup of a full reindex, and two runs on the same doc-status table
-  namespace race on the registry read the removal plan is built from. Runs
-  on different suffixes with separate doc-status tables are fine. The CDK
-  state machine does not block an overlapping execution and the stack has
-  no schedule or trigger that starts one (#197).
-- Documentation: removed the unreferenced hexagonal-architecture, retrieval
-  and incremental-indexing diagram images, which no longer matched the code
-  (search strategies drawn inside `domain/`, LightRAG graph expansion shown
-  as always on, incremental merges by name only); the Mermaid diagrams in the
-  Design Doc replace them. `CLAUDE.md` now points to Design Doc §15 for
-  extension recipes instead of repeating them (#205).
-- **Behaviour change:** a memory query with conversation history is rewritten
-  as a standalone question before retrieval (new `QueryRewritePrompt`,
-  `search.query_rewrite_model_id` on the fast tier, override key
-  `custom_prompts.query_rewrite_*`). Routing, translation, entity and keyword
-  extraction, retrieval and the answer read the rewritten question;
-  `ProcessedQuery.standalone_query` records it and `original_query` keeps the
-  user's text. Follow-ups such as "what about its price?" were searched
-  verbatim before, and the history reached only the post-retrieval context
-  builder (#212).
-- Global search reranks once: the candidate reports were fused and reranked,
-  then re-sorted by indexed `rank` (discarding the rerank order), then fused
-  and reranked again with their text units. The candidates are no longer
-  reranked; without `use_dynamic_selection` they are selected by retrieval
-  score with `rank` and `rating` as tie-breaks, and the fusion with their text
-  units reranks the selection. `GlobalSearchStrategy._parse_map_points` is
-  removed (use `_parse_map_payload`) (#212).
-- DRIFT no longer requests query-side entity extraction (saving that LLM call
-  per query): the extracted entities only shrank each iteration's candidate
-  entity lookup (twice the entity count instead of `top_k`). Every iteration
-  now looks candidates up from its own query text. Conversation entities reach
-  only strategies that read an entity focus (local) (#212).
-- DRIFT runs independent calls concurrently: each iteration's document
-  retrieval alongside its candidate-entity lookup and graph expansion, and the
-  primer's follow-up searches together (deduplicated in follow-up order)
-  (#212).
-- LightRAG keyword extraction no longer waits for the query translation: the
-  keyword prompt already writes its keywords in the target language, so both
-  calls read the user's question and run concurrently, removing one sequential
-  LLM round trip from translated `mix`/`hybrid` queries (#212).
-- `run-rag` and `run-eval` define their shared query flags (`--suffix`,
-  `--enable-thinking`, `--search-strategy`, `--search-type`, `--top-k`,
-  `--retrieval-multiplier`) once, in `application/cli/query_args.py`;
-  `--top-k` and `--retrieval-multiplier` below 1 now fail at parse time (#212).
-
-### Removed
-- **Breaking** (import path): `unified_kg_rag.ports.CachePort`
-  (`ports/cache.py`). It had one implementation, no injection point, and
-  `S3CacheManager` did not conform to it; the pipeline uses
-  `shared.cache_manager.CacheManager` directly (#216).
-- Fields and helpers that were never set or only tests read:
-  `CommunityReport.summary_embedding` / `full_content_embedding` (always
-  null; the indexer embeds the report itself), `PipelineStageResult.cache_path`,
-  `CacheStats.s3_entries`, the deprecated always-null
-  `EvaluationReport.overall_score`, `run_evaluation.exceeds_failure_budget`
-  (use `failure_budget_breaches`) and `PipelineStage._stats_to_dict`. Stored
-  JSON with these keys still loads (#216).
-- **Breaking:** the `"NONE"` alias of `aws.s3.encryption.encryption_type`; use
-  `BUCKET_DEFAULT` (#216).
-- **Breaking** for code that builds `Document`s: the page-element model
-  (`ElementContent`, `ElementType`, `DocumentElement`, `Document.elements`,
-  `Page.elements` / `raw_data` / `height` / `width`) and
-  `Document.detected_language`. No loader filled them; parsed JSON written
-  with them still loads. `DocumentContent.html` / `markdown` stay (the chunker
-  reads them for `content_type`) (#216).
-- `DocStatusRecord.content_summary` and `content_length`, which nothing
-  wrote, and the `DocStatus.PARSING` / `PROCESSING` states, which no run
-  set. Records stored with the two attributes still load (#216).
-- **Breaking:** the renamed-key shim. `search.llm_retry`,
-  `aws.bedrock.effort`, `processing.max_retries`,
-  `indexing.neptune.max_retries` and `evaluation.ragas_max_retries` (renamed
-  in #120, #128 and #151) are no longer mapped to their replacements; each is
-  reported as an unknown key and ignored. Use `aws.bedrock.transient_retry`,
-  `aws.bedrock.default_effort` and the `max_attempts` keys (#216).
-- `PipelineContext.graph_statistics` and `PipelineContext.centrality_metrics`,
-  written by the graph-analysis stage but never read (and excluded from the
-  pipeline metadata file) (#210).
-- `LangChainEvaluator.evaluate_single` and `_evaluate_with_metric`, a
-  synchronous path only the tests called; the evaluation manager always scores
-  through `aevaluate_single` (#210).
-- Unused tracing surface: `observability.set_attributes`,
-  `TracerBackend.current_span`, the `ContextThreadPoolExecutor` re-export from
-  `shared.observability` (import it from `shared.utils.concurrency`), and the
-  `export_timeout_millis` passed to the batch span processor, which ignores
-  it. Captured content is no longer redacted twice: with an exporting
-  backend the exporter alone redacts it (#211).
-- **Breaking** for custom doc-status stores: the fallbacks for a store
-  without `get_many`, `put_many`, `record_fits` or the lineage-overflow
-  methods. Every `DocStatusPort` method is called directly; a store that
-  subclasses the Protocol inherits its defaults (#214).
-- **Breaking:** `IncrementalIndexer.plan`, `prune_changed` and
-  `remove_deleted`, which only tests called. Use `detect_delta` and
-  `remove_changed_and_deleted` (one removal plan over changed and deleted
-  documents) (#214).
-- `merge_communities`, `merge_community_reports` and `DeltaMergeResult`
-  from `domain.ingestion.merge`: nothing called them, since content-derived
-  community ids let a delta run upsert its communities and reports (#214).
-- `graph.community_detection.report_generation.include_statistics` and
-  `include_key_entities`: they only reached the report prompt as the text
-  "True"/"False" and changed nothing (#214).
-- `indexing.cross_run_fuzzy_merge`: the incremental merge follows
-  `processing.fuzzy_entity_resolution`, the full build's setting (#214).
-- Gleaning config keys `convergence_threshold`, `quality_threshold`,
-  `min_improvement_threshold`, `quality_completeness_weight`,
-  `initial_quality_entity_scale`, `initial_quality_relationship_scale` and
-  `convergence_change_scale` under `processing.gleaning`, with the validator
-  that kept `convergence_threshold` below `quality_threshold`. They only tuned
-  the removed score-based stop rule and are now ignored with an unknown-key
-  warning; `GleaningStats` drops `initial_quality_score`,
-  `final_quality_score`, `convergence_achieved`, the per-round averages and
-  the per-round `quality_improvement`/`convergence_score` (#171).
-- `indexing.neptune.min_entity_importance`: it thresholded an `importance`
-  property no vertex stores; the key is now ignored with an unknown-key
-  warning (#155).
-- The unused `RetrieverType` enum and the latency-optimized inference path
-  (`supports_performance_optimization` in model capability records), which no
-  caller enabled (#147).
-- `OpenSearchClient.aget_mapping` and the live-mapping/Neptune-probe filter
-  scoping (#123).
-- The `dev` and `docs` extras and the unused `asyncio-throttle` and `rapidfuzz`
-  dependencies (#119).
-- `S3EncryptionType.NONE` ("NONE" still validates as `BUCKET_DEFAULT`) and
-  test-only helpers on the guardrail handler and token counter (#120).
-- Global search's Neptune community expansion, with
-  `search.global_search.graph_timeout_seconds` and the
-  `opensearch_expanded_community_reports` fusion bucket. Its limit equalled the
-  candidate count and the candidates were emitted first, so it returned only
-  the candidates: a Neptune and an OpenSearch round trip that re-fetched the
-  same reports and counted each twice in fusion. Global search now needs only
-  the document retriever; an old config key is ignored (#161).
-- **Breaking** for custom indexers: the unreachable `BaseIndexer.get_stats` and
-  `GraphIndexer`/`VectorIndexer.get_entity_count` port methods, their Neptune
-  and OpenSearch implementations, and the client helpers that served only them
-  (`NeptuneClient.get_graph_stats`, `NeptuneClient.submit`,
-  `OpenSearchClient.get_index_stats`, `OpenSearchClient.count`). Nothing in the
-  pipeline called them (#169).
-- Unused parameters and fields: `BaseSearchStrategy(optimization_threshold_factor=,
-  default_max_tokens=)`, `convert_langchain_to_document(n_chars=)`,
-  `PipelineConfig.batch_size` (the CLI set it, nothing read it),
-  `BedrockLanguageModelFactory.DEFAULT_EFFORT`, `StaticRenderer.color_palette`
-  and `evaluation.base.SKIP_REASON_ANSWER_FAILED`. **Breaking** for callers
-  that pass the removed keyword arguments (#169).
-- `OptimizedContext.quality_score` and `TokenManager._calculate_quality_score`:
-  the score was computed for every query and never read. **Breaking** for code
-  that reads or constructs `OptimizedContext` with `quality_score` (#169).
-- Production methods only tests called: `IncrementalIndexer.documents_to_process`
-  (use `domain.ingestion.delta_detector.filter_documents_to_process`),
-  `BaseGraphRAGRetriever.retrieve` (use `aretrieve`, or LangChain `invoke`),
-  `OpenSearchIndexer.embedding_cache_hit_rate` and the explicit `fuzzy_matcher`
-  argument of `graph_resolver.find_all_matches_for_entity_task`. **Breaking**
-  for code that called them (#169).
-- Model fields nothing populated or read: `TextUnit.covariate_ids`,
-  `Community.covariate_ids`, `Covariate.covariate_type`/`subject_type`,
-  `ConversationContext.current_topics`/`user_intent`, and
-  `DocumentElement.coordinates`/`base64_encoding`. Cached stage outputs and
-  exported data that still carry them load unchanged (the keys are ignored)
-  (#169).
-- `GraphRAGConversationBufferMemory` (a deprecated `langchain_classic` memory
-  used only to read the history), `MemoryManager.get_langchain_memory` and
-  `MemoryManager.add_message` (use `load_context` and `add_turn`),
-  `GraphRAGChatMessageHistory.get_context_summary` and `add_messages`, and the
-  `MessageRole` and `ConversationContext` models, which nothing outside the
-  memory read. **Breaking** for code that used them (#212).
-- The post-retrieval context-building LLM call (`ContextBuildingPrompt`),
-  `search.context_building_model_id` and `custom_prompts.context_building_*`:
-  it used the history only to interpret the query, which the standalone
-  rewrite now does before retrieval, so the answer model reads the budgeted
-  retrieval context directly. The old keys are ignored with an unknown-key
-  warning. **Breaking** for configs that set them (#212).
-- The deprecated `SearchQuery.metadata["lightrag_mode"]` alias; LightRAG reads
-  only `search_strategy` (#123, #PR).
-- `GraphRAGChain._build_graph_retriever` and `_build_document_retriever`, a
-  second override layer on top of the provider bundle's retriever builders: a
-  role resolves to the injected `retriever_builders` entry, else
-  `Providers.build_retriever`. **Breaking** for subclasses that overrode them;
-  inject `retriever_builders` instead (#212).
-- `domain.retrieval.strategy_registry.registered_strategies`, which only tests
-  called; use `get_strategy_spec` per `SearchStrategy` (#212).
+- Retrieval: AUTO routes among `local`/`mix`/`global`/`drift` with the fast
+  model; `mix`/`hybrid` retrievals, DRIFT steps and keyword extraction run
+  concurrently; global search answers from ranked map points without a
+  reduce call and reranks once; Neptune expansion is opt-in for LightRAG;
+  the context budget defaults to 30,000 tokens (#125, #132, #212).
+- Ingestion: smaller chunk defaults that fit embedding and rerank limits
+  (#125); descriptions are written in the target language (#179); gleaning
+  stops per unit once it adds nothing new (#171); output-token floors follow
+  the configured limits (#179).
+- Conversation memory is process-wide by default and keeps the most recent
+  entities in focus; `memory.max_conversation_age_hours` is enforced
+  (#176, #212).
+- A doc-status registry that cannot be read fails the loading stage
+  (`DocStatusRegistryError`) instead of silently rebuilding (#186). A
+  relative `providers.doc_status.sqlite_path` resolves against the config
+  file, and an incremental run whose registry lists documents the graph no
+  longer holds fails and asks for `indexing.reset: true` (#214).
+- Querying a suffix nothing was ingested under raises `IndexNotFoundError`
+  (#178).
+- Performance: shared MinHash permutations, float32 embedding cache,
+  reused query chains, batched registry reads and writes, and in-process
+  claim resolution and gleaning preparation (#176, #191, #194, #213).
+- The CloudWatch EMF sink publishes dimensionless aggregate series only
+  (#158). Development tools live in the `dev` dependency group (#119).
 
 ### Fixed
-- `interactive_graph.html` centres the layout and scales it to a fixed canvas
-  extent: UMAP/t-SNE/PCA coordinates were multiplied by a constant as if they
-  spanned [-1, 1], which clumped or scattered the nodes. The bars of the
-  static centrality comparison plot are centred on their node instead of
-  shifted left by a bar width (#210).
-- Visualization layouts are reproducible: UMAP, t-SNE and PCA take
-  `random_state` 42 by default (`graph.visualization.layout.<method>.random_state`;
-  `null` restores a random layout and UMAP's parallel run), so re-rendering
-  the same graph no longer moves every node (#210).
-- `graph_analysis_report.html` shows a density or average clustering of 0 as
-  `0.0000` instead of `N/A`, shows `N/A` instead of a fabricated 0 for
-  communities and modularity when community detection produced no metrics,
-  and links only the visualizations the renderers actually wrote (a skipped
-  or failed renderer used to leave a dead link) (#210).
-- Node centrality (exact or sampled betweenness is O(V*E)) is computed once
-  per graph instead of up to four times per ingest: `GraphAnalyzer` memoizes
-  `calculate_centrality` until its graph is replaced, so the visualization
-  layout, summary report and data export share one result (#210).
-- Evaluation datasets may put `answer_aliases` at the top level of an item,
-  next to `answer`; it was silently ignored there and only read from
-  `metadata.answer_aliases`, which still wins when both are set (#210).
-- The `ragas` evaluator no longer pays judge calls for reference-based
-  metrics (`answer_correctness`, `context_precision`, `context_recall`) on
-  rows without a reference answer, whose scores were then discarded as
-  skipped: such rows are scored in a separate run without those metrics. Its
-  context truncation also keeps `BUFFER_TOKENS` free, so the judge's contexts
-  no longer exceed `evaluation.max_context_tokens - 128` (#210).
-- `run-eval` no longer discards a whole run when one judge call fails after
-  every answer has been generated. Scoring errors (a judge call, a RAGAS run
-  or an evaluator crash) are now recorded as failed metrics for the affected
-  queries whatever `processing.ignore_errors` says, the results files are
-  written, and `--max-failure-rate` decides the exit code. `ignore_errors`
-  still governs answer generation and evaluator construction (#210).
-- `answer_match` no longer counts a different number or name as contained.
-  Normalization keeps a decimal point or comma between digits ("1.5 million"
-  no longer matches "15 million", nor "3.5" "35 percent") and a trailing
-  `+`/`#` ("C" no longer matches "C++"); thousands separators are still
-  dropped. A bare-number gold no longer takes the Korean particle tolerance,
-  which accepted a unit or magnitude ("3" matched "3억", "2" "2개월"). A
-  `yes`/`no` gold is scored by the answer's leading polarity, HotpotQA-style,
-  instead of matching the "no" in almost any long answer. A gold that is only
-  an article ("A") is scored instead of skipped. The docs no longer claim
-  SQuAD v1.1 normalization: scores are not comparable with leaderboard
-  numbers (#210).
-- Tracing: model spans never recorded `gen_ai.request.max_tokens` /
-  `temperature` (LangChain's invocation parameters do not carry them for
-  these providers); the Bedrock and local factories now pass them to the
-  handler. Model, embedding and Bedrock rerank spans are `CLIENT` spans, and
-  failed spans carry `error.type`. A `session_id` / `user_id` in a model
-  call's run metadata becomes `session.id` / `user.id`, so a streamed answer
-  groups with its session. Finish reasons are also read from
-  OpenAI-compatible (`finish_reason`) and Ollama (`done_reason`) responses,
-  and Phoenix gets `llm.provider` for local providers too (#211).
-- Tracing: partial degradations were invisible on ingestion spans. A stage
-  span now carries the stage's numeric metrics (`kg_rag.stage.<metric>`), a
-  crashed stage records the exception and `error.type`, and the run span is
-  `ERROR` when the run failed (#211).
-- The docs said the exit flush waits for about one export; against an
-  unreachable collector it takes about one export timeout per queued batch,
-  up to the batch processor's 30-second shutdown wait. `opentelemetry` is
-  now at `ERROR` in the default `logging.library_levels`, which hides the
-  exporter's per-retry warnings (#211).
-- The CDK stack left every OpenSearch index without replicas, even on the
-  non-dev two-node, two-AZ domain, so losing one node made shards
-  unavailable. The compute stack now injects `OPENSEARCH_NUMBER_OF_REPLICAS`
-  (1 on a multi-node domain, 0 on a single node), a new override of
-  `indexing.opensearch.index_settings.number_of_replicas`; existing indices
-  need a one-off `PUT _settings` (operations runbook) (#211).
-- Ingestion runs that hit the state machine timeout or were aborted notified
-  nobody: they never reach a phase Catch, and the only alarm watched
-  `ExecutionsFailed`. A `PipelineTimedOutOrAborted` alarm now covers both.
-  `States.Timeout` is dropped from the phase retries (no task timeout could
-  raise it), and phases retry only ECS start failures
-  (`ECS.AmazonECSException`, `AmazonECS.Unknown`) instead of rerunning a
-  phase that exited non-zero twice more. The four per-phase failure
-  notifications become one JSON message with the execution id, pipeline id,
-  error and cause (#211).
-- The Neptune error alarm watched the deprecated HTTP-only `GremlinHttp5xx`,
-  which misses the WebSocket traffic the app sends; it now alarms on
-  `GremlinServerErrorsPerSec`. The doc-status throttle alarm watched
-  `PutItem` only, while the registry writes through `BatchWriteItem`; it now
-  uses the table-level `WriteThrottleEvents` (#211).
-- The ECR lifecycle rule (keep 10 images, any tag) could expire the image the
-  task definition runs; the deployed `image_tag` is now exempt. IAM ARNs use
-  the stack partition instead of a hardcoded `arn:aws:` (#211).
-- Claim resolution no longer rewrites a claim onto a different entity. A
-  subject or object resolves by its `entity_key`, then through the guarded
-  fuzzy match entity grouping uses (spelling and legal-form variants match;
-  differing identifier tokens or head characters never do), else the object
-  stays a literal value. The abbreviation, token-Jaccard and partial-match
-  tiers that turned "PO 1003 -> Vendor B" into "PO 1002 -> Vendor A" are
-  removed with `FuzzyMatcher.find_best_match` and its
-  `include_partial_matching` option. Claims resolve in this process, in
-  input order, instead of shipping the matcher to a process pool per claim
-  (10,000 claims against 5,000 entities: 1.8 s, from over 10 minutes), so
-  the merged claim of a group no longer depends on completion order (#213).
-- Gleaning and claim extraction no longer copy the whole graph to a worker
-  process per text unit to prepare its prompt. Each stage indexes entities and
-  relationships by the text units they cite once (per gleaning round), and
-  parsing a gleaning answer resolves names, corrections and endpoints through
-  that index instead of scanning the graph per unit (one round over 1,000 units
-  and 10,000 entities: 0.2 s, from 173 s). `GraphGleaner` and `ClaimExtractor`
-  drop their `max_workers` and `use_process_pool` arguments. Merged text-unit
-  lists keep first-seen order instead of set order (#213).
-- Gleaning no longer overwrites or duplicates descriptions and no longer
-  inflates relationship weights. The refinement prompt lists names only, so an
-  `ENTITY_CORRECTION` or `RELATIONSHIP_CORRECTION` description is merged into
-  the current one (`merge_descriptions`) instead of replacing text the model
-  never saw. The round's merge combines descriptions with the same
-  line-deduplicating rule as every other path instead of a `"; "` join, and an
-  edge a unit restates adds no strength for a text unit it already cites
-  (each re-proposal used to add 1.0) (#213).
-- An extraction answer whose last section lacks its closing tag (a missing
-  `</relationships>`) no longer loses that section. The XML parser counted the
-  section's inner `<relationship>` elements as top-level sections, rejected the
-  correct lxml recovery for not having them, and fell back to a result keyed
-  `relationship`, which the extractor never reads. Only the expected
-  top-level tags now count as sections (#213).
-- In local mode a response cut at its output-token limit now fails its item
-  like on Bedrock instead of being parsed as a partial success. The truncation
-  guard also reads the OpenAI-compatible `finish_reason` and Ollama
-  `done_reason` (`"length"`), not only Bedrock's `stopReason`/`stop_reason`
-  (`"max_tokens"`) (#213).
-- The intelligent chunker no longer returns chunks far above
-  `max_chunk_size`. An answer that keeps a pre-chunk whole (no boundaries,
-  `single_chunk`, only line 1, or out-of-range lines) is now split by size like
-  every other answer, and a failed boundary call splits its pre-chunks by size
-  instead of keeping them whole (#213).
-- Intelligent chunking sends the pre-chunks of all documents to the boundary
-  model in one batch instead of one batch per document, so a corpus of short
-  documents no longer runs one call at a time, and the chunking stats logged
-  at the end cover the whole stage instead of its last document (#213).
-- Files under a hidden directory (`.drafts/note.txt`) are no longer parsed
-  while left out of the corpus fingerprint, so editing them no longer resumes
-  stale stage output. Discovery, the document loader, `run-prompt-tuning` and
-  the fingerprint share one rule: a path component below the corpus root that
-  starts with `.` or is `__pycache__` excludes the file (a hidden corpus root
-  itself is fine) (#213).
-- Translation translates each target language once (a language repeated in
-  `target_language` / `additional_target_languages` was translated and
-  counted twice) and no longer calls the model to "translate" text into its
-  own `source_language`: that language keeps the original text (#213).
-- With `processing.deduplicate` and incremental indexing on, a new near-copy
-  of an indexed document no longer replaces it: deduplication keeps the
-  document the doc-status registry already holds, where it used to keep
-  whichever copy came first and the diff then deleted the indexed original.
-  Documents load in file order instead of completion order, so the copy kept
-  no longer varies between runs, and the Jaccard check of a candidate pair runs
-  in-process instead of sending every document's MinHash to a worker per
-  pair (#213).
-- `entity_confidence_threshold` no longer leaves stub entities without a
-  description or a relationship: an entity materialized only for relationships
-  that the filter removed (they named a filtered entity) is dropped with them.
-  Merged extraction entities list their text units in first-seen order instead
-  of set order (#213).
-- Community reports: members left out by `max_entities_per_report` now roll
-  the sub-community reports in, as a token-budget overflow does, and a report
-  context that left members out with no sub-report to cover them is logged.
-  The findings count per `content_length` has one source
-  (`REPORT_FINDINGS`: short 5-7, medium 7-10, long 10-15) for the prompt,
-  the output-token floor and the config description, which named paragraph
-  counts. A report rank of 0 is indexed as 0, not 1 (#214).
-- Neptune writes: a relationship edge or a community's `MemberOf` edges whose
-  drop failed are no longer re-added next to the old ones (duplicates); they
-  count as failed writes, so the documents are retried. Relationship edges
-  are written `indexing.neptune.index_concurrency` at a time (they ignored
-  it). Clearing a label drops bounded batches until one comes back short,
-  without recounting the label and sleeping 0.5 s per batch.
-  `find_incident_relationship_ids` batches its ids and raises on a failed
-  read instead of returning none, which left orphaned relationship documents
-  in OpenSearch; the removal then fails and is retried (#214).
-- **Behaviour change:** a relative `providers.doc_status.sqlite_path` is
-  resolved against the config file's directory instead of the working
-  directory, so a run started elsewhere no longer opens a new, empty registry;
-  the SQLite store logs the database's absolute path, and
-  `docker/config.local.yaml` keeps it in the repository's `.unified-kg-rag/`.
-  An incremental run whose registry lists indexed documents of its namespace
-  that the graph store no longer holds (an in-memory Gremlin Server
-  restarted) now fails before writing anything and asks for
-  `indexing.reset: true`, instead of treating them as unchanged (#214).
-- A delta entity that merged into a stored one under another id no longer
-  rewrites (and re-summarizes) every edge of the stored entity: its incident
-  edges are still read to find matches, but only the edges a delta edge
-  became or merged into are written (#214).
-- Removing a changed or deleted document's text units from the entities and
-  relationships it shares with other documents no longer re-embeds them: the
-  OpenSearch copies get a partial update of `text_unit_ids` (and `weight`)
-  through the new `VectorIndexer.update_entity_lineage` /
-  `update_relationship_lineage` (default: re-upsert) (#214).
-- **Behaviour change:** entity and relationship `rank` are now computed (MS
-  GraphRAG parity): an entity's rank is its degree and a relationship's the
-  sum of its endpoints' degrees. They stayed 1, so degree-first ordering and
-  the default `indexing.neptune.entity_importance_source: "rank"` sorted by a
-  constant. Graph resolution sets them for a full build; an incremental merge
-  recomputes them for the items it writes over the stored graph
-  (`GraphIndexer.read_neighbor_ids`, default `{}`), and a stored entity the
-  delta does not write keeps its rank until the next full build. A rank of 0
-  is indexed as 0, not 1 (#214).
-- Community detection no longer copies a cluster that Leiden leaves on its
-  own (often an isolated one) to every coarser level as a parent identical to
-  its only child; such parents were embedded, indexed and returned once per
-  level. The cluster keeps its level and joins the first coarser community
-  that merges it, so the single-child report reuse is removed (#214).
-- A full rebuild now replaces an index type that comes out empty: with no
-  claims, community reports or communities in run 2, OpenSearch swaps the
-  alias onto an empty index and Neptune clears the label instead of serving
-  run 1's data. **Breaking** for custom indexers: the full-build `index_*`
-  methods of `VectorIndexer` and `index_entities`/`index_communities` of
-  `GraphIndexer` take a keyword-only `suffixes` argument naming the suffixes
-  they replace even without items (#214).
-- An incremental commit whose entities or relationships merged into stored
-  ones under another id now points the delta's communities
-  (`entity_ids`/`relationship_ids`, deduplicated) and claims
-  (`subject_id`/`object_id`) at the kept ids; they referenced ids that were
-  never written (#214).
-- Relationships of another type or in the other direction between the same
-  two entities no longer collapse into one community-graph edge (the last one
-  inserted). The edge sums their weights and lists every relationship, so
-  Leiden weights do not depend on input order, `Community.relationship_ids`
-  keeps them all and the report prompt receives each one (#214).
-- With `entity_grounding` enabled, the check whether a gleaned
-  relationship's endpoint name occurs in its unit (#202) now accepts common
-  spelling variants and no longer accepts partial words. Both sides drop
-  accents and possessive "'s" and read dots, hyphens and apostrophes as
-  joined or separated ("Nestlé"/"Nestle", "U.S."/"US", "E-Mail"/"email",
-  "Vendor's Agent"/"vendor agent"); the last word may differ by a trailing
-  "s"/"es" or a corporate suffix (Corporation/Corp, Incorporated/Inc,
-  Company/Co, Limited/Ltd); a name with a parenthetical alias matches by
-  either part. Latin words must match whole, so "Ven" no longer matches
-  "Vendor" nor "AI" "aim", also inside a mixed-script name; a
-  one-character Han/Hangul/Kana name must stand alone instead of matching
-  any text containing the character (#203).
-- `pipeline_metadata.json` no longer carries the extraction stage's
-  `rejected_entities`. The list is a cached stage output, yet every metadata
-  save (after each stage) re-serialized it and synced it to S3: a run with
-  20,000 rejections wrote about 3.4 MB per save. A resume still restores the
-  rejections from the stage cache (#203).
-- With `entity_grounding` enabled, gleaning no longer brings back an entity
-  the grounding guard rejected. Since #201 a gleaned relationship naming an
-  entity the batch lacks adds it as a stub, and the relationship's grounding
-  check covers only its quote, which need not name its endpoints: a
-  relationship to an entity gleaning rejected in the same answer (or an
-  earlier round), or to one extraction dropped as ungrounded for that unit,
-  recreated the entity. Such relationships are now dropped (gleaning stat
-  `relationships_dropped_rejected_endpoint`), and a gleaned relationship
-  naming an entity its unit does not list is kept only when the unit's text
-  contains that name (`relationships_dropped_ungrounded_endpoint_name`).
-  Extraction now hands its rejected entities to gleaning as a cached stage
-  output (`rejected_entities`), so a run resumed from an extraction cache
-  written before this fix re-runs extraction. With grounding disabled
-  gleaning is unchanged (#202).
-- An entity `entity_confidence_threshold` removed at extraction no longer
-  comes back through gleaning. The filter runs after extraction, so a gleaned
-  relationship naming the entity added it back as a stub at the default
-  confidence 1.0 (and graph resolution keeps the maximum confidence), as did
-  a gleaned entity of the same name, whose answer carries no score.
-  Extraction now hands the filtered entities to gleaning with the units they
-  cited (`rejected_entities`, reason `low_confidence`); gleaning drops
-  relationships from those units naming them and does not re-add them as
-  entities from those units. A gleaned entity below the threshold is dropped
-  too (gleaning stat `entities_dropped_low_confidence`). A stub still gets
-  the default confidence, as an entity listed without a score does: it only
-  exists for an entity not rejected for its unit (#202).
-- Citing relationship endpoints (after extraction, in every gleaning round
-  and at the start of graph resolution) took time quadratic in an entity's
-  edge count: an entity on 20,000 edges took several seconds per pass. It is
-  now linear, with the same text-unit order (#202).
-- Relationships gleaning adds now make their endpoints cite the gleaned text
-  unit, as first-pass extraction does. Before, an entity one document
-  extracted kept citing only its own text units when gleaning another
-  document's chunk added an edge to it, while the document lineage
-  attributed it to both documents: deleting the first document kept the
-  entity but stripped it to no text units (`frequency` 0) in Neptune and
-  OpenSearch, where local search still retrieved it. A gleaned edge naming an
-  entity the batch did not extract now adds it as a stub citing the gleaned
-  unit instead of being dropped, so gleaning no longer depends on which
-  documents share a batch. Graph resolution applies the same step to its
-  input, so resuming from an extraction or gleaning output cached before
-  this fix also cites the endpoints (#201).
-- With `entity_grounding.action: penalize`, an ungrounded relationship naming
-  an entity its chunk did not extract is now dropped (counted in
-  `relationships_dropped_ungrounded_unlisted_endpoint`) instead of kept at
-  the penalized weight. Since every relationship endpoint cites the
-  relationship's text units, keeping it made that entity, possibly well
-  grounded in other chunks, cite a chunk with no evidence for it. An
-  ungrounded relationship between two entities its chunk extracted is still
-  kept at the penalized weight; its endpoints cite that chunk already (#201).
-- Design doc: §4 now states that relationship endpoints cite their
-  relationships' text units, a deliberate divergence from MS GraphRAG and
-  LightRAG (where an entity cites only the chunks that list it) made for
-  incremental convergence, and that a run resumed with the same
-  `pipeline_id` after upgrading reuses the old stage outputs, so
-  `--force-rebuild` or a new `pipeline_id` is needed (#201).
-- Deleting or changing a document no longer deletes a relationship a
-  surviving document still lists. When one document extracted an entity and
-  another named it only as the endpoint of its relationship in the same run,
-  the entity cited only the first document's text units and was attributed
-  to it alone: removing that document deleted the entity, and with it every
-  incident edge (in Neptune and the OpenSearch relationships index), while a
-  fresh build of the remaining corpus keeps the edge. Every relationship
-  endpoint now also cites the relationship's text units (an extracted entity
-  as well as a stub; a stub cites every relationship it is an endpoint of,
-  not just the first), so an entity's text units no longer depend on which
-  chunks shared an extraction batch, and the document lineage attributes a
-  relationship's endpoints to the relationship's documents. Entity
-  `frequency` counts these text units. Registry records written before keep
-  the old lineage until their document is re-indexed or the stores are
-  rebuilt (`indexing.reset: true`) (#200).
-- Operations guide: a direct-API record without a scope that stores a
-  `file_path` under a caller's own `doc_id` survives every reset; the guide
-  now says so and how to delete such records through the doc-status store
-  (#200).
-- A configured `document_parsing.source_scope` that is a local path with a
-  trailing or repeated slash (`/mnt/corpus/`) can now be retired. The scope
-  is stored as given, but `indexing.retire_source_scopes` normalized the
-  retire value, so neither `/mnt/corpus/` nor `/mnt/corpus` matched the
-  stored records and the run only warned that the scope had no records. A
-  retired scope now also matches every stored scope of the run's namespace
-  whose source scope normalizes to the same value (read from the scopes the
-  diff's scan already returns; the run's own scope is never retired). Stored
-  scopes are not re-keyed (#195).
-- The delta detection reads the records of changed documents in one batch
-  (`DocStatusPort.get_many`, `BatchGetItem` on DynamoDB) to check
-  `indexing.max_document_failures`, instead of one `GetItem` per changed
-  document: editing 300 documents, or the recovery run after an interrupted
-  run left 300 `PENDING` records, cost 300 sequential reads. A custom store
-  without `get_many` still gets one `get` per document (#195).
-- Deleting or changing a document no longer leaves its entities and
-  relationships in the stores because a document of another index namespace
-  sharing the registry table references the same ids. The removal plan
-  grouped survivors by the record's `suffix`, which is the item suffix
-  (`index_value`, `default` when unset) and the same for every
-  `indexing.additional_suffix`, so another namespace's documents counted as
-  survivors and the artifacts stayed, stripped of their text units. Survivors
-  are now grouped by the namespace read from each record's scope; a record
-  written before scopes existed still counts as a survivor for every
-  namespace of its suffix (#195).
-- `indexing.reset` on one index namespace (`index_value` +
-  `indexing.additional_suffix`) no longer deletes the doc-status records of
-  every namespace sharing the registry table. Every config uses the same
-  default table name, and the reset only clears its own namespace's stores,
-  so the other namespaces lost the lineage of intact stores: their next run
-  re-extracted the whole corpus, and a file removed from them before that run
-  was never removed from their stores. The reset now deletes only the records
-  whose scope belongs to the cleared namespaces, and a record written before
-  scopes existed only when its key is such a namespace's legacy key (#195).
-- `indexing.reset` again clears the doc-status records written by the
-  initial public release. Since #195 a record without a scope was cleared
-  only when it stored its `file_path` and its key was a cleared namespace's
-  legacy key, which those records (keyed by a hash of the file path alone,
-  no `file_path`) never match, so they stayed. Removal planning counts a
-  record without a scope as a survivor in every namespace of its suffix, so
-  an entity such a record listed was never deleted again, only stripped of
-  its text units. A reset now also deletes every record without a scope
-  and without `file_path` whose `suffix` is one of the cleared suffixes:
-  such a record names no namespace, so it counts as a survivor in every
-  namespace of its suffix. A record without a scope that stores its
-  `file_path` is still cleared only when its key is a cleared namespace's
-  legacy key, so a reset keeps another namespace's records on the same
-  suffix (#197).
-- Deleting a document of one index namespace no longer leaves its entities
-  in the stores, without text units, because a registry record of another
-  namespace on the same item suffix (another `indexing.additional_suffix`)
-  written before scopes existed lists them. Removal planning counted every
-  record without a scope as a survivor in every namespace of its suffix. A
-  record without a scope that stores its `file_path` is now matched to its
-  namespace by its legacy key (`compute_doc_id(file_path, namespace)`, the
-  check a reset already makes) and retains only there; one without
-  `file_path` (the initial release) still retains in every namespace of its
-  suffix until a reset clears it (#198).
-- Write-ahead lineage overflow no longer stays in the doc-status table when
-  a run stops between a commit's record write and its overflow delete. The
-  document then reads unchanged, and only the write-ahead of a document it
-  processes read (and dropped) overflow, so it stayed until the document
-  changed or was removed. The diff's scan now reports overflow next to a
-  record that is not `PENDING`, or next to none
-  (`DocumentDelta.orphan_overflow`), and the next incremental run's
-  write-ahead deletes it for the owners of its namespace (#198).
-- A write-ahead lineage overflow append that DynamoDB stored only in part
-  no longer strands an overflow item for good. All new parts went out in
-  one `BatchWriteItem`, which can store any subset: with part 1 stored and
-  part 0 unprocessed when the run died or ran out of retries, part 1 was
-  never read (reads stop at the first missing part) or deleted, not even
-  by a reset. Parts are now written in index order, each only after the
-  one before it, and deleting a document's overflow also removes parts
-  after a gap: those the last registry scan found, or those a probe that
-  does not stop at a missing part finds (#198).
-- The incremental write-ahead no longer probes for lineage overflow of
-  every new and changed document with strongly consistent reads (on a
-  first run, twice the `BatchGetItem` requests). Only a document whose
-  stored record is `PENDING` can have overflow to keep; leftover overflow
-  next to other records is collected from the diff's report (#198).
-- Deleting a document no longer deletes an entity that a registry record
-  without a scope still lists, when that record's key is no legacy key of a
-  namespace the removal knew of. Since #198 such a record retained nothing
-  in any namespace, which is only right for a pipeline record of another
-  namespace: a record the direct API wrote under a caller's own `doc_id`,
-  or one a direct-API run without a scope wrote (keyed by the bare item
-  suffix, while the indexers write under `indexing.additional_suffix`),
-  lost its entities to the next scoped run that added and deleted a
-  document sharing them. A record without a scope now has a namespace only
-  when its key is the legacy key of the run's namespace or of one a scope
-  in the registry names; any other counts as a survivor in every
-  namespace of its suffix (#199).
-- `indexing.reset` on one index namespace no longer deletes the doc-status
-  records without a scope of another namespace on the same item suffix.
-  Since #197 a reset cleared every record without a scope whose `suffix`
-  was a cleared suffix before checking its key, so a record stored with its
-  `file_path` under another `indexing.additional_suffix`'s legacy key lost
-  the lineage of intact stores. Only a record without `file_path` is now
-  cleared by its suffix (#199).
-- `indexing.reset` no longer fails on an index namespace that was never
-  indexed. Clearing OpenSearch deleted the namespace's five aliases in one
-  request, which OpenSearch answers with a 404 when none of them exists,
-  so the reset stopped with "Failed to clear existing data before
-  indexing". Deleting an index drops its aliases; only an alias still on
-  another index is now deleted (#199).
-- `indexing.reset` no longer deletes the OpenSearch indices of other index
-  namespaces. Clearing a namespace deleted every index matching
-  `<prefix>-<suffix>[-<additional_suffix>]-*`, so a reset of `default`
-  without an additional suffix also deleted the indices of `default-x` and
-  of every suffix starting with `default-` (a reset of `acme` took
-  `acme-eu`), while their Neptune labels and registry records stayed. The
-  reset now deletes only the indices named `<alias>-<timestamp>` for the
-  namespace's own aliases (#199).
-- An incremental run no longer fails on a large document whose old and new
-  versions each fit one doc-status record but not together. The write-ahead
-  `PENDING` record lists both lineages; for such a document (each version
-  near 235 KB of artifact ids, the union over the DynamoDB 400 KB item
-  limit) the write-ahead raised `DataProcessingError` after extraction and
-  before any write, so no document of the delta got its `PENDING` record,
-  every later run re-extracted and failed the same way, and the error told
-  the user to split a file that fits. Such a record now keeps the stored
-  lineage and puts the other planned ids in lineage overflow: new
-  `DocStatusPort` methods `record_fits`, `add_lineage_overflow`,
-  `get_lineage_overflow` and `delete_lineage_overflow` (defaults: no limit,
-  no overflow). `DynamoDBDocStatusStore` stores it in the same table as
-  items `<doc_id>#pending#<n>` marked `record_kind` `lineage_overflow`, which
-  `get`, `get_many`, `list_all` and `diff` skip. A later run reads the
-  overflow with the record, so crash recovery still removes everything the
-  interrupted run may have written; the commit and the removal of the
-  document delete it. A document whose own lineage cannot fit one record now
-  fails before anything is written, with an error naming the file and its
-  artifact id count (#196).
-- An incremental run resumed after the document_loading stage logs a WARNING
-  naming the `indexing.retire_source_scopes` it does not apply: the resumed
-  delta was computed without them, so they were ignored silently. Re-run
-  from document_loading (`--resume-from-stage document_loading`) to retire
-  them. The applied scopes are recorded on the pipeline context
-  (`incremental_retired_scopes`) (#196).
-- Resuming a pipeline context saved before #196, which has no
-  `incremental_retired_scopes`, no longer warns that every configured
-  `indexing.retire_source_scopes` value was NOT applied: whether they were is
-  unknown, so the WARNING now says they may not have been applied. The field
-  is `None` for such a context (#197).
-- The CI local-stores job no longer sleeps after its last failed attempt to
-  start the stores before failing (#196).
-- An incremental run interrupted inside the indexing stage (a killed task, a
-  store outage, the failure gate) is repaired by the next run. Before, a run
-  that stopped after pruning a changed document left its old content hash in
-  the registry: if the file was then reverted to that content, the document
-  read as unchanged and was never indexed again, with its artifacts gone. A
-  run that stopped after writing new documents but before recording them left
-  their artifacts with no registry record, so if those files were removed
-  before the next run, nothing ever deleted the artifacts. The indexing stage
-  now writes ahead: before it removes or writes anything, each new and
-  changed document is recorded `PENDING` with a content hash no document has
-  (`PENDING_CONTENT_HASH`) and the union of its stored and planned lineage,
-  and the commit replaces the record only after the writes. The next run
-  re-extracts a `PENDING` document that still exists and removes everything
-  the interrupted run may have written for one that is gone. An interruption
-  is not counted as a failure toward `indexing.max_document_failures`, but
-  it resets the document's consecutive-failure count. The write-ahead
-  and commit records are written in batches through the new
-  `DocStatusPort.put_many` (default: one `put` per record;
-  `DynamoDBDocStatusStore` uses `BatchWriteItem`, 25 items per request, with
-  unprocessed items retried), and the commit no longer reads the registry
-  once per document. A role with a custom IAM policy needs
-  `dynamodb:BatchWriteItem` (#194).
-- Removing a changed or deleted document's text units from entities and
-  relationships shared with surviving documents rewrites every shared item it
-  reads back from Neptune. It rewrote only the items whose Neptune copy still
-  cited the removed text units, so after a removal whose Neptune write landed
-  but whose OpenSearch write was interrupted or failed, every retry found the
-  Neptune copy already stripped and left the OpenSearch copy citing text units
-  that no longer exist (#194).
-- An incremental run that both changes one document and deletes another no
-  longer leaves behind the entities and relationships only those two
-  documents shared. The stale artifacts of changed documents and of deleted
-  documents were removed in two passes, each treating the other set's
-  documents as survivors, so such an artifact was kept with no text units
-  and retrieval could still surface the deleted content. The removal is now
-  planned once over changed + deleted documents. If it fails, the deleted
-  documents' registry records are kept as before, and the run fails before
-  committing whenever the delta has changed documents (#190).
-- A full build and an incremental build of the same corpus store the same
-  entity and relationship descriptions. Graph and claim extraction merged
-  the descriptions of one item found in several text units with `"; "` and
-  kept repeats, while the resolver and the cross-run merge join with a
-  newline and drop duplicate lines. All three now use the newline rule
-  (`merge.merger.merge_descriptions`); the resolver also compares lines
-  rather than whole descriptions. Descriptions written before stay as they
-  are until the item is re-extracted or the index is rebuilt (#190).
-- Community detection no longer fails with `ZeroDivisionError` on a graph
-  that has entities but no relationships, such as an incremental delta of a
-  document that yields one entity. Each entity becomes its own community and
-  the modularity, undefined without edges, is recorded as `0.0` (#191).
-- Moving a local corpus to another directory no longer leaves its old content
-  indexed without notice. Without a fixed `document_parsing.source_scope` the
-  scope is the source directory, so every document read as new under the new
-  directory while the old directory's records stayed in the registry and kept
-  the previous content live, including that of files removed during the
-  move. The records are not adopted on a guess: a directory missing on the
-  host that runs can be another host's corpus sharing the registry and index
-  suffix, and adopting its records would delete that corpus's content on
-  every run. Instead, a local default-scope run with new documents logs one
-  WARNING naming the other local source directories with records in its
-  suffix, pointing to `--retire-source-scope` (see Added) and to a fixed
-  `source_scope`; it deletes nothing. The scopes come from the scan the diff
-  already makes: `DocumentDelta.stored_scopes`, which the DynamoDB and
-  in-memory stores fill and a custom store may leave empty (#191, #PR).
-- An interrupted adoption of a doc-status record written before scopes
-  existed is now completed. When a run had written the record under its
-  scoped key but stopped before deleting the old key, the old record (scope
-  unset, so never a deletion candidate) stayed forever and kept the previous
-  version's text units, entities and relationships referenced, so a later
-  edit or deletion left that content indexed. Any such legacy key is now
-  deleted once its current-key record exists. The diff now also reports
-  which legacy keys are stored, so only those are read (#191).
-- Adopting a legacy-keyed doc-status record no longer diffs the registry a
-  second time. The delta is adjusted in memory instead: an adopted document
-  moves from new to unchanged or changed by the adopted record's content hash
-  and status, and a legacy key is never listed as deleted. The second diff
-  was a second full scan, and an eventually consistent DynamoDB `Scan` could
-  still return the legacy key (scope = the run's) and miss its new copy, so
-  the run read the legacy key as deleted and pruned the artifacts the adopted
-  document now owns (#192).
-- `DynamoDBDocStatusStore` returns the artifact-id lists of a record sorted.
-  They are stored as string sets, which have no order, so two reads of one
-  record could compare unequal (#192).
-- Delta detection looks up the pre-scope registry keys of new documents in
-  batches instead of one DynamoDB `GetItem` per document on every run (1,000
-  new documents were 1,000 sequential reads, repeated until they were
-  committed). `DocStatusPort` gains `get_many(doc_ids)`, whose default loops
-  `get`; `DynamoDBDocStatusStore` reads 100 keys per `BatchGetItem` and
-  retries unprocessed keys with backoff, failing the run rather than reading
-  a key it could not fetch as absent. The task role needs
-  `dynamodb:BatchGetItem`, which the CDK stack's `grant_read_write_data`
-  already grants (#191).
-- An incremental commit no longer records every document FAILED when one
-  community's `MemberOf` edges fail in more than one Neptune entity batch.
-  Each failed batch carries the community id, and the commit deduplicated the
-  ids before comparing them with the failure count, so the repeated failures
-  counted as failures without an id. Failed ids are now counted once per
-  failed item (`IndexingStats.unattributed_failures`), and only the documents
-  owning the failed community are recorded FAILED (#187).
-- `run-prompt-tuning` finds an evidence span in a long sentence for a name
-  whose casefolded form has a different length, such as `Straße Holding`
-  written `STRASSE Holding`. The sentence filter compared casefolded text
-  but the window search used case-insensitive regex matching, which does not
-  equate `ß` with `ss`, so the relationship was left out. Both now match on
-  casefolded text (#187).
-- Deleting OpenSearch indices no longer fails once many have accumulated.
-  All names were joined into one request path, so reaping the ~80 stale
-  indices that earlier full reindexes leaked exceeded OpenSearch's 4 KB
-  request-line limit and the cleanup failed on every run. Indices are now
-  deleted in batches of at most 20 names and 3,000 characters; a failed batch
-  does not stop the others, and the error names the indices left behind
-  (#187).
-- Two source scopes on one index suffix (different source directories or
-  `document_parsing.source_scope` values) no longer delete each other's
-  content when both hold a file at the same relative path. The registry key
-  was the index namespace and relative path only, so each scope's run read the
-  other's record as its own changed document, pruned its artifacts and
-  re-registered it under its own scope, on every run. The source scope is now
-  part of the key; text-unit and other artifact ids do not depend on it and
-  are unchanged. Existing registries are migrated in place: the first run of
-  a scope re-keys each legacy record of that scope (or with no scope) to the
-  new key with its content hash, status and lineage, so the upgrade neither
-  re-extracts nor deletes anything; another scope's legacy record is left for
-  that scope's run. Moving a local corpus to another directory without a
-  fixed `source_scope` now re-indexes it under the new scope (#188).
-  Upgrade note: a legacy record is adopted only when its file is still in the
-  corpus, and a record without a scope is never listed as deleted. The record
-  of a file deleted before the upgrade therefore stays, and so do its
-  artifacts. Run once with `indexing.reset: true` to clear them; deleting
-  those registry items (no `registry_scope` attribute) only cleans the
-  registry and leaves the artifacts until a reset (#190).
-- `run-prompt-tuning` few-shot examples show relationship strength on the
-  1-10 scale the extraction prompt teaches. Relationship weight already holds
-  the raw strength, but the example renderer multiplied it by 10 (so a
-  strength of 8 was shown as 80); it is now rounded and clamped to 1-10,
-  which also covers weights summed over several extractions (#189).
-- Community reports that fail are no longer dropped silently. Report
-  generation returns the ids of the communities that got no report, and the
-  community detection stage records their text units as failed, so an
-  incremental run marks those documents `FAILED` and the next run
-  re-processes them and generates the missing reports (subject to
-  `indexing.max_document_failures`). Before, the failures were only logged,
-  the documents were recorded `PROCESSED` and the reports stayed missing
-  until a full rebuild. More than `indexing.max_failure_rate` of the
-  communities without a report now fails the stage (#189).
-- An incremental run no longer rewrites the stored edges of every delta
-  entity that is already in the graph. The cross-run entity merge recorded an
-  id remap even when the delta entity kept its stored id, and a non-empty
-  remap made the indexing manager read back and upsert all edges incident to
-  those entities, so a hub entity's whole neighbourhood was rewritten on each
-  run. A remap is now recorded only when the id changes (#189).
-- Merging small chunks no longer drops text when a chunk repeats the previous
-  chunk's last lines verbatim, such as a document ending in two identical
-  `Signed: ____` lines with an LLM line boundary between them. The repeated
-  chunk matched the earlier copy inside the previous chunk and vanished from
-  the merged span. Line-boundary slices are now located with no overlap
-  allowance, and any located chunk must end after the previous one (#184).
-- `run-prompt-tuning` examples give each relationship an evidence span that
-  mentions both its source and target. A sentence over 200 characters was cut
-  to a window around the first name only, so the target could be missing; the
-  window now covers every name (up to 400 characters, otherwise the record is
-  left out). Japanese and Chinese sentence terminators (`。！？`) now end a
-  sentence without needing a following space, so CJK spans are one sentence
-  rather than a whole paragraph (#184).
-- A resume reads and hash-checks each cached stage file once. Before, it
-  read and hashed every file to verify the resume point, then read and hashed
-  it all again to restore the context. The data loaded during verification
-  is now reused for the restore, and an entry that fails its hash is still a
-  miss, so its stage is recomputed (#184).
-- A full OpenSearch index run deletes the timestamped indices it replaced.
-  The cleanup looked them up with an alias-name query on the index-name
-  pattern `<alias>-*`, which matched nothing, so every full run left up to
-  five indices per suffix behind until the domain's shard limit blocked
-  `create_index`. Old indices are now found by index name and only
-  `<alias>-<timestamp>` indices older than the new one and no longer behind
-  the alias are deleted, so another suffix such as `default-2` is not
-  touched. Cleanup runs only after a successful alias swap: a run that
-  writes nothing keeps the live index and drops its own unused new index,
-  and a failed cleanup no longer deletes the index just made live. Indices
-  leaked by earlier runs are deleted on the next successful full run of the
-  same alias; those of a suffix that is never rebuilt must be deleted by
-  hand (#185).
-- Re-running a failed `community_detection` with the same `--pipeline-id`
-  (the documented recovery) works: the stage rebuilds the knowledge graph from
-  the restored entities, relationships and claims. The graph is built by
-  `graph_analysis` but neither cached nor kept in the run metadata, so the
-  resumed stage always failed with "Knowledge graph is required for community
-  detection" (#186).
-- Incremental runs no longer record a document `PROCESSED` when some of its
-  artifacts failed to write. OpenSearch bulk calls resent nothing
-  (`streaming_bulk` defaults to no item retries, and the client's
-  request-level retries never see per-item 429 rejections inside a 200
-  response), and a commit within `indexing.max_failure_rate` recorded every
-  document `PROCESSED`, so dropped entities or relationships were never
-  rewritten: their documents read as unchanged on every later run. Bulk items
-  rejected with 429/502/503/504 are now resent up to four times with backoff,
-  the OpenSearch and Neptune indexers report the ids of items that still
-  failed (`IndexingStats.failed_ids`), and the commit records the documents
-  owning them `FAILED` (counted against `indexing.max_document_failures`) so
-  the next run rewrites them. A failure reported without an id marks every
-  document of the commit `FAILED` (#186).
-- The interactive graph HTML (`graph.html`, the community hierarchy) escapes
-  node tooltips when pyvis renders them as HTML. Once any node title contained
-  `href`, pyvis replaced the plain-text tooltip with a popup that sets
-  `innerHTML` to the title, so markup in an attribute such as an LLM-written
-  description (`<img src=x onerror=...>`) ran as script when the page was
-  opened. Plain-text tooltips are unchanged (#180).
-- The centrality comparison plot gives repeated node names a ` (2)`, ` (3)`
-  suffix on its x axis. Two claims with the same subject, type and object
-  (or two same-named entities) made Bokeh reject the axis with
-  `DUPLICATE_FACTORS` and draw their bars on one factor (#180).
-- `run-eval` sends each item's `question` to the RAG chain even when its
-  `metadata` has a `query` key. The metadata key overrode the question at
-  answer time, while `load_data` validated the item with the question
-  winning (#180).
-- Merging an undersized chunk into its neighbour no longer duplicates the
-  splitter's `chunk_overlap` or fuses words at the seam. Adjacent chunks were
-  concatenated as strings, so a single-paragraph document of ~5,100
-  characters got its last ~500 characters twice and tokens like
-  `w0799w0717`; the intelligent chunker's LLM-boundary pieces were likewise
-  joined without their line break. Merged chunks are now the source text's
-  span (overlap dropped and a separator used if a chunk cannot be located)
-  (#180).
-- `run-prompt-tuning` keeps the built-in output format. The tuned
-  `graph_extraction_system` and `community_report_system` replaced the whole
-  system prompt with a persona paragraph, dropping the XML schema the parsers
-  read and the extraction rules (verbatim `<source_text>` grounding, no
-  invented entities); with no generated examples there was no format at all.
-  Each is now a domain-adapted preamble followed by the prompt's built-in
-  rules and format verbatim, then any few-shot examples, which now carry a
-  verbatim `<source_text>` span (records no sentence supports are left out).
-  For `run-prompt-tuning` users: re-run it to regenerate prompts written by an
-  earlier version. The tuned extraction prompt now holds the model to the
-  configured `processing.graph_extraction.entity_types` (`{entity_types}`);
-  the profile's entity types are listed as guidance, so copy them into
-  `entity_types` to make them the strict categories. Loading a config now
-  logs a warning (not an error) naming the output tags a `graph_extraction`
-  or `community_report` override no longer mentions (#181).
-- A damaged stage cache entry is a miss instead of a partial hit. A chunked
-  entry skipped a missing or unreadable chunk with a log line and returned the
-  rest as the stage output, and the resume check only tested that the chunk
-  files existed. Chunk count and the recorded per-chunk hashes (and the
-  single-file content hash) are now verified by both the resume check and the
-  load, so a missing, truncated or rewritten file recomputes the stage with a
-  WARNING. Chunk files, single-file entries and the index are written to a
-  temp file and renamed into place, the index last (#181).
-- A stage cache directory that is moved or restored to another path keeps
-  its hits. `CacheEntry.local_path` held the absolute path at write time, so
-  every entry became a miss after a move. It is now stored relative to the
-  pipeline cache directory; entries written before hold an absolute path and
-  are re-rooted by stage and file name under the current directory.
-  `CacheEntry.exists_locally` is replaced by `resolve_local_path(dir)` (#181).
-- `iac/`: CloudWatch alarms deliver notifications. The alarm topic was
-  encrypted with the AWS-managed `alias/aws/sns` key (or the shared data CMK
-  with `use_cmk=true`), neither of which lets CloudWatch publish; the topic
-  now has its own rotated customer-managed key that allows CloudWatch in the
-  same account and is granted to the state machine role (#157).
-- `iac/`: the cache bucket's 30-day expiry applies only to the prefixes the
-  app writes (`pipeline-runs/` and `embedding-cache/`). It covered the whole
-  bucket, so a corpus uploaded there expired after 30 days and the next
-  incremental run treated its files as deleted (#157).
-- `iac/`: interface VPC endpoints are created only in `private` mode and only
-  for the services the data plane calls (`bedrock`, `bedrock-runtime`,
-  `bedrock-agent-runtime`, `ecr.api`, `ecr.dkr`, CloudWatch Logs, STS); the
-  S3 and DynamoDB gateway endpoints stay in both modes. With `vpc_id`, synth
-  warns which subnets and endpoints the reused VPC must provide (#157).
-- `iac/`: the ECR repository (emptied first) and the `/<prefix>/tasks` and
-  `/<prefix>/pipeline` log groups follow `removal_destroy`, so a dev
-  `cdk destroy --all` no longer leaves fixed-name resources that make the
-  next deploy fail (#157).
-- `iac/`: the `OpenSearchEndpoint` stack output is a bare host, the form
-  `aws.opensearch.endpoint` expects; it carried an `https://` prefix (#157).
-- `iac/`: the baseline guardrail no longer anonymizes `NAME`, which replaced
-  person names in answers with `{NAME}` and removed entity-search seeds;
-  email, phone and card numbers stay anonymized (#157).
-- `iac/`: `cdk synth` works from `iac/` without `PYTHONPATH`, and the cdk-nag
-  IAM5 suppression matches a concrete account id, so a synth with
-  `CDK_DEFAULT_ACCOUNT` set no longer fails (#157).
-- `run-prompt-tuning` doubles the braces in every corpus- or model-derived
-  field (persona, domain, language, entity types, few-shot examples) before
-  writing the `custom_prompts` templates. A sample containing `{"retries": 3}`
-  made graph extraction fail to format, and `{input_text}` in a sample was
-  substituted with the chunk being extracted (#173).
-- LightRAG keyword extraction keeps numeric keywords (`[2024, "Acme"]`) as
-  text; it rejected the whole payload, which failed the query under the
-  default `processing.ignore_errors: false`. Null, boolean and nested items
-  are still rejected (#176).
-- Claude Haiku 5.5 (the default fast tier) streams. langchain-aws 1.8.0
-  streams only model ids on its allowlist, which lacks Haiku 5.5, so every
-  model construction fell back to non-streaming Converse and logged a
-  warning. A `supports_streaming` capability (also a `model_overrides` key)
-  now sets it per model (#176).
-- A Neptune connection whose probe query fails is closed before the error is
-  raised, instead of leaving its websocket and thread pool open (#176).
-- `memory.max_conversation_age_hours` is enforced: a conversation idle for
-  longer is dropped on the next memory lookup (a returning one starts over).
-  The TTL was stored and never read, so conversations lived until the
-  `max_conversations` limit evicted them (#176).
-- The CountTokens `bedrock-runtime` client sizes its connection pool like the
-  model clients instead of botocore's default 10, which concurrent queries'
-  batched counts (8 at a time each) overran (#176).
-- Global search runs `processing.max_concurrency` map calls at once, as
-  documented; each map call was its own BatchProcessor chunk, so the default
-  chunk concurrency of 4 capped it (40 map calls of 0.5 s: 5.0 s, now
-  1.0 s at the default 20) (#176).
-- Neptune traversals beyond `aws.neptune.pool_size` wait on the event loop
-  instead of in gremlinpython's blocking pool checkout, where each held a
-  default-executor thread and the Bedrock calls LangChain runs on that
-  executor queued behind them (64 concurrent traversals at pool size 4 delayed
-  a 0.2 s executor call to 3.0 s; now 0.2 s). The default pool size stays 4,
-  the query-thread count of the default `db.r6g.large` (#176).
-- A `GraphRAGChain` dropped without `close()`/`aclose()` now releases its
-  cached retrievers when it is garbage-collected; its finalizer only stopped
-  the sync-API loop, so the retrievers' sockets outlived the chain (20 dropped
-  chains against the local stores: +40 sockets and "Unclosed client
-  session" warnings after `gc.collect()`, now +0). Closing the chain
-  explicitly is still required for timely release (#176).
-- `run-eval` closes its chain on exit, whether the run succeeds or fails, so
-  the retrievers' Neptune/OpenSearch sockets are released instead of the
-  process ending with "Unclosed client session / connector" warnings (#176).
-- **Breaking (index data):** the chunk `text` field is analyzed with the
-  source-language analyzer (`language_analyzers[source_language]`, else
-  `default_analyzer`) instead of `standard`. An untranslated Korean corpus
-  (`source_language: ko`, `target_language: ko`) had almost no BM25 recall:
-  `standard` keeps "홍길동으로부터" as one token, so "홍길동" never matched.
-  Re-index existing text-unit indices to pick up the new mapping (#177).
-- Lexical search no longer applies `fuzziness: AUTO` to a query that contains
-  Hangul, Han or Kana. One such character is a whole syllable or morpheme, so
-  the one edit AUTO allows on a 3-5 character term matched a different word
-  ("김철민" found "김철수"). Latin-script queries keep typo tolerance (#177).
-- Entity resolution no longer fuzzy-merges Han/Hangul/Kana names whose final
-  character (the head noun) differs ("가나다연구원" / "가나다연구소",
-  "김철수" / "김철민"), and does merge spacing and legal-form variants
-  ("가나다 상사" / "가나다상사", "(주)가나다" / "가나다", "Acme Inc" /
-  "Acme"); the "주" of "(주)" no longer counts as an identifier token. Entity
-  ids are unchanged (#177).
-- `answer_contains` and `graph_aware` phrase matching: a Korean particle may
-  follow any gold word, so `2024`, `AWS` and `Acme Corp` match `2024년에`,
-  `AWS는` and `Acme Corp입니다`; spacing next to CJK letters is ignored
-  (`3억 원` = `3억원`); and a CJK substring no longer matches inside a longer
-  number (`2년` in `12년`, `二年` in `十二年`) (#177).
-- The `retrieval` evaluator NFKC-normalizes and casefolds source names before
-  matching, so a decomposed (NFD) Hangul file name from macOS or a PDF tool
-  and a full-width `ＡＢＣ` match their reference sources (#177).
-- Parsed document text and the `RAGInput.query` are NFC-normalized, so
-  decomposed (NFD) Hangul from macOS file systems or PDF text layers matches
-  composed queries, analyzer dictionaries and entity names. NFC text is
-  unchanged and keeps its ids; a document that contained NFD text gets a new
-  content hash and document id, so the next incremental run re-indexes it
-  once (#177).
-- Entity grounding (opt-in) judges Chinese and Japanese spans: their length
-  counts each Han/Hangul/Kana character as a token, where the whitespace
-  count made every span "too short" and so always grounded. Dense-script
-  spans fall back to character-bigram overlap, so a Korean paraphrase that
-  only changes particles is kept, and punctuation no longer separates
-  "2년이다." from "2년이다" (#177).
-- **Breaking (index data):** translations into
-  `processing.translation.additional_target_languages` were produced (one LLM
-  call per chunk and language) but never indexed. Each is now indexed in its
-  own `translated_text_<language>` field with that language's analyzer and
-  included in lexical text-unit search. Re-index text units so existing
-  indices get the analyzed fields (#177).
-- The size-based splitter also splits after CJK sentence terminators
-  (`。．｡！？；`) before falling back to spaces and characters, so Chinese and
-  Japanese text is no longer cut mid-sentence. Text without these characters
-  is chunked exactly as before (#177).
-- Querying a suffix nothing was ingested under (before the first ingestion,
-  or a typo in `--suffix`) fails with `IndexNotFoundError`: "No indices found
-  for suffix '<suffix>' ... Did you run ingestion with
-  processing.document_parsing.index_value '<suffix>'?". It used to return a
-  successful answer over 0 results while logging `index_not_found` warnings.
-  A single missing optional index of an ingested corpus (no claims, no
-  community reports) is still skipped (#178).
-- `custom_prompts` overrides are checked when the config loads. An unknown
-  `{variable}` (often a literal JSON brace, which raised `KeyError` on every
-  call) or a missing data variable such as `{input_text}` (which ran the
-  prompt on no document text) now fails the load with the offending key;
-  literal braces are written `{{`/`}}`. `run-prompt-tuning` escapes braces
-  in the overrides it writes (#178).
-- Ingestion warns once per skipped file extension with the remedy (for
-  `.md`/`.html`, the `uv sync --extra unstructured` install command) instead
-  of skipping unparseable files silently, and an empty first stage reports
-  "No supported source files found in <dir>" rather than telling the user to
-  check a previous stage that does not exist (#178).
-- `run-ingestion` (when the `indexing` stage is enabled), `run-rag` and
-  `run-eval` check the Neptune and OpenSearch endpoints the run needs at
-  start-up and exit with an error naming the config key and environment
-  variable (`aws.neptune.endpoint`/`NEPTUNE_ENDPOINT`,
-  `aws.opensearch.endpoint`/`OPENSEARCH_ENDPOINT`). A missing endpoint used
-  to surface only at the indexing stage, after every paid LLM stage, or at
-  query time (#178).
-- `run-rag --help`, invalid arguments and a missing `--query`/`--interactive`
-  no longer print an asyncio "Task exception was never retrieved ...
-  SystemExit" traceback: arguments are parsed before the event loop starts,
-  and the missing-mode case is a usage error (exit code 2) (#178).
-- Missing, expired or invalid AWS credentials now fail model resolution with
-  "No valid AWS credentials for Amazon Bedrock ..." instead of falling back to
-  the bare model id, which for inference-profile-only models surfaced as a
-  misleading "Enable aws.bedrock.enable_global_profile" error. A missing
-  `bedrock:ListInferenceProfiles` grant still falls back (#178).
-- An empty (or comment-only) `config.yaml` loads the defaults instead of
-  raising a raw `TypeError`; a file whose top level is not a mapping is a
-  clear `ValueError` (#178).
-- Token budgets for Claude 4.7-and-later models (Opus 4.7/4.8/5/5.5, Sonnet
-  5/5.5, Haiku 5.5) scale the local token estimate by 1.3: CountTokens
-  rejects them, and their tokenizer counts roughly 1x-1.35x the tokens of
-  the older Claude tokenizer the ~4-characters-per-token estimate matches, so
-  the retrieval context budget and the RAGAS context cap were under-counted
-  by up to ~30%. The factor is a new capability-record field,
-  `token_estimate_multiplier` (default 1.0, overridable through
-  `aws.bedrock.model_overrides`), applied by the default token counter; API
-  counts are never scaled (#179).
-- The LLM XML parser no longer tries LangChain's `XMLOutputParser.parse`
-  first. Without `defusedxml` (not a dependency) that call raised
-  `ImportError` on every response, so the strict and the two re-escaping
-  attempts never ran; with `defusedxml` present in the environment, a
-  well-formed single-root response (claims, gleaning refinement plan) parsed
-  into lists of one-key dicts that the extractors cannot read. Every response
-  now goes through the lxml recovery path, which produced all results before,
-  so parsed output does not change (#165).
-- The LLM XML parser keeps a bare `&` and a `<` that does not start a tag
-  as text. lxml recovery ran on the unescaped response and cut them, with
-  the characters after them, from single-root responses (claims, gleaning
-  refinement plans): `A&B Corp` parsed as `A Corp` and `R&D budget < 5M` as
-  `R budget  5M`. The escaping attempts removed in #165 never reached such a
-  response, since lxml recovery came first and returned the cut text (#174).
-- The LLM XML parser keeps every top-level element. lxml recovery kept only
-  the first one, so a response of repeated siblings (`<line_number>4</...>`
-  `<line_number>7</...>`, from a model continuing the chunking prompt's
-  trailing open `<chunk_boundaries>`) parsed as `{"line_number": "4"}` and
-  passed the section check, losing every later boundary. The response is now
-  parsed under one synthetic root, so repeated siblings become a list and
-  multi-section answers decode `&amp;` and `&lt;` like single-root ones.
-  The chunking prompt no longer ends with `<?xml ...?>` and an open
-  `<chunk_boundaries>`: it already asks the model to emit the whole document
-  (#174).
-- The LLM XML parser repairs stray and misnamed end tags more
-  conservatively. A stray end tag between two fields of a record (e.g.
-  `</entity_placeholder>` after `<source>`) closed the record, so its later
-  fields and every later record were lost; it is now dropped, and an
-  unmatched end tag only closes the innermost element when that is a field
-  (`<strength>7</strong>`). An opening tag naming an open record closes it,
-  so `</entity>` written for `</relationship>` still yields two records, and
-  `<target>B</source>` no longer nests the record's remaining fields inside
-  `target`. Tag-like text inside a field (`Optional<User>`, `<br>`, `<T>`) is
-  kept verbatim instead of being parsed into a nested element (#182).
-- `BatchProcessor` no longer calls an item again when its first error is not
-  retryable. The retry pass's first attempt was a new call, so a response
-  truncated at the output-token limit (`LLMOutputTruncatedError`, documented
-  as not retried) cost a second call, and up to `max_attempts` more where
-  every error is retried (`is_transient_error` unset); an error the
-  classifier marks permanent also cost a second call. Truncated responses
-  are now never retried, and other non-retryable items fail after one call
-  (#182).
-- The persisted embedding cache (`persist_embedding_cache`) is safe to share
-  across the indexing threads. A flush iterated the vectors while other
-  threads added to them, failed with `dictionary changed size during
-  iteration` (logged as a WARNING) and left the cache unpersisted, and a
-  flush that succeeded forgot the vectors added during its upload, so they
-  were never written. A flush now uploads a snapshot and keeps the vectors
-  added meanwhile pending for the next one (#182).
-- A model response that stopped at its output-token limit (`stopReason`
-  or `stop_reason` `max_tokens`) fails with `LLMOutputTruncatedError`
-  instead of being parsed. The XML parser recovered the sections before the
-  cut, so an extraction cut inside `<relationships>` counted as a success
-  with its relationships missing. The chain now logs a WARNING with the
-  prompt, model purpose and model id, and ingestion counts the item as
-  failed; the error is not retried, since the same input hits the same
-  limit. Streamed output is passed through and only logged (#174).
-- The output-fixing LLM is told the top-level elements its prompt asks for
-  (e.g. `<entities>`, `<relationships>`) instead of "Here are the output
-  tags: None" with an example that nests the tags, and an empty or
-  whitespace-only answer (e.g. thinking only) fails the parse without
-  calling it, since it could only invent the structure; the batch retry
-  re-asks the original model. `create_robust_xml_output_parser` takes a
-  required keyword `output_tags` (**Breaking** for direct callers) (#174).
-- `BatchProcessor.execute_with_fallback` runs every item as its own call
-  under its own `call_timeout_seconds`. The timeout wrapped a chunk's whole
-  `batch()` call, so one slow item discarded the chunk's finished results
-  and re-ran every item (10 items with one slow: 20 model calls instead of
-  11), while the abandoned calls kept running and billing. Now only the
-  timed-out or failed item is retried, with the same `max_attempts`.
-  **Breaking** for direct callers: the synchronous method no longer takes
-  `batch_func` (the async one still does) (#174).
-- The Bedrock client's socket read timeout is 330 s, above
-  `BatchProcessor`'s 300 s call timeout. Both were 300 s, so a long
-  ingestion call raced them: when the socket timeout won, botocore silently
-  re-sent the call, which the call timeout then abandoned. Now the call
-  timeout ends such a call and the item is retried under the batch policy
-  (backoff, `max_attempts`, logged). An ingestion generation still has to
-  finish within the 300 s call timeout (#174).
-- Claude requests no longer send the `"\n\nHuman:"` stop sequence. It is a
-  marker of the legacy text-completion format; Converse and the InvokeModel
-  Messages body are turn-structured, so it only ended translation,
-  extraction or answers early, without an error, on text that contains it
-  (chat transcripts, quoted dialogue) (#174).
-- `cdk destroy` with `removal_destroy=true` (dev default) deletes the
-  OpenSearch domain's app, slow-index and slow-search log groups. The domain
-  created them with CDK's default `Retain`, so every dev teardown left three
-  log groups behind (#166).
-- Changing a `graph.analysis` setting (centrality or statistics) no longer
-  invalidates the `graph_analysis`, `community_detection` and `indexing`
-  stage caches. These settings only shape the stage's centrality and
-  statistics, which no later stage reads, yet they were part of every later
-  stage's cache key, so a tuning change regenerated every community report.
-  The `graph_analysis` and `community_detection` keys change once on upgrade,
-  so a resumed pipeline recomputes those stages one time (#167).
-- The cross-run merge matches a delta entity or relationship to a stored one
-  by id before the name or (source, target, type) key. A gleaning correction
-  renames, retypes or reverses an item in place and keeps the id derived from
-  its old form, so a later document naming the old form produced a second
-  item with the same id: the stored entity's text units and description were
-  overwritten, and Neptune got two edges with one id (#175).
-- `NeptuneIndexer.read_entities` and `read_relationships` raise
-  `AWSServiceError` when the read fails instead of returning `[]`. Removing a
-  deleted or changed document's chunks from shared artifacts then counted a
-  transient read error as "nothing to update" and dropped the document's
-  registry row, leaving the shared artifacts citing removed chunks with no
-  lineage to retry; it now counts as a failed removal and keeps the row. A
-  failed read during the cross-run merge fails the indexing stage before any
-  write instead of overwriting the stored lineage (#175).
-- The translation stage honours `processing.ignore_errors`: a failed call for
-  a whole target language now fails the stage when it is `false` (the
-  translator swallowed every error, so the graph silently mixed languages).
-  Text units left untranslated, in any target language, are reported in the
-  stage's `failed_units` and through the per-stage failed text units, so an
-  incremental run records their documents FAILED and retries them instead of
-  recording them PROCESSED (#175).
-- Neptune expansion from seed communities (`NeptuneRetriever` queried with
-  the community label, e.g. through its LangChain retriever interface) gets
-  the entity expansion's per-seed budget from #161. A `limit()` inside
-  `repeat()` counted every traverser of the traversal and a final
-  `limit(top_k * retrieval_multiplier)` followed, so the seeds filled the
-  result: against Gremlin Server, 10 seed communities with 3 members each
-  returned only the 10 seeds at `top_k` 10 and the neighbourhoods of 5 of
-  them at `top_k` 100. Each seed now gets its members and their
-  neighbourhood within its own share of the fetch width, ranked and cut like
-  the entity expansion; the same probe returns all 10 seeds, 30 members and
-  neighbours of all 10 (#175).
-- The opt-in real-AWS ingest-then-search smoke test
-  (`GRAPHRAG_TEST_RUN_INGEST=1`) could not run: it built
-  `DataIngestionPipeline` without the required `pipeline_config`, called
-  `run()` without the source directory and never awaited the async
-  `create_rag_chain`. It now does all three, checks the pipeline did not
-  fail, and closes the chain (#175).
-- `indexing.reset` with the doc-status registry enabled rebuilds from the
-  whole corpus and records every document again. The loading stage used to
-  diff against the registry first, so the reset cleared the stores but
-  indexed only new and changed documents, and the unchanged ones were lost
-  (#163).
-- Cross-run merge reads relationships back from Neptune with their type (the
-  edge label), endpoint names, attributes and `text_unit_ids`, scoped to the
-  delta's index suffix. The type and endpoint names were dropped and the
-  JSON-encoded `text_unit_ids` came back as one string, so every delta run
-  added a second edge with the same id next to the stored one, nested the
-  lineage one JSON level deeper and reset the weight. Serialized JSON
-  properties are no longer cut at `indexing.neptune.property_max_length`,
-  which left long lists unparseable (#163).
-- Cross-run merge reads entities back with their attributes,
-  `community_ids`, rank and confidence, from the delta's index suffix only,
-  and merges each suffix's delta separately. The read was not scoped by
-  label, so another tenant's vertex with the same id could be merged in, and
-  it dropped the attributes, so the merged entity lost its `index` suffix and
-  was written into the default suffix's graph and indices. The merge now
-  unions attributes (the delta wins on a shared key, as in the full build)
-  (#163).
-- Re-applying a delta no longer appends its entity and relationship
-  descriptions again: the merge compares description lines instead of the
-  whole stored multi-line description (#163).
-- The registry lineage records the ids the cross-run merge kept. With
-  `indexing.cross_run_fuzzy_merge`, a delta entity folded into a stored one
-  was recorded under its own id, so deleting the document never removed the
-  stored entity. A delta edge whose endpoint was remapped is now merged with
-  the stored edge between the same entities instead of being added next to
-  it. The merge moved from `IndexingManager.index_delta` (now a plain upsert)
-  to `IncrementalIndexer.commit` through the new
-  `IndexingManager.merge_with_existing_graph` (#163).
-- Deleting or changing a document strips its text units from the entities
-  and relationships it shared with surviving documents and recomputes their
-  frequency and weight, in Neptune and OpenSearch. They kept citing the
-  removed chunks. Their descriptions still keep the removed document's text
-  until a full rebuild, since removing it needs an LLM re-summary (#163).
-- An untyped relationship merges with its stored edge: Neptune stores it
-  under the `RELATED_TO` label, so it read back with that type and the merge
-  key treated it as a different relationship (#163).
-- **Breaking** for direct callers: `IndexingManager.index_delta` no longer
-  merges with the stored graph (call `merge_with_existing_graph` first, or go
-  through `IncrementalIndexer.commit`), and `read_entities`/`read_relationships`
-  take the index `suffix` (#163).
-- A doc-status record over the DynamoDB 400 KB item limit (a document with
-  roughly 10,000+ artifact ids) fails with an error naming the file before the
-  registry write, instead of a bare `ValidationException`; the limit is
-  documented in the user guide (#159).
-- A failed removal of a deleted document's artifacts now fails the indexing
-  stage (after the delta is committed) instead of only logging a warning, so
-  the run status and the `IndexingFailures` alarm report it; the registry
-  rows are still kept for a retry (#159).
-- Incremental runs no longer record a document as PROCESSED when graph
-  extraction, gleaning or claim extraction failed on any of its text units.
-  It is recorded FAILED with the lineage of what was written, and the
-  registry diff treats a FAILED record as changed, so the next run prunes and
-  re-extracts it instead of leaving the hole in place (#159).
-- A Neptune relationship whose source entity vertex is missing is counted as
-  a failed write instead of a success: the add-edge traversal returns the
-  edge id and an empty result is recorded as an error (#159).
-- A graph-extraction answer of only empty sections
-  (`<entities></entities><relationships></relationships>`) parses as a valid
-  zero-entity result instead of failing, being retried, and going to the
-  output-fixing model (#159).
-- Graph expansion (local search, LightRAG `enable_graph_expansion`) returns
-  the seed entities and a neighbourhood for every seed. The per-hop limit
-  inside `repeat()` counted the whole traversal, so the first seeds used it up
-  and the seeds themselves were never emitted (10 seeds with 6 neighbours
-  each: 1 seed and 2 neighbourhoods came back). The fetch width is now split
-  across the seeds, `max_results_per_hop` caps neighbours per node and hop,
-  and a seed scores proximity 1.0 (#161).
-- Global search's map key points (or reduce summary) reach the answer context
-  whole: they are seated before the per-type split instead of sharing the
-  `general` share, which cut 7,000 tokens of key points to about 4,200 while
-  most of the window stayed unused. Points are still sized by
-  `max_map_reduce_tokens` (#161).
-- DRIFT fusion orders each section type by its native score. All results
-  share one RRF bucket, so the rank within a type was arrival order and a
-  later iteration's best item ranked below an earlier iteration's worst. The
-  positions of the types in the bucket are unchanged (#161).
-- `NeptuneRetriever` seeding by name or query text (no `id` filter) always
-  returned nothing: it required and sorted by an `importance` property that
-  entity vertices never store. It now orders entities by `rank` and
-  communities by `size`, with no threshold. Strategies seed by id, so their
-  results are unchanged (#155).
-- Prompt caching works on Converse: system prompts end with a native
-  `cachePoint` once they reach the model's minimum cache size (#127).
-- Requests cap output at `aws.bedrock.default_max_output_tokens` (16,384, with
-  higher floors for long-output prompts) instead of reserving the model
-  maximum against the TPM quota (#127).
-- System-prompt placeholders are substituted when prompt caching is on (#93).
-- `custom_prompts` overrides reach community-report, memory entity extraction
-  and DRIFT refinement/expansion/primer chains (#120).
-- Ingestion LLM stages fail permanent Bedrock errors on the first attempt, and
-  XML that no recovery step parses reaches the output-fixing model (#120).
-- Embedding and query-time LLM calls retry transient Bedrock errors such as
-  HTTP 424 `ModelErrorException` (#115, #116).
-- Global, DRIFT and history-aware paths no longer answer from empty or
-  rejected evidence; primer and map-reduce summaries are not reported as
-  sources (#96).
-- `RAGOutput.sources` lists only what the answer model saw, and OpenSearch hits
-  no longer carry embedding vectors (#97).
-- MMR normalizes relevance before the diversity penalty (#100).
-- Local and LightRAG honour caller filters; local and DRIFT fall back to the
-  raw query when no entities are extracted (#101).
-- Fatal errors (for example Neptune AccessDenied) surface from every retrieval
-  path instead of reading as no results (#102).
-- `stream`/`astream` stream answer tokens instead of raising `TypeError` (#107).
-- RRF fusion rewards cross-store agreement on the same artifact and counts each
-  artifact once per bucket.
-- Stage-result cache keys fingerprint the config, model and prompts that
-  determine each stage, so changed inputs no longer resume from stale output.
-- The gleaner applies `ENTITY_CORRECTION`/`RELATIONSHIP_CORRECTION` issues and
-  renames edge endpoints to match.
-- Repeated XML tags in LLM output no longer drop the entity or relationship
-  (#124).
-- Parsed `<stem>.json` files are no longer written into the source directory;
-  the export happens only to an explicit `target_directory` (#114, #120).
-- The config loader maps `GRAPHRAG_DOC_STATUS_TABLE` and
-  `GRAPHRAG_DOC_STATUS_CREATE_TABLE` from the IaC stack (#105).
-- A failed S3 cache sync fails the run (`CacheSyncError`) (#106).
-- `run-visualization` input is exported, edge widths scale with weight, and an
-  embedding failure no longer yields a random layout (#108).
-- The config file's `logging` section is applied and every record is rendered
-  as JSON in structured mode; `run-rag --output-format json` keeps stdout
-  pipeable; tqdm is disabled without a TTY (#122).
-- `run-eval` validates the dataset at load and exits non-zero on all-failed
-  runs or above `--max-failure-rate`; RAGAS judges the context text once (#121).
-- Errored answers and unmeasurable metrics are excluded from evaluation means
-  (#95).
-- RAGAS no longer forces temperature on Claude 5 judges (#112).
-- `config-template.yaml` validates as shipped (`source_directory` defaults to
-  `source`) and documents the betweenness sampling and auto-resolution knobs;
-  the user guides list common knobs in tables checked against `Config()`
-  instead of copied YAML (#129).
-- `GraphRAGChain.invoke`/`batch`/`stream` run on one chain-owned event loop,
-  so `invoke` works inside a running loop and `batch` no longer leaks a
-  retriever set per item.
-- Reranking passes `top_n` per call instead of mutating the shared rerank
-  model, and fusion + rerank run off the event-loop thread.
-- Neptune opens and closes its connection off the event-loop thread, and a
-  discarded `AsyncOpenSearch` client is closed.
-- Conversation memory reuses the query step's entity extraction instead of a
-  second LLM call per user turn.
-- Extraction drops relationships whose endpoint entity was dropped instead of
-  recreating it, reads an integer confidence of 1 as the scale minimum, and
-  treats single letters of any script as designators in entity resolution
-  (#130).
-- Items without a description get a surrogate embedding text instead of being
-  skipped from the vector indexes (#130).
-- Communities are detected on the entity-only subgraph, so claim nodes no
-  longer join communities or become singleton reports (#130).
-- `.json` sources parse without the optional `jq` package, exclude patterns
-  match relative to the source root, and repeated claim tags no longer drop
-  the claim (#130).
-- Incremental deletion is scoped to the run's namespace and corpus
-  (`processing.document_parsing.source_scope`, set from
-  `GRAPHRAG_SOURCE_SCOPE`); files that fail to parse are reported as `failed`
-  instead of deleted, and delta runs no longer overwrite the corpus's
-  communities and reports (#134).
-- A changed corpus is a stage-cache miss (keys carry a corpus manifest), a
-  resume after gleaning keeps the gleaned relationships, and a failed removal
-  of stale artifacts blocks the commit (#134).
-- The Neptune relationship pre-drop is scoped to the run's entity label, so
-  one index suffix no longer deletes another's edges (#134).
-- `processing.max_retries` now sets the ingestion LLM retry count; the
-  stages passed it but the batch processor kept its own default. The default
-  is 5, the value previously in effect (#140).
-- The community auto-resolution sweep scores complete partitions. Leiden
-  leaves isolated nodes out and modularity rejects a partial partition, so
-  every candidate failed silently and `resolution` was always used.
-  `graph.community_detection.auto_resolution` now defaults to `false`, the
-  behaviour actually in effect until now: with the sweep working, global
-  search lost 3 of 20 answers on the E2E corpus. Cached community-detection
-  output is recomputed once (#141).
-- A conversation turn (question and answer) is appended to memory as one
-  unit, so concurrent turns on one conversation no longer interleave (#143).
-- `astream`/`stream` bind a `query_id` (and `conversation_id`) to the
-  retrieval logs like `ainvoke` (#144).
-- `run-rag` no longer translates every query for a same-language corpus: it
-  passed the configured target language explicitly, which disabled the
-  chain's no-op translation skip (#145).
-- Neptune writes fail fast on errors a retry cannot fix (malformed query,
-  access denied, bad parameter); they used to be retried with backoff before
-  they surfaced. Throttling, concurrent modification and connection loss are
-  still retried (#151).
-- The Gremlin connection pool is sized to at least
-  `indexing.neptune.index_concurrency`. It used `aws.neptune.pool_size` alone,
-  so a higher write concurrency queued batches on too few connections (#151).
-- The batch processor marks an item that failed every attempt with
-  `BATCH_ITEM_FAILED` instead of `{}`, so stages no longer confuse a failure
-  with an empty LLM result. Graph extraction output without a well-formed
-  `entities` section counts toward `total_extraction_failures` instead of
-  reading as an empty success, and an output whose empty `relationships`
-  section was dropped by the XML parser keeps its entities (#152).
-- Log lines from worker threads (batch processor chunks and call timeouts,
-  indexing, embedding, Neptune batches, file loading, resolution) keep the
-  bound `pipeline_id`/`stage`/`query_id`: the thread pools are
-  `ContextThreadPoolExecutor`s, which run each task in a copy of the
-  submitter's `contextvars`. `pipeline_id` is now bound for the whole
-  `run-ingestion` run, including the S3 cache sync and the failure report
-  (#156).
-- The LangChain `partial_correctness` judge is scored only from the JSON
-  `score` its prompt asks for: LangChain's CORRECT/INCORRECT word heuristic
-  (which scored `"... is correct"}` as 1.0) and the free-text regex fallbacks
-  (`"Score: 8/10"` → 1.0) are gone. A judge reply without a valid score in
-  [0, 1] (either metric) is recorded under `failed_metrics` instead of as 0.0
-  or a clamped value (#158).
-- `run-eval` no longer exits 0 when scoring fails: with
-  `processing.ignore_errors: false` (the default) an evaluator error stops the
-  run instead of being recorded per query, and `--max-failure-rate` now also
-  applies to each metric's failed share of attempted values, so a metric that
-  failed on every query exits non-zero (#158).
-- `run-ingestion --verify-metadata` exits non-zero when the metadata is
-  corrupt, and `--repair-metadata` when the repair fails or raises (#158).
-- `run-rag` reports `success: false` and exits non-zero when the chain returns
-  its `ignore_errors` error fallback (`metadata.error`) instead of an answer
-  (#158).
-- Importing the package no longer configures logging: it used to replace the
-  host's root handlers, set the root level to INFO and open a `FileHandler` in
-  `logs/` next to the installed package (failing on a read-only
-  `site-packages`). Only the CLIs call `setup_logging`, and a relative
-  `logging.log_file_path` is now resolved against the working directory
-  (#158).
-- Visualization: `graph.visualization.embeddings.bedrock_model_id` given as a
-  YAML string is validated as an embedding model id at config load (it used to
-  fail with `'str' object has no attribute 'value'`, which ingestion logged
-  and skipped, so no visualization was written); an edgeless graph no longer
-  gets NaN node sizes in the interactive view; a failed dimensionality
-  reduction falls back to a seeded spring layout and sets `layout_degraded`
-  instead of returning an unseeded random layout (#158).
-- The evaluation `run_manifest` records `git_sha` only when the package runs
-  from a checkout that tracks it (an install inside another repository used to
-  report that repository's HEAD) and adds `git_dirty` (#158).
-- `run-eval` output files carry a random suffix after the timestamp, so runs
-  started in the same second no longer overwrite each other, and a numeric
-  `answer` of `0` is kept as a ground truth instead of being treated as
-  missing (#158).
-- `run-prompt-tuning` fails instead of emitting a default profile when the
-  profiling model returns no JSON profile, splits an `entity_types` string
-  (`"PERSON, ORGANIZATION"`) into types instead of characters, and builds the
-  example `GraphExtractor` from the tuner's providers (#158).
-- `GraphRAGChain` keeps one set of cached retrievers and strategies per event
-  loop and releases a loop's set only once that loop is closed (or on chain
-  close). A query on a second loop (e.g. `ainvoke()` on the caller's loop while
-  `invoke()` runs on the chain's loop thread) used to evict and close the first
-  loop's clients under its in-flight queries. The caches are guarded by a lock
-  (#160).
-- The process-wide `MemoryManager` guards its conversation state with a
-  threading lock instead of an `asyncio.Lock`, which bound to the first event
-  loop that contended for it (`RuntimeError` on another loop) and did not
-  exclude other threads, so turns appended from two threads could interleave
-  or hang (#160).
-- Context budgeting counts section tokens concurrently (up to 8 at a time,
-  each distinct text once) instead of one Bedrock CountTokens call after
-  another, which made token counting dominate mix/hybrid query latency. Global
-  search packs its ranked key points the same way, off the event loop. Counts
-  stay exact (#160).
-- With `ignore_errors: false`, a fatal error (no model access, bad credentials,
-  unreachable endpoint) in a global-search map call or a DRIFT query
-  refinement/keyword expansion fails the query. Global search turned every such
-  map call into an unrated batch and answered from the raw reports, and DRIFT
-  dropped the error without a log line; non-fatal failures still degrade, now
-  with a warning (#160).
-- LightRAG keyword extraction checks the shape of the model's JSON: each
-  keyword level must be a list of strings. A bare string was split into
-  one-character keywords, `null` raised a bare `TypeError`, and a JSON array
-  passed as "no keywords" even with `ignore_errors: false`; these now raise
-  `LanguageModelError` (or degrade to no keywords when errors are ignored)
-  (#160).
-- Conversation memory added the five alphabetically first entities of the
-  whole conversation to every follow-up's entity focus, so later turns kept
-  retrieving around old entities. It now keeps the most recently mentioned
-  ones, newest first (#212).
-- Community report hits put their title and summary into the context twice:
-  `full_content` already opens with both, and the retriever appended them
-  again. DRIFT's 200-character report excerpts then showed mostly the title
-  and rating. A report hit's content is now its `full_content` alone (#212).
-- Concurrent sub-queries of one search embedded the same query text once each:
-  the embedding cache was filled only after the call returned. They now share
-  one in-flight embedding call per text (#212).
-- Neptune graph expansion silently kept only the first 10 seed entities
-  (`NeptuneRetriever.SEED_NODE_LIMIT`), dropping the rest of the candidates
-  local search and DRIFT passed. Explicit seed ids are all expanded, and
-  name-matched seeds follow `top_k * retrieval_multiplier`. Also removes an
-  unreachable hybrid-query branch (#212).
-- Global search's map step sent the selected communities' text units to the
-  map LLM as community reports, and counted them toward
-  `map_reduce_min_results`. Only community reports are mapped now; the text
-  units pass through after the synthesized item (#212).
-- DRIFT keyword expansion received the first results of the whole search, the
-  seed community reports, so it expanded from report titles. It now receives
-  entity names from the newest iteration's results first
-  (`search.drift_search.n_entities` of them) (#212).
-- Query-side prompts (entity extraction, translation, keyword extraction and
-  the conversation entity extraction) received the target language as
-  `LanguageCode.EN`, the enum's string form, while DRIFT and global search
-  passed the bare code (`en`). Every retrieval prompt now gets the language
-  name (`English`, `Korean`, ...); a `RAGInput.target_language` that is not a
-  supported code is passed as given (#212).
-- The token budgeter treated a 0.0 retrieval score as missing (`score or
-  0.5`), so the lowest-scored sections were ranked as mid-priority (#212).
-- LightRAG `mix`/`hybrid` linked chunks lost their weighted-polling selection
-  order when fetched by id (index order, score 0); they keep it now, as local
-  search's text units do (#212).
-- Local search fetched every text unit linked to the expanded entities and
-  then kept only the text quota; it now fetches the best-supported ones up to
-  that quota. `search.local_search.entity_frequency_threshold` now drops the
-  over-frequent entities from the context as documented; they were only left
-  out of the text-unit fan-out (#212).
-- `RAGInput` and `SearchQuery` accepted `top_k: 0`, `retrieval_multiplier: 0`
-  and a negative `max_tokens`, which ran a query that could return nothing.
-  All three must now be at least 1 (#212).
-- Tracing: a query that failed under `processing.ignore_errors` left its
-  `kg_rag.query` span UNSET; it now records the exception and ends with ERROR
-  status. The streamed answer's model call, which runs after the query span
-  has ended, carries `session_id` and `user_id` in its run metadata so the
-  tracing callback can attach the conversation and user (#PR, #92).
+- Incremental indexing: shared artifacts are stripped instead of deleted or
+  left citing removed text units; interrupted runs are repaired on the next
+  run; resets and deletions no longer touch other index namespaces or
+  OpenSearch indices; partial bulk failures mark their documents `FAILED`;
+  full and incremental builds produce the same descriptions, weights and
+  ranks (#159, #163, #185-#200, #214).
+- Graph quality: gleaning no longer revives rejected entities or overwrites
+  descriptions; claims no longer resolve onto a different entity; CJK names
+  with a different head character no longer merge; communities no longer
+  duplicate singletons across levels (#201-#203, #213, #214).
+- Parsing: the LLM XML parser keeps `&`, `<`, repeated siblings and
+  sections with a missing closing tag; truncated responses fail instead of
+  parsing as partial successes (#165, #174, #182, #213).
+- Retrieval: graph expansion returns every seed and its neighbourhood;
+  Korean BM25 recall, CJK fuzziness and NFC normalization; fatal errors
+  surface instead of reading as no results (#102, #161, #175, #177, #212).
+- Evaluation: `answer_match` no longer counts a different number or name as
+  a match; judge failures are recorded per query instead of discarding the
+  run; non-zero exit codes on failed scoring (#158, #210).
+- CLIs and config: an empty config loads the defaults; `custom_prompts`
+  overrides are validated at load; `run-rag` exits cleanly on usage errors;
+  importing the package no longer configures logging (#158, #178).
+- IaC: alarms deliver notifications, the corpus no longer expires with the
+  cache prefixes, OpenSearch indices get replicas on multi-node domains,
+  timed-out or aborted pipeline runs alarm, and `cdk destroy` leaves no
+  fixed-name resources (#157, #166, #211).
 
 ### Security
-- The task role drops the unused `neptune-db:GetEngineStatus`,
-  `GetQueryStatus` and `CancelQuery` actions and S3 `DeleteObject*` on the
-  cache bucket (the app only reads and writes objects; the lifecycle expires
-  them). Private-mode interface endpoints get a policy that admits only this
-  account's principals (`aws:PrincipalAccount`) (#211).
-- The CDK task role no longer grants `bedrock:GetInferenceProfile`; the model
-  resolver only calls `ListInferenceProfiles`, so the extra account-wide
-  read is dropped (least privilege) (#204).
-- The user guide and design doc state that metadata filters are relevance
-  filters, not an access-control boundary: stores that do not declare a key
-  (relationships, claims, Neptune community vertices) return unfiltered
-  content. Isolate tenants with separate `suffix` namespaces (#173).
-- `pipeline_id` (`--pipeline-id`, `GRAPHRAG_PIPELINE_ID`, which the Step
-  Functions task sets, `PipelineConfig` and `DataIngestionPipeline.run`) must
-  be a single path segment: letters, digits, `.`, `_` and `-`, starting with a
-  letter or digit and without `..`. The id names the local cache directory
-  and the S3 prefix, so `../x` or `a/b` reached paths outside the cache
-  directory (#173).
-- The persisted embedding cache (`persist_embedding_cache`) uploads with the
-  `aws.s3.encryption` settings the stage-cache sync already used. It sent no
-  SSE header, so `AES256` or `aws:kms` with a specific key were ignored for
-  that object (#173).
-- `run-rag` prints answers, errors and the verbose query/source panels as
-  plain text with terminal control characters (other than newline and tab)
-  removed. Model output was rendered as rich markup, so `[link=...]` became a
-  terminal hyperlink, and escape sequences in it reached the terminal (#173).
-- Ingestion prompts (graph extraction, gleaning, claim extraction, description
-  summarization, community reports) wrap corpus text and corpus-derived inputs
-  in named tags (`<input_text>`, `<current_entities>`, `<entity_data>`, ...)
-  and say once that tagged content is data whose instructions are not to be
-  followed. A corpus `## heading` no longer reads as a prompt section. Template
-  variable names are unchanged, so `custom_prompts` overrides keep working;
-  built-in prompt text is not part of the stage cache keys (#179).
-- Query-time prompts do the same for retrieved content: answer generation
-  (`<context>`), context building, community relevance, global map/reduce
-  (`<community_reports>`, `<summaries>`) and the DRIFT primer and query
-  refinement prompts (#179).
-- Input values can no longer close the tag block that delimits them. A corpus
-  chunk or retrieved context containing `</context>` (or `</input_text>`)
-  ended the data block, so the text after it read as instructions. Every
-  chain now escapes the opening and closing forms of its prompt's delimiter
-  tags (the tags around a `{placeholder}`, read from the resolved template,
-  so `custom_prompts` delimiters are covered) in every string input,
-  case-insensitively and allowing whitespace: `</context>` reaches the model
-  as `&lt;/context>` (#182).
-- The CLIs log a WARNING at startup when `LANGSMITH_TRACING` or
-  `LANGCHAIN_TRACING_V2` enables LangSmith tracing, which uploads prompts,
-  retrieved context and model outputs. Tracing is not turned off (#156).
-- Logs at INFO and above no longer carry query text, rewritten (DRIFT) queries,
-  corpus entity names or raw model output; they log lengths, counts, ids and a
-  short hash instead, and the text moves to DEBUG. The XML parser's exception
-  message no longer embeds model output, and the per-query "no entity focus"
-  WARNING is now a DEBUG record (#173).
-- Require patched `unstructured>=0.24.0` for optional Markdown/HTML parsing on
-  Python 3.11+ (GHSA-4mvj-m6j5-pmf7), which also drops NLTK and its model
-  artifact path traversal (GHSA-8mgp-746c-j5xp); Python 3.10 keeps the core
-  formats without this extra.
-- Constrain the transitive `langchain-openai` to `>=1.1.14`
+- Prompts delimit corpus and retrieved text as data, and inputs cannot close
+  their delimiter tags (#179, #182).
+- INFO-level logs no longer carry query text, entity names or model output;
+  `run-rag` strips terminal control characters from output; the CLIs warn
+  when LangSmith tracing is on (#156, #173).
+- `pipeline_id` must be a single path segment (#173).
+- The persisted embedding cache honours `aws.s3.encryption` (#173).
+- Metadata filters are documented as relevance filters, not an
+  access-control boundary (#173).
+- Interactive graph tooltips are escaped (#180).
+- Least privilege: the task role drops unused Neptune, S3 delete and
+  `bedrock:GetInferenceProfile` actions, and private-mode endpoint policies
+  admit only the account's principals (#204, #211).
+- Dependency floors: `unstructured>=0.24.0` (GHSA-4mvj-m6j5-pmf7,
+  GHSA-8mgp-746c-j5xp) and `langchain-openai>=1.1.14`
   (GHSA-r7w7-9xr2-qq2r).
