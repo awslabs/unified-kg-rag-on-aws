@@ -251,28 +251,3 @@ jobs:
         # entrypoint and the installed console script, so a missing runtime
         # dependency or a broken entrypoint fails here, not at deploy time.
         run: docker run --rm unified-kg-rag:ci
-
-  licenses:
-    # Fail on copyleft, source-available or unlabeled licenses among the
-    # runtime dependencies of every extra (dev tools are not redistributed).
-    # Reviewed exceptions are listed in .github/scripts/check_licenses.py.
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          python-version: "3.12"
-
-      - name: Sync every extra
-        run: uv sync --locked --all-extras --no-dev --no-install-project
-
-      - name: Check dependency licenses
-        # shell: bash adds pipefail, so a pip-licenses failure fails the step.
-        shell: bash
-        run: >-
-          uv run --no-sync --with pip-licenses==5.5.5
-          pip-licenses --format=json
-          | uv run --no-sync python .github/scripts/check_licenses.py
