@@ -17,7 +17,7 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   the run) and `--outputs-directory` (results uploaded with the configured
   `aws.s3.encryption` SSE settings; a failed upload exits non-zero and keeps
   the local files), so it runs as a one-off ECS task on the CDK stack. Malformed
-  URIs fail before the run with a `ConfigurationError` (#PR).
+  URIs fail before the run with a `ConfigurationError` (#206).
 - Each `run-*` CLI's `--help` ends with one example invocation and a link to
   its user-guide section.
 - `indexing.max_document_failures` (default `3`): an incremental run stops
