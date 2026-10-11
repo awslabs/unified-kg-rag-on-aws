@@ -209,22 +209,27 @@ class StorageStack(Stack):
     # ---------------------------------------------------------- OpenSearch
     def _build_opensearch(self) -> opensearch.Domain:
         multi_node = self.config.opensearch_count > 1
-        # Zone awareness requires availabilityZoneCount of 2 or 3 and is only
+        # One app subnet per AZ the VPC offers (max_azs for a created VPC, the
+        # subnets' AZs for a reused one).
+        selected = self.vpc.select_subnets(
+            subnet_type=self.app_subnets.subnet_type, one_per_az=True
+        ).subnets
+        # Zone awareness takes an availabilityZoneCount of 2 or 3 and is only
         # valid for multi-node domains; omit it entirely for a single node.
+        # A multi-node domain spans as many AZs as it has nodes, up to 3 and
+        # up to the AZs available, so 3 nodes in a 3-AZ VPC use all three.
+        zone_count = min(self.config.opensearch_count, len(selected), 3)
         zone_awareness = (
             opensearch.ZoneAwarenessConfig(
-                enabled=True,
-                availability_zone_count=min(self.config.opensearch_count, 2),
+                enabled=True, availability_zone_count=zone_count
             )
             if multi_node
             else None
         )
-        # OpenSearch needs exactly as many subnets as AZs it spans: 1 for a
-        # single node, 2 for a zone-aware multi-node domain.
-        selected = self.vpc.select_subnets(
-            subnet_type=self.app_subnets.subnet_type
-        ).subnets
-        os_subnets = ec2.SubnetSelection(subnets=selected[: (2 if multi_node else 1)])
+        # OpenSearch needs exactly as many subnets as AZs it spans.
+        os_subnets = ec2.SubnetSelection(
+            subnets=selected[: (zone_count if multi_node else 1)]
+        )
         domain = opensearch.Domain(
             self,
             "OpenSearch",

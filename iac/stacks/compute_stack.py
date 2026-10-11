@@ -131,13 +131,27 @@ class ComputeStack(Stack):
         # in two shapes: account-scoped application profiles
         # (`:<account>:inference-profile/*`) and account-less system-defined
         # profiles (`::inference-profile/global.*`), so allow both. Explicit ARNs
-        # override this when provided.
+        # replace the foundation-model grant. When they name no inference
+        # profile, the profile grants are kept: models that are offered only
+        # through a profile (resolved at runtime) would otherwise be denied,
+        # and a profile call still needs the foundation-model ARNs listed, so
+        # this grants no model beyond them. Listing any inference-profile ARN
+        # scopes profiles to exactly the ARNs given.
         partition = self.partition
-        bedrock_resources = self.config.bedrock_model_arns or [
-            f"arn:{partition}:bedrock:*::foundation-model/*",
+        profile_resources = [
             f"arn:{partition}:bedrock:*:{self.account}:inference-profile/*",
             f"arn:{partition}:bedrock:*::inference-profile/*",
         ]
+        explicit = self.config.bedrock_model_arns
+        if not explicit:
+            bedrock_resources = [
+                f"arn:{partition}:bedrock:*::foundation-model/*",
+                *profile_resources,
+            ]
+        elif any("inference-profile/" in arn for arn in explicit):
+            bedrock_resources = list(explicit)
+        else:
+            bedrock_resources = [*explicit, *profile_resources]
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=[

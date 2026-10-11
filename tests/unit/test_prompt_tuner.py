@@ -337,8 +337,11 @@ class TestSampleAndParse:
         mocker.patch(
             "unified_kg_rag.application.prompts.tuner.setup_chain", return_value=chain
         )
-        with pytest.raises(LanguageModelError, match="profile"):
+        with pytest.raises(LanguageModelError, match="profile") as exc:
             await tuner.profile_corpus(["some text"])
+        # Model output is DEBUG-only; the error (logged at ERROR) has a digest.
+        assert raw not in str(exc.value)
+        assert f"len={len(raw)}" in str(exc.value)
 
     async def test_generate_examples_uses_the_injected_providers(
         self, tuner: PromptTuner, mocker

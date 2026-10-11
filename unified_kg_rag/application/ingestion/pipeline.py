@@ -15,6 +15,9 @@ from structlog.contextvars import bind_contextvars, reset_contextvars
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.bootstrap import build_providers
+from unified_kg_rag.application.ingestion.incremental import (
+    record_stopped_run_failed,
+)
 from unified_kg_rag.application.ingestion.pipeline_stages import (
     ClaimExtractionStage,
     ClaimResolutionStage,
@@ -392,7 +395,10 @@ class DataIngestionPipeline:
         """Run the pipeline over ``source_directory`` and return its context.
 
         Args:
-            source_directory: The corpus root.
+            source_directory: The corpus root. When it differs from the
+                directory the pipeline was built with, the parsing and loading
+                stages (and with them the incremental registry's source scope)
+                are rebuilt for it, so the run reads and diffs this corpus.
             pipeline_id: The run to resume (its cache and metadata); a new id
                 is generated when neither this nor ``pipeline_config`` sets
                 one.
@@ -445,6 +451,7 @@ class DataIngestionPipeline:
             )
 
             self._validate_source_directory(source_path)
+            self._use_source_directory(Path(source_directory))
             self._validate_retired_scopes(source_path)
 
             resolved_pipeline_id = self._resolve_pipeline_id(source_path, pipeline_id)
@@ -526,6 +533,49 @@ class DataIngestionPipeline:
                 f"{', '.join(valid)}"
             )
         return normalized
+
+    @property
+    def executed_stages(self) -> frozenset[str]:
+        """Names of the stages the last run executed; the other completed
+        stages of a resumed run were restored from the stage cache."""
+        return self._executed_stages
+
+    def _use_source_directory(self, source_directory: Path) -> None:
+        """Point the stages at ``source_directory`` if they read another one.
+
+        The parsing and loading stages capture the corpus root when they are
+        built (parsing and discovery read it; the loading stage derives
+        document ids and the registry's source scope from it), so running over
+        another directory rebuilds those two rather than ingesting and diffing
+        the old corpus. The other stages, which hold the backend clients, are
+        kept.
+        """
+        if Path(self.source_directory).resolve() == source_directory.resolve():
+            return
+        logger.info(
+            "Source directory changed from '%s' to '%s'; rebuilding the parsing "
+            "and loading stages",
+            self.source_directory,
+            source_directory,
+        )
+        self.source_directory = source_directory
+        for index, stage in enumerate(self.stages):
+            if isinstance(stage, DocumentParsingStage):
+                self.stages[index] = type(stage)(
+                    config=self.config,
+                    providers=self.providers,
+                    source_directory=source_directory,
+                    target_directory=stage.target_directory,
+                    cache_directory=stage.cache_directory,
+                )
+            elif isinstance(stage, DocumentLoadingStage):
+                self.stages[index] = type(stage)(
+                    config=self.config,
+                    providers=self.providers,
+                    source_directory=source_directory,
+                    parse_files=stage.loader.parse_files,
+                    doc_status=stage._doc_status,
+                )
 
     def _set_corpus_fingerprint(self, source_directory: Path) -> None:
         self.corpus_fingerprint = self._compute_corpus_fingerprint(source_directory)
@@ -805,6 +855,7 @@ class DataIngestionPipeline:
                         "Pipeline execution stopped due to stage failure: '%s'",
                         stage.name,
                     )
+                    self._record_stopped_run_failed(stage, context)
                     break
 
     def _start_index(self, start_stage_name: str | None) -> int:
@@ -911,6 +962,47 @@ class DataIngestionPipeline:
                 stage.name,
                 len(units),
             )
+
+    def _record_stopped_run_failed(
+        self, stage: PipelineStage, context: PipelineContext
+    ) -> None:
+        """Record the delta's documents FAILED when an artifact stage stops
+        the run, so ``indexing.max_document_failures`` also bounds documents
+        that always crash a stage (see ``record_stopped_run_failed``).
+
+        Best-effort: the run has already failed, and a registry that cannot
+        be written only leaves the records as they were.
+        """
+        if (
+            self.name_to_type_map.get(stage.name) not in self.ARTIFACT_STAGES
+            or context.incremental_delta is None
+            or self.config.indexing.reset
+            or not self.providers.doc_status_enabled
+        ):
+            return
+        try:
+            record_stopped_run_failed(
+                self._doc_status_store(),
+                context,
+                context.translated_units or context.text_units or [],
+                stage.name,
+            )
+        except Exception as e:  # noqa: BLE001 - the run already failed
+            logger.error(
+                "Could not record the documents of failed stage '%s' in the "
+                "doc-status registry: %s",
+                stage.name,
+                e,
+            )
+
+    def _doc_status_store(self) -> DocStatusPort:
+        """The registry the stages were given, or a new one (a phased run
+        whose window holds neither the loading nor the indexing stage)."""
+        for stage in self.stages:
+            if isinstance(stage, DocumentLoadingStage | IndexingStage):
+                if stage._doc_status is not None:
+                    return stage._doc_status
+        return self.providers.build_doc_status()
 
     def _run_stage(
         self, stage: PipelineStage, context: PipelineContext

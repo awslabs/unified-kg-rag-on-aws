@@ -1,5 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+from collections.abc import Collection
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -65,7 +67,16 @@ def display_ascii_art(version: str = "1.0.0") -> None:
     console.print(Panel(ascii_art, expand=False, border_style="dim"))
 
 
-def display_pipeline_results(context: PipelineContext, limit: int = 10) -> None:
+def display_pipeline_results(
+    context: PipelineContext,
+    limit: int = 10,
+    executed_stages: Collection[str] | None = None,
+) -> None:
+    """Print a run's summary, samples and performance.
+
+    ``executed_stages`` names the stages this run executed; a completed stage
+    outside it was restored from the stage cache of an earlier run (a resume).
+    """
     display_pipeline_summary(context)
     display_stage_results(getattr(context, "stage_results", []))
 
@@ -80,7 +91,9 @@ def display_pipeline_results(context: PipelineContext, limit: int = 10) -> None:
     display_sample_claims(claims, limit=limit)
     display_communities(communities, community_reports, entities, claims, limit=limit)
     display_performance_summary(
-        getattr(context, "stage_results", []), getattr(context, "global_metrics", None)
+        getattr(context, "stage_results", []),
+        getattr(context, "global_metrics", None),
+        executed_stages,
     )
 
 
@@ -334,7 +347,9 @@ def _create_reports_lookup(
 
 
 def display_performance_summary(
-    stage_results: list[PipelineStageResult], metrics: PipelineMetrics | None
+    stage_results: list[PipelineStageResult],
+    metrics: PipelineMetrics | None,
+    executed_stages: Collection[str] | None = None,
 ) -> None:
     if not stage_results:
         return
@@ -346,26 +361,35 @@ def display_performance_summary(
         )
     )
 
-    metrics_table = _create_performance_metrics_table(stage_results, metrics)
+    metrics_table = _create_performance_metrics_table(
+        stage_results, metrics, executed_stages
+    )
 
     if metrics_table.row_count > 0:
         console.print(metrics_table)
 
 
 def _create_performance_metrics_table(
-    stage_results: list[PipelineStageResult], metrics: PipelineMetrics | None
+    stage_results: list[PipelineStageResult],
+    metrics: PipelineMetrics | None,
+    executed_stages: Collection[str] | None = None,
 ) -> Table:
     metrics_table = Table(show_header=False, show_edge=False, box=None)
     metrics_table.add_column("Metric", style="cyan")
     metrics_table.add_column("Value", style="green", justify="right")
 
     total_duration = sum(r.duration_seconds or 0 for r in stage_results)
-    completed_stages = sum(
-        1 for r in stage_results if r.status == PipelineStageStatus.COMPLETED
-    )
+    completed = [r for r in stage_results if r.status == PipelineStageStatus.COMPLETED]
     cached_stages = sum(
         1 for r in stage_results if r.status == PipelineStageStatus.CACHED
     )
+    if executed_stages is None:
+        completed_stages = len(completed)
+    else:
+        # A resumed run keeps the earlier runs' COMPLETED results of the
+        # stages it restored from the cache instead of executing them.
+        completed_stages = sum(r.stage_name in executed_stages for r in completed)
+        cached_stages += len(completed) - completed_stages
 
     metrics_table.add_row("Total Pipeline Duration", f"{total_duration:.2f} seconds")
     metrics_table.add_row("Stages Executed", str(completed_stages))

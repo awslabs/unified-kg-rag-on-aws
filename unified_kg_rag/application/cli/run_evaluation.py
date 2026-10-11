@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import argparse
+import json
 import logging
 import shutil
 import sys
@@ -11,6 +12,7 @@ from pathlib import Path
 
 import nest_asyncio
 from langchain_core.runnables import Runnable
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -41,6 +43,7 @@ from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.shared import (
     AWSServiceError,
     ConfigurationError,
+    EvaluationException,
     get_config,
     get_logger,
     setup_logging,
@@ -56,6 +59,10 @@ try:
     __version__ = version("unified-kg-rag-on-aws")
 except (FileNotFoundError, ImportError, ValueError):
     __version__ = "unknown"
+
+
+class InvalidDatasetError(Exception):
+    """The evaluation dataset cannot be read or fails validation (exit 2)."""
 
 
 def _failure_rate(value: str) -> float:
@@ -309,17 +316,28 @@ class EvaluationRunner:
             config=self.config, rag_chain=self.rag_chain
         )
 
-        queries, ground_truths = self.evaluation_manager.load_data(
-            eval_data_path=eval_data_path,
-            base_metadata={
-                "suffix": self.args.suffix,
-                "enable_thinking": self.args.enable_thinking,
-                "search_strategy": self.args.search_strategy,
-                "search_type": self.args.search_type,
-                "top_k": self.args.top_k,
-                "retrieval_multiplier": self.args.retrieval_multiplier,
-            },
-        )
+        try:
+            queries, ground_truths = self.evaluation_manager.load_data(
+                eval_data_path=eval_data_path,
+                base_metadata={
+                    "suffix": self.args.suffix,
+                    "enable_thinking": self.args.enable_thinking,
+                    "search_strategy": self.args.search_strategy,
+                    "search_type": self.args.search_type,
+                    "top_k": self.args.top_k,
+                    "retrieval_multiplier": self.args.retrieval_multiplier,
+                },
+            )
+        except FileNotFoundError as e:
+            raise InvalidDatasetError(
+                f"evaluation dataset '{eval_data_uri}' not found"
+            ) from e
+        except json.JSONDecodeError as e:
+            raise InvalidDatasetError(
+                f"evaluation dataset '{eval_data_uri}' is not valid JSON: {e}"
+            ) from e
+        except EvaluationException as e:
+            raise InvalidDatasetError(str(e)) from e
 
         if not ground_truths:
             logger.warning(
@@ -433,6 +451,14 @@ def main() -> None:
     except KeyboardInterrupt:
         console.print("\n[yellow]Evaluation interrupted by user.[/yellow]")
         sys.exit(130)
+
+    except InvalidDatasetError as e:
+        # An input error, like a usage error: no traceback.
+        console.print(
+            f"\n[red]Error: invalid evaluation dataset: {escape(str(e))}[/red]"
+        )
+        logger.error("Invalid evaluation dataset: %s", e)
+        sys.exit(2)
 
     except (AWSServiceError, ConfigurationError) as e:
         # e.g. an s3:// dataset that cannot be downloaded.

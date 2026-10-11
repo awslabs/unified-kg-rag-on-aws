@@ -61,8 +61,11 @@ Context keys (all optional; sensible defaults shown):
                                        is only retained via removal_destroy)
   bedrock_model_arns  None             scope Bedrock IAM to specific model ARNs
                                        (list, or a comma-separated string with
-                                       -c); None => account/region foundation
-                                       + inference-profile ARNs
+                                       -c); None => every foundation model +
+                                       inference profile. Replaces the
+                                       foundation-model grant; the profile
+                                       grants stay unless a profile ARN is
+                                       listed
   alarm_email         None             subscribe an email to the alarm topic
   enable_cdk_nag      False            run cdk-nag AwsSolutions checks at synth
 

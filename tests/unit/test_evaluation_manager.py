@@ -125,6 +125,14 @@ class TestLoadData:
                 [{"id": "t1", "question": "q", "expected_entities": "Vendor"}],
                 "(?s)query_id 't1'.*expected_entities",
             ),
+            (
+                [{"id": "al", "question": "q", "answer_aliases": 5}],
+                "query_id 'al'.*'answer_aliases' must be a string or a list",
+            ),
+            (
+                [{"question": "q", "metadata": {"answer_aliases": ["x", 2]}}],
+                "'answer_aliases' must be a string or a list of strings",
+            ),
         ],
     )
     def test_invalid_dataset_fails_fast_with_location(

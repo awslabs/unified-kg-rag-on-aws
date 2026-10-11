@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+from opensearchpy.exceptions import NotFoundError
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
@@ -40,7 +41,7 @@ from tests.integration.test_incremental_source_scopes import (
     write_corpus,
 )
 from unified_kg_rag.adapters.aws.neptune import NeptuneClient
-from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
+from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient, is_index_not_found
 from unified_kg_rag.adapters.retrievers import NeptuneRetriever, OpenSearchRetriever
 from unified_kg_rag.adapters.storage import NeptuneIndexer, OpenSearchIndexer
 from unified_kg_rag.domain.models import (
@@ -55,7 +56,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.domain.models.config import LanguageCode
-from unified_kg_rag.shared import get_config
+from unified_kg_rag.shared import IndexNotFoundError, get_config
 
 pytestmark = [
     pytest.mark.integration,
@@ -651,6 +652,33 @@ def test_clear_of_a_namespace_never_indexed_succeeds(local_config: Config) -> No
         assert indexer.clear([_SUFFIX])
     finally:
         indexer.close()
+
+
+def test_query_of_a_never_ingested_suffix_raises_index_not_found(
+    local_config: Config,
+) -> None:
+    # The real server's 404 body, through the real sync and async connection
+    # classes, must reach the "No indices found for suffix" error rather than
+    # a search that quietly returns nothing.
+    config = local_config.model_copy(deep=True)
+    config.indexing.additional_suffix = f"none{uuid.uuid4().hex[:8]}"
+    prefix = config.indexing.opensearch.entities_index_prefix
+
+    client = OpenSearchClient(config)
+    try:
+        with pytest.raises(NotFoundError) as sync_exc:
+            client.client.search(index=f"{prefix}-nosuch-{uuid.uuid4().hex[:8]}")
+    finally:
+        client.close()
+    assert is_index_not_found(sync_exc.value)
+
+    with pytest.raises(IndexNotFoundError, match="No indices found for suffix"):
+        asyncio.run(
+            _vector_retrieve(
+                config,
+                SearchQuery(query="contract", index_prefixes=[prefix], suffix="nosuch"),
+            )
+        )
 
 
 def _stored_texts(indexer: OpenSearchIndexer, config: Config) -> set[str]:

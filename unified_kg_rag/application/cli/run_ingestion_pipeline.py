@@ -241,6 +241,22 @@ class IngestionPipelineRunner:
                     f"[red]Error: Source directory not found: {self.args.source_directory}[/red]"
                 )
                 sys.exit(1)
+            target = (
+                self.args.target_directory
+                or self.config.processing.document_parsing.target_directory
+            )
+            if target and (
+                Path(target).resolve() == self.args.source_directory.resolve()
+            ):
+                # Parsed .json written into the corpus is re-ingested as new
+                # documents on the next run.
+                console.print(
+                    "[red]Error: --target-directory (document_parsing."
+                    "target_directory) must not be the source directory "
+                    f"'{self.args.source_directory}': the parsed .json files "
+                    "would be ingested as new documents on the next run.[/red]"
+                )
+                sys.exit(1)
 
         if self.args.s3_sync and not self.args.s3_bucket_name:
             console.print(
@@ -515,7 +531,9 @@ class IngestionPipelineRunner:
             context = self._execute_pipeline()
 
             if context:
-                display_pipeline_results(context)
+                display_pipeline_results(
+                    context, executed_stages=self.pipeline.executed_stages
+                )
                 # A soft stage failure stops the run but does NOT raise — the
                 # pipeline returns a context with status=FAILED. Without this
                 # check the CLI would print success and exit 0, so Step Functions

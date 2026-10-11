@@ -10,7 +10,10 @@ response shapes. The cross-encoder is a fake loader; tiktoken is not loaded.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 import httpx
@@ -34,6 +37,7 @@ from unified_kg_rag.adapters.local.models import (
     PLACEHOLDER_API_KEY,
     OllamaLanguageModelFactory,
     OpenAICompatibleLanguageModelFactory,
+    PerLoopAsyncClient,
     import_optional,
 )
 from unified_kg_rag.adapters.local.rerank import (
@@ -671,3 +675,131 @@ def test_token_counter_factory_follows_the_llm_settings() -> None:
     )
     assert isinstance(counter, LocalTokenCounter)
     assert counter.count_tokens("Vendor") == 1
+
+
+# --- event loops ---------------------------------------------------------------
+
+
+class _HTTPFakeServer:
+    """``FakeServer`` over real HTTP/1.1 keep-alive sockets on localhost.
+
+    ``httpx.MockTransport`` opens no connection, so it cannot show a pooled
+    connection bound to a closed event loop; this server can.
+    """
+
+    def __init__(self, server: FakeServer) -> None:
+        fake = server
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_POST(self) -> None:  # noqa: N802 - http.server API
+                length = int(self.headers.get("Content-Length") or 0)
+                request = httpx.Request(
+                    "POST",
+                    f"http://localhost{self.path}",
+                    content=self.rfile.read(length),
+                )
+                response = fake(request)
+                body = response.content
+                self.send_response(response.status_code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args: Any) -> None:
+                pass
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+
+    def __enter__(self) -> _HTTPFakeServer:
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+def _http_config(kind: str, url: str) -> Config:
+    config = _config(kind)
+    base_url = f"{url}/v1" if kind == "openai_compatible" else url
+    config.providers.llm.base_url = base_url
+    config.providers.embedding.base_url = base_url
+    return config
+
+
+@pytest.mark.parametrize(
+    ("kind", "factory_cls"),
+    [
+        ("ollama", OllamaLanguageModelFactory),
+        ("openai_compatible", OpenAICompatibleLanguageModelFactory),
+    ],
+)
+def test_one_chat_model_serves_successive_event_loops(
+    kind: str, factory_cls: type
+) -> None:
+    # A query chain is built once and reused, and asyncio.run gives every
+    # call a new loop: a client whose pooled connection belongs to the first
+    # loop fails the second call with "Event loop is closed".
+    with _HTTPFakeServer(FakeServer()) as server:
+        model = factory_cls(_http_config(kind, server.url)).get_model("synthetic-chat")
+        for _ in range(3):
+            reply = asyncio.run(model.ainvoke([HumanMessage(content="Who ships?")]))
+            assert reply.content == "Vendor ships to Buyer."
+        if kind != "ollama":
+            return  # FakeServer answers OpenAI streams without SSE framing.
+
+        async def stream() -> str:
+            return "".join(
+                [
+                    str(chunk.content)
+                    async for chunk in model.astream([HumanMessage(content="Who?")])
+                ]
+            )
+
+        assert asyncio.run(stream()) == "Vendor ships to Buyer."
+
+
+@pytest.mark.parametrize(
+    ("kind", "factory_cls"),
+    [
+        ("ollama", OllamaEmbeddingFactory),
+        ("openai_compatible", OpenAICompatibleEmbeddingFactory),
+    ],
+)
+def test_one_embedding_model_serves_successive_event_loops(
+    kind: str, factory_cls: type
+) -> None:
+    with _HTTPFakeServer(FakeServer()) as server:
+        model = factory_cls(_http_config(kind, server.url)).get_model(
+            "synthetic-embed", dimensions=DIM
+        )
+        for _ in range(3):
+            assert len(asyncio.run(model.aembed_query("Vendor"))) == DIM
+
+
+def test_per_loop_client_is_reused_within_a_loop_and_rebuilt_across_loops() -> None:
+    built: list[object] = []
+
+    class Client:
+        def __init__(self) -> None:
+            built.append(self)
+
+        async def chat(self) -> object:
+            return self
+
+    proxy = PerLoopAsyncClient(Client)
+
+    async def twice() -> tuple[object, object]:
+        return await proxy.chat(), await proxy.chat()
+
+    first_a, first_b = asyncio.run(twice())
+    second_a, _ = asyncio.run(twice())
+
+    assert first_a is first_b
+    assert second_a is not first_a
+    assert len(built) == 2

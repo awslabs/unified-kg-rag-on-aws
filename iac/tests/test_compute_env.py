@@ -122,3 +122,33 @@ def test_ecr_lifecycle_never_expires_the_deployed_tag() -> None:
     rules = json.loads(repo["Properties"]["LifecyclePolicy"]["LifecyclePolicyText"])
     first, *_ = sorted(rules["rules"], key=lambda r: r["rulePriority"])
     assert first["selection"]["tagPatternList"] == ["v1.2.3"]
+
+
+def _invoke_resources(context: dict[str, Any]) -> list[str]:
+    """The InvokeModel statement's resources, tokens rendered as JSON."""
+    template = _compute_template(context)
+    (statement,) = [
+        s
+        for p in template.find_resources("AWS::IAM::Policy").values()
+        for s in p["Properties"]["PolicyDocument"]["Statement"]
+        if "bedrock:InvokeModel" in s["Action"]
+    ]
+    return [r if isinstance(r, str) else json.dumps(r) for r in statement["Resource"]]
+
+
+_MODEL = "arn:aws:bedrock:*::foundation-model/vendor.model-a"
+_PROFILE = "arn:aws:bedrock:us-west-2:111111111111:inference-profile/us.vendor.model-a"
+
+
+def test_foundation_model_arns_keep_the_inference_profile_grants() -> None:
+    # Profile-only models resolve to a profile id at runtime; a profile call
+    # still needs the listed foundation-model ARN, so no other model is granted.
+    resources = _invoke_resources({"bedrock_model_arns": _MODEL})
+    assert resources[0] == _MODEL
+    assert not [r for r in resources if "foundation-model/*" in r]
+    assert sum("inference-profile/*" in r for r in resources) == 2
+
+
+def test_listed_inference_profile_arns_are_used_exactly() -> None:
+    resources = _invoke_resources({"bedrock_model_arns": f"{_MODEL},{_PROFILE}"})
+    assert resources == [_MODEL, _PROFILE]

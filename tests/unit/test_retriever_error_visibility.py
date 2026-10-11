@@ -11,13 +11,21 @@ empty list only on genuinely-transient failures.
 
 from __future__ import annotations
 
+import json
 import weakref
 
 import pytest
 from gremlin_python.process.graph_traversal import GraphTraversal
 from gremlin_python.structure.graph import Graph
-from opensearchpy.exceptions import NotFoundError
+from opensearchpy import (
+    AsyncHttpConnection,
+    Connection,
+    RequestsHttpConnection,
+    Urllib3HttpConnection,
+)
+from opensearchpy.exceptions import NotFoundError, TransportError
 
+from unified_kg_rag.adapters.aws.opensearch import is_index_not_found
 from unified_kg_rag.adapters.retrieval.base import is_fatal_retrieval_error
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
@@ -292,15 +300,103 @@ def recording_logger(monkeypatch) -> _RecordingLogger:
     return rec
 
 
+def _server_error(
+    connection_cls: type[Connection], status: int, body: dict
+) -> TransportError:
+    """The exception ``connection_cls`` raises for an HTTP error ``body``.
+
+    Built through the connection's own ``_raise_error`` with the arguments its
+    ``perform_request`` passes: the sync connections forward the response
+    content type (so ``.error`` is the extracted type and ``.info`` the parsed
+    body), ``AsyncHttpConnection`` forwards none (``.error`` is the raw JSON
+    text, ``.info`` is ``None``).
+    """
+    raw = json.dumps(body)
+    connection = connection_cls()
+    try:
+        if connection_cls is AsyncHttpConnection:
+            connection._raise_error(status, raw)
+        else:
+            connection._raise_error(status, raw, "application/json; charset=UTF-8")
+    except TransportError as exc:
+        return exc
+    raise AssertionError("_raise_error did not raise")
+
+
+_NO_SUCH_INDEX_BODY = {
+    "error": {
+        "root_cause": [
+            {
+                "type": "index_not_found_exception",
+                "reason": "no such index [graphrag-entities-default]",
+            }
+        ],
+        "type": "index_not_found_exception",
+        "reason": "no such index [graphrag-entities-default]",
+    },
+    "status": 404,
+}
+_CONNECTIONS = [AsyncHttpConnection, RequestsHttpConnection, Urllib3HttpConnection]
+
+
+@pytest.mark.parametrize("connection_cls", _CONNECTIONS)
+def test_index_not_found_is_recognised_for_every_connection_class(
+    connection_cls: type[Connection],
+) -> None:
+    exc = _server_error(connection_cls, 404, _NO_SUCH_INDEX_BODY)
+    assert isinstance(exc, NotFoundError)
+    assert is_index_not_found(exc)
+
+
+def test_async_connection_leaves_the_raw_body_in_error() -> None:
+    # Pins the library shape the classifier depends on: if opensearch-py starts
+    # extracting the type for the async client too, this documents the change.
+    exc = _server_error(AsyncHttpConnection, 404, _NO_SUCH_INDEX_BODY)
+    assert exc.info is None
+    assert json.loads(exc.error)["error"]["type"] == "index_not_found_exception"
+
+
+@pytest.mark.parametrize("connection_cls", _CONNECTIONS)
+def test_root_cause_only_index_not_found_is_recognised(
+    connection_cls: type[Connection],
+) -> None:
+    body = {
+        "error": {
+            "root_cause": [{"type": "index_not_found_exception"}],
+            "type": "some_wrapper_exception",
+        },
+        "status": 404,
+    }
+    assert is_index_not_found(_server_error(connection_cls, 404, body))
+
+
+@pytest.mark.parametrize("connection_cls", _CONNECTIONS)
+def test_other_404_bodies_are_not_index_not_found(
+    connection_cls: type[Connection],
+) -> None:
+    resource = {"error": {"type": "resource_not_found_exception"}, "status": 404}
+    document = {"_index": "graphrag-entities-default", "_id": "x", "found": False}
+    assert not is_index_not_found(_server_error(connection_cls, 404, resource))
+    assert not is_index_not_found(_server_error(connection_cls, 404, document))
+
+
+def test_non_404_is_not_index_not_found() -> None:
+    exc = _server_error(AsyncHttpConnection, 400, _NO_SUCH_INDEX_BODY)
+    assert not is_index_not_found(exc)
+    assert not is_index_not_found(ValueError("index_not_found_exception"))
+
+
+@pytest.mark.parametrize("connection_cls", _CONNECTIONS)
 async def test_index_not_found_warns_instead_of_error(
-    config: Config, recording_logger: _RecordingLogger
+    config: Config,
+    recording_logger: _RecordingLogger,
+    connection_cls: type[Connection],
 ) -> None:
     # A 404 index_not_found is a config/index mismatch, not a transient
     # failure: a WARNING (not an ERROR) per query, empty results.
     retriever = _opensearch_retriever(config)
     _set_asearch_raising(
-        retriever,
-        NotFoundError(404, "index_not_found_exception", {"error": "no such index"}),
+        retriever, _server_error(connection_cls, 404, _NO_SUCH_INDEX_BODY)
     )
     prefix = config.indexing.opensearch.entities_index_prefix
     for _ in range(3):
@@ -317,7 +413,8 @@ async def test_other_not_found_still_logs_error(
     config: Config, recording_logger: _RecordingLogger
 ) -> None:
     retriever = _opensearch_retriever(config)
-    _set_asearch_raising(retriever, NotFoundError(404, "resource_not_found", {}))
+    body = {"error": {"type": "resource_not_found_exception"}, "status": 404}
+    _set_asearch_raising(retriever, _server_error(AsyncHttpConnection, 404, body))
     prefix = config.indexing.opensearch.entities_index_prefix
     results = await retriever.aretrieve(
         SearchQuery(query="hello", index_prefixes=[prefix])
@@ -328,9 +425,9 @@ async def test_other_not_found_still_logs_error(
     assert len(recording_logger.errors) == 1
 
 
-_INDEX_NOT_FOUND = NotFoundError(
-    404, "index_not_found_exception", {"error": "no such index"}
-)
+# The retriever searches through the async client, so this is the shape it
+# actually sees.
+_INDEX_NOT_FOUND = _server_error(AsyncHttpConnection, 404, _NO_SUCH_INDEX_BODY)
 
 
 @pytest.mark.parametrize("suffix", [None, "tenant-a"])

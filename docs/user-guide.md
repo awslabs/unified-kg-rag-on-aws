@@ -824,7 +824,7 @@ OpenSearch + Neptune.
 | `--s3-sync` | off | Sync cache to S3 (requires `--s3-bucket-name`) |
 | `--s3-bucket-name` | — | S3 bucket for cache sync |
 | `--s3-prefix` | `pipeline-runs` | S3 key prefix for cache files |
-| `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | Existing run to resume/inspect. If the flag is omitted it falls back to the `GRAPHRAG_PIPELINE_ID` environment variable. The id names the run's cache directory and S3 prefix, so only lowercase letters, digits, hyphens and underscores are accepted. |
+| `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | Existing run to resume/inspect. If the flag is omitted it falls back to the `GRAPHRAG_PIPELINE_ID` environment variable. The id names the run's cache directory and S3 prefix, so it accepts letters, digits, `.`, `_` and `-` only: up to 128 characters, starting with a letter or digit, with no `..`. |
 | `--resume-from-stage` | — | Stage to resume from, by name, case-insensitive (requires `--pipeline-id`); an unknown name is a usage error (exit 2) |
 | `--verify-metadata` | off | Verify pipeline metadata integrity (needs `--pipeline-id`); exits non-zero when it is corrupt or the run is not found |
 | `--repair-metadata` | off | Attempt metadata repair (needs `--pipeline-id`); asks for confirmation, and exits non-zero when the repair fails |
@@ -1446,9 +1446,20 @@ directory and uploaded under the prefix when the run ends, with the
 S3 calls use `aws.profile_name` and `aws.region_name`. The principal needs
 `s3:GetObject` on the dataset and `s3:PutObject` on the outputs prefix.
 
+A dataset that cannot be read (missing file, invalid JSON) or fails
+validation (an empty array, a missing `question`, a duplicate id, a field of
+the wrong type such as a non-list `expected_entities` or an `answer_aliases`
+that is not a string or a list of strings, metadata the RAG chain rejects)
+stops `run-eval` before any query with `Error: invalid evaluation dataset:`,
+the item index and query id, and exit code 2.
+
 Results are written to the outputs directory as
 `evaluation_{results,reports,summary}_<timestamp>.json`; when every answered
 query used the same strategy the name becomes `..._<strategy>_<timestamp>.json`.
+`<timestamp>` is `YYYYMMDD_HHMMSS_<8 hex characters>`: the random part keeps
+runs started in the same second (parallel strategies, CI matrices) from
+overwriting each other's files, so a script finds the latest run by sorting
+the names or by file time, not by building the name.
 The summary holds, per metric, mean/median/stdev/min/max/count
 (`metric_statistics`) and scored/failed/skipped counts (`metric_outcomes`), plus:
 
@@ -1746,6 +1757,9 @@ config = get_config("config.yaml")
 
 # Ingest. PipelineConfig carries the run options the run-ingestion flags set
 # (pipeline_id, cache directory, S3 sync, enabled stages, force_rebuild).
+# run() ingests the directory it is given (the constructor's source_directory
+# defaults to processing.document_parsing.source_directory and is replaced by
+# it): parsing, loading and the incremental registry scope all use it.
 pipeline = DataIngestionPipeline(config, PipelineConfig(pipeline_id="run-001"))
 try:
     context = pipeline.run("./source")

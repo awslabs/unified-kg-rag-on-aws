@@ -17,7 +17,11 @@ provider never needs them.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
+import threading
+import weakref
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -53,6 +57,48 @@ def import_optional(module: str, kind: str) -> Any:
             "Install the local extra: uv sync --extra local (or pip install -e "
             "'.[local]' in a source checkout)."
         ) from e
+
+
+class PerLoopAsyncClient:
+    """Stands in for an Ollama ``AsyncClient``, with one client per event loop.
+
+    ``ChatOllama`` and ``OllamaEmbeddings`` build one async client at
+    construction. Its httpx connection pool belongs to the first event loop
+    that uses it, so the same model used again from another loop (a second
+    ``asyncio.run``, or the sync API's loop and then the caller's) fails with
+    "Event loop is closed". The models are built once and reused, as the
+    query chains are; this proxy gives every running loop its own client,
+    built by ``build``, and drops it with the loop.
+    """
+
+    def __init__(self, build: Callable[[], Any]) -> None:
+        self._build = build
+        self._clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Any] = (
+            weakref.WeakKeyDictionary()
+        )
+        self._lock = threading.Lock()
+
+    def _current(self) -> Any:
+        loop = asyncio.get_running_loop()
+        with self._lock:
+            client = self._clients.get(loop)
+            if client is None:
+                client = self._clients[loop] = self._build()
+        return client
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._current(), name)
+
+
+def per_loop_async_client(model: Any, rebuild: Callable[[], Any]) -> Any:
+    """Give ``model`` (an Ollama LangChain model) a per-loop async client.
+
+    ``rebuild`` returns a new model with the same settings; its async client
+    is the one for a new loop, so the client is built exactly as the library
+    builds it (host, auth from the URL, client kwargs).
+    """
+    model._async_client = PerLoopAsyncClient(lambda: rebuild()._async_client)
+    return model
 
 
 def api_key_value(endpoint: EndpointConfig) -> str:
@@ -246,13 +292,18 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
         client_kwargs: dict[str, Any] = {"timeout": self.settings.timeout_seconds}
         if self.transport is not None:
             client_kwargs["transport"] = self.transport
-        model: BaseChatModel = module.ChatOllama(
-            model=model_id,
-            base_url=self.settings.base_url,
-            temperature=temperature,
-            num_predict=max_tokens,
-            num_ctx=self.settings.context_window_size,
-            client_kwargs=client_kwargs,
-            callbacks=callbacks,
-        )
+
+        def build() -> BaseChatModel:
+            chat: BaseChatModel = module.ChatOllama(
+                model=model_id,
+                base_url=self.settings.base_url,
+                temperature=temperature,
+                num_predict=max_tokens,
+                num_ctx=self.settings.context_window_size,
+                client_kwargs=client_kwargs,
+                callbacks=callbacks,
+            )
+            return chat
+
+        model: BaseChatModel = per_loop_async_client(build(), build)
         return model

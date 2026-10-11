@@ -49,16 +49,25 @@ derived) to avoid replace-on-rename conflicts.
 > region (`bedrock_region`), which can differ from the deploy region that hosts
 > Neptune/OpenSearch. It is therefore its own stack. Because it lives in another
 > region, the two-step flow avoids cross-region CloudFormation references
-> (which churn every deploy-region stack's exports):
+> (which churn every deploy-region stack's exports). A `bedrock_region` other
+> than the deploy region needs `network_mode=public`: the default `private`
+> mode reaches Bedrock only through the deploy region's VPC endpoints, so synth
+> fails otherwise. With a deploy region of, say, `ap-northeast-2` and Bedrock
+> in `us-west-2`:
 >
 > ```bash
 > # 0) once: bootstrap bedrock_region too (cdk bootstrap covers one region)
 > cdk bootstrap aws://<account>/us-west-2
 > # 1) create the guardrail in bedrock_region, note its id from the output
-> cdk deploy GraphRagGuardrail -c bedrock_region=us-west-2 …
+> cdk deploy GraphRagGuardrail -c network_mode=public -c bedrock_region=us-west-2 …
 > # 2) pass that id so compute injects BEDROCK_GUARDRAIL_IDENTIFIER
-> cdk deploy --all -c guardrail_identifier=<id> -c bedrock_region=us-west-2 …
+> cdk deploy --all -c network_mode=public -c bedrock_region=us-west-2 \
+>   -c guardrail_identifier=<id> …
 > ```
+>
+> In `private` mode leave `bedrock_region` unset (it defaults to the deploy
+> region): the same two steps then create the guardrail in the deploy region,
+> and step 0 is not needed.
 >
 > Keep passing `-c guardrail_identifier=<id>` on every later deploy, or compute
 > stops injecting it. The guardrail stack keeps owning the guardrail in step 2
@@ -108,7 +117,7 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `neptune_instances` | `1` (dev) / `2` (non-dev) | Neptune instances; `>=2` ⇒ Multi-AZ HA (reader in another AZ). dev defaults to 1 (no failover) for cost |
 | `opensearch_instance` | `r6g.large.search` | OpenSearch data node type (Graviton) |
 | `opensearch_master_instance` | `m6g.large.search` | dedicated master node type, used only when `opensearch_count > 1`. 8 GiB Graviton, which AWS sizes for up to 10 nodes / 10K shards on OpenSearch 2.13; raise it for larger domains |
-| `opensearch_count` | `1` (dev) / `2` (non-dev) | OpenSearch data node count (`>1` ⇒ 3 dedicated masters + zone awareness = 5 nodes; dev runs a single node for cost) |
+| `opensearch_count` | `1` (dev) / `2` (non-dev) | OpenSearch data node count (`>1` ⇒ 3 dedicated masters + zone awareness, e.g. 2 data nodes = 5 nodes; dev runs a single node for cost). A zone-aware domain spans as many AZs as it has data nodes, up to 3 and up to the AZs of the VPC (`max_azs` for a created VPC): 3 data nodes with `max_azs=3` use 3 AZs |
 | `opensearch_volume_gib` | `50` | GP3 volume per OpenSearch data node; the free-storage alarm fires at 40% free |
 | `doc_status_table` | `graphrag-doc-status` (dev) / `<env>-graphrag-doc-status` (non-dev) | DynamoDB doc-status (incremental-indexing registry) table name, injected into the task as `GRAPHRAG_DOC_STATUS_TABLE`. Changing it on a deployed environment creates a new, empty registry table |
 | `backup_retention_days` | `7` | Neptune automated backup retention, 1-35 days (see [Backup and restore](../docs/operations.md#backup-and-restore)) |
@@ -123,7 +132,7 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `vpc_flow_logs` | `false` (dev) / `true` (non-dev) | enable VPC flow logs (created VPC only) |
 | `flow_log_retention_days` | `731` | flow-log log group retention; must be a CloudWatch Logs retention value (e.g. `30`, `90`, `365`, `731`) |
 | `deletion_protection` | `false` (dev) / `true` (non-dev) | deletion protection on the Neptune cluster and the DynamoDB doc-status table (blocks a direct delete API/console call). OpenSearch domains have no deletion-protection setting; outside dev the domain is only kept by `removal_destroy=false` (CloudFormation `Retain`), which does not stop a direct `DeleteDomain` call |
-| `bedrock_model_arns` | _(none)_ | scope Bedrock IAM to specific model ARNs: a list in `cdk.json`, or a comma-separated string with `-c bedrock_model_arns=arn:...,arn:...` |
+| `bedrock_model_arns` | _(none)_ | scope Bedrock `InvokeModel` IAM to specific model ARNs: a list in `cdk.json`, or a comma-separated string with `-c bedrock_model_arns=arn:...,arn:...`. The list **replaces** the default `foundation-model/*` grant. If it names only foundation models, the default `inference-profile/*` grants are kept, because the app calls models that are offered only through an inference profile (Claude 4.5 and later) by profile id; a profile call is still authorized against the listed foundation-model ARNs, so no other model becomes callable. Cross-region and global profiles route to several regions, so list foundation models with a `*` region (`arn:aws:bedrock:*::foundation-model/<model-id>`). If the list names any inference-profile ARN, it is used exactly as given and no other profile is granted. `Rerank` and `ListInferenceProfiles` stay on `*` (they have no resource scoping) |
 | `alarm_email` | _(none)_ | subscribe an email to the pipeline alarm topic |
 | `enable_cdk_nag` | `false` | run cdk-nag AwsSolutions (Well-Architected) checks at synth |
 | `owner` | `aws-proserve` | `owner` tag applied to every resource |
