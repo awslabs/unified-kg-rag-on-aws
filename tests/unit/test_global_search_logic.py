@@ -30,7 +30,7 @@ def _community(
         content=f"community {i}",
         score=score,
         source=f"c{i}",
-        retriever_type="graph",
+        retriever_type="community",
         metadata=metadata or {},
     )
 
@@ -346,34 +346,30 @@ async def test_retrieve_community_reports_uses_community_reports_prefix() -> Non
     assert sent.index_prefixes == ["community_reports"]
 
 
-async def test_reports_are_fused_without_a_graph_round_trip() -> None:
+async def test_reports_are_retrieved_without_a_graph_round_trip_or_rerank() -> None:
     # The Neptune community expansion returned only the candidate communities
     # (its limit equalled their count and they were emitted first), so it was
-    # removed: one report bucket is fused, and the graph is never queried.
+    # removed. The candidates are not reranked either: selection reorders them
+    # and the fusion with their text units reranks the selected reports once.
     candidates = [_community(0, metadata={"community_id": "cid0"}), _community(1)]
     graph = _StubRetriever(raises=AssertionError("graph must not be queried"))
     strat = _bare_strategy(
         retrievers={"document": _StubRetriever(candidates), "graph": graph}
     )
-    fused: list[dict] = []
 
-    async def _fuse(results, **kwargs):
-        fused.append(results)
-        return results["opensearch_candidate_community_reports"]
+    async def _no_fuse(results, **kwargs):
+        raise AssertionError("candidates must not be fused")
 
-    strat._fuse_and_rerank = _fuse  # type: ignore[method-assign]
-    out = await strat._retrieve_and_fuse_communities(SearchQuery(query="q"))
+    strat._fuse_and_rerank = _no_fuse  # type: ignore[method-assign]
+    out = await strat._retrieve_community_reports(SearchQuery(query="q"))
     assert out == candidates
-    assert [list(buckets) for buckets in fused] == [
-        ["opensearch_candidate_community_reports"]
-    ]
     assert graph.last_query is None
 
 
-# --- _parse_map_points robustness to non-finite LLM scores (R3 fix) ---
+# --- _parse_map_payload robustness to non-finite LLM scores (R3 fix) ---
 
 
-def test_parse_map_points_handles_infinity_and_nan() -> None:
+def test_parse_map_payload_handles_infinity_and_nan() -> None:
     # parse_llm_json (json.loads) accepts Infinity/-Infinity/NaN, and "1e999"
     # overflows float() to inf; int(inf)/int(nan) would crash the whole query.
     # Non-finite scores must be coerced to 0 (dropped), not raise.
@@ -385,18 +381,18 @@ def test_parse_map_points_handles_infinity_and_nan() -> None:
     # Inject the non-standard literals json.dumps won't emit but json.loads reads.
     raw_bad = '{"points": [{"description": "inf", "score": Infinity}, {"description": "nan", "score": NaN}, {"description": "ok", "score": 7}]}'
 
-    pts = GlobalSearchStrategy._parse_map_points(raw_bad)
+    pts = GlobalSearchStrategy._parse_map_payload(raw_bad) or []
     scores = {p.description: p.score for p in pts}
     assert scores["inf"] == 0  # coerced, not crashed
     assert scores["nan"] == 0
     assert scores["ok"] == 7
     # And a normal payload still parses.
-    assert len(GlobalSearchStrategy._parse_map_points(raw)) == 2
+    assert len(GlobalSearchStrategy._parse_map_payload(raw) or []) == 2
 
 
-def test_parse_map_points_overflow_string_score() -> None:
+def test_parse_map_payload_overflow_string_score() -> None:
     raw = '{"points": [{"description": "big", "score": "1e999"}]}'
-    pts = GlobalSearchStrategy._parse_map_points(raw)
+    pts = GlobalSearchStrategy._parse_map_payload(raw) or []
     assert pts[0].score == 0  # 1e999 -> inf -> coerced to 0
 
 
@@ -496,7 +492,7 @@ async def test_synthesized_item_does_not_take_an_evidence_slot(
         retriever_type="general",
         metadata={"synthesized": True},
     )
-    strat._retrieve_and_fuse_communities = AsyncMock(return_value=evidence)  # type: ignore[method-assign]
+    strat._retrieve_community_reports = AsyncMock(return_value=evidence)  # type: ignore[method-assign]
     strat._select_relevant_communities = AsyncMock(return_value=evidence[:10])  # type: ignore[method-assign]
     strat._augment_and_rerank_communities = AsyncMock(return_value=evidence)  # type: ignore[method-assign]
     strat._apply_map_reduce = AsyncMock(return_value=[synthesized, *evidence])  # type: ignore[method-assign]

@@ -118,7 +118,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             query.search_type.value,
         )
 
-        retrieved_communities = await self._retrieve_and_fuse_communities(query)
+        retrieved_communities = await self._retrieve_community_reports(query)
         if not retrieved_communities:
             logger.warning("No results found for query: %s", text_digest(query.query))
             return SearchResult(
@@ -206,30 +206,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             },
         )
 
-    async def _retrieve_and_fuse_communities(
-        self, query: SearchQuery
-    ) -> list[RetrievalResult]:
-        # Reports come from the community-reports index alone. A Neptune
-        # community expansion used to follow: re-reading the candidate
-        # communities' vertices, their members and the members' neighbours,
-        # then fetching the reports of the communities it returned. Its limit
-        # (top_k * retrieval_multiplier) equalled the candidate count and the
-        # candidates were emitted first, so it returned only the candidates; the
-        # re-fetched copies cost a Neptune and an OpenSearch round trip and
-        # double-counted every candidate in fusion.
-        candidate_community_reports = await self._retrieve_community_reports(query)
-        if not candidate_community_reports:
-            return []
-        return await self._fuse_and_rerank(
-            {"opensearch_candidate_community_reports": candidate_community_reports},
-            top_k=query.top_k,
-            retrieval_multiplier=query.retrieval_multiplier,
-            query=query.query,
-        )
-
     async def _retrieve_community_reports(
         self, query: SearchQuery
     ) -> list[RetrievalResult]:
+        # The candidates are not reranked here: selection reorders them and the
+        # fusion with their text units reranks the selected reports once.
         index_prefixes = [
             self.config.indexing.opensearch.community_reports_index_prefix
         ]
@@ -258,15 +239,14 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             self.global_search_config.max_communities * query.retrieval_multiplier
         )
         if not self.global_search_config.use_dynamic_selection:
-            # Without per-query LLM scoring, fall back to the community-report
-            # `rank` (graph-importance, set at indexing time), tie-breaking on the
-            # LLM-assigned `rating` (importance/impact severity, MS GraphRAG
-            # parity) so we keep the most central + most important communities
-            # rather than truncating in arbitrary retrieval order. Both missing
-            # sort last.
+            # Without per-query LLM scoring, keep the reports most relevant to
+            # the query (retrieval score); the community-report `rank`
+            # (graph importance, set at indexing time) and then the
+            # LLM-assigned `rating` only break ties. Both missing sort last.
             return sorted(
                 all_communities,
                 key=lambda c: (
+                    c.score or 0.0,
                     float(c.metadata.get("rank", 0.0) or 0.0),
                     float(c.metadata.get("rating", 0.0) or 0.0),
                 ),
@@ -403,8 +383,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         PACK — take ranked points up to ``max_map_reduce_tokens``.
         REDUCE — synthesize the answer from the ranked, packed points.
 
-        Below ``map_reduce_min_results`` the results pass through unchanged (the
-        existing direct path). If the map phase yields no usable scored points
+        Only the community reports are mapped; their text units pass through
+        next to the synthesized item. Below ``map_reduce_min_results`` reports
+        the results pass through unchanged (the existing direct path). If the map phase yields no usable scored points
         (e.g. every map call failed to parse), it degrades to the legacy
         concat-and-reduce path so global search never hard-fails.
 
@@ -418,18 +399,24 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         reports were never judged, so it degrades to concat-and-reduce over
         just those unrated reports instead.
         """
-        if len(results) < self.global_search_config.map_reduce_min_results:
+        reports = [
+            r for r in results if r.retriever_type == SectionType.COMMUNITY.value
+        ]
+        if len(reports) < self.global_search_config.map_reduce_min_results:
             return results
+        text_units = [
+            r for r in results if r.retriever_type != SectionType.COMMUNITY.value
+        ]
 
         try:
             map_points, unrated = await self._run_map_phase(
-                results, query, config=config
+                reports, query, config=config
             )
         except Exception as e:
             if not self.ignore_errors:
                 raise
             logger.error("Map phase failed: %s", e)
-            map_points, unrated = [], list(results)
+            map_points, unrated = [], list(reports)
 
         ranked_points = self._filter_and_rank_points(map_points)
         if not ranked_points:
@@ -439,9 +426,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     "reports were never rated (failed or unparseable map calls); "
                     "degrading to concat-and-reduce over the unrated reports.",
                     len(unrated),
-                    len(results),
+                    len(reports),
                 )
-                return await self._concat_reduce(unrated, query, config=config)
+                reduced = await self._concat_reduce(unrated, query, config=config)
+                return reduced + text_units
             logger.warning(
                 "All %s map key points scored at or below threshold %s; "
                 "no relevant community data for the query, returning no context.",
@@ -546,20 +534,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         return "\n\n".join(parts)
 
     @staticmethod
-    def _parse_map_points(raw: str) -> list[_MapPoint]:
-        """Robustly parse a map JSON payload into scored key points.
-
-        Tolerates the LLM wrapping the JSON in prose or code fences. Returns an
-        empty list on any parse failure (the caller degrades gracefully) so a
-        single bad map response never aborts global search.
-        """
-        return GlobalSearchStrategy._parse_map_payload(raw) or []
-
-    @staticmethod
     def _parse_map_payload(raw: str) -> list[_MapPoint] | None:
-        """Like ``_parse_map_points`` but ``None`` when ``raw`` is not map JSON.
+        """Parse a map JSON payload into scored key points.
 
-        An empty list means the batch WAS rated and yielded no key points.
+        Tolerates the LLM wrapping the JSON in prose or code fences. ``None``
+        when ``raw`` is not map JSON (the batch counts as unrated); an empty
+        list means the batch WAS rated and yielded no key points.
         """
         payload = parse_llm_json(raw)
         if not payload:

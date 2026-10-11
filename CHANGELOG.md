@@ -521,6 +521,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   user's text. Follow-ups such as "what about its price?" were searched
   verbatim before, and the history reached only the post-retrieval context
   builder (#PR).
+- Global search reranks once: the candidate reports were fused and reranked,
+  then re-sorted by indexed `rank` (discarding the rerank order), then fused
+  and reranked again with their text units. The candidates are no longer
+  reranked; without `use_dynamic_selection` they are selected by retrieval
+  score with `rank` and `rating` as tie-breaks, and the fusion with their text
+  units reranks the selection. `GlobalSearchStrategy._parse_map_points` is
+  removed (use `_parse_map_payload`) (#PR).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
@@ -1766,6 +1773,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   local search and DRIFT passed. Explicit seed ids are all expanded, and
   name-matched seeds follow `top_k * retrieval_multiplier`. Also removes an
   unreachable hybrid-query branch (#PR).
+- Global search's map step sent the selected communities' text units to the
+  map LLM as community reports, and counted them toward
+  `map_reduce_min_results`. Only community reports are mapped now; the text
+  units pass through after the synthesized item (#PR).
 
 ### Security
 - The task role drops the unused `neptune-db:GetEngineStatus`,
