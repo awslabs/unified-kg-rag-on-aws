@@ -52,7 +52,7 @@ flowchart LR
 | `hybrid` | LightRAG | 키워드 중심의 그래프 질문. 청크 검색은 더하지 않습니다 |
 | `naive` | LightRAG | 빠른 벡터 전용 기준선과 비교 실험 |
 
-전략별 동작은 [사용자 가이드](./docs/user-guide.ko.md) §4를, 레이어 구조·알고리즘·데이터 모델은 [설계 문서](./docs/design.ko.md)를 참고하세요.
+전략별 동작은 [사용자 가이드 §4](./docs/user-guide.ko.md#4-질의-run-rag)를, 레이어 구조·알고리즘·데이터 모델은 [설계 문서](./docs/design.ko.md)를 참고하세요.
 
 ## 빠른 시작
 
@@ -60,18 +60,20 @@ flowchart LR
 
 | 방식 | 그래프·벡터 저장소 | 모델 | 시작 방법 |
 |---|---|---|---|
-| **로컬 모드**(개발용, AWS 불필요) | 컨테이너로 띄운 Gremlin Server와 OpenSearch([`docker/compose.local.yaml`](./docker/compose.local.yaml)), 증분 인덱싱용 SQLite | Ollama(또는 OpenAI 호환 서버)나 Amazon Bedrock | `uv sync --extra local`, `docker compose -f docker/compose.local.yaml --profile models up -d --wait`를 실행한 뒤 `--config-path docker/config.local.yaml`을 넘깁니다([로컬 모드](./docs/user-guide.ko.md#로컬-모드-aws-없이)) |
+| **로컬 모드**(개발용, AWS 불필요) | 컨테이너로 띄운 Gremlin Server와 OpenSearch([`docker/compose.local.yaml`](./docker/compose.local.yaml)), 증분 인덱싱용 SQLite | Ollama(또는 OpenAI 호환 서버)나 Amazon Bedrock | [로컬 모드](./docs/user-guide.ko.md#로컬-모드-aws-없이)를 따라 컨테이너를 띄우고 Ollama 모델 두 개를 내려받은 뒤 `--config-path docker/config.local.yaml`을 넘깁니다 |
 | **기존 AWS 리소스** | 사용 중인 Neptune 클러스터와 OpenSearch 도메인(그리고 S3 버킷, 증분 인덱싱을 쓰면 DynamoDB) | Amazon Bedrock | `config-template.yaml`을 `config.yaml`로 복사하고 엔드포인트를 입력합니다 |
 | **번들 CDK 스택** | [`iac/`](./iac/README.md)가 Fargate 데이터 플레인, Step Functions 수집 파이프라인과 함께 생성 | Amazon Bedrock | [AWS에 배포](#aws에-배포선택)를 진행한 뒤 [`iac/README.md`의 After deploy](./iac/README.md#after-deploy)를 따릅니다 |
 
-AWS 방식은 Amazon Bedrock을 호출하므로 먼저 [필요한 모델](./docs/user-guide.ko.md)의
+AWS 방식은 Amazon Bedrock을 호출하므로 먼저 [필요한 모델](./docs/user-guide.ko.md#필수-모델)의
 액세스를 활성화하세요. 로컬 모드는 개발과 평가 전용입니다. 저장소는 보안 강화가 되어 있지
 않고 그래프를 메모리에만 보관하며, 작은 로컬 모델은 그래프를 더 약하게 추출합니다.
 
 ### 사전 요구사항
 
-- Python 3.10–3.12와 [uv](https://docs.astral.sh/uv/) (`pip`도 사용할 수 있습니다).
-- Amazon Bedrock([필요한 모델](./docs/user-guide.ko.md)의 액세스 활성화)에 접근할 수 있는 AWS 자격 증명. 로컬 저장소를 쓰지 않는다면 Amazon Neptune 클러스터, Amazon OpenSearch Service 도메인, S3 버킷, 그리고 증분 인덱싱을 쓸 때만 DynamoDB에도 접근할 수 있어야 합니다. 프레임워크는 이미 있는 서비스에 연결만 합니다. 서비스를 새로 만들려면 [AWS에 배포](#aws에-배포선택)를 참고하세요.
+- 모든 방식: Python 3.10–3.12와 [uv](https://docs.astral.sh/uv/) (`pip`도 사용할 수 있습니다).
+- 로컬 모드: Docker와 Compose. 모델에 Bedrock을 쓰지 않으면 AWS 계정이 필요 없습니다.
+- 기존 AWS 리소스: Amazon Bedrock([필요한 모델](./docs/user-guide.ko.md#필수-모델)의 액세스 활성화)에 접근할 수 있는 AWS 자격 증명, Amazon Neptune 클러스터, Amazon OpenSearch Service 도메인. DynamoDB는 증분 인덱싱을 쓸 때만, S3 버킷은 단계 캐시 동기화(`--s3-sync`)나 임베딩 캐시 저장을 쓸 때만 필요합니다. 프레임워크는 이미 있는 서비스에 연결할 뿐 서비스를 만들지 않습니다.
+- 번들 CDK 스택: [`iac/README.md`의 Prerequisites](./iac/README.md#prerequisites)에 있는 CDK CLI와 Node.js, 이미지 푸시용 Docker.
 
 ### 설치와 설정
 
@@ -111,14 +113,7 @@ uv run run-prompt-tuning --source-directory ./source --output tuned_prompts.yaml
 
 [`iac/`](./iac/README.md)의 AWS CDK 앱이 스택 전체를 만듭니다. 엔드포인트를 갖춘 VPC, Neptune, OpenSearch, DynamoDB 문서 상태 테이블, S3 캐시 버킷, ECS Fargate 데이터 플레인, Step Functions 수집 파이프라인, CloudWatch 대시보드와 경보, 선택적 Bedrock Guardrail이 포함됩니다.
 
-```bash
-cd iac && python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
-cdk synth          # 미리 보기만 수행: AWS 변경과 비용 없음
-cdk bootstrap      # 계정·리전마다 한 번
-cdk deploy --all   # 과금 리소스 생성
-```
-
-저장소는 VPC 안에서만 접근할 수 있으므로 CLI는 배포된 Fargate 태스크에서 실행합니다. 태스크는 엔드포인트를 환경 변수로 받습니다. 이미지 푸시, 수집 시작, 질의 태스크 실행 명령은 [`iac/README.md`의 After deploy](./iac/README.md#after-deploy)에 있습니다.
+`cdk synth`(미리 보기, AWS 변경 없음), `cdk bootstrap`, `cdk deploy --all` 명령과 `-c key=value` 옵션 전체는 [`iac/README.md`의 Usage](./iac/README.md#usage)에 있습니다. 저장소는 VPC 안에서만 접근할 수 있으므로 CLI는 배포된 Fargate 태스크에서 실행합니다. 태스크는 엔드포인트를 환경 변수로 받습니다. 이미지 푸시, 수집 시작, 질의 태스크 실행 명령은 [`iac/README.md`의 After deploy](./iac/README.md#after-deploy)에 있습니다.
 
 > **비용과 정리.** Neptune과 OpenSearch는 시간 단위로 과금되며, `public` 네트워크 모드에서는 NAT 게이트웨이 비용이 추가됩니다. 기본 `dev` 환경은 `cdk destroy --all`로 정리되지만, dev가 아닌 환경은 기본적으로 상태 저장소를 보존하고 삭제 방지를 켭니다. 프로덕션에 쓰기 전에 [`iac/README.md`](./iac/README.md)의 강화 옵션(`use_cmk`, `deletion_protection`, 다중 AZ 구성, `vpc_flow_logs`)을 검토하세요.
 
@@ -126,7 +121,7 @@ cdk deploy --all   # 과금 리소스 생성
 
 | 문서 | 내용 |
 |---|---|
-| [사용자 가이드](./docs/user-guide.ko.md) ([English](./docs/user-guide.md)) | 설정, CLI 플래그, 증분 인덱싱, 평가, 라이브러리 사용법, 제약 사항 |
+| [사용자 가이드](./docs/user-guide.ko.md) ([English](./docs/user-guide.md)) | 설정, CLI 플래그, 증분 인덱싱, 평가, 라이브러리 사용법, [제한 사항](./docs/user-guide.ko.md#12-제한-사항) |
 | [모델 카탈로그](./docs/models.ko.md) ([English](./docs/models.md)) | 지원하는 Bedrock 모델과 공급자별 요청 차이 |
 | [운영 런북](./docs/operations.ko.md) ([English](./docs/operations.md)) | 재수집, 증분 실행, 실패한 문서, 캐시, 자주 나는 오류 |
 | [설계 문서](./docs/design.ko.md) ([English](./docs/design.md)) | 헥사고날 아키텍처, 알고리즘, 데이터 모델, 확장 가이드, 참고 자료 |
