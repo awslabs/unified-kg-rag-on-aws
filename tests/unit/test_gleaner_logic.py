@@ -107,7 +107,26 @@ class TestUpdateRelationshipsAfterMerge:
         )
         assert len(out) == 2
 
+    def test_reproposed_edge_adds_no_weight_or_duplicate_text(self) -> None:
+        # The unit already cites the edge: its answer restating it is not a
+        # second instance, so the strength and description stay as they were.
+        stored = _rel(
+            "r1", "e1", "e2", weight=0.8, description="a", text_unit_ids=["t1"]
+        )
+        again = _rel(
+            "r2", "e1", "e2", weight=1.0, description="a", text_unit_ids=["t1"]
+        )
+        out = GraphGleaner._update_relationships_after_merge(
+            [stored, again], unique_entity_ids={"e1", "e2"}, id_remap={}
+        )
+        assert out[0].weight == 0.8
+        assert out[0].text_unit_ids == ["t1"]
+        assert out[0].description == "a"
 
+
+# --------------------------------------------------------------------------- #
+# _merge_duplicate_entities
+# --------------------------------------------------------------------------- #
 class TestMergeDuplicateEntities:
     def test_name_keyed_dedup_with_id_remap(self) -> None:
         ents = [
@@ -128,6 +147,47 @@ class TestMergeDuplicateEntities:
         unique, _ = GraphGleaner._merge_duplicate_entities(ents)
         assert len(unique) == 1
         assert unique[0].type == "person"  # lowercased, most frequent
+
+    def test_duplicate_descriptions_and_units_merged_once(self) -> None:
+        ents = [
+            Entity(id="e1", name="A", description="d", text_unit_ids=["t2", "t1"]),
+            Entity(id="e2", name="a", description="d", text_unit_ids=["t1", "t3"]),
+        ]
+        unique, _ = GraphGleaner._merge_duplicate_entities(ents)
+        assert unique[0].description == "d"
+        assert unique[0].text_unit_ids == ["t2", "t1", "t3"]
+
+
+class TestCorrectionDescriptions:
+    """The prompt lists names only, so a correction's description is merged."""
+
+    UNIT = TextUnit(id="t1", text="x")
+
+    def test_entity_correction_description_is_appended(self, gleaner) -> None:
+        entity = Entity(id="e1", name="Acme", description="Supplier of parts.")
+        issue = {
+            "issue_type": "ENTITY_CORRECTION",
+            "details": {"name": "Acme", "description": "Based in Springfield."},
+        }
+        gleaner._process_issue(issue, self.UNIT, GleaningIndex([entity], []), [], [])
+        assert entity.description == "Supplier of parts.\nBased in Springfield."
+
+    def test_relationship_correction_description_is_appended(self, gleaner) -> None:
+        rel = Relationship(
+            id="r1",
+            source_id="e1",
+            target_id="e2",
+            source_name="Acme",
+            target_name="Depot",
+            type="SHIPS_TO",
+            description="Ships weekly.",
+        )
+        issue = {
+            "issue_type": "RELATIONSHIP_CORRECTION",
+            "details": {"source": "Acme", "target": "Depot", "description": "By rail."},
+        }
+        gleaner._process_issue(issue, self.UNIT, GleaningIndex([], [rel]), [], [])
+        assert rel.description == "Ships weekly.\nBy rail."
 
 
 class TestGleaningIndex:

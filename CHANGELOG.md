@@ -749,6 +749,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   and 10,000 entities: 0.2 s, from 173 s). `GraphGleaner` and `ClaimExtractor`
   drop their `max_workers` and `use_process_pool` arguments. Merged text-unit
   lists keep first-seen order instead of set order (#PR).
+- Gleaning no longer overwrites or duplicates descriptions and no longer
+  inflates relationship weights. The refinement prompt lists names only, so an
+  `ENTITY_CORRECTION` or `RELATIONSHIP_CORRECTION` description is merged into
+  the current one (`merge_descriptions`) instead of replacing text the model
+  never saw. The round's merge combines descriptions with the same
+  line-deduplicating rule as every other path instead of a `"; "` join, and an
+  edge a unit restates adds no strength for a text unit it already cites
+  (each re-proposal used to add 1.0) (#PR).
 - With `entity_grounding` enabled, the check whether a gleaned
   relationship's endpoint name occurs in its unit (#202) now accepts common
   spelling variants and no longer accepts partial words. Both sides drop

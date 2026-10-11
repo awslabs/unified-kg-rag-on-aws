@@ -23,12 +23,12 @@ from unified_kg_rag.domain.ingestion.entity_grounding import (
     is_grounded,
     is_name_grounded,
 )
+from unified_kg_rag.domain.ingestion.merge.merger import merge_descriptions
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     cite_relationship_endpoints,
 )
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
-    sum_weights,
     text_unit_weights,
 )
 from unified_kg_rag.domain.models import (
@@ -892,6 +892,10 @@ class GraphGleaner(BaseProcessor):
         deliberately left alone: relationships reference it, and re-deriving it
         from a corrected name would orphan every edge touching this entity.
 
+        The prompt lists entity names only, so the model never sees the
+        current description: a proposed one is merged into it
+        (``merge_descriptions``) rather than replacing it.
+
         Args:
             details: The issue's ``<details>`` payload.
             index: The round's graph (existing plus newly added entities).
@@ -928,8 +932,10 @@ class GraphGleaner(BaseProcessor):
             entity.type = corrected_type
             corrected.append("type")
 
-        description = self._clean_text(details.get("description"))
-        if description and description != entity.description:
+        description = merge_descriptions(
+            (entity.description, self._clean_text(details.get("description")))
+        )
+        if description != entity.description:
             entity.description = description
             entity.description_embedding = None
             corrected.append("description")
@@ -963,6 +969,8 @@ class GraphGleaner(BaseProcessor):
         direction, or a wrong description. Re-pointing an edge at a different
         pair of entities is not a correction and is rejected — that is a
         MISSING_RELATIONSHIP plus a deletion, which this stage cannot express.
+        A proposed description is merged into the current one, which the
+        prompt does not show.
 
         Args:
             details: The issue's ``<details>`` payload.
@@ -1010,8 +1018,10 @@ class GraphGleaner(BaseProcessor):
             index.move_relationship(relationship, old_pair)
             corrected.append("direction")
 
-        description = self._clean_text(details.get("description"))
-        if description and description != relationship.description:
+        description = merge_descriptions(
+            (relationship.description, self._clean_text(details.get("description")))
+        )
+        if description != relationship.description:
             relationship.description = description
             relationship.description_embedding = None
             corrected.append("description")
@@ -1075,14 +1085,9 @@ class GraphGleaner(BaseProcessor):
                 entity_type = entity.type.lower() if entity.type else ""
                 type_counts[key][entity_type] = type_counts[key].get(entity_type, 0) + 1
 
-                if entity.description and entity.description.strip():
-                    if master_entity.description and master_entity.description.strip():
-                        master_entity.description = (
-                            f"{master_entity.description}; {entity.description}"
-                        )
-                    else:
-                        master_entity.description = entity.description
-
+                master_entity.description = merge_descriptions(
+                    (master_entity.description, entity.description)
+                )
                 master_entity.text_unit_ids = list(
                     dict.fromkeys(
                         (master_entity.text_unit_ids or [])
@@ -1138,22 +1143,19 @@ class GraphGleaner(BaseProcessor):
                     relationships_map[key] = rel
                 else:
                     existing_rel = relationships_map[key]
-                    if rel.description and rel.description.strip():
-                        if (
-                            existing_rel.description
-                            and existing_rel.description.strip()
-                        ):
-                            existing_rel.description = (
-                                f"{existing_rel.description}; {rel.description}"
-                            )
-                        else:
-                            existing_rel.description = rel.description
-
-                    # Instance strengths add up per supporting text unit, as in
-                    # the extractor's merge (see relationship_weights).
-                    weights = sum_weights(
-                        [text_unit_weights(existing_rel), text_unit_weights(rel)]
+                    existing_rel.description = merge_descriptions(
+                        (existing_rel.description, rel.description)
                     )
+                    # A gleaned edge adds the strength of each text unit it
+                    # newly cites. One the edge already cites keeps its stored
+                    # strength: the model re-stating an edge it was shown is
+                    # not a second instance of it.
+                    stored = text_unit_weights(existing_rel)
+                    weights = stored | {
+                        unit_id: weight
+                        for unit_id, weight in text_unit_weights(rel).items()
+                        if unit_id not in stored
+                    }
                     if weights:
                         apply_text_unit_weights(existing_rel, weights)
                     else:
