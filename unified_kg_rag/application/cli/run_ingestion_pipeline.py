@@ -241,6 +241,22 @@ class IngestionPipelineRunner:
                     f"[red]Error: Source directory not found: {self.args.source_directory}[/red]"
                 )
                 sys.exit(1)
+            target = (
+                self.args.target_directory
+                or self.config.processing.document_parsing.target_directory
+            )
+            if target and (
+                Path(target).resolve() == self.args.source_directory.resolve()
+            ):
+                # Parsed .json written into the corpus is re-ingested as new
+                # documents on the next run.
+                console.print(
+                    "[red]Error: --target-directory (document_parsing."
+                    "target_directory) must not be the source directory "
+                    f"'{self.args.source_directory}': the parsed .json files "
+                    "would be ingested as new documents on the next run.[/red]"
+                )
+                sys.exit(1)
 
         if self.args.s3_sync and not self.args.s3_bucket_name:
             console.print(

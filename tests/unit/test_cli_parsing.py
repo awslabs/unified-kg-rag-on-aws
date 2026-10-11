@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -495,6 +496,30 @@ def test_ingestion_runner_missing_source_dir_exits(config, mocker, tmp_path) -> 
     args = _ing_parser().parse_args(["--source-directory", str(missing)])
     with pytest.raises(SystemExit):
         run_ingestion_pipeline.IngestionPipelineRunner(args)
+
+
+@pytest.mark.parametrize("from_config", [False, True])
+def test_ingestion_runner_rejects_the_source_as_target(
+    config, mocker, tmp_path, capsys, from_config: bool
+) -> None:
+    # A clear usage error before the pipeline is built, not a traceback from
+    # the parsing stage's constructor.
+    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    src = tmp_path / "src"
+    src.mkdir()
+    argv = ["--source-directory", str(src)]
+    if from_config:
+        config.processing.document_parsing.target_directory = str(src / ".")
+    else:
+        argv += ["--target-directory", str(src)]
+    args = _ing_parser().parse_args(argv)
+    with pytest.raises(SystemExit) as exc:
+        run_ingestion_pipeline.IngestionPipelineRunner(args)
+    assert exc.value.code == 1
+    raw = re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().out)
+    out = " ".join(raw.split())  # undo rich styling and wrapping
+    assert "must not be the source directory" in out
+    assert "Traceback" not in out
 
 
 def test_ingestion_runner_s3_sync_needs_bucket(config, mocker, tmp_path) -> None:
