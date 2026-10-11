@@ -589,6 +589,32 @@ class TestProcessExtractionResults:
         assert extractor.stats.relationships_filtered_by_confidence == 1
         assert rels == []
 
+    def test_confidence_filter_drops_the_stubs_it_orphans(self, extractor) -> None:
+        # "Depot" is named only in the filtered entity's relationship: its stub
+        # would be left with no description and no edge. "Harbor", named in a
+        # surviving relationship, stays.
+        extractor.extraction_config.entity_confidence_threshold = 0.5
+        units = [TextUnit(id="t1", text="x")]
+        results = [
+            {
+                "entities": {
+                    "entity": [
+                        {"name": "Alice", "type": "PERSON", "confidence": 0.1},
+                        {"name": "Acme", "type": "ORG", "confidence": 0.9},
+                    ]
+                },
+                "relationships": {
+                    "relationship": [
+                        {"source": "Alice", "target": "Depot", "type": "VISITS"},
+                        {"source": "Acme", "target": "Harbor", "type": "SHIPS_TO"},
+                    ]
+                },
+            }
+        ]
+        ents, rels = extractor._process_extraction_results(units, results)
+        assert sorted(e.name for e in ents) == ["Acme", "Harbor"]
+        assert [(r.source_name, r.target_name) for r in rels] == [("Acme", "Harbor")]
+
 
 # --------------------------------------------------------------------------- #
 # extract_from_text_units (batch chain mocked)

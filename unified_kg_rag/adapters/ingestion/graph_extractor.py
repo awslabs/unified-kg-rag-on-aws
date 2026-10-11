@@ -320,6 +320,7 @@ class GraphExtractor(BaseProcessor):
 
         all_entities = self._merge_entities(all_entities)
         all_relationships = self._merge_relationships(all_relationships)
+        listed_ids = {e.id for e in all_entities}
 
         # Materialize entities referenced only by a relationship endpoint (the
         # LLM mentioned them in a relation but did not list them as an entity),
@@ -354,6 +355,17 @@ class GraphExtractor(BaseProcessor):
                 all_relationships, all_entities
             )
             self.stats.relationships_filtered_by_confidence = rel_filtered_count
+            # A stub entity exists only for its relationships; one whose
+            # relationships all named a filtered entity would be left with no
+            # description and no edge.
+            endpoint_ids = {
+                ent_id
+                for rel in all_relationships
+                for ent_id in (rel.source_id, rel.target_id)
+            }
+            all_entities = [
+                e for e in all_entities if e.id in listed_ids or e.id in endpoint_ids
+            ]
 
         if all_entities:
             self.stats.average_entity_confidence = sum(
@@ -436,7 +448,7 @@ class GraphExtractor(BaseProcessor):
         field_mergers: dict[str, Callable[[Any, Any], Any]] = {
             "description": self._merge_description,
             "text_unit_ids": lambda current, new: list(
-                set(
+                dict.fromkeys(
                     (current if isinstance(current, list) else [])
                     + (new if isinstance(new, list) else [])
                 )

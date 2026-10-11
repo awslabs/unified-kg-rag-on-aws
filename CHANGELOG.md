@@ -802,6 +802,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   no longer varies between runs, and the Jaccard check of a candidate pair runs
   in-process instead of sending every document's MinHash to a worker per
   pair (#PR).
+- `entity_confidence_threshold` no longer leaves stub entities without a
+  description or a relationship: an entity materialized only for relationships
+  that the filter removed (they named a filtered entity) is dropped with them.
+  Merged extraction entities list their text units in first-seen order instead
+  of set order (#PR).
 - With `entity_grounding` enabled, the check whether a gleaned
   relationship's endpoint name occurs in its unit (#202) now accepts common
   spelling variants and no longer accepts partial words. Both sides drop
