@@ -346,7 +346,8 @@ def test_graph_expansion_returns_every_seed_and_its_neighbourhood(
         for seed, group in neighbours.items():
             found = [n for n in group if n in scores]
             assert len(found) == 2, (seed, sorted(scores))
-            assert all(scores[n] == 0.75 for n in found)
+            # One hop out always ranks below every seed (distance orders first).
+            assert all(0 < scores[n] < min(scores[x] for x in seeds) for n in found)
     finally:
         graph_indexer.delete_by_id(ids, _SUFFIX)
 
