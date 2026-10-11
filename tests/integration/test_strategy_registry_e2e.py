@@ -19,10 +19,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchStrategy,
 )
-from unified_kg_rag.domain.retrieval.strategy_registry import (
-    get_strategy_spec,
-    registered_strategies,
-)
+from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
 
 pytestmark = pytest.mark.integration
 
@@ -45,10 +42,12 @@ class FakeRetriever:
         ]
 
 
+# AUTO is an LLM router, not a concrete strategy; every other value is one.
+_CONCRETE = [s for s in SearchStrategy if s is not SearchStrategy.AUTO]
+
+
 def test_all_registered_strategies_have_valid_specs() -> None:
-    strategies = registered_strategies()
-    assert len(strategies) >= 7  # simple/local/global/drift + mix/hybrid/naive
-    for strategy in strategies:
+    for strategy in _CONCRETE:
         spec = get_strategy_spec(strategy)
         assert spec.strategy_class is not None
         assert spec.required_roles, f"{strategy} declares no required roles"
@@ -56,11 +55,8 @@ def test_all_registered_strategies_have_valid_specs() -> None:
 
 
 def test_every_non_auto_enum_value_is_registered() -> None:
-    registered = {s.value for s in registered_strategies()}
-    for member in SearchStrategy:
-        if member is SearchStrategy.AUTO:
-            continue  # AUTO is an LLM router, not a concrete strategy
-        assert member.value in registered, f"{member.value} not registered"
+    for member in _CONCRETE:
+        get_strategy_spec(member)  # raises for an unregistered strategy
 
 
 async def test_simple_strategy_runs_through_registry() -> None:

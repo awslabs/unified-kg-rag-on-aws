@@ -49,8 +49,8 @@ from unified_kg_rag.domain.models import (
     PipelineConfig,
     PipelineStageType,
     RetrieverRole,
+    SearchStrategy,
 )
-from unified_kg_rag.domain.retrieval.strategy_registry import registered_strategies
 from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.unit
@@ -242,7 +242,7 @@ def test_local_backend_reaches_every_query_component(no_aws, tmp_path) -> None:
     assert isinstance(chain.factory, OllamaLanguageModelFactory)
     assert isinstance(chain.token_manager._token_counter, LocalTokenCounter)
     assert chain.memory_manager.providers is providers
-    for strategy in registered_strategies():
+    for strategy in [s for s in SearchStrategy if s is not SearchStrategy.AUTO]:
         instance = chain._get_strategy_instance(strategy)
         assert instance.providers is providers, strategy
         assert isinstance(instance.hybrid_scorer.rerank_factory, NoRerankFactory)

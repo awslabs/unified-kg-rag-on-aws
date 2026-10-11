@@ -118,8 +118,3 @@ def get_strategy_spec(strategy: SearchStrategy) -> StrategySpec:
             f"No search strategy registered for '{strategy.value}'. "
             f"Available: {available or '(none)'}."
         ) from None
-
-
-def registered_strategies() -> tuple[SearchStrategy, ...]:
-    """Return the strategies currently registered (registration order)."""
-    return tuple(_REGISTRY)

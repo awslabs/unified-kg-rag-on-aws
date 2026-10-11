@@ -641,6 +641,8 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   role resolves to the injected `retriever_builders` entry, else
   `Providers.build_retriever`. **Breaking** for subclasses that overrode them;
   inject `retriever_builders` instead (#PR).
+- `domain.retrieval.strategy_registry.registered_strategies`, which only tests
+  called; use `get_strategy_spec` per `SearchStrategy` (#PR).
 
 ### Fixed
 - `interactive_graph.html` centres the layout and scales it to a fixed canvas

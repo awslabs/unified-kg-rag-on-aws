@@ -15,12 +15,12 @@ import pytest
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import Config, RetrieverRole, SearchStrategy
-from unified_kg_rag.domain.retrieval.strategy_registry import (
-    get_strategy_spec,
-    registered_strategies,
-)
+from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
 
 pytestmark = pytest.mark.unit
+
+# AUTO is the router; every other strategy is registered.
+_CONCRETE = [s for s in SearchStrategy if s is not SearchStrategy.AUTO]
 
 
 class _SentinelRetriever:
@@ -39,7 +39,7 @@ def chain(config: Config, monkeypatch: pytest.MonkeyPatch) -> GraphRAGChain:
     return instance
 
 
-@pytest.mark.parametrize("strategy", list(registered_strategies()))
+@pytest.mark.parametrize("strategy", _CONCRETE)
 def test_built_retrievers_match_spec(
     chain: GraphRAGChain, strategy: SearchStrategy
 ) -> None:
@@ -73,7 +73,7 @@ def test_graph_strategy_gets_both_roles(chain: GraphRAGChain) -> None:
 
 
 def test_instance_type_matches_registered_class(chain: GraphRAGChain) -> None:
-    for strategy in registered_strategies():
+    for strategy in _CONCRETE:
         spec = get_strategy_spec(strategy)
         instance = chain._get_strategy_instance(strategy)
         assert isinstance(instance, spec.strategy_class)

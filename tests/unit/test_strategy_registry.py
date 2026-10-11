@@ -19,20 +19,15 @@ from unified_kg_rag.domain.retrieval.strategy_registry import (
     StrategySpec,
     get_strategy_spec,
     register_strategy,
-    registered_strategies,
 )
 
 pytestmark = pytest.mark.unit
 
 
 def test_all_builtin_strategies_registered() -> None:
-    registered = set(registered_strategies())
-    assert {
-        SearchStrategy.SIMPLE,
-        SearchStrategy.LOCAL,
-        SearchStrategy.GLOBAL,
-        SearchStrategy.DRIFT,
-    } <= registered
+    for strategy in SearchStrategy:
+        if strategy is not SearchStrategy.AUTO:  # AUTO is the router
+            assert get_strategy_spec(strategy).strategy_class is not None
 
 
 @pytest.mark.parametrize(
