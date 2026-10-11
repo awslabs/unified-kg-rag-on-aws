@@ -19,6 +19,7 @@ from unified_kg_rag.adapters.aws.chain_factory import (
 from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.ingestion.graph_builder import edge_relationships
 from unified_kg_rag.domain.models import (
     Community,
     CommunityFinding,
@@ -701,13 +702,20 @@ class CommunityDetector(BaseProcessor):
             self.graph.nodes[nid].get("name", nid) for nid in member_ids[:max_entities]
         ]
 
+        # An edge carries every relationship between its two entities.
+        relationship_ids = sorted(
+            rel["id"]
+            for _, _, data in subgraph.edges(data=True)
+            for rel in edge_relationships(data)
+            if rel.get("id") is not None
+        )
         community_attributes = {
             **attributes,
             "size": len(hier_comm.nodes),
             "density": nx.density(subgraph),
             "entity_names": entity_names,
             "resolution": self.community_detection_config.resolution,
-            "num_relationships": subgraph.number_of_edges(),
+            "num_relationships": len(relationship_ids),
         }
 
         label = hier_comm.label or hier_comm.community_id
@@ -720,11 +728,7 @@ class CommunityDetector(BaseProcessor):
             parent=hier_comm.parent_id or "",
             children=hier_comm.children_ids,
             entity_ids=member_ids,
-            relationship_ids=[
-                rel_id
-                for source, target in subgraph.edges()
-                if (rel_id := self.graph.edges[source, target].get("id")) is not None
-            ],
+            relationship_ids=relationship_ids,
             # Union the member entities' source text units. Nodes are added with
             # the full entity dump (graph_builder), so text_unit_ids is present.
             # Without this the community's text_unit_ids stayed empty, so
@@ -1070,18 +1074,22 @@ class CommunityDetector(BaseProcessor):
         # Relationships only among the selected entities, ordered by combined
         # endpoint degree (most-connected pair first, edge weight as tiebreak)
         # so the most salient connections survive the same token budget.
-        selected_set = set(selected_ids)
+        # An edge carries every relationship between its two entities; each
+        # is its own line, in the relationship's own direction.
         edges = sorted(
-            self.graph.subgraph(selected_ids).edges(data=True),
+            (
+                (data.get("source_id", u), data.get("target_id", v), data)
+                for u, v, edge in self.graph.subgraph(selected_ids).edges(data=True)
+                for data in edge_relationships(edge)
+            ),
             key=lambda e: (
                 -(self.graph.degree(e[0]) + self.graph.degree(e[1])),
-                -float(e[2].get("weight", 1.0)),
+                -float(e[2].get("weight") or 1.0),
+                str(e[2].get("id", "")),
             ),
         )
         relationships: list[dict[str, Any]] = []
         for u, v, data in edges:
-            if u not in selected_set or v not in selected_set:
-                continue
             rel = {
                 # Use entity NAMES, not raw node ids (hashes): the report LLM
                 # otherwise sees relationships between unintelligible ids,

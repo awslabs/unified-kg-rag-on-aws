@@ -20,7 +20,8 @@ from unified_kg_rag.adapters.ingestion.community_detector import (
     HierarchicalCommunity,
     community_content_id,
 )
-from unified_kg_rag.domain.models import Community, Config
+from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
+from unified_kg_rag.domain.models import Community, Config, Entity, Relationship
 from unified_kg_rag.shared import GraphError
 
 pytestmark = pytest.mark.unit
@@ -399,6 +400,30 @@ class TestGenerateCommunityObjects:
         assert "entity_names" in obj.attributes
         # The three intra-triangle edges all carry ids.
         assert len(obj.relationship_ids) == 3
+
+    def test_parallel_relationships_are_all_members_and_in_the_report(self) -> None:
+        cd = _detector()
+        entities = [
+            Entity(id="e1", name="Vendor", text_unit_ids=["t1"]),
+            Entity(id="e2", name="Buyer", text_unit_ids=["t1"]),
+        ]
+        relationships = [
+            Relationship(id="r1", source_id="e1", target_id="e2", type="SUPPLIES"),
+            Relationship(id="r2", source_id="e2", target_id="e1", type="PAYS"),
+        ]
+        cd.graph = GraphBuilder(entities, relationships).build()
+        cd.all_communities = {
+            "c": HierarchicalCommunity(community_id="c", level=0, nodes={"e1", "e2"})
+        }
+        (community,) = cd.generate_community_objects()
+        assert community.relationship_ids == ["r1", "r2"]
+        assert community.attributes["num_relationships"] == 2
+
+        lines = {
+            (r["source"], r["type"], r["target"])
+            for r in cd._prepare_report_input(community)["relationships"]
+        }
+        assert lines == {("Vendor", "SUPPLIES", "Buyer"), ("Buyer", "PAYS", "Vendor")}
 
 
 def _community(entity_ids: list[str]) -> Community:

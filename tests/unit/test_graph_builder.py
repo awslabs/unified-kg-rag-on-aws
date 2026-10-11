@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import pytest
 
-from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
+from unified_kg_rag.domain.ingestion.graph_builder import (
+    GraphBuilder,
+    edge_relationships,
+)
 from unified_kg_rag.domain.models import Claim, Entity, Relationship
 
 pytestmark = pytest.mark.unit
@@ -106,16 +109,26 @@ class TestRelationshipEdges:
         assert g.number_of_nodes() == 0
         assert g.number_of_edges() == 0
 
-    def test_parallel_edges_collapse_in_simple_graph(self) -> None:
-        # nx.Graph is simple: a second edge between the same pair overwrites.
+    def test_parallel_relationships_share_one_edge_and_are_all_kept(self) -> None:
+        # Another type and the reverse direction link the same pair: one
+        # undirected edge with the summed weight, listing every relationship,
+        # whatever the input order.
         ents = [_entity("e1"), _entity("e2")]
         rels = [
-            _rel("r1", "e1", "e2", weight=1.0),
-            _rel("r2", "e1", "e2", weight=5.0),
+            _rel("r2", "e1", "e2", type="SUPPLIES", weight=5.0),
+            _rel("r1", "e1", "e2", type="OWNS", weight=1.0),
+            _rel("r3", "e2", "e1", type="PAYS", weight=2.0),
         ]
-        g = GraphBuilder(ents, rels).build()
-        assert g.number_of_edges() == 1
-        assert g.edges["e1", "e2"]["weight"] == 5.0
+        for ordering in (rels, rels[::-1]):
+            g = GraphBuilder(ents, ordering).build()
+            assert g.number_of_edges() == 1
+            edge = g.edges["e1", "e2"]
+            assert edge["weight"] == 8.0
+            assert [r["id"] for r in edge_relationships(edge)] == ["r1", "r2", "r3"]
+            assert (edge["id"], edge["type"]) == ("r1", "OWNS")
+
+    def test_edge_relationships_of_a_plain_edge_is_the_edge(self) -> None:
+        assert edge_relationships({"id": "r1"}) == [{"id": "r1"}]
 
 
 # --------------------------------------------------------------------------- #

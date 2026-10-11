@@ -1,11 +1,23 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+from collections import defaultdict
+from typing import Any
+
 import networkx as nx
 
 from unified_kg_rag.domain.models import Claim, Entity, Relationship
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
+
+
+def edge_relationships(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """The relationships an edge of the built graph carries (see GraphBuilder).
+
+    An edge added elsewhere (one relationship's attributes) is its own list.
+    """
+    relationships = data.get("relationships")
+    return list(relationships) if relationships else [data]
 
 
 class GraphBuilder:
@@ -50,18 +62,38 @@ class GraphBuilder:
             self.graph.add_node(entity.id, **entity.model_dump(), node_type="entity")
 
     def _add_relationship_edges(self) -> None:
-        skipped_count = 0
+        """Add one undirected edge per entity pair, carrying every relationship.
 
+        Two entities can be linked by several relationships (other types, or
+        both directions); a plain ``nx.Graph`` keeps one edge per pair. The
+        edge weight is the sum of their weights and ``relationships`` lists
+        each one (by id), so community membership and report context keep all
+        of them and Leiden sees the pair's total strength whatever the input
+        order. The other edge attributes are the smallest-id relationship's.
+        """
+        skipped_count = 0
+        by_pair: dict[frozenset[str], list[Relationship]] = defaultdict(list)
         for rel in self.relationships:
             if self._both_nodes_exist(rel.source_id, rel.target_id):
-                self.graph.add_edge(
-                    rel.source_id,
-                    rel.target_id,
-                    **rel.model_dump(),
-                    edge_type="relationship",
-                )
+                by_pair[frozenset((rel.source_id, rel.target_id))].append(rel)
             else:
                 skipped_count += 1
+
+        for group in by_pair.values():
+            group.sort(key=lambda rel: rel.id)
+            first = group[0]
+            self.graph.add_edge(
+                first.source_id,
+                first.target_id,
+                **{
+                    **first.model_dump(),
+                    "weight": sum(
+                        rel.weight if rel.weight is not None else 1.0 for rel in group
+                    ),
+                },
+                relationships=[rel.model_dump() for rel in group],
+                edge_type="relationship",
+            )
 
         if skipped_count > 0:
             logger.warning(

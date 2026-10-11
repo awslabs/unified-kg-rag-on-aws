@@ -821,6 +821,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   that the filter removed (they named a filtered entity) is dropped with them.
   Merged extraction entities list their text units in first-seen order instead
   of set order (#213).
+- Relationships of another type or in the other direction between the same
+  two entities no longer collapse into one community-graph edge (the last one
+  inserted). The edge sums their weights and lists every relationship, so
+  Leiden weights do not depend on input order, `Community.relationship_ids`
+  keeps them all and the report prompt receives each one (#PR).
 - With `entity_grounding` enabled, the check whether a gleaned
   relationship's endpoint name occurs in its unit (#202) now accepts common
   spelling variants and no longer accepts partial words. Both sides drop
