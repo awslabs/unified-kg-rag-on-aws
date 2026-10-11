@@ -292,7 +292,7 @@ Library API (Python callers and custom backends).
   `report_generation.max_entities_per_report` still keys community
   detection with reports off, since it caps the entity names each community
   lists. Only the settings a switched-off block alone reads (such as the
-  translation model) stay out of the keys (#PR).
+  translation model) stay out of the keys (#228).
 - Answer matching normalizes text with many dashes in linear time: each dash
   re-scanned the text before it, so a 70 KB answer with 4,000 dashes took
   seconds (#226).
@@ -301,7 +301,7 @@ Library API (Python callers and custom backends).
   differ from "vitamin a": a spaced lone letter is again a word or an
   article in either case. A dash next to a lone letter still joins it in
   either case ("Type-A" and "type-a" are both `typea`), while "Type A" is
-  read like "Type" plus the article "a" (#PR).
+  read like "Type" plus the article "a" (#228).
 - `backend: local` sets its 22,000-token retrieval context budget only for a
   non-Bedrock LLM left at the default 32,768-token window. With
   `providers.llm.kind: bedrock` or an explicit `context_window_size` the
