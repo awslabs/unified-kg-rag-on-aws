@@ -65,7 +65,8 @@ def s3_client_for(config: Config) -> S3Client:
     session = boto3.Session(
         profile_name=config.aws.profile_name, region_name=config.aws.region_name
     )
-    return session.client("s3")
+    client: S3Client = session.client("s3")
+    return client
 
 
 def download_s3_object(s3_client: S3Client, uri: str, local_path: Path) -> Path:
