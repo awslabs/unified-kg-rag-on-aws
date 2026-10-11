@@ -184,7 +184,7 @@ def test_cross_run_merge_of_a_same_id_entity_leaves_its_other_edges_alone(
 
 
 def test_fuzzy_cross_run_merge_collapses_near_duplicate_entity(mocker) -> None:
-    # With cross_run_fuzzy_merge on, a delta entity whose name only FUZZILY
+    # With fuzzy_entity_resolution on, a delta entity whose name only FUZZILY
     # matches an existing one (different id) must collapse onto the existing
     # entity, not accumulate as a separate node.
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
@@ -202,7 +202,7 @@ def test_fuzzy_cross_run_merge_collapses_near_duplicate_entity(mocker) -> None:
 
     config = Config()
     config.indexing.cross_run_merge = True
-    config.indexing.cross_run_fuzzy_merge = True
+    config.processing.fuzzy_entity_resolution = True
     mgr = IndexingManager(
         config=config, vector_indexer=os_indexer, graph_indexer=neptune_indexer
     )

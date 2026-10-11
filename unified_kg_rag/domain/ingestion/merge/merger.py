@@ -149,15 +149,16 @@ def merge_entities(
     listed: there is nothing to remap, and callers treat a non-empty remap as a
     reason to read back and rewrite the surviving entities' edges.
 
-    When ``fuzzy_matcher`` is supplied (built over the *old* entity names), a
-    delta entity whose normalized name does not exactly match an old one is
-    additionally matched fuzzily against the old names — so near-duplicate
-    surface forms ("Acme Corp" vs "Acme Corporation") converge across runs the
-    way the full-build ``EntityResolver`` groups them, instead of accumulating
-    as separate entities. Without a matcher the merge is exact-name-only (its
-    long-standing behaviour). Fuzzy matches only ever collapse a delta onto an
-    *existing old* entity (never delta-onto-delta), which keeps the result
-    order-independent and idempotent.
+    When ``fuzzy_matcher`` is supplied (built over the *old* entity names with
+    the full build's settings), a delta entity whose normalized name does not
+    exactly match an old one is additionally matched against the old names
+    with ``find_all_matches`` — so the surface forms the full-build
+    ``EntityResolver`` groups ("Acme Inc" vs "Acme", and similar names when
+    fuzzy resolution is on) converge across runs too, instead of accumulating
+    as separate entities. Without a matcher the merge is exact-name-only.
+    Matches only ever collapse a delta onto an *existing old* entity (never
+    delta-onto-delta), which keeps the result order-independent and
+    idempotent.
     """
     by_id: dict[str, Entity] = {}
     # Identity key -> id of the first entity with that key.

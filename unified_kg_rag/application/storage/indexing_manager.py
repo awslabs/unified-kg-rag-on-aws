@@ -11,6 +11,7 @@ from unified_kg_rag.adapters.ingestion.description_summarizer import (
     DescriptionSummarizer,
 )
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
 from unified_kg_rag.domain.ingestion.merge import (
     merge_entities,
     merge_relationships,
@@ -377,23 +378,17 @@ class IndexingManager:
         merged_entities = entities
         entity_id_remap: dict[str, str] = {}
         if entities:
-            existing_ids = {e.id for e in entities}
-            fuzzy_matcher = None
-            if self.config.indexing.cross_run_fuzzy_merge:
-                # Fuzzy merge needs old entities whose ids DIFFER from the delta's
-                # (exact-id read-back only surfaces normalized-name-equal ones).
-                # Project existing (id, name), fuzzy-match delta names, and pull
-                # the matched olds into the read-back set.
-                fuzzy_matcher, fuzzy_old_ids = self._build_fuzzy_old_matcher(
-                    suffix, entities
-                )
-                existing_ids |= fuzzy_old_ids
+            # The full build also merges names that differ only by legal form
+            # or spacing (and by similarity with fuzzy_entity_resolution);
+            # their stored entities have other ids than the delta's, so they
+            # are found through the stored names and read back as well.
+            name_matcher, matched_ids = self._match_stored_names(suffix, entities)
             existing = self.neptune_indexer.read_entities(
-                sorted(existing_ids), suffix=suffix
+                sorted({e.id for e in entities} | matched_ids), suffix=suffix
             )
             if existing:
                 merged_entities, entity_id_remap = merge_entities(
-                    existing, entities, fuzzy_matcher=fuzzy_matcher
+                    existing, entities, fuzzy_matcher=name_matcher
                 )
                 # The cross-run merge concatenates descriptions, so an entity
                 # seen across many runs can grow unbounded — re-summarize the
@@ -441,36 +436,35 @@ class IndexingManager:
             {**entity_id_remap, **relationship_remap},
         )
 
-    def _build_fuzzy_old_matcher(
+    def _match_stored_names(
         self, suffix: str, entities: list[Entity]
-    ) -> tuple[Any, set[str]]:
-        """Build a FuzzyMatcher over existing entity names and find fuzzy hits.
+    ) -> tuple[FuzzyMatcher | None, set[str]]:
+        """Match delta entity names against the stored names of ``suffix``.
 
-        Returns ``(matcher, old_ids)`` where ``matcher`` is built over all
-        existing entity names in ``suffix`` and ``old_ids`` is the set of
-        existing entity ids whose name fuzzy-matches some delta name — so the
-        caller can read those olds back for merging. Returns ``(None, set())``
-        if no existing names can be projected (adapter without the capability),
-        degrading to exact-name merge.
+        Returns a matcher over the stored names (built with the full build's
+        settings) and the ids of the stored entities some delta name matches.
+        Returns ``(None, set())`` when the adapter projects no names, which
+        leaves the merge to ids and exact keys.
         """
-        from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
-
         id_by_name: dict[str, str] = {}
         for eid, name in self.neptune_indexer.read_entity_names(suffix):
             id_by_name.setdefault(name, eid)
         if not id_by_name:
             return None, set()
 
+        processing = self.config.processing
         matcher = FuzzyMatcher(
             candidates=list(id_by_name.keys()),
-            resolution_method=self.config.processing.resolution_method.value,
-            similarity_threshold=self.config.processing.similarity_threshold,
+            resolution_method=processing.resolution_method,
+            similarity_threshold=processing.similarity_threshold,
+            fuzzy=processing.fuzzy_entity_resolution,
         )
-        old_ids: set[str] = set()
-        for entity in entities:
-            for name, _score in matcher.find_all_matches(entity.name):
-                if name in id_by_name:
-                    old_ids.add(id_by_name[name])
+        old_ids = {
+            id_by_name[name]
+            for entity in entities
+            for name, _score in matcher.find_all_matches(entity.name)
+            if name in id_by_name
+        }
         return matcher, old_ids
 
     def remove_text_units_from_shared(

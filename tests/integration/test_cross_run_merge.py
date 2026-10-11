@@ -31,7 +31,7 @@ pytestmark = pytest.mark.integration
 def _harness(*, cross_run_merge: bool, fuzzy: bool = False):
     config = Config()
     config.indexing.cross_run_merge = cross_run_merge
-    config.indexing.cross_run_fuzzy_merge = fuzzy
+    config.processing.fuzzy_entity_resolution = fuzzy
     graph = FakeGraphStore()
     vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
     manager = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)

@@ -276,13 +276,15 @@ class TestFingerprintScope:
         # The score-based gleaning knobs were removed, so gleaning and every
         # later stage re-key once.
         PipelineStageType.GLEANING: "82ece6329622",
-        PipelineStageType.GRAPH_RESOLUTION: "5e9f846cfb84",
-        PipelineStageType.CLAIM_EXTRACTION: "a33b8a26ff07",
-        PipelineStageType.CLAIM_RESOLUTION: "a33b8a26ff07",
+        # Fuzzy entity resolution became opt-in (and its threshold 0.85), so
+        # graph resolution and every later stage re-key once.
+        PipelineStageType.GRAPH_RESOLUTION: "cf1df7e60038",
+        PipelineStageType.CLAIM_EXTRACTION: "82612783b846",
+        PipelineStageType.CLAIM_RESOLUTION: "82612783b846",
         # graph.analysis is no longer an input (it shapes nothing a later
         # stage reads), so graph analysis shares claim resolution's inputs.
-        PipelineStageType.GRAPH_ANALYSIS: "a33b8a26ff07",
-        PipelineStageType.COMMUNITY_DETECTION: "6cc3882cf718",
+        PipelineStageType.GRAPH_ANALYSIS: "82612783b846",
+        PipelineStageType.COMMUNITY_DETECTION: "2bef209de07c",
     }
 
     def test_default_config_fingerprints_are_unchanged(self) -> None:

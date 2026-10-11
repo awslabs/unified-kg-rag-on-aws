@@ -101,6 +101,7 @@ _STAGE_INPUT_PATHS: dict[PipelineStageType, tuple[str, ...]] = {
     PipelineStageType.GRAPH_RESOLUTION: (
         "processing.resolution_method",
         "processing.similarity_threshold",
+        "processing.fuzzy_entity_resolution",
     ),
     PipelineStageType.CLAIM_EXTRACTION: (
         "processing.claim_extraction",

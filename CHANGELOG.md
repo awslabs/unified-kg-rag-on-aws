@@ -202,6 +202,18 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   through the Markdown header splitter, which dropped blank lines and
   indentation and made any line starting with `#` a heading. Chunk boundaries
   of plain-text corpora change, so the chunking stage re-runs (#213).
+- **Breaking:** entity resolution no longer merges names that are only
+  similar by default. Names merge when they are equal after normalization,
+  legal-form removal ("Acme Inc" / "Acme") and dense-script spacing; the new
+  `processing.fuzzy_entity_resolution` (default `false`) adds similarity
+  matching, and `processing.similarity_threshold` now defaults to 0.85 (was
+  0.6; it also bounds claim subject/object matching). At the old defaults
+  MinHash merged different organizations sharing most of their name ("...
+  University" / "... University Hospital"). The incremental merge now matches
+  delta names against the stored names with the same rule, so a full build
+  and an incremental build group the same names, and a merged group takes the
+  name cited by the most text units instead of the first one seen. Stage
+  caches from graph resolution on re-key once (#PR).
 - `indexing.opensearch.embedding_model_id`, `evaluation.embedding_model_id`
   and `search.reranking.rerank_model_id` accept any model name when a
   non-Bedrock provider serves the role; with the Bedrock providers (the
@@ -574,6 +586,8 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `export_timeout_millis` passed to the batch span processor, which ignores
   it. Captured content is no longer redacted twice: with an exporting
   backend the exporter alone redacts it (#211).
+- `indexing.cross_run_fuzzy_merge`: the incremental merge follows
+  `processing.fuzzy_entity_resolution`, the full build's setting (#PR).
 - Gleaning config keys `convergence_threshold`, `quality_threshold`,
   `min_improvement_threshold`, `quality_completeness_weight`,
   `initial_quality_entity_scale`, `initial_quality_relationship_scale` and

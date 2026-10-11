@@ -181,6 +181,7 @@ class FuzzyMatcher:
         resolution_method: str = ResolutionMethod.SEQUENCE_MATCHER,
         similarity_threshold: float = 0.5,
         minhash_permutations: int = 128,
+        fuzzy: bool = True,
     ):
         if not 0.0 <= similarity_threshold <= 1.0:
             raise ValueError("similarity_threshold must be between 0.0 and 1.0")
@@ -193,6 +194,9 @@ class FuzzyMatcher:
         self.resolution_method = resolution_method
         self.similarity_threshold = similarity_threshold
         self.minhash_permutations = minhash_permutations
+        # Without fuzzy matching only names with the same compact key (exact,
+        # spacing and legal-form variants) match.
+        self.fuzzy = fuzzy
 
         logger.debug(
             "Initializing FuzzyMatcher with %s candidates, method: %s, threshold: %s",
@@ -202,7 +206,7 @@ class FuzzyMatcher:
         )
 
         self._build_indices()
-        if self.resolution_method == ResolutionMethod.MINHASH:
+        if self.fuzzy and self.resolution_method == ResolutionMethod.MINHASH:
             self._build_minhash_lsh()
 
     def _build_indices(self) -> None:
@@ -271,6 +275,10 @@ class FuzzyMatcher:
 
         Candidates with the same :func:`compact_name_key` (spacing and
         legal-form variants: "가나다 상사" / "(주)가나다상사") match with 1.0.
+        They are the only matches when the matcher was built with
+        ``fuzzy=False``: shingle similarity also links different organizations
+        that share most of their name ("... University" / "... University
+        Hospital"), so it is opt-in.
 
         Candidates whose :func:`discriminator_tokens` or
         :func:`head_character` differ from the query's are dropped:
@@ -279,7 +287,9 @@ class FuzzyMatcher:
         and every consumer of this method (full-build grouping, incremental
         merge, claim resolution) would otherwise collapse them.
         """
-        if self.resolution_method == ResolutionMethod.MINHASH:
+        if not self.fuzzy:
+            matches: list[tuple[str, float]] = []
+        elif self.resolution_method == ResolutionMethod.MINHASH:
             matches = self._find_all_lsh_matches(query)
         else:
             matches = self._find_all_string_similarity_matches(query)

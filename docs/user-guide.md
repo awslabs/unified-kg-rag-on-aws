@@ -459,7 +459,8 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `processing.ignore_errors` | `false` | Skip items whose LLM step fails instead of failing the run. |
 | `processing.deduplicate` | `false` | Drop duplicate documents before extraction. |
 | `processing.resolution_method` | `"minhash"` | Entity resolution: `minhash` or `sequence_matcher`. |
-| `processing.similarity_threshold` | `0.6` | Fuzzy-match threshold for entity resolution. Raise it if distinct entities merge. |
+| `processing.fuzzy_entity_resolution` | `false` | Also merge entities whose names are only similar, in full builds and incremental merges. Off: names merge when equal after normalization, legal-form removal and dense-script spacing. |
+| `processing.similarity_threshold` | `0.85` | Threshold for fuzzy entity resolution and for matching claim subjects/objects to entity names. Raise it if distinct entities merge. |
 | `processing.document_parsing.source_directory` | `"source"` | Fallback for library callers. `run-ingestion` requires `--source-directory` (or `GRAPHRAG_SOURCE_DIRECTORY`). |
 | `processing.document_parsing.target_directory` | `null` | Export each parsed document as `<stem>.json` for inspection (same as `--target-directory`). Must not be the source directory. |
 | `processing.document_parsing.index_value` | `null` | Index suffix the run writes: every OpenSearch index and Neptune label is named `<prefix>-<index_value>` (`null` = `default`). Query the corpus with the same value as `run-rag`/`run-eval --suffix`. `run-ingestion` has no flag for it; use one config file per tenant or version. |
@@ -506,7 +507,6 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.reset` | `false` | Clear existing indexed data before indexing. |
 | `indexing.additional_suffix` | `null` | Appended after the run suffix in every OpenSearch index name and Neptune label (`<prefix>-<suffix>-<additional_suffix>`, where `<suffix>` is `processing.document_parsing.index_value` at ingestion and `--suffix` at query time, both `default` when unset). Set it identically for ingestion and queries. Use it for versioned or multi-tenant separation. |
 | `indexing.cross_run_merge` | `true` | On delta runs, union the delta with existing graph state instead of overwriting, so entities shared with unchanged documents keep their lineage (§5). `false` overwrites. |
-| `indexing.cross_run_fuzzy_merge` | `false` | Extend `cross_run_merge` with fuzzy entity-name matching. |
 | `indexing.max_failure_rate` | `0.2` | Per-index-type write failure rate above which the indexing stage fails, and share of communities without a report above which community detection fails. `1.0` disables the partial-failure gate. |
 | `indexing.max_document_failures` | `3` | Incremental runs: consecutive FAILED records of unchanged content after which a document is no longer retried (§5). |
 | `indexing.retire_source_scopes` | `[]` | Incremental runs: former source scopes (an old absolute source directory, or a former `source_scope` value) whose records in the run's index suffix are treated as deleted, so their exclusive content is removed. Never the run's own scope. `--retire-source-scope` adds to it. See §5 Deletion scope. |
@@ -810,7 +810,7 @@ Run order (`DataIngestionPipeline.STAGE_CLASSES`). Use the stage **names**
    source == target and no extra targets).
 5. **`graph_extraction`** — LLM extracts entities + relationships per chunk.
 6. **`gleaning`** — optional iterative refinement passes (`processing.gleaning`).
-7. **`graph_resolution`** — fuzzy-match and merge duplicate entities/relationships.
+7. **`graph_resolution`** — merge duplicate entities/relationships (name variants; similar names with `processing.fuzzy_entity_resolution`).
 8. **`claim_extraction`** — optional; extract factual claims (off by default).
 9. **`claim_resolution`** — optional; dedupe extracted claims.
 10. **`graph_analysis`** — centrality metrics + graph statistics.

@@ -157,6 +157,10 @@ class ClaimResolver(BaseResolver):
 
         logger.info("Created normalized entity map with %s entries.", len(ids_by_key))
 
+        # The guarded similarity step stays on whatever
+        # processing.fuzzy_entity_resolution says: that flag decides which
+        # entities merge, while a claim only points at an existing entity
+        # (bounded by processing.similarity_threshold).
         fuzzy_matcher = self._create_fuzzy_matcher(
             candidate_texts=list(names_by_key.values())
         )

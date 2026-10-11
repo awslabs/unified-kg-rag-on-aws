@@ -1178,11 +1178,23 @@ class ProcessingConfig(BaseModel):
         default=ResolutionMethod.MINHASH,
         description="Entity/relationship resolution method",
     )
+    fuzzy_entity_resolution: bool = Field(
+        default=False,
+        description="Also merge entities whose names are only similar "
+        "(resolution_method at similarity_threshold), in full builds and "
+        "incremental merges alike. Off by default: names are merged when they "
+        "are equal after normalization, legal-form removal ('Acme Inc' / "
+        "'Acme') and dense-script spacing, because name similarity also joins "
+        "different organizations that share most of their name ('... "
+        "University' / '... University Hospital').",
+    )
     similarity_threshold: float = Field(
-        default=0.6,
+        default=0.85,
         ge=0.0,
         le=1.0,
-        description="Similarity threshold for entity/relationship resolution",
+        description="Similarity threshold for fuzzy entity resolution "
+        "(fuzzy_entity_resolution) and for matching claim subjects and "
+        "objects to entity names",
     )
     document_parsing: DocumentParsingConfig = Field(
         default_factory=DocumentParsingConfig,
@@ -1746,17 +1758,10 @@ class IndexingConfig(BaseModel):
         "frequency/weight) before upsert, instead of overwriting. Requires a graph "
         "adapter that supports read-back (an adapter without it degrades to "
         "overwrite). On by default: overwriting replaces an entity shared with "
-        "unchanged documents by its delta-only description and text_unit_ids.",
-    )
-    cross_run_fuzzy_merge: bool = Field(
-        default=False,
-        description="Extend cross_run_merge with fuzzy entity resolution: match "
-        "delta entities against existing entity names by similarity (not just "
-        "exact normalized name), so near-duplicate surface forms ('Acme Corp' vs "
-        "'Acme Corporation') converge across incremental runs the way a full "
-        "rebuild groups them. Costs an entity-name projection per delta run; "
-        "requires cross_run_merge and a graph adapter that supports read-back. "
-        "Off by default.",
+        "unchanged documents by its delta-only description and text_unit_ids. "
+        "Delta entities match stored ones by the full build's rule "
+        "(processing.fuzzy_entity_resolution), which costs an entity-name "
+        "projection per delta run.",
     )
     neptune: NeptuneIndexingConfig = Field(
         default_factory=NeptuneIndexingConfig,

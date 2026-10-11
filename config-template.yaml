@@ -266,7 +266,16 @@ processing:
   ignore_errors: false
   deduplicate: false
   resolution_method: "minhash"
-  similarity_threshold: 0.6
+  # Entities merge when their names are equal after normalization, legal-form
+  # removal ("Acme Inc" / "Acme") and dense-script spacing. true also merges
+  # names that are only similar (resolution_method at similarity_threshold),
+  # in full builds and incremental merges alike; similarity also joins
+  # different organizations that share most of their name ("... University" /
+  # "... University Hospital").
+  fuzzy_entity_resolution: false
+  # Fuzzy entity resolution threshold; also used to match claim subjects and
+  # objects to entity names.
+  similarity_threshold: 0.85
 
   # Document Parsing
   document_parsing:
@@ -517,14 +526,10 @@ indexing:
   # overwriting. Requires a graph adapter that supports read-back. On by
   # default: with false, an entity shared with unchanged documents is replaced
   # by its delta-only description and text_unit_ids (its lineage to the
-  # unchanged documents' chunks is lost).
+  # unchanged documents' chunks is lost). Delta entities match stored ones by
+  # the full build's rule (processing.fuzzy_entity_resolution), which costs an
+  # entity-name projection per delta run.
   cross_run_merge: true
-  # Extend cross_run_merge with fuzzy entity resolution: match delta entities
-  # against existing entity names by similarity (not just exact normalized name),
-  # so near-duplicate surface forms ("Acme Corp" vs "Acme Corporation") converge
-  # across incremental runs the way a full rebuild groups them. Costs an
-  # entity-name projection per delta run. Requires cross_run_merge. Off by default.
-  cross_run_fuzzy_merge: false
   # Maximum tolerated per-index-type write failure rate before the indexing
   # stage is marked FAILED. A fully-failed index type (0 successes) always
   # fails; this additionally catches PARTIAL failures (e.g. most relationship
