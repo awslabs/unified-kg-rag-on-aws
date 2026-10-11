@@ -421,7 +421,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 `visualization/` — `BaseRenderer` ABC + `@register_renderer` 레지스트리 + `RenderContext`.
 
 - `InteractiveRenderer`(pyvis 네트워크 + 커뮤니티 계층), `StaticRenderer`(Bokeh degree/centrality/community-size)
-- 레이아웃: Bedrock Node2Vec 임베딩 + UMAP 차원 축소(실패하면 spring layout)
+- 레이아웃: 노드별 `name: description` 임베딩 + UMAP 차원 축소(실패하면 spring layout)
 - **독립 실행**(`application/cli/run_visualization.py`): 수집 없이 내보낸 그래프 JSON(`export_visualization_data` 출력 형식: `nodes`/`edges`/`layout`/`communities.hierarchy`)을 읽어 타입이 있는 객체로 되살린 뒤 등록된 렌더러로 렌더링합니다.
 
 ---

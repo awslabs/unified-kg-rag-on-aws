@@ -5,7 +5,7 @@ from unified_kg_rag.adapters.renderers.static import StaticRenderer
 
 from .base import GraphVisualizationManager
 from .embeddings.dimensionality import DimensionalityReducer
-from .embeddings.node2vec import BedrockNodeEmbedder
+from .embeddings.node_embedder import BedrockNodeEmbedder
 
 __all__ = [
     "BedrockNodeEmbedder",

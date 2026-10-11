@@ -175,6 +175,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#157).
 
 ### Changed
+- **Breaking**: `graph.visualization.embedding_method: "node2vec"` is renamed
+  to `"description"`, and `visualization/embeddings/node2vec.py` to
+  `node_embedder.py`. The layout never used node2vec random walks; it embeds
+  each node's `name: description` with the embedding model. Replace
+  `node2vec` with `description` in existing configs (#PR).
 - **Breaking**: `graph.visualization.enabled` defaults to `false`. Rendering
   during ingestion embedded every node and reduced the embeddings to a layout
   on each ingest, and the image preset already turned it off; set it to `true`

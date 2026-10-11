@@ -1417,7 +1417,7 @@ Layout and error behaviour:
 
 - `embedding_method: "none"` uses a spring layout and never constructs a
   Bedrock embedding client.
-- `embedding_method: "node2vec"` embeds each node's `name: description` with
+- `embedding_method: "description"` embeds each node's `name: description` with
   Bedrock and reduces it with `layout_method`. If embedding fails, the
   visualization step fails when `processing.ignore_errors` is `false` (ingestion
   itself continues and logs the failure). With `ignore_errors: true` it logs an

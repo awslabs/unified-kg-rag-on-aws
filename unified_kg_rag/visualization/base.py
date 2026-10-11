@@ -20,7 +20,7 @@ from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import strip_embedding_fields
 
 from .embeddings.dimensionality import DimensionalityReducer
-from .embeddings.node2vec import BedrockNodeEmbedder
+from .embeddings.node_embedder import BedrockNodeEmbedder
 from .exporters.html_exporter import HTMLExporter
 
 logger = get_logger(__name__)

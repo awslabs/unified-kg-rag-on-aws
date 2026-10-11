@@ -472,7 +472,7 @@ graph:
     # copies .json only; re-render the HTML with run-visualization). Set a path
     # to write elsewhere.
     # outputs_directory: "outputs/visualization"
-    embedding_method: "node2vec"
+    embedding_method: "description"
     layout_method: "umap"
 
     # Node embeddings come from Bedrock (the model determines dimensionality).

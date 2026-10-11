@@ -10,7 +10,7 @@ from sklearn.manifold import TSNE
 
 from unified_kg_rag.shared import get_logger
 
-from .node2vec import NodeEmbeddings
+from .node_embedder import NodeEmbeddings
 
 logger = get_logger(__name__)
 

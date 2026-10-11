@@ -3,7 +3,7 @@
 """AWS-free unit tests for the renderer registry / RenderContext and the pure
 ``DimensionalityReducer`` (PCA/t-SNE/fallback paths).
 
-The node2vec embedder is Bedrock-coupled and excluded here; the reducer itself
+The node embedder is Bedrock-coupled and excluded here; the reducer itself
 operates on plain numpy arrays so its PCA/t-SNE/fallback paths are AWS-free.
 """
 
@@ -27,7 +27,7 @@ from unified_kg_rag.adapters.renderers import (
 from unified_kg_rag.visualization.embeddings.dimensionality import (
     DimensionalityReducer,
 )
-from unified_kg_rag.visualization.embeddings.node2vec import NodeEmbeddings
+from unified_kg_rag.visualization.embeddings.node_embedder import NodeEmbeddings
 
 pytestmark = pytest.mark.unit
 

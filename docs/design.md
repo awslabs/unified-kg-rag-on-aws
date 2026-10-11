@@ -421,7 +421,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 `visualization/` — `BaseRenderer` ABC + `@register_renderer` registry + `RenderContext`.
 
 - `InteractiveRenderer` (pyvis network + community hierarchy), `StaticRenderer` (Bokeh degree/centrality/community-size)
-- Layout: Bedrock Node2Vec embeddings + UMAP dimensionality reduction (spring layout on failure)
+- Layout: embeddings of each node's `name: description` + UMAP dimensionality reduction (spring layout on failure)
 - **Standalone execution** (`application/cli/run_visualization.py`): Reads exported graph JSON without ingestion (`export_visualization_data` output format: `nodes`/`edges`/`layout`/`communities.hierarchy`), rehydrates it into typed objects, and renders with the registered renderers.
 
 ---

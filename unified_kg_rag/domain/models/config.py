@@ -1400,9 +1400,11 @@ class VisualizationConfig(BaseModel):
         "fall back to 'outputs/visualization'.",
     )
     embedding_method: str = Field(
-        default="node2vec",
-        pattern="^(node2vec|none)$",
-        description="Method for node embedding ('node2vec' or 'none').",
+        default="description",
+        pattern="^(description|none)$",
+        description="Node embedding for the layout: 'description' embeds each "
+        "node's 'name: description' with the embedding model; 'none' uses a "
+        "spring layout from the graph topology.",
     )
     layout_method: str = Field(
         default="umap",
