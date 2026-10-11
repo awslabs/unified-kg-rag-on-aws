@@ -27,7 +27,8 @@ are deliberately excluded: they change how long a stage takes, not what it
 produces, and including them would discard an expensive cache on a tuning
 change. For the same reason a Bedrock guardrail counts only while it guards
 ingestion models (``apply_to: all``), and a block switched off with
-``enabled: false`` counts as the default block, whatever its other fields say.
+``enabled: false`` counts as the default block, except for the fields other
+components read whatever the switch says (see ``_CONSUMED_WHEN_DISABLED``).
 
 The corpus itself is an input too: the source path alone says nothing about
 what the files contain, so with a fixed ``pipeline_id`` an edited, added, or
@@ -298,22 +299,48 @@ def _default_config() -> Config:
     return Config()
 
 
-def _neutralize_disabled(value: Any, default: Any) -> Any:
+# Fields of a switchable block that other components read whatever its
+# ``enabled`` flag says, so they keep shaping the output of a switched-off
+# block's neighbours. With translation off, extraction, gleaning, claim and
+# description prompts still take ``target_language`` and the OpenSearch
+# indexer picks its analyzers and translated-text fields from the three
+# languages; with reports off, community objects still list at most
+# ``max_entities_per_report`` entity names.
+_CONSUMED_WHEN_DISABLED: dict[str, frozenset[str]] = {
+    "processing.translation": frozenset(
+        {"source_language", "target_language", "additional_target_languages"}
+    ),
+    "graph.community_detection.report_generation": frozenset(
+        {"max_entities_per_report"}
+    ),
+}
+
+
+def _neutralize_disabled(value: Any, default: Any, path: str) -> Any:
     """Project a switched-off settings block as the default block.
 
     A block with ``enabled: false`` (fixing, translation, gleaning, claim
     extraction, description summarization, entity grounding, community
-    detection or reports) produces no output, so its other fields (model id,
-    languages, limits) must not move a fingerprint. It is replaced by the
-    default configuration's block, switched off, so a default configuration
-    keeps its released fingerprints.
+    detection or reports) runs nothing, so the fields only it reads (model
+    id, limits) must not move a fingerprint. They are replaced by the default
+    configuration's values, so a default configuration keeps its released
+    fingerprints. Fields other components read regardless
+    (``_CONSUMED_WHEN_DISABLED``) keep their configured value.
     """
     if not isinstance(value, dict):
         return value
     if value.get("enabled") is False and isinstance(default, dict):
-        return {**default, "enabled": False}
+        kept = _CONSUMED_WHEN_DISABLED.get(path, frozenset())
+        return {
+            **default,
+            **{k: v for k, v in value.items() if k in kept},
+            "enabled": False,
+        }
     defaults = default if isinstance(default, dict) else {}
-    return {k: _neutralize_disabled(v, defaults.get(k)) for k, v in value.items()}
+    return {
+        k: _neutralize_disabled(v, defaults.get(k), f"{path}.{k}")
+        for k, v in value.items()
+    }
 
 
 def _projection(
@@ -326,6 +353,7 @@ def _projection(
         value = _neutralize_disabled(
             _canonicalize(_resolve_path(config, path)),
             _canonicalize(_resolve_path(_default_config(), path)),
+            path,
         )
         if path in drop_subfields and isinstance(value, dict):
             value = {k: v for k, v in value.items() if k not in drop_subfields[path]}
@@ -343,8 +371,8 @@ def extraction_fingerprint(config: Config) -> str:
     gleaning, resolution), the same paths the stage cache keys use, minus the
     corpus location and the switches that do not change a document's output
     (see ``_EXTRACTION_NON_OUTPUT_PATHS``), a guardrail that does not guard
-    ingestion, and the settings of switched-off blocks. Recorded on each document's
-    doc-status record by an incremental run, so a later run with other
+    ingestion, and the settings only a switched-off block reads. Recorded on
+    each document's doc-status record by an incremental run, so a later run with other
     settings re-extracts documents whose content did not change.
 
     Like the cache keys, it does not see edits to the built-in prompt
