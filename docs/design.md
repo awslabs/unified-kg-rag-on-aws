@@ -593,7 +593,9 @@ and `providers.llm.kind: my_server` selects it (a non-Bedrock LLM kind also
 needs a token-counter builder for the same kind, or
 `Providers(token_counter_factory=...)`). `backend: local` is a config preset
 (`domain/models/provider_config.py`), not a code path: it only fills in
-`providers`, `aws.neptune` and `aws.opensearch` keys the config leaves unset.
+`providers`, `aws.neptune` and `aws.opensearch` keys, and the retrieval
+context budget (`search.token_manager.max_context_tokens`), that the config
+leaves unset.
 Model ids are strings; embedding and rerank ids are validated against the
 Bedrock catalog only while the Bedrock provider serves that role.
 

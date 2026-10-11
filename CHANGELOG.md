@@ -75,6 +75,9 @@ Defaults. Set the old value explicitly to keep the previous behaviour.
   that ingestion still writes (`graph.visualization.export_data`, default
   `true`: graph and communities, no model call; `run-visualization` computes
   a spring layout and centrality) (#210, #PR).
+- `backend: local` sets `search.token_manager.max_context_tokens` to 22000,
+  what the default local model's 32,768-token window accepts beside its
+  output reservation (30000 was clamped, with a WARNING, on every query) (#PR).
 - Entity resolution merges only names equal after normalization, legal-form
   removal and dense-script spacing. Similarity matching is opt-in
   (`processing.fuzzy_entity_resolution: true`), and

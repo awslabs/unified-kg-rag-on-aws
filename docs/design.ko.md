@@ -581,7 +581,8 @@ def _build(providers):
 이후 `providers.llm.kind: my_server`로 고릅니다(Bedrock이 아닌 LLM kind에는 같은 kind의
 토큰 카운터 빌더나 `Providers(token_counter_factory=...)`도 필요합니다). `backend: local`은
 코드 경로가 아니라 설정 프리셋(`domain/models/provider_config.py`)이며, 설정에서 비워 둔
-`providers`, `aws.neptune`, `aws.opensearch` 키만 채웁니다. 모델 ID는 문자열이며, 임베딩과
+`providers`, `aws.neptune`, `aws.opensearch` 키와 검색 컨텍스트 예산
+(`search.token_manager.max_context_tokens`)만 채웁니다. 모델 ID는 문자열이며, 임베딩과
 재순위화 ID는 그 역할을 Bedrock 공급자가 맡을 때만 Bedrock 카탈로그로 검증합니다.
 
 > **알 수 없는 kwargs는 받아서 무시하세요.** 호출 측은 `get_model(model_id, **kwargs)`로

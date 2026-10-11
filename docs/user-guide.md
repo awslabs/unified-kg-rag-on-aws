@@ -230,7 +230,11 @@ models:
   optionally `fast_model_id`) replaces the two Bedrock tiers for every role;
   a role's own `*_model_id` still wins. `providers.llm.context_window_size`
   and `max_output_tokens` describe the model (Bedrock models take theirs from
-  the catalog), and the window is sent to Ollama as `num_ctx`. An
+  the catalog), and the window is sent to Ollama as `num_ctx`. The preset
+  also sets `search.token_manager.max_context_tokens` to 22000, what the
+  default 32,768-token window accepts beside the 8,192-token output
+  reservation (the AWS default of 30000 would be clamped on every query);
+  raise it with the window when you run a larger model. An
   OpenAI-compatible server (vLLM, llama.cpp server, LM Studio) takes
   `base_url` (its `/v1` root) and, if it needs one, `api_key`.
 - **Embeddings.** `providers.embedding.model_id` and `dimension` are required
