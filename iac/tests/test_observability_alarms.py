@@ -62,7 +62,11 @@ def test_timed_out_and_aborted_runs_alarm() -> None:
 def test_store_alarms_watch_the_paths_the_app_uses() -> None:
     alarms = _alarms()
     # Gremlin runs over WebSocket; GremlinHttp5xx counts HTTP only.
-    assert alarms["NeptuneGremlinErrors"]["MetricName"] == "GremlinServerErrorsPerSec"
+    gremlin = alarms["NeptuneGremlinErrors"]
+    assert gremlin["MetricName"] == "GremlinServerErrorsPerSec"
+    # Retried ConcurrentModificationExceptions during parallel writes come in
+    # bursts: only errors in 3 consecutive 1-minute periods alarm.
+    assert (gremlin["Period"], gremlin["EvaluationPeriods"]) == (60, 3)
     # Registry writes are BatchWriteItem, not a single-operation PutItem.
     throttle = alarms["DocStatusWriteThrottled"]
     assert throttle["MetricName"] == "WriteThrottleEvents"

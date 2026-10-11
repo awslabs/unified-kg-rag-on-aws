@@ -114,8 +114,9 @@ class DeploymentConfig:
     fargate_cpu: int
     fargate_memory: int
     # container image tag the Fargate task pulls. Default "latest" (mutable, for
-    # local/dev iteration); set to an immutable version tag or digest for
-    # non-dev, which also flips the ECR repo to immutable tags (provenance).
+    # local/dev iteration); set to an immutable version tag for non-dev, which
+    # also flips the ECR repo to immutable tags (provenance). A tag, not a
+    # digest: the ECR lifecycle rule keeps the deployed image by tag.
     image_tag: str
     sfn_timeout_hours: int
     # security

@@ -295,6 +295,10 @@ Library API (Python callers and custom backends).
   cache prefixes, OpenSearch indices get replicas on multi-node domains,
   timed-out or aborted pipeline runs alarm, and `cdk destroy` leaves no
   fixed-name resources (#157, #166, #211).
+- IaC: the pipeline-failure notification renders the whole error, so an
+  error without a `Cause` no longer fails the SNS publish; the Neptune
+  Gremlin-errors alarm needs errors in 3 consecutive minutes, so retried
+  write conflicts during parallel writes do not page (#PR).
 
 ### Security
 - Prompts delimit corpus and retrieved text as data, and inputs cannot close
