@@ -264,7 +264,7 @@ class OpenSearchIndexer(VectorIndexer):
             "summary_embedding": embeddings[1],
             "full_content": report.full_content or "",
             "full_content_embedding": embeddings[2],
-            "rank": report.rank or 1.0,
+            "rank": report.rank if report.rank is not None else 1.0,
             "rating": report.rating,
             # Community membership provenance (candidate sources of the report's
             # community), so a retrieved report can be filtered by origin. Not

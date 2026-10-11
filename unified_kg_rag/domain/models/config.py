@@ -1335,13 +1335,8 @@ class ReportGenerationConfig(BaseModel):
     content_length: str = Field(
         default="medium",
         pattern="^(short|medium|long)$",
-        description="Report length: short (6-8 paragraphs), medium (10-12), long (15-18)",
-    )
-    include_statistics: bool = Field(
-        default=True, description="Include statistical metrics in community reports"
-    )
-    include_key_entities: bool = Field(
-        default=True, description="Highlight key entities in community reports"
+        description="Report length, as the number of findings the report asks "
+        "for: short (5-7), medium (7-10), long (10-15)",
     )
     enable_sub_community_rollup: bool = Field(
         default=True,

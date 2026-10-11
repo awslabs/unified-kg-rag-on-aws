@@ -497,7 +497,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `graph.community_detection.max_levels` | `5` | Maximum community hierarchy depth. |
 | `graph.community_detection.min_community_size` | `3` | Smaller communities merge into neighbours. |
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | Token budget for the entity/relationship context in one report prompt. |
-| `graph.community_detection.report_generation.content_length` | `"medium"` | Report length: `short`, `medium`, `long`. |
+| `graph.community_detection.report_generation.content_length` | `"medium"` | Report length as findings per report: `short` (5-7), `medium` (7-10), `long` (10-15). |
 | `graph.analysis.centrality.calculate_betweenness` | `true` | Betweenness centrality. On graphs larger than `betweenness_auto_sample_threshold` (`2000`) nodes it is sampled instead of computed exactly. |
 | `graph.visualization.enabled` | `false` | Render visualizations and export visualization data during ingestion (one embedding call per node plus a layout reduction per ingest). |
 | `graph.visualization.outputs_directory` | `null` | Unset writes to `<cache dir>/<pipeline_id>/visualization`, so the data syncs to S3 with the cache. |

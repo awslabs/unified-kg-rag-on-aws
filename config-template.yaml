@@ -465,9 +465,8 @@ graph:
       # prompt. Entities are degree-sorted (most-connected first) and packed up
       # to this budget; truncation drops the least-important entities first.
       max_report_context_tokens: 4000
+      # Findings per report: short 5-7, medium 7-10, long 10-15.
       content_length: "medium"
-      include_statistics: true
-      include_key_entities: true
       # When a parent community's raw context would overflow the token budget,
       # substitute summaries of its already-generated child sub-community reports
       # for the lowest-priority raw context (MS GraphRAG roll-up) instead of

@@ -588,6 +588,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `export_timeout_millis` passed to the batch span processor, which ignores
   it. Captured content is no longer redacted twice: with an exporting
   backend the exporter alone redacts it (#211).
+- `graph.community_detection.report_generation.include_statistics` and
+  `include_key_entities`: they only reached the report prompt as the text
+  "True"/"False" and changed nothing (#PR).
 - `indexing.cross_run_fuzzy_merge`: the incremental merge follows
   `processing.fuzzy_entity_resolution`, the full build's setting (#PR).
 - Gleaning config keys `convergence_threshold`, `quality_threshold`,
@@ -823,6 +826,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   that the filter removed (they named a filtered entity) is dropped with them.
   Merged extraction entities list their text units in first-seen order instead
   of set order (#213).
+- Community reports: members left out by `max_entities_per_report` now roll
+  the sub-community reports in, as a token-budget overflow does, and a report
+  context that left members out with no sub-report to cover them is logged.
+  The findings count per `content_length` has one source
+  (`REPORT_FINDINGS`: short 5-7, medium 7-10, long 10-15) for the prompt,
+  the output-token floor and the config description, which named paragraph
+  counts. A report rank of 0 is indexed as 0, not 1 (#PR).
 - Neptune writes: a relationship edge or a community's `MemberOf` edges whose
   drop failed are no longer re-added next to the old ones (duplicates); they
   count as failed writes, so the documents are retried. Relationship edges

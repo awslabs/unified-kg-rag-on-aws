@@ -990,7 +990,11 @@ class CommunityDetector(BaseProcessor):
         entities: list[dict[str, Any]] = []
         selected_ids: list[str] = []
         used_tokens = 0
-        truncated = False
+        # Members over the entity cap are left out as well: like a token
+        # overflow, that rolls the sub-community reports in.
+        truncated = len(candidate_ids) < sum(
+            1 for eid in community.entity_ids or [] if eid in self.graph
+        )
         for eid in candidate_ids:
             node = self.graph.nodes[eid]
             entity = {
@@ -1055,15 +1059,20 @@ class CommunityDetector(BaseProcessor):
             sub_reports = self._build_sub_community_context(
                 community, reports_by_id, token_budget
             )
+        if truncated and not sub_reports:
+            logger.info(
+                "Report context of community '%s' keeps %s of its %s entities",
+                community.id,
+                len(entities),
+                len(community.entity_ids or []),
+            )
 
         return {
             "community_id": community.id,
             "entities": entities,
             "relationships": relationships,
             "sub_community_reports": sub_reports,
-            **report_config.model_dump(
-                include={"content_length", "include_statistics", "include_key_entities"}
-            ),
+            "content_length": report_config.content_length,
         }
 
     def _build_sub_community_context(
@@ -1131,8 +1140,6 @@ class CommunityDetector(BaseProcessor):
                 ),
                 "sub_community_reports": r.get("sub_community_reports", ""),
                 "content_length": r["content_length"],
-                "include_statistics": str(r["include_statistics"]),
-                "include_key_entities": str(r["include_key_entities"]),
             }
             for r in report_inputs
         ]

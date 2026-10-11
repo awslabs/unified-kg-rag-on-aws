@@ -46,6 +46,28 @@ def indexer(config: Config) -> OpenSearchIndexer:
 # --------------------------------------------------------------------------- #
 
 
+def test_a_rank_of_zero_is_indexed_as_zero(indexer) -> None:
+    from unified_kg_rag.domain.models import Relationship
+
+    assert (
+        indexer._prepare_entity_doc(Entity(id="e", name="E", rank=0), ([0.1], [0.2]))[
+            "rank"
+        ]
+        == 0
+    )
+    assert (
+        indexer._prepare_relationship_doc(
+            Relationship(id="r", source_id="a", target_id="b", rank=0), ([0.1],)
+        )["rank"]
+        == 0
+    )
+    report = CommunityReport(id="r", name="R", community_id="c", rank=0)
+    assert (
+        indexer._prepare_community_report_doc(report, ([0.1], [0.2], [0.3]))["rank"]
+        == 0
+    )
+
+
 def test_prepare_entity_doc_full(indexer) -> None:
     entity = Entity(
         id="e1",

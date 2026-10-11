@@ -476,7 +476,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `graph.community_detection.max_levels` | `5` | 커뮤니티 계층의 최대 깊이입니다. |
 | `graph.community_detection.min_community_size` | `3` | 이보다 작은 커뮤니티는 이웃 커뮤니티에 합칩니다. |
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | 리포트 프롬프트 하나에 넣는 엔티티·관계 컨텍스트의 토큰 예산입니다. |
-| `graph.community_detection.report_generation.content_length` | `"medium"` | 리포트 길이입니다. `short`, `medium`, `long` 중 하나입니다. |
+| `graph.community_detection.report_generation.content_length` | `"medium"` | 리포트 길이로, 리포트마다 요청할 findings 수입니다. `short`(5-7), `medium`(7-10), `long`(10-15) 중 하나입니다. |
 | `graph.analysis.centrality.calculate_betweenness` | `true` | 매개 중심성을 계산합니다. 노드가 `betweenness_auto_sample_threshold`(`2000`)보다 많은 그래프에서는 정확히 계산하지 않고 샘플링합니다. |
 | `graph.visualization.enabled` | `false` | 수집 중에 시각화를 렌더링하고 시각화 데이터를 내보냅니다(수집마다 노드당 임베딩 호출 한 번과 레이아웃 차원 축소가 추가됨). |
 | `graph.visualization.outputs_directory` | `null` | 지정하지 않으면 `<cache dir>/<pipeline_id>/visualization`에 기록하므로 데이터가 캐시와 함께 S3로 동기화됩니다. |

@@ -22,6 +22,7 @@ from unified_kg_rag.adapters.ingestion.community_detector import (
 )
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.models import Community, Config, Entity, Relationship
+from unified_kg_rag.domain.prompts import CommunityReportPrompt
 from unified_kg_rag.shared import GraphError
 
 pytestmark = pytest.mark.unit
@@ -518,9 +519,7 @@ class TestReportInputShaping:
                         "description": "rel",
                     }
                 ],
-                "content_length": 500,
-                "include_statistics": True,
-                "include_key_entities": False,
+                "content_length": "medium",
             }
         ]
         out = CommunityDetector._create_report_chain_inputs(report_inputs)
@@ -529,9 +528,9 @@ class TestReportInputShaping:
         assert chain_in["community_id"] == "L0_C0"
         assert "Alice (PERSON): A person" in chain_in["entities"]
         assert "Alice -> Acme (works_at): rel" in chain_in["relationships"]
-        # bool flags are stringified.
-        assert chain_in["include_statistics"] == "True"
-        assert chain_in["include_key_entities"] == "False"
+        assert chain_in["content_length"] == "medium"
+        # Every variable the prompt reads is passed, and nothing else.
+        assert set(chain_in) == set(CommunityReportPrompt.input_variables)
 
 
 class TestReportRank:
@@ -782,6 +781,32 @@ class TestSubCommunityRollup:
         # generate_reports guards on a report_generator attribute existing.
         cd.report_generator = object()
         return cd
+
+    def test_members_over_the_entity_cap_roll_the_sub_reports_in(self) -> None:
+        from unified_kg_rag.domain.models import CommunityReport
+
+        cd = self._detector()
+        cd.community_detection_config.report_generation.max_entities_per_report = 2
+        g = nx.Graph()
+        for i in range(3):
+            g.add_node(f"e{i}", name=f"E{i}", type="ORG", description="d")
+        cd.graph = g
+        parent = Community(
+            id="p",
+            name="Parent",
+            level="1",
+            parent="",
+            children=["c"],
+            entity_ids=["e0", "e1", "e2"],
+        )
+        child_report = CommunityReport(
+            id="r-c", name="Child", community_id="c", summary="E2 detail."
+        )
+
+        report_input = cd._prepare_report_input(parent, {"c": child_report})
+
+        assert len(report_input["entities"]) == 2
+        assert "E2 detail." in report_input["sub_community_reports"]
 
     def test_build_sub_community_context_packs_children_biggest_first(self) -> None:
         from unified_kg_rag.domain.models import CommunityReport

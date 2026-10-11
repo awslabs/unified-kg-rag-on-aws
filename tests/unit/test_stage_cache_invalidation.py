@@ -284,7 +284,8 @@ class TestFingerprintScope:
         # graph.analysis is no longer an input (it shapes nothing a later
         # stage reads), so graph analysis shares claim resolution's inputs.
         PipelineStageType.GRAPH_ANALYSIS: "82612783b846",
-        PipelineStageType.COMMUNITY_DETECTION: "2bef209de07c",
+        # The no-op report flags were removed: community detection re-keys.
+        PipelineStageType.COMMUNITY_DETECTION: "89c8c959f541",
     }
 
     def test_default_config_fingerprints_are_unchanged(self) -> None:
