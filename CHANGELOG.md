@@ -821,6 +821,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   that the filter removed (they named a filtered entity) is dropped with them.
   Merged extraction entities list their text units in first-seen order instead
   of set order (#213).
+- An incremental commit whose entities or relationships merged into stored
+  ones under another id now points the delta's communities
+  (`entity_ids`/`relationship_ids`, deduplicated) and claims
+  (`subject_id`/`object_id`) at the kept ids; they referenced ids that were
+  never written (#PR).
 - Relationships of another type or in the other direction between the same
   two entities no longer collapse into one community-graph edge (the last one
   inserted). The edge sums their weights and lists every relationship, so

@@ -18,6 +18,8 @@ from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.models import (
+    Claim,
+    Community,
     Config,
     DocumentDelta,
     DocumentLineage,
@@ -251,3 +253,64 @@ def test_failed_read_back_fails_the_commit_before_any_write(mocker) -> None:
         _commit_entity(incremental, "doc-b", Entity(id="e1", name="Vendor"))
 
     assert store.get("doc-b") is None
+
+
+def test_communities_and_claims_follow_the_merge_remap() -> None:
+    # "Acme Inc" merges into the stored "Acme" (another id), and its edge into
+    # the stored edge: the delta's community and claim must reference the
+    # kept ids, not ids that are never written.
+    incremental, graph, _ = _harness(cross_run_merge=True)
+    vector = incremental.indexing_manager.opensearch_indexer
+    incremental.commit(
+        lineages=[DocumentLineage(doc_id="doc-a", entity_ids=["e-old", "e-buyer"])],
+        fingerprints={"doc-a": "h-a"},
+        entities=[
+            Entity(id="e-old", name="Acme", text_unit_ids=["t1"]),
+            Entity(id="e-buyer", name="Buyer", text_unit_ids=["t1"]),
+        ],
+        relationships=[
+            Relationship(
+                id="r-old", source_id="e-old", target_id="e-buyer", type="SUPPLIES"
+            )
+        ],
+    )
+    incremental.commit(
+        lineages=[DocumentLineage(doc_id="doc-b", entity_ids=["e-new", "e-buyer"])],
+        fingerprints={"doc-b": "h-b"},
+        entities=[
+            Entity(id="e-new", name="Acme Inc", text_unit_ids=["t2"]),
+            Entity(id="e-buyer", name="Buyer", text_unit_ids=["t2"]),
+        ],
+        relationships=[
+            Relationship(
+                id="r-new", source_id="e-new", target_id="e-buyer", type="SUPPLIES"
+            )
+        ],
+        communities=[
+            Community(
+                id="c1",
+                name="Community 1",
+                level="0",
+                parent="",
+                children=[],
+                entity_ids=["e-new", "e-buyer", "e-old"],
+                relationship_ids=["r-new"],
+            )
+        ],
+        claims=[
+            Claim(
+                id="cl1",
+                subject_id="e-new",
+                subject_name="Acme Inc",
+                object_id="e-buyer",
+                object_name="Buyer",
+                type="SUPPLIES",
+            )
+        ],
+    )
+
+    community = graph.data["communities"][("default", "c1")]
+    assert community.entity_ids == ["e-old", "e-buyer"]
+    assert community.relationship_ids == ["r-old"]
+    claim = vector.data["claims"]["cl1"]
+    assert (claim.subject_id, claim.object_id) == ("e-old", "e-buyer")

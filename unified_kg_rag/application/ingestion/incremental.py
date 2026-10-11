@@ -53,6 +53,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.ports import DocStatusPort
+from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import DataProcessingError, get_logger
 from unified_kg_rag.shared.utils.document_identity import (
     RELATIVE_PATH_KEY,
@@ -333,6 +334,58 @@ def _remap_lineage(
             ),
         }
     )
+
+
+def _remap_ids(ids: list[str] | None, id_remap: dict[str, str]) -> list[str]:
+    return list(dict.fromkeys(id_remap.get(i, i) for i in ids or []))
+
+
+def _remap_references(
+    communities: list[Community] | None,
+    claims: list[Claim] | None,
+    id_remap_by_suffix: dict[str, dict[str, str]],
+) -> tuple[list[Community] | None, list[Claim] | None]:
+    """Point communities' members and claims' subjects/objects at the ids the
+    cross-run merge kept, so none references an id that is never written."""
+    if not id_remap_by_suffix:
+        return communities, claims
+    remapped_communities = None
+    if communities is not None:
+        remapped_communities = []
+        for community in communities:
+            remap = id_remap_by_suffix.get(BaseIndexer.get_suffix(community), {})
+            remapped_communities.append(
+                community.model_copy(
+                    update={
+                        "entity_ids": _remap_ids(community.entity_ids, remap),
+                        "relationship_ids": _remap_ids(
+                            community.relationship_ids, remap
+                        ),
+                    }
+                )
+                if remap
+                else community
+            )
+    remapped_claims = None
+    if claims is not None:
+        remapped_claims = []
+        for claim in claims:
+            remap = id_remap_by_suffix.get(BaseIndexer.get_suffix(claim), {})
+            remapped_claims.append(
+                claim.model_copy(
+                    update={
+                        "subject_id": remap.get(claim.subject_id, claim.subject_id),
+                        "object_id": (
+                            remap.get(claim.object_id, claim.object_id)
+                            if claim.object_id
+                            else claim.object_id
+                        ),
+                    }
+                )
+                if remap
+                else claim
+            )
+    return remapped_communities, remapped_claims
 
 
 class IncrementalIndexer:
@@ -724,12 +777,16 @@ class IncrementalIndexer:
         they touch (``indexing.cross_run_merge``); a delta item that merged into
         a stored one under another id is recorded in the lineage by that id
         (and added to the document's PENDING record before the write, see
-        :meth:`write_ahead`).
+        :meth:`write_ahead`), and the communities and claims referencing it
+        are pointed at that id too.
         """
         merged = self.indexing_manager.merge_with_existing_graph(
             entities, relationships
         )
         entities, relationships = merged.entities, merged.relationships
+        communities, claims = _remap_references(
+            communities, claims, merged.id_remap_by_suffix
+        )
         lineages = [
             _remap_lineage(lineage, merged.id_remap_by_suffix.get(lineage.suffix, {}))
             for lineage in lineages
