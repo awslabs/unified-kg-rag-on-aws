@@ -304,9 +304,9 @@ class TokenManager(MetricsMixin):
             # lookup below already tolerates unknowns via `.get(..., 1.0)`.
             section_type = SectionType.GENERAL
 
-        base_score = result.score or 0.5
-        priority_multiplier = self.PRIORITY_MULTIPLIERS.get(section_type, 1.0)
-        priority = base_score * priority_multiplier
+        # A 0.0 score is the lowest score, not a missing one (`or 0.5` made
+        # it a mid-ranked section).
+        priority = result.score * self.PRIORITY_MULTIPLIERS.get(section_type, 1.0)
 
         return ContextSection(
             content=result.content,

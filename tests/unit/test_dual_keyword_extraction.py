@@ -241,7 +241,7 @@ class TestLightragModeFromQuery:
         ("metadata", "expected"),
         [
             ({"search_strategy": "naive"}, "naive"),
-            ({"lightrag_mode": "hybrid"}, "hybrid"),
+            ({"lightrag_mode": "hybrid"}, "mix"),  # the removed alias is ignored
             ({}, "mix"),
         ],
     )

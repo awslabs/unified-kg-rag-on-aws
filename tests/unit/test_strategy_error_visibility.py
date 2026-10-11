@@ -133,7 +133,7 @@ def _lightrag_query(mode: SearchStrategy) -> SearchQuery:
         query="q",
         ll_keywords=["Vendor"],
         hl_keywords=["supply"],
-        metadata={"lightrag_mode": mode.value},
+        metadata={"search_strategy": mode.value},
     )
 
 

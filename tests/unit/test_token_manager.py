@@ -308,14 +308,14 @@ class TestPriorityOrdering:
         assert section.section_type == SectionType.CLAIM
         assert section.priority == pytest.approx(0.55)
 
-    def test_missing_score_defaults_to_half(self, mocker) -> None:
+    def test_zero_score_stays_the_lowest_priority(self, mocker) -> None:
         mgr = _make_manager(mocker)
         result = RetrievalResult(
             content="x y", score=0.0, retriever_type="entity", source="s"
         )
-        # score 0.0 is falsy -> base_score becomes 0.5; ENTITY multiplier 1.2.
+        # `score or 0.5` turned a 0.0 score into a mid-ranked 0.5.
         section = mgr._create_context_section(result, index=0)
-        assert section.priority == pytest.approx(0.5 * 1.2)
+        assert section.priority == 0.0
 
 
 class TestPerTypeBudgetIsAHardCap:

@@ -541,7 +541,6 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
 - `aws.bedrock.effort`; use `aws.bedrock.default_effort` (#128).
-- `SearchQuery.metadata["lightrag_mode"]`; use `search_strategy` (#123).
 - `processing.max_retries`, `indexing.neptune.max_retries` and
   `evaluation.ragas_max_retries`; use the `max_attempts` keys. A renamed key
   (including `search.llm_retry`) now logs a deprecation WARNING instead of
@@ -627,6 +626,8 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   rewrite now does before retrieval, so the answer model reads the budgeted
   retrieval context directly. The old keys are ignored with an unknown-key
   warning. **Breaking** for configs that set them (#PR).
+- The deprecated `SearchQuery.metadata["lightrag_mode"]` alias; LightRAG reads
+  only `search_strategy` (#123, #PR).
 
 ### Fixed
 - `interactive_graph.html` centres the layout and scales it to a fixed canvas
@@ -1796,6 +1797,16 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   passed the bare code (`en`). Every retrieval prompt now gets the language
   name (`English`, `Korean`, ...); a `RAGInput.target_language` that is not a
   supported code is passed as given (#PR).
+- The token budgeter treated a 0.0 retrieval score as missing (`score or
+  0.5`), so the lowest-scored sections were ranked as mid-priority (#PR).
+- LightRAG `mix`/`hybrid` linked chunks lost their weighted-polling selection
+  order when fetched by id (index order, score 0); they keep it now, as local
+  search's text units do (#PR).
+- Local search fetched every text unit linked to the expanded entities and
+  then kept only the text quota; it now fetches the best-supported ones up to
+  that quota. `search.local_search.entity_frequency_threshold` now drops the
+  over-frequent entities from the context as documented; they were only left
+  out of the text-unit fan-out (#PR).
 
 ### Security
 - The task role drops the unused `neptune-db:GetEngineStatus`,

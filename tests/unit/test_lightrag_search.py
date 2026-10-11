@@ -86,7 +86,7 @@ def _make_strategy(config: Config):
 
 
 def _query(mode: SearchStrategy, **kw) -> SearchQuery:
-    return SearchQuery(query="q", metadata={"lightrag_mode": mode.value}, **kw)
+    return SearchQuery(query="q", metadata={"search_strategy": mode.value}, **kw)
 
 
 async def test_naive_mode_queries_only_text_units(config: Config) -> None:
@@ -235,7 +235,7 @@ async def test_long_empty_keyword_query_does_not_fall_back(config: Config) -> No
     # Exceeds config.search.lightrag_search.raw_query_fallback_max_len (default 50).
     long_query = "x" * 60
     await strategy.asearch(
-        SearchQuery(query=long_query, metadata={"lightrag_mode": "hybrid"})
+        SearchQuery(query=long_query, metadata={"search_strategy": "hybrid"})
     )
     # No fallback -> no graph retrieval for a long keyword-less query.
     assert os_r.calls == []
@@ -1322,3 +1322,40 @@ async def test_opt_in_graph_expansion_seeds_in_rank_order(config: Config) -> Non
     entity_prefix = config.indexing.opensearch.entities_index_prefix
     assert neptune_r.calls[0].filters["id"][0] == f"{entity_prefix}-id"
     assert result.metadata["sources"]["graph_entities"] == 1
+
+
+async def test_linked_chunks_keep_their_selection_order(config: Config) -> None:
+    # The fetch by id comes back in index order with no score; the weighted
+    # polling order (most important KG hit first) must survive it.
+    class _Document(FakeRetriever):
+        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+            ids = (query.filters or {}).get("id") or []
+            return [
+                RetrievalResult(
+                    content=uid, score=0.0, source=uid, retriever_type="text"
+                )
+                for uid in sorted(ids)
+            ]
+
+    strategy = get_strategy_spec(SearchStrategy.MIX).strategy_class(
+        config=config,
+        retrievers={
+            RetrieverRole.DOCUMENT.value: _Document("document"),
+            RetrieverRole.GRAPH.value: FakeRetriever("graph"),
+        },
+    )
+    entity = RetrievalResult(
+        content="e",
+        score=1.0,
+        source="e1",
+        retriever_type="entity",
+        metadata={"id": "e1", "text_unit_ids": ["t-c", "t-a", "t-b"]},
+    )
+
+    linked = await strategy._retrieve_linked_chunks(
+        SearchQuery(query="q"), [entity], []
+    )
+
+    chunks = linked["lightrag_linked_chunks"]
+    assert [r.source for r in chunks] == ["t-c", "t-a", "t-b"]
+    assert [r.score for r in chunks] == sorted((r.score for r in chunks), reverse=True)

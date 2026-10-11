@@ -307,3 +307,60 @@ async def test_independent_sections_run_concurrently_with_entity_chain(
     sources = {r.source for r in result.results}
     assert {f"{p}-1" for p in side_prefixes} <= sources
     assert result.metadata["text_unit_count"] == 1
+
+
+class _GraphWithLineage(FakeRetriever):
+    """Graph expansion: one generic entity and one specific entity."""
+
+    def __init__(self, generic_units: int, specific_units: int) -> None:
+        super().__init__("graph")
+        self.lineage = {"generic": generic_units, "specific": specific_units}
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        self.calls.append(query)
+        return [
+            RetrievalResult(
+                content=name,
+                score=1.0,
+                source=name,
+                retriever_type="entity",
+                metadata={
+                    "id": name,
+                    "text_unit_ids": [f"{name}-t{i}" for i in range(count)],
+                },
+            )
+            for name, count in self.lineage.items()
+        ]
+
+
+async def test_generic_entities_are_dropped_from_the_context(config: Config) -> None:
+    # search.local_search.entity_frequency_threshold: an entity in more text
+    # units is too generic. It was kept out of the text-unit fan-out but still
+    # reached the context; it is now dropped from both.
+    config.search.local_search.entity_frequency_threshold = 3
+    strategy, os_r, _ = _make_strategy(config)
+    strategy.retrievers[RetrieverRole.GRAPH.value] = _GraphWithLineage(5, 2)
+
+    result = await strategy.asearch(_query())
+
+    entities = [r.source for r in result.results if r.retriever_type == "entity"]
+    assert entities == ["specific"]
+    (fetch,) = [q for q in os_r.calls if q.filters and "id" in q.filters]
+    assert fetch.filters is not None
+    assert fetch.filters["id"] == ["specific-t0", "specific-t1"]
+
+
+async def test_text_unit_fetch_is_capped_at_the_text_quota(config: Config) -> None:
+    # Fusion keeps at most the text quota of the linked units, so fetching
+    # more only paid for hits that were thrown away.
+    config.search.local_search.entity_frequency_threshold = 1000
+    strategy, os_r, _ = _make_strategy(config)
+    strategy.retrievers[RetrieverRole.GRAPH.value] = _GraphWithLineage(0, 500)
+    query = _query(top_k=5)
+
+    await strategy.asearch(query)
+
+    quota = strategy._per_type_quota(query.top_k)["text"]
+    (fetch,) = [q for q in os_r.calls if q.filters and "id" in q.filters]
+    assert fetch.filters is not None
+    assert len(fetch.filters["id"]) == quota < 500

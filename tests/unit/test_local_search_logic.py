@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from unified_kg_rag.adapters.retrieval.base import BaseSearchStrategy
 from unified_kg_rag.adapters.search_strategies.local_search import LocalSearchStrategy
 from unified_kg_rag.domain.models import RetrievalResult, SearchQuery, SearchType
 
@@ -384,13 +385,13 @@ def test_rank_text_unit_ids_dedups_across_entities() -> None:
 def test_restore_rank_reorders_fetched_batch_to_ranked_order() -> None:
     # The id-batch fetch returns index order; the graph-support ranking must win.
     fetched = [_result("c3"), _result("c1"), _result("c2")]
-    out = LocalSearchStrategy._restore_rank(fetched, ["c1", "c2", "c3"])
+    out = BaseSearchStrategy._restore_rank(fetched, ["c1", "c2", "c3"])
     assert [r.source for r in out] == ["c1", "c2", "c3"]
 
 
 def test_restore_rank_projects_descending_scores() -> None:
     fetched = [_result("c2", score=0.0), _result("c1", score=0.0)]
-    out = LocalSearchStrategy._restore_rank(fetched, ["c1", "c2"])
+    out = BaseSearchStrategy._restore_rank(fetched, ["c1", "c2"])
     # Scores must be strictly descending so downstream sorting is not arbitrary.
     assert out[0].score > out[1].score
     assert out[0].source == "c1"
@@ -398,11 +399,11 @@ def test_restore_rank_projects_descending_scores() -> None:
 
 def test_restore_rank_puts_unranked_ids_last() -> None:
     fetched = [_result("unknown"), _result("c1")]
-    out = LocalSearchStrategy._restore_rank(fetched, ["c1"])
+    out = BaseSearchStrategy._restore_rank(fetched, ["c1"])
     assert [r.source for r in out] == ["c1", "unknown"]
 
 
 def test_restore_rank_empty_inputs_are_passthrough() -> None:
-    assert LocalSearchStrategy._restore_rank([], ["c1"]) == []
+    assert BaseSearchStrategy._restore_rank([], ["c1"]) == []
     fetched = [_result("c1")]
-    assert LocalSearchStrategy._restore_rank(fetched, []) == fetched
+    assert BaseSearchStrategy._restore_rank(fetched, []) == fetched
