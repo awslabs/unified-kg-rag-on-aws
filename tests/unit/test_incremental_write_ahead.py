@@ -72,18 +72,18 @@ def _assert_converged(harness: IncrementalRun, corpus: Corpus) -> None:
     assert harness.state() == expected_state(corpus)
 
 
-@pytest.mark.parametrize("follow_up", sorted(FOLLOW_UPS))
+# Random corpora, points, k and follow-ups (with and without overflow) are in
+# tests/property/test_incremental_interruption_properties.py, and every point
+# runs through each registry in test_doc_status_conformance.py. This keeps one
+# named case per point that also proves the point fires on this corpus.
 @pytest.mark.parametrize("point", POINTS)
-@pytest.mark.parametrize("k", [1, 2])
-def test_interrupted_run_converges_to_a_fresh_build(
-    point: str, follow_up: str, k: int
-) -> None:
+def test_interrupted_run_converges_to_a_fresh_build(point: str) -> None:
     harness = IncrementalRun()
     harness.run(R0)
     assert harness.state() == expected_state(R0)
 
-    assert harness.run(R1, interrupt=point, k=k), f"{point} did not fire"
-    corpus = FOLLOW_UPS[follow_up]
+    assert harness.run(R1, interrupt=point), f"{point} did not fire"
+    corpus = FOLLOW_UPS["reverted"]
     harness.run(corpus)
 
     _assert_converged(harness, corpus)

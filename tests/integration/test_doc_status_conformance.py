@@ -16,6 +16,8 @@ from pathlib import Path
 
 import boto3
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 from moto import mock_aws
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
@@ -225,6 +227,61 @@ def test_diff_reports_orphan_overflow(store: DocStatusPort) -> None:
     assert delta.orphan_overflow == ["done", "gone"]
     # Overflow is never a document of the partition.
     assert sorted(delta.deleted) == ["busy", "done"]
+
+
+# --- diff partition properties ----------------------------------------------
+
+# doc_id -> content_hash maps; ids are short tokens, hashes arbitrary text.
+_ids = st.text(alphabet="abcdefghij", min_size=1, max_size=4)
+_corpus = st.dictionaries(_ids, st.text(min_size=1, max_size=8), max_size=10)
+
+# One store per test, emptied at the start of every example; the store fixture
+# is function-scoped, which is safe here because each example resets it.
+_per_store = settings(
+    max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
+
+
+def _reset(store: DocStatusPort, records: dict[str, str]) -> None:
+    for record in store.list_all():
+        store.delete(record.doc_id)
+    store.put_many(
+        [_record(doc_id, content_hash) for doc_id, content_hash in records.items()]
+    )
+
+
+@_per_store
+@given(stored=_corpus, incoming=_corpus)
+def test_diff_partitions_are_disjoint_and_complete(
+    store: DocStatusPort, stored: dict[str, str], incoming: dict[str, str]
+) -> None:
+    _reset(store, stored)
+    delta = store.diff(incoming)
+
+    # new + changed + unchanged exactly partitions the incoming keys.
+    classified = set(delta.new) | set(delta.changed) | set(delta.unchanged)
+    assert classified == set(incoming)
+    assert len(delta.new) + len(delta.changed) + len(delta.unchanged) == len(incoming)
+    # deleted are exactly the stored ids absent from incoming.
+    assert set(delta.deleted) == set(stored) - set(incoming)
+
+
+@_per_store
+@given(corpus=_corpus)
+def test_diff_unchanged_when_corpus_identical(
+    store: DocStatusPort, corpus: dict[str, str]
+) -> None:
+    _reset(store, {})
+    store.put_many(
+        [
+            _record(doc_id, content_hash, status=DocStatus.PROCESSED)
+            for doc_id, content_hash in corpus.items()
+        ]
+    )
+    delta = store.diff(corpus)
+
+    assert delta.is_empty is True
+    assert set(delta.unchanged) == set(corpus)
 
 
 # --- whole incremental runs --------------------------------------------------
