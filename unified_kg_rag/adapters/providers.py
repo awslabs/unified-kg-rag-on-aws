@@ -97,7 +97,8 @@ class Providers:
             returning a ``GraphIndexer`` / ``VectorIndexer`` (one per call).
         retriever_builders: Zero-argument retriever builders by
             ``RetrieverRole``, as accepted by ``GraphRAGChain``.
-        doc_status: The doc-status registry (``DocStatusPort``).
+        doc_status: The doc-status registry (``DocStatusPort``), shared by
+            every run that uses this bundle.
     """
 
     def __init__(
@@ -239,17 +240,20 @@ class Providers:
         retriever: BaseGraphRAGRetriever = self._build(provider_role)
         return retriever
 
-    @property
-    def doc_status(self) -> DocStatusPort:
-        """The doc-status registry, built once per bundle.
+    def build_doc_status(self) -> DocStatusPort:
+        """The injected doc-status registry, else a new one of the configured kind.
 
-        Building it does no I/O; whether incremental indexing uses it is
+        A new instance per call, like the indexers: a registry adapter keeps
+        per-run state (the DynamoDB store remembers the overflow its last
+        scan found), so two runs sharing a bundle must not share one. The
+        pipeline builds it once and hands it to its stages. Building it does
+        no I/O; whether incremental indexing uses it is
         ``config.doc_status_enabled``.
         """
-        with self._lock:
-            if self._doc_status is None:
-                self._doc_status = self._build(ProviderRole.DOC_STATUS)
+        if self._doc_status is not None:
             return self._doc_status
+        store: DocStatusPort = self._build(ProviderRole.DOC_STATUS)
+        return store
 
     # --- Bedrock token counting ----------------------------------------------
 

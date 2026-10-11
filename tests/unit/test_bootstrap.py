@@ -160,8 +160,7 @@ def test_default_config_builds_the_bedrock_providers(mocker) -> None:
     store = mocker.patch.object(dynamodb_module, "DynamoDBDocStatusStore")
     providers = build_providers(Config(), boto_session=MagicMock())
     assert providers.llm_factory is llm.return_value
-    assert providers.doc_status is store.return_value
-    assert providers.doc_status is providers.doc_status
+    assert providers.build_doc_status() is store.return_value
     store.assert_called_once()
 
 
@@ -177,7 +176,8 @@ def test_injected_components_win_over_the_configured_kind(no_aws, tmp_path) -> N
         retriever_builders={RetrieverRole.GRAPH: lambda: retriever},
     )
     assert providers.llm_factory is llm
-    assert providers.doc_status is store
+    assert providers.build_doc_status() is store
+    assert providers.build_doc_status() is store
     assert providers.build_graph_indexer() is graph
     assert providers.build_retriever(RetrieverRole.GRAPH) is retriever
 
@@ -222,7 +222,9 @@ def test_local_bundle_selects_the_local_adapters(no_aws, tmp_path) -> None:
     assert isinstance(providers.embedding_factory, OllamaEmbeddingFactory)
     assert isinstance(providers.rerank_factory, NoRerankFactory)
     assert isinstance(providers.token_counter("qwen"), LocalTokenCounter)
-    assert isinstance(providers.doc_status, SQLiteDocStatusStore)
+    assert isinstance(providers.build_doc_status(), SQLiteDocStatusStore)
+    # A new registry per call: runs sharing a bundle keep their own state.
+    assert providers.build_doc_status() is not providers.build_doc_status()
 
 
 def test_local_backend_reaches_every_query_component(no_aws, tmp_path) -> None:
@@ -299,7 +301,8 @@ def test_local_backend_reaches_every_ingestion_component(no_aws, tmp_path) -> No
     assert manager.description_summarizer.factory is llm
     # The registry the pipeline injects is the configured SQLite store.
     assert isinstance(stages[T.DOCUMENT_LOADING]._doc_status, SQLiteDocStatusStore)
-    assert stages[T.INDEXING]._doc_status is providers.doc_status
+    # One registry per pipeline, shared by its stages.
+    assert stages[T.INDEXING]._doc_status is stages[T.DOCUMENT_LOADING]._doc_status
     pipeline.close()
 
 
@@ -392,4 +395,4 @@ def test_the_guard_catches_the_aws_defaults(no_aws) -> None:
     with pytest.raises(AssertionError):
         providers.token_counter("anthropic.claude-sonnet-5-5")
     with pytest.raises(AssertionError):
-        providers.doc_status
+        providers.build_doc_status()

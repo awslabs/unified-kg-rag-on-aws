@@ -196,7 +196,8 @@ async def test_local_backend_ingests_and_answers_without_aws(
     assert set(server.chat_models) <= {"synthetic-llm", "synthetic-fast"}
     assert "synthetic-llm" in server.chat_models
     # The incremental registry is the SQLite file from config.
-    registry = providers.doc_status
+    # A fresh store on the configured file sees what the run committed.
+    registry = providers.build_doc_status()
     assert isinstance(registry, SQLiteDocStatusStore)
     records = registry.list_all()
     assert len(records) == 2 and {r.status for r in records} == {DocStatus.PROCESSED}

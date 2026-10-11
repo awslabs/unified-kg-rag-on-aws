@@ -777,8 +777,9 @@ def test_local_mode_ingests_and_answers_through_the_registry(
     try:
         context = pipeline.run(source, pipeline_id="local-mode")
         assert context.status is PipelineStageStatus.COMPLETED
-        assert isinstance(providers.doc_status, SQLiteDocStatusStore)
-        assert len(providers.doc_status.list_all()) == 2
+        registry = providers.build_doc_status()
+        assert isinstance(registry, SQLiteDocStatusStore)
+        assert len(registry.list_all()) == 2
 
         out = chain.invoke(
             RAGInput(

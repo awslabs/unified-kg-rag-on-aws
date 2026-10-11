@@ -244,7 +244,7 @@ class DataIngestionPipeline:
             return self._doc_status
         if not self.config.doc_status_enabled:
             return None
-        return self.providers.doc_status
+        return self.providers.build_doc_status()
 
     def _initialize_stages(
         self,

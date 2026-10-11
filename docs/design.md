@@ -551,10 +551,11 @@ writes to, the stores `providers.graph` / `providers.vector` /
 `providers.doc_status` select (see the table above).
 
 Anything not supplied is built lazily by the builder registered for the
-configured kind (Bedrock, Neptune, OpenSearch and DynamoDB by default), and the
-model factories and registry at most once per bundle, so a chain constructs
-its clients once rather than per component or per query (strategy instances are
-also reused per event loop). A component constructed directly, without a
+configured kind (Bedrock, Neptune, OpenSearch and DynamoDB by default); the
+model factories at most once per bundle, so a chain constructs its model
+clients once rather than per component or per query; stores and the
+doc-status registry are built once per consumer, and strategy instances are
+reused per event loop. A component constructed directly, without a
 bundle, still builds a default one from the same config, so existing direct
 constructors keep working and follow `config.providers`. There is deliberately
 no DI container: the bundle covers exactly the providers the framework

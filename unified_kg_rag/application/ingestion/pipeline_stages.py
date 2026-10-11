@@ -586,7 +586,7 @@ class DocumentLoadingStage(PipelineStage):
             return self._doc_status
         # Fallback when the stage is used standalone (no pipeline injection):
         # the registry config.providers selects.
-        return self.providers.doc_status
+        return self.providers.build_doc_status()
 
 
 class DocumentParsingStage(PipelineStage):
@@ -1471,7 +1471,7 @@ class IndexingStage(PipelineStage):
     def _build_doc_status_store(self) -> "DocStatusPort":
         if self._doc_status is not None:
             return self._doc_status
-        return self.providers.doc_status
+        return self.providers.build_doc_status()
 
     def _reset_suffixes(self, text_units: list[TextUnit]) -> set[str]:
         """The item suffixes whose stores a reset clears.

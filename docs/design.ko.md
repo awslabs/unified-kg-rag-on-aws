@@ -544,9 +544,9 @@ pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
 `providers.vector` / `providers.doc_status`가 고른 저장소를 씁니다(위 표 참고).
 
 넘기지 않은 공급자는 처음 쓸 때 설정된 kind에 등록된 빌더로 만듭니다(기본값은 Bedrock,
-Neptune, OpenSearch, DynamoDB). 모델 팩토리와 레지스트리는 묶음마다 한 번만 만들므로
-체인은 클라이언트를 구성 요소나 질의마다 만들지 않고 한 번만 만듭니다(전략 인스턴스도
-이벤트 루프별로 재사용합니다). 묶음 없이 직접 생성한 구성 요소도 같은 설정으로 기본 묶음을
+Neptune, OpenSearch, DynamoDB). 모델 팩토리는 묶음마다 한 번만 만들므로 체인은 모델
+클라이언트를 구성 요소나 질의마다 만들지 않고 한 번만 만듭니다. 저장소와 문서 상태
+레지스트리는 사용하는 쪽마다 한 번 만들고, 전략 인스턴스는 이벤트 루프별로 재사용합니다. 묶음 없이 직접 생성한 구성 요소도 같은 설정으로 기본 묶음을
 만들므로, 기존 생성자 호출이 그대로 동작하면서 `config.providers`를 따릅니다. DI
 컨테이너는 의도적으로 두지 않았습니다. 묶음은 프레임워크가 실제로 쓰는 공급자만 다룹니다.
 
