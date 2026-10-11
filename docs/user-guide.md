@@ -233,8 +233,10 @@ models:
   the catalog), and the window is sent to Ollama as `num_ctx`. The preset
   also sets `search.token_manager.max_context_tokens` to 22000, what the
   default 32,768-token window accepts beside the 8,192-token output
-  reservation (the AWS default of 30000 would be clamped on every query);
-  raise it with the window when you run a larger model. An
+  reservation (the AWS default of 30000 would be clamped on every query).
+  It applies only to a non-Bedrock LLM left at the default window: set
+  `context_window_size` (or `kind: bedrock`) and the regular default
+  applies, clamped to the model's window. An
   OpenAI-compatible server (vLLM, llama.cpp server, LM Studio) takes
   `base_url` (its `/v1` root) and, if it needs one, `api_key`.
 - **Embeddings.** `providers.embedding.model_id` and `dimension` are required

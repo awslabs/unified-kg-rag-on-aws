@@ -362,6 +362,10 @@ def strip_backend_preset(data: dict[str, Any], backend: Backend) -> dict[str, An
     return {} if stripped is _MISSING else dict(stripped)
 
 
+def _kind_value(kind: Any) -> Any:
+    return kind.value if isinstance(kind, Enum) else kind
+
+
 def apply_backend_preset(data: dict[str, Any]) -> dict[str, Any]:
     """Raw config ``data`` with its ``backend`` preset filled in.
 
@@ -381,6 +385,15 @@ def apply_backend_preset(data: dict[str, Any]) -> dict[str, Any]:
         opensearch.get("username") or opensearch.get("use_iam")
     ):
         preset["aws"]["opensearch"].pop("allow_anonymous")
+    # The context budget is derived from the default non-Bedrock window, so it
+    # only fits a non-Bedrock LLM left at that window. Bedrock models (sized
+    # from the catalog) or an explicit window keep the regular default.
+    llm = (data.get("providers") or {}).get("llm") or {}
+    if isinstance(llm, dict) and (
+        _kind_value(llm.get("kind", preset["providers"]["llm"]["kind"])) == BEDROCK
+        or "context_window_size" in llm
+    ):
+        preset.pop("search")
     merged = _merge_under(preset, data)
     assert isinstance(merged, dict)
     return merged

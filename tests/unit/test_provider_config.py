@@ -355,3 +355,20 @@ def test_local_preset_context_budget_fits_the_local_model_window() -> None:
     )
     assert explicit.search.token_manager.max_context_tokens == 12000
     assert Config().search.token_manager.max_context_tokens == 30_000
+
+
+@pytest.mark.parametrize(
+    "llm",
+    [
+        # Bedrock models are sized from the capability catalog.
+        {"kind": "bedrock"},
+        # An explicit window is not the one the preset budget was derived from.
+        {"context_window_size": 131072},
+        {"context_window_size": 32768},
+    ],
+)
+def test_local_preset_budget_only_fits_the_default_local_window(
+    llm: dict[str, object],
+) -> None:
+    config = Config(backend="local", providers={"llm": llm})
+    assert config.search.token_manager.max_context_tokens == 30_000

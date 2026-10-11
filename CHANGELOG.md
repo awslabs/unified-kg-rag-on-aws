@@ -279,6 +279,11 @@ Library API (Python callers and custom backends).
   instead of dropping the "A" as an article and matching "Type B"; a lone
   lowercase letter after a space is still read as an article or a word
   (#PR).
+- `backend: local` sets its 22,000-token retrieval context budget only for a
+  non-Bedrock LLM left at the default 32,768-token window. With
+  `providers.llm.kind: bedrock` or an explicit `context_window_size` the
+  regular default (30,000, clamped to the model's window) applies instead of
+  capping a larger model at the small local one's budget (#PR).
 - Queries on Ollama retry a transient error (HTTP 408/429/5xx, dropped
   connection, timeout) instead of failing on the first one: the Ollama client
   never retries, so query chains and Ollama embedding calls now get the

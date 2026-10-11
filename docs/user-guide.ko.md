@@ -227,7 +227,9 @@ uv pip install --torch-backend cpu -e '.[local]'
   컨텍스트 창은 Ollama에 `num_ctx`로 전달됩니다. 프리셋은
   `search.token_manager.max_context_tokens`도 22000으로 설정합니다. 기본 32,768토큰
   창이 8,192토큰 출력 예약과 함께 받을 수 있는 값이며, AWS 기본값 30000이면 질의마다
-  잘립니다. 더 큰 모델을 쓰면 창과 함께 올리세요. OpenAI 호환 서버(vLLM, llama.cpp
+  잘립니다. 이 값은 기본 창을 그대로 쓰는 Bedrock 외 LLM에만 적용되며,
+  `context_window_size`를 지정하거나 `kind: bedrock`을 쓰면 모델 창에 맞춰 잘리는 일반
+  기본값을 씁니다. OpenAI 호환 서버(vLLM, llama.cpp
   server, LM Studio)에는 `base_url`(`/v1` 루트)과, 필요하면 `api_key`를 지정합니다.
 - **임베딩.** Bedrock이 아닌 공급자에서는 `providers.embedding.model_id`와 `dimension`이
   필수입니다. 차원은 OpenSearch 매핑에 고정되므로 둘 중 하나를 바꾸면 전체를 다시
