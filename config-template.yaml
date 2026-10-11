@@ -589,6 +589,8 @@ indexing:
     # Index settings (applied at index creation)
     index_settings:
       number_of_shards: 1
+      # Env OPENSEARCH_NUMBER_OF_REPLICAS overrides; the CDK stack sets 1 on a
+      # multi-node domain. Existing indices keep theirs (PUT <index>/_settings).
       number_of_replicas: 0
       # Search-visibility latency vs indexing throughput; raise (e.g. "30s" or
       # "-1" to disable) for faster bulk loads, then reset for live querying.

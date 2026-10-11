@@ -625,10 +625,12 @@ for booleans) but are not re-validated.
 | `AWS_REGION` | `aws.region_name` | Also moves Bedrock calls when `aws.bedrock.region_name` is `null`. `AWS_DEFAULT_REGION` is not read. |
 | `BEDROCK_REGION` | `aws.bedrock.region_name` | |
 | `BEDROCK_GUARDRAIL_IDENTIFIER` | `aws.bedrock.guardrail.identifier` | |
+| `BEDROCK_GUARDRAIL_VERSION` | `aws.bedrock.guardrail.version` | |
 | `NEPTUNE_ENDPOINT` | `aws.neptune.endpoint` | |
 | `OPENSEARCH_ENDPOINT` | `aws.opensearch.endpoint` | |
 | `OPENSEARCH_USERNAME` | `aws.opensearch.username` | Basic auth when `aws.opensearch.use_iam: false`. |
 | `OPENSEARCH_PASSWORD` | `aws.opensearch.password` | Kept masked in logs. |
+| `OPENSEARCH_NUMBER_OF_REPLICAS` | `indexing.opensearch.index_settings.number_of_replicas` | Applies to indices created afterwards. |
 | `S3_BUCKET_NAME` | `aws.s3.bucket_name` | |
 | `GRAPHRAG_DOC_STATUS_TABLE` | `aws.dynamodb.table_name` | |
 | `GRAPHRAG_DOC_STATUS_CREATE_TABLE` | `aws.dynamodb.create_table_if_missing` | |
@@ -661,10 +663,12 @@ location upward, not from the current directory, so in a source checkout put it
 at the repository root.
 
 The CDK compute stack injects `AWS_REGION`, `BEDROCK_REGION`,
-`NEPTUNE_ENDPOINT`, `OPENSEARCH_ENDPOINT`, `S3_BUCKET_NAME`,
+`NEPTUNE_ENDPOINT`, `OPENSEARCH_ENDPOINT`, `OPENSEARCH_NUMBER_OF_REPLICAS`
+(1 on a multi-node domain), `S3_BUCKET_NAME`,
 `GRAPHRAG_DOC_STATUS_TABLE`, `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false` (the
 table is IaC-managed and the task role cannot create tables), `LOG_FORMAT`, and,
-when a guardrail is deployed, `BEDROCK_GUARDRAIL_IDENTIFIER`. Incremental
+when a guardrail is deployed, `BEDROCK_GUARDRAIL_IDENTIFIER` (and
+`BEDROCK_GUARDRAIL_VERSION` when `guardrail_version` is set). Incremental
 indexing still needs `aws.dynamodb.enabled: true` in the config file.
 
 ### 2.11 `observability` — OpenTelemetry tracing

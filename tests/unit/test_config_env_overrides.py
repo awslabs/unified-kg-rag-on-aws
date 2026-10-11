@@ -64,6 +64,20 @@ def test_env_overrides_yaml_table_name(
     assert cfg.aws.dynamodb.enabled is False
 
 
+def test_opensearch_replicas_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The compute stack sets one replica on a multi-node domain.
+    monkeypatch.setenv("OPENSEARCH_NUMBER_OF_REPLICAS", "1")
+    settings = ConfigLoader().load_config().indexing.opensearch.index_settings
+    assert settings["number_of_replicas"] == 1
+    assert settings["number_of_shards"] == 1
+
+
+def test_guardrail_version_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BEDROCK_GUARDRAIL_VERSION", "3")
+    cfg = ConfigLoader().load_config()
+    assert cfg.aws.bedrock.guardrail.version == "3"
+
+
 def test_unset_env_keeps_defaults() -> None:
     cfg = ConfigLoader().load_config()
     assert cfg.aws.dynamodb.table_name == "unified-kg-rag-on-aws-doc-status"

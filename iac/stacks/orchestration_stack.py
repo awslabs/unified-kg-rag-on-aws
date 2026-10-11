@@ -13,8 +13,9 @@ phases:
   analysis     graph_analysis, community_detection
   index        indexing
 
-Each phase has bounded retries; any failure is caught and published to an SNS
-topic. The state machine input carries only ``source_directory`` (an s3:// URI
+A phase is retried only when ECS fails to start its task (a container that
+exits non-zero is a pipeline failure, and rerunning it repeats the same work);
+any failure is caught and published once to an SNS topic. The state machine input carries only ``source_directory`` (an s3:// URI
 the container entrypoint syncs locally) and ``pipeline_id``. There is no
 full-vs-incremental switch: a run is incremental when ``aws.dynamodb`` is
 enabled in the baked-in config, and the same phases run either way.
@@ -146,13 +147,35 @@ class OrchestrationStack(Stack):
             ),
         )
 
+        # One failure handler for every phase: the Catch keeps the state input
+        # and adds the error under $.error, so the message carries the run id,
+        # the error name and its cause (the stopped ECS task, with its exit
+        # code and the phase's command).
+        self.notify_failure = tasks.SnsPublish(
+            self,
+            "NotifyFailure",
+            topic=self.alarm_topic,
+            subject="unified-kg-rag-on-aws ingestion failed",
+            message=sfn.TaskInput.from_object(
+                {
+                    "execution_id": sfn.JsonPath.execution_id,
+                    "pipeline_id": sfn.JsonPath.string_at("$.pipeline_id"),
+                    "error": sfn.JsonPath.string_at("$.error.Error"),
+                    "cause": sfn.JsonPath.string_at("$.error.Cause"),
+                }
+            ),
+            result_path=sfn.JsonPath.DISCARD,
+        ).next(sfn.Fail(self, "PipelineFailed", cause="An ingestion phase failed"))
+
         definition = self._build_definition()
         self.state_machine = sfn.StateMachine(
             self,
             "IngestionPipeline",
             state_machine_name=f"{config.prefix}-ingestion",
             definition_body=sfn.DefinitionBody.from_chainable(definition),
-            timeout=Duration.hours(6),
+            # A run that hits this is TIMED_OUT, not FAILED: the observability
+            # stack alarms on timed-out and aborted executions separately.
+            timeout=Duration.hours(config.sfn_timeout_hours),
             tracing_enabled=True,  # X-Ray
             logs=sfn.LogOptions(destination=self.log_group, level=sfn.LogLevel.ALL),
         )
@@ -219,23 +242,17 @@ class OrchestrationStack(Stack):
             ],
             result_path="$.last_phase",
         )
-        # Bounded retry on transient task failures.
+        # Retry only failures to start the task (RunTask API errors, or a
+        # RunTask response with `failures`, e.g. no Fargate capacity, which
+        # Step Functions raises as AmazonECS.Unknown). A task that ran and
+        # exited non-zero is States.TaskFailed and is not retried.
         run.add_retry(
-            errors=["States.TaskFailed", "States.Timeout"],
+            errors=["ECS.AmazonECSException", "AmazonECS.Unknown"],
             interval=Duration.seconds(30),
             max_attempts=2,
             backoff_rate=2.0,
         )
-        # Any unrecovered failure -> notify and fail the run.
-        notify = tasks.SnsPublish(
-            self,
-            f"{phase_name}Failed",
-            topic=self.alarm_topic,
-            message=sfn.TaskInput.from_text(
-                f"unified-kg-rag-on-aws ingestion failed at phase {phase_name}"
-            ),
-        ).next(sfn.Fail(self, f"{phase_name}Abort", cause=f"{phase_name} failed"))
-        run.add_catch(notify, errors=["States.ALL"])
+        run.add_catch(self.notify_failure, errors=["States.ALL"], result_path="$.error")
         return run
 
     # ---------------------------------------------------------- definition

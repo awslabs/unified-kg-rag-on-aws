@@ -603,10 +603,12 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `AWS_REGION` | `aws.region_name` | `aws.bedrock.region_name`이 `null`이면 Bedrock 호출 리전도 바뀝니다. `AWS_DEFAULT_REGION`은 읽지 않습니다. |
 | `BEDROCK_REGION` | `aws.bedrock.region_name` | |
 | `BEDROCK_GUARDRAIL_IDENTIFIER` | `aws.bedrock.guardrail.identifier` | |
+| `BEDROCK_GUARDRAIL_VERSION` | `aws.bedrock.guardrail.version` | |
 | `NEPTUNE_ENDPOINT` | `aws.neptune.endpoint` | |
 | `OPENSEARCH_ENDPOINT` | `aws.opensearch.endpoint` | |
 | `OPENSEARCH_USERNAME` | `aws.opensearch.username` | `aws.opensearch.use_iam: false`일 때의 기본 인증입니다. |
 | `OPENSEARCH_PASSWORD` | `aws.opensearch.password` | 로그에는 가려서 표시합니다. |
+| `OPENSEARCH_NUMBER_OF_REPLICAS` | `indexing.opensearch.index_settings.number_of_replicas` | 이후에 만드는 인덱스에 적용됩니다. |
 | `S3_BUCKET_NAME` | `aws.s3.bucket_name` | |
 | `GRAPHRAG_DOC_STATUS_TABLE` | `aws.dynamodb.table_name` | |
 | `GRAPHRAG_DOC_STATUS_CREATE_TABLE` | `aws.dynamodb.create_table_if_missing` | |
@@ -639,10 +641,12 @@ CLI는 python-dotenv로 `.env` 파일도 읽습니다. 환경에 이미 설정�
 찾으므로, 소스 체크아웃에서는 저장소 루트에 두세요.
 
 CDK compute 스택은 `AWS_REGION`, `BEDROCK_REGION`,
-`NEPTUNE_ENDPOINT`, `OPENSEARCH_ENDPOINT`, `S3_BUCKET_NAME`,
+`NEPTUNE_ENDPOINT`, `OPENSEARCH_ENDPOINT`, `OPENSEARCH_NUMBER_OF_REPLICAS`(다중 노드
+도메인이면 1), `S3_BUCKET_NAME`,
 `GRAPHRAG_DOC_STATUS_TABLE`, `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false`(테이블은
 IaC가 관리하며 태스크 역할에는 테이블 생성 권한이 없음), `LOG_FORMAT`을 주입하고,
-가드레일을 배포했다면 `BEDROCK_GUARDRAIL_IDENTIFIER`도 주입합니다. 증분 인덱싱을
+가드레일을 배포했다면 `BEDROCK_GUARDRAIL_IDENTIFIER`도 주입합니다(`guardrail_version`을
+설정하면 `BEDROCK_GUARDRAIL_VERSION`도 주입). 증분 인덱싱을
 쓰려면 설정 파일에 `aws.dynamodb.enabled: true`가 있어야 합니다.
 
 ### 2.11 `observability` — OpenTelemetry 추적

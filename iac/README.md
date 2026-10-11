@@ -14,13 +14,13 @@ can coexist in one account/region. Every resource also carries an `env` tag.
 
 | Stack | Resources |
 |---|---|
-| `GraphRagNetwork` | VPC (reuse or create), subnets, data-plane security group, VPC endpoints for a created VPC: S3/DynamoDB gateways always; in `private` mode also interface endpoints (own security group, 443 from the data plane only) for Bedrock (`bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`), ECR (`ecr.api`, `ecr.dkr`), CloudWatch Logs and STS |
+| `GraphRagNetwork` | VPC (reuse or create), subnets, data-plane security group, VPC endpoints for a created VPC: S3/DynamoDB gateways always; in `private` mode also interface endpoints (own security group, 443 from the data plane only) for Bedrock (`bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`), ECR (`ecr.api`, `ecr.dkr`), CloudWatch Logs and STS, each with an endpoint policy that admits only this account's principals (`aws:PrincipalAccount`) |
 | `GraphRagStorage` | Neptune cluster (IAM auth), OpenSearch domain (VPC, encrypted), DynamoDB doc-status table, S3 cache bucket |
-| `GraphRagCompute` | ECR repo, ECS cluster, Fargate task definition + least-privilege task role |
-| `GraphRagOrchestration` | Step Functions state machine — 4 resumable phases on Fargate + retries + SNS alarm topic. The topic is encrypted with its own customer-managed key whose policy lets CloudWatch alarms publish (the AWS-managed `alias/aws/sns` key cannot, so alarm notifications would be dropped) |
-| `GraphRagObservability` | CloudWatch dashboard + alarms: pipeline-failure, silent indexing-failure and extraction-failure (EMF), and store health (OpenSearch cluster-red / free-storage / JVM pressure, DynamoDB write throttling) → SNS. Synth warns if `alarm_email` is unset (alarms would have no subscriber) |
+| `GraphRagCompute` | ECR repo (lifecycle keeps the 10 newest images and never expires the deployed `image_tag`), ECS cluster, Fargate task definition + least-privilege task role (S3 cache read + put, no delete). Injects `OPENSEARCH_NUMBER_OF_REPLICAS` = 1 on a multi-node domain (0 on a single node) |
+| `GraphRagOrchestration` | Step Functions state machine — 4 resumable phases on Fargate, retried only when ECS cannot start the task (a phase that exits non-zero is not rerun), one JSON failure notification (execution id, error, cause) + SNS alarm topic. The topic is encrypted with its own customer-managed key whose policy lets CloudWatch alarms publish (the AWS-managed `alias/aws/sns` key cannot, so alarm notifications would be dropped) |
+| `GraphRagObservability` | CloudWatch dashboard + alarms: pipeline failed, timed out or aborted, silent indexing-failure and extraction-failure (EMF), and store health (OpenSearch cluster-red / free-storage / JVM pressure, DynamoDB write throttling, Neptune CPU / memory / Gremlin server errors) → SNS. Synth warns if `alarm_email` is unset (alarms would have no subscriber) |
 | `GraphRagSecurity` | Shared customer-managed KMS key (optional, `use_cmk`) |
-| `GraphRagGuardrail` | Bedrock Guardrail, **pinned to `bedrock_region`** (creates and keeps a baseline PII/prompt-attack guardrail; empty with `create_guardrail=false`). It anonymizes email, phone and card numbers but not `NAME`: names are corpus content, and anonymizing them on the query path puts `{NAME}` in answers and removes entity-search seeds. The app applies the guardrail's `DRAFT` version |
+| `GraphRagGuardrail` | Bedrock Guardrail, **pinned to `bedrock_region`** (creates and keeps a baseline PII/prompt-attack guardrail; empty with `create_guardrail=false`). It anonymizes email, phone and card numbers but not `NAME`: names are corpus content, and anonymizing them on the query path puts `{NAME}` in answers and removes entity-search seeds. The app applies the guardrail's `DRAFT` version unless `guardrail_version` is set |
 
 ### Resource naming
 
@@ -106,12 +106,15 @@ Prep (parse/load/chunk/translate) → GraphBuild (extract/glean/resolve/claims)
 | `opensearch_instance` | `r6g.large.search` | OpenSearch data node type (Graviton) |
 | `opensearch_master_instance` | `m6g.large.search` | dedicated master node type, used only when `opensearch_count > 1`. 8 GiB Graviton, which AWS sizes for up to 10 nodes / 10K shards on OpenSearch 2.13; raise it for larger domains |
 | `opensearch_count` | `1` (dev) / `2` (non-dev) | OpenSearch data node count (`>1` ⇒ 3 dedicated masters + zone awareness = 5 nodes; dev runs a single node for cost) |
-| `backup_retention_days` | `7` | Neptune automated backup retention |
+| `opensearch_volume_gib` | `50` | GP3 volume per OpenSearch data node; the free-storage alarm fires at 40% free |
+| `backup_retention_days` | `7` | Neptune automated backup retention (see [Backup and restore](../docs/operations.md#backup-and-restore)) |
 | `fargate_cpu` | `2048` | Fargate task vCPU units (in-task ProcessPool extractors scale with vCPU) |
 | `fargate_memory` | `8192` | Fargate task memory (MiB) |
-| `image_tag` | `latest` | container image tag the task pulls; pin a version tag to make ECR tags immutable |
+| `image_tag` | `latest` | container image tag the task pulls; pin a version tag to make ECR tags immutable. The ECR lifecycle keeps this tag and the 10 newest images, so pin a tag rather than a digest |
+| `sfn_timeout_hours` | `6` | ingestion state machine timeout for a whole run; a run that hits it is `TIMED_OUT` (alarmed) |
 | `create_guardrail` | `true` | `GraphRagGuardrail` creates and keeps a baseline PII/prompt-attack guardrail in `bedrock_region` (retained on stack deletion unless `removal_destroy`). `false` = bring your own guardrail; nothing is created |
 | `guardrail_identifier` | _(none)_ | guardrail id the compute task **uses**, injected as `BEDROCK_GUARDRAIL_IDENTIFIER`. The created guardrail's id is **not** injected automatically: pass the `GuardrailIdentifier` output of `GraphRagGuardrail` here (two-step flow above), or an external id with `create_guardrail=false`. Unset = no guardrail on the task |
+| `guardrail_version` | _(none)_ | published guardrail version the task applies, injected as `BEDROCK_GUARDRAIL_VERSION`. Unset = `DRAFT`, which changes whenever the guardrail is edited; publish a version and pin it outside dev |
 | `use_cmk` | `false` | customer-managed KMS key for at-rest encryption (S3/Neptune/OpenSearch/DDB/ECR and every log group; the key policy lets CloudWatch Logs use it for this account's log groups, and principals in this account may use it through CloudWatch Logs (`kms:ViaService`), so log writers and readers need no KMS permissions of their own). Choose it before the first deploy: ECR sets a repository's encryption only at creation, and CloudFormation cannot replace the fixed-name repository, so turning `use_cmk` on (or off) for a deployed environment fails until the compute stack is destroyed and redeployed. The SNS alarm topic always uses its own customer-managed key (see below) |
 | `vpc_flow_logs` | `false` (dev) / `true` (non-dev) | enable VPC flow logs (created VPC only) |
 | `flow_log_retention_days` | `731` | flow-log log group retention; must be a CloudWatch Logs retention value (e.g. `30`, `90`, `365`, `731`) |
@@ -319,9 +322,11 @@ running task definition. To parse `.md`/`.html` files, build with
 The image bakes in the tracked, endpoint-free `docker/config.yaml` as
 `/app/config.yaml`; the deployed values come from the environment variables the
 task injects: `NEPTUNE_ENDPOINT`, `OPENSEARCH_ENDPOINT`, `S3_BUCKET_NAME`,
-`AWS_REGION`, `BEDROCK_REGION`, `LOG_FORMAT`, `GRAPHRAG_DOC_STATUS_TABLE`
+`AWS_REGION`, `BEDROCK_REGION`, `LOG_FORMAT`, `OPENSEARCH_NUMBER_OF_REPLICAS`,
+`GRAPHRAG_DOC_STATUS_TABLE`
 (the table this stack created) and `GRAPHRAG_DOC_STATUS_CREATE_TABLE=false`,
-plus `BEDROCK_GUARDRAIL_IDENTIFIER` when `guardrail_identifier` is set. The
+plus `BEDROCK_GUARDRAIL_IDENTIFIER` when `guardrail_identifier` is set (and
+`BEDROCK_GUARDRAIL_VERSION` when `guardrail_version` is). The
 image config sets `aws.dynamodb.enabled: true`, so ingestion runs
 incrementally. S3 cache uploads default to the bucket's own encryption
 (`aws.s3.encryption.encryption_type: BUCKET_DEFAULT`), so with `use_cmk=true`

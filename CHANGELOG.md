@@ -13,6 +13,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 **Breaking** change configuration, stored index data, or a public interface.
 
 ### Added
+- CDK context keys `sfn_timeout_hours` (state machine timeout, default 6),
+  `opensearch_volume_gib` (data-node volume, default 50; the free-storage
+  alarm threshold follows it) and `guardrail_version` (injected as the new
+  `BEDROCK_GUARDRAIL_VERSION` override; unset keeps `DRAFT`) (#PR).
 - Local mode: ingestion, querying and evaluation run without an AWS account.
   `backend: local` (or `--backend local` on `run-ingestion`, `run-rag`,
   `run-eval` and `run-prompt-tuning`) fills in local providers for every key
@@ -621,6 +625,29 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   an article ("A") is scored instead of skipped. The docs no longer claim
   SQuAD v1.1 normalization: scores are not comparable with leaderboard
   numbers (#210).
+- The CDK stack left every OpenSearch index without replicas, even on the
+  non-dev two-node, two-AZ domain, so losing one node made shards
+  unavailable. The compute stack now injects `OPENSEARCH_NUMBER_OF_REPLICAS`
+  (1 on a multi-node domain, 0 on a single node), a new override of
+  `indexing.opensearch.index_settings.number_of_replicas`; existing indices
+  need a one-off `PUT _settings` (operations runbook) (#PR).
+- Ingestion runs that hit the state machine timeout or were aborted notified
+  nobody: they never reach a phase Catch, and the only alarm watched
+  `ExecutionsFailed`. A `PipelineTimedOutOrAborted` alarm now covers both.
+  `States.Timeout` is dropped from the phase retries (no task timeout could
+  raise it), and phases retry only ECS start failures
+  (`ECS.AmazonECSException`, `AmazonECS.Unknown`) instead of rerunning a
+  phase that exited non-zero twice more. The four per-phase failure
+  notifications become one JSON message with the execution id, pipeline id,
+  error and cause (#PR).
+- The Neptune error alarm watched the deprecated HTTP-only `GremlinHttp5xx`,
+  which misses the WebSocket traffic the app sends; it now alarms on
+  `GremlinServerErrorsPerSec`. The doc-status throttle alarm watched
+  `PutItem` only, while the registry writes through `BatchWriteItem`; it now
+  uses the table-level `WriteThrottleEvents` (#PR).
+- The ECR lifecycle rule (keep 10 images, any tag) could expire the image the
+  task definition runs; the deployed `image_tag` is now exempt. IAM ARNs use
+  the stack partition instead of a hardcoded `arn:aws:` (#PR).
 - With `entity_grounding` enabled, the check whether a gleaned
   relationship's endpoint name occurs in its unit (#202) now accepts common
   spelling variants and no longer accepts partial words. Both sides drop
@@ -1675,6 +1702,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#160).
 
 ### Security
+- The task role drops the unused `neptune-db:GetEngineStatus`,
+  `GetQueryStatus` and `CancelQuery` actions and S3 `DeleteObject*` on the
+  cache bucket (the app only reads and writes objects; the lifecycle expires
+  them). Private-mode interface endpoints get a policy that admits only this
+  account's principals (`aws:PrincipalAccount`) (#PR).
 - The CDK task role no longer grants `bedrock:GetInferenceProfile`; the model
   resolver only calls `ListInferenceProfiles`, so the extra account-wide
   read is dropped (least privilege) (#204).

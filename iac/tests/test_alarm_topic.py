@@ -9,6 +9,7 @@ cloudwatch.amazonaws.com use it and the state machine role holds the key.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import aws_cdk as cdk
@@ -110,3 +111,34 @@ def test_state_machine_role_can_use_topic_key(template: Template) -> None:
             }
         },
     )
+
+
+def _definition(template: Template) -> dict[str, Any]:
+    (machine,) = template.find_resources("AWS::StepFunctions::StateMachine").values()
+    parts = machine["Properties"]["DefinitionString"]["Fn::Join"][1]
+    # Tokens (ARNs) are joined into string values; the rest is plain JSON.
+    text = "".join(p if isinstance(p, str) else "TOKEN" for p in parts)
+    return dict(json.loads(text))
+
+
+def test_phases_retry_only_task_start_errors(template: Template) -> None:
+    states = _definition(template)["States"]
+    phases = [s for name, s in states.items() if name.endswith("Phase")]
+    assert len(phases) == 4
+    for state in phases:
+        (retry,) = state["Retry"]
+        assert retry["ErrorEquals"] == ["ECS.AmazonECSException", "AmazonECS.Unknown"]
+        (catch,) = state["Catch"]
+        assert catch == {
+            "ErrorEquals": ["States.ALL"],
+            "ResultPath": "$.error",
+            "Next": "NotifyFailure",
+        }
+    message = states["NotifyFailure"]["Parameters"]["Message"]
+    assert message["execution_id.$"] == "$$.Execution.Id"
+    assert message["cause.$"] == "$.error.Cause"
+
+
+def test_state_machine_timeout_is_configurable() -> None:
+    template = _orchestration_template({"sfn_timeout_hours": 12})
+    assert _definition(template)["TimeoutSeconds"] == 12 * 3600
