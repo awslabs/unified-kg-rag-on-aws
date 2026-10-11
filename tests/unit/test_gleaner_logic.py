@@ -16,10 +16,11 @@ import pytest
 import unified_kg_rag.adapters.ingestion.gleaner as gleaner_module
 from unified_kg_rag.adapters import providers as providers_module
 from unified_kg_rag.adapters.ingestion.gleaner import (
+    GleaningIndex,
     GraphGleaner,
     format_entities_with_limit_task,
 )
-from unified_kg_rag.domain.models import Config, Entity, Relationship
+from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
 
 pytestmark = pytest.mark.unit
 
@@ -107,9 +108,6 @@ class TestUpdateRelationshipsAfterMerge:
         assert len(out) == 2
 
 
-# --------------------------------------------------------------------------- #
-# _merge_duplicate_entities
-# --------------------------------------------------------------------------- #
 class TestMergeDuplicateEntities:
     def test_name_keyed_dedup_with_id_remap(self) -> None:
         ents = [
@@ -130,6 +128,27 @@ class TestMergeDuplicateEntities:
         unique, _ = GraphGleaner._merge_duplicate_entities(ents)
         assert len(unique) == 1
         assert unique[0].type == "person"  # lowercased, most frequent
+
+
+class TestGleaningIndex:
+    UNIT = TextUnit(id="t1", text="x")
+
+    def test_renamed_entity_is_found_under_its_new_name(self, gleaner) -> None:
+        entity = Entity(id="e1", name="Acme", type="PERSON")
+        index = GleaningIndex([entity], [])
+        rename = {
+            "issue_type": "ENTITY_CORRECTION",
+            "details": {"name": "Acme", "corrected_name": "Acme Corp"},
+        }
+        retype = {
+            "issue_type": "ENTITY_CORRECTION",
+            "details": {"name": "Acme Corp", "corrected_type": "ORGANIZATION"},
+        }
+        gleaner._process_issue(rename, self.UNIT, index, [], [])
+        gleaner._process_issue(retype, self.UNIT, index, [], [])
+        assert (entity.name, entity.type) == ("Acme Corp", "ORGANIZATION")
+        assert index.entity_named("Acme") is None
+        assert index.entity_ids == {"acme corp": "e1"}
 
 
 # --------------------------------------------------------------------------- #
@@ -159,7 +178,6 @@ class TestFormatEntitiesWithLimit:
 # --------------------------------------------------------------------------- #
 # Gleaner provenance grounding (hallucination guard on gleaner-added items)
 # --------------------------------------------------------------------------- #
-from unified_kg_rag.domain.models import TextUnit  # noqa: E402
 
 
 class TestGleanerGrounding:
@@ -179,7 +197,7 @@ class TestGleanerGrounding:
         gleaner._process_issue(
             self._missing_entity_issue("A fabricated clause never in the text."),
             self.UNIT,
-            [],
+            GleaningIndex([], []),
             new_e,
             new_r,
         )
@@ -191,7 +209,7 @@ class TestGleanerGrounding:
         gleaner._process_issue(
             self._missing_entity_issue("Alice works at Acme Corp in Seattle."),
             self.UNIT,
-            [],
+            GleaningIndex([], []),
             new_e,
             new_r,
         )
@@ -206,7 +224,7 @@ class TestGleanerGrounding:
                 "The Warranty Period from the Provisional Acceptance Date."
             ),
             self.UNIT,
-            [],
+            GleaningIndex([], []),
             new_e,
             new_r,
         )
@@ -218,7 +236,7 @@ class TestGleanerGrounding:
         gleaner._process_issue(
             self._missing_entity_issue("Alice works at Acme Corp in Seattle."),
             self.UNIT,
-            [],
+            GleaningIndex([], []),
             new_e,
             new_r,
         )

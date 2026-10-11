@@ -2,14 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
-from functools import partial
 from typing import Any
 
 import boto3
 from pydantic import BaseModel
-from tqdm import tqdm
 
 from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.aws.chain_factory import (
@@ -19,20 +16,18 @@ from unified_kg_rag.adapters.aws.chain_factory import (
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
-    check_entity_relevance_task,
     coerce_llm_text,
+    group_by_text_unit,
 )
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_identity_suffix
 from unified_kg_rag.domain.models import Claim, Config, Entity, ModelPurpose, TextUnit
 from unified_kg_rag.domain.prompts import ClaimExtractionPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
-    default_max_workers,
     ensure_list,
     entity_key,
     generate_stable_id,
 )
-from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 logger = get_logger(__name__)
@@ -62,9 +57,10 @@ def format_entities_with_limit_task(entities: list[Entity], max_entities: int) -
     return entity_list
 
 
-def _prepare_claim_input_task(
-    unit: TextUnit, all_entities: list[Entity], config: dict[str, Any]
+def prepare_claim_input(
+    unit: TextUnit, unit_entities: list[Entity], config: dict[str, Any]
 ) -> dict[str, Any]:
+    """The claim prompt's input for ``unit`` and the entities citing it."""
     if unit.translated_texts:
         target_language = config.get("target_language", "en")
         unit_text = unit.translated_texts.get(target_language, unit.text or "")
@@ -72,14 +68,9 @@ def _prepare_claim_input_task(
         unit_text = unit.text or ""
 
     entity_specs_str = ""
-    if config["max_entities_per_prompt"] > 0 and all_entities:
-        relevant_entities = [
-            entity
-            for entity in all_entities
-            if check_entity_relevance_task(entity, unit.id)[1]
-        ]
+    if config["max_entities_per_prompt"] > 0:
         entity_specs_str = format_entities_with_limit_task(
-            relevant_entities, config["max_entities_per_prompt"]
+            unit_entities, config["max_entities_per_prompt"]
         )
 
     return {
@@ -112,8 +103,6 @@ class ClaimExtractor(BaseProcessor):
         self,
         config: Config,
         boto_session: boto3.Session | None = None,
-        max_workers: int | None = None,
-        use_process_pool: bool = True,
         show_progress: bool = True,
         *,
         providers: Providers | None = None,
@@ -123,8 +112,6 @@ class ClaimExtractor(BaseProcessor):
         self.boto_session = self.providers.boto_session
         self.claim_extraction_config = self.config.processing.claim_extraction
         self.ignore_errors = self.config.processing.ignore_errors
-        self.max_workers = max_workers or default_max_workers()
-        self.use_process_pool = use_process_pool
         self.show_progress = show_progress
         self.batch_processor = BatchProcessor(
             is_transient_error=is_transient_bedrock_error
@@ -151,11 +138,6 @@ class ClaimExtractor(BaseProcessor):
         )
 
         self.stats: ClaimExtractionStats = ClaimExtractionStats()
-        logger.info(
-            "ClaimExtractor initialized with %s workers, process pool: %s",
-            self.max_workers,
-            self.use_process_pool,
-        )
 
     def extract_from_text_units(
         self, text_units: list[TextUnit], entities: list[Entity] | None = None
@@ -234,38 +216,20 @@ class ClaimExtractor(BaseProcessor):
             "target_language": self.config.processing.translation.target_language.value,
         }
 
-        task_with_args = partial(
-            _prepare_claim_input_task,
-            all_entities=all_entities,
-            config=config_for_task,
-        )
-
-        executor_class = (
-            ProcessPoolExecutor if self.use_process_pool else ContextThreadPoolExecutor
-        )
-
-        # Key by owning unit, not completion order: as_completed is unordered, so
-        # appending to a list and zipping positionally against text_units would
-        # mismatch inputs to the wrong unit (and crash under strict=True on skip).
+        # One lineage index for all units: each unit's prompt lists the
+        # entities citing it, a lookup here rather than a scan of every entity
+        # per unit in a worker that would be sent all of them.
+        entities_by_unit = group_by_text_unit(all_entities)
         unit_to_input: dict[str, dict[str, Any]] = {}
-        with executor_class(max_workers=self.max_workers) as executor:
-            future_to_unit = {
-                executor.submit(task_with_args, unit): unit for unit in text_units
-            }
-
-            for future in tqdm(
-                as_completed(future_to_unit),
-                total=len(text_units),
-                desc="Preparing Claim Inputs",
-                disable=None if self.show_progress else True,
-            ):
-                unit = future_to_unit[future]
-                try:
-                    unit_to_input[unit.id] = future.result()
-                except Exception as e:
-                    logger.error(
-                        "Error preparing claim input for unit '%s': %s", unit.id, e
-                    )
+        for unit in text_units:
+            try:
+                unit_to_input[unit.id] = prepare_claim_input(
+                    unit, entities_by_unit.get(unit.id, []), config_for_task
+                )
+            except Exception as e:
+                logger.error(
+                    "Error preparing claim input for unit '%s': %s", unit.id, e
+                )
 
         return unit_to_input
 
@@ -413,7 +377,7 @@ class ClaimExtractor(BaseProcessor):
         def safe_list_merge(current: list[str], new: list[str]) -> list[str]:
             merged_current = current if current is not None else []
             merged_new = new if new is not None else []
-            return list(set(merged_current + merged_new))
+            return list(dict.fromkeys(merged_current + merged_new))
 
         field_mergers: dict[str, Callable[[Any, Any], Any]] = {
             "description": self._merge_description,

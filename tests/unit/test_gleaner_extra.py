@@ -4,7 +4,7 @@
 ``test_gleaner_logic.py``).
 
 Covers the branches the logic suite leaves uncovered: the module-level
-``prepare_input_task`` / ``format_relationships_with_limit_task`` pure helpers,
+``prepare_input`` / ``format_relationships_with_limit_task`` pure helpers,
 refinement-output parsing and issue dispatch, the completion summary, the
 stop rule, and the end-to-end
 ``glean_graph`` / ``_perform_llm_refinement`` orchestration driven by a mocked
@@ -22,11 +22,12 @@ import pytest
 import unified_kg_rag.adapters.ingestion.gleaner as gleaner_module
 from unified_kg_rag.adapters import providers as providers_module
 from unified_kg_rag.adapters.ingestion.gleaner import (
+    GleaningIndex,
     GleaningRound,
     GleaningStats,
     GraphGleaner,
     format_relationships_with_limit_task,
-    prepare_input_task,
+    prepare_input,
 )
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.domain.models import Config, Entity, Relationship, TextUnit
@@ -41,7 +42,7 @@ def gleaner(config: Config, mocker) -> GraphGleaner:
     mocker.patch.object(providers_module, "BedrockLanguageModelFactory")
     mocker.patch.object(gleaner_module, "create_robust_xml_output_parser")
     mocker.patch.object(gleaner_module, "setup_chain")
-    g = GraphGleaner(config, use_process_pool=False, show_progress=False)
+    g = GraphGleaner(config, show_progress=False)
     return g
 
 
@@ -101,7 +102,7 @@ class TestFormatRelationshipsWithLimit:
 
 
 # --------------------------------------------------------------------------- #
-# prepare_input_task
+# prepare_input + GleaningIndex lineage
 # --------------------------------------------------------------------------- #
 class TestPrepareInputTask:
     def _config(self) -> dict:
@@ -135,7 +136,13 @@ class TestPrepareInputTask:
                 text_unit_ids=["other"],
             ),  # excluded
         ]
-        out = prepare_input_task(unit, ents, rels, self._config())
+        index = GleaningIndex(ents, rels)
+        out = prepare_input(
+            unit,
+            index.entities_for(unit.id),
+            index.relationships_for(unit.id),
+            self._config(),
+        )
         assert out["text"] == "hello"
         assert "Alice" in out["entities"]
         assert "Bob" not in out["entities"]
@@ -143,18 +150,18 @@ class TestPrepareInputTask:
 
     def test_uses_translated_text_when_available(self) -> None:
         unit = TextUnit(id="t1", text="orig", translated_texts={"en": "translated"})
-        out = prepare_input_task(unit, [], [], self._config())
+        out = prepare_input(unit, [], [], self._config())
         assert out["text"] == "translated"
 
     def test_translated_text_missing_target_falls_back_to_text(self) -> None:
         unit = TextUnit(id="t1", text="orig", translated_texts={"fr": "bonjour"})
-        out = prepare_input_task(unit, [], [], self._config())
+        out = prepare_input(unit, [], [], self._config())
         assert out["text"] == "orig"
 
     def test_passes_target_language_for_descriptions(self) -> None:
         unit = TextUnit(id="t1", text="orig")
         config = {**self._config(), "target_language": "ko"}
-        assert prepare_input_task(unit, [], [], config)["target_language"] == "ko"
+        assert prepare_input(unit, [], [], config)["target_language"] == "ko"
 
 
 # --------------------------------------------------------------------------- #
@@ -163,12 +170,14 @@ class TestPrepareInputTask:
 class TestParseRefinementOutput:
     def test_empty_plan_returns_empties(self, gleaner) -> None:
         unit = TextUnit(id="t1", text="x")
-        ents, rels = gleaner._parse_refinement_output({}, unit, [])
+        ents, rels = gleaner._parse_refinement_output({}, unit, GleaningIndex([], []))
         assert ents == [] and rels == []
 
     def test_non_dict_plan_returns_empties(self, gleaner) -> None:
         unit = TextUnit(id="t1", text="x")
-        ents, rels = gleaner._parse_refinement_output("not a dict", unit, [])
+        ents, rels = gleaner._parse_refinement_output(
+            "not a dict", unit, GleaningIndex([], [])
+        )
         assert ents == [] and rels == []
 
     def test_list_plan_first_element_used(self, gleaner) -> None:
@@ -181,7 +190,9 @@ class TestParseRefinementOutput:
                 }
             },
         }
-        ents, rels = gleaner._parse_refinement_output([plan], unit, [])
+        ents, rels = gleaner._parse_refinement_output(
+            [plan], unit, GleaningIndex([], [])
+        )
         assert len(ents) == 1
         assert ents[0].name.lower().startswith("neo")
 
@@ -209,7 +220,7 @@ class TestParseRefinementOutput:
                 ]
             }
         }
-        ents, rels = gleaner._parse_refinement_output(plan, unit, [])
+        ents, rels = gleaner._parse_refinement_output(plan, unit, GleaningIndex([], []))
         assert len(ents) == 2
         assert len(rels) == 1
         # The relationship resolves its endpoints against the just-discovered
@@ -224,7 +235,7 @@ class TestParseRefinementOutput:
                 "issue": {"issue_type": "SOMETHING_ELSE", "details": {}}
             }
         }
-        ents, rels = gleaner._parse_refinement_output(plan, unit, [])
+        ents, rels = gleaner._parse_refinement_output(plan, unit, GleaningIndex([], []))
         assert ents == [] and rels == []
 
     def test_issues_as_bare_list_not_dict(self, gleaner) -> None:
@@ -235,7 +246,7 @@ class TestParseRefinementOutput:
                 {"issue_type": "MISSING_ENTITY", "details": {"name": "Zed"}}
             ]
         }
-        ents, _ = gleaner._parse_refinement_output(plan, unit, [])
+        ents, _ = gleaner._parse_refinement_output(plan, unit, GleaningIndex([], []))
         assert len(ents) == 1
 
 
@@ -274,7 +285,7 @@ class TestCorrectionIssues:
                 self._entity_correction(name="acme corp", corrected_type="ORGANIZATION")
             ),
             self.UNIT,
-            [entity],
+            GleaningIndex([entity], []),
         )
         assert entity.type == "ORGANIZATION"
         # A correction is not a new artifact.
@@ -290,7 +301,7 @@ class TestCorrectionIssues:
                 )
             ),
             self.UNIT,
-            [entity],
+            GleaningIndex([entity], []),
         )
         # Extracted names keep their display form (whitespace cleaned only), so
         # a corrected one is cleaned the same way.
@@ -310,7 +321,7 @@ class TestCorrectionIssues:
                 )
             ),
             self.UNIT,
-            [entity],
+            GleaningIndex([entity], []),
         )
         assert entity.type == "PERSON"
 
@@ -333,8 +344,7 @@ class TestCorrectionIssues:
                 )
             ),
             self.UNIT,
-            [],
-            [rel],
+            GleaningIndex([], [rel]),
         )
         assert rel.type == "LOCATED_IN"
 
@@ -357,8 +367,7 @@ class TestCorrectionIssues:
                 )
             ),
             self.UNIT,
-            [],
-            [rel],
+            GleaningIndex([], [rel]),
         )
         assert (rel.source_id, rel.source_name) == ("e-acme", "acme corp")
         assert (rel.target_id, rel.target_name) == ("e-seattle", "seattle")
@@ -379,8 +388,7 @@ class TestCorrectionIssues:
                 )
             ),
             self.UNIT,
-            [],
-            [rel],
+            GleaningIndex([], [rel]),
         )
         assert rel.type == "EMPLOYS"
 
@@ -402,8 +410,7 @@ class TestCorrectionIssues:
                 )
             ),
             self.UNIT,
-            [],
-            [first, second],
+            GleaningIndex([], [first, second]),
         )
         assert (first.type, second.type) == ("EMPLOYS", "FOUNDED_IN")
 
@@ -426,8 +433,7 @@ class TestCorrectionIssues:
                 )
             ),
             self.UNIT,
-            [],
-            [first, second],
+            GleaningIndex([], [first, second]),
         )
         assert (first.type, second.type) == ("EMPLOYS", "LOCATED_IN")
 
@@ -440,7 +446,9 @@ class TestCorrectionIssues:
         entity.type = "PERSON"
         issue = self._entity_correction(name="acme corp", corrected_type="ORGANIZATION")
         issue["text_evidence"] = "A clause that appears nowhere in the chunk."
-        gleaner._parse_refinement_output(self._plan(issue), self.UNIT, [entity])
+        gleaner._parse_refinement_output(
+            self._plan(issue), self.UNIT, GleaningIndex([entity], [])
+        )
         assert entity.type == "PERSON"
 
     def test_correction_survives_a_full_gleaning_round(self, gleaner, mocker) -> None:

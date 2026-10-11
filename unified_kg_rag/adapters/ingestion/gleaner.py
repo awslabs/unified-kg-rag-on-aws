@@ -2,14 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 from collections.abc import Sequence
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
-from functools import partial
 from typing import Any
 
 import boto3
 from pydantic import BaseModel, Field
-from tqdm import tqdm
 
 from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.aws.chain_factory import (
@@ -19,9 +16,8 @@ from unified_kg_rag.adapters.aws.chain_factory import (
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
-    check_entity_relevance_task,
-    check_relationship_relevance_task,
     coerce_llm_text,
+    group_by_text_unit,
 )
 from unified_kg_rag.domain.ingestion.entity_grounding import (
     is_grounded,
@@ -47,11 +43,9 @@ from unified_kg_rag.domain.prompts import GraphRefinementPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
     clean_display_name,
-    default_max_workers,
     ensure_list,
     entity_key,
 )
-from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 from unified_kg_rag.shared.utils.langchain import BATCH_ITEM_FAILED, BatchProcessor
 
 logger = get_logger(__name__)
@@ -105,45 +99,113 @@ def format_relationships_with_limit_task(
     return rel_list
 
 
-def prepare_input_task(
+def prepare_input(
     unit: TextUnit,
-    all_entities: list[Entity],
-    all_relationships: list[Relationship],
+    unit_entities: list[Entity],
+    unit_relationships: list[Relationship],
     config: dict[str, Any],
 ) -> dict[str, Any]:
+    """The refinement prompt's input for ``unit`` and the graph it cites."""
     target_language = config.get("target_language", "en")
     if unit.translated_texts:
         unit_text = unit.translated_texts.get(target_language, unit.text or "")
     else:
         unit_text = unit.text or ""
 
-    relevant_entities = []
-    if all_entities:
-        for entity in all_entities:
-            _, is_relevant = check_entity_relevance_task(entity, unit.id)
-            if is_relevant:
-                relevant_entities.append(entity)
-
-    relevant_relationships = []
-    if all_relationships:
-        for rel in all_relationships:
-            _, is_relevant = check_relationship_relevance_task(rel, unit.id)
-            if is_relevant:
-                relevant_relationships.append(rel)
-
-    entities_str = format_entities_with_limit_task(
-        relevant_entities, config["max_entities_per_prompt"]
-    )
-    relationships_str = format_relationships_with_limit_task(
-        relevant_relationships, config["max_relationships_per_prompt"]
-    )
-
     return {
         "text": unit_text,
-        "entities": entities_str,
-        "relationships": relationships_str,
+        "entities": format_entities_with_limit_task(
+            unit_entities, config["max_entities_per_prompt"]
+        ),
+        "relationships": format_relationships_with_limit_task(
+            unit_relationships, config["max_relationships_per_prompt"]
+        ),
         "target_language": target_language,
     }
+
+
+def _name_key(value: Any) -> str | None:
+    """``entity_key`` of a non-blank string, else None (matches nothing)."""
+    return entity_key(value) if isinstance(value, str) and value.strip() else None
+
+
+class GleaningIndex:
+    """The lookups one gleaning round needs, built once from its graph.
+
+    Parsing a unit's answer resolves names to entities and edges; scanning
+    the whole graph for each would make a round quadratic in its size. The
+    index follows the changes parsing makes: the entities an answer adds, a
+    rename (the entity moves to its new name key) and a reversal (the edge
+    moves to its new endpoint pair).
+    """
+
+    def __init__(
+        self, entities: list[Entity], relationships: list[Relationship]
+    ) -> None:
+        self._entities_by_unit = group_by_text_unit(entities)
+        self._relationships_by_unit = group_by_text_unit(relationships)
+        self._entities_by_key: dict[str, list[Entity]] = {}
+        # entity_key -> id of the first entity with that key: the endpoint
+        # index parse_relationship_data reads.
+        self.entity_ids: dict[str, str] = {}
+        for entity in entities:
+            self._add_key(entity)
+        self._relationships_by_pair: dict[tuple[str, str], list[Relationship]] = {}
+        for rel in relationships:
+            self._relationships_by_pair.setdefault(self._pair(rel), []).append(rel)
+
+    @staticmethod
+    def _pair(rel: Relationship) -> tuple[str, str]:
+        return entity_key(rel.source_name or ""), entity_key(rel.target_name or "")
+
+    def _add_key(self, entity: Entity) -> None:
+        key = entity_key(entity.name)
+        self._entities_by_key.setdefault(key, []).append(entity)
+        self.entity_ids.setdefault(key, entity.id)
+
+    def entities_for(self, unit_id: str) -> list[Entity]:
+        """Entities citing the unit (its lineage), in graph order."""
+        return self._entities_by_unit.get(unit_id, [])
+
+    def relationships_for(self, unit_id: str) -> list[Relationship]:
+        """Relationships citing the unit, in graph order."""
+        return self._relationships_by_unit.get(unit_id, [])
+
+    def entity_named(self, name: Any) -> Entity | None:
+        """The first entity whose name has the same ``entity_key``."""
+        key = _name_key(name)
+        matches = self._entities_by_key.get(key, []) if key else []
+        return matches[0] if matches else None
+
+    def relationships_between(self, source: Any, target: Any) -> list[Relationship]:
+        """Edges whose endpoint names have these ``entity_key`` values."""
+        source_key, target_key = _name_key(source), _name_key(target)
+        if source_key is None or target_key is None:
+            return []
+        return self._relationships_by_pair.get((source_key, target_key), [])
+
+    def add_entity(self, entity: Entity) -> None:
+        self._add_key(entity)
+        for unit_id in entity.text_unit_ids or []:
+            self._entities_by_unit.setdefault(unit_id, []).append(entity)
+
+    def rename_entity(self, entity: Entity, old_name: str) -> None:
+        old_key = entity_key(old_name)
+        remaining = [
+            e for e in self._entities_by_key.get(old_key, []) if e is not entity
+        ]
+        self._entities_by_key[old_key] = remaining
+        if remaining:
+            self.entity_ids[old_key] = remaining[0].id
+        else:
+            self.entity_ids.pop(old_key, None)
+        self._add_key(entity)
+
+    def move_relationship(self, rel: Relationship, old_pair: tuple[str, str]) -> None:
+        self._relationships_by_pair[old_pair] = [
+            r for r in self._relationships_by_pair.get(old_pair, []) if r is not rel
+        ]
+        self._relationships_by_pair.setdefault(self._pair(rel), []).append(rel)
 
 
 class GleaningRound(BaseModel):
@@ -194,8 +256,6 @@ class GraphGleaner(BaseProcessor):
         self,
         config: Config,
         boto_session: boto3.Session | None = None,
-        max_workers: int | None = None,
-        use_process_pool: bool = True,
         show_progress: bool = True,
         *,
         providers: Providers | None = None,
@@ -205,8 +265,6 @@ class GraphGleaner(BaseProcessor):
         self.boto_session = self.providers.boto_session
         self.gleaning_config = self.config.processing.gleaning
         self.ignore_errors = self.config.processing.ignore_errors
-        self.max_workers = max_workers or default_max_workers()
-        self.use_process_pool = use_process_pool
         self.show_progress = show_progress
         self._failed_unit_ids: list[str] = []
         # Entity keys rejected per text unit (by extraction, or by gleaning's
@@ -471,41 +529,24 @@ class GraphGleaner(BaseProcessor):
             "max_relationships_per_prompt": self.max_relationships_per_prompt,
             "target_language": self.config.processing.translation.target_language.value,
         }
-
-        task_with_args = partial(
-            prepare_input_task,
-            all_entities=current_entities,
-            all_relationships=current_relationships,
-            config=config_for_task,
-        )
-
-        executor_class = (
-            ProcessPoolExecutor if self.use_process_pool else ContextThreadPoolExecutor
-        )
-
-        # Key results by their OWNING unit, not by completion order: as_completed
-        # yields futures out of order, so appending to a list and zipping it
-        # positionally against text_units would mismatch inputs to the wrong unit
-        # (and crash under strict=True when a failed unit is skipped).
+        # Built once per round: each unit's prompt lists the entities and
+        # edges citing it, and parsing its answer resolves names against the
+        # whole graph. Preparing inputs is a dict lookup and a format per
+        # unit, so it runs here rather than shipping the graph to workers.
+        index = GleaningIndex(current_entities, current_relationships)
         unit_to_input: dict[str, Any] = {}
-        with executor_class(max_workers=self.max_workers) as executor:
-            future_to_unit = {
-                executor.submit(task_with_args, unit): unit for unit in text_units
-            }
-
-            for future in tqdm(
-                as_completed(future_to_unit),
-                total=len(text_units),
-                desc="Preparing Gleaning Inputs",
-                disable=None if self.show_progress else True,
-            ):
-                unit = future_to_unit[future]
-                try:
-                    unit_to_input[unit.id] = future.result()
-                except Exception as e:
-                    logger.error(
-                        "Error preparing gleaning input for unit '%s': %s", unit.id, e
-                    )
+        for unit in text_units:
+            try:
+                unit_to_input[unit.id] = prepare_input(
+                    unit,
+                    index.entities_for(unit.id),
+                    index.relationships_for(unit.id),
+                    config_for_task,
+                )
+            except Exception as e:
+                logger.error(
+                    "Error preparing gleaning input for unit '%s': %s", unit.id, e
+                )
 
         def prepare_inputs_for_chunk(
             chunk_items: list[TextUnit],
@@ -554,10 +595,7 @@ class GraphGleaner(BaseProcessor):
                 self._failed_unit_ids.append(item.id)
                 continue
             new_entities, new_relationships = self._parse_refinement_output(
-                result_data.get("refinement_plan", {}),
-                item,
-                current_entities,
-                current_relationships,
+                result_data.get("refinement_plan", {}), item, index
             )
             all_new_entities.extend(new_entities)
             all_new_relationships.extend(new_relationships)
@@ -578,8 +616,7 @@ class GraphGleaner(BaseProcessor):
         self,
         result_data: dict[str, Any] | list[Any],
         unit: TextUnit,
-        existing_entities: list[Entity],
-        existing_relationships: list[Relationship] | None = None,
+        index: GleaningIndex,
     ) -> tuple[list[Entity], list[Relationship]]:
         new_entities: list[Entity] = []
         new_relationships: list[Relationship] = []
@@ -611,22 +648,20 @@ class GraphGleaner(BaseProcessor):
             else:
                 issues = ensure_list(issues_data)
 
-            current_and_new_entities = list(existing_entities)
             rejected_keys: set[str] = set()
 
             for issue in issues:
                 self._process_issue(
                     issue,
                     unit,
-                    current_and_new_entities,
+                    index,
                     new_entities,
                     new_relationships,
-                    existing_relationships or [],
                     rejected_keys=rejected_keys,
                 )
 
             new_relationships = self._drop_unsupported_relationships(
-                new_relationships, unit, current_and_new_entities, rejected_keys
+                new_relationships, unit, index.entities_for(unit.id), rejected_keys
             )
             if rejected_keys:
                 self._rejected_keys.setdefault(unit.id, set()).update(rejected_keys)
@@ -652,10 +687,9 @@ class GraphGleaner(BaseProcessor):
         self,
         issue: dict[str, Any],
         unit: TextUnit,
-        current_and_new_entities: list[Entity],
+        index: GleaningIndex,
         new_entities: list[Entity],
         new_relationships: list[Relationship],
-        current_relationships: list[Relationship] | None = None,
         *,
         rejected_keys: set[str] | None = None,
     ) -> None:
@@ -710,19 +744,16 @@ class GraphGleaner(BaseProcessor):
                 # Strip the reserved grounding span (gleaner already verified it).
                 (entity.attributes or {}).pop("_source_text", None)
                 new_entities.append(entity)
-                current_and_new_entities.append(entity)
+                index.add_entity(entity)
         elif issue_type == "MISSING_RELATIONSHIP":
-            entity_name_to_id = self.build_entity_key_index(current_and_new_entities)
-            rel = self.parse_relationship_data(details, unit, entity_name_to_id)
+            rel = self.parse_relationship_data(details, unit, index.entity_ids)
             if rel:
                 (rel.attributes or {}).pop("_source_text", None)
                 new_relationships.append(rel)
         elif issue_type == "ENTITY_CORRECTION":
-            self._apply_entity_correction(details, current_and_new_entities, unit)
+            self._apply_entity_correction(details, index, unit)
         elif issue_type == "RELATIONSHIP_CORRECTION":
-            self._apply_relationship_correction(
-                details, current_relationships or [], unit
-            )
+            self._apply_relationship_correction(details, index, unit)
         else:
             # Every type the refinement prompt asks for must have a branch here.
             # Falling through silently is how ENTITY_CORRECTION and
@@ -741,6 +772,8 @@ class GraphGleaner(BaseProcessor):
         rejected_keys: set[str],
     ) -> list[Relationship]:
         """Drop gleaned relationships whose endpoint the unit does not support.
+
+        ``entities`` are the entities citing ``unit``.
 
         Every kept relationship makes its endpoints cite its unit, adding a
         stub for one the batch lacks (:func:`cite_relationship_endpoints`), so
@@ -769,9 +802,7 @@ class GraphGleaner(BaseProcessor):
         if not relationships:
             return relationships
         grounding = self.extraction_config.entity_grounding
-        cited = {
-            entity_key(e.name) for e in entities if unit.id in (e.text_unit_ids or [])
-        }
+        cited = {entity_key(e.name) for e in entities}
         blocked = (
             (self._rejected_keys.get(unit.id, set()) | rejected_keys) - cited
         ) | self._low_confidence_keys.get(unit.id, set())
@@ -852,7 +883,7 @@ class GraphGleaner(BaseProcessor):
         return entity_key(left_clean) == entity_key(right_clean)
 
     def _apply_entity_correction(
-        self, details: dict[str, Any], entities: list[Entity], unit: TextUnit
+        self, details: dict[str, Any], index: GleaningIndex, unit: TextUnit
     ) -> bool:
         """Apply an ENTITY_CORRECTION to the existing entity it names.
 
@@ -863,14 +894,14 @@ class GraphGleaner(BaseProcessor):
 
         Args:
             details: The issue's ``<details>`` payload.
-            entities: Entities visible to this chunk (existing plus newly added).
+            index: The round's graph (existing plus newly added entities).
             unit: The text unit being refined, for log attribution.
 
         Returns:
             True when at least one field changed.
         """
         name = self._clean_text(details.get("name"))
-        entity = next((e for e in entities if self._matches(e.name, name)), None)
+        entity = index.entity_named(name)
         if entity is None:
             logger.info(
                 "Dropping ENTITY_CORRECTION in chunk '%s': no matching current entity",
@@ -886,7 +917,8 @@ class GraphGleaner(BaseProcessor):
             self._clean_text(details.get("corrected_name")) or ""
         )
         if corrected_name and corrected_name != entity.name:
-            entity.name = corrected_name
+            old_name, entity.name = entity.name, corrected_name
+            index.rename_entity(entity, old_name)
             # The stored embedding described the old name.
             entity.name_embedding = None
             corrected.append("name")
@@ -922,7 +954,7 @@ class GraphGleaner(BaseProcessor):
     def _apply_relationship_correction(
         self,
         details: dict[str, Any],
-        relationships: list[Relationship],
+        index: GleaningIndex,
         unit: TextUnit,
     ) -> bool:
         """Apply a RELATIONSHIP_CORRECTION to the existing edge it names.
@@ -934,7 +966,7 @@ class GraphGleaner(BaseProcessor):
 
         Args:
             details: The issue's ``<details>`` payload.
-            relationships: The relationships carried into this gleaning round.
+            index: The round's graph (the relationships carried into it).
             unit: The text unit being refined, for log attribution.
 
         Returns:
@@ -942,7 +974,7 @@ class GraphGleaner(BaseProcessor):
         """
         source, target = details.get("source"), details.get("target")
         relationship = self._find_relationship(
-            relationships, source, target, details.get("type")
+            index.relationships_between(source, target), details.get("type")
         )
         if relationship is None:
             logger.info(
@@ -966,6 +998,7 @@ class GraphGleaner(BaseProcessor):
         if self._matches(
             details.get("corrected_source"), relationship.target_name
         ) and self._matches(details.get("corrected_target"), relationship.source_name):
+            old_pair = GleaningIndex._pair(relationship)
             relationship.source_id, relationship.target_id = (
                 relationship.target_id,
                 relationship.source_id,
@@ -974,6 +1007,7 @@ class GraphGleaner(BaseProcessor):
                 relationship.target_name,
                 relationship.source_name,
             )
+            index.move_relationship(relationship, old_pair)
             corrected.append("direction")
 
         description = self._clean_text(details.get("description"))
@@ -1004,24 +1038,15 @@ class GraphGleaner(BaseProcessor):
 
     @classmethod
     def _find_relationship(
-        cls,
-        relationships: list[Relationship],
-        source: Any,
-        target: Any,
-        current_type: Any = None,
+        cls, candidates: list[Relationship], current_type: Any = None
     ) -> Relationship | None:
-        """Resolve the edge a correction names, or None when it is ambiguous."""
-        candidates = [
-            rel
-            for rel in relationships
-            if cls._matches(rel.source_name, source)
-            and cls._matches(rel.target_name, target)
-        ]
-        if not candidates:
-            return None
-        if len(candidates) == 1:
-            return candidates[0]
-        # A pair can carry several edges; the stated current type disambiguates.
+        """Pick the edge a correction names among the pair's edges.
+
+        None when the pair has no edge, or several and the stated current type
+        does not single one out.
+        """
+        if len(candidates) <= 1:
+            return candidates[0] if candidates else None
         typed = [rel for rel in candidates if cls._matches(rel.type, current_type)]
         return typed[0] if len(typed) == 1 else None
 
@@ -1059,7 +1084,7 @@ class GraphGleaner(BaseProcessor):
                         master_entity.description = entity.description
 
                 master_entity.text_unit_ids = list(
-                    set(
+                    dict.fromkeys(
                         (master_entity.text_unit_ids or [])
                         + (entity.text_unit_ids or [])
                     )

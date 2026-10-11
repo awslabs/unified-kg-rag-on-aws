@@ -18,7 +18,7 @@ import pytest
 import unified_kg_rag.adapters.ingestion.gleaner as gleaner_module
 import unified_kg_rag.adapters.ingestion.graph_extractor as extractor_module
 from unified_kg_rag.adapters import providers as providers_module
-from unified_kg_rag.adapters.ingestion.gleaner import GraphGleaner
+from unified_kg_rag.adapters.ingestion.gleaner import GleaningIndex, GraphGleaner
 from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.entity_grounding import is_name_grounded
@@ -46,7 +46,7 @@ def gleaner(config: Config, mocker) -> GraphGleaner:
     mocker.patch.object(providers_module, "BedrockLanguageModelFactory")
     mocker.patch.object(gleaner_module, "create_robust_xml_output_parser")
     mocker.patch.object(gleaner_module, "setup_chain")
-    return GraphGleaner(config, use_process_pool=False, show_progress=False)
+    return GraphGleaner(config, show_progress=False)
 
 
 def _ground(gleaner: GraphGleaner, action: str = "drop") -> None:
@@ -85,7 +85,7 @@ def _glean(gleaner, issues, entities=None, unit=UNIT):
     entities = [_vendor()] if entities is None else entities
     plan = {"identified_issues": {"issue": issues}}
     new_entities, new_relationships = gleaner._parse_refinement_output(
-        plan, unit, entities, []
+        plan, unit, GleaningIndex(entities, [])
     )
     merged_entities, merged_relationships = GraphGleaner._merge_round(
         entities + new_entities, new_relationships

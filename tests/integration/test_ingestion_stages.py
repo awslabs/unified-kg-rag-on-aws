@@ -178,10 +178,7 @@ def test_stages_run_end_to_end_and_report_a_failed_extraction() -> None:
     failed_unit = next(u for u in context.text_units if _UNREADABLE in u.text)
     assert context.failed_text_unit_ids["graph_extraction"] == [failed_unit.id]
 
-    # Stages that prepare inputs in a process pool use threads here: forking
-    # the multi-threaded test process can deadlock the child.
     gleaning = ps.GleaningStage(config, providers=providers)
-    gleaning.gleaner.use_process_pool = False
     metrics = _run(gleaning, context)
     assert metrics["failed_units"] == 0
     # The empty answer adds nothing, so every unit is gleaned exactly once.
@@ -189,6 +186,8 @@ def test_stages_run_end_to_end_and_report_a_failed_extraction() -> None:
     assert metrics["refinement_calls"] == metrics["text_units_processed"]
     assert len(context.entities) == 3 and len(context.relationships) == 2
 
+    # The resolver's process pool uses threads here: forking the
+    # multi-threaded test process can deadlock the child.
     resolution = ps.GraphResolutionStage(config, providers=providers)
     resolution.resolver.entity_resolver.use_process_pool = False
     resolution.resolver.relationship_resolver.use_process_pool = False
@@ -197,7 +196,6 @@ def test_stages_run_end_to_end_and_report_a_failed_extraction() -> None:
     assert len(context.resolved_relationships) == 2
 
     claim_extraction = ps.ClaimExtractionStage(config, providers=providers)
-    claim_extraction.extractor.use_process_pool = False
     metrics = _run(claim_extraction, context)
     # An empty <claims/> answer is a valid result, not a failure.
     assert context.claims == [] and metrics["failed_units"] == 0

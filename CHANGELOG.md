@@ -741,6 +741,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   input order, instead of shipping the matcher to a process pool per claim
   (10,000 claims against 5,000 entities: 1.8 s, from over 10 minutes), so
   the merged claim of a group no longer depends on completion order (#PR).
+- Gleaning and claim extraction no longer copy the whole graph to a worker
+  process per text unit to prepare its prompt. Each stage indexes entities and
+  relationships by the text units they cite once (per gleaning round), and
+  parsing a gleaning answer resolves names, corrections and endpoints through
+  that index instead of scanning the graph per unit (one round over 1,000 units
+  and 10,000 entities: 0.2 s, from 173 s). `GraphGleaner` and `ClaimExtractor`
+  drop their `max_workers` and `use_process_pool` arguments. Merged text-unit
+  lists keep first-seen order instead of set order (#PR).
 - With `entity_grounding` enabled, the check whether a gleaned
   relationship's endpoint name occurs in its unit (#202) now accepts common
   spelling variants and no longer accepts partial words. Both sides drop

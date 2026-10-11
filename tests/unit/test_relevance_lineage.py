@@ -1,8 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for lineage-based entity/relationship relevance (Tier-3 refactor).
+"""Unit tests for lineage-based entity/relationship relevance.
 
-Relevance now uses the authoritative ``text_unit_ids`` recorded during
+Relevance uses the authoritative ``text_unit_ids`` recorded during
 extraction instead of token-overlap heuristics — exact and language-agnostic.
 """
 
@@ -10,44 +10,32 @@ from __future__ import annotations
 
 import pytest
 
-from unified_kg_rag.domain.ingestion.base_processor import (
-    check_entity_relevance_task,
-    check_relationship_relevance_task,
-)
+from unified_kg_rag.domain.ingestion.base_processor import group_by_text_unit
 from unified_kg_rag.domain.models import Entity, Relationship
 
 pytestmark = pytest.mark.unit
 
 
-class TestEntityRelevance:
-    def test_relevant_when_extracted_from_unit(self) -> None:
-        entity = Entity(id="e1", name="Alice", text_unit_ids=["t1", "t2"])
-        assert check_entity_relevance_task(entity, "t1")[1] is True
-
-    def test_not_relevant_for_other_unit(self) -> None:
-        entity = Entity(id="e1", name="Alice", text_unit_ids=["t1"])
-        assert check_entity_relevance_task(entity, "t9")[1] is False
-
-    def test_no_lineage_is_not_relevant(self) -> None:
-        entity = Entity(id="e1", name="Alice", text_unit_ids=None)
-        assert check_entity_relevance_task(entity, "t1")[1] is False
-
-    def test_language_agnostic(self) -> None:
-        # A non-Latin name that token-overlap heuristics would mishandle is
-        # still correctly matched purely by lineage.
-        entity = Entity(id="e1", name="앨리스", text_unit_ids=["t1"])
-        assert check_entity_relevance_task(entity, "t1")[1] is True
+def test_entities_grouped_by_the_units_they_cite() -> None:
+    alice = Entity(id="e1", name="Alice", text_unit_ids=["t1", "t2"])
+    bob = Entity(id="e2", name="Bob", text_unit_ids=["t2"])
+    by_unit = group_by_text_unit([alice, bob])
+    assert by_unit == {"t1": [alice], "t2": [alice, bob]}
 
 
-class TestRelationshipRelevance:
-    def test_relevant_when_extracted_from_unit(self) -> None:
-        rel = Relationship(
-            id="r1", source_id="e1", target_id="e2", text_unit_ids=["t1"]
-        )
-        assert check_relationship_relevance_task(rel, "t1")[1] is True
+def test_no_lineage_is_relevant_to_no_unit() -> None:
+    assert group_by_text_unit([Entity(id="e1", name="Alice")]) == {}
 
-    def test_not_relevant_for_other_unit(self) -> None:
-        rel = Relationship(
-            id="r1", source_id="e1", target_id="e2", text_unit_ids=["t1"]
-        )
-        assert check_relationship_relevance_task(rel, "t9")[1] is False
+
+def test_language_agnostic() -> None:
+    # A non-Latin name that token-overlap heuristics would mishandle is
+    # still matched purely by lineage.
+    entity = Entity(id="e1", name="앨리스", text_unit_ids=["t1"])
+    assert group_by_text_unit([entity])["t1"] == [entity]
+
+
+def test_relationships_and_repeated_unit_ids() -> None:
+    rel = Relationship(
+        id="r1", source_id="e1", target_id="e2", text_unit_ids=["t1", "t1"]
+    )
+    assert group_by_text_unit([rel]) == {"t1": [rel]}
