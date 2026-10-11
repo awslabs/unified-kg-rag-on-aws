@@ -106,7 +106,7 @@ The two rules to keep in mind:
 
 ## No customer data (MANDATORY)
 
-This repo is destined for public/awslabs release. Customer-identifying or
+This is a public repository. Customer-identifying or
 customer-confidential content MUST NEVER appear in application code, tests,
 evaluation datasets, fixtures, prompts, comments, docs, diagrams, or commit
 messages. This includes: customer/project names and codenames (e.g. internal
@@ -115,10 +115,9 @@ customer corpus, account ids, endpoints, and internal hostnames.
 
 - **Tests/fixtures/eval**: use neutral *synthetic* data (generic entities like
   "Vendor"/"Buyer", made-up amounts). Never paste real customer text.
-- **Real-corpus E2E**: keep customer corpora out of the repo entirely — local
-  only, under the gitignored `.test-corpus-backup/`, synced to S3 at runtime.
-- **Before committing**: grep the diff for customer terms; if any slips into
-  history, a history scrub (squash/filter) is required before publish.
+- **Real-corpus tests**: keep non-public corpora out of the repo entirely; the
+  gitignored `.test-corpus-backup/` is for local copies only.
+- **Before committing**: grep the staged diff for customer terms.
 
 ## Testing
 
@@ -147,10 +146,8 @@ black, isort, mypy, and pytest+coverage. Install hooks with `pre-commit install`
 
 ## Git & collaboration workflow
 
-This is a **public awslabs repository**. Treat `main` as protected shared
-history — the loose "commit straight to main" habits from the private prototype
-do **not** carry over. These rules apply to human contributors **and** to Claude
-Code working in this repo.
+Treat `main` as protected shared history. These rules apply to human
+contributors **and** to Claude Code working in this repo.
 
 - **Never commit or push directly to `main`.** Do all work on a topic branch
   (`feat/…`, `fix/…`, `docs/…`, `chore/…`) and land it through a Pull Request,
@@ -164,25 +161,22 @@ Code working in this repo.
 - **Green before you push.** Run `uv run pytest -m "not aws"` and the pre-commit
   hooks (ruff/black/isort/mypy) locally; never push a commit that fails the CI
   quality gate. Fix formatting *before* committing, not in a follow-up.
-- **No force-push to `main`, no history rewrites** on the published branch.
-  History rewriting is reserved for a one-off customer-data scrub (see below) and
-  requires explicit owner sign-off — it breaks every clone, fork, and open PR.
+- **No force-push to `main`, no history rewrites**: they break every clone,
+  fork, and open PR.
 - **Never merge your own PR without review** when a second maintainer is
   available; for genuinely solo changes, still open the PR, let CI pass, and use
   a squash-merge so `main` keeps one clean commit per change.
 - **Ask before side-effecting actions** — pushing, opening/merging PRs, tagging
   releases, and any AWS resource creation or real-AWS tests. Approval for one
   action is not standing approval for the next.
-- **Customer-data gate is a hard blocker.** Before every commit, grep the staged
-  diff for customer terms (see *No customer data* above). If any customer data
-  has already reached history, publication is blocked until a history scrub
-  (orphan-squash or `git filter-repo`) removes it — and on GitHub a force-push
-  alone does **not** purge dangling commits, so open a GitHub Support request to
-  garbage-collect the old SHAs.
+- **Customer-data check is a hard blocker.** Before every commit, grep the
+  staged diff for customer terms (see *No customer data* above); never commit or
+  push a change that contains any.
 
 ## Notes
 
 - This file holds project conventions for Claude Code and contributors.
-- `references/graphrag` and `references/LightRAG` are vendored upstream copies
-  for porting reference — not part of this package.
+- `references/` is gitignored: a place for local copies of the upstream
+  GraphRAG and LightRAG sources used as porting reference, not part of this
+  package.
 - Ask before side-effecting AWS actions (resource creation, real-AWS tests).
