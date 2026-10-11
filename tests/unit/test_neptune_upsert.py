@@ -189,6 +189,51 @@ def test_write_relationships_counts_an_edge_without_source_as_failed(
     assert stats.failed_ids == ["r2"]
 
 
+def test_an_edge_whose_drop_failed_is_not_re_added(indexer, mocker) -> None:
+    # Re-adding next to the old edge would duplicate it: the batch fails.
+    indexer.neptune_config.batch_size = 1
+    g = mocker.MagicMock()
+    drop = g.E.return_value.has.return_value.where.return_value.drop.return_value
+    drop.iterate.side_effect = [RuntimeError("drop timed out"), None]
+    indexer.neptune_client.g = g
+    built = mocker.patch.object(indexer, "_build_add_edge_traversal")
+    mocker.patch.object(indexer, "_execute_with_retries", return_value=["edge-id"])
+
+    stats = indexer.upsert_relationships(
+        [
+            Relationship(id="r1", source_id="e1", target_id="e2"),
+            Relationship(id="r2", source_id="e2", target_id="e3"),
+        ]
+    )
+
+    assert [c.args[1].id for c in built.call_args_list] == ["r2"]
+    assert (stats.successful_items, stats.failed_ids) == (1, ["r1"])
+
+
+def test_edges_are_written_index_concurrency_at_a_time(indexer, mocker) -> None:
+    import threading
+
+    indexer.neptune_config.index_concurrency = 4
+    indexer.neptune_client.g = RecordingTraversal([])
+    threads: set[int] = set()
+    barrier = threading.Barrier(4, timeout=5)
+
+    def execute(traversal, op, *, results=False):
+        threads.add(threading.get_ident())
+        barrier.wait()
+        return ["edge-id"]
+
+    mocker.patch.object(indexer, "_execute_with_retries", side_effect=execute)
+    rels = [
+        Relationship(id=f"r{i}", source_id=f"e{i}", target_id="e9") for i in range(8)
+    ]
+
+    stats = indexer.upsert_relationships(rels)
+
+    assert stats.successful_items == 8
+    assert len(threads) == 4
+
+
 def test_add_edge_traversal_returns_the_edge_id(indexer) -> None:
     calls: list[str] = []
     indexer._build_add_edge_traversal(

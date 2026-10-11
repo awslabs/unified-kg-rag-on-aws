@@ -20,7 +20,9 @@ from unified_kg_rag.adapters.ingestion.community_detector import (
     HierarchicalCommunity,
     community_content_id,
 )
-from unified_kg_rag.domain.models import Community, Config
+from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
+from unified_kg_rag.domain.models import Community, Config, Entity, Relationship
+from unified_kg_rag.domain.prompts import CommunityReportPrompt
 from unified_kg_rag.shared import GraphError
 
 pytestmark = pytest.mark.unit
@@ -277,6 +279,27 @@ class TestHierarchyProcessing:
         assert cd.all_communities[first].parent_id == parent_id
         assert cd.all_communities[second].parent_id == parent_id
 
+    def test_a_cluster_left_alone_is_not_copied_up_a_level(self) -> None:
+        # Leiden leaves the isolated cluster {n6} on its own at level 1; a
+        # parent identical to it would be one more report and vector per level.
+        cd = _detector()
+        partitions = [
+            [{"n0", "n1", "n2"}, {"n3", "n4", "n5"}, {"n6"}],
+            [{0, 1}, {2}],
+            [{0, 1}],
+        ]
+        cd._process_hierarchical_partitions(partitions)
+        alone = community_content_id(0, {"n6"})
+        level1 = community_content_id(1, {"n0", "n1", "n2", "n3", "n4", "n5"})
+        root = community_content_id(2, {f"n{i}" for i in range(7)})
+
+        assert len(cd.all_communities) == 5
+        assert all(
+            c.nodes != {"n6"} for c in cd.all_communities.values() if c.level > 0
+        )
+        assert cd.all_communities[root].children_ids == [level1, alone]
+        assert cd.all_communities[alone].parent_id == root
+
 
 class TestEndToEndDetection:
     def test_detect_communities_on_two_triangles(self) -> None:
@@ -400,6 +423,30 @@ class TestGenerateCommunityObjects:
         # The three intra-triangle edges all carry ids.
         assert len(obj.relationship_ids) == 3
 
+    def test_parallel_relationships_are_all_members_and_in_the_report(self) -> None:
+        cd = _detector()
+        entities = [
+            Entity(id="e1", name="Vendor", text_unit_ids=["t1"]),
+            Entity(id="e2", name="Buyer", text_unit_ids=["t1"]),
+        ]
+        relationships = [
+            Relationship(id="r1", source_id="e1", target_id="e2", type="SUPPLIES"),
+            Relationship(id="r2", source_id="e2", target_id="e1", type="PAYS"),
+        ]
+        cd.graph = GraphBuilder(entities, relationships).build()
+        cd.all_communities = {
+            "c": HierarchicalCommunity(community_id="c", level=0, nodes={"e1", "e2"})
+        }
+        (community,) = cd.generate_community_objects()
+        assert community.relationship_ids == ["r1", "r2"]
+        assert community.attributes["num_relationships"] == 2
+
+        lines = {
+            (r["source"], r["type"], r["target"])
+            for r in cd._prepare_report_input(community)["relationships"]
+        }
+        assert lines == {("Vendor", "SUPPLIES", "Buyer"), ("Buyer", "PAYS", "Vendor")}
+
 
 def _community(entity_ids: list[str]) -> Community:
     return Community(
@@ -472,9 +519,7 @@ class TestReportInputShaping:
                         "description": "rel",
                     }
                 ],
-                "content_length": 500,
-                "include_statistics": True,
-                "include_key_entities": False,
+                "content_length": "medium",
             }
         ]
         out = CommunityDetector._create_report_chain_inputs(report_inputs)
@@ -483,9 +528,9 @@ class TestReportInputShaping:
         assert chain_in["community_id"] == "L0_C0"
         assert "Alice (PERSON): A person" in chain_in["entities"]
         assert "Alice -> Acme (works_at): rel" in chain_in["relationships"]
-        # bool flags are stringified.
-        assert chain_in["include_statistics"] == "True"
-        assert chain_in["include_key_entities"] == "False"
+        assert chain_in["content_length"] == "medium"
+        # Every variable the prompt reads is passed, and nothing else.
+        assert set(chain_in) == set(CommunityReportPrompt.input_variables)
 
 
 class TestReportRank:
@@ -737,6 +782,32 @@ class TestSubCommunityRollup:
         cd.report_generator = object()
         return cd
 
+    def test_members_over_the_entity_cap_roll_the_sub_reports_in(self) -> None:
+        from unified_kg_rag.domain.models import CommunityReport
+
+        cd = self._detector()
+        cd.community_detection_config.report_generation.max_entities_per_report = 2
+        g = nx.Graph()
+        for i in range(3):
+            g.add_node(f"e{i}", name=f"E{i}", type="ORG", description="d")
+        cd.graph = g
+        parent = Community(
+            id="p",
+            name="Parent",
+            level="1",
+            parent="",
+            children=["c"],
+            entity_ids=["e0", "e1", "e2"],
+        )
+        child_report = CommunityReport(
+            id="r-c", name="Child", community_id="c", summary="E2 detail."
+        )
+
+        report_input = cd._prepare_report_input(parent, {"c": child_report})
+
+        assert len(report_input["entities"]) == 2
+        assert "E2 detail." in report_input["sub_community_reports"]
+
     def test_build_sub_community_context_packs_children_biggest_first(self) -> None:
         from unified_kg_rag.domain.models import CommunityReport
 
@@ -853,107 +924,6 @@ class TestSubCommunityRollup:
         # The parent's prepared input carries the child's rolled-up summary.
         parent_input = next(ri for ri in captured if ri["community_id"] == "L1_C0")
         assert "summary for L0_C0" in parent_input["sub_community_reports"]
-
-    def test_single_child_parent_with_same_members_reuses_child_report(
-        self,
-    ) -> None:
-        # Leiden often carries a cluster unchanged up a level: the parent's only
-        # child has the same members, so its report input would be identical.
-        cd = self._detector()
-        g = nx.Graph()
-        g.add_node("e0", name="Vendor", type="ORG", description="d")
-        g.add_node("e1", name="Buyer", type="ORG", description="d")
-        g.add_edge("e0", "e1")
-        cd.graph = g
-
-        child = Community(
-            id="L0_C0",
-            name="Child",
-            level="0",
-            parent="L1_C0",
-            children=[],
-            entity_ids=["e0", "e1"],
-            text_unit_ids=["t1"],
-            size=2,
-        )
-        parent = Community(
-            id="L1_C0",
-            name="Parent",
-            level="1",
-            parent="",
-            children=["L0_C0"],
-            entity_ids=["e1", "e0"],
-            text_unit_ids=["t1"],
-            size=2,
-        )
-        generated: list[str] = []
-
-        def _fake_run_batch(report_inputs, communities, graph_attributes):
-            from unified_kg_rag.domain.models import CommunityReport
-
-            generated.extend(c.id for c in communities)
-            return [
-                CommunityReport(
-                    id=f"r-{c.id}",
-                    community_id=c.id,
-                    name=f"Report for {c.name}: Supply ties",
-                    summary="Vendor supplies Buyer.",
-                    rating=6.0,
-                    size=c.size,
-                )
-                for c in communities
-            ], []
-
-        cd._run_report_batch = _fake_run_batch  # type: ignore[method-assign]
-        reports, _ = cd.generate_reports([parent, child])
-
-        assert generated == ["L0_C0"]
-        by_community = {r.community_id: r for r in reports}
-        assert set(by_community) == {"L0_C0", "L1_C0"}
-        reused = by_community["L1_C0"]
-        assert reused.id != by_community["L0_C0"].id
-        assert reused.summary == "Vendor supplies Buyer."
-        assert reused.name == "Report for Parent: Supply ties"
-        assert reused.attributes["reused_from_community_id"] == "L0_C0"
-        assert reused.text_unit_ids == ["t1"]
-
-    def test_single_child_with_different_members_is_regenerated(self) -> None:
-        cd = self._detector()
-        cd.graph = nx.Graph()
-        child = Community(
-            id="L0_C0",
-            name="Child",
-            level="0",
-            parent="L1_C0",
-            children=[],
-            entity_ids=["e0"],
-            text_unit_ids=[],
-            size=1,
-        )
-        parent = Community(
-            id="L1_C0",
-            name="Parent",
-            level="1",
-            parent="",
-            children=["L0_C0"],
-            entity_ids=["e0", "e1"],
-            text_unit_ids=[],
-            size=2,
-        )
-        generated: list[str] = []
-
-        def _fake_run_batch(report_inputs, communities, graph_attributes):
-            from unified_kg_rag.domain.models import CommunityReport
-
-            generated.extend(c.id for c in communities)
-            return [
-                CommunityReport(id=f"r-{c.id}", community_id=c.id, name=c.name)
-                for c in communities
-            ], []
-
-        cd._run_report_batch = _fake_run_batch  # type: ignore[method-assign]
-        cd.generate_reports([parent, child])
-        assert generated == ["L0_C0", "L1_C0"]
 
     def test_flat_path_when_rollup_disabled(self) -> None:
         cd = self._detector()

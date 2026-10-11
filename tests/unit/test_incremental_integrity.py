@@ -136,7 +136,7 @@ def test_prune_failure_blocks_commit_and_keeps_old_lineage(mocker) -> None:
     assert store.diff({"doc-a": "old-hash"}).changed == ["doc-a"]
 
 
-def test_prune_changed_reports_success_and_failure() -> None:
+def test_removal_of_changed_docs_reports_success_and_failure() -> None:
     from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
 
     class _Manager:
@@ -150,10 +150,10 @@ def test_prune_changed_reports_success_and_failure() -> None:
     store.put(DocStatusRecord(doc_id="d", content_hash="h", entity_ids=["e1"]))
     delta = DocumentDelta(changed=["d"])
 
-    assert IncrementalIndexer(store, _Manager(0)).prune_changed(delta) is True  # type: ignore[arg-type]
-    assert IncrementalIndexer(store, _Manager(1)).prune_changed(delta) is False  # type: ignore[arg-type]
+    assert IncrementalIndexer(store, _Manager(0)).remove_changed_and_deleted(delta) is True  # type: ignore[arg-type]
+    assert IncrementalIndexer(store, _Manager(1)).remove_changed_and_deleted(delta) is False  # type: ignore[arg-type]
     # Nothing changed -> nothing to prune -> success.
-    assert IncrementalIndexer(store, _Manager(1)).prune_changed(DocumentDelta()) is True  # type: ignore[arg-type]
+    assert IncrementalIndexer(store, _Manager(1)).remove_changed_and_deleted(DocumentDelta()) is True  # type: ignore[arg-type]
 
 
 # --- shared entity keeps unchanged documents' lineage ------------------------

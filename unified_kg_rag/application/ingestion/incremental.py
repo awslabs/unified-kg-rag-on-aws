@@ -28,13 +28,12 @@ stays storage-focused and is exercised end-to-end with in-memory fakes.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Collection, Iterable
+from collections.abc import Collection
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.domain.ingestion.delta_detector import (
-    detect_delta,
     document_doc_id,
     scope_namespace,
 )
@@ -53,6 +52,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.ports import DocStatusPort
+from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import DataProcessingError, get_logger
 from unified_kg_rag.shared.utils.document_identity import (
     RELATIVE_PATH_KEY,
@@ -169,6 +169,11 @@ class _SuffixRemoval(BaseModel):
     removed_text_unit_ids: list[str] = Field(default_factory=list)
 
 
+# Indexed documents, and entities of them, probed in the graph store before
+# a delta run writes (IncrementalIndexer.check_graph_holds_registry).
+_PROBE_DOCUMENTS = 20
+_PROBE_ENTITIES = 100
+
 _EXTRACTION_FAILED = "extraction failed on some text units"
 _WRITE_FAILED = "writing some of its artifacts to the stores failed"
 _WRITE_AHEAD_INFO = (
@@ -230,34 +235,6 @@ def _namespace_key(
     return record.suffix, None
 
 
-def _read_many(
-    doc_status: DocStatusPort, doc_ids: Iterable[str]
-) -> dict[str, DocStatusRecord]:
-    """``doc_status.get_many``; one ``get`` per id for a custom store that
-    predates ``get_many``."""
-    ids = list(dict.fromkeys(doc_ids))
-    if not ids:
-        return {}
-    get_many = getattr(doc_status, "get_many", None)
-    if get_many is None:
-        records = {doc_id: doc_status.get(doc_id) for doc_id in ids}
-        return {doc_id: r for doc_id, r in records.items() if r is not None}
-    return dict(get_many(ids))
-
-
-def _write_many(doc_status: DocStatusPort, records: list[DocStatusRecord]) -> None:
-    """``doc_status.put_many``; one ``put`` per record for a custom store that
-    predates ``put_many``."""
-    if not records:
-        return
-    put_many = getattr(doc_status, "put_many", None)
-    if put_many is None:
-        for record in records:
-            doc_status.put(record)
-    else:
-        put_many(records)
-
-
 def _union_lineage(
     record: DocStatusRecord | DocumentLineage,
     lineage: DocumentLineage | DocStatusRecord | None,
@@ -291,34 +268,6 @@ def _lineage(doc_id: str, ids: dict[str, list[str]]) -> DocumentLineage:
     return DocumentLineage.model_validate({"doc_id": doc_id, **ids})
 
 
-def _record_fits(doc_status: DocStatusPort, record: DocStatusRecord) -> bool:
-    """``doc_status.record_fits``; always True for a custom store that
-    predates it (it has no item limit the run knows of)."""
-    fits = getattr(doc_status, "record_fits", None)
-    return True if fits is None else bool(fits(record))
-
-
-def _read_overflow(
-    doc_status: DocStatusPort, doc_ids: Iterable[str]
-) -> dict[str, DocumentLineage]:
-    """``doc_status.get_lineage_overflow``; none for a custom store that
-    predates it."""
-    ids = list(dict.fromkeys(doc_ids))
-    get = getattr(doc_status, "get_lineage_overflow", None)
-    if not ids or get is None:
-        return {}
-    return dict(get(ids))
-
-
-def _delete_overflow(doc_status: DocStatusPort, doc_ids: Iterable[str]) -> None:
-    """``doc_status.delete_lineage_overflow``; a no-op for a custom store
-    that predates it."""
-    ids = list(dict.fromkeys(doc_ids))
-    delete = getattr(doc_status, "delete_lineage_overflow", None)
-    if ids and delete is not None:
-        delete(ids)
-
-
 def _remap_lineage(
     lineage: DocumentLineage, id_remap: dict[str, str]
 ) -> DocumentLineage:
@@ -333,6 +282,58 @@ def _remap_lineage(
             ),
         }
     )
+
+
+def _remap_ids(ids: list[str] | None, id_remap: dict[str, str]) -> list[str]:
+    return list(dict.fromkeys(id_remap.get(i, i) for i in ids or []))
+
+
+def _remap_references(
+    communities: list[Community] | None,
+    claims: list[Claim] | None,
+    id_remap_by_suffix: dict[str, dict[str, str]],
+) -> tuple[list[Community] | None, list[Claim] | None]:
+    """Point communities' members and claims' subjects/objects at the ids the
+    cross-run merge kept, so none references an id that is never written."""
+    if not id_remap_by_suffix:
+        return communities, claims
+    remapped_communities = None
+    if communities is not None:
+        remapped_communities = []
+        for community in communities:
+            remap = id_remap_by_suffix.get(BaseIndexer.get_suffix(community), {})
+            remapped_communities.append(
+                community.model_copy(
+                    update={
+                        "entity_ids": _remap_ids(community.entity_ids, remap),
+                        "relationship_ids": _remap_ids(
+                            community.relationship_ids, remap
+                        ),
+                    }
+                )
+                if remap
+                else community
+            )
+    remapped_claims = None
+    if claims is not None:
+        remapped_claims = []
+        for claim in claims:
+            remap = id_remap_by_suffix.get(BaseIndexer.get_suffix(claim), {})
+            remapped_claims.append(
+                claim.model_copy(
+                    update={
+                        "subject_id": remap.get(claim.subject_id, claim.subject_id),
+                        "object_id": (
+                            remap.get(claim.object_id, claim.object_id)
+                            if claim.object_id
+                            else claim.object_id
+                        ),
+                    }
+                )
+                if remap
+                else claim
+            )
+    return remapped_communities, remapped_claims
 
 
 class IncrementalIndexer:
@@ -360,19 +361,37 @@ class IncrementalIndexer:
         self._overflow: dict[str, DocumentLineage] = {}
         self._in_flight: set[str] = set()
 
-    def plan(
-        self,
-        documents: list[Document],
-        failed_doc_ids: list[str] | None = None,
-        max_failures: int | None = None,
-    ) -> tuple[DocumentDelta, dict[str, str]]:
-        """Compute the delta for ``documents`` without mutating any store."""
-        return detect_delta(
-            documents,
-            self.doc_status,
-            self.scope,
-            failed_doc_ids or (),
-            max_failures=max_failures,
+    def check_graph_holds_registry(self, delta: DocumentDelta) -> None:
+        """Raise before any write when the graph lost the registry's documents.
+
+        The registry and the stores must describe the same corpus: with a
+        registry of indexed documents over an emptied graph (an in-memory
+        Gremlin Server restarted, say), the diff calls those documents
+        unchanged and they would never be indexed again. Probes the entities
+        of a few indexed documents of the run's namespace; when the graph
+        holds none of them, raises :class:`DataProcessingError`.
+        """
+        stored = [*delta.unchanged, *delta.changed][:_PROBE_DOCUMENTS]
+        ids_by_suffix: dict[str, list[str]] = defaultdict(list)
+        for record in self.doc_status.get_many(stored).values():
+            if record.status is DocStatus.PROCESSED:
+                ids_by_suffix[record.suffix].extend(record.entity_ids)
+        probes = {
+            suffix: sorted(set(ids))[:_PROBE_ENTITIES]
+            for suffix, ids in ids_by_suffix.items()
+            if ids
+        }
+        if not probes or any(
+            self.indexing_manager.neptune_indexer.read_entities(ids, suffix=suffix)
+            for suffix, ids in probes.items()
+        ):
+            return
+        raise DataProcessingError(
+            "The doc-status registry lists indexed documents of this namespace "
+            "whose entities the graph store does not hold (an in-memory Gremlin "
+            "Server loses its graph on restart). Re-run with indexing.reset: "
+            "true to rebuild the stores and the registry, or delete the "
+            "registry's records of this namespace."
         )
 
     def write_ahead(
@@ -424,7 +443,7 @@ class IncrementalIndexer:
         doc_ids = list(dict.fromkeys([*delta.to_process, *planned]))
         if not doc_ids and not delta.orphan_overflow:
             return
-        read = _read_many(self.doc_status, [*doc_ids, *delta.orphan_overflow])
+        read = self.doc_status.get_many([*doc_ids, *delta.orphan_overflow])
         self._collect_leftover_overflow(delta.orphan_overflow, read, set(doc_ids))
         if not doc_ids:
             return
@@ -435,8 +454,7 @@ class IncrementalIndexer:
         # read. Next to any other record, or none, it is left over from a
         # commit or removal interrupted before deleting it, and was collected
         # above (delta.orphan_overflow).
-        kept = _read_overflow(
-            self.doc_status,
+        kept = self.doc_status.get_lineage_overflow(
             [
                 doc_id
                 for doc_id, record in stored.items()
@@ -467,12 +485,12 @@ class IncrementalIndexer:
             added = _lineage_minus(spilled, kept.get(doc_id))
             if any(added.values()):
                 additions.append(_lineage(doc_id, added))
-        _write_many(self.doc_status, list(self._pending.values()))
+        self.doc_status.put_many(list(self._pending.values()))
         if additions:
             self.doc_status.add_lineage_overflow(additions)
         # A record that now holds its interrupted run's overflow ids itself.
-        _delete_overflow(
-            self.doc_status, [doc_id for doc_id in kept if doc_id not in self._overflow]
+        self.doc_status.delete_lineage_overflow(
+            [doc_id for doc_id in kept if doc_id not in self._overflow]
         )
         logger.info(
             "Recorded %d documents PENDING before indexing the delta%s",
@@ -518,14 +536,14 @@ class IncrementalIndexer:
                 "(an interrupted commit or removal did not delete it)",
                 len(leftover),
             )
-            _delete_overflow(self.doc_status, leftover)
+            self.doc_status.delete_lineage_overflow(leftover)
 
     def _fit(
         self, full: DocStatusRecord, stored: DocStatusRecord | None
     ) -> tuple[DocStatusRecord, DocumentLineage | None]:
         """``full`` as stored: itself when it fits, else a record listing the
         stored lineage (or none) plus the overflow holding the rest."""
-        if _record_fits(self.doc_status, full):
+        if self.doc_status.record_fits(full):
             return full, None
         empty = DocumentLineage(doc_id=full.doc_id)
         for base in (stored, empty):
@@ -534,7 +552,7 @@ class IncrementalIndexer:
             record = full.model_copy(
                 update={name: list(getattr(base, name)) for name in _LINEAGE_FIELDS}
             )
-            if _record_fits(self.doc_status, record):
+            if self.doc_status.record_fits(record):
                 return record, _lineage(full.doc_id, _lineage_minus(full, record))
         raise DataProcessingError(
             f"Doc-status record for '{full.file_path or full.doc_id}' does not "
@@ -568,7 +586,7 @@ class IncrementalIndexer:
                 file_path=lineage.file_path,
                 **{name: getattr(lineage, name) for name in _LINEAGE_FIELDS},
             )
-            if not _record_fits(self.doc_status, record):
+            if not self.doc_status.record_fits(record):
                 too_large.append(
                     f"{lineage.file_path or doc_id} "
                     f"({len(_artifact_ids(lineage))} artifact ids)"
@@ -622,7 +640,7 @@ class IncrementalIndexer:
                 continue
             if held is None:
                 extended = pending.model_copy(update=_union_lineage(pending, lineage))
-                if _record_fits(self.doc_status, extended):
+                if self.doc_status.record_fits(extended):
                     self._pending[doc_id] = extended
                     updated.append(extended)
                     continue
@@ -631,7 +649,7 @@ class IncrementalIndexer:
                 update=_union_lineage(held, _lineage(doc_id, added))
             )
             additions.append(_lineage(doc_id, added))
-        _write_many(self.doc_status, updated)
+        self.doc_status.put_many(updated)
         if additions:
             self.doc_status.add_lineage_overflow(additions)
 
@@ -724,12 +742,16 @@ class IncrementalIndexer:
         they touch (``indexing.cross_run_merge``); a delta item that merged into
         a stored one under another id is recorded in the lineage by that id
         (and added to the document's PENDING record before the write, see
-        :meth:`write_ahead`).
+        :meth:`write_ahead`), and the communities and claims referencing it
+        are pointed at that id too.
         """
         merged = self.indexing_manager.merge_with_existing_graph(
             entities, relationships
         )
         entities, relationships = merged.entities, merged.relationships
+        communities, claims = _remap_references(
+            communities, claims, merged.id_remap_by_suffix
+        )
         lineages = [
             _remap_lineage(lineage, merged.id_remap_by_suffix.get(lineage.suffix, {}))
             for lineage in lineages
@@ -858,79 +880,33 @@ class IncrementalIndexer:
         )
         return owners
 
-    def remove_deleted(self, delta: DocumentDelta) -> bool:
-        """Remove artifacts and registry records for deleted documents.
-
-        The registry record is only deleted when artifact removal fully
-        succeeded. If removal partially failed, the record is kept so the next
-        run retries the removal — deleting the record first would strand the
-        still-live artifacts with no lineage to ever clean them up (permanent
-        orphans).
-
-        Returns True when every artifact was removed (or nothing was deleted).
-        The caller must report False as a failed run: the stores still hold
-        the deleted documents' content. A delta that also changes documents
-        must use :meth:`remove_changed_and_deleted` instead.
-        """
-        if not delta.deleted:
-            return True
-        removed = self.remove_obsolete_artifacts(delta.deleted)
-        if not removed:
-            logger.warning(
-                "Keeping %d deleted-doc registry records because artifact "
-                "removal did not fully succeed; will retry next run.",
-                len(delta.deleted),
-            )
-            return False
-        self._delete_records(delta.deleted)
-        return True
-
     def _delete_records(self, doc_ids: list[str]) -> None:
         """Delete removed documents' records, their lineage overflow first: an
         interruption in between leaves the record, listing artifacts that
         are already gone, rather than overflow nothing references."""
-        _delete_overflow(self.doc_status, doc_ids)
+        self.doc_status.delete_lineage_overflow(doc_ids)
         for doc_id in doc_ids:
             self.doc_status.delete(doc_id)
-
-    def prune_changed(self, delta: DocumentDelta) -> bool:
-        """Remove the now-stale artifacts of changed docs before re-extraction.
-
-        A changed document's old entities/edges are dropped first (unless shared
-        with surviving docs) so a re-extraction that no longer produces some
-        artifact does not leave it orphaned in the graph. Call this before
-        re-running extraction + :meth:`commit` on the changed documents.
-
-        Returns True when every stale artifact was removed (or there was nothing
-        to remove). The caller MUST NOT :meth:`commit` on False: commit replaces
-        the changed docs' registry lineage with the new artifacts, so the old
-        ids that failed to delete would no longer be referenced anywhere and
-        could never be cleaned up (permanent orphans). Not committing keeps the
-        old lineage (inside the PENDING record when :meth:`write_ahead` ran),
-        so the next run re-detects the docs as changed and retries the prune.
-
-        A delta that also deletes documents must use
-        :meth:`remove_changed_and_deleted` instead: pruning and deleting in
-        separate passes keeps what only a changed and a deleted doc share.
-        """
-        if not delta.changed:
-            return True
-        return self.remove_obsolete_artifacts(delta.changed)
 
     def remove_changed_and_deleted(self, delta: DocumentDelta) -> bool:
         """Remove the stale artifacts of changed AND deleted docs in one pass.
 
+        A changed document's old entities/edges are dropped (unless shared
+        with surviving docs) before its re-extraction is committed, so an
+        artifact the new extraction no longer produces is not left orphaned.
         The removal is planned once over changed + deleted, so an artifact only
         those documents reference is removed even when it is referenced by one
-        changed and one deleted document. Planning the two sets separately
-        (:meth:`prune_changed` then :meth:`remove_deleted`) treats each set as
-        a survivor of the other and leaves such artifacts behind as orphans
-        with no text units.
+        changed and one deleted document; planning the two sets separately
+        would treat each as a survivor of the other.
 
         The deleted documents' registry records are deleted only when the
-        removal fully succeeded (see :meth:`remove_deleted`). Returns False on
-        a partial failure; the caller MUST NOT :meth:`commit` changed
-        documents on False, for the reason given in :meth:`prune_changed`.
+        removal fully succeeded: deleting them first would strand the
+        still-live artifacts with no lineage to clean them up. Returns False
+        on a partial failure. The caller MUST NOT :meth:`commit` changed
+        documents on False: commit replaces their lineage with the new
+        artifacts, so the old ids that failed to delete would never be
+        cleaned up. Not committing keeps the old lineage (inside the PENDING
+        record :meth:`write_ahead` wrote), so the next run retries.
         """
         doc_ids = list(dict.fromkeys(delta.changed + delta.deleted))
         if not doc_ids:
@@ -962,8 +938,7 @@ class IncrementalIndexer:
         records = self.doc_status.list_all()
         # Another run's interrupted PENDING record may keep part of its
         # lineage in overflow (this run's documents have theirs in _prior).
-        overflow = _read_overflow(
-            self.doc_status,
+        overflow = self.doc_status.get_lineage_overflow(
             [
                 r.doc_id
                 for r in records
@@ -1057,8 +1032,7 @@ class IncrementalIndexer:
         # The records as stored before this run's PENDING records (read by
         # write_ahead); the others in one batched read.
         prior = {
-            **_read_many(
-                self.doc_status,
+            **self.doc_status.get_many(
                 [lin.doc_id for lin in lineages if lin.doc_id not in self._pending],
             ),
             **self._prior,
@@ -1106,13 +1080,13 @@ class IncrementalIndexer:
                 community_report_ids=lineage.community_report_ids,
             )
             records.append(record)
-        _write_many(self.doc_status, records)
+        self.doc_status.put_many(records)
         # The committed records replace the PENDING ones: their overflow is
         # no longer referenced (deleted after the write, so an interruption
         # in between leaves overflow next to a committed record, which the
         # next write-ahead ignores and drops).
         committed = [r.doc_id for r in records if r.doc_id in self._overflow]
-        _delete_overflow(self.doc_status, committed)
+        self.doc_status.delete_lineage_overflow(committed)
         for doc_id in committed:
             del self._overflow[doc_id]
         unrecorded = sorted(set(self._pending) - {r.doc_id for r in records})

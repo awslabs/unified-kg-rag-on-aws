@@ -19,7 +19,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     build_document_lineage,
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
-from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
+from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id, detect_delta
 from unified_kg_rag.domain.models import (
     Config,
     DocStatusRecord,
@@ -29,6 +29,7 @@ from unified_kg_rag.domain.models import (
     Relationship,
     TextUnit,
 )
+from unified_kg_rag.shared import DataProcessingError
 
 pytestmark = pytest.mark.integration
 
@@ -64,7 +65,7 @@ def _artifacts_for(doc: Document, entity_ids: list[str]):
 
 
 def _commit(inc, docs, all_text_units, all_entities, all_relationships=None):
-    delta, fingerprints = inc.plan(docs)
+    delta, fingerprints = detect_delta(docs, inc.doc_status)
     lineages = build_document_lineage(
         documents=docs,
         text_units=all_text_units,
@@ -100,9 +101,9 @@ def test_add_then_delete_cycle_reaches_stores(harness) -> None:
     }
 
     # Second run: /b.txt deleted from the corpus -> its artifacts pruned.
-    delta = inc.plan([a])[0]
+    delta = detect_delta([a], inc.doc_status)[0]
     assert delta.deleted == [compute_doc_id("/b.txt")]
-    inc.remove_deleted(delta)
+    inc.remove_changed_and_deleted(delta)
 
     assert "e-bob" not in vector.ids("entities")
     assert "e-bob" not in graph.ids("entities")
@@ -123,8 +124,8 @@ def test_shared_entity_survives_deletion(harness) -> None:
     assert vector.ids("entities") == {"e-shared"}
 
     # Delete /b.txt: e-shared is still referenced by /a.txt -> must NOT be removed.
-    delta = inc.plan([a])[0]
-    inc.remove_deleted(delta)
+    delta = detect_delta([a], inc.doc_status)[0]
+    inc.remove_changed_and_deleted(delta)
     assert "e-shared" in vector.ids("entities")
     assert "e-shared" in graph.ids("entities")
 
@@ -157,12 +158,10 @@ def test_deleting_a_doc_strips_its_text_units_from_shared_artifacts(harness) -> 
     inc, _, graph, vector = harness
     a, _ = _shared_vendor_corpus(inc)
 
-    inc.remove_deleted(inc.plan([a])[0])
+    inc.remove_changed_and_deleted(detect_delta([a], inc.doc_status)[0])
 
     (vendor,) = graph.read_entities(["e-vendor"])
     assert vendor.text_unit_ids == ["tu-a"]
-    # Neptune does not store frequency; the vector index does.
-    assert vector.data["entities"]["e-vendor"].frequency == 1
     # The description cannot be re-derived without an LLM call and is kept.
     assert vendor.description == "Vendor supplies parts."
     (edge,) = graph.read_relationships(["r-supplies"])
@@ -171,6 +170,7 @@ def test_deleting_a_doc_strips_its_text_units_from_shared_artifacts(harness) -> 
     assert edge.weight == 1.0
     assert vector.data["entities"]["e-vendor"].text_unit_ids == ["tu-a"]
     assert vector.data["relationships"]["r-supplies"].text_unit_ids == ["tu-a"]
+    assert vector.data["relationships"]["r-supplies"].weight == 1.0
 
 
 def test_changed_doc_replaces_its_text_units_on_shared_artifacts(harness) -> None:
@@ -179,8 +179,8 @@ def test_changed_doc_replaces_its_text_units_on_shared_artifacts(harness) -> Non
     edited = _doc("/b.txt", "y, edited")
     tu_b2 = TextUnit(id="tu-b2", text="...", document_ids=[edited.document_id])
 
-    delta = inc.plan([a, edited])[0]
-    assert inc.prune_changed(delta)
+    delta = detect_delta([a, edited], inc.doc_status)[0]
+    assert inc.remove_changed_and_deleted(delta)
     _commit(
         inc,
         [edited],
@@ -387,9 +387,9 @@ def test_a_direct_api_record_retains_for_a_scoped_run_of_its_namespace(
     tu_c, _ = _artifacts_for(c, [])
     shared_c = Entity(id="e-shared", name="Shared", text_unit_ids=[tu_c[0].id])
     _commit(scoped, [c], tu_c, [shared_c])
-    delta, _ = scoped.plan([])
+    delta, _ = detect_delta([], scoped.doc_status, scoped.scope)
     assert delta.deleted == [compute_doc_id("c.txt", "default-x", "/corpus")]
-    assert scoped.remove_deleted(delta)
+    assert scoped.remove_changed_and_deleted(delta)
 
     assert "e-shared" in graph.ids("entities")
     assert "e-shared" in vector.ids("entities")
@@ -423,3 +423,24 @@ def test_a_removed_scopeless_record_of_no_known_namespace_is_retained_for(
 
     assert removal.shared_entity_ids == ["e-vendor"]
     assert "tu-a" in removal.exclusive_ids
+
+
+def test_a_graph_that_lost_the_registrys_documents_fails_fast(harness) -> None:
+    # An in-memory Gremlin Server restarted: the registry still lists the
+    # document, so the diff calls it unchanged, but the graph is empty.
+    inc, store, graph, _ = harness
+    a = _doc("/a.txt", "x")
+    tus, ents = _artifacts_for(a, ["e-vendor"])
+    _commit(inc, [a], tus, ents)
+    delta, _ = detect_delta([a, _doc("/b.txt", "y")], store)
+
+    inc.check_graph_holds_registry(delta)
+
+    graph.clear(["default"])
+    with pytest.raises(DataProcessingError, match="indexing.reset"):
+        inc.check_graph_holds_registry(delta)
+
+
+def test_the_graph_probe_skips_a_registry_without_indexed_documents(harness) -> None:
+    inc, store, _, _ = harness
+    inc.check_graph_holds_registry(detect_delta([_doc("/a.txt", "x")], store)[0])

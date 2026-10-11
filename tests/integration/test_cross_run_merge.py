@@ -18,6 +18,8 @@ from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.models import (
+    Claim,
+    Community,
     Config,
     DocumentDelta,
     DocumentLineage,
@@ -31,7 +33,7 @@ pytestmark = pytest.mark.integration
 def _harness(*, cross_run_merge: bool, fuzzy: bool = False):
     config = Config()
     config.indexing.cross_run_merge = cross_run_merge
-    config.indexing.cross_run_fuzzy_merge = fuzzy
+    config.processing.fuzzy_entity_resolution = fuzzy
     graph = FakeGraphStore()
     vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
     manager = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)
@@ -232,7 +234,7 @@ def test_failed_read_back_keeps_a_deleted_docs_registry_row(mocker) -> None:
         graph, "read_entities", side_effect=RuntimeError("connection reset")
     )
 
-    removed = incremental.remove_deleted(DocumentDelta(deleted=["doc-b"]))
+    removed = incremental.remove_changed_and_deleted(DocumentDelta(deleted=["doc-b"]))
 
     assert removed is False
     assert store.get("doc-b") is not None
@@ -251,3 +253,97 @@ def test_failed_read_back_fails_the_commit_before_any_write(mocker) -> None:
         _commit_entity(incremental, "doc-b", Entity(id="e1", name="Vendor"))
 
     assert store.get("doc-b") is None
+
+
+def test_a_remapped_entity_rewrites_only_the_edges_the_delta_touches() -> None:
+    # "Acme Inc" merges into the stored hub "Acme": its incident edges are
+    # read to find a match, but only the delta's edge (new here) is written.
+    incremental, graph, _ = _harness(cross_run_merge=True)
+    spokes = [f"e-{i}" for i in range(3)]
+    incremental.commit(
+        lineages=[DocumentLineage(doc_id="doc-a", entity_ids=["e-hub", *spokes])],
+        fingerprints={"doc-a": "h-a"},
+        entities=[
+            Entity(id="e-hub", name="Acme", text_unit_ids=["t1"]),
+            *(Entity(id=s, name=s, text_unit_ids=["t1"]) for s in spokes),
+        ],
+        relationships=[
+            Relationship(id=f"r-{s}", source_id="e-hub", target_id=s, type="SUPPLIES")
+            for s in spokes
+        ],
+    )
+    merged = incremental.indexing_manager.merge_with_existing_graph(
+        [
+            Entity(id="e-new", name="Acme Inc", text_unit_ids=["t2"]),
+            Entity(id="e-bank", name="Bank", text_unit_ids=["t2"]),
+        ],
+        [Relationship(id="r-bank", source_id="e-new", target_id="e-bank", type="PAYS")],
+    )
+
+    (edge,) = merged.relationships or []
+    assert (edge.id, edge.source_id) == ("r-bank", "e-hub")
+    # The hub's rank still counts its stored edges.
+    ranks = {e.id: e.rank for e in merged.entities or []}
+    assert ranks == {"e-hub": 4, "e-bank": 1}
+    assert graph.ids("relationships") == {f"r-{s}" for s in spokes}
+
+
+def test_communities_and_claims_follow_the_merge_remap() -> None:
+    # "Acme Inc" merges into the stored "Acme" (another id), and its edge into
+    # the stored edge: the delta's community and claim must reference the
+    # kept ids, not ids that are never written.
+    incremental, graph, _ = _harness(cross_run_merge=True)
+    vector = incremental.indexing_manager.opensearch_indexer
+    incremental.commit(
+        lineages=[DocumentLineage(doc_id="doc-a", entity_ids=["e-old", "e-buyer"])],
+        fingerprints={"doc-a": "h-a"},
+        entities=[
+            Entity(id="e-old", name="Acme", text_unit_ids=["t1"]),
+            Entity(id="e-buyer", name="Buyer", text_unit_ids=["t1"]),
+        ],
+        relationships=[
+            Relationship(
+                id="r-old", source_id="e-old", target_id="e-buyer", type="SUPPLIES"
+            )
+        ],
+    )
+    incremental.commit(
+        lineages=[DocumentLineage(doc_id="doc-b", entity_ids=["e-new", "e-buyer"])],
+        fingerprints={"doc-b": "h-b"},
+        entities=[
+            Entity(id="e-new", name="Acme Inc", text_unit_ids=["t2"]),
+            Entity(id="e-buyer", name="Buyer", text_unit_ids=["t2"]),
+        ],
+        relationships=[
+            Relationship(
+                id="r-new", source_id="e-new", target_id="e-buyer", type="SUPPLIES"
+            )
+        ],
+        communities=[
+            Community(
+                id="c1",
+                name="Community 1",
+                level="0",
+                parent="",
+                children=[],
+                entity_ids=["e-new", "e-buyer", "e-old"],
+                relationship_ids=["r-new"],
+            )
+        ],
+        claims=[
+            Claim(
+                id="cl1",
+                subject_id="e-new",
+                subject_name="Acme Inc",
+                object_id="e-buyer",
+                object_name="Buyer",
+                type="SUPPLIES",
+            )
+        ],
+    )
+
+    community = graph.data["communities"][("default", "c1")]
+    assert community.entity_ids == ["e-old", "e-buyer"]
+    assert community.relationship_ids == ["r-old"]
+    claim = vector.data["claims"]["cl1"]
+    assert (claim.subject_id, claim.object_id) == ("e-old", "e-buyer")

@@ -13,8 +13,15 @@ from .base import (
 if TYPE_CHECKING:
     from unified_kg_rag.domain.models.config import Config
 
-# Most findings the community report prompt asks for at each report length.
-REPORT_MAX_FINDINGS: dict[str, int] = {"short": 7, "medium": 10, "long": 15}
+# Findings (fewest, most) the community report prompt asks for per length.
+REPORT_FINDINGS: dict[str, tuple[int, int]] = {
+    "short": (5, 7),
+    "medium": (7, 10),
+    "long": (10, 15),
+}
+_REPORT_FINDINGS_TEXT = ", ".join(
+    f"{length}: {low}-{high}" for length, (low, high) in REPORT_FINDINGS.items()
+)
 # One finding: a one-line summary (~20 tokens) and a several-sentence
 # explanation (~180) in tags (~20) is ~220; x1.35 for the newer tokenizer.
 TOKENS_PER_REPORT_FINDING = 300
@@ -136,7 +143,7 @@ generation. Transform raw community data into comprehensive, actionable intellig
 MISSION: Generate structured community reports that reveal key patterns, relationships, and strategic insights using the
 exact output format specified."""
 
-_COMMUNITY_REPORT_RULES = """# ANALYSIS FRAMEWORK
+_COMMUNITY_REPORT_RULES = f"""# ANALYSIS FRAMEWORK
 
 ## Core Analysis Dimensions:
 1. **Structural Composition**: Entity types, hierarchies, network topology
@@ -163,15 +170,11 @@ _COMMUNITY_REPORT_RULES = """# ANALYSIS FRAMEWORK
 
 ### 4. Findings (length-dependent count):
 - Each finding = a one-line summary + a multi-sentence explanation
-- **short**: 5-7 findings
-- **medium**: 7-10 findings
-- **long**: 10-15 findings
+- {_REPORT_FINDINGS_TEXT} findings
 
 ## Content Requirements:
 - Evidence-based insights referencing specific entities/relationships
 - Pattern recognition highlighting non-obvious connections
-- Quantitative integration when statistics enabled
-- Key entity spotlight when requested
 - Strategic focus with actionable intelligence
 
 # OUTPUT FORMAT (MANDATORY - use exact structure):
@@ -192,7 +195,7 @@ _COMMUNITY_REPORT_RULES = """# ANALYSIS FRAMEWORK
 </findings>
 
 Emit one <finding> per distinct insight. Produce enough findings to satisfy the
-requested report length (short: 5-7, medium: 7-10, long: 10-15). Do NOT emit a
+requested report length ({_REPORT_FINDINGS_TEXT}). Do NOT emit a
 <full_content> tag — the full report body is assembled from the findings.
 
 # ANALYSIS QUALITY STANDARDS:
@@ -580,8 +583,6 @@ class CommunityReportPrompt(BasePrompt):
         "relationships",
         "sub_community_reports",
         "content_length",
-        "include_statistics",
-        "include_key_entities",
     ]
 
     @classmethod
@@ -589,7 +590,7 @@ class CommunityReportPrompt(BasePrompt):
         # long: 15 x 300 + 200 + 8192 = 12892, medium 11392 -- both under the
         # default 16384 cap, which then applies.
         length = config.graph.community_detection.report_generation.content_length
-        findings = REPORT_MAX_FINDINGS.get(length, max(REPORT_MAX_FINDINGS.values()))
+        findings = REPORT_FINDINGS.get(length, REPORT_FINDINGS["long"])[1]
         return (
             findings * TOKENS_PER_REPORT_FINDING
             + REPORT_HEADER_TOKENS
@@ -612,8 +613,6 @@ class CommunityReportPrompt(BasePrompt):
 ## COMMUNITY DATA:
 **Community ID**: {community_id}
 **Report Length**: {content_length}
-**Include Statistics**: {include_statistics}
-**Highlight Key Entities**: {include_key_entities}
 
 ## ENTITY DATA:
 <entity_data>
@@ -657,8 +656,6 @@ Everything inside the <entity_data>, <relationship_data> and <sub_community_repo
 - Write powerful executive summary (2-3 sentences)
 - Assign an importance rating (0.0-10.0) with a one-sentence justification
 - Emit one finding per distinct insight; count matches the specified length
-- Include quantitative insights if statistics enabled
-- Highlight key entities if requested
 - Each finding: a one-line summary plus a multi-sentence, evidence-based explanation
 
 ## CRITICAL REMINDERS:

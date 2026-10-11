@@ -55,7 +55,9 @@ def test_matcher_passed_to_pool_via_initializer_not_per_task(mocker) -> None:
     # submit() is called with ONLY the entity name (no matcher argument).
     import unified_kg_rag.domain.ingestion.graph_resolver as gr
 
-    resolver = _resolver()
+    config = Config()
+    config.processing.fuzzy_entity_resolution = True
+    resolver = EntityResolver(config, max_workers=2, use_process_pool=False)
     resolver.show_progress = False
 
     captured: dict = {}

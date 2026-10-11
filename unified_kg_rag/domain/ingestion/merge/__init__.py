@@ -13,17 +13,15 @@ unified-kg-rag-on-aws's Pydantic domain models (no pandas):
   description lines,
   ``text_unit_ids`` and attributes; weight = sum of the per-text-unit
   extracted strengths (``relationship_weights``), as in a full build.
-- communities/reports: id-offset append (MS never re-clusters globally on an
-  incremental run; new communities are appended, not merged into existing ones).
+
+Communities and reports need no merge: their ids are content-derived, so a
+delta run's are upserted next to the existing ones (see ``community_content_id``).
 
 These functions are pure (old + delta -> merged), so they are exercised entirely
 with in-memory fixtures and back the upsert path in the indexers.
 """
 
 from .merger import (
-    DeltaMergeResult,
-    merge_communities,
-    merge_community_reports,
     merge_entities,
     merge_relationships,
     relationship_id_remap,
@@ -31,9 +29,6 @@ from .merger import (
 )
 
 __all__ = [
-    "DeltaMergeResult",
-    "merge_communities",
-    "merge_community_reports",
     "merge_entities",
     "merge_relationships",
     "relationship_id_remap",

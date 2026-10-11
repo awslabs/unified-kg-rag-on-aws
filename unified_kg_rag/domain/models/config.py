@@ -1178,11 +1178,23 @@ class ProcessingConfig(BaseModel):
         default=ResolutionMethod.MINHASH,
         description="Entity/relationship resolution method",
     )
+    fuzzy_entity_resolution: bool = Field(
+        default=False,
+        description="Also merge entities whose names are only similar "
+        "(resolution_method at similarity_threshold), in full builds and "
+        "incremental merges alike. Off by default: names are merged when they "
+        "are equal after normalization, legal-form removal ('Acme Inc' / "
+        "'Acme') and dense-script spacing, because name similarity also joins "
+        "different organizations that share most of their name ('... "
+        "University' / '... University Hospital').",
+    )
     similarity_threshold: float = Field(
-        default=0.6,
+        default=0.85,
         ge=0.0,
         le=1.0,
-        description="Similarity threshold for entity/relationship resolution",
+        description="Similarity threshold for fuzzy entity resolution "
+        "(fuzzy_entity_resolution) and for matching claim subjects and "
+        "objects to entity names",
     )
     document_parsing: DocumentParsingConfig = Field(
         default_factory=DocumentParsingConfig,
@@ -1323,13 +1335,8 @@ class ReportGenerationConfig(BaseModel):
     content_length: str = Field(
         default="medium",
         pattern="^(short|medium|long)$",
-        description="Report length: short (6-8 paragraphs), medium (10-12), long (15-18)",
-    )
-    include_statistics: bool = Field(
-        default=True, description="Include statistical metrics in community reports"
-    )
-    include_key_entities: bool = Field(
-        default=True, description="Highlight key entities in community reports"
+        description="Report length, as the number of findings the report asks "
+        "for: short (5-7), medium (7-10), long (10-15)",
     )
     enable_sub_community_rollup: bool = Field(
         default=True,
@@ -1510,7 +1517,8 @@ class NeptuneIndexingConfig(BaseModel):
         default=1,
         ge=1,
         description=(
-            "Number of Neptune write batches to submit concurrently. 1 (default) "
+            "Number of Neptune write batches (and relationship edges, written "
+            "one per request) to submit concurrently. 1 (default) "
             "preserves sequential indexing; >1 fans batches over a thread pool, "
             "multiplexed across the Gremlin connection pool (sized to at least "
             "this value). Each batch accumulates its own stats, merged "
@@ -1746,17 +1754,10 @@ class IndexingConfig(BaseModel):
         "frequency/weight) before upsert, instead of overwriting. Requires a graph "
         "adapter that supports read-back (an adapter without it degrades to "
         "overwrite). On by default: overwriting replaces an entity shared with "
-        "unchanged documents by its delta-only description and text_unit_ids.",
-    )
-    cross_run_fuzzy_merge: bool = Field(
-        default=False,
-        description="Extend cross_run_merge with fuzzy entity resolution: match "
-        "delta entities against existing entity names by similarity (not just "
-        "exact normalized name), so near-duplicate surface forms ('Acme Corp' vs "
-        "'Acme Corporation') converge across incremental runs the way a full "
-        "rebuild groups them. Costs an entity-name projection per delta run; "
-        "requires cross_run_merge and a graph adapter that supports read-back. "
-        "Off by default.",
+        "unchanged documents by its delta-only description and text_unit_ids. "
+        "Delta entities match stored ones by the full build's rule "
+        "(processing.fuzzy_entity_resolution), which costs an entity-name "
+        "projection per delta run.",
     )
     neptune: NeptuneIndexingConfig = Field(
         default_factory=NeptuneIndexingConfig,

@@ -479,6 +479,40 @@ class OpenSearchClient:
 
         return {"errors": bool(errors), "items": errors}
 
+    def bulk_update(
+        self, index: str, documents: list[dict[str, Any]], refresh: bool = True
+    ) -> dict[str, Any]:
+        """Set the given fields of documents by ``id``, keeping the others.
+
+        A missing document is skipped (it has nothing to update). Returns the
+        same ``{errors, items}`` shape as :meth:`bulk_index`.
+        """
+        if not documents:
+            return {"errors": False, "items": []}
+
+        actions = [
+            {
+                "_op_type": "update",
+                "_index": index,
+                "_id": str(doc["id"]),
+                "doc": {key: value for key, value in doc.items() if key != "id"},
+            }
+            for doc in documents
+        ]
+
+        def updated(ok: bool, result: dict[str, Any]) -> bool:
+            return ok or _bulk_item_status(result) == 404
+
+        try:
+            success_count, errors = self._bulk_with_item_retries(actions, updated)
+        except Exception as e:
+            raise AWSServiceError("Streaming bulk update failed.") from e
+
+        if refresh and success_count > 0:
+            self.client.indices.refresh(index=index)
+
+        return {"errors": bool(errors), "items": errors}
+
     def _bulk_with_item_retries(
         self,
         actions: list[dict[str, Any]],

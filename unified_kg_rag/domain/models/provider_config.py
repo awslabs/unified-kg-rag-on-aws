@@ -243,7 +243,9 @@ class DocStatusProviderConfig(BaseModel):
     sqlite_path: str = Field(
         default=".unified-kg-rag/doc-status.sqlite3",
         min_length=1,
-        description="SQLite database file when kind is sqlite (created on first use).",
+        description="SQLite database file when kind is sqlite (created on first "
+        "use). A relative path is resolved against the config file's directory "
+        "(the working directory without a config file).",
     )
 
 

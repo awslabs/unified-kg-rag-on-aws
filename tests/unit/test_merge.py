@@ -7,16 +7,12 @@ from __future__ import annotations
 import pytest
 
 from unified_kg_rag.domain.ingestion.merge import (
-    merge_communities,
-    merge_community_reports,
     merge_entities,
     merge_relationships,
     relationship_id_remap,
     remove_text_units,
 )
 from unified_kg_rag.domain.models import (
-    Community,
-    CommunityReport,
     Entity,
     Relationship,
 )
@@ -405,32 +401,3 @@ class TestRemoveTextUnits:
         ]
         # Inputs are not mutated.
         assert entities[0].text_unit_ids == ["ta", "tb"]
-
-
-class TestMergeCommunities:
-    def test_appends_and_disambiguates_colliding_ids(self) -> None:
-        old = [Community(id="c1", name="A", level="0", parent="", children=[])]
-        delta = [
-            Community(id="c1", name="B", level="0", parent="", children=[]),
-            Community(id="c2", name="C", level="0", parent="", children=[]),
-        ]
-        merged = merge_communities(old, delta)
-        ids = [c.id for c in merged]
-        assert ids == ["c1", "c1-delta", "c2"]
-
-    def test_remerging_same_delta_is_idempotent(self) -> None:
-        # Re-applying a delta must not grow `c1-delta` into `c1-delta-delta`.
-        old = [Community(id="c1", name="A", level="0", parent="", children=[])]
-        delta = [Community(id="c1", name="B", level="0", parent="", children=[])]
-        once = merge_communities(old, delta)
-        twice = merge_communities(once, delta)
-        assert [c.id for c in twice] == ["c1", "c1-delta"]
-
-    def test_reports_appended(self) -> None:
-        old = [CommunityReport(id="cr1", community_id="c1", name="R1")]
-        delta = [CommunityReport(id="cr1", community_id="c1", name="R2")]
-        merged = merge_community_reports(old, delta)
-        assert [r.id for r in merged] == ["cr1", "cr1-delta"]
-        # Idempotent on re-merge.
-        twice = merge_community_reports(merged, delta)
-        assert [r.id for r in twice] == ["cr1", "cr1-delta"]

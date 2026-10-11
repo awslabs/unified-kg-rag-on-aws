@@ -230,7 +230,8 @@ Bedrock models:
 - **Incremental indexing** uses the SQLite registry when
   `providers.doc_status.enabled: true` (or `aws.dynamodb.enabled: true`, the
   original switch); [`docker/config.local.yaml`](../docker/config.local.yaml)
-  turns it on.
+  turns it on. A relative `sqlite_path` is resolved against the config file's
+  directory, and the run logs the database's absolute path.
 - **Token counting** uses the script-aware estimate (the same one Bedrock falls
   back to); `providers.llm.tokenizer: tiktoken` counts with a BPE encoding
   instead, which downloads its encoding file on first use.
@@ -277,7 +278,10 @@ hashing embedding provider and a fake model server:
 `LOCAL_STORES=1 uv run pytest tests/integration/test_local_stores.py`.
 
 Known differences from Neptune: TinkerGraph keeps the graph in memory only,
-and a list property written when a vertex is created keeps duplicate values
+so restarting Gremlin Server empties it while the SQLite registry keeps its
+records. An incremental run then stops before writing anything and asks for
+`indexing.reset: true` (or deleting the registry), instead of treating the
+lost documents as unchanged. A list property written when a vertex is created keeps duplicate values
 (Neptune stores them once). Nothing in the compose file is hardened; it binds
 to `127.0.0.1` only.
 
@@ -459,7 +463,8 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `processing.ignore_errors` | `false` | Skip items whose LLM step fails instead of failing the run. |
 | `processing.deduplicate` | `false` | Drop duplicate documents before extraction. |
 | `processing.resolution_method` | `"minhash"` | Entity resolution: `minhash` or `sequence_matcher`. |
-| `processing.similarity_threshold` | `0.6` | Fuzzy-match threshold for entity resolution. Raise it if distinct entities merge. |
+| `processing.fuzzy_entity_resolution` | `false` | Also merge entities whose names are only similar, in full builds and incremental merges. Off: names merge when equal after normalization, legal-form removal and dense-script spacing. |
+| `processing.similarity_threshold` | `0.85` | Threshold for fuzzy entity resolution and for matching claim subjects/objects to entity names. Raise it if distinct entities merge. |
 | `processing.document_parsing.source_directory` | `"source"` | Fallback for library callers. `run-ingestion` requires `--source-directory` (or `GRAPHRAG_SOURCE_DIRECTORY`). |
 | `processing.document_parsing.target_directory` | `null` | Export each parsed document as `<stem>.json` for inspection (same as `--target-directory`). Must not be the source directory. |
 | `processing.document_parsing.index_value` | `null` | Index suffix the run writes: every OpenSearch index and Neptune label is named `<prefix>-<index_value>` (`null` = `default`). Query the corpus with the same value as `run-rag`/`run-eval --suffix`. `run-ingestion` has no flag for it; use one config file per tenant or version. |
@@ -492,7 +497,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `graph.community_detection.max_levels` | `5` | Maximum community hierarchy depth. |
 | `graph.community_detection.min_community_size` | `3` | Smaller communities merge into neighbours. |
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | Token budget for the entity/relationship context in one report prompt. |
-| `graph.community_detection.report_generation.content_length` | `"medium"` | Report length: `short`, `medium`, `long`. |
+| `graph.community_detection.report_generation.content_length` | `"medium"` | Report length as findings per report: `short` (5-7), `medium` (7-10), `long` (10-15). |
 | `graph.analysis.centrality.calculate_betweenness` | `true` | Betweenness centrality. On graphs larger than `betweenness_auto_sample_threshold` (`2000`) nodes it is sampled instead of computed exactly. |
 | `graph.visualization.enabled` | `false` | Render visualizations and export visualization data during ingestion (one embedding call per node plus a layout reduction per ingest). |
 | `graph.visualization.outputs_directory` | `null` | Unset writes to `<cache dir>/<pipeline_id>/visualization`, so the data syncs to S3 with the cache. |
@@ -506,7 +511,6 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.reset` | `false` | Clear existing indexed data before indexing. |
 | `indexing.additional_suffix` | `null` | Appended after the run suffix in every OpenSearch index name and Neptune label (`<prefix>-<suffix>-<additional_suffix>`, where `<suffix>` is `processing.document_parsing.index_value` at ingestion and `--suffix` at query time, both `default` when unset). Set it identically for ingestion and queries. Use it for versioned or multi-tenant separation. |
 | `indexing.cross_run_merge` | `true` | On delta runs, union the delta with existing graph state instead of overwriting, so entities shared with unchanged documents keep their lineage (§5). `false` overwrites. |
-| `indexing.cross_run_fuzzy_merge` | `false` | Extend `cross_run_merge` with fuzzy entity-name matching. |
 | `indexing.max_failure_rate` | `0.2` | Per-index-type write failure rate above which the indexing stage fails, and share of communities without a report above which community detection fails. `1.0` disables the partial-failure gate. |
 | `indexing.max_document_failures` | `3` | Incremental runs: consecutive FAILED records of unchanged content after which a document is no longer retried (§5). |
 | `indexing.retire_source_scopes` | `[]` | Incremental runs: former source scopes (an old absolute source directory, or a former `source_scope` value) whose records in the run's index suffix are treated as deleted, so their exclusive content is removed. Never the run's own scope. `--retire-source-scope` adds to it. See §5 Deletion scope. |
@@ -517,11 +521,11 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.opensearch.vector_search.engine` | `"lucene"` | HNSW engine. `lucene` supports `cosinesimil` up to 1024 dimensions; see the template for `faiss`. |
 | `indexing.opensearch.index_settings.refresh_interval` | `"1s"` | Raise it (or `"-1"`) for faster bulk loads, then reset for live querying. |
 | `indexing.neptune.batch_size` | `100` | Items per Neptune write batch. |
-| `indexing.neptune.index_concurrency` | `1` | Concurrent write batches. The Gremlin connection pool grows to match if `aws.neptune.pool_size` is smaller. |
+| `indexing.neptune.index_concurrency` | `1` | Concurrent write batches (and relationship edges). The Gremlin connection pool grows to match if `aws.neptune.pool_size` is smaller. |
 | `indexing.neptune.max_attempts` | `4` | Attempts per Neptune write, including the first. Failures are retried with jittered exponential backoff from `retry_delay_seconds` (`2`), except errors a retry cannot fix (malformed query, access denied, bad parameter), which fail on the first attempt. `1` disables the retry. |
 | `indexing.neptune.max_hops` | `3` | Neighbour-expansion depth at retrieval time. |
 | `indexing.neptune.property_max_length` | `4000` | Character cap per Neptune property value. Keep it above the longest description that is not re-summarized (summarization triggers above 600 tokens, ~2,400 characters). Takes effect on re-ingestion. |
-| `indexing.neptune.entity_importance_source` | `"rank"` | Entity importance in graph-expansion relevance: `rank` (indexed entity rank), `degree` (edge count at query time) or `none` (neutral 0.5 for every entity). |
+| `indexing.neptune.entity_importance_source` | `"rank"` | Entity importance in graph-expansion relevance: `rank` (indexed entity rank, its degree), `degree` (edge count at query time) or `none` (neutral 0.5 for every entity). |
 | `indexing.neptune.traversal_fetch_multiplier` | `3` | Graph expansion fetches this many times the result width, ranks, then cuts. `1` = cut in traversal order. |
 
 ### 2.6 `search` — retrieval, fusion, reranking, per-strategy knobs
@@ -810,7 +814,7 @@ Run order (`DataIngestionPipeline.STAGE_CLASSES`). Use the stage **names**
    source == target and no extra targets).
 5. **`graph_extraction`** — LLM extracts entities + relationships per chunk.
 6. **`gleaning`** — optional iterative refinement passes (`processing.gleaning`).
-7. **`graph_resolution`** — fuzzy-match and merge duplicate entities/relationships.
+7. **`graph_resolution`** — merge duplicate entities/relationships (name variants; similar names with `processing.fuzzy_entity_resolution`).
 8. **`claim_extraction`** — optional; extract factual claims (off by default).
 9. **`claim_resolution`** — optional; dedupe extracted claims.
 10. **`graph_analysis`** — centrality metrics + graph statistics.

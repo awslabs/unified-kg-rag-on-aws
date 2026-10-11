@@ -3,7 +3,7 @@
 import re
 import time
 from array import array
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from typing import TYPE_CHECKING, Any
 
 import boto3
@@ -30,6 +30,11 @@ if TYPE_CHECKING:
     from unified_kg_rag.adapters.aws.embedding_cache import S3EmbeddingCache
 
 logger = get_logger(__name__)
+
+# Texts per embedding request, and requests in flight at once (Bedrock
+# embedding calls are IO-bound).
+_EMBED_BATCH_SIZE = 50
+_EMBED_WORKERS = 8
 
 
 class OpenSearchIndexer(VectorIndexer):
@@ -218,9 +223,12 @@ class OpenSearchIndexer(VectorIndexer):
         }
         self.opensearch_client.create_search_pipeline(pipeline_name, body)
 
-    def index_text_units(self, text_units: list[TextUnit]) -> IndexingStats:
+    def index_text_units(
+        self, text_units: list[TextUnit], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         return self._index_item_type(
             items=text_units,
+            suffixes=suffixes,
             item_type_name="text units",
             alias_prefix=self.opensearch_config.text_units_index_prefix,
             mapping_func=self._get_text_units_mapping,
@@ -228,9 +236,12 @@ class OpenSearchIndexer(VectorIndexer):
             prepare_doc_func=self._prepare_text_unit_doc,
         )
 
-    def index_entities(self, entities: list[Entity]) -> IndexingStats:
+    def index_entities(
+        self, entities: list[Entity], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         return self._index_item_type(
             items=entities,
+            suffixes=suffixes,
             item_type_name="entities",
             alias_prefix=self.opensearch_config.entities_index_prefix,
             mapping_func=self._get_entities_mapping,
@@ -253,7 +264,7 @@ class OpenSearchIndexer(VectorIndexer):
             "summary_embedding": embeddings[1],
             "full_content": report.full_content or "",
             "full_content_embedding": embeddings[2],
-            "rank": report.rank or 1.0,
+            "rank": report.rank if report.rank is not None else 1.0,
             "rating": report.rating,
             # Community membership provenance (candidate sources of the report's
             # community), so a retrieved report can be filtered by origin. Not
@@ -264,9 +275,12 @@ class OpenSearchIndexer(VectorIndexer):
             "document_ids": list(report.document_ids or []),
         }
 
-    def index_community_reports(self, reports: list[CommunityReport]) -> IndexingStats:
+    def index_community_reports(
+        self, reports: list[CommunityReport], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         return self._index_item_type(
             items=reports,
+            suffixes=suffixes,
             item_type_name="community reports",
             alias_prefix=self.opensearch_config.community_reports_index_prefix,
             mapping_func=self._get_community_reports_mapping,
@@ -365,7 +379,7 @@ class OpenSearchIndexer(VectorIndexer):
             "description": entity.description or "",
             "description_embedding": embeddings[1],
             "type": entity.type or "",
-            "rank": entity.rank or 1.0,
+            "rank": entity.rank if entity.rank is not None else 1.0,
             "confidence": (entity.confidence if entity.confidence is not None else 1.0),
             # Chunk lineage: lets LightRAG mix follow entity -> source chunks
             # instead of relying solely on a separate naive vector query.
@@ -385,13 +399,15 @@ class OpenSearchIndexer(VectorIndexer):
             "description": rel.description or "",
             "description_embedding": embeddings[0],
             "weight": rel.weight if rel.weight is not None else 1.0,
-            "rank": rel.rank or 1.0,
+            "rank": rel.rank if rel.rank is not None else 1.0,
             # Chunk lineage: lets LightRAG mix follow relationship -> source
             # chunks (LightRAG's _find_related_text_unit_from_relationships).
             "text_unit_ids": list(rel.text_unit_ids or []),
         }
 
-    def index_relationships(self, relationships: list[Relationship]) -> IndexingStats:
+    def index_relationships(
+        self, relationships: list[Relationship], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         """Embed and index relationship descriptions (LightRAG global retrieval).
 
         Relationships are embedded as first-class vectors so high-level keywords
@@ -399,6 +415,7 @@ class OpenSearchIndexer(VectorIndexer):
         """
         return self._index_item_type(
             items=relationships,
+            suffixes=suffixes,
             item_type_name="relationships",
             alias_prefix=self.opensearch_config.relationships_index_prefix,
             mapping_func=self._get_relationships_mapping,
@@ -434,7 +451,9 @@ class OpenSearchIndexer(VectorIndexer):
             "source_text": claim.source_text or "",
         }
 
-    def index_claims(self, claims: list[Claim]) -> IndexingStats:
+    def index_claims(
+        self, claims: list[Claim], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         """Embed and index claim (covariate) descriptions as searchable vectors.
 
         Connects claim extraction to retrieval: claims become first-class
@@ -442,6 +461,7 @@ class OpenSearchIndexer(VectorIndexer):
         """
         return self._index_item_type(
             items=claims,
+            suffixes=suffixes,
             item_type_name="claims",
             alias_prefix=self.opensearch_config.claims_index_prefix,
             mapping_func=self._get_claims_mapping,
@@ -484,6 +504,67 @@ class OpenSearchIndexer(VectorIndexer):
             ],
             prepare_doc_func=self._prepare_entity_doc,
         )
+
+    def update_entity_lineage(self, entities: list[Entity]) -> IndexingStats:
+        """Set stored entities' ``text_unit_ids`` in place (no re-embedding)."""
+        return self._update_fields(
+            entities,
+            self.opensearch_config.entities_index_prefix,
+            lambda e: {"text_unit_ids": list(e.text_unit_ids or [])},
+        )
+
+    def update_relationship_lineage(
+        self, relationships: list[Relationship]
+    ) -> IndexingStats:
+        """Set stored relationships' ``text_unit_ids`` and ``weight`` in place."""
+        return self._update_fields(
+            relationships,
+            self.opensearch_config.relationships_index_prefix,
+            lambda r: {
+                "text_unit_ids": list(r.text_unit_ids or []),
+                "weight": r.weight if r.weight is not None else 1.0,
+            },
+        )
+
+    def _update_fields(
+        self,
+        items: list[Any],
+        alias_prefix: str,
+        fields: Callable[[Any], dict[str, Any]],
+    ) -> IndexingStats:
+        """Partially update ``items`` by id in their suffix's live index.
+
+        A suffix without a live index, or an item without a document, has
+        nothing to update.
+        """
+        stats = IndexingStats(total_items=len(items))
+        for suffix, chunk in self._group_items_by_suffix(items).items():
+            alias_name = self._get_name(alias_prefix, suffix)
+            try:
+                index_name = self.opensearch_client.get_index_name_by_alias(alias_name)
+                if not index_name:
+                    stats.add_success(len(chunk))
+                    continue
+                response = self.opensearch_client.bulk_update(
+                    index_name,
+                    [{"id": item.id, **fields(item)} for item in chunk],
+                    refresh=self.opensearch_config.refresh_after_batch,
+                )
+                failed = [next(iter(r.values())) for r in response.get("items", [])]
+                stats.add_success(len(chunk) - len(failed))
+                if failed:
+                    stats.add_error(
+                        f"Bulk update errors: {len(failed)}",
+                        len(failed),
+                        ids=[str(f["_id"]) for f in failed if "_id" in f],
+                    )
+            except Exception as e:
+                stats.add_error(
+                    f"Update of '{alias_name}' failed: {e}",
+                    len(chunk),
+                    ids=[item.id for item in chunk],
+                )
+        return stats
 
     def delete_by_id(
         self, ids: list[str], alias_prefix: str, suffix: str
@@ -632,14 +713,20 @@ class OpenSearchIndexer(VectorIndexer):
         mapping_func: Callable[[], dict[str, Any]],
         embedding_field_extractors: list[Callable[[Any], str]],
         prepare_doc_func: Callable[[Any, tuple[list[float], ...]], dict[str, Any]],
+        suffixes: Collection[str] = (),
     ) -> IndexingStats:
-        if not items:
+        """Build a new index per suffix and swap the alias onto it.
+
+        A suffix in ``suffixes`` without items gets an empty index, so the
+        alias stops serving the previous build's documents.
+        """
+        if not items and not suffixes:
             return IndexingStats()
 
         logger.info("Indexing %s %s", len(items), item_type_name)
         total_stats = IndexingStats()
 
-        for suffix, chunk_items in self._group_items_by_suffix(items).items():
+        for suffix, chunk_items in self._group_items_by_suffix(items, suffixes).items():
             alias_name = self._get_name(alias_prefix, suffix)
             index_name = self._get_name(alias_prefix, suffix, add_timestamp=True)
 
@@ -660,16 +747,20 @@ class OpenSearchIndexer(VectorIndexer):
                         ids=failed_ids,
                     )
 
-                swapped = False
+                # Swap onto the new index when it holds something, or when the
+                # rebuild has nothing of this type for the suffix.
+                swap = not chunk_items
                 if docs:
                     indexing_stats = self._perform_indexing(index_name, docs)
                     total_stats.merge(indexing_stats)
+                    swap = indexing_stats.successful_items > 0
 
-                    if indexing_stats.successful_items > 0:
-                        self.opensearch_client.update_alias(
-                            alias_name, index_name, remove_pattern=f"{alias_name}-*"
-                        )
-                        swapped = True
+                swapped = False
+                if swap:
+                    self.opensearch_client.update_alias(
+                        alias_name, index_name, remove_pattern=f"{alias_name}-*"
+                    )
+                    swapped = True
 
                 if swapped:
                     self._reap_stale_indices(alias_name, index_name)
@@ -682,8 +773,11 @@ class OpenSearchIndexer(VectorIndexer):
                 logger.error(
                     "Failed to index %s (suffix=%s): %s", item_type_name, suffix, e
                 )
+                # A failed empty replacement still fails the run.
                 total_stats.add_error(
-                    str(e), len(chunk_items), ids=[item.id for item in chunk_items]
+                    str(e),
+                    max(1, len(chunk_items)),
+                    ids=[item.id for item in chunk_items],
                 )
                 self._drop_unswapped_index(alias_name, index_name)
 
@@ -774,7 +868,7 @@ class OpenSearchIndexer(VectorIndexer):
         return list(zip(*all_embeddings, strict=True))
 
     def _batch_embed(
-        self, texts: list[str], batch_size: int = 50
+        self, texts: list[str], batch_size: int = _EMBED_BATCH_SIZE
     ) -> list[list[float] | None]:
         result: list[list[float] | None] = [None] * len(texts)
 
@@ -848,7 +942,7 @@ class OpenSearchIndexer(VectorIndexer):
             for start in range(0, len(unique), batch_size)
         ]
         if batches:
-            max_workers = min(8, len(batches))
+            max_workers = min(_EMBED_WORKERS, len(batches))
             failed_keys = 0
             with ContextThreadPoolExecutor(max_workers=max_workers) as executor:
                 for pairs in executor.map(_embed_batch, batches):

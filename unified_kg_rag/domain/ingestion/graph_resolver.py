@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 from collections import defaultdict
+from collections.abc import Iterator
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any
@@ -13,6 +14,7 @@ from unified_kg_rag.domain.ingestion.base_resolver import (
     FuzzyMatcher,
     normalize_entity_type,
 )
+from unified_kg_rag.domain.ingestion.graph_rank import with_graph_ranks
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     cite_relationship_endpoints,
 )
@@ -230,49 +232,31 @@ class EntityResolver(BaseResolver):
             entity_map[entity.name].append(entity)
         entity_names = list(entity_map.keys())
 
-        fuzzy_matcher = self._create_fuzzy_matcher(candidate_texts=entity_names)
+        fuzzy = self.config.processing.fuzzy_entity_resolution
+        fuzzy_matcher = self._create_fuzzy_matcher(
+            candidate_texts=entity_names, fuzzy=fuzzy
+        )
 
         # Best score per undirected name pair; the matcher already drops pairs
         # whose identifier tokens differ ("purchase order 1001" vs "... 1002").
         pair_scores: dict[tuple[str, str], float] = {}
-        executor_class = (
-            ProcessPoolExecutor if self.use_process_pool else ContextThreadPoolExecutor
+        matches = (
+            self._match_in_pool(fuzzy_matcher, entity_names)
+            if fuzzy
+            # Without fuzzy matching a lookup is a dict read: a worker pool
+            # would cost more than it saves.
+            else ((n, fuzzy_matcher.find_all_matches(n)) for n in entity_names)
         )
-
-        # Send the matcher to each worker ONCE via the pool initializer, then
-        # submit only the (tiny) entity name per task. This holds for both the
-        # ProcessPoolExecutor (initializer runs once per process) and the
-        # thread-pool path (initializer runs once per thread; the matcher
-        # is shared in-process anyway). The thread pool accepts the same
-        # initializer/initargs signature.
-        with executor_class(
-            max_workers=self.max_workers,
-            initializer=_init_worker_fuzzy_matcher,
-            initargs=(fuzzy_matcher,),
-        ) as executor:
-            future_to_name = {
-                executor.submit(find_all_matches_for_entity_task, name): name
-                for name in entity_names
-            }
-            total = len(entity_names)
-            for done, future in enumerate(as_completed(future_to_name), start=1):
-                original_name = future_to_name[future]
-                if self.show_progress and done % _RESOLVE_PROGRESS_EVERY == 0:
-                    logger.info("  ...resolved %s/%s entities", done, total)
-                try:
-                    for matched_name, score in future.result():
-                        if matched_name == original_name:
-                            continue
-                        pair = (
-                            (original_name, matched_name)
-                            if original_name < matched_name
-                            else (matched_name, original_name)
-                        )
-                        pair_scores[pair] = max(score, pair_scores.get(pair, 0.0))
-                except Exception as e:
-                    logger.warning(
-                        "Failed to find matches for entity '%s': %s", original_name, e
-                    )
+        for original_name, name_matches in matches:
+            for matched_name, score in name_matches:
+                if matched_name == original_name:
+                    continue
+                pair = (
+                    (original_name, matched_name)
+                    if original_name < matched_name
+                    else (matched_name, original_name)
+                )
+                pair_scores[pair] = max(score, pair_scores.get(pair, 0.0))
 
         # Union strongest links first (ties broken by name for determinism),
         # rejecting any union that would put two type-incompatible members in
@@ -308,14 +292,59 @@ class EntityResolver(BaseResolver):
         logger.info("Created %s entity groups", len(groups))
         return groups
 
+    def _match_in_pool(
+        self, fuzzy_matcher: FuzzyMatcher, entity_names: list[str]
+    ) -> Iterator[tuple[str, list[tuple[str, float]]]]:
+        """Yield ``(name, matches)`` for every name, matched in a worker pool."""
+        executor_class = (
+            ProcessPoolExecutor if self.use_process_pool else ContextThreadPoolExecutor
+        )
+        # Send the matcher to each worker ONCE via the pool initializer, then
+        # submit only the (tiny) entity name per task. This holds for both the
+        # ProcessPoolExecutor (initializer runs once per process) and the
+        # thread-pool path (initializer runs once per thread; the matcher
+        # is shared in-process anyway). The thread pool accepts the same
+        # initializer/initargs signature.
+        with executor_class(
+            max_workers=self.max_workers,
+            initializer=_init_worker_fuzzy_matcher,
+            initargs=(fuzzy_matcher,),
+        ) as executor:
+            future_to_name = {
+                executor.submit(find_all_matches_for_entity_task, name): name
+                for name in entity_names
+            }
+            total = len(entity_names)
+            for done, future in enumerate(as_completed(future_to_name), start=1):
+                original_name = future_to_name[future]
+                if self.show_progress and done % _RESOLVE_PROGRESS_EVERY == 0:
+                    logger.info("  ...resolved %s/%s entities", done, total)
+                try:
+                    yield original_name, future.result()
+                except Exception as e:
+                    logger.warning(
+                        "Failed to find matches for entity '%s': %s", original_name, e
+                    )
+
+    @staticmethod
+    def _best_supported_name(entities: list[Entity]) -> str:
+        """The group name cited by the most text units (ties: smallest name).
+
+        Extraction already merges one name's mentions into one entity, so
+        counting entities would leave every name at one and make the
+        canonical name (and id) the first one seen, i.e. depend on input order.
+        """
+        support: dict[str, set[str]] = defaultdict(set)
+        for entity in entities:
+            support[entity.name].update(entity.text_unit_ids or ())
+        return min(support, key=lambda name: (-len(support[name]), name))
+
     def _merge_entities(self, entities: list[Entity]) -> Entity:
         if len(entities) == 1:
             return entities[0]
 
-        canonical_name = self._get_most_common_value([e.name for e in entities])
-        primary_entity = next(
-            (e for e in entities if e.name == canonical_name), entities[0]
-        )
+        canonical_name = self._best_supported_name(entities)
+        primary_entity = next(e for e in entities if e.name == canonical_name)
 
         # Max, not mean: confidence is monotonic in evidence (consistent with the
         # extractor merge); averaging dilutes a well-supported entity.
@@ -340,7 +369,6 @@ class EntityResolver(BaseResolver):
             community_ids=self._merge_lists(
                 [e.community_ids for e in entities if e.community_ids]
             ),
-            rank=max((e.rank for e in entities if e.rank is not None), default=1),
             # Recompute from text-unit support (pre-existing frequencies are
             # typically None in a full build), so frequency is a real signal.
             frequency=len(merged_text_unit_ids),
@@ -480,7 +508,6 @@ class RelationshipResolver(BaseResolver):
             ),
             description_embedding=primary_rel.description_embedding,
             text_unit_ids=merged_text_unit_ids,
-            rank=max((r.rank for r in relationships if r.rank is not None), default=1),
             attributes=self._merge_attributes(
                 [r.attributes for r in relationships if r.attributes]
             ),
@@ -533,6 +560,9 @@ class GraphResolver:
             resolved_relationships,
             relationship_stats,
         ) = self.relationship_resolver.resolve(relationships, entity_mapping)
+        resolved_entities, resolved_relationships = with_graph_ranks(
+            resolved_entities, resolved_relationships
+        )
 
         stats = GraphResolutionStats(
             entity_stats=entity_stats,

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import random
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from concurrent.futures import as_completed
 from typing import Any, cast
 
@@ -161,6 +161,37 @@ class NeptuneIndexer(GraphIndexer):
         except Exception as e:
             raise AWSServiceError(f"Neptune read_relationships failed: {e}") from e
 
+    def read_neighbor_ids(
+        self, entity_ids: list[str], suffix: str | None = None
+    ) -> dict[str, list[str]]:
+        """Read the ids of the entities each entity is related to.
+
+        Scoped to this suffix's entity label (community vertices are not
+        neighbours). Raises :class:`AWSServiceError` when the read fails, as
+        :meth:`read_entities` does.
+        """
+        if not entity_ids:
+            return {}
+        entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
+        try:
+            g = self.neptune_client.g
+            neighbors: dict[str, list[str]] = {}
+            for id_batch in self._batch_iterator(entity_ids):
+                rows = (
+                    g.V()
+                    .hasLabel(entity_label)
+                    .has("id", P.within(id_batch))
+                    .project("id", "neighbors")
+                    .by("id")
+                    .by(__.both().hasLabel(entity_label).values("id").dedup().fold())
+                    .toList()
+                )
+                for row in rows:
+                    neighbors[str(row["id"])] = [str(n) for n in row["neighbors"]]
+            return neighbors
+        except Exception as e:
+            raise AWSServiceError(f"Neptune read_neighbor_ids failed: {e}") from e
+
     def read_entity_names(self, suffix: str | None = None) -> list[tuple[str, str]]:
         """Project ``(id, name)`` for all existing entities in the suffix's label.
 
@@ -195,7 +226,9 @@ class NeptuneIndexer(GraphIndexer):
     def initialize(self) -> bool:
         return True
 
-    def index_entities(self, entities: list[Entity]) -> IndexingStats:
+    def index_entities(
+        self, entities: list[Entity], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         def get_traversal_builder(label: str) -> Callable:
             def builder(g: GraphTraversalSource, batch: list[Entity]) -> GraphTraversal:
                 t = g
@@ -216,6 +249,7 @@ class NeptuneIndexer(GraphIndexer):
             self.neptune_config.entity_label_prefix,
             get_traversal_builder,
             clear_first=True,
+            suffixes=suffixes,
         )
 
     def index_relationships(self, relationships: list[Relationship]) -> IndexingStats:
@@ -224,8 +258,10 @@ class NeptuneIndexer(GraphIndexer):
         # behavioural difference to justify two code paths.
         return self._write_relationships(relationships)
 
-    def index_communities(self, communities: list[Community]) -> IndexingStats:
-        return self._index_communities(communities, upsert=False)
+    def index_communities(
+        self, communities: list[Community], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
+        return self._index_communities(communities, upsert=False, suffixes=suffixes)
 
     def upsert_communities(self, communities: list[Community]) -> IndexingStats:
         """Idempotently merge communities into the live graph (delta semantics).
@@ -239,13 +275,17 @@ class NeptuneIndexer(GraphIndexer):
         return self._index_communities(communities, upsert=True)
 
     def _index_communities(
-        self, communities: list[Community], *, upsert: bool
+        self,
+        communities: list[Community],
+        *,
+        upsert: bool,
+        suffixes: Collection[str] = (),
     ) -> IndexingStats:
-        if not communities:
+        if not communities and not suffixes:
             return IndexingStats()
 
         total_stats = IndexingStats()
-        grouped_items = self._group_items_by_suffix(communities)
+        grouped_items = self._group_items_by_suffix(communities, suffixes)
 
         for suffix, comms in grouped_items.items():
             stats = IndexingStats()
@@ -259,6 +299,8 @@ class NeptuneIndexer(GraphIndexer):
 
             if not upsert:
                 self._clear_existing_data_by_label(community_label)
+            if not comms:
+                continue
 
             def community_vertex_builder(
                 g: GraphTraversalSource,
@@ -312,17 +354,20 @@ class NeptuneIndexer(GraphIndexer):
                     continue
                 if upsert:
                     # Drop this community's existing membership edges so re-adding
-                    # does not create duplicate MemberOf edges on an incremental run.
+                    # does not create duplicate MemberOf edges on an incremental
+                    # run; re-adding after a failed drop would duplicate them.
                     try:
                         self.neptune_client.g.V().hasLabel(community_label).has(
                             "id", comm.id
                         ).inE("MemberOf").drop().iterate()
                     except Exception as e:
+                        stats.add_error(str(e), ids=[comm.id])
                         logger.warning(
                             "Failed clearing MemberOf edges for community '%s': %s",
                             comm.id,
                             e,
                         )
+                        continue
                 for entity_id_batch in self._batch_iterator(comm.entity_ids):
                     try:
                         edge_traversal = (
@@ -431,10 +476,12 @@ class NeptuneIndexer(GraphIndexer):
         """Write relationship edges one small traversal per edge (idempotent).
 
         For each suffix group: drop existing edges by id in batches (so re-runs
-        don't duplicate parallel edges), then add each edge as its own traversal.
-        Emits a progress log every ``_PROGRESS_LOG_EVERY`` edges so a large run is
-        distinguishable from a hang. A single failed edge is recorded and skipped
-        (does not abort the batch).
+        don't duplicate parallel edges), then add each edge as its own
+        traversal, ``index_concurrency`` at a time. An edge whose drop failed
+        is not re-added (that would duplicate it) and counts as failed, as does
+        a single failed write; neither aborts the others. Emits a progress log
+        every ``_PROGRESS_LOG_EVERY`` edges so a large run is distinguishable
+        from a hang.
         """
         if not relationships:
             return IndexingStats()
@@ -461,42 +508,57 @@ class NeptuneIndexer(GraphIndexer):
             # source vertex carries THIS suffix's entity label (the scope
             # delete_by_id uses); unscoped, indexing one tenant would drop
             # another tenant's identical edges.
-            for id_batch in self._batch_iterator([rel.id for rel in rels]):
+            writable: list[Relationship] = []
+            for batch in self._batch_iterator(rels):
                 try:
-                    self.neptune_client.g.E().has("id", P.within(id_batch)).where(
-                        __.outV().hasLabel(entity_label)
-                    ).drop().iterate()
+                    self.neptune_client.g.E().has(
+                        "id", P.within([rel.id for rel in batch])
+                    ).where(__.outV().hasLabel(entity_label)).drop().iterate()
+                    writable.extend(batch)
                 except Exception as e:
+                    stats.add_error(
+                        f"dropping existing edges failed: {e}",
+                        len(batch),
+                        ids=[rel.id for rel in batch],
+                    )
                     logger.warning("Failed dropping existing edge batch: %s", e)
 
-            for index, rel in enumerate(rels, start=1):
+            def write(
+                rel: Relationship, entity_label: str = entity_label
+            ) -> str | None:
+                """Write one edge; the error, or None once it is written."""
                 try:
                     traversal = self._build_add_edge_traversal(
                         self.neptune_client.g, rel, entity_label
                     )
-                    written = self._execute_with_retries(
+                    if self._execute_with_retries(
                         traversal, "Relationship indexing", results=True
-                    )
-                    if written:
+                    ):
+                        return None
+                    return f"source entity '{rel.source_id}' not found"
+                except Exception as e:
+                    return str(e)
+
+            workers = max(1, min(self.neptune_config.index_concurrency, len(writable)))
+            with ContextThreadPoolExecutor(max_workers=workers) as executor:
+                for index, (rel, error) in enumerate(
+                    zip(writable, executor.map(write, writable), strict=True),
+                    start=1,
+                ):
+                    if error is None:
                         stats.add_success(1)
                     else:
-                        stats.add_error("source entity vertex not found", ids=[rel.id])
+                        stats.add_error(error, ids=[rel.id])
                         logger.warning(
-                            "Relationship '%s' not written: source entity '%s' "
-                            "not found",
-                            rel.id,
-                            rel.source_id,
+                            "Relationship '%s' not written: %s", rel.id, error
                         )
-                except Exception as e:
-                    stats.add_error(str(e), ids=[rel.id])
-                    logger.warning("Failed indexing relationship '%s': %s", rel.id, e)
-                if index % self._PROGRESS_LOG_EVERY == 0:
-                    logger.info(
-                        "  ...%s/%s relationships written for '%s'",
-                        index,
-                        len(rels),
-                        entity_label,
-                    )
+                    if index % self._PROGRESS_LOG_EVERY == 0:
+                        logger.info(
+                            "  ...%s/%s relationships written for '%s'",
+                            index,
+                            len(writable),
+                            entity_label,
+                        )
 
             stats.processing_time = time.time() - start_time
             total_stats.merge(stats)
@@ -515,31 +577,38 @@ class NeptuneIndexer(GraphIndexer):
         relationship index survives (it is keyed by its own id, attributed to a
         *different*, still-present document's lineage). We query the incident
         edge ids here so the caller can also remove those orphaned relationship
-        documents from OpenSearch. Best-effort: returns [] on any failure (the
-        caller still performs the id-set based deletion).
+        documents from OpenSearch.
+
+        Raises:
+            AWSServiceError: The read failed. An empty result would leave the
+                orphaned relationship documents behind, or miss the stored
+                edges a remapped delta edge must merge into.
         """
         if not entity_ids:
             return []
+        label = (
+            self._get_label(self.neptune_config.entity_label_prefix, suffix)
+            if suffix is not None
+            else None
+        )
         try:
             g = self.neptune_client.g
-            base = (
-                g.V().hasLabel(
-                    self._get_label(self.neptune_config.entity_label_prefix, suffix)
+            rel_ids: set[str] = set()
+            for id_batch in self._batch_iterator(entity_ids):
+                base = g.V().hasLabel(label) if label is not None else g.V()
+                rows = (
+                    base.has("id", P.within(id_batch))
+                    .bothE()
+                    .values("id")
+                    .dedup()
+                    .toList()
                 )
-                if suffix is not None
-                else g.V()
-            )
-            rel_ids = (
-                base.has("id", P.within(entity_ids))
-                .bothE()
-                .values("id")
-                .dedup()
-                .toList()
-            )
-            return [str(rid) for rid in rel_ids if rid is not None]
-        except Exception as e:  # noqa: BLE001 - best-effort orphan cleanup
-            logger.warning("find_incident_relationship_ids failed: %s", e)
-            return []
+                rel_ids.update(str(rid) for rid in rows if rid is not None)
+            return sorted(rel_ids)
+        except Exception as e:
+            raise AWSServiceError(
+                f"Neptune find_incident_relationship_ids failed: {e}"
+            ) from e
 
     def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
         """Delete vertices and edges by their ``id`` property (delta removals).
@@ -642,17 +711,20 @@ class NeptuneIndexer(GraphIndexer):
         traversal_builder_func: Callable,
         *,
         clear_first: bool,
+        suffixes: Collection[str] = (),
     ) -> IndexingStats:
-        if not items:
+        if not items and not suffixes:
             return IndexingStats()
 
-        grouped_items = self._group_items_by_suffix(items)
+        grouped_items = self._group_items_by_suffix(items, suffixes)
         total_stats = IndexingStats()
 
         for suffix, chunk in grouped_items.items():
             label = self._get_label(label_prefix, suffix)
             if clear_first:
                 self._clear_existing_data_by_label(label)
+            if not chunk:
+                continue
 
             start_time = time.time()
 

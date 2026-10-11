@@ -239,6 +239,7 @@ providers:
     kind: "dynamodb"
     # Incremental indexing on/off; null follows aws.dynamodb.enabled.
     enabled: null
+    # SQLite registry file (kind: sqlite); relative to this config file.
     sqlite_path: ".unified-kg-rag/doc-status.sqlite3"
 
 # Global Output Fixing Configuration (auto-repair malformed model responses)
@@ -266,7 +267,16 @@ processing:
   ignore_errors: false
   deduplicate: false
   resolution_method: "minhash"
-  similarity_threshold: 0.6
+  # Entities merge when their names are equal after normalization, legal-form
+  # removal ("Acme Inc" / "Acme") and dense-script spacing. true also merges
+  # names that are only similar (resolution_method at similarity_threshold),
+  # in full builds and incremental merges alike; similarity also joins
+  # different organizations that share most of their name ("... University" /
+  # "... University Hospital").
+  fuzzy_entity_resolution: false
+  # Fuzzy entity resolution threshold; also used to match claim subjects and
+  # objects to entity names.
+  similarity_threshold: 0.85
 
   # Document Parsing
   document_parsing:
@@ -455,9 +465,8 @@ graph:
       # prompt. Entities are degree-sorted (most-connected first) and packed up
       # to this budget; truncation drops the least-important entities first.
       max_report_context_tokens: 4000
+      # Findings per report: short 5-7, medium 7-10, long 10-15.
       content_length: "medium"
-      include_statistics: true
-      include_key_entities: true
       # When a parent community's raw context would overflow the token budget,
       # substitute summaries of its already-generated child sub-community reports
       # for the lowest-priority raw context (MS GraphRAG roll-up) instead of
@@ -517,14 +526,10 @@ indexing:
   # overwriting. Requires a graph adapter that supports read-back. On by
   # default: with false, an entity shared with unchanged documents is replaced
   # by its delta-only description and text_unit_ids (its lineage to the
-  # unchanged documents' chunks is lost).
+  # unchanged documents' chunks is lost). Delta entities match stored ones by
+  # the full build's rule (processing.fuzzy_entity_resolution), which costs an
+  # entity-name projection per delta run.
   cross_run_merge: true
-  # Extend cross_run_merge with fuzzy entity resolution: match delta entities
-  # against existing entity names by similarity (not just exact normalized name),
-  # so near-duplicate surface forms ("Acme Corp" vs "Acme Corporation") converge
-  # across incremental runs the way a full rebuild groups them. Costs an
-  # entity-name projection per delta run. Requires cross_run_merge. Off by default.
-  cross_run_fuzzy_merge: false
   # Maximum tolerated per-index-type write failure rate before the indexing
   # stage is marked FAILED. A fully-failed index type (0 successes) always
   # fails; this additionally catches PARTIAL failures (e.g. most relationship
@@ -619,7 +624,8 @@ indexing:
     entity_label_prefix: "Entity"
     community_label_prefix: "Community"
     batch_size: 100
-    # Concurrent write batches submitted to Neptune. 1 (default) = sequential
+    # Concurrent write batches (and relationship edges, one per request)
+    # submitted to Neptune. 1 (default) = sequential
     # indexing; >1 fans batches over a thread pool, multiplexed across the
     # Gremlin connection pool (aws.neptune.pool_size, raised to at least this
     # value). Each batch accumulates its own stats, merged on completion.

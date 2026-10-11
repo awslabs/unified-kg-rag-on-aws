@@ -144,7 +144,7 @@ class TestLegacyLookups:
         assert len(delta.new) == 250
         # The diff already shows that no legacy key is stored: nothing is read.
         assert store.gets == 0
-        assert store.batches == []
+        assert not any(store.batches)
 
     def test_a_legacy_record_is_adopted_through_the_batch(self) -> None:
         store = _CountingStore()
@@ -170,6 +170,28 @@ class TestLegacyLookups:
         assert store.batches == [1]
         assert store.get(legacy_doc_id(first)) is None
         assert store.get(document_doc_id(first)).entity_ids == ["e1"]
+
+    def test_legacy_records_are_rekeyed_in_one_write(self, mocker) -> None:
+        store = _CountingStore()
+        docs = self._docs(3)
+        legacy = {document_doc_id(d): legacy_doc_id(d) for d in docs}
+        for document in docs[:2]:
+            store.put(
+                DocStatusRecord(
+                    doc_id=legacy_doc_id(document),
+                    content_hash=compute_content_hash(document),
+                    status="processed",
+                    scope=self.SCOPE,
+                )
+            )
+        put_many = mocker.spy(store, "put_many")
+
+        detect_delta(docs, store, scope=self.SCOPE, legacy_doc_ids=legacy)
+
+        (call,) = put_many.call_args_list
+        assert sorted(r.doc_id for r in call.args[0]) == sorted(
+            document_doc_id(d) for d in docs[:2]
+        )
 
 
 class TestFilterDocumentsToProcess:
@@ -253,16 +275,3 @@ def test_exhausted_retries_are_read_in_one_batch() -> None:
     assert len(delta.unchanged) == 299
     assert store.gets == 0
     assert store.batches == [300]
-
-
-def test_exhausted_retries_fall_back_to_get_without_get_many() -> None:
-    class _Legacy(FakeDocStatusStore):
-        get_many = None  # type: ignore[assignment]
-
-    store = _Legacy()
-    documents = _failed_corpus(store, 3)
-
-    delta, _ = detect_delta(documents, store, max_failures=3)
-
-    assert delta.changed == [document_doc_id(documents[0])]
-    assert len(delta.unchanged) == 2

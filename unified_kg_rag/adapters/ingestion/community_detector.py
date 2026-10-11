@@ -19,6 +19,7 @@ from unified_kg_rag.adapters.aws.chain_factory import (
 from unified_kg_rag.adapters.aws.token_counter import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
+from unified_kg_rag.domain.ingestion.graph_builder import edge_relationships
 from unified_kg_rag.domain.models import (
     Community,
     CommunityFinding,
@@ -570,7 +571,13 @@ class CommunityDetector(BaseProcessor):
                             parent_nodes.update(child_comm.nodes)
                             children.append(child_comm)
 
-                if parent_nodes:
+                if len(children) == 1:
+                    # A cluster Leiden left on its own (often an isolated one)
+                    # would be a parent identical to its only child, embedded,
+                    # indexed and retrieved once per level. The child stands
+                    # for it at this level instead.
+                    current_level_map[i] = children[0].community_id
+                elif parent_nodes:
                     # The id derives from the members, so it is known only once
                     # every child has been folded in.
                     parent_comm_id = community_content_id(level, parent_nodes)
@@ -588,7 +595,12 @@ class CommunityDetector(BaseProcessor):
                     current_level_map[i] = parent_comm_id
 
             logger.info(
-                "Created %s level %s communities", len(current_level_map), level
+                "Created %s level %s communities",
+                sum(
+                    self.all_communities[cid].level == level
+                    for cid in current_level_map.values()
+                ),
+                level,
             )
             previous_level_map = current_level_map
 
@@ -701,13 +713,20 @@ class CommunityDetector(BaseProcessor):
             self.graph.nodes[nid].get("name", nid) for nid in member_ids[:max_entities]
         ]
 
+        # An edge carries every relationship between its two entities.
+        relationship_ids = sorted(
+            rel["id"]
+            for _, _, data in subgraph.edges(data=True)
+            for rel in edge_relationships(data)
+            if rel.get("id") is not None
+        )
         community_attributes = {
             **attributes,
             "size": len(hier_comm.nodes),
             "density": nx.density(subgraph),
             "entity_names": entity_names,
             "resolution": self.community_detection_config.resolution,
-            "num_relationships": subgraph.number_of_edges(),
+            "num_relationships": len(relationship_ids),
         }
 
         label = hier_comm.label or hier_comm.community_id
@@ -720,11 +739,7 @@ class CommunityDetector(BaseProcessor):
             parent=hier_comm.parent_id or "",
             children=hier_comm.children_ids,
             entity_ids=member_ids,
-            relationship_ids=[
-                rel_id
-                for source, target in subgraph.edges()
-                if (rel_id := self.graph.edges[source, target].get("id")) is not None
-            ],
+            relationship_ids=relationship_ids,
             # Union the member entities' source text units. Nodes are added with
             # the full entity dump (graph_builder), so text_unit_ids is present.
             # Without this the community's text_unit_ids stayed empty, so
@@ -908,94 +923,21 @@ class CommunityDetector(BaseProcessor):
         reports_by_id: dict[str, CommunityReport] = {}
         all_reports: list[CommunityReport] = []
         total_failed: list[str] = []
-        community_by_id = {c.id: c for c in communities}
 
         for level in sorted({_level(c) for c in communities}):
             level_communities = [c for c in communities if _level(c) == level]
-            # A parent whose only child has the same members would get a second
-            # LLM report over identical context; reuse the child's instead.
-            reused = []
-            to_generate = []
-            for community in level_communities:
-                copy = self._reuse_single_child_report(
-                    community, reports_by_id, community_by_id
-                )
-                if copy is None:
-                    to_generate.append(community)
-                else:
-                    reused.append(copy)
             report_inputs = [
-                self._prepare_report_input(c, reports_by_id) for c in to_generate
+                self._prepare_report_input(c, reports_by_id) for c in level_communities
             ]
-            level_reports, failed = (
-                self._run_report_batch(report_inputs, to_generate, graph_attributes)
-                if to_generate
-                else ([], [])
+            level_reports, failed = self._run_report_batch(
+                report_inputs, level_communities, graph_attributes
             )
             total_failed.extend(failed)
-            for report in [*level_reports, *reused]:
+            for report in level_reports:
                 reports_by_id[report.community_id] = report
             all_reports.extend(level_reports)
-            all_reports.extend(reused)
-            if reused:
-                logger.info(
-                    "Level %s: reused %s single-child reports instead of "
-                    "regenerating them",
-                    level,
-                    len(reused),
-                )
 
         return all_reports, total_failed
-
-    def _reuse_single_child_report(
-        self,
-        community: Community,
-        reports_by_id: dict[str, CommunityReport],
-        community_by_id: dict[str, Community],
-    ) -> CommunityReport | None:
-        """The only child's report re-keyed to ``community``, if membership matches.
-
-        Leiden often keeps a cluster unchanged across levels, so the parent has
-        exactly one child with the same entities and relationships. Its report
-        input would be the same context, so a new LLM call could only restate
-        the child's report.
-        """
-        children = list(community.children or [])
-        if len(children) != 1:
-            return None
-        child_report = reports_by_id.get(children[0])
-        child = community_by_id.get(children[0])
-        if child_report is None or child is None:
-            return None
-        if set(child.entity_ids or []) != set(community.entity_ids or []) or set(
-            child.relationship_ids or []
-        ) != set(community.relationship_ids or []):
-            return None
-
-        report_id = generate_stable_id(f"report:{community.id}")
-        _, _, title = child_report.name.partition(": ")
-        report = child_report.model_copy(
-            deep=True,
-            update={
-                "id": report_id,
-                "short_id": report_id[:8],
-                "name": (
-                    f"Report for {community.name}: {title}"
-                    if title
-                    else f"Report for {community.name}"
-                ),
-                "community_id": community.id,
-                "rank": self._compute_report_rank(community),
-                "size": community.size,
-                "period": community.period,
-                "attributes": {
-                    **(child_report.attributes or {}),
-                    "reused_from_community_id": child.id,
-                },
-            },
-        )
-        report.full_content = report.render_full_content() or child_report.full_content
-        return report
 
     def _compute_report_rank(self, community: Community) -> int:
         """Deterministic community-importance rank (no LLM call).
@@ -1048,7 +990,11 @@ class CommunityDetector(BaseProcessor):
         entities: list[dict[str, Any]] = []
         selected_ids: list[str] = []
         used_tokens = 0
-        truncated = False
+        # Members over the entity cap are left out as well: like a token
+        # overflow, that rolls the sub-community reports in.
+        truncated = len(candidate_ids) < sum(
+            1 for eid in community.entity_ids or [] if eid in self.graph
+        )
         for eid in candidate_ids:
             node = self.graph.nodes[eid]
             entity = {
@@ -1070,18 +1016,22 @@ class CommunityDetector(BaseProcessor):
         # Relationships only among the selected entities, ordered by combined
         # endpoint degree (most-connected pair first, edge weight as tiebreak)
         # so the most salient connections survive the same token budget.
-        selected_set = set(selected_ids)
+        # An edge carries every relationship between its two entities; each
+        # is its own line, in the relationship's own direction.
         edges = sorted(
-            self.graph.subgraph(selected_ids).edges(data=True),
+            (
+                (data.get("source_id", u), data.get("target_id", v), data)
+                for u, v, edge in self.graph.subgraph(selected_ids).edges(data=True)
+                for data in edge_relationships(edge)
+            ),
             key=lambda e: (
                 -(self.graph.degree(e[0]) + self.graph.degree(e[1])),
-                -float(e[2].get("weight", 1.0)),
+                -float(e[2].get("weight") or 1.0),
+                str(e[2].get("id", "")),
             ),
         )
         relationships: list[dict[str, Any]] = []
         for u, v, data in edges:
-            if u not in selected_set or v not in selected_set:
-                continue
             rel = {
                 # Use entity NAMES, not raw node ids (hashes): the report LLM
                 # otherwise sees relationships between unintelligible ids,
@@ -1109,15 +1059,20 @@ class CommunityDetector(BaseProcessor):
             sub_reports = self._build_sub_community_context(
                 community, reports_by_id, token_budget
             )
+        if truncated and not sub_reports:
+            logger.info(
+                "Report context of community '%s' keeps %s of its %s entities",
+                community.id,
+                len(entities),
+                len(community.entity_ids or []),
+            )
 
         return {
             "community_id": community.id,
             "entities": entities,
             "relationships": relationships,
             "sub_community_reports": sub_reports,
-            **report_config.model_dump(
-                include={"content_length", "include_statistics", "include_key_entities"}
-            ),
+            "content_length": report_config.content_length,
         }
 
     def _build_sub_community_context(
@@ -1185,8 +1140,6 @@ class CommunityDetector(BaseProcessor):
                 ),
                 "sub_community_reports": r.get("sub_community_reports", ""),
                 "content_length": r["content_length"],
-                "include_statistics": str(r["include_statistics"]),
-                "include_key_entities": str(r["include_key_entities"]),
             }
             for r in report_inputs
         ]

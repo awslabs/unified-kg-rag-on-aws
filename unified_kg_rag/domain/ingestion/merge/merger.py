@@ -13,20 +13,12 @@ from __future__ import annotations
 from collections.abc import Collection, Iterable
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
-
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
     overlay_weights,
     text_unit_weights,
 )
-from unified_kg_rag.domain.models import (
-    Community,
-    CommunityReport,
-    Constants,
-    Entity,
-    Relationship,
-)
+from unified_kg_rag.domain.models import Constants, Entity, Relationship
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils.common import entity_key
 
@@ -34,18 +26,6 @@ if TYPE_CHECKING:
     from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
 
 logger = get_logger(__name__)
-
-
-class DeltaMergeResult(BaseModel):
-    """Outcome of merging delta artifacts into the existing index."""
-
-    entities: list[Entity] = Field(default_factory=list)
-    relationships: list[Relationship] = Field(default_factory=list)
-    communities: list[Community] = Field(default_factory=list)
-    community_reports: list[CommunityReport] = Field(default_factory=list)
-    # Maps a delta entity id to the existing entity id it merged into, so callers
-    # can remap relationship/text-unit references onto the surviving id.
-    entity_id_remap: dict[str, str] = Field(default_factory=dict)
 
 
 def _dedupe_preserve_order(values: list[str]) -> list[str]:
@@ -149,15 +129,16 @@ def merge_entities(
     listed: there is nothing to remap, and callers treat a non-empty remap as a
     reason to read back and rewrite the surviving entities' edges.
 
-    When ``fuzzy_matcher`` is supplied (built over the *old* entity names), a
-    delta entity whose normalized name does not exactly match an old one is
-    additionally matched fuzzily against the old names — so near-duplicate
-    surface forms ("Acme Corp" vs "Acme Corporation") converge across runs the
-    way the full-build ``EntityResolver`` groups them, instead of accumulating
-    as separate entities. Without a matcher the merge is exact-name-only (its
-    long-standing behaviour). Fuzzy matches only ever collapse a delta onto an
-    *existing old* entity (never delta-onto-delta), which keeps the result
-    order-independent and idempotent.
+    When ``fuzzy_matcher`` is supplied (built over the *old* entity names with
+    the full build's settings), a delta entity whose normalized name does not
+    exactly match an old one is additionally matched against the old names
+    with ``find_all_matches`` — so the surface forms the full-build
+    ``EntityResolver`` groups ("Acme Inc" vs "Acme", and similar names when
+    fuzzy resolution is on) converge across runs too, instead of accumulating
+    as separate entities. Without a matcher the merge is exact-name-only.
+    Matches only ever collapse a delta onto an *existing old* entity (never
+    delta-onto-delta), which keeps the result order-independent and
+    idempotent.
     """
     by_id: dict[str, Entity] = {}
     # Identity key -> id of the first entity with that key.
@@ -398,114 +379,3 @@ def remove_text_units(
         apply_text_unit_weights(updated, weights)
         updated_relationships.append(updated)
     return updated_entities, updated_relationships
-
-
-def _community_content_key(community: Community) -> tuple:
-    """Identity signature for a community (excludes the id, which we reassign).
-
-    Includes every membership/content field so two communities that differ in
-    any of them are treated as distinct: keying on a subset would make a delta
-    community that genuinely differs only in (say) its relationship/text-unit
-    membership collide with an existing one and be silently dropped as
-    "already merged".
-    """
-    return (
-        community.name,
-        str(community.level),
-        community.parent,
-        tuple(sorted(community.entity_ids or [])),
-        tuple(sorted(community.relationship_ids or [])),
-        tuple(sorted(community.text_unit_ids or [])),
-    )
-
-
-def _report_content_key(report: CommunityReport) -> tuple:
-    """Identity signature for a community report (excludes the id).
-
-    Includes ``full_content`` and ``rank`` so a regenerated report that differs
-    only in its body or importance is not collapsed onto the old one.
-    """
-    return (
-        report.name,
-        report.community_id,
-        report.summary,
-        report.full_content,
-        report.rank,
-    )
-
-
-def _placed_id(
-    base_id: str, content_key: tuple, existing: dict[str, tuple]
-) -> str | None:
-    """Resolve where a colliding delta item should go, or ``None`` to skip.
-
-    Walks ``base_id``, ``base_id-delta``, ``base_id-delta-2``, … :
-    - if a candidate id is free, return it (disambiguated, never dropped);
-    - if a candidate id is taken by an item with the SAME content, return
-      ``None`` — this delta was already merged (re-application is idempotent);
-    - if taken by DIFFERENT content, advance to the next candidate.
-    """
-    if base_id not in existing:
-        return base_id
-    if existing[base_id] == content_key:
-        return None
-    candidate = f"{base_id}-delta"
-    counter = 2
-    while candidate in existing:
-        if existing[candidate] == content_key:
-            return None
-        candidate = f"{base_id}-delta-{counter}"
-        counter += 1
-    return candidate
-
-
-def merge_communities(old: list[Community], delta: list[Community]) -> list[Community]:
-    """Append delta communities to old ones (MS-style id-offset append).
-
-    Incremental runs do not re-cluster globally; a delta community whose id
-    collides with an existing one is kept distinct by a unique
-    ``-delta``/``-delta-N`` suffix (never silently dropped). Re-merging the same
-    delta is idempotent: a collision whose content matches an already-merged
-    community is skipped rather than re-appended (matched by content, not by a
-    fragile id-suffix string).
-    """
-    existing: dict[str, tuple] = {c.id: _community_content_key(c) for c in old}
-    merged = [community.model_copy(deep=True) for community in old]
-
-    for community in delta:
-        key = _community_content_key(community)
-        placed = _placed_id(community.id, key, existing)
-        if placed is None:
-            continue  # already merged (idempotent re-application)
-        new_community = community.model_copy(deep=True)
-        new_community.id = placed
-        existing[placed] = key
-        merged.append(new_community)
-
-    logger.info(
-        "Merged communities: %d old + %d delta -> %d",
-        len(old),
-        len(delta),
-        len(merged),
-    )
-    return merged
-
-
-def merge_community_reports(
-    old: list[CommunityReport], delta: list[CommunityReport]
-) -> list[CommunityReport]:
-    """Append delta community reports (mirrors :func:`merge_communities`)."""
-    existing: dict[str, tuple] = {r.id: _report_content_key(r) for r in old}
-    merged = [report.model_copy(deep=True) for report in old]
-
-    for report in delta:
-        key = _report_content_key(report)
-        placed = _placed_id(report.id, key, existing)
-        if placed is None:
-            continue
-        new_report = report.model_copy(deep=True)
-        new_report.id = placed
-        existing[placed] = key
-        merged.append(new_report)
-
-    return merged

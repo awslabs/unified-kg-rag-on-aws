@@ -3,6 +3,7 @@
 import time
 from collections.abc import Callable
 from concurrent.futures import as_completed
+from functools import partial
 from typing import Any, NamedTuple
 
 from pydantic import BaseModel, Field
@@ -11,6 +12,8 @@ from unified_kg_rag.adapters.ingestion.description_summarizer import (
     DescriptionSummarizer,
 )
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
+from unified_kg_rag.domain.ingestion.graph_rank import with_graph_ranks
 from unified_kg_rag.domain.ingestion.merge import (
     merge_entities,
     merge_relationships,
@@ -52,6 +55,8 @@ class IndexingTask(NamedTuple):
     fn: Callable
     args: list
     key: str
+    # Run even without items (a full build replacing a type with nothing).
+    run_empty: bool = False
 
 
 class IndexingManager:
@@ -169,35 +174,54 @@ class IndexingManager:
         community_reports: list[CommunityReport] | None = None,
         claims: list[Claim] | None = None,
     ) -> dict[str, IndexingStats]:
+        """Replace the stored artifacts of the run's suffixes (full build).
+
+        Every index type is rebuilt for every suffix the run's artifacts carry,
+        including a type the run has none of (no claims, no reports): its index
+        is emptied rather than left serving a previous run's items.
+        """
         start_time = time.time()
         results: dict[str, IndexingStats] = {}
 
         self._enrich_text_units(text_units, communities)
+        suffixes = self._discover_suffixes(
+            [
+                *(text_units or []),
+                *(entities or []),
+                *(relationships or []),
+                *(communities or []),
+                *(community_reports or []),
+                *(claims or []),
+            ]
+        )
+
+        def replace(fn: Callable, items: list[Any] | None, key: str) -> IndexingTask:
+            return IndexingTask(
+                partial(fn, suffixes=suffixes), [items or []], key, run_empty=True
+            )
 
         phase1_tasks = [
-            IndexingTask(
+            replace(
                 self.opensearch_indexer.index_text_units,
-                [text_units],
+                text_units,
                 "opensearch_text_units",
             ),
-            IndexingTask(
+            replace(
                 self.opensearch_indexer.index_entities,
-                [entities],
+                entities,
                 "opensearch_entities",
             ),
-            IndexingTask(
+            replace(
                 self.opensearch_indexer.index_community_reports,
-                [community_reports],
+                community_reports,
                 "opensearch_community_reports",
             ),
-            IndexingTask(
+            replace(
                 self.opensearch_indexer.index_claims,
-                [claims],
+                claims,
                 "opensearch_claims",
             ),
-            IndexingTask(
-                self.neptune_indexer.index_entities, [entities], "neptune_entities"
-            ),
+            replace(self.neptune_indexer.index_entities, entities, "neptune_entities"),
         ]
         # The OpenSearch relationship VECTOR index is only consumed by LightRAG
         # high-level keyword retrieval (mix/hybrid). Skip it for a GraphRAG-only
@@ -206,9 +230,9 @@ class IndexingManager:
         # them for graph expansion.
         if self.config.indexing.opensearch.build_relationship_vector_index:
             phase1_tasks.append(
-                IndexingTask(
+                replace(
                     self.opensearch_indexer.index_relationships,
-                    [relationships],
+                    relationships,
                     "opensearch_relationships",
                 )
             )
@@ -217,14 +241,15 @@ class IndexingManager:
         results.update(self._run_indexing_phase(phase1_tasks))
 
         phase2_tasks = [
+            # Replacing the entity vertices already dropped the old edges.
             IndexingTask(
                 self.neptune_indexer.index_relationships,
                 [relationships],
                 "neptune_relationships",
             ),
-            IndexingTask(
+            replace(
                 self.neptune_indexer.index_communities,
-                [communities],
+                communities,
                 "neptune_communities",
             ),
         ]
@@ -377,23 +402,17 @@ class IndexingManager:
         merged_entities = entities
         entity_id_remap: dict[str, str] = {}
         if entities:
-            existing_ids = {e.id for e in entities}
-            fuzzy_matcher = None
-            if self.config.indexing.cross_run_fuzzy_merge:
-                # Fuzzy merge needs old entities whose ids DIFFER from the delta's
-                # (exact-id read-back only surfaces normalized-name-equal ones).
-                # Project existing (id, name), fuzzy-match delta names, and pull
-                # the matched olds into the read-back set.
-                fuzzy_matcher, fuzzy_old_ids = self._build_fuzzy_old_matcher(
-                    suffix, entities
-                )
-                existing_ids |= fuzzy_old_ids
+            # The full build also merges names that differ only by legal form
+            # or spacing (and by similarity with fuzzy_entity_resolution);
+            # their stored entities have other ids than the delta's, so they
+            # are found through the stored names and read back as well.
+            name_matcher, matched_ids = self._match_stored_names(suffix, entities)
             existing = self.neptune_indexer.read_entities(
-                sorted(existing_ids), suffix=suffix
+                sorted({e.id for e in entities} | matched_ids), suffix=suffix
             )
             if existing:
                 merged_entities, entity_id_remap = merge_entities(
-                    existing, entities, fuzzy_matcher=fuzzy_matcher
+                    existing, entities, fuzzy_matcher=name_matcher
                 )
                 # The cross-run merge concatenates descriptions, so an entity
                 # seen across many runs can grow unbounded — re-summarize the
@@ -427,50 +446,74 @@ class IndexingManager:
                     relationships,
                     entity_id_remap=entity_id_remap or None,
                 )
-                merged_relationships = (
-                    self.description_summarizer.summarize_relationships(
-                        merged_relationships
-                    )
-                )
                 relationship_remap = relationship_id_remap(
                     relationships, merged_relationships, entity_id_remap
                 )
+                # The incident edges were read only to find matches: write
+                # back just the edges a delta edge became or merged into.
+                written = {relationship_remap.get(r.id, r.id) for r in relationships}
+                merged_relationships = (
+                    self.description_summarizer.summarize_relationships(
+                        [r for r in merged_relationships if r.id in written]
+                    )
+                )
+        merged_entities, merged_relationships = self._rank_with_stored_graph(
+            suffix, merged_entities, merged_relationships
+        )
         return (
             merged_entities,
             merged_relationships,
             {**entity_id_remap, **relationship_remap},
         )
 
-    def _build_fuzzy_old_matcher(
-        self, suffix: str, entities: list[Entity]
-    ) -> tuple[Any, set[str]]:
-        """Build a FuzzyMatcher over existing entity names and find fuzzy hits.
+    def _rank_with_stored_graph(
+        self,
+        suffix: str,
+        entities: list[Entity],
+        relationships: list[Relationship],
+    ) -> tuple[list[Entity], list[Relationship]]:
+        """Recompute the ranks (degrees) of the items the delta writes over the
+        stored graph plus the delta's relationships.
 
-        Returns ``(matcher, old_ids)`` where ``matcher`` is built over all
-        existing entity names in ``suffix`` and ``old_ids`` is the set of
-        existing entity ids whose name fuzzy-matches some delta name — so the
-        caller can read those olds back for merging. Returns ``(None, set())``
-        if no existing names can be projected (adapter without the capability),
-        degrading to exact-name merge.
+        A stored entity the delta does not write keeps its rank until a full
+        rebuild, also when a removed document dropped one of its edges.
         """
-        from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
+        ids = sorted(
+            {e.id for e in entities}
+            | {i for r in relationships for i in (r.source_id, r.target_id)}
+        )
+        stored_neighbors = self.neptune_indexer.read_neighbor_ids(ids, suffix=suffix)
+        return with_graph_ranks(entities, relationships, stored_neighbors)
 
+    def _match_stored_names(
+        self, suffix: str, entities: list[Entity]
+    ) -> tuple[FuzzyMatcher | None, set[str]]:
+        """Match delta entity names against the stored names of ``suffix``.
+
+        Returns a matcher over the stored names (built with the full build's
+        settings) and the ids of the stored entities some delta name matches.
+        Returns ``(None, set())`` when the adapter projects no names, which
+        leaves the merge to ids and exact keys.
+        """
         id_by_name: dict[str, str] = {}
         for eid, name in self.neptune_indexer.read_entity_names(suffix):
             id_by_name.setdefault(name, eid)
         if not id_by_name:
             return None, set()
 
+        processing = self.config.processing
         matcher = FuzzyMatcher(
             candidates=list(id_by_name.keys()),
-            resolution_method=self.config.processing.resolution_method.value,
-            similarity_threshold=self.config.processing.similarity_threshold,
+            resolution_method=processing.resolution_method,
+            similarity_threshold=processing.similarity_threshold,
+            fuzzy=processing.fuzzy_entity_resolution,
         )
-        old_ids: set[str] = set()
-        for entity in entities:
-            for name, _score in matcher.find_all_matches(entity.name):
-                if name in id_by_name:
-                    old_ids.add(id_by_name[name])
+        old_ids = {
+            id_by_name[name]
+            for entity in entities
+            for name, _score in matcher.find_all_matches(entity.name)
+            if name in id_by_name
+        }
         return matcher, old_ids
 
     def remove_text_units_from_shared(
@@ -485,9 +528,10 @@ class IndexingManager:
 
         Reads the stored items back, removes ``text_unit_ids`` from their
         lineage (recomputing frequency/weight, see ``remove_text_units``) and
-        upserts every item read back to both stores, so a retry also repairs
-        a store an earlier, interrupted strip did not reach. A graph adapter
-        without read-back leaves them unchanged.
+        writes every item read back to both stores (the vector store updates
+        only those fields in place), so a retry also repairs a store an earlier,
+        interrupted strip did not reach. A graph adapter without read-back
+        leaves them unchanged.
 
         A failed read is reported as failed items, so the caller keeps the
         documents' registry rows and retries the removal.
@@ -530,7 +574,39 @@ class IndexingManager:
             len(relationships),
             suffix,
         )
-        return self.index_delta(entities=entities, relationships=relationships)
+        # Only lineage and weight changed: the vector store updates them in
+        # place instead of re-embedding unchanged text.
+        phase1 = [
+            IndexingTask(
+                self.neptune_indexer.upsert_entities, [entities], "neptune_entities"
+            ),
+            IndexingTask(
+                self.opensearch_indexer.update_entity_lineage,
+                [entities],
+                "opensearch_entities",
+            ),
+        ]
+        if self.config.indexing.opensearch.build_relationship_vector_index:
+            phase1.append(
+                IndexingTask(
+                    self.opensearch_indexer.update_relationship_lineage,
+                    [relationships],
+                    "opensearch_relationships",
+                )
+            )
+        results = self._run_indexing_phase(phase1)
+        results.update(
+            self._run_indexing_phase(
+                [
+                    IndexingTask(
+                        self.neptune_indexer.upsert_relationships,
+                        [relationships],
+                        "neptune_relationships",
+                    )
+                ]
+            )
+        )
+        return results
 
     def delete_documents(
         self, ids_by_suffix: dict[str, list[str]]
@@ -550,9 +626,18 @@ class IndexingManager:
             # but its OpenSearch relationship document would survive as a
             # dangling edge. Collect those incident edge ids BEFORE the Neptune
             # drop, then fold them into the relationship-index deletion below.
-            incident_rel_ids = self.neptune_indexer.find_incident_relationship_ids(
-                ids, suffix=suffix
-            )
+            try:
+                incident_rel_ids = self.neptune_indexer.find_incident_relationship_ids(
+                    ids, suffix=suffix
+                )
+            except Exception as e:  # noqa: BLE001 - reported as failed items
+                # Deleting without them would orphan their vector documents
+                # for good; fail the removal so the registry rows are kept.
+                logger.error("Reading incident edges in '%s' failed: %s", suffix, e)
+                stats = IndexingStats(total_items=len(ids))
+                stats.add_error(str(e), count=len(ids))
+                results[f"neptune_read_{suffix}"] = stats
+                continue
             results[f"neptune_delete_{suffix}"] = self.neptune_indexer.delete_by_id(
                 ids, suffix=suffix
             )
@@ -567,13 +652,13 @@ class IndexingManager:
         self, tasks: list[IndexingTask]
     ) -> dict[str, IndexingStats]:
         phase_results: dict[str, IndexingStats] = {}
-        valid_tasks = [task for task in tasks if task.args and task.args[0]]
+        valid_tasks = [task for task in tasks if task.run_empty or task.args[0]]
 
         if not valid_tasks:
             logger.info("No tasks to run in this phase.")
             return phase_results
 
-        total_items = sum(len(task.args[0]) for task in valid_tasks)
+        total_items = sum(len(task.args[0] or []) for task in valid_tasks)
         logger.info(
             "Executing %s tasks with %s total items...", len(valid_tasks), total_items
         )

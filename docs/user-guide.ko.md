@@ -227,6 +227,8 @@ docker compose -f docker/compose.local.yaml down -v
 - **증분 인덱싱**은 `providers.doc_status.enabled: true`(또는 기존 스위치인
   `aws.dynamodb.enabled: true`)일 때 SQLite 레지스트리를 씁니다.
   [`docker/config.local.yaml`](../docker/config.local.yaml)은 이를 켭니다.
+  상대 경로 `sqlite_path`는 설정 파일 디렉터리를 기준으로 해석하며, 실행 로그에
+  데이터베이스의 절대 경로를 남깁니다.
 - **토큰 계산**은 문자 체계를 고려한 추정치(Bedrock이 대체 수단으로 쓰는 것과 같음)를
   씁니다. `providers.llm.tokenizer: tiktoken`이면 BPE 인코딩으로 세며, 처음 쓸 때 인코딩
   파일을 내려받습니다.
@@ -268,8 +270,10 @@ Ollama를 실행합니다. OpenSearch는 보안 플러그인을 끄고 `analysis
 모델 없이 저장소만 확인하려면 해싱 임베딩 공급자와 가짜 모델 서버를 쓰는 스모크 테스트를
 실행하세요: `LOCAL_STORES=1 uv run pytest tests/integration/test_local_stores.py`.
 
-Neptune과 다른 점이 있습니다. TinkerGraph는 그래프를 메모리에만 두며, 정점을 만들 때
-쓴 리스트 속성에 중복 값을 그대로 저장합니다(Neptune은 한 번만 저장). compose 파일에는
+Neptune과 다른 점이 있습니다. TinkerGraph는 그래프를 메모리에만 두므로 Gremlin Server를
+다시 시작하면 그래프는 비지만 SQLite 레지스트리의 레코드는 남습니다. 이때 증분 실행은 잃어버린
+문서를 변경 없음으로 처리하지 않고, 아무것도 쓰기 전에 멈추며 `indexing.reset: true`(또는
+레지스트리 삭제)를 안내합니다. 또 정점을 만들 때 쓴 리스트 속성에 중복 값을 그대로 저장합니다(Neptune은 한 번만 저장). compose 파일에는
 보안 강화 설정이 없으며 `127.0.0.1`에만 바인딩합니다.
 
 ---
@@ -438,7 +442,8 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `processing.ignore_errors` | `false` | LLM 단계가 실패한 항목을 건너뛰고 실행을 계속합니다. |
 | `processing.deduplicate` | `false` | 추출 전에 중복 문서를 제거합니다. |
 | `processing.resolution_method` | `"minhash"` | 엔티티 해석 방식입니다. `minhash` 또는 `sequence_matcher`입니다. |
-| `processing.similarity_threshold` | `0.6` | 엔티티 해석의 퍼지 매칭 임계값입니다. 서로 다른 엔티티가 합쳐지면 올리세요. |
+| `processing.fuzzy_entity_resolution` | `false` | 이름이 비슷하기만 한 엔티티도 전체 빌드와 증분 병합에서 병합합니다. 끄면 정규화, 법인 형태 표기 제거, 한자·한글·가나 옆 공백 제거 뒤 이름이 같을 때만 병합합니다. |
+| `processing.similarity_threshold` | `0.85` | 퍼지 엔티티 해석과 클레임 주체·객체의 엔티티 이름 매칭에 쓰는 임계값입니다. 서로 다른 엔티티가 합쳐지면 올리세요. |
 | `processing.document_parsing.source_directory` | `"source"` | 라이브러리 호출용 기본값입니다. `run-ingestion`에는 `--source-directory`(또는 `GRAPHRAG_SOURCE_DIRECTORY`)가 반드시 필요합니다. |
 | `processing.document_parsing.target_directory` | `null` | 파싱한 문서를 확인용 `<stem>.json`으로 내보냅니다(`--target-directory`와 같음). 소스 디렉터리는 지정할 수 없습니다. |
 | `processing.document_parsing.index_value` | `null` | 실행이 쓰는 인덱스 접미사입니다. 모든 OpenSearch 인덱스와 Neptune 레이블 이름이 `<prefix>-<index_value>`가 됩니다(`null`이면 `default`). 이 코퍼스에 질의할 때는 같은 값을 `run-rag`/`run-eval --suffix`로 넘깁니다. `run-ingestion`에는 이 값을 지정하는 플래그가 없으므로 테넌트나 버전마다 설정 파일을 따로 두세요. |
@@ -471,7 +476,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `graph.community_detection.max_levels` | `5` | 커뮤니티 계층의 최대 깊이입니다. |
 | `graph.community_detection.min_community_size` | `3` | 이보다 작은 커뮤니티는 이웃 커뮤니티에 합칩니다. |
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | 리포트 프롬프트 하나에 넣는 엔티티·관계 컨텍스트의 토큰 예산입니다. |
-| `graph.community_detection.report_generation.content_length` | `"medium"` | 리포트 길이입니다. `short`, `medium`, `long` 중 하나입니다. |
+| `graph.community_detection.report_generation.content_length` | `"medium"` | 리포트 길이로, 리포트마다 요청할 findings 수입니다. `short`(5-7), `medium`(7-10), `long`(10-15) 중 하나입니다. |
 | `graph.analysis.centrality.calculate_betweenness` | `true` | 매개 중심성을 계산합니다. 노드가 `betweenness_auto_sample_threshold`(`2000`)보다 많은 그래프에서는 정확히 계산하지 않고 샘플링합니다. |
 | `graph.visualization.enabled` | `false` | 수집 중에 시각화를 렌더링하고 시각화 데이터를 내보냅니다(수집마다 노드당 임베딩 호출 한 번과 레이아웃 차원 축소가 추가됨). |
 | `graph.visualization.outputs_directory` | `null` | 지정하지 않으면 `<cache dir>/<pipeline_id>/visualization`에 기록하므로 데이터가 캐시와 함께 S3로 동기화됩니다. |
@@ -485,7 +490,6 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `indexing.reset` | `false` | 인덱싱 전에 기존 인덱싱 데이터를 지웁니다. |
 | `indexing.additional_suffix` | `null` | 모든 OpenSearch 인덱스 이름과 Neptune 레이블에서 실행 접미사 뒤에 붙습니다(`<prefix>-<suffix>-<additional_suffix>`). `<suffix>`는 수집 시 `processing.document_parsing.index_value`, 질의 시 `--suffix`이며 지정하지 않으면 둘 다 `default`입니다. 수집과 질의에 같은 값을 지정하세요. 버전별·테넌트별 분리에 씁니다. |
 | `indexing.cross_run_merge` | `true` | 증분 실행에서 변경분을 기존 그래프 상태에 덮어쓰지 않고 합칩니다. 그래서 바뀌지 않은 문서와 공유하는 엔티티의 계보가 유지됩니다(§5). `false`이면 덮어씁니다. |
-| `indexing.cross_run_fuzzy_merge` | `false` | `cross_run_merge`에 엔티티 이름 퍼지 매칭을 더합니다. |
 | `indexing.max_failure_rate` | `0.2` | 인덱스 유형별 쓰기 실패율이 이 값을 넘으면 인덱싱 단계가, 보고서가 없는 커뮤니티 비율이 이 값을 넘으면 커뮤니티 탐지 단계가 실패합니다. `1.0`이면 부분 실패 검사를 끕니다. |
 | `indexing.max_document_failures` | `3` | 증분 실행에서 내용이 바뀌지 않은 문서가 연속으로 이 횟수만큼 FAILED로 기록되면 더는 재시도하지 않습니다(§5). |
 | `indexing.retire_source_scopes` | `[]` | 증분 실행에서 이전 소스 범위(옮기기 전의 절대 소스 디렉터리나 이전 `source_scope` 값)를 지정하면, 실행 인덱스 접미사에서 그 범위의 레코드를 삭제된 문서로 처리해 그 문서에만 속한 내용을 지웁니다. 실행 자신의 범위는 지정할 수 없습니다. `--retire-source-scope`로 값을 더할 수 있습니다(§5 삭제 범위 참고). |
@@ -496,11 +500,11 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `indexing.opensearch.vector_search.engine` | `"lucene"` | HNSW 엔진입니다. `lucene`은 1024차원까지 `cosinesimil`을 지원합니다. `faiss`는 템플릿을 참고하세요. |
 | `indexing.opensearch.index_settings.refresh_interval` | `"1s"` | 대량 적재를 빠르게 하려면 늘리거나 `"-1"`로 두고, 실제 질의 전에 되돌리세요. |
 | `indexing.neptune.batch_size` | `100` | Neptune 쓰기 배치당 항목 수입니다. |
-| `indexing.neptune.index_concurrency` | `1` | 동시에 보내는 쓰기 배치 수입니다. `aws.neptune.pool_size`가 이보다 작으면 Gremlin 연결 풀이 이 값에 맞춰 늘어납니다. |
+| `indexing.neptune.index_concurrency` | `1` | 동시에 보내는 쓰기 배치(와 관계 간선) 수입니다. `aws.neptune.pool_size`가 이보다 작으면 Gremlin 연결 풀이 이 값에 맞춰 늘어납니다. |
 | `indexing.neptune.max_attempts` | `4` | 첫 시도를 포함한 Neptune 쓰기당 시도 횟수입니다. 실패하면 `retry_delay_seconds`(`2`)에서 시작하는 지터 포함 지수 백오프로 재시도합니다. 단, 재시도로 해결되지 않는 오류(잘못된 쿼리, 액세스 거부, 잘못된 파라미터)는 첫 시도에서 실패합니다. `1`이면 재시도하지 않습니다. |
 | `indexing.neptune.max_hops` | `3` | 검색 시점의 이웃 확장 깊이입니다. |
 | `indexing.neptune.property_max_length` | `4000` | Neptune 속성 값당 최대 문자 수입니다. 다시 요약되지 않는 가장 긴 설명보다 크게 두세요(요약은 600토큰, 약 2,400자를 넘으면 실행). 다시 수집해야 반영됩니다. |
-| `indexing.neptune.entity_importance_source` | `"rank"` | 그래프 확장 관련도에 쓰는 엔티티 중요도입니다. `rank`(인덱싱된 엔티티 rank), `degree`(질의 시점의 간선 수), `none`(모든 엔티티에 중립값 0.5) 중 하나입니다. |
+| `indexing.neptune.entity_importance_source` | `"rank"` | 그래프 확장 관련도에 쓰는 엔티티 중요도입니다. `rank`(인덱싱된 엔티티 rank, 즉 degree), `degree`(질의 시점의 간선 수), `none`(모든 엔티티에 중립값 0.5) 중 하나입니다. |
 | `indexing.neptune.traversal_fetch_multiplier` | `3` | 그래프 확장이 결과 폭의 이 배수만큼 가져와 순위를 매긴 뒤 자릅니다. `1`이면 순회 순서대로 자릅니다. |
 
 ### 2.6 `search` — 검색, 융합, 재순위화, 전략별 설정
@@ -780,7 +784,7 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
    대상 언어가 같고 추가 대상 언어가 없으면 아무 일도 하지 않음).
 5. **`graph_extraction`** — LLM이 청크마다 엔티티와 관계를 추출합니다.
 6. **`gleaning`** — 선택 단계입니다. 반복 정제 패스를 실행합니다(`processing.gleaning`).
-7. **`graph_resolution`** — 중복 엔티티와 관계를 퍼지 매칭으로 찾아 병합합니다.
+7. **`graph_resolution`** — 중복 엔티티와 관계를 병합합니다(이름 변형, `processing.fuzzy_entity_resolution`이면 비슷한 이름도).
 8. **`claim_extraction`** — 선택 단계입니다. 사실 주장을 추출합니다(기본은 꺼짐).
 9. **`claim_resolution`** — 선택 단계입니다. 추출한 주장의 중복을 제거합니다.
 10. **`graph_analysis`** — 중심성 지표와 그래프 통계를 계산합니다.

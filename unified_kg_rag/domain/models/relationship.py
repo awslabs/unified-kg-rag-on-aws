@@ -22,6 +22,7 @@ class Relationship(Identified):
         None, description="List of text unit IDs in which the relationship appears"
     )
     rank: int | None = Field(
-        1,
-        description="Rank of the relationship, used for sorting. Higher rank indicates more important relationship",
+        default=1,
+        description="Sum of the endpoints' graph degrees, set with the entity "
+        "rank; higher is more important",
     )

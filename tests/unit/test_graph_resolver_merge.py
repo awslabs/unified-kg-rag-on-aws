@@ -64,16 +64,27 @@ def test_merge_recomputes_frequency_from_text_unit_union(
     assert set(merged.text_unit_ids) == {"t1", "t2"}
 
 
-def test_merge_canonical_name_is_most_common(resolver: GraphResolver) -> None:
+def test_merge_canonical_name_is_the_best_supported(resolver: GraphResolver) -> None:
     entities = [
-        _ent("e1", "Acme"),
-        _ent("e2", "Acme"),
-        _ent("e3", "ACME"),
+        _ent("e1", "ACME", text_unit_ids=["t1"]),
+        _ent("e2", "Acme", text_unit_ids=["t1", "t2"]),
+        _ent("e3", "Acme Inc", text_unit_ids=["t3"]),
     ]
-    merged = resolver.entity_resolver._merge_entities(entities)
-    assert merged.name == "Acme"
-    # The surviving id is the primary (most-common-name) entity's.
-    assert merged.id in {"e1", "e2"}
+    for ordering in (entities, entities[::-1]):
+        merged = resolver.entity_resolver._merge_entities(ordering)
+        # The name cited by the most text units wins, whatever the order.
+        assert (merged.name, merged.id) == ("Acme", "e2")
+
+
+def test_merge_canonical_name_tie_takes_the_smallest_name(
+    resolver: GraphResolver,
+) -> None:
+    entities = [
+        _ent("e1", "Acme", text_unit_ids=["t1"]),
+        _ent("e2", "ACME", text_unit_ids=["t2"]),
+    ]
+    for ordering in (entities, entities[::-1]):
+        assert resolver.entity_resolver._merge_entities(ordering).id == "e2"
 
 
 def test_merge_single_entity_returns_input_unchanged(resolver: GraphResolver) -> None:

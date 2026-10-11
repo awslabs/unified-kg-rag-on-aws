@@ -250,9 +250,10 @@ def test_merge_with_existing_graph_passthrough_when_nothing_existing(manager) ->
     result = mgr.merge_with_existing_graph(new_e, new_r)
     merged_e, merged_r = result.entities, result.relationships
 
-    # No existing rows read back -> returns the inputs unchanged (overwrite mode).
-    assert merged_e == new_e
-    assert merged_r == new_r
+    # No existing rows read back -> returns the inputs (overwrite mode), ranked
+    # by the delta's relationships.
+    assert merged_e == [new_e[0].model_copy(update={"rank": 1})]
+    assert merged_r == [new_r[0].model_copy(update={"rank": 2})]
 
 
 def test_merge_with_existing_graph_handles_empty_inputs(manager) -> None:
@@ -370,3 +371,41 @@ def test_relationship_vector_index_disabled_in_delta(manager) -> None:
     mgr.index_delta(relationships=[_rel()], entities=[])
     assert "relationships" not in vector.data
     assert "relationships" in graph.data
+
+
+def test_full_rebuild_empties_an_index_type_the_run_has_none_of(manager) -> None:
+    # Run 2 has no claims, reports or communities: it must not keep serving
+    # run 1's.
+    from unified_kg_rag.domain.models import Claim, CommunityReport
+
+    mgr, graph, vector, _ = manager
+    community = Community(
+        id="c1", name="C1", level="0", parent="", children=[], entity_ids=["e1"]
+    )
+    mgr.index_all_data(
+        text_units=[TextUnit(id="t1", text="a")],
+        entities=[Entity(id="e1", name="Vendor")],
+        communities=[community],
+        community_reports=[CommunityReport(id="cr1", name="R1", community_id="c1")],
+        claims=[
+            Claim(
+                id="cl1",
+                subject_id="e1",
+                subject_name="Vendor",
+                object_name="100",
+                type="OWES",
+            )
+        ],
+    )
+    assert vector.ids("claims") == {"cl1"}
+
+    mgr.index_all_data(
+        text_units=[TextUnit(id="t2", text="b")],
+        entities=[Entity(id="e2", name="Buyer")],
+    )
+
+    assert vector.ids("claims") == set()
+    assert vector.ids("community_reports") == set()
+    assert graph.ids("communities") == set()
+    assert vector.ids("text_units") == {"t2"}
+    assert graph.ids("entities") == {"e2"}

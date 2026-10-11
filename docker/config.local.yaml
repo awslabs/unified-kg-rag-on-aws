@@ -41,7 +41,8 @@ providers:
   doc_status:
     # Incremental indexing: re-runs only re-index new and changed documents.
     enabled: true
-    sqlite_path: ".unified-kg-rag/doc-status.sqlite3"
+    # Relative to this file: the repository's .unified-kg-rag/ directory.
+    sqlite_path: "../.unified-kg-rag/doc-status.sqlite3"
 
 aws:
   neptune:

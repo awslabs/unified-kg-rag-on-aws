@@ -37,7 +37,7 @@ from unified_kg_rag.application.ingestion.incremental import (
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
-from unified_kg_rag.domain.ingestion.delta_detector import document_doc_id
+from unified_kg_rag.domain.ingestion.delta_detector import detect_delta, document_doc_id
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
     sum_weights,
@@ -179,7 +179,7 @@ def _expected_state(corpus: dict[str, Content]):
 def _run(inc: IncrementalIndexer, corpus: dict[str, Content]) -> None:
     """One incremental run, wired like the indexing stage."""
     documents = [_document(path, content) for path, content in corpus.items()]
-    delta, fingerprints = inc.plan(documents)
+    delta, fingerprints = detect_delta(documents, inc.doc_status)
     assert inc.remove_changed_and_deleted(delta)
     to_extract = set(delta.new + delta.changed)
     extracted = [d for d in documents if document_doc_id(d) in to_extract]
