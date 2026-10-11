@@ -19,11 +19,11 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     coerce_llm_text,
     group_by_text_unit,
 )
+from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.entity_grounding import (
     is_grounded,
     is_name_grounded,
 )
-from unified_kg_rag.domain.ingestion.merge.merger import merge_descriptions
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     cite_relationship_endpoints,
 )

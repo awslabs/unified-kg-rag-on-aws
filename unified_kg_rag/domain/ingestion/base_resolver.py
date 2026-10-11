@@ -11,7 +11,7 @@ from typing import Any
 
 from datasketch import MinHash, MinHashLSH
 
-from unified_kg_rag.domain.ingestion.merge.merger import merge_descriptions
+from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.models import Config, ResolutionMethod
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import (
