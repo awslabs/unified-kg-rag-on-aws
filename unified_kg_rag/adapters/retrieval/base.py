@@ -20,6 +20,7 @@ from unified_kg_rag.adapters.storage.filter_schema import FilterFields
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
+    RetrieverRole,
     SearchQuery,
     SearchResult,
     SearchType,
@@ -180,15 +181,11 @@ class BaseSearchStrategy(MetricsMixin, ABC):
     @property
     def graph_retriever(self) -> BaseGraphRAGRetriever | None:
         """The retriever bound to the GRAPH role (graph traversal/expansion)."""
-        from unified_kg_rag.domain.models import RetrieverRole
-
         return self.retrievers.get(RetrieverRole.GRAPH.value)
 
     @property
     def document_retriever(self) -> BaseGraphRAGRetriever | None:
         """The retriever bound to the DOCUMENT role (vector/lexical lookup)."""
-        from unified_kg_rag.domain.models import RetrieverRole
-
         return self.retrievers.get(RetrieverRole.DOCUMENT.value)
 
     async def _safe_aretrieve(

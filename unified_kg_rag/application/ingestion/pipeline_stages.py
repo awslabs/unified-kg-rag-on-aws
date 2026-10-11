@@ -1395,8 +1395,8 @@ class CommunityDetectionStage(PipelineStage):
 
         if self.config.graph.visualization.enabled and context.knowledge_graph:
             try:
-                # Imported lazily to avoid an import cycle (visualization.base
-                # imports ingestion, which imports this module).
+                # Imported on use: rendering is opt-in, and the visualization
+                # package loads umap and scikit-learn (seconds of import time).
                 from unified_kg_rag.visualization import GraphVisualizationManager
 
                 logger.info("Generating graph visualizations...")
