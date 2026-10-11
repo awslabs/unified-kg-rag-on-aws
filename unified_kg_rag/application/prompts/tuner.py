@@ -100,7 +100,6 @@ class PromptTuner:
     ) -> None:
         self.config = config
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
         self.factory = self.providers.llm_factory
 
     def sample_corpus(self, texts: list[str]) -> str:

@@ -91,15 +91,10 @@ def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
 
 
 class BaseGraphRAGRetriever(BaseRetriever, MetricsMixin, ABC):
-    def __init__(
-        self, config: Config, boto_session: boto3.Session | None = None, **kwargs: Any
-    ) -> None:
+    def __init__(self, config: Config, **kwargs: Any) -> None:
         BaseRetriever.__init__(self, **kwargs)
         MetricsMixin.__init__(self, **kwargs)
         self._config = config
-        self._boto_session = boto_session or boto3.Session(
-            profile_name=self._config.aws.profile_name
-        )
 
     def _get_relevant_documents(
         self,
@@ -179,10 +174,7 @@ class BaseSearchStrategy(MetricsMixin, ABC):
         # the strategy's LLM chains, scorer and token counter alike. Without
         # one, a default bundle is built over ``boto_session``.
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
-        self.hybrid_scorer = HybridScorer(
-            self.config, boto_session=self.boto_session, providers=self.providers
-        )
+        self.hybrid_scorer = HybridScorer(self.config, providers=self.providers)
         self.token_manager = TokenManager(self.config, providers=self.providers)
 
     @property

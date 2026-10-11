@@ -184,6 +184,35 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#157).
 
 ### Changed
+- **Breaking:** one injection path per component. `DataIngestionPipeline`'s
+  `doc_status=`, `vector_indexer=` and `graph_indexer=`, and `GraphRAGChain`'s
+  `model_factory=` and `retriever_builders=`, are shorthand for a bundle built
+  with them; passing one together with `providers=` raises `ValueError` (set
+  it on the `Providers` bundle instead). An injected doc-status registry turns
+  incremental indexing on wherever it is injected (`Providers.doc_status_enabled`;
+  before, `Providers(doc_status=...)` alone did not). `IndexingStage` no longer
+  takes `vector_indexer` / `graph_indexer`: its indexers come from the bundle
+  (#PR).
+- **Breaking:** the AWS session is created only when an AWS client needs it, so
+  a local run with `aws.profile_name` naming a missing profile no longer fails
+  with `ProfileNotFound` while building the pipeline. The pipeline stages no
+  longer take `boto_session` (pass `providers=`), and the `boto_session`
+  attributes of the pipeline, its stages, `GraphRAGChain` and the LLM
+  adapters are gone (read `providers.boto_session`). The Neptune and
+  OpenSearch clients create their default session on first use (IAM auth
+  only), and the bundle hands a store client its session only when that store
+  signs requests (`use_iam`) or, for OpenSearch, keeps the S3 embedding cache.
+  `run-ingestion` no longer creates its own session (#PR).
+- **Breaking:** `OpenSearchIndexer`, `OpenSearchRetriever` and
+  `BedrockNodeEmbedder` require `embedding_factory=` instead of building a
+  second provider bundle of their own; `NeptuneIndexer` takes the bundle's
+  `boto_session`. `BaseGraphRAGRetriever`, `NeptuneRetriever` and
+  `OpenSearchRetriever` no longer take `boto_session` (unused) (#PR).
+- The pipeline decides which stages run from one table
+  (`DataIngestionPipeline.CONFIG_ENABLED`) instead of membership sets and
+  `if`/`elif` branches; `BOTO_REQUIRED_STAGES`, `PROVIDER_STAGES`,
+  `DOC_STATUS_STAGES` and `INPUT_DIR_REQUIRED_STAGES` are gone and every stage
+  receives the bundle (#PR).
 - **Breaking** (import paths): provider-neutral LLM code no longer lives in
   `adapters/aws/`. `LanguageModelInfo`, `EmbeddingModelInfo`,
   `RerankModelInfo` and `effective_max_output_tokens` moved from

@@ -82,8 +82,8 @@ def test_injected_providers_reach_every_ingestion_stage(
     stages = {pipeline.name_to_type_map[s.name]: s for s in pipeline.stages}
 
     assert pipeline.providers is providers
-    for stage_type in DataIngestionPipeline.PROVIDER_STAGES:
-        assert stages[stage_type].providers is providers, stage_type
+    for stage_type, stage in stages.items():
+        assert stage.providers is providers, stage_type
 
     T = PipelineStageType
     assert stages[T.TEXT_CHUNKING].chunker.factory is llm
@@ -117,7 +117,6 @@ def test_translator_and_visualization_use_the_bundle(no_bedrock) -> None:
 
     assert translator.factory is llm
     assert viz.providers is providers
-    assert viz.boto_session is providers.boto_session
 
 
 def test_pipeline_without_providers_builds_one_default_bundle(
@@ -143,11 +142,7 @@ def test_pipeline_without_providers_builds_one_default_bundle(
 
     # Every LLM-using stage shares one default factory: built exactly once.
     llm_cls.assert_called_once()
-    assert all(
-        stage.providers is pipeline.providers
-        for stage in pipeline.stages
-        if pipeline.name_to_type_map[stage.name] in pipeline.PROVIDER_STAGES
-    )
+    assert all(stage.providers is pipeline.providers for stage in pipeline.stages)
 
 
 def test_evaluation_manager_hands_the_chain_bundle_to_evaluators(

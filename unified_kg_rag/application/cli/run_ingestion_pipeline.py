@@ -7,7 +7,6 @@ from datetime import datetime
 from importlib.metadata import version
 from pathlib import Path
 
-import boto3
 from dotenv import load_dotenv
 from rich.panel import Panel
 from rich.prompt import Confirm
@@ -434,7 +433,6 @@ class IngestionPipelineRunner:
         self._display_run_info()
 
         console.print("\n[bold]Initializing pipeline...[/bold]")
-        boto_session = boto3.Session(profile_name=self.config.aws.profile_name)
         pipeline_config = self._create_pipeline_config()
         self._require_indexing_endpoints(pipeline_config)
         self.pipeline = DataIngestionPipeline(
@@ -442,7 +440,6 @@ class IngestionPipelineRunner:
             pipeline_config=pipeline_config,
             source_directory=self.args.source_directory,
             target_directory=self.args.target_directory,
-            boto_session=boto_session,
             metrics_sink=self._build_metrics_sink(),
         )
 

@@ -262,7 +262,6 @@ class GraphGleaner(BaseProcessor):
     ) -> None:
         super().__init__(config)
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
         self.gleaning_config = self.config.processing.gleaning
         self.ignore_errors = self.config.processing.ignore_errors
         self.show_progress = show_progress

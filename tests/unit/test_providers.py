@@ -224,7 +224,7 @@ def test_injected_llm_factory_reaches_conversation_memory(no_bedrock) -> None:
     assert isinstance(chain.memory_manager, MemoryManager)
     assert chain.memory_manager.providers is providers
     history = asyncio.run(chain.memory_manager.get_or_create_memory("c-1"))
-    assert history.boto_session is providers.boto_session
+    assert history.entity_extractor is not None
     assert str(config.search.entity_extraction_model_id) in (
         providers.llm_factory.model_ids  # type: ignore[attr-defined]
     )
@@ -288,7 +288,7 @@ def test_mismatched_config_keeps_shared_memory_and_logs_once(
 
 def test_providers_and_model_factory_are_exclusive() -> None:
     config = Config()
-    with pytest.raises(ValueError, match="either model_factory or providers"):
+    with pytest.raises(ValueError, match="either to GraphRAGChain"):
         GraphRAGChain(
             config=config,
             providers=_fake_providers(config),
@@ -303,7 +303,6 @@ def test_strategy_without_providers_still_constructs(mocker) -> None:
     mocker.patch.object(bedrock_module, "BedrockTokenCounter")
     session = MagicMock()
     strategy = LocalSearchStrategy(config=Config(), retrievers={}, boto_session=session)
-    assert strategy.boto_session is session
     assert strategy.providers.boto_session is session
 
 

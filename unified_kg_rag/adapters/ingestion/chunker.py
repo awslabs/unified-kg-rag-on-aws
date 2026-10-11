@@ -694,7 +694,6 @@ class IntelligentTextChunker(BaseChunker):
     ) -> None:
         super().__init__(config, show_progress=show_progress)
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
 
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor.from_processing(

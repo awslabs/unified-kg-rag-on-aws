@@ -48,7 +48,6 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
     ):
         self.config = config
         providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = providers.boto_session
         self.conversation_id = conversation_id
         self.max_messages = max_messages
         self.ttl = timedelta(hours=ttl_hours)

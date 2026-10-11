@@ -92,7 +92,6 @@ class CommunityDetector(BaseProcessor):
     ) -> None:
         super().__init__(config)
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
         self.community_detection_config = self.config.graph.community_detection
         self.ignore_errors = self.config.processing.ignore_errors
 

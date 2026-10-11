@@ -682,9 +682,7 @@ async def test_traversals_beyond_the_pool_wait_on_the_loop(config: Config) -> No
     # on the loop instead of holding an executor thread.
     config.aws.neptune.pool_size = 3
     config.indexing.neptune.index_concurrency = 1
-    retriever = NeptuneRetriever(
-        config=config, neptune_client=MagicMock(), boto_session=MagicMock()
-    )
+    retriever = NeptuneRetriever(config=config, neptune_client=MagicMock())
     results = await asyncio.gather(
         *(retriever._execute_traversal(_SlowTraversal()) for _ in range(12))  # type: ignore[arg-type]
     )

@@ -107,7 +107,6 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         # The judge LLM comes from the shared provider bundle
         # (EvaluationManager passes the chain's).
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
         super().__init__(
             config=config,
             evaluator_type=EvaluatorType.LANGCHAIN,

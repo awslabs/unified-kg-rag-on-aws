@@ -6,7 +6,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import boto3
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from unified_kg_rag.adapters.ingestion.chunker import ChunkerFactory
@@ -67,7 +66,7 @@ from unified_kg_rag.shared.utils.cache_keys import is_excluded_source_path
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
-    from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
+    from unified_kg_rag.ports import DocStatusPort
 
 logger = get_logger(__name__)
 
@@ -119,15 +118,14 @@ class PipelineStage(ABC):
         self,
         stage_type: PipelineStageType,
         config: Config,
-        boto_session: boto3.Session | None = None,
         providers: Providers | None = None,
     ) -> None:
         self.config = config
         self.stage_type = stage_type
         # The pipeline passes its one provider bundle, so every stage's LLM /
-        # embedding adapters share the session and any injected factory.
-        self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
+        # embedding adapters share the session and any injected factory. The
+        # session itself is only created when an AWS adapter asks for it.
+        self.providers = Providers.resolve(config, providers)
 
     @property
     def name(self) -> str:
@@ -309,11 +307,11 @@ class DocumentLoadingStage(PipelineStage):
         self,
         config: Config,
         source_directory: Path,
-        boto_session: boto3.Session | None = None,
         parse_files: bool = False,
         doc_status: "DocStatusPort | None" = None,
+        providers: Providers | None = None,
     ):
-        super().__init__(PipelineStageType.DOCUMENT_LOADING, config, boto_session)
+        super().__init__(PipelineStageType.DOCUMENT_LOADING, config, providers)
         self.loader = DirectoryLoader(
             source_directory,
             config=self.config,
@@ -646,10 +644,10 @@ class DocumentParsingStage(PipelineStage):
         config: Config,
         source_directory: Path,
         target_directory: Path | None = None,
-        boto_session: boto3.Session | None = None,
         cache_directory: Path | None = None,
+        providers: Providers | None = None,
     ):
-        super().__init__(PipelineStageType.DOCUMENT_PARSING, config, boto_session)
+        super().__init__(PipelineStageType.DOCUMENT_PARSING, config, providers)
         self.source_directory = Path(source_directory)
         self.target_directory = Path(target_directory) if target_directory else None
         self.cache_directory = Path(cache_directory) if cache_directory else None
@@ -798,17 +796,13 @@ class TextChunkingStage(PipelineStage):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         providers: Providers | None = None,
     ):
-        super().__init__(
-            PipelineStageType.TEXT_CHUNKING, config, boto_session, providers
-        )
+        super().__init__(PipelineStageType.TEXT_CHUNKING, config, providers)
 
         chunker_type = self.config.processing.chunking.chunker_type
         self.chunker = ChunkerFactory.create_chunker(
             config=self.config,
-            boto_session=self.boto_session,
             chunker_type=chunker_type,
             providers=self.providers,
         )
@@ -849,10 +843,9 @@ class TranslationStage(PipelineStage):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         providers: Providers | None = None,
     ):
-        super().__init__(PipelineStageType.TRANSLATION, config, boto_session, providers)
+        super().__init__(PipelineStageType.TRANSLATION, config, providers)
         self.translation_config = self.config.processing.translation
         self.target_language = self.translation_config.target_language.value
         # Build the Bedrock-backed translator lazily so a disabled / no-op stage
@@ -862,9 +855,7 @@ class TranslationStage(PipelineStage):
     @property
     def translator(self) -> TextUnitTranslator:
         if self._translator is None:
-            self._translator = TextUnitTranslator(
-                self.config, boto_session=self.boto_session, providers=self.providers
-            )
+            self._translator = TextUnitTranslator(self.config, providers=self.providers)
         return self._translator
 
     def _should_skip(self) -> str | None:
@@ -943,12 +934,9 @@ class GraphExtractionStage(PipelineStage):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         providers: Providers | None = None,
     ):
-        super().__init__(
-            PipelineStageType.GRAPH_EXTRACTION, config, boto_session, providers
-        )
+        super().__init__(PipelineStageType.GRAPH_EXTRACTION, config, providers)
         self.extractor = GraphExtractor(self.config, providers=self.providers)
 
     def _execute_core(
@@ -996,10 +984,9 @@ class GleaningStage(PipelineStage):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         providers: Providers | None = None,
     ):
-        super().__init__(PipelineStageType.GLEANING, config, boto_session, providers)
+        super().__init__(PipelineStageType.GLEANING, config, providers)
         self.gleaner = GraphGleaner(self.config, providers=self.providers)
 
     def _execute_core(
@@ -1078,16 +1065,12 @@ class GraphResolutionStage(PipelineStage):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         providers: Providers | None = None,
     ):
-        super().__init__(
-            PipelineStageType.GRAPH_RESOLUTION, config, boto_session, providers
-        )
+        super().__init__(PipelineStageType.GRAPH_RESOLUTION, config, providers)
         self.resolver = GraphResolver(config)
         # Resolution merges descriptions (concatenation); re-summarize the
-        # over-long ones with an LLM here (parity with MS/LightRAG). Needs Bedrock,
-        # hence GRAPH_RESOLUTION is in BOTO_REQUIRED_STAGES.
+        # over-long ones with an LLM here (parity with MS/LightRAG).
         self.description_summarizer = DescriptionSummarizer(
             config, providers=self.providers
         )
@@ -1155,12 +1138,9 @@ class ClaimExtractionStage(PipelineStage):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         providers: Providers | None = None,
     ):
-        super().__init__(
-            PipelineStageType.CLAIM_EXTRACTION, config, boto_session, providers
-        )
+        super().__init__(PipelineStageType.CLAIM_EXTRACTION, config, providers)
         self.extractor = ClaimExtractor(self.config, providers=self.providers)
 
     def _execute_core(
@@ -1198,8 +1178,8 @@ class ClaimExtractionStage(PipelineStage):
 
 
 class ClaimResolutionStage(PipelineStage):
-    def __init__(self, config: Config):
-        super().__init__(PipelineStageType.CLAIM_RESOLUTION, config)
+    def __init__(self, config: Config, providers: Providers | None = None):
+        super().__init__(PipelineStageType.CLAIM_RESOLUTION, config, providers)
         self.resolver = ClaimResolver(config)
 
     def _execute_core(
@@ -1252,12 +1232,9 @@ class GraphAnalysisStage(PipelineStage):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         providers: Providers | None = None,
     ):
-        super().__init__(
-            PipelineStageType.GRAPH_ANALYSIS, config, boto_session, providers
-        )
+        super().__init__(PipelineStageType.GRAPH_ANALYSIS, config, providers)
         self.analyzer = GraphAnalyzer(config)
 
     def _execute_core(
@@ -1313,13 +1290,10 @@ class CommunityDetectionStage(PipelineStage):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         cache_directory: Path | None = None,
         providers: Providers | None = None,
     ):
-        super().__init__(
-            PipelineStageType.COMMUNITY_DETECTION, config, boto_session, providers
-        )
+        super().__init__(PipelineStageType.COMMUNITY_DETECTION, config, providers)
         self.detector = CommunityDetector(config, providers=self.providers)
         self.cache_directory = Path(cache_directory) if cache_directory else None
 
@@ -1434,7 +1408,6 @@ class CommunityDetectionStage(PipelineStage):
                     graph_analyzer=analyzer,
                     community_detector=self.detector,
                     outputs_dir=self._visualization_outputs_dir(context),
-                    boto_session=self.boto_session,
                     providers=self.providers,
                 )
 
@@ -1474,18 +1447,12 @@ class IndexingStage(PipelineStage):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         doc_status: "DocStatusPort | None" = None,
         providers: Providers | None = None,
-        vector_indexer: "VectorIndexer | None" = None,
-        graph_indexer: "GraphIndexer | None" = None,
     ):
-        super().__init__(PipelineStageType.INDEXING, config, boto_session, providers)
+        super().__init__(PipelineStageType.INDEXING, config, providers)
         self.indexing_manager = IndexingManager(
-            config=self.config,
-            providers=self.providers,
-            vector_indexer=vector_indexer,
-            graph_indexer=graph_indexer,
+            config=self.config, providers=self.providers
         )
         # Injected by the pipeline for the incremental commit/registry write-back.
         self._doc_status = doc_status

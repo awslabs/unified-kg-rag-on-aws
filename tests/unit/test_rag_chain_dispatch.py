@@ -116,4 +116,4 @@ def test_default_backends_unchanged_without_injection(config: Config) -> None:
     # No injection -> AWS defaults remain (Bedrock factory instance present).
     chain = GraphRAGChain(config=config)
     assert chain.factory is not None
-    assert chain._retriever_builders_override == {}
+    assert chain.providers._retriever_builders == {}

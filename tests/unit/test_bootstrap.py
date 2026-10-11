@@ -49,6 +49,8 @@ from unified_kg_rag.domain.models import (
     Backend,
     Config,
     PipelineConfig,
+    PipelineContext,
+    PipelineStageStatus,
     PipelineStageType,
     RetrieverRole,
     SearchStrategy,
@@ -276,8 +278,8 @@ def test_local_backend_reaches_every_ingestion_component(no_aws, tmp_path) -> No
     providers = pipeline.providers
     llm = providers.llm_factory
     assert isinstance(llm, OllamaLanguageModelFactory)
-    for stage_type in DataIngestionPipeline.PROVIDER_STAGES:
-        assert stages[stage_type].providers is providers, stage_type
+    for stage_type, stage in stages.items():
+        assert stage.providers is providers, stage_type
 
     T = PipelineStageType
     assert stages[T.TEXT_CHUNKING].chunker.factory is llm
@@ -412,3 +414,34 @@ def test_local_bootstrap_loads_no_aws_or_store_sdk(tmp_path) -> None:
         timeout=120,
     )
     assert json.loads(result.stdout.strip().splitlines()[-1]) == []
+
+
+def test_local_pipeline_ignores_a_missing_aws_profile(no_aws, tmp_path) -> None:
+    # A local run never resolves the AWS profile: one that names no profile
+    # in ~/.aws/config must not stop the pipeline from building or running.
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+
+    config = _local_config(tmp_path)
+    config.aws.profile_name = "synthetic-profile-that-does-not-exist"
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "note.txt").write_text("Vendor ships widgets to Buyer.")
+    pipeline = DataIngestionPipeline(
+        config,
+        PipelineConfig(local_directory=str(tmp_path / "cache")),
+        source_directory=corpus,
+    )
+    stages = {pipeline.name_to_type_map[s.name]: s for s in pipeline.stages}
+    assert PipelineStageType.GRAPH_ANALYSIS in stages
+    parsing = stages[PipelineStageType.DOCUMENT_PARSING]
+    context = PipelineContext(
+        pipeline_id="p",
+        config=PipelineConfig(),
+        status=PipelineStageStatus.RUNNING,
+        start_time="2026-01-01T00:00:00",
+        source_directory=str(corpus),
+    )
+    result = parsing.execute(context)
+    assert result.status is PipelineStageStatus.COMPLETED
+    assert len(context.documents) == 1
+    pipeline.close()

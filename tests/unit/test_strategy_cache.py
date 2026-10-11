@@ -87,15 +87,12 @@ def _chain(config: Config | None = None) -> GraphRAGChain:
         embedding_factory=MagicMock(),
         rerank_factory=MagicMock(),
         token_counter_factory=lambda *_, **__: _TokenCounter(),
-    )
-    return GraphRAGChain(
-        config=config,
-        providers=providers,
         retriever_builders={
             RetrieverRole.DOCUMENT: _EchoRetriever,  # type: ignore[dict-item]
             RetrieverRole.GRAPH: _EchoRetriever,  # type: ignore[dict-item]
         },
     )
+    return GraphRAGChain(config=config, providers=providers)
 
 
 def _run_on_fresh_loop(coro: Any) -> Any:

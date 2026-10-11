@@ -295,10 +295,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # Before any model is built, so the factory attaches the tracing
         # callback (no-op unless observability.enabled).
         configure_observability(config.observability)
-        if providers is not None and model_factory is not None:
+        if providers is not None and (
+            model_factory is not None or retriever_builders is not None
+        ):
             raise ValueError(
-                "Pass either model_factory or providers, not both; set the LLM "
-                "factory on the Providers bundle instead."
+                "Pass model_factory and retriever_builders either to GraphRAGChain "
+                "or on the Providers bundle (llm_factory=, retriever_builders=), "
+                "not both."
             )
         # Composition root (hexagonal): ONE provider bundle — session plus
         # LLM/embedding/rerank/token-counter factories — built here (or
@@ -308,9 +311,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         # reaches all of them; anything not injected is what config.providers
         # selects (Bedrock by default).
         self.providers = providers or build_providers(
-            config, boto_session, llm_factory=model_factory
+            config,
+            boto_session,
+            llm_factory=model_factory,
+            retriever_builders=retriever_builders,
         )
-        self.boto_session = self.providers.boto_session
         self.mode = mode
         self.ignore_errors = self.config.processing.ignore_errors
         # Conversation memory is process-wide by default, so history survives
@@ -322,10 +327,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         )
         self.token_manager = TokenManager(self.config, providers=self.providers)
         self.factory: LLMFactoryPort = self.providers.llm_factory
-        # Backend seam: inject custom retriever builders keyed by abstract role
-        # ("graph"/"document") to swap Neptune/OpenSearch for another store
-        # without subclassing. Unspecified roles fall back to the bundle's.
-        self._retriever_builders_override = retriever_builders or {}
         # Retrievers and strategy instances are built once per event loop and
         # reused across queries: retrievers hold loop-bound async clients, and a
         # strategy holds its retrievers. Entries are keyed by the loop object
@@ -904,12 +905,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             return retriever
 
     def _build_retriever(self, role: RetrieverRole) -> BaseGraphRAGRetriever:
-        # Injected retriever_builders take precedence (the backend seam), so a
-        # custom store is wired without subclassing or editing any strategy;
-        # the rest are the stores config.providers selects.
-        builder = self._retriever_builders_override.get(role)
-        if builder is not None:
-            return builder()
+        # Injected retriever builders (the backend seam) come first, so a custom
+        # store is wired without subclassing or editing any strategy; the rest
+        # are the stores config.providers selects.
         return self.providers.build_retriever(role)
 
     def _cache_loop(self) -> asyncio.AbstractEventLoop | None:

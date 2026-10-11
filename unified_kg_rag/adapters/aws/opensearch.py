@@ -3,7 +3,7 @@
 import asyncio
 import time
 from collections.abc import Callable
-from functools import wraps
+from functools import cached_property, wraps
 from typing import Any
 
 import boto3
@@ -165,16 +165,26 @@ class OpenSearchClient:
     def __init__(self, config: Config, boto_session: boto3.Session | None = None):
         self.config = config
         self.opensearch_config = config.aws.opensearch
-        self.boto_session = boto_session or boto3.Session(
-            profile_name=config.aws.profile_name,
-            region_name=config.aws.region_name,
-        )
+        if boto_session is not None:
+            self.boto_session = boto_session
         self._client: OpenSearch | None = None
         self._async_client: AsyncOpenSearch | None = None
         self._bound_loop_id: int | None = None
         # The loop object itself: keeps its id from being reused while bound,
         # and lets a rotated client be closed (awaited) on its own loop.
         self._bound_loop: asyncio.AbstractEventLoop | None = None
+
+    @cached_property
+    def boto_session(self) -> boto3.Session:
+        """The session IAM auth signs with (a default one unless given).
+
+        Created on first use, so a client of a store without IAM auth (a
+        local Gremlin Server or OpenSearch) never resolves an AWS profile.
+        """
+        return boto3.Session(
+            profile_name=self.config.aws.profile_name,
+            region_name=self.config.aws.region_name,
+        )
 
     @property
     def client(self) -> OpenSearch:

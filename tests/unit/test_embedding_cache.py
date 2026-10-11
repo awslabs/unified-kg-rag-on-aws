@@ -23,7 +23,7 @@ def indexer(mocker):
     factory.return_value.get_model.return_value = MagicMock()
     from unified_kg_rag.domain.models import Config
 
-    ix = OpenSearchIndexer(config=Config())
+    ix = OpenSearchIndexer(config=Config(), embedding_factory=factory.return_value)
     embedded: list[str] = []
 
     def _embed(texts):

@@ -109,7 +109,6 @@ class ClaimExtractor(BaseProcessor):
     ):
         super().__init__(config)
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
         self.claim_extraction_config = self.config.processing.claim_extraction
         self.ignore_errors = self.config.processing.ignore_errors
         self.show_progress = show_progress

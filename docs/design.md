@@ -384,7 +384,7 @@ Per-source behavior:
 | **S3** | `adapters/aws/s3_cache.py` | Pipeline cache sync (encryption defaults to `BUCKET_DEFAULT` — the bucket's default encryption, e.g. a CMK; `AES256`/`aws:kms` force per-object SSE) |
 | **DynamoDB** | `adapters/aws/dynamodb.py` | Incremental-indexing document-status registry |
 
-All adapters can be injected with a `boto_session` (by default created from `config.aws.profile_name`), so a fake/moto session can be injected during testing.
+The AWS session is the bundle's (`Providers(boto_session=...)`, by default created from `config.aws.profile_name` on first use), so a fake/moto session can be injected during testing. Only an AWS client asks for it: a local run, or a store without IAM auth, never resolves the profile.
 
 ### 8.5 Retrieval Error Visibility
 
@@ -498,7 +498,7 @@ subclassing or editing dispatch code. The ports, their default
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` (`LocalTokenCounter`: estimate or tiktoken; follows the LLM kind) | `Providers(token_counter_factory=...)` |
 | `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer` (`gremlin`: the same adapter on Gremlin Server) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` or `IndexingManager(vector_indexer=..., graph_indexer=...)` |
 | retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `Providers(retriever_builders=...)` or `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
-| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `delete` / `list_all` / `diff` (`get_many` / `put_many` optional: without them each record is read or written on its own; `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow` optional: without them a record has no size limit and no overflow) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (the latter turns incremental indexing on); conform structurally and pass `tests/integration/test_doc_status_conformance.py` |
+| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `delete` / `list_all` / `diff` (`get_many` / `put_many` optional: without them each record is read or written on its own; `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow` optional: without them a record has no size limit and no overflow) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (either turns incremental indexing on); conform structurally and pass `tests/integration/test_doc_status_conformance.py` |
 
 Because the model-factory and doc-status ports are `runtime_checkable`
 `Protocol`s, a custom class only needs the right **method shapes** — no base
@@ -553,7 +553,10 @@ pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
 The stores follow the same bundle: without `retriever_builders` the chain
 reads, and without `doc_status`/`vector_indexer`/`graph_indexer` the pipeline
 writes to, the stores `providers.graph` / `providers.vector` /
-`providers.doc_status` select (see the table above).
+`providers.doc_status` select (see the table above). Those orchestrator
+arguments (and `GraphRAGChain(model_factory=...)`) are shorthand for a bundle
+built with them: with a `providers=` bundle, set them on the bundle instead
+(passing both raises `ValueError`).
 
 Anything not supplied is built lazily by the builder registered for the
 configured kind (Bedrock, Neptune, OpenSearch and DynamoDB by default); the

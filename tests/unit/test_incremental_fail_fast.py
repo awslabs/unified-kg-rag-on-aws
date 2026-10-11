@@ -88,9 +88,7 @@ def _indexing_stage(config: Config, store, mocker):
     manager.config = config
     manager.initialize.return_value = True
     mocker.patch.object(ps, "IndexingManager", return_value=manager)
-    stage = ps.IndexingStage(
-        config=config, boto_session=mocker.MagicMock(), doc_status=store
-    )
+    stage = ps.IndexingStage(config=config, doc_status=store)
     return stage, manager
 
 

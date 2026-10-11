@@ -1,12 +1,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
-import boto3
 from pydantic import BaseModel
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
@@ -65,6 +66,9 @@ from unified_kg_rag.shared.utils import (
 )
 from unified_kg_rag.shared.utils.document_identity import registry_namespace
 
+if TYPE_CHECKING:
+    import boto3
+
 logger = get_logger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
@@ -86,34 +90,21 @@ class DataIngestionPipeline:
         PipelineStageType.INDEXING: IndexingStage,
     }
 
-    INPUT_DIR_REQUIRED_STAGES = {
-        PipelineStageType.DOCUMENT_PARSING,
-        PipelineStageType.DOCUMENT_LOADING,
-    }
-
-    BOTO_REQUIRED_STAGES = {
-        PipelineStageType.CLAIM_EXTRACTION,
-        PipelineStageType.COMMUNITY_DETECTION,
-        PipelineStageType.GLEANING,
-        PipelineStageType.GRAPH_ANALYSIS,
-        PipelineStageType.GRAPH_EXTRACTION,
-        # Graph resolution merges descriptions and then re-summarizes the
-        # over-long ones with an LLM (DescriptionSummarizer), so it needs Bedrock.
-        PipelineStageType.GRAPH_RESOLUTION,
-        PipelineStageType.TEXT_CHUNKING,
-        PipelineStageType.TRANSLATION,
-    }
-
-    # Stages that build LLM/embedding adapters; they receive the pipeline's
-    # provider bundle.
-    PROVIDER_STAGES = BOTO_REQUIRED_STAGES | {PipelineStageType.INDEXING}
-
-    # Stages that consume the document-status registry (incremental indexing).
-    # The DocStatusPort adapter is built ONCE at this orchestration layer and
-    # injected, rather than each stage constructing its own.
-    DOC_STATUS_STAGES = {
-        PipelineStageType.DOCUMENT_LOADING,
-        PipelineStageType.INDEXING,
+    # Stages switched off by a config section besides stages_enabled. Claim
+    # extraction and resolution go together; community detection is optional
+    # for a LightRAG-only (mix/hybrid/naive) ingestion, which needs no
+    # communities (GraphRAG global/drift require it).
+    CONFIG_ENABLED: dict[PipelineStageType, Callable[[Config], bool]] = {
+        PipelineStageType.GLEANING: lambda c: c.processing.gleaning.enabled,
+        PipelineStageType.CLAIM_EXTRACTION: (
+            lambda c: c.processing.claim_extraction.enabled
+        ),
+        PipelineStageType.CLAIM_RESOLUTION: (
+            lambda c: c.processing.claim_extraction.enabled
+        ),
+        PipelineStageType.COMMUNITY_DETECTION: (
+            lambda c: c.graph.community_detection.enabled
+        ),
     }
 
     # What each stage caches, derived from the single shared definition the
@@ -149,19 +140,32 @@ class DataIngestionPipeline:
             providers: Model and store provider bundle (built from
                 ``config.providers`` when omitted; see
                 ``application.bootstrap.build_providers``).
-            doc_status: Document-status registry for incremental indexing.
-                Passing one turns incremental indexing on; otherwise it follows
-                ``config.doc_status_enabled`` with the bundle's registry.
-            vector_indexer: Document-index writer (default: the bundle's).
-            graph_indexer: Graph writer (default: the bundle's).
+            doc_status / vector_indexer / graph_indexer: Shorthand for a bundle
+                built with ``doc_status=``, ``vector_indexer_factory=`` and
+                ``graph_indexer_factory=`` (an injected registry turns
+                incremental indexing on, as on ``Providers``). Set them on
+                ``providers`` instead when passing one.
+
+        Raises:
+            ValueError: ``providers`` and one of the shorthand components are
+                both given.
         """
         self.config = config
         # Before any stage builds a model, so the factories attach the tracing
         # callback (no-op unless observability.enabled).
         configure_observability(config.observability)
-        self._doc_status = doc_status
-        self._vector_indexer = vector_indexer
-        self._graph_indexer = graph_indexer
+        overrides: dict[str, Any] = {}
+        if doc_status is not None:
+            overrides["doc_status"] = doc_status
+        if vector_indexer is not None:
+            overrides["vector_indexer_factory"] = lambda: vector_indexer
+        if graph_indexer is not None:
+            overrides["graph_indexer_factory"] = lambda: graph_indexer
+        if providers is not None and overrides:
+            raise ValueError(
+                "Pass doc_status, vector_indexer and graph_indexer either to "
+                "DataIngestionPipeline or on the Providers bundle, not both."
+            )
         self.pipeline_config = pipeline_config
         # Where pipeline metrics are forwarded (CloudWatch EMF, etc.). Defaults
         # to a no-op so the library assumes no monitoring backend.
@@ -184,9 +188,8 @@ class DataIngestionPipeline:
         self.providers = (
             providers
             if providers is not None
-            else build_providers(config, boto_session)
+            else build_providers(config, boto_session, **overrides)
         )
-        self.boto_session = self.providers.boto_session
 
         self._initialize_managers()
         self.stages, self.name_to_type_map = self._initialize_stages()
@@ -227,94 +230,57 @@ class DataIngestionPipeline:
         if self.pipeline_config.s3_sync_enabled:
             self.s3_cache_manager = S3CacheManager(
                 config=self.config,
-                boto_session=self.boto_session,
+                boto_session=self.providers.boto_session,
                 bucket_name=self.pipeline_config.s3_bucket_name,
                 prefix=self.pipeline_config.s3_prefix,
             )
 
-    def _build_doc_status_store(self) -> Any:
-        """Build the document-status registry adapter once (incremental mode).
-
-        Returns the injected store when given, and None when the registry is
-        disabled. Building the adapter does no I/O; a registry that cannot be
-        reached fails the document_loading stage (DocStatusRegistryError)
-        rather than silently turning the run into a full rebuild.
-        """
-        if self._doc_status is not None:
-            return self._doc_status
-        if not self.config.doc_status_enabled:
-            return None
-        return self.providers.build_doc_status()
-
     def _initialize_stages(
         self,
     ) -> tuple[list[PipelineStage], dict[str, PipelineStageType]]:
-        stages = []
-        name_to_type_map = {}
-        enabled_stages = []
+        # The doc-status registry is built once, here, and handed to the two
+        # stages that use it (None when incremental indexing is off). Building
+        # it does no I/O; a registry that cannot be reached fails the
+        # document_loading stage (DocStatusRegistryError) rather than silently
+        # turning the run into a full rebuild.
+        doc_status = (
+            self.providers.build_doc_status()
+            if self.providers.doc_status_enabled
+            else None
+        )
+        cache_directory = Path(self.pipeline_config.local_directory)
+        extra_kwargs: dict[PipelineStageType, dict[str, Any]] = {
+            PipelineStageType.DOCUMENT_PARSING: {
+                "source_directory": self.source_directory,
+                "target_directory": self.target_directory,
+                "cache_directory": cache_directory,
+            },
+            PipelineStageType.DOCUMENT_LOADING: {
+                "source_directory": self.source_directory,
+                "doc_status": doc_status,
+            },
+            PipelineStageType.COMMUNITY_DETECTION: {"cache_directory": cache_directory},
+            PipelineStageType.INDEXING: {"doc_status": doc_status},
+        }
+
+        stages: list[PipelineStage] = []
+        name_to_type_map: dict[str, PipelineStageType] = {}
         disabled_stages = []
-
-        # Build the doc-status adapter once (incremental mode) and inject it into
-        # the stages that need it, instead of each stage constructing its own.
-        doc_status = self._build_doc_status_store()
-
         for stage_type, stage_class in self.STAGE_CLASSES.items():
-            stage_enabled = self.pipeline_config.stages_enabled.get(stage_type, True)
-
-            if stage_type == PipelineStageType.GLEANING:
-                gleaning_config = self.config.processing.gleaning
-                if gleaning_config and hasattr(gleaning_config, "enabled"):
-                    stage_enabled = stage_enabled and gleaning_config.enabled
-
-            elif stage_type in [
-                PipelineStageType.CLAIM_EXTRACTION,
-                PipelineStageType.CLAIM_RESOLUTION,
-            ]:
-                claim_config = getattr(self.config.processing, "claim_extraction", None)
-                if claim_config and hasattr(claim_config, "enabled"):
-                    stage_enabled = stage_enabled and claim_config.enabled
-
-            elif stage_type == PipelineStageType.COMMUNITY_DETECTION:
-                # Optional for a LightRAG-only (mix/hybrid/naive) ingestion, which
-                # needs no communities; skipping avoids the Leiden pass and all
-                # community-report LLM calls. GraphRAG global/drift require it.
-                community_config = getattr(
-                    self.config.graph, "community_detection", None
-                )
-                if community_config and hasattr(community_config, "enabled"):
-                    stage_enabled = stage_enabled and community_config.enabled
-
-            if stage_enabled:
-                kwargs: dict[str, Any] = {}
-                if stage_type in self.INPUT_DIR_REQUIRED_STAGES:
-                    kwargs["source_directory"] = self.source_directory
-                if stage_type in self.BOTO_REQUIRED_STAGES:
-                    kwargs["boto_session"] = self.boto_session
-                if stage_type in self.PROVIDER_STAGES:
-                    kwargs["providers"] = self.providers
-                if stage_type == PipelineStageType.DOCUMENT_PARSING:
-                    kwargs["target_directory"] = self.target_directory
-                if stage_type in (
-                    PipelineStageType.DOCUMENT_PARSING,
-                    PipelineStageType.COMMUNITY_DETECTION,
-                ):
-                    kwargs["cache_directory"] = Path(
-                        self.pipeline_config.local_directory
-                    )
-                if stage_type in self.DOC_STATUS_STAGES and doc_status is not None:
-                    kwargs["doc_status"] = doc_status
-                if stage_type == PipelineStageType.INDEXING:
-                    kwargs["vector_indexer"] = self._vector_indexer
-                    kwargs["graph_indexer"] = self._graph_indexer
-
-                kwargs["config"] = self.config
-
-                stage_instance = stage_class(**kwargs)
-                stages.append(stage_instance)
-                name_to_type_map[stage_instance.name] = stage_type
-                enabled_stages.append(stage_type.value)
-            else:
+            config_enabled = self.CONFIG_ENABLED.get(stage_type, lambda _: True)
+            if not (
+                self.pipeline_config.stages_enabled.get(stage_type, True)
+                and config_enabled(self.config)
+            ):
                 disabled_stages.append(stage_type.value)
+                continue
+            stage = stage_class(
+                config=self.config,
+                providers=self.providers,
+                **extra_kwargs.get(stage_type, {}),
+            )
+            stages.append(stage)
+            name_to_type_map[stage.name] = stage_type
 
         if disabled_stages:
             logger.info("Disabled stages: %s", disabled_stages)
@@ -469,7 +435,7 @@ class DataIngestionPipeline:
         retired = self.config.indexing.retire_source_scopes
         if not retired:
             return
-        if self._doc_status is None and not self.config.doc_status_enabled:
+        if not self.providers.doc_status_enabled:
             raise ConfigurationError(
                 "indexing.retire_source_scopes / --retire-source-scope needs "
                 "incremental indexing (aws.dynamodb.enabled: true, or "

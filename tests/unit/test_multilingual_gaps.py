@@ -174,7 +174,7 @@ class TestTranslationStageSkip:
     def _stage(config: Config) -> TranslationStage:
         # Pass a sentinel boto_session so the base __init__ builds no real
         # boto3.Session (AWS-free).
-        return TranslationStage(config, boto_session=object())  # type: ignore[arg-type]
+        return TranslationStage(config)  # type: ignore[arg-type]
 
     @staticmethod
     def _context(config: Config) -> PipelineContext:

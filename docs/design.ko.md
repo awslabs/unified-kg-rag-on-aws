@@ -384,7 +384,7 @@ Neptune 그래프 확장은 `local`과 `drift`에 포함되어 있고, `mix`/`hy
 | **S3** | `adapters/aws/s3_cache.py` | 파이프라인 캐시 동기화(암호화 기본값 `BUCKET_DEFAULT`는 버킷의 기본 암호화(예: CMK)를 따르고, `AES256`/`aws:kms`는 객체별 SSE를 강제) |
 | **DynamoDB** | `adapters/aws/dynamodb.py` | 증분 인덱싱용 문서 상태 레지스트리 |
 
-모든 어댑터는 `boto_session`을 주입받을 수 있으므로(기본값은 `config.aws.profile_name`으로 생성) 테스트에서 fake나 moto 세션을 넣을 수 있습니다.
+AWS 세션은 묶음의 세션(`Providers(boto_session=...)`, 기본값은 처음 쓸 때 `config.aws.profile_name`으로 생성)이므로 테스트에서 fake나 moto 세션을 넣을 수 있습니다. 세션은 AWS 클라이언트만 요청하므로 로컬 실행이나 IAM 인증을 쓰지 않는 저장소는 프로필을 읽지 않습니다.
 
 ### 8.5 검색 오류 가시성
 
@@ -497,7 +497,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter`(`LocalTokenCounter`: 추정치 또는 tiktoken. LLM kind를 따름) | `Providers(token_counter_factory=...)` |
 | `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id` | `OpenSearchIndexer` / `NeptuneIndexer`(`gremlin`: 같은 어댑터로 Gremlin Server 사용) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)`, `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` 또는 `IndexingManager(vector_indexer=..., graph_indexer=...)` |
 | 리트리버(역할별 빌더) | `BaseGraphRAGRetriever.aretrieve` | `OpenSearchRetriever` / `NeptuneRetriever` | `Providers(retriever_builders=...)` 또는 `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
-| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `delete` / `list_all` / `diff` (`get_many` / `put_many`는 선택. 없으면 레코드를 하나씩 읽고 씀. `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow`도 선택. 없으면 레코드 크기 한도와 초과분이 없음) | `DynamoDBDocStatusStore`(`SQLiteDocStatusStore`) | `Providers(doc_status=...)` 또는 `DataIngestionPipeline(..., doc_status=...)`(후자는 증분 인덱싱이 켜짐). 구조를 맞추고 `tests/integration/test_doc_status_conformance.py`를 통과해야 함 |
+| `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `put` / `delete` / `list_all` / `diff` (`get_many` / `put_many`는 선택. 없으면 레코드를 하나씩 읽고 씀. `record_fits` / `add_lineage_overflow` / `get_lineage_overflow` / `delete_lineage_overflow`도 선택. 없으면 레코드 크기 한도와 초과분이 없음) | `DynamoDBDocStatusStore`(`SQLiteDocStatusStore`) | `Providers(doc_status=...)` 또는 `DataIngestionPipeline(..., doc_status=...)`(어느 쪽이든 증분 인덱싱이 켜짐). 구조를 맞추고 `tests/integration/test_doc_status_conformance.py`를 통과해야 함 |
 
 모델 팩토리와 문서 상태 포트는 `runtime_checkable` `Protocol`이므로 커스텀
 클래스는 **메서드 형태만** 맞으면 되고, import할 베이스 클래스가 없습니다. 예시(로컬
@@ -547,6 +547,9 @@ pipeline = DataIngestionPipeline(cfg, pipeline_config, providers=providers)
 저장소도 같은 묶음을 따릅니다. `retriever_builders`가 없으면 체인은, `doc_status`/
 `vector_indexer`/`graph_indexer`가 없으면 파이프라인은 `providers.graph` /
 `providers.vector` / `providers.doc_status`가 고른 저장소를 씁니다(위 표 참고).
+이 오케스트레이터 인자(와 `GraphRAGChain(model_factory=...)`)는 그 값으로 만든 묶음의
+줄임 표현입니다. `providers=` 묶음을 넘길 때는 묶음에 지정하세요(둘 다 넘기면
+`ValueError`).
 
 넘기지 않은 공급자는 처음 쓸 때 설정된 kind에 등록된 빌더로 만듭니다(기본값은 Bedrock,
 Neptune, OpenSearch, DynamoDB). 모델 팩토리는 묶음마다 한 번만 만들므로 체인은 모델

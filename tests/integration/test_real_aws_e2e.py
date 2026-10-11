@@ -61,9 +61,13 @@ def test_bedrock_embedding_roundtrip(live_config) -> None:
 
 def test_opensearch_connectivity(live_config) -> None:
     """The OpenSearch client can reach the cluster and report stats."""
+    from unified_kg_rag.adapters.providers import Providers
     from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 
-    indexer = OpenSearchIndexer(config=live_config)
+    indexer = OpenSearchIndexer(
+        config=live_config,
+        embedding_factory=Providers(live_config).embedding_factory,
+    )
     assert indexer.initialize() is True
 
 

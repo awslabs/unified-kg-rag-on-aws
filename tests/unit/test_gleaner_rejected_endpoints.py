@@ -294,11 +294,8 @@ def test_rejected_entities_reach_gleaning_through_the_stages(mocker) -> None:
         text_units=[UNIT],
     )
 
-    session = mocker.MagicMock()
-    ps.GraphExtractionStage(config=Config(), boto_session=session)._execute_core(
-        context
-    )
-    ps.GleaningStage(config=Config(), boto_session=session)._execute_core(context)
+    ps.GraphExtractionStage(config=Config())._execute_core(context)
+    ps.GleaningStage(config=Config())._execute_core(context)
 
     assert context.rejected_entities == rejected
     assert gleaner.glean_graph.call_args.kwargs["rejected_entities"] == rejected

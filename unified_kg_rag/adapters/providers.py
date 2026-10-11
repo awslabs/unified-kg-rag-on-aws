@@ -86,7 +86,8 @@ class Providers:
         retriever_builders: Zero-argument retriever builders by
             ``RetrieverRole``, as accepted by ``GraphRAGChain``.
         doc_status: The doc-status registry (``DocStatusPort``), shared by
-            every run that uses this bundle.
+            every run that uses this bundle. Injecting one turns incremental
+            indexing on (``doc_status_enabled``).
     """
 
     def __init__(
@@ -227,6 +228,14 @@ class Providers:
         retriever: BaseGraphRAGRetriever = self._build(provider_role)
         return retriever
 
+    @property
+    def doc_status_enabled(self) -> bool:
+        """Whether runs on this bundle index incrementally.
+
+        True with an injected registry; otherwise ``config.doc_status_enabled``.
+        """
+        return self._doc_status is not None or self.config.doc_status_enabled
+
     def build_doc_status(self) -> DocStatusPort:
         """The injected doc-status registry, else a new one of the configured kind.
 
@@ -234,8 +243,7 @@ class Providers:
         per-run state (the DynamoDB store remembers the overflow its last
         scan found), so two runs sharing a bundle must not share one. The
         pipeline builds it once and hands it to its stages. Building it does
-        no I/O; whether incremental indexing uses it is
-        ``config.doc_status_enabled``.
+        no I/O; whether incremental indexing uses it is ``doc_status_enabled``.
         """
         if self._doc_status is not None:
             return self._doc_status
@@ -341,6 +349,15 @@ def _no_rerank(providers: Providers) -> RerankFactoryPort:
     return NoRerankFactory(providers.config)
 
 
+def _signing_session(providers: Providers, needed: bool) -> boto3.Session | None:
+    """The bundle's session for a store client that signs requests, else None.
+
+    A store without IAM auth (a local Gremlin Server or OpenSearch) gets none,
+    so building its client never resolves an AWS profile.
+    """
+    return providers.boto_session if needed else None
+
+
 # Gremlin Server speaks the same TinkerPop protocol as Neptune; the config
 # validator requires aws.neptune.use_iam: false for it (no SigV4).
 @register_provider(ProviderRole.GRAPH_INDEXER, NEPTUNE)
@@ -348,7 +365,10 @@ def _no_rerank(providers: Providers) -> RerankFactoryPort:
 def _neptune_graph_indexer(providers: Providers) -> GraphIndexer:
     from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 
-    return NeptuneIndexer(config=providers.config)
+    return NeptuneIndexer(
+        config=providers.config,
+        boto_session=_signing_session(providers, providers.config.aws.neptune.use_iam),
+    )
 
 
 @register_provider(ProviderRole.GRAPH_RETRIEVER, NEPTUNE)
@@ -362,9 +382,11 @@ def _neptune_graph_retriever(providers: Providers) -> BaseGraphRAGRetriever:
     return NeptuneRetriever(
         config=providers.config,
         neptune_client=NeptuneClient(
-            config=providers.config, boto_session=providers.boto_session
+            config=providers.config,
+            boto_session=_signing_session(
+                providers, providers.config.aws.neptune.use_iam
+            ),
         ),
-        boto_session=providers.boto_session,
     )
 
 
@@ -374,9 +396,15 @@ def _opensearch_vector_indexer(providers: Providers) -> VectorIndexer:
         OpenSearchIndexer,
     )
 
+    config = providers.config
     return OpenSearchIndexer(
-        config=providers.config,
-        boto_session=providers.boto_session,
+        config=config,
+        # The S3 embedding cache reads and writes with the same session.
+        boto_session=_signing_session(
+            providers,
+            config.aws.opensearch.use_iam
+            or config.indexing.opensearch.persist_embedding_cache,
+        ),
         embedding_factory=providers.embedding_factory,
     )
 
@@ -391,9 +419,11 @@ def _opensearch_vector_retriever(providers: Providers) -> BaseGraphRAGRetriever:
     return OpenSearchRetriever(
         config=providers.config,
         opensearch_client=OpenSearchClient(
-            config=providers.config, boto_session=providers.boto_session
+            config=providers.config,
+            boto_session=_signing_session(
+                providers, providers.config.aws.opensearch.use_iam
+            ),
         ),
-        boto_session=providers.boto_session,
         embedding_factory=providers.embedding_factory,
     )
 

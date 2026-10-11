@@ -131,7 +131,6 @@ class GraphExtractor(BaseProcessor):
     ) -> None:
         super().__init__(config)
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
         self.ignore_errors = self.config.processing.ignore_errors
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor.from_processing(

@@ -96,7 +96,6 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         # Judge LLM, embeddings and token counter come from the shared
         # provider bundle (EvaluationManager passes the chain's).
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
         eval_model_info = self.providers.llm_model_info(
             config.evaluation.evaluation_model_id
         )

@@ -148,6 +148,9 @@ class ScopeStack:
             boto_session=MagicMock(),
             llm_factory=ScriptedLLMFactory(self.model.respond),
             embedding_factory=HashingEmbeddingFactory(),
+            doc_status=self.registry,
+            vector_indexer_factory=lambda: self.vectors,
+            graph_indexer_factory=lambda: self.graph,
         )
 
     def run(self, source: Path) -> PipelineContext:
@@ -161,9 +164,6 @@ class ScopeStack:
             ),
             source_directory=source,
             providers=self.providers,
-            doc_status=self.registry,
-            vector_indexer=self.vectors,
-            graph_indexer=self.graph,
         )
         for stage in pipeline.stages:
             if isinstance(stage, ps.GraphResolutionStage):

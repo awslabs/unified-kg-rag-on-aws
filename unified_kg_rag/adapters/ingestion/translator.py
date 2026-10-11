@@ -84,7 +84,6 @@ class TextUnitTranslator:
             )
         )
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
         self.ignore_errors = config.processing.ignore_errors
         self.show_progress = show_progress
         self.stats: TranslationStats | None = None

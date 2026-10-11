@@ -22,6 +22,7 @@ from moto import mock_aws
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.adapters.aws.dynamodb import DynamoDBDocStatusStore
+from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
     build_document_lineage,
@@ -729,11 +730,11 @@ def test_a_pipeline_retiring_without_the_registry_fails_fast(tmp_path) -> None:
     pipeline.config = _config()
     pipeline.config.aws.dynamodb.enabled = False
     pipeline.config.indexing.retire_source_scopes = ["/corpora/old"]
-    pipeline._doc_status = None
+    pipeline.providers = Providers(pipeline.config)
     with pytest.raises(ConfigurationError, match="needs incremental indexing"):
         pipeline._validate_retired_scopes(tmp_path)
 
-    pipeline._doc_status = FakeDocStatusStore()
+    pipeline.providers = Providers(pipeline.config, doc_status=FakeDocStatusStore())
     pipeline._validate_retired_scopes(tmp_path)
     pipeline.config.indexing.retire_source_scopes = [f"{tmp_path.as_posix()}/"]
     with pytest.raises(ConfigurationError, match="own source scope"):

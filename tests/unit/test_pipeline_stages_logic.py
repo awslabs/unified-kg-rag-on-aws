@@ -187,7 +187,7 @@ def _indexing_stage(
     cfg.indexing.reset = False
     if max_failure_rate is not None:
         cfg.indexing.max_failure_rate = max_failure_rate
-    stage = ps.IndexingStage(config=cfg, boto_session=mocker.MagicMock())
+    stage = ps.IndexingStage(config=cfg)
     return stage, fake_mgr
 
 
@@ -387,7 +387,7 @@ def test_extraction_stage_records_failed_units_and_rerun_replaces_them(
 
     extractor = mocker.MagicMock()
     mocker.patch.object(ps, "GraphExtractor", return_value=extractor)
-    stage = ps.GraphExtractionStage(config=Config(), boto_session=mocker.MagicMock())
+    stage = ps.GraphExtractionStage(config=Config())
     ctx = _context()
 
     extractor.extract_from_text_units.return_value = (
@@ -418,7 +418,7 @@ def test_translation_stage_records_failed_units(mocker) -> None:
     config = Config()
     config.processing.translation.enabled = True
     config.processing.translation.additional_target_languages = [LanguageCode.KO]
-    stage = ps.TranslationStage(config=config, boto_session=mocker.MagicMock())
+    stage = ps.TranslationStage(config=config)
     ctx = _context()
 
     stage._execute_core(ctx)
@@ -433,7 +433,7 @@ def test_gleaning_stage_improvement_rate_is_graph_growth(mocker) -> None:
 
     gleaner = mocker.MagicMock()
     mocker.patch.object(ps, "GraphGleaner", return_value=gleaner)
-    stage = ps.GleaningStage(config=Config(), boto_session=mocker.MagicMock())
+    stage = ps.GleaningStage(config=Config())
     ctx = _context()
     ctx.entities = [Entity(id=f"e{i}", name=f"n{i}") for i in range(3)]
     ctx.relationships = [Relationship(id="r1", source_id="e0", target_id="e1")]
@@ -478,7 +478,7 @@ def _community_stage(mocker, failed: list[str], max_failure_rate: float):
     config = Config()
     config.graph.visualization.enabled = False
     config.indexing.max_failure_rate = max_failure_rate
-    stage = ps.CommunityDetectionStage(config=config, boto_session=mocker.MagicMock())
+    stage = ps.CommunityDetectionStage(config=config)
     ctx = _context()
     ctx.knowledge_graph = nx.Graph()
     return stage, ctx

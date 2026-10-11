@@ -63,7 +63,6 @@ class DescriptionSummarizer:
         )
         self.target_language = self.config.processing.translation.target_language.value
         self.providers = Providers.resolve(config, providers, boto_session)
-        self.boto_session = self.providers.boto_session
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor.from_processing(
             self.config.processing, is_transient_error=is_transient_bedrock_error
