@@ -197,14 +197,6 @@ class PipelineContext(BaseModel):
     community_reports: "list[CommunityReport]" = Field(
         default_factory=list, description="Human-readable reports for each community."
     )
-    graph_statistics: Any = Field(
-        default=None,
-        description="Statistical metrics and analysis of the knowledge graph.",
-    )
-    centrality_metrics: list[Any] = Field(
-        default_factory=list,
-        description="Node centrality metrics from the graph analysis.",
-    )
     stage_results: list[PipelineStageResult] = Field(
         default_factory=list,
         description="A collection of results from each executed stage.",

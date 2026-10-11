@@ -503,6 +503,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   being reported as an unknown key that is ignored (#151).
 
 ### Removed
+- `PipelineContext.graph_statistics` and `PipelineContext.centrality_metrics`,
+  written by the graph-analysis stage but never read (and excluded from the
+  pipeline metadata file) (#PR).
 - `LangChainEvaluator.evaluate_single` and `_evaluate_with_metric`, a
   synchronous path only the tests called; the evaluation manager always scores
   through `aevaluate_single` (#PR).
@@ -563,6 +566,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- Node centrality (exact or sampled betweenness is O(V*E)) is computed once
+  per graph instead of up to four times per ingest: `GraphAnalyzer` memoizes
+  `calculate_centrality` until its graph is replaced, so the visualization
+  layout, summary report and data export share one result (#PR).
 - Evaluation datasets may put `answer_aliases` at the top level of an item,
   next to `answer`; it was silently ignored there and only read from
   `metadata.answer_aliases`, which still wins when both are set (#PR).

@@ -72,6 +72,7 @@ class GraphAnalyzer:
         self.analysis_config = config.graph.analysis
         self._graph = graph
         self._centrality_cache: dict[str, dict[str, float]] = {}
+        self._centrality: dict[str, CentralityMetrics] | None = None
         self._statistics_cache: GraphStatistics | None = None
 
     def set_community_data(
@@ -87,6 +88,11 @@ class GraphAnalyzer:
         logger.info("Community data integrated into the graph and statistics.")
 
     def calculate_centrality(self) -> dict[str, CentralityMetrics]:
+        """Per-node centrality, computed once per graph (setting ``graph``
+        resets it): betweenness alone is O(V*E), and the analysis stage and
+        every visualization output read the same values."""
+        if self._centrality is not None:
+            return self._centrality
         if not self._graph or self._graph.number_of_nodes() == 0:
             logger.warning("Cannot calculate centrality for an empty graph")
             return {}
@@ -168,6 +174,7 @@ class GraphAnalyzer:
         logger.info(
             "Centrality calculation completed for %s nodes", len(centrality_data)
         )
+        self._centrality = centrality_data
         return centrality_data
 
     def _resolve_betweenness_k(self) -> int | None:
@@ -228,6 +235,7 @@ class GraphAnalyzer:
 
     def clear_cache(self) -> None:
         self._centrality_cache.clear()
+        self._centrality = None
         self._statistics_cache = None
         logger.info("Graph analyzer cache cleared.")
 
