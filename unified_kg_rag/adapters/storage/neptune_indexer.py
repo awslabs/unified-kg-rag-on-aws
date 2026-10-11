@@ -4,9 +4,8 @@ import random
 import time
 from collections.abc import Callable, Collection, Iterator
 from concurrent.futures import as_completed
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
-import boto3
 from gremlin_python.process.graph_traversal import (
     GraphTraversal,
     GraphTraversalSource,
@@ -36,6 +35,9 @@ from unified_kg_rag.ports.indexer import GraphIndexer, IndexingStats
 from unified_kg_rag.shared import AWSServiceError, get_logger
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
+if TYPE_CHECKING:
+    import boto3
+
 logger = get_logger(__name__)
 
 # Retry-backoff seams: tests patch these module attributes rather than the
@@ -51,7 +53,7 @@ class NeptuneIndexer(GraphIndexer):
     _PROGRESS_LOG_EVERY: int = 2000
 
     def __init__(
-        self, config: Config, boto_session: boto3.Session | None = None
+        self, config: Config, boto_session: "boto3.Session | None" = None
     ) -> None:
         super().__init__(config)
         self.neptune_config = self.config.indexing.neptune

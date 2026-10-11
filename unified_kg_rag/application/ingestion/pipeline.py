@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from pydantic import BaseModel
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
-from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.bootstrap import build_providers
@@ -68,6 +67,8 @@ from unified_kg_rag.shared.utils.document_identity import registry_namespace
 
 if TYPE_CHECKING:
     import boto3
+
+    from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager
 
 logger = get_logger(__name__)
 T = TypeVar("T", bound=BaseModel)
@@ -240,6 +241,9 @@ class DataIngestionPipeline:
 
         self.s3_cache_manager: S3CacheManager | None = None
         if self.pipeline_config.s3_sync_enabled:
+            # Imported here: a run without S3 sync never loads the AWS SDK.
+            from unified_kg_rag.adapters.aws.s3_cache import S3CacheManager
+
             self.s3_cache_manager = S3CacheManager(
                 config=self.config,
                 boto_session=self.providers.boto_session,

@@ -4,9 +4,8 @@ import asyncio
 import time
 from collections.abc import Callable
 from functools import cached_property, wraps
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import boto3
 from opensearchpy import (
     AsyncHttpConnection,
     AsyncOpenSearch,
@@ -21,6 +20,9 @@ from opensearchpy.helpers import streaming_bulk
 from unified_kg_rag.adapters.llm.retry import backoff_delay
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import AWSServiceError, get_logger
+
+if TYPE_CHECKING:
+    import boto3
 
 logger = get_logger(__name__)
 
@@ -162,7 +164,7 @@ class OpenSearchClient:
     BULK_ITEM_MAX_DELAY_SECONDS = 30.0
     BULK_CHUNK_SIZE = 100
 
-    def __init__(self, config: Config, boto_session: boto3.Session | None = None):
+    def __init__(self, config: Config, boto_session: "boto3.Session | None" = None):
         self.config = config
         self.opensearch_config = config.aws.opensearch
         if boto_session is not None:
@@ -175,12 +177,15 @@ class OpenSearchClient:
         self._bound_loop: asyncio.AbstractEventLoop | None = None
 
     @cached_property
-    def boto_session(self) -> boto3.Session:
+    def boto_session(self) -> "boto3.Session":
         """The session IAM auth signs with (a default one unless given).
 
         Created on first use, so a client of a store without IAM auth (a
-        local Gremlin Server or OpenSearch) never resolves an AWS profile.
+        local Gremlin Server or OpenSearch) never resolves an AWS profile,
+        nor imports the AWS SDK.
         """
+        import boto3
+
         return boto3.Session(
             profile_name=self.config.aws.profile_name,
             region_name=self.config.aws.region_name,

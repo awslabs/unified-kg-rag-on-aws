@@ -30,12 +30,11 @@ import threading
 from array import array
 from typing import TYPE_CHECKING, Any
 
-import boto3
-
 from unified_kg_rag.adapters.aws.s3_cache import sse_extra_args
 from unified_kg_rag.shared import get_logger
 
 if TYPE_CHECKING:
+    import boto3
     from types_boto3_s3 import S3Client
 
     from unified_kg_rag.domain.models.config import S3EncryptionConfig
@@ -64,7 +63,7 @@ class S3EmbeddingCache:
         # Namespace entries so a model/dimension change never returns a stale
         # vector of the wrong shape/semantics.
         self._namespace = f"{model_id}:{dimension}"
-        self._session = boto_session or boto3.Session()
+        self._session = boto_session
         self._client: S3Client | None = None
         # This namespace's vectors (float32), loaded and computed.
         self._cache: dict[str, array] = {}
@@ -86,6 +85,10 @@ class S3EmbeddingCache:
     @property
     def client(self) -> S3Client:
         if self._client is None:
+            if self._session is None:
+                import boto3
+
+                self._session = boto3.Session()
             self._client = self._session.client("s3")
         return self._client
 

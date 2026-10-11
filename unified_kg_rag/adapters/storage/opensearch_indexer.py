@@ -6,8 +6,6 @@ from array import array
 from collections.abc import Callable, Collection
 from typing import TYPE_CHECKING, Any
 
-import boto3
-
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 from unified_kg_rag.domain.models import (
     Claim,
@@ -26,6 +24,8 @@ from unified_kg_rag.shared.utils.common import compute_hash
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 if TYPE_CHECKING:
+    import boto3
+
     from unified_kg_rag.adapters.aws.embedding_cache import S3EmbeddingCache
 
 logger = get_logger(__name__)
@@ -40,7 +40,7 @@ class OpenSearchIndexer(VectorIndexer):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
+        boto_session: "boto3.Session | None" = None,
         *,
         embedding_factory: EmbeddingFactoryPort,
         **kwargs: Any,

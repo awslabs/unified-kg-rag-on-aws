@@ -284,6 +284,10 @@ Library API (Python callers and custom backends).
   on the first one; they take the classifier from the LLM factory
   (`is_transient_error`), and a factory without one gets these network and
   server errors retried (#PR).
+- Local mode imports no boto3 or botocore: the CLIs, the ingestion
+  pipeline, the query chain and the local stores import the S3 sync and
+  transfer helpers, SigV4 signing and the AWS session only when a run uses
+  them (#PR).
 - Parsing: the LLM XML parser keeps `&`, `<`, repeated siblings and
   sections with a missing closing tag; truncated responses fail instead of
   parsing as partial successes (#165, #174, #182, #213).

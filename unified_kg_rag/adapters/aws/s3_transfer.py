@@ -5,7 +5,8 @@
 Used by CLIs whose inputs/outputs may live in S3 (``run-eval`` on the bundled
 ECS stack, where the image holds no dataset and the task disk is discarded on
 exit). Uploads apply the same per-object SSE args as every other pipeline
-upload (``sse_extra_args``).
+upload (``sse_extra_args``). The AWS SDK is imported by the functions that
+call S3, so parsing a path (``is_s3_uri``) loads none of it.
 """
 
 from __future__ import annotations
@@ -14,11 +15,6 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import boto3
-from boto3.exceptions import S3UploadFailedError
-from botocore.exceptions import BotoCoreError, ClientError
-
-from unified_kg_rag.adapters.aws.s3_cache import sse_extra_args
 from unified_kg_rag.shared import AWSServiceError, ConfigurationError, get_logger
 
 if TYPE_CHECKING:
@@ -62,6 +58,8 @@ def parse_s3_uri(uri: str, *, require_key: bool) -> tuple[str, str]:
 
 def s3_client_for(config: Config) -> S3Client:
     """An S3 client on the configured profile and region."""
+    import boto3
+
     session = boto3.Session(
         profile_name=config.aws.profile_name, region_name=config.aws.region_name
     )
@@ -74,6 +72,8 @@ def download_s3_object(s3_client: S3Client, uri: str, local_path: Path) -> Path:
 
     Raises :class:`AWSServiceError` naming the URI on any S3 failure.
     """
+    from botocore.exceptions import BotoCoreError, ClientError
+
     bucket, key = parse_s3_uri(uri, require_key=True)
     local_path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -93,6 +93,11 @@ def upload_directory_to_s3(
     attempted; raises :class:`AWSServiceError` listing the failed keys if any
     upload failed, else returns the uploaded ``s3://`` URIs.
     """
+    from boto3.exceptions import S3UploadFailedError
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    from unified_kg_rag.adapters.aws.s3_cache import sse_extra_args
+
     bucket, prefix = parse_s3_uri(uri, require_key=False)
     extra_args = sse_extra_args(config.aws.s3.encryption)
     uploaded: list[str] = []
