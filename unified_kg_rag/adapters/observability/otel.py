@@ -9,12 +9,20 @@ Backends:
 
 * ``none``: spans go to the process's global tracer provider, which the host
   application (or ``opentelemetry-instrument``) owns. Nothing is installed.
-* ``otlp``: an SDK tracer provider with a batch span processor and an OTLP
-  exporter. The exporter reads its endpoint, headers, timeout and protocol
-  from the standard ``OTEL_EXPORTER_OTLP_*`` environment variables, so no
-  credential is ever part of the config file. Spans are exported from a
-  background thread, so a slow or unreachable collector delays nothing but the
-  final flush at exit, which ``OTEL_EXPORTER_OTLP_TIMEOUT`` bounds.
+* ``otlp``, ``langfuse``, ``phoenix``: an SDK tracer provider with a
+  parent-based ratio sampler (``sample_rate``), a batch span processor and an
+  OTLP exporter. The endpoint and headers come from the environment (see
+  ``endpoints``: the standard ``OTEL_EXPORTER_OTLP_*`` variables, or the
+  ``LANGFUSE_*`` / ``PHOENIX_*`` ones), so no credential is ever part of the
+  config file. Spans pass through ``span_transforms.TransformingSpanExporter``
+  (vendor attribute names, then ``redact_patterns`` on every string
+  attribute) on their way out.
+
+Spans are exported from a background thread. Each export request is bounded by
+``export_timeout_seconds`` (or ``OTEL_EXPORTER_OTLP_TIMEOUT``), the batch
+queue drops spans rather than block when it is full, and the final flush at
+exit waits at most for one bounded export, so a slow or unreachable collector
+cannot stall a request.
 """
 
 from __future__ import annotations
@@ -33,6 +41,8 @@ from unified_kg_rag.domain.models.config import (
 from unified_kg_rag.shared.exceptions import ConfigurationError
 from unified_kg_rag.shared.logging import get_logger
 from unified_kg_rag.shared.observability import SpanHandle
+
+from .endpoints import ExportSettings, resolve_export_settings
 
 _EXTRA_HINT = (
     "install the 'otel' extra (`uv sync --extra otel`, or "
@@ -58,7 +68,13 @@ INSTRUMENTATION_NAME = "unified_kg_rag"
 # repository); the schema URL tells a backend which version to read them as.
 SEMCONV_SCHEMA_URL = "https://opentelemetry.io/schemas/1.44.0"
 
-_OTLP_PROTOCOLS = ("http/protobuf", "grpc")
+_EXPORTING_BACKENDS = (
+    ObservabilityBackend.OTLP,
+    ObservabilityBackend.LANGFUSE,
+    ObservabilityBackend.PHOENIX,
+)
+# OpenInference resource attribute Phoenix files traces under.
+PHOENIX_PROJECT_ATTRIBUTE = "openinference.project.name"
 
 AttributeValue = (
     str | bool | int | float | list[str] | list[bool] | list[int] | list[float]
@@ -174,30 +190,42 @@ class OTelTracerBackend:
 
 
 def build_backend(
-    config: ObservabilityConfig, tracer_provider: Any | None = None
+    config: ObservabilityConfig,
+    tracer_provider: Any | None = None,
+    *,
+    span_exporter: Any | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> OTelTracerBackend:
     """The tracer backend ``config`` asks for.
 
     ``tracer_provider`` overrides the backend choice with a caller-owned
     provider (tests use one with an in-memory exporter); it is not shut down
-    with the backend.
+    with the backend, and no vendor mapping or redaction is added to it.
+    ``span_exporter`` replaces the OTLP exporter of an exporting backend
+    (tests use an in-memory one) while keeping its sampler, batching, vendor
+    mapping and redaction; the provider is then not made global.
+    ``environ`` defaults to ``os.environ``.
     """
+    env = os.environ if environ is None else environ
     owned: Any | None = None
     if tracer_provider is not None:
         provider = tracer_provider
     elif config.backend == ObservabilityBackend.NONE:
         provider = trace.get_tracer_provider()
-    elif config.backend == ObservabilityBackend.OTLP:
-        provider = owned = _otlp_tracer_provider(config)
-        if isinstance(trace.get_tracer_provider(), trace.ProxyTracerProvider):
+    elif config.backend in _EXPORTING_BACKENDS:
+        provider = owned = _sdk_tracer_provider(config, env, span_exporter)
+        if span_exporter is None and isinstance(
+            trace.get_tracer_provider(), trace.ProxyTracerProvider
+        ):
             # Make it the global provider too, so spans from libraries
             # instrumented through the OTel API join the same traces.
             trace.set_tracer_provider(provider)
-        else:
+        elif span_exporter is None:
             logger.warning(
                 "A global OpenTelemetry tracer provider is already set; "
-                "observability backend 'otlp' exports through its own provider. "
-                "Use backend 'none' to send spans to the existing one instead."
+                "observability backend '%s' exports through its own provider. "
+                "Use backend 'none' to send spans to the existing one instead.",
+                config.backend.value,
             )
     else:  # pragma: no cover - the enum is exhaustive
         raise ConfigurationError(
@@ -209,55 +237,93 @@ def build_backend(
     return OTelTracerBackend(tracer, owned_provider=owned)
 
 
-def _otlp_tracer_provider(config: ObservabilityConfig) -> Any:
+def _resource_attributes(
+    config: ObservabilityConfig, env: Mapping[str, str]
+) -> dict[str, str]:
+    from opentelemetry.sdk.resources import SERVICE_NAME
+
+    # OTEL_SERVICE_NAME / OTEL_RESOURCE_ATTRIBUTES (read by Resource.create)
+    # win over the config values, as the OpenTelemetry environment
+    # conventions specify; an attribute passed here would override them.
+    attributes: dict[str, str] = {}
+    if not env.get("OTEL_SERVICE_NAME"):
+        attributes[SERVICE_NAME] = config.service_name
+    if config.backend == ObservabilityBackend.PHOENIX and (
+        PHOENIX_PROJECT_ATTRIBUTE not in env.get("OTEL_RESOURCE_ATTRIBUTES", "")
+    ):
+        attributes[PHOENIX_PROJECT_ATTRIBUTE] = (
+            env.get("PHOENIX_PROJECT_NAME") or config.service_name
+        )
+    return attributes
+
+
+def _sdk_tracer_provider(
+    config: ObservabilityConfig,
+    env: Mapping[str, str],
+    span_exporter: Any | None,
+) -> Any:
     try:
-        from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+        from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
+
+        from .span_transforms import (
+            VENDOR_MAPPERS,
+            Redactor,
+            TransformingSpanExporter,
+        )
     except ImportError as e:
         raise ConfigurationError(
-            f"observability.backend 'otlp' needs the OpenTelemetry SDK: {_EXTRA_HINT}"
+            f"observability.backend '{config.backend.value}' needs the "
+            f"OpenTelemetry SDK: {_EXTRA_HINT}"
         ) from e
 
-    # OTEL_SERVICE_NAME (read by Resource.create) wins over the config value,
-    # as the OpenTelemetry environment conventions specify.
-    attributes = (
-        {} if os.getenv("OTEL_SERVICE_NAME") else {SERVICE_NAME: config.service_name}
+    settings = resolve_export_settings(config, env)
+    exporter = (
+        span_exporter if span_exporter is not None else _otlp_exporter(config, settings)
+    )
+    logger.info(
+        "Observability exporter for backend '%s': %s",
+        config.backend.value,
+        settings.describe(),
     )
     provider = TracerProvider(
-        resource=Resource.create(attributes),
+        resource=Resource.create(_resource_attributes(config, env)),
         sampler=ParentBased(TraceIdRatioBased(config.sample_rate)),
     )
-    provider.add_span_processor(BatchSpanProcessor(_otlp_span_exporter()))
+    exporter = TransformingSpanExporter(
+        exporter,
+        mapper=VENDOR_MAPPERS.get(config.backend),
+        redactor=Redactor(config.redact_patterns),
+    )
+    timeout_millis = settings.timeout * 1000
+    kwargs: dict[str, Any] = {}
+    if not env.get("OTEL_BSP_EXPORT_TIMEOUT"):
+        # The processor's own bound on one export (30 s by default) follows
+        # the exporter's, so neither the batch thread nor the exit flush
+        # waits longer than one request is allowed to take.
+        kwargs["export_timeout_millis"] = timeout_millis
+    provider.add_span_processor(BatchSpanProcessor(exporter, **kwargs))
     return provider
 
 
-def _otlp_span_exporter() -> Any:
-    """The OTLP span exporter for the protocol the environment selects."""
-    protocol = (
-        os.getenv("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL")
-        or os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL")
-        or "http/protobuf"
-    ).strip()
-    if protocol not in _OTLP_PROTOCOLS:
-        raise ConfigurationError(
-            f"Unsupported OTLP protocol '{protocol}' (OTEL_EXPORTER_OTLP_PROTOCOL); "
-            f"supported: {', '.join(_OTLP_PROTOCOLS)}"
-        )
+def _otlp_exporter(config: ObservabilityConfig, settings: ExportSettings) -> Any:
+    """The OTLP span exporter for the resolved protocol and settings."""
     try:
-        if protocol == "grpc":
+        if settings.protocol == "grpc":
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
                 OTLPSpanExporter as GrpcExporter,
             )
 
-            return GrpcExporter()
+            return GrpcExporter(**settings.exporter_kwargs())
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
             OTLPSpanExporter as HttpExporter,
         )
 
-        return HttpExporter()
+        return HttpExporter(**settings.exporter_kwargs())
     except ImportError as e:
         raise ConfigurationError(
-            f"observability.backend 'otlp' needs the OTLP exporter: {_EXTRA_HINT}"
+            f"observability.backend '{config.backend.value}' needs the OTLP "
+            f"exporter: {_EXTRA_HINT}"
         ) from e

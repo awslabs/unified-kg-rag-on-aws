@@ -773,24 +773,40 @@ logging:
 # (`uv sync --extra otel`). Spans cover the ingestion run/stages/batches and
 # each query (strategy, retrieval, fusion, rerank, context build) plus every
 # model call with its token usage. The OTLP endpoint, headers (e.g. a collector
-# API key) and timeout come from the standard environment variables
-# (OTEL_EXPORTER_OTLP_ENDPOINT / _HEADERS / _TIMEOUT / _PROTOCOL), never from
-# this file. OTEL_SDK_DISABLED=true turns tracing off regardless.
+# API key) and timeout come from environment variables, never from this file:
+# the standard OTEL_EXPORTER_OTLP_ENDPOINT / _HEADERS / _TIMEOUT / _PROTOCOL,
+# or for the vendor backends LANGFUSE_HOST / LANGFUSE_PUBLIC_KEY /
+# LANGFUSE_SECRET_KEY and PHOENIX_COLLECTOR_ENDPOINT / PHOENIX_API_KEY. Fill
+# the keys from Secrets Manager or ECS task secrets at runtime.
+# OTEL_SDK_DISABLED=true turns tracing off regardless.
 observability:
   enabled: false
-  # none: send spans to the process's global OpenTelemetry tracer provider
-  #       (set up by a host application or `opentelemetry-instrument`).
-  # otlp: export over OTLP (http/protobuf; grpc with
-  #       OTEL_EXPORTER_OTLP_PROTOCOL=grpc).
+  # none:     send spans to the process's global OpenTelemetry tracer provider
+  #           (set up by a host application or `opentelemetry-instrument`).
+  # otlp:     export over OTLP (http/protobuf; grpc with
+  #           OTEL_EXPORTER_OTLP_PROTOCOL=grpc).
+  # langfuse: OTLP to Langfuse (HTTP only) with Langfuse observation types.
+  # phoenix:  OTLP to Arize Phoenix with OpenInference span kinds and token
+  #           counts (default endpoint: a local server on port 6006).
+  # The vendor backends need the `otel` extra only, no vendor SDK.
   backend: "none"
   # Record prompt and completion text on model spans. Off: spans carry counts,
   # ids, timings and token usage only.
   capture_content: false
-  # Fraction of root traces kept (backend otlp); child spans follow the root.
+  # Fraction of root traces kept (otlp, langfuse, phoenix); child spans follow
+  # the root. With `none` the host's tracer provider decides.
   sample_rate: 1.0
-  service_name: "unified-kg-rag"  # OTEL_SERVICE_NAME wins when set
-  # Regular expressions replaced with [REDACTED] in captured content.
+  # service.name; also the Phoenix project (OTEL_SERVICE_NAME and
+  # PHOENIX_PROJECT_NAME win when set).
+  service_name: "unified-kg-rag"
+  # Regular expressions replaced with [REDACTED] in captured content and, for
+  # otlp/langfuse/phoenix, in every exported string attribute, event attribute
+  # and status message (session/user ids and exception messages included).
   redact_patterns: []
+  # Upper bound on one export request in seconds (OTEL_EXPORTER_OTLP_TIMEOUT
+  # wins when set). Exports run in a background thread; this bounds the
+  # flush at exit.
+  export_timeout_seconds: 10
 
 # Evaluation Configuration
 evaluation:

@@ -2363,19 +2363,26 @@ class ObservabilityBackend(str, Enum):
     OpenTelemetry tracer provider, which a host application or
     ``opentelemetry-instrument`` configures. ``otlp`` installs an OTLP
     exporter configured by the standard ``OTEL_EXPORTER_OTLP_*`` environment
-    variables. Vendor backends are added here as they land.
+    variables. ``langfuse`` and ``phoenix`` install the same OTLP exporter,
+    pointed at that vendor's OTLP endpoint (from ``LANGFUSE_*`` /
+    ``PHOENIX_*`` variables when the ``OTEL_*`` ones are unset), and add the
+    vendor's attribute names (Langfuse observation types, OpenInference span
+    kinds and token counts). No vendor SDK is needed.
     """
 
     NONE = "none"
     OTLP = "otlp"
+    LANGFUSE = "langfuse"
+    PHOENIX = "phoenix"
 
 
 class ObservabilityConfig(BaseModel):
     """OpenTelemetry tracing of ingestion and query runs (off by default).
 
-    Needs the ``otel`` extra (``uv sync --extra otel``). The exporter endpoint,
-    headers and timeouts come from the ``OTEL_EXPORTER_OTLP_*`` environment
-    variables, never from this file, so no credential lands in a config file.
+    Needs the ``otel`` extra (``uv sync --extra otel``) for every backend. The
+    exporter endpoint and headers come from environment variables
+    (``OTEL_EXPORTER_OTLP_*``, or ``LANGFUSE_*`` / ``PHOENIX_*`` for those
+    backends), never from this file, so no credential lands in a config file.
     """
 
     enabled: bool = Field(
@@ -2385,7 +2392,9 @@ class ObservabilityConfig(BaseModel):
     backend: ObservabilityBackend = Field(
         default=ObservabilityBackend.NONE,
         description="'none' uses the process's global tracer provider; 'otlp' "
-        "installs an OTLP exporter configured by OTEL_EXPORTER_OTLP_* variables",
+        "installs an OTLP exporter configured by OTEL_EXPORTER_OTLP_* variables; "
+        "'langfuse' and 'phoenix' export over OTLP to that vendor with its "
+        "attribute names added",
     )
     capture_content: bool = Field(
         default=False,
@@ -2397,8 +2406,9 @@ class ObservabilityConfig(BaseModel):
         default=1.0,
         ge=0.0,
         le=1.0,
-        description="Fraction of root traces sampled (backend 'otlp'); child "
-        "spans follow their parent's decision",
+        description="Fraction of root traces sampled (backends otlp, langfuse, "
+        "phoenix; with 'none' the host's provider samples); child spans follow "
+        "their parent's decision",
     )
     service_name: str = Field(
         default="unified-kg-rag",
@@ -2408,7 +2418,17 @@ class ObservabilityConfig(BaseModel):
     redact_patterns: list[str] = Field(
         default_factory=list,
         description="Regular expressions replaced with '[REDACTED]' in captured "
-        "content (only used with capture_content)",
+        "content and, for the backends this package installs (otlp, langfuse, "
+        "phoenix), in every exported string attribute, event attribute and "
+        "status message",
+    )
+    export_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0.0,
+        le=60.0,
+        description="Upper bound on one span-export request (backends otlp, "
+        "langfuse, phoenix). OTEL_EXPORTER_OTLP_TRACES_TIMEOUT / "
+        "OTEL_EXPORTER_OTLP_TIMEOUT win when set",
     )
 
     @field_validator("redact_patterns")

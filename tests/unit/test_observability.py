@@ -199,7 +199,7 @@ def test_config_defaults_and_validation() -> None:
     )
     assert ObservabilityConfig(backend="otlp").backend == ObservabilityBackend.OTLP
     with pytest.raises(ValueError):
-        ObservabilityConfig(backend="langfuse")  # P2, not accepted yet
+        ObservabilityConfig(backend="cloudwatch")  # use otlp + an ADOT collector
     with pytest.raises(ValueError):
         ObservabilityConfig(sample_rate=1.5)
     with pytest.raises(ValueError, match="redact_patterns"):
