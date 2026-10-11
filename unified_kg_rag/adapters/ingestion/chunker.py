@@ -649,8 +649,14 @@ class BaseChunker(ABC):
 
 class SimpleTextChunker(BaseChunker):
     def __init__(
-        self, config: Config, show_progress: bool = True, **kwargs: Any
+        self,
+        config: Config,
+        show_progress: bool = True,
+        *,
+        providers: Providers | None = None,
     ) -> None:
+        # No model calls: ``providers`` is accepted so the factory can pass
+        # one bundle to either chunker.
         super().__init__(config, show_progress=show_progress)
         logger.debug("Initialized SimpleTextChunker")
 
@@ -688,7 +694,6 @@ class IntelligentTextChunker(BaseChunker):
         show_progress: bool = True,
         *,
         providers: Providers | None = None,
-        **kwargs: Any,
     ) -> None:
         super().__init__(config, show_progress=show_progress)
         self.providers = Providers.resolve(config, providers)
@@ -1132,11 +1137,12 @@ class ChunkerFactory:
         config: Config,
         chunker_type: ChunkingStrategy = ChunkingStrategy.INTELLIGENT,
         show_progress: bool = True,
-        **kwargs: Any,
+        *,
+        providers: Providers | None = None,
     ) -> BaseChunker:
         logger.info("Creating chunker of type: '%s'", chunker_type.value)
         if chunker_type == ChunkingStrategy.SIMPLE:
-            return SimpleTextChunker(config, show_progress, **kwargs)
+            return SimpleTextChunker(config, show_progress, providers=providers)
         if chunker_type == ChunkingStrategy.INTELLIGENT:
-            return IntelligentTextChunker(config, show_progress, **kwargs)
+            return IntelligentTextChunker(config, show_progress, providers=providers)
         raise DataProcessingError(f"Unknown chunker type: '{chunker_type}'")

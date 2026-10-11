@@ -198,6 +198,12 @@ class DataIngestionPipeline:
         # LLM/embedding factories) built here or injected, and passed to every
         # stage, so an injected factory reaches every LLM/embedding adapter
         # and the default Bedrock clients are created once per pipeline.
+        if providers is not None and boto_session is not None:
+            raise ValueError(
+                "Pass boto_session either to DataIngestionPipeline or on the "
+                "Providers bundle (Providers(config, boto_session=...)), not both: "
+                "the bundle's session is the one every stage uses."
+            )
         self.providers = (
             providers
             if providers is not None

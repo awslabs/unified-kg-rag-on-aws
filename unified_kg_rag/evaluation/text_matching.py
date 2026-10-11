@@ -44,6 +44,21 @@ def _is_punctuation(ch: str) -> bool:
     return ch in _ASCII_PUNCTUATION or unicodedata.category(ch).startswith("P")
 
 
+def _split_or_join_dash(match: re.Match[str]) -> str:
+    """A dash between words is a space, except next to a lone letter.
+
+    "1990-1995" and "5-year" split into separate tokens, but "Type-A" and
+    "A-1" stay one token: split, the lone "a" would be dropped as an article
+    and "Type-A" would match "Type-B".
+    """
+    left = re.search(r"\w+$", match.string[: match.start()])
+    right = re.match(r"\w+", match.string[match.end() :])
+    for token in (left.group(0) if left else "", right.group(0) if right else ""):
+        if len(token) == 1 and token.isalpha():
+            return ""
+    return " "
+
+
 def normalize_answer(text: str) -> str:
     """SQuAD-style answer normalization, preceded by Unicode NFKC.
 
@@ -65,7 +80,7 @@ def normalize_answer(text: str) -> str:
     """
     text = unicodedata.normalize("NFKC", text).lower()
     text = _THOUSANDS_SEPARATOR.sub("", text)
-    text = _JOINING_DASH.sub(" ", text)
+    text = _JOINING_DASH.sub(_split_or_join_dash, text)
     text = _LEADING_MINUS.sub("-", text)
     text = _SPACED_PERCENT.sub("%", text)
     kept = {i for m in _KEPT_PUNCTUATION.finditer(text) for i in range(*m.span())}

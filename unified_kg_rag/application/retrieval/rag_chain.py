@@ -819,7 +819,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             text = text[len(prefix) :].strip()
         if not text:
             return None
-        if text.lower().startswith(cls._REWRITE_REFUSALS):
+        # A refusal opens with an apology or an inability and asks nothing; a
+        # rewritten question may start the same way ("I can't find …; where
+        # is it?") but ends with a question mark.
+        opening = text.lower().replace("\u2019", "'")
+        if opening.startswith(cls._REWRITE_REFUSALS) and not text.endswith("?"):
             logger.warning("Follow-up rewrite was a refusal; using the query as is")
             return None
         return text
