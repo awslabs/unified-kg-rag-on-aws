@@ -677,7 +677,7 @@ becomes an OpenTelemetry trace that any OTLP-capable backend (Jaeger, Grafana
 Tempo, an OpenTelemetry Collector, ...) can show. It needs the `otel` extra:
 
 ```bash
-uv sync --extra otel          # or: pip install "unified-kg-rag-on-aws[otel]"
+uv sync --extra otel          # or: pip install -e '.[otel]'
 ```
 
 Enabling tracing without the extra fails at start-up with a

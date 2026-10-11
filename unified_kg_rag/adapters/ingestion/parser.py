@@ -33,7 +33,7 @@ UNSTRUCTURED_EXTENSIONS = frozenset({".htm", ".html", ".markdown", ".md"})
 UNSTRUCTURED_INSTALL_HINT = (
     "install the optional 'unstructured' extra (Python 3.11+): "
     "`uv sync --extra unstructured` or "
-    "`pip install 'unified-kg-rag-on-aws[unstructured]'`"
+    "`pip install -e '.[unstructured]'` in a source checkout"
 )
 
 

@@ -655,7 +655,7 @@ OpenTelemetry 트레이스가 되며, OTLP를 받는 백엔드(Jaeger, Grafana T
 OpenTelemetry Collector 등)에서 볼 수 있습니다. `otel` extra가 필요합니다.
 
 ```bash
-uv sync --extra otel          # 또는: pip install "unified-kg-rag-on-aws[otel]"
+uv sync --extra otel          # 또는: pip install -e '.[otel]'
 ```
 
 extra 없이 추적을 켜면 시작할 때 extra 이름을 알려 주는 `ConfigurationError`로

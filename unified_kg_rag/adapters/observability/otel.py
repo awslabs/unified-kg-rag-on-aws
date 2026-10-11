@@ -48,7 +48,7 @@ from .endpoints import ExportSettings, resolve_export_settings
 
 _EXTRA_HINT = (
     "install the 'otel' extra (`uv sync --extra otel`, or "
-    "`pip install 'unified-kg-rag-on-aws[otel]'`) or set "
+    "`pip install -e '.[otel]'` in a source checkout) or set "
     "observability.enabled: false"
 )
 
