@@ -268,16 +268,16 @@ Library API (Python callers and custom backends).
   never retries, so query chains and Ollama embedding calls now get the
   framework's retry, `providers.llm.max_attempts` /
   `providers.embedding.max_attempts` attempts. OpenAI-compatible servers keep
-  the OpenAI client's own retries, with no second layer (#PR).
+  the OpenAI client's own retries, with no second layer (#225).
 - A local ingestion run no longer imports the AWS SDK at community detection:
   Leiden now calls `graspologic-native` directly, as `graspologic` does,
   instead of importing `graspologic`, whose package import loads boto3
   (through gensim and smart_open) and takes about 10 s. Partitions are
-  unchanged (#PR).
+  unchanged (#225).
 - The check that the graph still holds the registry's documents reads past
   any number of entity-less records, still in batches, instead of stopping
   after 1,000: a corpus starting with more than 1,000 entity-less pages no
-  longer lets a wiped graph pass as intact (#PR).
+  longer lets a wiped graph pass as intact (#225).
 - Re-running `run-ingestion` with an existing `--pipeline-id` resumes again:
   the integrity check built its cache keys before the corpus fingerprint was
   known, so it reported every stage missing and prompted, which crashed
