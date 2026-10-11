@@ -149,7 +149,7 @@ Library API (Python callers and custom backends).
   / `add_message` (use `load_history` / `add_turn`) (#212); conversation
   entity tracking: `MemoryManager.load_context` (now `load_history`),
   `add_turn(entities=)`, `MemoryManager(providers=)` and the history's entity
-  extractor (#PR); the
+  extractor (#218); the
   `Document` page-element model and `Document.detected_language` (#216);
   `OptimizedContext.quality_score` and other unused parameters and
   test-only methods (#169).
@@ -252,24 +252,24 @@ Library API (Python callers and custom backends).
 - Retrieval: graph expansion ranks by distance from the seeds first, so
   high-degree neighbours no longer push the query's own seed entities out of
   the cut; the seeds are always kept and the neighbourhood gets its own
-  `top_k * retrieval_multiplier` slots (#PR).
+  `top_k * retrieval_multiplier` slots (#218).
 - Local search: the entity frequency filter no longer drops the query's own
   matched entities, so a hub-heavy graph cannot leave the context with no
-  entities; only expanded entities above the threshold are dropped (#PR).
+  entities; only expanded entities above the threshold are dropped (#218).
 - Conversation memory: earlier turns' entities no longer leak into the entity
   focus of a rewritten follow-up, and a turn no longer pays an
   entity-extraction LLM call (for DRIFT and global search too); the rewrite
   resolves references instead and reads a bounded history (earlier answers
-  cut to 1,000 characters) (#PR).
+  cut to 1,000 characters) (#218).
 - An empty or refusing follow-up rewrite no longer replaces the user's
-  question; the query is used as is (#PR).
+  question; the query is used as is (#218).
 - `GraphRAGChain(providers=..., boto_session=...)` raises instead of silently
-  ignoring the session (#PR).
+  ignoring the session (#218).
 - Global search: when dynamic selection keeps no community, the fallback
   reports are capped at `max_communities` and get their text units and the
-  rerank, instead of the raw retrieved list (#PR).
+  rerank, instead of the raw retrieved list (#218).
 - A shared query-embedding call that fails after all its waiters were
-  cancelled no longer logs "Task exception was never retrieved" (#PR).
+  cancelled no longer logs "Task exception was never retrieved" (#218).
 - Evaluation: `answer_match` no longer counts a different number or name as
   a match; judge failures are recorded per query instead of discarding the
   run; non-zero exit codes on failed scoring (#158, #210).
