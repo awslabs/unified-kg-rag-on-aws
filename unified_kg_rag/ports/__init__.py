@@ -30,7 +30,7 @@ they are NOT exported from this catalog; they live beside their adapters and are
 imported from there directly. Listed here only as a pointer:
 - ``BaseGraphRAGRetriever`` / ``BaseSearchStrategy``
   (``adapters.retrieval.base``; adapters: ``adapters.retrievers`` / ``adapters.search_strategies``).
-- ``BaseGraphRAGEvaluator`` (``evaluation.base``; adapters: ``adapters.evaluators``).
+- ``BaseGraphRAGEvaluator`` (``adapters.evaluators.base``).
 """
 
 from unified_kg_rag.ports.cache import CachePort

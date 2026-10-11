@@ -80,7 +80,7 @@ unified_kg_rag/
 │  ├─ ingestion/        #   LLM/IO 결합: chunker, *_extractor, loader, parser,
 │  │                    #   translator, gleaner, community_detector
 │  ├─ renderers/        #   그래프 시각화 렌더러
-│  └─ evaluators/       #   langchain/ragas 평가기 (LLM을 쓰지 않는 graph_aware,
+│  └─ evaluators/       #   평가기 베이스 + langchain/ragas 평가기 (LLM을 쓰지 않는 graph_aware,
 │                       #   retrieval, answer_match 평가기는 evaluation/에 있음)
 ├─ application/         # 오케스트레이션 + 진입점
 │  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning
@@ -90,13 +90,13 @@ unified_kg_rag/
 │  └─ prompts/          #   PromptTuner (LLM 기반 코퍼스 프로파일링)
 ├─ shared/              # 공통 커널 (config, logging, exceptions, metrics,
 │                       #   cache/pipeline manager, utils)
-├─ evaluation/          # 실제 로직 패키지: evaluation_manager / base / graph_aware /
+├─ evaluation/          # 실제 로직 패키지: evaluation_manager / graph_aware /
 │                       #   retrieval / answer_match
 └─ visualization/       # 실제 로직 패키지: 렌더 루프 + embeddings/exporters
 ```
 
 > 레이아웃 참고: `evaluation/`과 `visualization/`은 **실제 로직 패키지**입니다.
-> `evaluation/`에는 `evaluation_manager`, `base`와 LLM을 쓰지 않는
+> `evaluation/`에는 `evaluation_manager`와 LLM을 쓰지 않는
 > `graph_aware_evaluator`, `retrieval_evaluator`, `answer_match_evaluator`가 있고,
 > `visualization/`에는 렌더 루프와 `embeddings/`, `exporters/` 하위 패키지가
 > 있습니다(렌더러는 `adapters/renderers/`에 있습니다). 그 밖의 모듈은 모두 실제 위치
@@ -114,7 +114,7 @@ unified_kg_rag/
 | `BaseGraphRAGRetriever` (읽기 측) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch}_retriever.py` | 검색 어댑터 |
 | LLM/임베딩/재순위화 팩토리, 토큰 카운터 | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`) | `adapters/aws/bedrock.py`, `adapters/aws/bedrock_models.py`, `adapters/aws/token_counter.py`. 로컬: `adapters/local/{models,embeddings,rerank,token_counter}.py` | 오케스트레이터마다 한 번 만드는 `Providers` 묶음(`adapters/providers.py`, `application/bootstrap.py`가 생성)에 담아 모든 구성 요소에 전달. 역할별 어댑터는 `adapters/provider_registry.py`를 거쳐 `providers.<역할>.kind`가 고름(기본값 Bedrock. §15) |
 
-> 설계 참고: 순수 포트(`DocStatusPort`, 쓰기 측 인덱서 ABC)는 `ports/`에 모았습니다. 읽기 측 추상 베이스(`BaseGraphRAGRetriever`/`BaseSearchStrategy`)는 `__init__`에서 인프라(HybridScorer/TokenManager)를 생성하는 "어댑터 베이스"이므로 `adapters/retrieval/base.py`에 두고 그곳에서 import합니다. `ports/__init__`은 이들을 export하지 않고 카탈로그 docstring에 이름만 적습니다(중복 Protocol 정의는 두지 않습니다). `BaseGraphRAGEvaluator`(`evaluation/base.py`)도 같은 종류의 어댑터 베이스입니다.
+> 설계 참고: 순수 포트(`DocStatusPort`, 쓰기 측 인덱서 ABC)는 `ports/`에 모았습니다. 읽기 측 추상 베이스(`BaseGraphRAGRetriever`/`BaseSearchStrategy`)는 `__init__`에서 인프라(HybridScorer/TokenManager)를 생성하는 "어댑터 베이스"이므로 `adapters/retrieval/base.py`에 두고 그곳에서 import합니다. `ports/__init__`은 이들을 export하지 않고 카탈로그 docstring에 이름만 적습니다(중복 Protocol 정의는 두지 않습니다). `BaseGraphRAGEvaluator`(`adapters/evaluators/base.py`)도 같은 종류의 어댑터 베이스입니다.
 
 ### 2.2 역할 기반 리트리버 주입
 

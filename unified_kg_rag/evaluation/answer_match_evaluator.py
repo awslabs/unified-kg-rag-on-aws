@@ -35,6 +35,11 @@ from collections import Counter
 from datetime import datetime
 from typing import Any
 
+from unified_kg_rag.adapters.evaluators.base import (
+    SKIP_REASON_EMPTY_REFERENCE,
+    SKIPPED_METRICS_KEY,
+    BaseGraphRAGEvaluator,
+)
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetric,
@@ -45,11 +50,6 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
 )
 
-from .base import (
-    SKIP_REASON_EMPTY_REFERENCE,
-    SKIPPED_METRICS_KEY,
-    BaseGraphRAGEvaluator,
-)
 from .text_matching import normalize_answer, phrase_in_text
 
 __all__ = [

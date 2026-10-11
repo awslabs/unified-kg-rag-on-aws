@@ -29,6 +29,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from unified_kg_rag.adapters.evaluators.base import (
+    SKIPPED_METRICS_KEY,
+    BaseGraphRAGEvaluator,
+)
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetric,
@@ -40,7 +44,6 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.shared import get_logger
 
-from .base import SKIPPED_METRICS_KEY, BaseGraphRAGEvaluator
 from .text_matching import phrase_in_text
 
 logger = get_logger(__name__)

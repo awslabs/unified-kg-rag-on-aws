@@ -78,7 +78,7 @@ unified_kg_rag/
 │  ├─ ingestion/        #   LLM/IO coupled: chunker, *_extractor, loader, parser,
 │  │                    #   translator, gleaner, community_detector
 │  ├─ renderers/        #   graph visualization renderers
-│  └─ evaluators/       #   langchain/ragas evaluators (the LLM-free graph_aware,
+│  └─ evaluators/       #   evaluator bases + langchain/ragas evaluators (the LLM-free graph_aware,
 │                       #   retrieval and answer_match evaluators live in evaluation/)
 ├─ application/         # orchestration + entry points
 │  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning
@@ -88,13 +88,13 @@ unified_kg_rag/
 │  └─ prompts/          #   PromptTuner (LLM-based corpus profiling)
 ├─ shared/              # cross-cutting kernel (config, logging, exceptions, metrics,
 │                       #   cache/pipeline manager, utils)
-├─ evaluation/          # real logic package: evaluation_manager / base / graph_aware /
+├─ evaluation/          # real logic package: evaluation_manager / graph_aware /
 │                       #   retrieval / answer_match
 └─ visualization/       # real logic package: render loop + embeddings/exporters
 ```
 
 > Layout note: `evaluation/` and `visualization/` are **real logic packages** —
-> `evaluation/` holds `evaluation_manager` / `base` and the LLM-free
+> `evaluation/` holds `evaluation_manager` and the LLM-free
 > `graph_aware_evaluator` / `retrieval_evaluator` / `answer_match_evaluator`;
 > `visualization/` holds the render loop plus the `embeddings/` and
 > `exporters/` subpackages (the renderers are in `adapters/renderers/`). Everything else is imported from its real
@@ -113,7 +113,7 @@ unified_kg_rag/
 | `BaseGraphRAGRetriever` (read-side) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch}_retriever.py` | Retrieval adapters |
 | LLM/Embedding/Rerank factories, token counter | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`) | `adapters/aws/bedrock.py`, `adapters/aws/bedrock_models.py`, `adapters/aws/token_counter.py`; local: `adapters/local/{models,embeddings,rerank,token_counter}.py` | Carried by one `Providers` bundle (`adapters/providers.py`, built by `application/bootstrap.py`) that each orchestrator builds once and passes to every component; each role's adapter is the one `providers.<role>.kind` selects through `adapters/provider_registry.py` (default Bedrock; §15) |
 
-> Design note: Pure ports (`DocStatusPort`, the write-side indexer ABCs) are gathered in `ports/`. The read-side abstract bases (`BaseGraphRAGRetriever`/`BaseSearchStrategy`) are "adapter bases" that construct infrastructure (HybridScorer/TokenManager) in `__init__`, so they live in `adapters/retrieval/base.py` and are imported from there; `ports/__init__` does not export them and only names them in its catalog docstring (no duplicate Protocol definition is kept). `BaseGraphRAGEvaluator` (`evaluation/base.py`) is an adapter base of the same kind.
+> Design note: Pure ports (`DocStatusPort`, the write-side indexer ABCs) are gathered in `ports/`. The read-side abstract bases (`BaseGraphRAGRetriever`/`BaseSearchStrategy`) are "adapter bases" that construct infrastructure (HybridScorer/TokenManager) in `__init__`, so they live in `adapters/retrieval/base.py` and are imported from there; `ports/__init__` does not export them and only names them in its catalog docstring (no duplicate Protocol definition is kept). `BaseGraphRAGEvaluator` (`adapters/evaluators/base.py`) is an adapter base of the same kind.
 
 ### 2.2 Role-Based Retriever Injection
 

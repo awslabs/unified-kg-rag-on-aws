@@ -45,6 +45,10 @@ import unicodedata
 from datetime import datetime
 from typing import Any
 
+from unified_kg_rag.adapters.evaluators.base import (
+    SKIPPED_METRICS_KEY,
+    BaseGraphRAGEvaluator,
+)
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetric,
@@ -54,8 +58,6 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluatorType,
 )
-
-from .base import SKIPPED_METRICS_KEY, BaseGraphRAGEvaluator
 
 # A file extension: "." + 1-5 ASCII alphanumerics with at least one letter, so
 # "Version 2.0" or "Route 66" keep their numeric tail.

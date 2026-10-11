@@ -24,7 +24,7 @@ ports → domain`, with `shared` as a cross-cutting kernel any layer may use.
   (+ `IndexingStats`). `ports/__init__` is the port catalog. The
   retrieval/evaluation abstract bases are *adapter bases* (they construct infra
   in `__init__`): `ports/__init__` names them but does not export them; import
-  them from `adapters.retrieval.base` / `evaluation.base`.
+  them from `adapters.retrieval.base` / `adapters.evaluators.base`.
 - **`adapters/`**: concrete technology bindings — `aws/` (Bedrock, Neptune,
   OpenSearch, DynamoDB, S3), `storage/` (indexers), `retrievers/`,
   `search_strategies/`, `retrieval/` (base + hybrid scorer + token/memory

@@ -184,6 +184,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#157).
 
 ### Changed
+- **Breaking** (import paths): the evaluator base classes moved from
+  `unified_kg_rag.evaluation.base` to `unified_kg_rag.adapters.evaluators.base`,
+  and `unified_kg_rag.evaluation` no longer re-exports `BaseEvaluator`,
+  `BaseGraphRAGEvaluator`, `LangChainEvaluator` or `RagasEvaluator` (nor does
+  `unified_kg_rag.adapters.evaluators`). Import the langchain and ragas
+  evaluators from `adapters.evaluators.langchain_evaluator` /
+  `ragas_evaluator`. This removes the evaluation ↔ adapter import cycle and
+  its lazy-export shim (#PR).
 - The ingestion `BatchProcessor`s are built from `config.processing` once
   (`BatchProcessor.from_processing`). `execute_with_fallback` and
   `aexecute_with_fallback` no longer take `run_config`, which overwrote the
