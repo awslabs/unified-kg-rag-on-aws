@@ -255,6 +255,10 @@ Library API (Python callers and custom backends).
   relationship's index suffix and filters, so the edge write no longer fails
   (and the document is no longer retried forever) when ingesting with
   `index_value` (#PR).
+- Gleaning: a re-proposal of a name or edge type a correction replaced
+  merges into the corrected item instead of producing a second entity or
+  edge with the same id, and graph resolution merges items that share an id,
+  so Neptune no longer gets two vertices or parallel edges for one id (#PR).
 - Parsing: the LLM XML parser keeps `&`, `<`, repeated siblings and
   sections with a missing closing tag; truncated responses fail instead of
   parsing as partial successes (#165, #174, #182, #213).
