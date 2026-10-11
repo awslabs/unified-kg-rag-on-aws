@@ -181,13 +181,27 @@ class NetworkingStack(Stack):
             self.service_sg, ec2.Port.tcp(443), "HTTPS from the data plane"
         )
         for name, service in INTERFACE_ENDPOINTS.items():
-            vpc.add_interface_endpoint(
+            endpoint = vpc.add_interface_endpoint(
                 f"{name}Endpoint",
                 service=service,
                 subnets=self.app_subnets,
                 security_groups=[self.endpoint_sg],
                 open=False,
                 private_dns_enabled=True,
+            )
+            # Only this account's principals (the task and execution roles) may
+            # use the endpoints, so stolen credentials from another account
+            # cannot exfiltrate through them. Conditioned on the caller, not
+            # the resource: ECR serves image layers and Bedrock serves models
+            # from AWS-owned accounts.
+            endpoint.add_to_policy(
+                iam.PolicyStatement(
+                    sid="ThisAccountPrincipals",
+                    principals=[iam.AnyPrincipal()],
+                    actions=["*"],
+                    resources=["*"],
+                    conditions={"StringEquals": {"aws:PrincipalAccount": self.account}},
+                )
             )
 
     def _restrict_gateway_endpoints(

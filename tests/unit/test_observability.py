@@ -34,7 +34,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
-from opentelemetry.trace import StatusCode
+from opentelemetry.trace import SpanKind, StatusCode
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from unified_kg_rag.adapters.observability.langchain_callback import (
@@ -124,7 +124,6 @@ def test_disabled_by_default_and_every_call_is_a_shared_noop() -> None:
         assert span is observability.NOOP_SPAN
         span.set_attributes({"k": "v"})
     assert observability.start_span("c") is observability.NOOP_SPAN
-    observability.set_attributes(x=1)
     assert observability.current_trace_ids() is None
     assert observability.content_policy().capture_content is False
     assert configure_observability(ObservabilityConfig()) is False
@@ -275,15 +274,19 @@ def test_span_records_namespaced_attributes_and_escaping_errors(
 ) -> None:
     exporter = tracing()
     with pytest.raises(RuntimeError):
-        with observability.span("outer", {"gen_ai.request.model": "m"}, hits=3):
-            observability.set_attributes(extra=True)
+        with observability.span(
+            "outer", {"gen_ai.request.model": "m"}, hits=3
+        ) as handle:
+            handle.set_attributes({"kg_rag.extra": True})
             raise RuntimeError("boom")
     span = _one(exporter, "outer")
     assert _attrs(span) == {
         "gen_ai.request.model": "m",
         "kg_rag.hits": 3,
         "kg_rag.extra": True,
+        "error.type": "RuntimeError",
     }
+    assert span.kind == SpanKind.INTERNAL
     assert span.status.status_code == StatusCode.ERROR
     assert span.events[0].name == "exception"
 
@@ -323,7 +326,11 @@ def test_context_propagates_across_the_executor(tracing: Tracing) -> None:
 # --- ingestion ------------------------------------------------------------------
 
 
-def _stage(stage_type: PipelineStageType, outcome: Callable[[], tuple[int, int]]):
+def _stage(
+    stage_type: PipelineStageType,
+    outcome: Callable[[], tuple[int, int]],
+    metrics: dict[str, Any] | None = None,
+):
     from unified_kg_rag.application.ingestion.pipeline_stages import PipelineStage
 
     class _Stage(PipelineStage):
@@ -331,9 +338,11 @@ def _stage(stage_type: PipelineStageType, outcome: Callable[[], tuple[int, int]]
             self.config = Config()
             self.stage_type = stage_type
 
-        def _execute_core(self, context: PipelineContext) -> tuple[int, int, None]:
+        def _execute_core(
+            self, context: PipelineContext
+        ) -> tuple[int, int, dict[str, Any] | None]:
             inputs, outputs = outcome()
-            return inputs, outputs, None
+            return inputs, outputs, metrics
 
     return _Stage()
 
@@ -349,7 +358,11 @@ def test_ingestion_run_and_stage_spans(tracing: Tracing) -> None:
         start_time=datetime(2026, 1, 1),
         source_directory=Path("."),
     )
-    ok = _stage(PipelineStageType.DOCUMENT_PARSING, lambda: (3, 2))
+    ok = _stage(
+        PipelineStageType.DOCUMENT_PARSING,
+        lambda: (3, 2),
+        {"failed_files": 1, "duration": 0.5, "partial": True, "source": "s3"},
+    )
 
     def _fail() -> tuple[int, int]:
         raise RuntimeError("synthetic stage failure")
@@ -358,6 +371,7 @@ def test_ingestion_run_and_stage_spans(tracing: Tracing) -> None:
 
     def _run(*_: Any) -> PipelineContext:
         context.stage_results = [ok.execute(context), failing.execute(context)]
+        context.status = PipelineStageStatus.FAILED
         return context
 
     pipeline = object.__new__(DataIngestionPipeline)
@@ -376,8 +390,17 @@ def test_ingestion_run_and_stage_spans(tracing: Tracing) -> None:
     assert _attrs(parsing)["kg_rag.input_count"] == 3
     assert _attrs(parsing)["kg_rag.output_count"] == 2
     assert _attrs(parsing)["kg_rag.stage.status"] == PipelineStageStatus.COMPLETED.value
+    # Numeric metrics only: a completed stage can still report dropped work.
+    assert _attrs(parsing)["kg_rag.stage.failed_files"] == 1
+    assert _attrs(parsing)["kg_rag.stage.duration"] == 0.5
+    assert "kg_rag.stage.partial" not in _attrs(parsing)
+    assert "kg_rag.stage.source" not in _attrs(parsing)
     chunking = stages[PipelineStageType.TEXT_CHUNKING.value]
     assert chunking.status.status_code == StatusCode.ERROR
+    assert _attrs(chunking)["error.type"] == "RuntimeError"
+    assert [e.name for e in chunking.events] == ["exception"]
+    # The pipeline reports the failure on the context, not by raising.
+    assert run.status.status_code == StatusCode.ERROR
 
 
 def test_batch_spans_nest_chunks_across_worker_threads(tracing: Tracing) -> None:
@@ -546,7 +569,10 @@ def _usage_message(text: str) -> AIMessage:
 
 def _traced_model(text: str) -> GenericFakeChatModel:
     handler = GenAITracingCallbackHandler(
-        "vendor.model-v1", purpose=ModelPurpose.QUERY.value
+        "vendor.model-v1",
+        purpose=ModelPurpose.QUERY.value,
+        max_tokens=512,
+        temperature=0.1,
     )
     return GenericFakeChatModel(
         messages=itertools.repeat(_usage_message(text)), callbacks=[handler]
@@ -571,9 +597,12 @@ async def test_model_span_records_genai_usage_and_nests(tracing: Tracing) -> Non
     for call in calls:
         attrs = _attrs(call)
         assert _is_child(call, caller)
+        assert call.kind == SpanKind.CLIENT
         assert attrs["gen_ai.operation.name"] == "chat"
         assert attrs["gen_ai.provider.name"] == "aws.bedrock"
         assert attrs["gen_ai.request.model"] == "vendor.model-v1"
+        assert attrs["gen_ai.request.max_tokens"] == 512
+        assert attrs["gen_ai.request.temperature"] == 0.1
         assert attrs["gen_ai.response.model"] == "vendor.model-v1"
         assert attrs["gen_ai.usage.input_tokens"] == 120
         assert attrs["gen_ai.usage.output_tokens"] == 30
@@ -616,6 +645,49 @@ def test_model_error_ends_the_span_with_error_status(tracing: Tracing) -> None:
         model.invoke("hi")
     span = _one(exporter, "chat vendor.model-v1")
     assert span.status.status_code == StatusCode.ERROR
+    assert _attrs(span)["error.type"] == "RuntimeError"
+
+
+async def test_model_span_takes_session_and_user_from_run_metadata(
+    tracing: Tracing,
+) -> None:
+    exporter = tracing()
+    # No bind_identity block: a streamed answer's model call can outlive it.
+    await _traced_model("Vendor ships parts.").ainvoke(
+        _PROMPT, config={"metadata": {"session_id": "conv-42", "user_id": "user-7"}}
+    )
+    _traced_model("Vendor ships parts.").invoke(_PROMPT)
+    with_ids, without_ids = _by_name(exporter)["chat vendor.model-v1"]
+    assert (_attrs(with_ids)["session.id"], _attrs(with_ids)["user.id"]) == (
+        "conv-42",
+        "user-7",
+    )
+    assert "session.id" not in _attrs(without_ids)
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"stopReason": "end_turn"},
+        {"stop_reason": "end_turn"},
+        {"finish_reason": "end_turn"},
+        {"done_reason": "end_turn"},
+    ],
+    ids=["converse", "invoke-model", "openai-compatible", "ollama"],
+)
+def test_finish_reason_is_read_from_every_provider_shape(
+    tracing: Tracing, metadata: dict[str, str]
+) -> None:
+    exporter = tracing()
+    handler = GenAITracingCallbackHandler("vendor.model-v1")
+    run_id = uuid4()
+    handler.on_chat_model_start({}, [_PROMPT], run_id=run_id)
+    message = AIMessage(content="Done.", response_metadata=metadata)
+    handler.on_llm_end(
+        LLMResult(generations=[[ChatGeneration(message=message)]]), run_id=run_id
+    )
+    attrs = _attrs(_one(exporter, "chat vendor.model-v1"))
+    assert list(attrs["gen_ai.response.finish_reasons"]) == ["end_turn"]
 
 
 def test_bedrock_factory_attaches_the_handler_only_when_enabled(
@@ -629,12 +701,22 @@ def test_bedrock_factory_attaches_the_handler_only_when_enabled(
 
     tracing()
     existing = object()
-    enabled: dict[str, Any] = {"callbacks": [existing]}
+    # InvokeModel carries the request parameters in model_kwargs.
+    enabled: dict[str, Any] = {
+        "callbacks": [existing],
+        "model_kwargs": {"max_tokens": 256, "temperature": 0.2},
+    }
     BedrockLanguageModelFactory._apply_tracing(enabled, "m", ModelPurpose.INGESTION)
     first, handler = enabled["callbacks"]
     assert first is existing
     assert isinstance(handler, GenAITracingCallbackHandler)
     assert (handler.model_id, handler.purpose) == ("m", "ingestion")
+    assert (handler.max_tokens, handler.temperature) == (256, 0.2)
+    # Converse carries them at the top level.
+    converse: dict[str, Any] = {"max_tokens": 128}
+    BedrockLanguageModelFactory._apply_tracing(converse, "m", ModelPurpose.QUERY)
+    (handler,) = converse["callbacks"]
+    assert (handler.max_tokens, handler.temperature) == (128, None)
 
 
 # --- Bedrock embedding and rerank wrappers ------------------------------------------

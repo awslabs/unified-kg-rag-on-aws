@@ -3,9 +3,10 @@
 # Intentionally endpoint-free: the CDK compute stack injects every
 # deployment-specific value as an environment variable, and ConfigLoader
 # applies those on top of this file (AWS_REGION, BEDROCK_REGION,
-# NEPTUNE_ENDPOINT, OPENSEARCH_ENDPOINT, S3_BUCKET_NAME,
-# GRAPHRAG_DOC_STATUS_TABLE, GRAPHRAG_DOC_STATUS_CREATE_TABLE, LOG_FORMAT and,
-# when a guardrail is deployed, BEDROCK_GUARDRAIL_IDENTIFIER). The source
+# NEPTUNE_ENDPOINT, OPENSEARCH_ENDPOINT, OPENSEARCH_NUMBER_OF_REPLICAS (1 on a
+# multi-node domain), S3_BUCKET_NAME, GRAPHRAG_DOC_STATUS_TABLE,
+# GRAPHRAG_DOC_STATUS_CREATE_TABLE, LOG_FORMAT and, when a guardrail is
+# deployed, BEDROCK_GUARDRAIL_IDENTIFIER / BEDROCK_GUARDRAIL_VERSION). The source
 # directory and pipeline id arrive per run via GRAPHRAG_SOURCE_DIRECTORY /
 # GRAPHRAG_PIPELINE_ID.
 #

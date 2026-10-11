@@ -2450,6 +2450,8 @@ class LoggingConfig(BaseModel):
             "langchain_aws": "WARNING",
             "botocore": "WARNING",
             "urllib3": "WARNING",
+            # The OTLP exporter warns on every retry to an unreachable collector.
+            "opentelemetry": "ERROR",
         },
         description="Per-logger levels for chatty third-party libraries "
         "(logger name -> level)",

@@ -37,6 +37,8 @@ Context keys (all optional; sensible defaults shown):
                                        opensearch_count > 1 (8 GiB Graviton; sized
                                        for <=10 nodes / 10K shards on OS 2.13)
   doc_status_table    dev:"graphrag-doc-status"/else:"<env>-graphrag-doc-status"
+  opensearch_volume_gib 50             GP3 volume per OpenSearch data node; the
+                                       free-storage alarm fires at 40% of it
   backup_retention_days 7              Neptune automated backup retention
 
   # --- Security ---
@@ -45,6 +47,9 @@ Context keys (all optional; sensible defaults shown):
   guardrail_identifier None            guardrail id the compute task USES
                                        (BEDROCK_GUARDRAIL_IDENTIFIER); does NOT
                                        disable creation
+  guardrail_version   None             published guardrail version the task
+                                       applies (BEDROCK_GUARDRAIL_VERSION);
+                                       unset = the app default, DRAFT
   use_cmk             False            customer-managed KMS key for at-rest
                                        encryption (S3/Neptune/OpenSearch/DDB); the
                                        alarm topic always has its own CMK
@@ -65,6 +70,7 @@ Context keys (all optional; sensible defaults shown):
                                        extractors scale with vCPU count)
   fargate_memory      8192             task memory (MiB)
   image_tag           latest           container image tag (pin a version for immutable ECR tags)
+  sfn_timeout_hours   6                ingestion state machine timeout (all phases)
 
   # --- Governance (propagated as cost-allocation / ownership tags) ---
   owner               "aws-proserve"   `owner` tag on every resource
@@ -102,6 +108,7 @@ class DeploymentConfig:
     opensearch_instance: str
     opensearch_count: int
     opensearch_master_instance: str
+    opensearch_volume_gib: int
     doc_status_table: str
     backup_retention_days: int
     fargate_cpu: int
@@ -110,11 +117,13 @@ class DeploymentConfig:
     # local/dev iteration); set to an immutable version tag or digest for
     # non-dev, which also flips the ECR repo to immutable tags (provenance).
     image_tag: str
+    sfn_timeout_hours: int
     # security
     # "create" and "use" are separate so the two-step deploy (create the
     # guardrail, then pass its id) never drops the guardrail from the template.
     create_guardrail: bool
     guardrail_identifier: str | None
+    guardrail_version: str | None
     use_cmk: bool
     vpc_flow_logs: bool
     flow_log_retention_days: int
@@ -226,6 +235,7 @@ class DeploymentConfig:
             opensearch_master_instance=str(
                 ctx("opensearch_master_instance", "m6g.large.search")
             ),
+            opensearch_volume_gib=int(ctx("opensearch_volume_gib", 50)),
             # Default DDB table name follows the same env-scoped prefix as the
             # other physical names (dev: "graphrag-doc-status";
             # non-dev: "<env>-graphrag-doc-status") so environments don't share a
@@ -244,8 +254,10 @@ class DeploymentConfig:
             fargate_cpu=int(ctx("fargate_cpu", 2048)),
             fargate_memory=int(ctx("fargate_memory", 8192)),
             image_tag=ctx("image_tag", "latest") or "latest",
+            sfn_timeout_hours=int(ctx("sfn_timeout_hours", 6)),
             create_guardrail=as_bool(ctx("create_guardrail"), default=True),
             guardrail_identifier=ctx("guardrail_identifier"),
+            guardrail_version=ctx("guardrail_version"),
             use_cmk=as_bool(ctx("use_cmk"), default=False),
             vpc_flow_logs=as_bool(ctx("vpc_flow_logs"), default=not is_dev),
             flow_log_retention_days=flow_log_retention_days,

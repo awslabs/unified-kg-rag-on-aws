@@ -70,6 +70,7 @@ class TracedEmbeddings(Embeddings):
                 "gen_ai.provider.name": self.provider_name,
                 "gen_ai.request.model": self.model_id,
             },
+            kind="client",
             texts=len(texts),
             characters=sum(len(t) for t in texts),
         )

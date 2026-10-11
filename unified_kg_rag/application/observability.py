@@ -13,7 +13,10 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from unified_kg_rag.domain.models.config import ObservabilityConfig
+from unified_kg_rag.domain.models.config import (
+    ObservabilityBackend,
+    ObservabilityConfig,
+)
 from unified_kg_rag.shared import observability
 from unified_kg_rag.shared.logging import get_logger
 
@@ -58,10 +61,16 @@ def configure_observability(
     from unified_kg_rag.adapters.observability.otel import build_backend
 
     backend = build_backend(config, tracer_provider)
+    # An exporting backend redacts every string at export (span_transforms),
+    # so captured content is redacted at capture only when spans go to a
+    # provider this package does not wrap (backend none, or the caller's).
+    redacts_at_export = (
+        tracer_provider is None and config.backend != ObservabilityBackend.NONE
+    )
     observability.install(
         backend,
         capture_content=config.capture_content,
-        redact_patterns=config.redact_patterns,
+        redact_patterns=() if redacts_at_export else config.redact_patterns,
         settings_key=settings_key,
     )
     logger.info(

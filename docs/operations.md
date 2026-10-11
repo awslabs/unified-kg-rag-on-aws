@@ -51,7 +51,7 @@ executions start only when someone (or an automation you add) calls
 starting while one is running. Check for a `RUNNING` execution first (the
 command above) and do not start overlapping executions; a schedule you add
 should not fire while a previous execution can still be running (up to the
-state machine's 6-hour timeout).
+state machine's timeout, `sfn_timeout_hours`, 6 hours by default).
 
 ## Re-ingest
 
@@ -203,12 +203,13 @@ artifact type's writes still fail, the indexing stage fails and the documents
 are not recorded, so the next run retries them. Below that rate the run
 succeeds and only the documents that own a failed artifact are recorded
 `FAILED`; a failure the backend reports without an item id marks every
-document of the run `FAILED`. On the CDK stack, three alarms report problems
+document of the run `FAILED`. On the CDK stack, four alarms report problems
 to the SNS topic:
 
 | Alarm | Fires when |
 |---|---|
 | `PipelineFailures` | A Step Functions execution failed |
+| `PipelineTimedOutOrAborted` | An execution hit the state machine timeout or was stopped |
 | `IndexingFailures` | Indexing reported failed items, even in a succeeded execution |
 | `ExtractionFailures` | Extraction, gleaning or claim extraction failed on some units |
 
@@ -232,6 +233,62 @@ them.
 
 A `pipeline_id` names the cache directory and S3 prefix, so it accepts only
 lowercase letters, digits, hyphens and underscores.
+
+## OpenSearch replicas
+
+On the CDK stack, a multi-node domain (`opensearch_count` > 1, the non-dev
+default) gets one replica per index, so losing a node or an AZ keeps every
+shard available; a single-node dev domain gets none. The compute stack sets
+`OPENSEARCH_NUMBER_OF_REPLICAS`, which overrides
+`indexing.opensearch.index_settings.number_of_replicas` when an index is
+created. Indices created before that keep their replica count, so set it on
+them once from inside the VPC:
+
+```bash
+curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
+  --aws-sigv4 "aws:amz:<region>:es" --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
+  -H "x-amz-security-token: $AWS_SESSION_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"index": {"number_of_replicas": 1}}'
+```
+
+## Backup and restore
+
+The three stores are backed up on different schedules, and their contents
+refer to each other (the registry lists each document's graph and index
+artifacts), so restore them to one common point or not at all:
+
+| Store | Backup | Window |
+|---|---|---|
+| Neptune | Automated backups, point-in-time restore | `backup_retention_days` (default 7 days) |
+| OpenSearch | Automated hourly snapshots (`cs-automated-enc` repository) | 14 days |
+| DynamoDB doc-status table | Point-in-time recovery | 35 days |
+| S3 cache bucket | None (unversioned; stage checkpoints are re-creatable) | — |
+
+The corpus in S3 is the source of truth: every store can be rebuilt from it.
+
+**Within Neptune's window**, restore all three to the same time:
+
+1. Stop ingestion (no `RUNNING` execution) so nothing writes during the restore.
+2. Pick an OpenSearch snapshot (`GET _snapshot/cs-automated-enc/_all`) taken
+   after the last ingestion run finished, and use its start time as the
+   restore point.
+3. Restore Neptune to that time with
+   `aws neptune restore-db-cluster-to-point-in-time`, and the table with
+   `aws dynamodb restore-table-to-point-in-time`. Both create *new* resources
+   with default settings (add instances to the Neptune cluster, re-enable
+   PITR and deletion protection on the table).
+4. Delete the domain's current indices, then restore the snapshot's indices
+   and aliases (`POST _snapshot/cs-automated-enc/<snapshot>/_restore`).
+5. Point the data plane at the restored cluster endpoint and table
+   (`NEPTUNE_ENDPOINT`, `GRAPHRAG_DOC_STATUS_TABLE`). The task role, the
+   DynamoDB gateway-endpoint policy and the alarms are scoped to the stack's
+   own cluster and table, so grant them on the restored resources too.
+
+**Outside Neptune's window** (or when step 5 is not worth it), there is no
+common point: run one full rebuild with `indexing.reset: true` (see
+[Re-ingest](#re-ingest)). It clears this index namespace's stores and
+registry records and re-indexes the whole corpus. Restore the table first
+only if other namespaces share it.
 
 ## Start-up endpoint check
 
@@ -399,9 +456,12 @@ traces for the per-query breakdown.
 Spans are exported from a background thread, so an unreachable collector does
 not slow runs down: each export request is bounded by
 `observability.export_timeout_seconds` (10 s; `OTEL_EXPORTER_OTLP_TIMEOUT`
-wins when set), the batch processor waits no longer than that for one export,
-a full queue drops spans instead of blocking, and the exporter logs its
-failures. The final flush at exit waits for about one bounded export at most.
+wins when set), a full queue drops spans instead of blocking, and the exporter
+logs its failures (at `ERROR`; `logging.library_levels` hides its per-retry
+warnings). The flush at exit sends what is still queued, one request per batch
+of up to 512 spans, so against an unreachable collector it takes about one
+timeout per remaining batch, and at most about 30 s (the batch processor's
+shutdown wait) before the process exits and drops the rest.
 In a private VPC the endpoint must be reachable from the tasks: a collector
 sidecar on `localhost`, a Langfuse or Phoenix hosted inside the VPC, or the
 X-Ray interface VPC endpoint for the collector's CloudWatch export. Hosted

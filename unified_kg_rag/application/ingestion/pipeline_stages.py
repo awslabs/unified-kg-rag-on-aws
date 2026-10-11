@@ -141,19 +141,29 @@ class PipelineStage(ABC):
 
     def execute(self, context: PipelineContext) -> PipelineStageResult:
         with observability.span("kg_rag.ingestion.stage", stage=self.name) as span:
-            result = self._execute_logged(context)
+            result = self._execute_logged(context, span)
             span.set_attributes(
                 {
                     "kg_rag.stage.status": result.status,
                     "kg_rag.input_count": result.input_count,
                     "kg_rag.output_count": result.output_count,
+                    # Counters such as dropped units or failed writes show a
+                    # partial degradation on a stage that still completed.
+                    **{
+                        f"kg_rag.stage.{key}": value
+                        for key, value in result.metrics.items()
+                        if isinstance(value, int | float)
+                        and not isinstance(value, bool)
+                    },
                 }
             )
             if result.status == PipelineStageStatus.FAILED:
                 span.set_error(f"stage '{self.name}' failed")
             return result
 
-    def _execute_logged(self, context: PipelineContext) -> PipelineStageResult:
+    def _execute_logged(
+        self, context: PipelineContext, span: observability.SpanHandle
+    ) -> PipelineStageResult:
         tokens = bind_contextvars(stage=self.name)
         logger.info("Starting stage: '%s'", self.name)
         start_time = datetime.now()
@@ -186,6 +196,8 @@ class PipelineStage(ABC):
 
         except Exception as e:
             logger.exception("Stage '%s' failed: %s", self.name, e)
+            span.record_exception(e)
+            span.set_attribute("error.type", type(e).__name__)
             end_time = datetime.now()
 
             return self._create_result(

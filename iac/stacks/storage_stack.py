@@ -251,7 +251,8 @@ class StorageStack(Stack):
                 app_log_enabled=True,
             ),
             ebs=opensearch.EbsOptions(
-                volume_size=50, volume_type=ec2.EbsDeviceVolumeType.GP3
+                volume_size=self.config.opensearch_volume_gib,
+                volume_type=ec2.EbsDeviceVolumeType.GP3,
             ),
             node_to_node_encryption=True,
             encryption_at_rest=opensearch.EncryptionAtRestOptions(

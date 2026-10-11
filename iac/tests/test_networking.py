@@ -162,3 +162,15 @@ def test_public_mode_keeps_default_gateway_policies() -> None:
         "S3": None,
         "DynamoDb": None,
     }
+
+
+def test_interface_endpoints_admit_only_this_account() -> None:
+    endpoints = Template.from_stack(_network({})).find_resources(
+        "AWS::EC2::VPCEndpoint", {"Properties": {"VpcEndpointType": "Interface"}}
+    )
+    assert len(endpoints) == len(INTERFACE_ENDPOINTS)
+    for resource in endpoints.values():
+        (statement,) = resource["Properties"]["PolicyDocument"]["Statement"]
+        assert statement["Condition"] == {
+            "StringEquals": {"aws:PrincipalAccount": "111111111111"}
+        }

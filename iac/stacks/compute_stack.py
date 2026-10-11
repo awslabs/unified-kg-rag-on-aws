@@ -70,7 +70,20 @@ class ComputeStack(Stack):
                 if pinned_image
                 else ecr.TagMutability.MUTABLE
             ),
-            lifecycle_rules=[ecr.LifecycleRule(max_image_count=10)],
+            # Keep the 10 newest images, but never expire the one the task
+            # definition runs: an image matched by a higher-priority rule is
+            # exempt from lower-priority rules, and the deployed tag holds a
+            # single image.
+            lifecycle_rules=[
+                ecr.LifecycleRule(
+                    rule_priority=1,
+                    description="Keep the deployed image_tag",
+                    tag_status=ecr.TagStatus.TAGGED,
+                    tag_pattern_list=[config.image_tag],
+                    max_image_count=1,
+                ),
+                ecr.LifecycleRule(rule_priority=2, max_image_count=10),
+            ],
             removal_policy=removal_policy,
             # A non-empty repository cannot be deleted.
             empty_on_delete=config.removal_destroy,
@@ -119,10 +132,11 @@ class ComputeStack(Stack):
         # (`:<account>:inference-profile/*`) and account-less system-defined
         # profiles (`::inference-profile/global.*`), so allow both. Explicit ARNs
         # override this when provided.
+        partition = self.partition
         bedrock_resources = self.config.bedrock_model_arns or [
-            "arn:aws:bedrock:*::foundation-model/*",
-            f"arn:aws:bedrock:*:{self.account}:inference-profile/*",
-            "arn:aws:bedrock:*::inference-profile/*",
+            f"arn:{partition}:bedrock:*::foundation-model/*",
+            f"arn:{partition}:bedrock:*:{self.account}:inference-profile/*",
+            f"arn:{partition}:bedrock:*::inference-profile/*",
         ]
         role.add_to_policy(
             iam.PolicyStatement(
@@ -161,7 +175,7 @@ class ComputeStack(Stack):
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=["bedrock:ApplyGuardrail"],
-                resources=[f"arn:aws:bedrock:*:{self.account}:guardrail/*"],
+                resources=[f"arn:{partition}:bedrock:*:{self.account}:guardrail/*"],
             )
         )
         # Neptune data-plane IAM auth. `connect` alone authorizes opening the
@@ -175,12 +189,9 @@ class ComputeStack(Stack):
                     "neptune-db:ReadDataViaQuery",
                     "neptune-db:WriteDataViaQuery",
                     "neptune-db:DeleteDataViaQuery",
-                    "neptune-db:GetEngineStatus",
-                    "neptune-db:GetQueryStatus",
-                    "neptune-db:CancelQuery",
                 ],
                 resources=[
-                    f"arn:aws:neptune-db:{self.region}:{self.account}:"
+                    f"arn:{partition}:neptune-db:{self.region}:{self.account}:"
                     f"{storage.neptune_cluster.cluster_resource_identifier}/*"
                 ],
             )
@@ -193,8 +204,12 @@ class ComputeStack(Stack):
             )
         )
         # DynamoDB doc-status registry + S3 cache (scoped to our resources).
+        # The app only reads and writes cache objects (stage checkpoints,
+        # embedding cache); expiry is the bucket lifecycle's job, so the role
+        # gets no s3:DeleteObject*.
         storage.doc_status_table.grant_read_write_data(role)
-        storage.cache_bucket.grant_read_write(role)
+        storage.cache_bucket.grant_read(role)
+        storage.cache_bucket.grant_put(role)
         if self.config.corpus_bucket_name:
             # A corpus kept outside the cache bucket is only read (entrypoint
             # `aws s3 sync`); the S3 endpoint policy allows it too.
@@ -225,6 +240,12 @@ class ComputeStack(Stack):
             # via use_ssl; passing https:// here yields https://[https://…].
             "OPENSEARCH_ENDPOINT": storage.opensearch_domain.domain_endpoint,
             "S3_BUCKET_NAME": storage.cache_bucket.bucket_name,
+            # One replica per index on a multi-node domain, so losing a node or
+            # an AZ keeps every shard available; a single node has nowhere to
+            # place one (the index would stay yellow).
+            "OPENSEARCH_NUMBER_OF_REPLICAS": str(
+                min(self.config.opensearch_count - 1, 1)
+            ),
             # Maps to aws.dynamodb.table_name. The table is IaC-managed (KMS,
             # PITR, alarms) and the task role has no dynamodb:CreateTable, so
             # disable app-side auto-creation. With aws.dynamodb.enabled, a
@@ -241,6 +262,8 @@ class ComputeStack(Stack):
         }
         if self.guardrail_identifier:
             environment["BEDROCK_GUARDRAIL_IDENTIFIER"] = self.guardrail_identifier
+        if self.config.guardrail_version:
+            environment["BEDROCK_GUARDRAIL_VERSION"] = self.config.guardrail_version
         task_def.add_container(
             "app",
             image=ecs.ContainerImage.from_ecr_repository(

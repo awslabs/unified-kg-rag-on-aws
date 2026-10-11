@@ -131,24 +131,25 @@ def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
             "Resource::*",
             # Cross-region inference fans one call out to models in several
             # regions, so model/profile/guardrail ARNs need region + id wildcards.
-            "Resource::arn:aws:bedrock:*::foundation-model/*",
-            "Resource::arn:aws:bedrock:*::inference-profile/*",
+            "Resource::arn:<AWS::Partition>:bedrock:*::foundation-model/*",
+            "Resource::arn:<AWS::Partition>:bedrock:*::inference-profile/*",
             # The account renders as the <AWS::AccountId> token for an
             # environment-agnostic synth and as the literal 12-digit id once
             # CDK_DEFAULT_ACCOUNT is set (any real deploy), so match both.
             {
-                "regex": r"/^Resource::arn:aws:bedrock:\*:(<AWS::AccountId>|\d{12}):"
+                "regex": r"/^Resource::arn:<AWS::Partition>:bedrock:\*:"
+                r"(<AWS::AccountId>|\d{12}):"
                 r"(inference-profile|guardrail)\/\*$/"
             },
             # Data-plane paths under this one Neptune cluster / OpenSearch domain.
             {
-                "regex": r"/^Resource::arn:aws:neptune-db:.+:<Neptune\w+\.ClusterResourceId>\/\*$/"
+                "regex": r"/^Resource::arn:<AWS::Partition>:neptune-db:.+:"
+                r"<Neptune\w+\.ClusterResourceId>\/\*$/"
             },
             "Action::es:ESHttp*",
             {"regex": r"/^Resource::<OpenSearch\w+\.Arn>\/\*$/"},
-            # CDK grant_read_write on the cache bucket (objects of this bucket only).
+            # CDK grant_read + grant_put on the cache bucket (its objects only).
             "Action::s3:Abort*",
-            "Action::s3:DeleteObject*",
             "Action::s3:GetBucket*",
             "Action::s3:GetObject*",
             "Action::s3:List*",

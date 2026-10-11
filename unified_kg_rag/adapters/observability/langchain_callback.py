@@ -2,12 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """A LangChain callback handler that traces each chat model call.
 
-One span per model call, named and attributed per the OpenTelemetry GenAI
-semantic conventions: ``gen_ai.operation.name``, ``gen_ai.provider.name``,
-``gen_ai.request.model``, request parameters, ``gen_ai.usage.*`` token counts
-(cache reads and writes when the provider reports them), finish reasons and
-whether a guardrail intervened. Cost is not recorded: the package has no
-model price table to derive it from.
+One client span per model call, named and attributed per the OpenTelemetry
+GenAI semantic conventions: ``gen_ai.operation.name``, ``gen_ai.provider.name``,
+``gen_ai.request.model``, the request's ``max_tokens`` and ``temperature`` (as
+the factory set them), ``gen_ai.usage.*`` token counts (cache reads and writes
+when the provider reports them), finish reasons, ``error.type`` on a failed
+call and whether a guardrail intervened. Cost is not recorded: the package has
+no model price table to derive it from.
+
+A ``session_id`` / ``user_id`` in the run's metadata (``config={"metadata":
+...}``) becomes ``session.id`` / ``user.id``, so a streamed answer, whose model
+call can outlive the caller's ``bind_identity`` block, still groups with its
+session.
 
 Prompt and completion text (``gen_ai.input.messages`` /
 ``gen_ai.output.messages``) is recorded only when
@@ -30,7 +36,12 @@ from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 
 from unified_kg_rag.shared import observability
-from unified_kg_rag.shared.observability import ContentPolicy, SpanHandle
+from unified_kg_rag.shared.observability import (
+    SESSION_ID,
+    USER_ID,
+    ContentPolicy,
+    SpanHandle,
+)
 
 # GenAI semantic-convention attribute names (see adapters.observability.otel
 # for the pinned schema version).
@@ -48,6 +59,7 @@ GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS = "gen_ai.usage.cache_creation.input_to
 GEN_AI_USAGE_REASONING_OUTPUT_TOKENS = "gen_ai.usage.reasoning.output_tokens"
 GEN_AI_INPUT_MESSAGES = "gen_ai.input.messages"
 GEN_AI_OUTPUT_MESSAGES = "gen_ai.output.messages"
+ERROR_TYPE = "error.type"
 GUARDRAIL_INTERVENED = "aws.bedrock.guardrail.intervened"
 MODEL_PURPOSE = "kg_rag.model.purpose"
 
@@ -89,16 +101,26 @@ def _input_messages(messages: Sequence[BaseMessage], policy: ContentPolicy) -> s
     )
 
 
+# Where providers report why generation stopped: Bedrock Converse,
+# Anthropic InvokeModel, OpenAI-compatible servers, Ollama.
+_FINISH_REASON_KEYS = ("stopReason", "stop_reason", "finish_reason", "done_reason")
+
+
 def _finish_reason(metadata: Mapping[str, Any]) -> str | None:
-    reason = metadata.get("stopReason") or metadata.get("stop_reason")
-    return str(reason) if reason else None
+    for key in _FINISH_REASON_KEYS:
+        if reason := metadata.get(key):
+            return str(reason)
+    return None
 
 
 class GenAITracingCallbackHandler(BaseCallbackHandler):
     """Trace chat model calls as GenAI spans (see the module docstring).
 
-    ``guardrail_detector`` tells from a response's metadata whether a
-    guardrail intervened (the Bedrock factory passes its detector).
+    ``max_tokens`` / ``temperature`` are the request parameters the factory
+    built the model with (LangChain's ``invocation_params`` do not carry them
+    for every provider). ``guardrail_detector`` tells from a response's
+    metadata whether a guardrail intervened (the Bedrock factory passes its
+    detector).
     """
 
     # Run in the caller's thread and context even on async calls, so the model
@@ -111,11 +133,15 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
         *,
         provider_name: str = PROVIDER_AWS_BEDROCK,
         purpose: str | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
         guardrail_detector: Callable[[dict[str, Any]], bool] | None = None,
     ) -> None:
         self.model_id = model_id
         self.provider_name = provider_name
         self.purpose = purpose
+        self.max_tokens = max_tokens
+        self.temperature = temperature
         self.guardrail_detector = guardrail_detector
         self._spans: dict[UUID, SpanHandle] = {}
         self._lock = threading.Lock()
@@ -130,19 +156,26 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
     ) -> None:
         if not observability.is_enabled():
             return
-        params = kwargs.get("invocation_params") or {}
+        metadata = kwargs.get("metadata") or {}
         attributes: dict[str, Any] = {
             GEN_AI_OPERATION_NAME: "chat",
             GEN_AI_PROVIDER_NAME: self.provider_name,
             GEN_AI_REQUEST_MODEL: self.model_id,
-            GEN_AI_REQUEST_MAX_TOKENS: params.get("max_tokens"),
-            GEN_AI_REQUEST_TEMPERATURE: params.get("temperature"),
+            GEN_AI_REQUEST_MAX_TOKENS: self.max_tokens,
+            GEN_AI_REQUEST_TEMPERATURE: self.temperature,
             MODEL_PURPOSE: self.purpose,
+            SESSION_ID: metadata.get("session_id"),
+            USER_ID: metadata.get("user_id"),
         }
         policy = observability.content_policy()
         if policy.capture_content and messages:
             attributes[GEN_AI_INPUT_MESSAGES] = _input_messages(messages[0], policy)
-        span = observability.start_span(f"chat {self.model_id}", attributes)
+        span = observability.start_span(
+            f"chat {self.model_id}",
+            # A None id must not mask one bound by bind_identity.
+            {key: value for key, value in attributes.items() if value is not None},
+            kind="client",
+        )
         with self._lock:
             self._spans[run_id] = span
 
@@ -170,6 +203,7 @@ class GenAITracingCallbackHandler(BaseCallbackHandler):
         if span is None:
             return
         span.record_exception(error)
+        span.set_attribute(ERROR_TYPE, type(error).__name__)
         span.set_error(type(error).__name__)
         span.end()
 

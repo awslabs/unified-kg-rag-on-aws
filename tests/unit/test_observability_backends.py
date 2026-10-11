@@ -220,21 +220,6 @@ def fake_otlp(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     return _FakeOTLPExporter.calls
 
 
-@pytest.fixture
-def batch_kwargs(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
-    from opentelemetry.sdk.trace import export
-
-    calls: list[dict[str, Any]] = []
-
-    class _Recording(export.BatchSpanProcessor):
-        def __init__(self, exporter: Any, **kwargs: Any) -> None:
-            calls.append(kwargs)
-            super().__init__(exporter, **kwargs)
-
-    monkeypatch.setattr(export, "BatchSpanProcessor", _Recording)
-    return calls
-
-
 @pytest.mark.parametrize(
     ("backend", "env", "endpoint", "header_names"),
     [
@@ -259,7 +244,6 @@ def test_backend_builds_a_bounded_otlp_exporter_without_logging_secrets(
     endpoint: str | None,
     header_names: set[str] | None,
     fake_otlp: list[dict[str, Any]],
-    batch_kwargs: list[dict[str, Any]],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -273,8 +257,6 @@ def test_backend_builds_a_bounded_otlp_exporter_without_logging_secrets(
     assert kwargs["timeout"] == 3
     assert kwargs.get("endpoint") == endpoint
     assert (set(kwargs["headers"]) if "headers" in kwargs else None) == header_names
-    # The batch processor's per-export bound follows the exporter's.
-    assert batch_kwargs == [{"export_timeout_millis": 3000}]
     assert f"Observability exporter for backend '{backend}'" in caplog.text
     for secret in (_SECRET, _PUBLIC, _PHOENIX_KEY, "Basic ", "Bearer "):
         assert secret not in caplog.text
@@ -300,18 +282,6 @@ def test_grpc_protocol_selects_the_grpc_exporter(
     tracer.shutdown()
     assert calls == ["grpc"]
     assert fake_otlp[0]["endpoint"] == PHOENIX_DEFAULT_GRPC_ENDPOINT
-
-
-def test_bsp_export_timeout_env_is_respected(
-    fake_otlp: list[dict[str, Any]],
-    batch_kwargs: list[dict[str, Any]],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(otel.trace, "set_tracer_provider", lambda provider: None)
-    otel.build_backend(
-        _config("otlp"), environ={"OTEL_BSP_EXPORT_TIMEOUT": "5000"}
-    ).shutdown()
-    assert batch_kwargs == [{}]
 
 
 @pytest.mark.parametrize("backend", ["otlp", "langfuse", "phoenix"])
@@ -413,6 +383,10 @@ def test_openinference_kinds_models_and_token_counts() -> None:
     assert chat["openinference.span.kind"] == "LLM"
     assert chat["llm.model_name"] == "model-a"
     assert chat["llm.provider"] == "aws"
+    local = openinference_attributes(
+        "chat model-b", {**_CHAT, "gen_ai.provider.name": "ollama"}
+    )
+    assert local["llm.provider"] == "ollama"
     assert (
         chat["llm.token_count.prompt"],
         chat["llm.token_count.completion"],
@@ -508,6 +482,34 @@ def test_redaction_covers_every_exported_string(
     }.get(backend)
     if vendor_input:
         assert "[REDACTED] balance" in span.attributes[vendor_input]
+
+
+@pytest.mark.parametrize(
+    ("backend", "capture_patterns"),
+    [("langfuse", 0), ("phoenix", 0), ("otlp", 0), ("none", 1)],
+)
+def test_content_is_redacted_once(
+    backend: str,
+    capture_patterns: int,
+    no_global_provider: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An exporting backend redacts at export, so capture-time redaction would
+    # only repeat it; backend none has no exporter of ours and keeps it.
+    from unified_kg_rag.application.observability import configure_observability
+
+    build = otel.build_backend
+
+    def _in_memory(config: ObservabilityConfig, tracer_provider: Any = None) -> Any:
+        return build(
+            config, span_exporter=InMemorySpanExporter(), environ=_LANGFUSE_ENV
+        )
+
+    monkeypatch.setattr(otel, "build_backend", _in_memory)
+    configure_observability(
+        _config(backend, capture_content=True, redact_patterns=[r"ACCT-\d+"])
+    )
+    assert len(observability.content_policy().redact_patterns) == capture_patterns
 
 
 def test_no_patterns_exports_spans_unchanged(no_global_provider: None) -> None:

@@ -113,7 +113,17 @@ class ConfigLoader:
                 "guardrail",
                 "identifier",
             ),
+            "BEDROCK_GUARDRAIL_VERSION": ("aws", "bedrock", "guardrail", "version"),
             "S3_BUCKET_NAME": ("aws", "s3", "bucket_name"),
+            # Injected by the CDK compute stack from the domain's node count.
+            # Applies to indices created from now on; existing indices keep
+            # theirs until changed with `PUT <index>/_settings`.
+            "OPENSEARCH_NUMBER_OF_REPLICAS": (
+                "indexing",
+                "opensearch",
+                "index_settings",
+                "number_of_replicas",
+            ),
             # Injected by the CDK compute stack so the app uses the IaC-managed
             # doc-status table (and never auto-creates an unmanaged one).
             "GRAPHRAG_DOC_STATUS_TABLE": ("aws", "dynamodb", "table_name"),
@@ -141,18 +151,25 @@ class ConfigLoader:
         if self._config is None:
             return
 
-        current = self._config
+        current: Any = self._config
         for key in path_tuple[:-1]:
             current = getattr(current, key)
 
         final_key = path_tuple[-1]
-        current_value = getattr(current, final_key)
+        # A free-form settings mapping (indexing.opensearch.index_settings) is
+        # coerced like a field, from the type of the value it already holds.
+        is_mapping = isinstance(current, dict)
+        current_value = (
+            current.get(final_key) if is_mapping else getattr(current, final_key)
+        )
 
         # Coerce the string env value to the field's declared type. SecretStr is
         # handled by field annotation (current_value may be None at default) so a
         # value set from the environment stays masked and exposes
         # .get_secret_value() regardless of validate_assignment.
-        annotation = type(current).model_fields[final_key].annotation
+        annotation = (
+            None if is_mapping else type(current).model_fields[final_key].annotation
+        )
         is_secret = current_value is not None and isinstance(current_value, SecretStr)
         if not is_secret and annotation is not None:
             is_secret = SecretStr in getattr(annotation, "__args__", (annotation,))
@@ -169,7 +186,10 @@ class ConfigLoader:
         else:
             parsed_value = value
 
-        setattr(current, final_key, parsed_value)
+        if is_mapping:
+            current[final_key] = parsed_value
+        else:
+            setattr(current, final_key, parsed_value)
 
     def reload_config(self) -> Config:
         self._config = None

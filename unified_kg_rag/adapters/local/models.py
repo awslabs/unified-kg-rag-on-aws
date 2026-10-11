@@ -61,7 +61,12 @@ def api_key_value(endpoint: EndpointConfig) -> str:
 
 
 def _tracing_callbacks(
-    callbacks: Any, model_id: str, provider_name: str, purpose: ModelPurpose
+    callbacks: Any,
+    model_id: str,
+    provider_name: str,
+    purpose: ModelPurpose,
+    max_tokens: int,
+    temperature: float,
 ) -> Any:
     """``callbacks`` plus the GenAI tracing handler when tracing is enabled."""
     if not observability.is_enabled():
@@ -71,7 +76,11 @@ def _tracing_callbacks(
     )
 
     handler: BaseCallbackHandler = GenAITracingCallbackHandler(
-        model_id, provider_name=provider_name, purpose=purpose.value
+        model_id,
+        provider_name=provider_name,
+        purpose=purpose.value,
+        max_tokens=max_tokens,
+        temperature=temperature,
     )
     if callbacks is None:
         return [handler]
@@ -127,7 +136,12 @@ class _LocalLanguageModelFactory:
         temperature = kwargs.get("temperature", self.settings.temperature)
         purpose = ModelPurpose(kwargs.get("model_purpose", ModelPurpose.QUERY))
         callbacks = _tracing_callbacks(
-            kwargs.get("callbacks"), model_id, self.provider_name, purpose
+            kwargs.get("callbacks"),
+            model_id,
+            self.provider_name,
+            purpose,
+            max_tokens,
+            temperature,
         )
         model = self._build(model_id, max_tokens, temperature, callbacks)
         logger.debug(

@@ -51,6 +51,27 @@ class ObservabilityStack(Stack):
         )
         failed_alarm.add_alarm_action(cw_actions.SnsAction(orchestration.alarm_topic))
 
+        # Alarm: a run that hit the state machine timeout or was stopped never
+        # reaches a phase Catch, so neither the failure notification nor the
+        # alarm above sees it. FILL keeps a missing series from blanking the sum.
+        stopped_alarm = cw.Alarm(
+            self,
+            "PipelineTimedOutOrAborted",
+            metric=cw.MathExpression(
+                expression="FILL(t, 0) + FILL(a, 0)",
+                using_metrics={"t": sm.metric_timed_out(), "a": sm.metric_aborted()},
+                label="Timed-out or aborted executions",
+                period=Duration.minutes(5),
+            ),
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+            alarm_description="unified-kg-rag-on-aws ingestion pipeline had a "
+            "timed-out or aborted execution",
+        )
+        stopped_alarm.add_alarm_action(cw_actions.SnsAction(orchestration.alarm_topic))
+
         # Alarm: any indexing failures -> SNS. A SUCCEEDED Step Functions run can
         # still have silently dropped artifacts (extracted > 0 but indexed == 0,
         # e.g. a backend write that erred per-item while the run continued). The
@@ -137,7 +158,12 @@ class ObservabilityStack(Stack):
         dashboard.add_widgets(
             cw.GraphWidget(
                 title="Pipeline executions",
-                left=[sm.metric_succeeded(), sm.metric_failed(), sm.metric_aborted()],
+                left=[
+                    sm.metric_succeeded(),
+                    sm.metric_failed(),
+                    sm.metric_timed_out(),
+                    sm.metric_aborted(),
+                ],
             ),
             cw.GraphWidget(
                 title="Pipeline duration",
@@ -205,13 +231,15 @@ class ObservabilityStack(Stack):
             1,
             "OpenSearch cluster status is RED (unallocated primary shard)",
         )
+        # MiB on the fullest node; alarm at 40% free, well before the ~20%
+        # block-write watermark, so there is time to react.
+        free_storage_mib = self.config.opensearch_volume_gib * 1024 * 0.4
         _alarm(
             "OpenSearchFreeStorageLow",
             domain.metric_free_storage_space(period=Duration.minutes(5)),
-            # MiB; alarm well before the ~20% block-write watermark on the 50 GiB
-            # GP3 volume so there is time to react.
-            20480,
-            "OpenSearch free storage space is low (<20 GiB)",
+            free_storage_mib,
+            "OpenSearch free storage space is low "
+            f"(<{free_storage_mib / 1024:g} GiB on a node)",
             comparison=cw.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
         )
         _alarm(
@@ -222,15 +250,15 @@ class ObservabilityStack(Stack):
         )
         # DynamoDB doc-status registry: throttled writes mean delta/lineage
         # updates are being rejected, which silently corrupts incremental-indexing
-        # state. Alarm on the write path specifically (a single operation, so the
-        # metric stays a plain metric, not a >10-metric math expression).
+        # state. The registry writes mostly through BatchWriteItem, so alarm on
+        # the table-level write-throttle count rather than a single operation.
         _alarm(
             "DocStatusWriteThrottled",
-            table.metric_throttled_requests_for_operation(
-                "PutItem", period=Duration.minutes(5)
+            table.metric(
+                "WriteThrottleEvents", statistic="Sum", period=Duration.minutes(5)
             ),
             1,
-            "DynamoDB doc-status table is throttling PutItem (write) requests",
+            "DynamoDB doc-status table is throttling writes",
         )
 
         # Neptune: the primary graph store and the write target of every
@@ -267,15 +295,12 @@ class ObservabilityStack(Stack):
             "Neptune freeable memory is low (<512 MiB)",
             comparison=cw.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
         )
+        # The app talks Gremlin over WebSocket, which the deprecated HTTP-only
+        # GremlinHttp5xx never counts; this per-second rate covers both.
         _alarm(
             "NeptuneGremlinErrors",
-            cw.Metric(
-                namespace="AWS/Neptune",
-                metric_name="GremlinHttp5xx",
-                dimensions_map=neptune_dims,
-                statistic="Sum",
-                period=Duration.minutes(5),
-            ),
-            1,
-            "Neptune is returning Gremlin 5xx errors (write/query failures)",
+            _neptune_metric("GremlinServerErrorsPerSec"),
+            0,
+            "Neptune is returning Gremlin server errors (write/query failures)",
+            comparison=cw.ComparisonOperator.GREATER_THAN_THRESHOLD,
         )

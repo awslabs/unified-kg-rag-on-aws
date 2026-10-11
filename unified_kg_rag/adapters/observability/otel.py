@@ -19,10 +19,12 @@ Backends:
   attribute) on their way out.
 
 Spans are exported from a background thread. Each export request is bounded by
-``export_timeout_seconds`` (or ``OTEL_EXPORTER_OTLP_TIMEOUT``), the batch
-queue drops spans rather than block when it is full, and the final flush at
-exit waits at most for one bounded export, so a slow or unreachable collector
-cannot stall a request.
+``export_timeout_seconds`` (or ``OTEL_EXPORTER_OTLP_TIMEOUT``) and the batch
+queue drops spans rather than block when it is full, so a slow or unreachable
+collector cannot stall a request. The flush at exit exports what is still
+queued, one request per batch of up to 512 spans, so against an unreachable
+collector it takes about one timeout per remaining batch, until the batch
+processor's 30-second shutdown wait ends it.
 """
 
 from __future__ import annotations
@@ -40,7 +42,7 @@ from unified_kg_rag.domain.models.config import (
 )
 from unified_kg_rag.shared.exceptions import ConfigurationError
 from unified_kg_rag.shared.logging import get_logger
-from unified_kg_rag.shared.observability import SpanHandle
+from unified_kg_rag.shared.observability import SpanHandle, SpanKind
 
 from .endpoints import ExportSettings, resolve_export_settings
 
@@ -75,6 +77,8 @@ _EXPORTING_BACKENDS = (
 )
 # OpenInference resource attribute Phoenix files traces under.
 PHOENIX_PROJECT_ATTRIBUTE = "openinference.project.name"
+ERROR_TYPE = "error.type"
+_SPAN_KINDS = {"internal": trace.SpanKind.INTERNAL, "client": trace.SpanKind.CLIENT}
 
 AttributeValue = (
     str | bool | int | float | list[str] | list[bool] | list[int] | list[float]
@@ -161,22 +165,27 @@ class OTelTracerBackend:
 
     @contextmanager
     def use_span(
-        self, name: str, attributes: Mapping[str, Any]
+        self, name: str, attributes: Mapping[str, Any], kind: SpanKind
     ) -> Iterator[SpanHandle]:
         # start_as_current_span records an escaping exception and sets the
-        # ERROR status before re-raising it.
+        # ERROR status before re-raising it; error.type is added here.
         with self._tracer.start_as_current_span(
-            name, attributes=clean_attributes(attributes)
+            name, kind=_SPAN_KINDS[kind], attributes=clean_attributes(attributes)
         ) as otel_span:
-            yield OTelSpan(otel_span)
+            try:
+                yield OTelSpan(otel_span)
+            except Exception as e:
+                otel_span.set_attribute(ERROR_TYPE, type(e).__name__)
+                raise
 
-    def start_span(self, name: str, attributes: Mapping[str, Any]) -> SpanHandle:
+    def start_span(
+        self, name: str, attributes: Mapping[str, Any], kind: SpanKind
+    ) -> SpanHandle:
         return OTelSpan(
-            self._tracer.start_span(name, attributes=clean_attributes(attributes))
+            self._tracer.start_span(
+                name, kind=_SPAN_KINDS[kind], attributes=clean_attributes(attributes)
+            )
         )
-
-    def current_span(self) -> SpanHandle:
-        return OTelSpan(trace.get_current_span())
 
     def trace_ids(self) -> tuple[str, str] | None:
         context = trace.get_current_span().get_span_context()
@@ -297,14 +306,9 @@ def _sdk_tracer_provider(
         mapper=VENDOR_MAPPERS.get(config.backend),
         redactor=Redactor(config.redact_patterns),
     )
-    timeout_millis = settings.timeout * 1000
-    kwargs: dict[str, Any] = {}
-    if not env.get("OTEL_BSP_EXPORT_TIMEOUT"):
-        # The processor's own bound on one export (30 s by default) follows
-        # the exporter's, so neither the batch thread nor the exit flush
-        # waits longer than one request is allowed to take.
-        kwargs["export_timeout_millis"] = timeout_millis
-    provider.add_span_processor(BatchSpanProcessor(exporter, **kwargs))
+    # The exporter's own timeout bounds each export: the processor accepts
+    # export_timeout_millis but does not use it.
+    provider.add_span_processor(BatchSpanProcessor(exporter))
     return provider
 
 
