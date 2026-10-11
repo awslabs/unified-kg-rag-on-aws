@@ -221,7 +221,8 @@ A reused bucket (`cache_bucket_name`) keeps its own lifecycle rules, so check
 them.
 
 A `pipeline_id` names the cache directory and S3 prefix, so it accepts only
-lowercase letters, digits, hyphens and underscores.
+letters, digits, `.`, `_` and `-`: up to 128 characters, starting with a
+letter or digit, with no `..`.
 
 ## OpenSearch replicas
 
