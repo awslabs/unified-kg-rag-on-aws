@@ -588,6 +588,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `export_timeout_millis` passed to the batch span processor, which ignores
   it. Captured content is no longer redacted twice: with an exporting
   backend the exporter alone redacts it (#211).
+- **Breaking** for custom doc-status stores: the fallbacks for a store
+  without `get_many`, `put_many`, `record_fits` or the lineage-overflow
+  methods. Every `DocStatusPort` method is called directly; a store that
+  subclasses the Protocol inherits its defaults (#PR).
 - **Breaking:** `IncrementalIndexer.plan`, `prune_changed` and
   `remove_deleted`, which only tests called. Use `detect_delta` and
   `remove_changed_and_deleted` (one removal plan over changed and deleted

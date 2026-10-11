@@ -144,7 +144,7 @@ class TestLegacyLookups:
         assert len(delta.new) == 250
         # The diff already shows that no legacy key is stored: nothing is read.
         assert store.gets == 0
-        assert store.batches == []
+        assert not any(store.batches)
 
     def test_a_legacy_record_is_adopted_through_the_batch(self) -> None:
         store = _CountingStore()
@@ -275,16 +275,3 @@ def test_exhausted_retries_are_read_in_one_batch() -> None:
     assert len(delta.unchanged) == 299
     assert store.gets == 0
     assert store.batches == [300]
-
-
-def test_exhausted_retries_fall_back_to_get_without_get_many() -> None:
-    class _Legacy(FakeDocStatusStore):
-        get_many = None  # type: ignore[assignment]
-
-    store = _Legacy()
-    documents = _failed_corpus(store, 3)
-
-    delta, _ = detect_delta(documents, store, max_failures=3)
-
-    assert delta.changed == [document_doc_id(documents[0])]
-    assert len(delta.unchanged) == 2

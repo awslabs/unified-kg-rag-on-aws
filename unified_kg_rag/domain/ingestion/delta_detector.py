@@ -385,7 +385,7 @@ def _adopt_legacy_records(
         for doc_id, legacy_id in sorted(legacy_doc_ids.items())
         if legacy_id != doc_id and (stored_ids is None or legacy_id in stored_ids)
     }
-    legacy_records = _get_many(doc_status, lookups.values())
+    legacy_records = doc_status.get_many(lookups.values())
     candidates = {
         doc_id: legacy_records[legacy_id]
         for doc_id, legacy_id in lookups.items()
@@ -396,7 +396,7 @@ def _adopt_legacy_records(
     known = current | set(delta.new)
     failed = [doc_id for doc_id in candidates if doc_id not in known]
     if stored_ids is None:
-        stored = set(_get_many(doc_status, failed))
+        stored = set(doc_status.get_many(failed))
     else:
         stored = set(failed) & stored_ids
     keep = current | stored
@@ -613,21 +613,6 @@ def _rekey(
     return written
 
 
-def _get_many(
-    doc_status: DocStatusPort, doc_ids: Iterable[str]
-) -> dict[str, DocStatusRecord]:
-    """``doc_status.get_many``; one :meth:`~DocStatusPort.get` per id for a
-    custom store written before ``get_many`` joined the port."""
-    ids = list(doc_ids)
-    if not ids:
-        return {}
-    get_many = getattr(doc_status, "get_many", None)
-    if get_many is None:
-        records = {doc_id: doc_status.get(doc_id) for doc_id in dict.fromkeys(ids)}
-        return {doc_id: r for doc_id, r in records.items() if r is not None}
-    return dict(get_many(ids))
-
-
 def _stop_retrying_exhausted(
     delta: DocumentDelta,
     doc_status: DocStatusPort,
@@ -643,8 +628,8 @@ def _stop_retrying_exhausted(
     (:meth:`DocStatusPort.get_many`), not one ``get`` per changed document.
     """
     written = written or {}
-    stored = _get_many(
-        doc_status, [doc_id for doc_id in delta.changed if doc_id not in written]
+    stored = doc_status.get_many(
+        [doc_id for doc_id in delta.changed if doc_id not in written]
     )
     exhausted: list[str] = []
     labels: list[str] = []

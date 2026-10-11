@@ -28,7 +28,7 @@ stays storage-focused and is exercised end-to-end with in-memory fakes.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Collection, Iterable
+from collections.abc import Collection
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
@@ -235,34 +235,6 @@ def _namespace_key(
     return record.suffix, None
 
 
-def _read_many(
-    doc_status: DocStatusPort, doc_ids: Iterable[str]
-) -> dict[str, DocStatusRecord]:
-    """``doc_status.get_many``; one ``get`` per id for a custom store that
-    predates ``get_many``."""
-    ids = list(dict.fromkeys(doc_ids))
-    if not ids:
-        return {}
-    get_many = getattr(doc_status, "get_many", None)
-    if get_many is None:
-        records = {doc_id: doc_status.get(doc_id) for doc_id in ids}
-        return {doc_id: r for doc_id, r in records.items() if r is not None}
-    return dict(get_many(ids))
-
-
-def _write_many(doc_status: DocStatusPort, records: list[DocStatusRecord]) -> None:
-    """``doc_status.put_many``; one ``put`` per record for a custom store that
-    predates ``put_many``."""
-    if not records:
-        return
-    put_many = getattr(doc_status, "put_many", None)
-    if put_many is None:
-        for record in records:
-            doc_status.put(record)
-    else:
-        put_many(records)
-
-
 def _union_lineage(
     record: DocStatusRecord | DocumentLineage,
     lineage: DocumentLineage | DocStatusRecord | None,
@@ -294,34 +266,6 @@ def _lineage_minus(
 def _lineage(doc_id: str, ids: dict[str, list[str]]) -> DocumentLineage:
     """A lineage of ``doc_id`` with ``{lineage field: ids}``."""
     return DocumentLineage.model_validate({"doc_id": doc_id, **ids})
-
-
-def _record_fits(doc_status: DocStatusPort, record: DocStatusRecord) -> bool:
-    """``doc_status.record_fits``; always True for a custom store that
-    predates it (it has no item limit the run knows of)."""
-    fits = getattr(doc_status, "record_fits", None)
-    return True if fits is None else bool(fits(record))
-
-
-def _read_overflow(
-    doc_status: DocStatusPort, doc_ids: Iterable[str]
-) -> dict[str, DocumentLineage]:
-    """``doc_status.get_lineage_overflow``; none for a custom store that
-    predates it."""
-    ids = list(dict.fromkeys(doc_ids))
-    get = getattr(doc_status, "get_lineage_overflow", None)
-    if not ids or get is None:
-        return {}
-    return dict(get(ids))
-
-
-def _delete_overflow(doc_status: DocStatusPort, doc_ids: Iterable[str]) -> None:
-    """``doc_status.delete_lineage_overflow``; a no-op for a custom store
-    that predates it."""
-    ids = list(dict.fromkeys(doc_ids))
-    delete = getattr(doc_status, "delete_lineage_overflow", None)
-    if ids and delete is not None:
-        delete(ids)
 
 
 def _remap_lineage(
@@ -429,7 +373,7 @@ class IncrementalIndexer:
         """
         stored = [*delta.unchanged, *delta.changed][:_PROBE_DOCUMENTS]
         ids_by_suffix: dict[str, list[str]] = defaultdict(list)
-        for record in _read_many(self.doc_status, stored).values():
+        for record in self.doc_status.get_many(stored).values():
             if record.status is DocStatus.PROCESSED:
                 ids_by_suffix[record.suffix].extend(record.entity_ids)
         probes = {
@@ -499,7 +443,7 @@ class IncrementalIndexer:
         doc_ids = list(dict.fromkeys([*delta.to_process, *planned]))
         if not doc_ids and not delta.orphan_overflow:
             return
-        read = _read_many(self.doc_status, [*doc_ids, *delta.orphan_overflow])
+        read = self.doc_status.get_many([*doc_ids, *delta.orphan_overflow])
         self._collect_leftover_overflow(delta.orphan_overflow, read, set(doc_ids))
         if not doc_ids:
             return
@@ -510,8 +454,7 @@ class IncrementalIndexer:
         # read. Next to any other record, or none, it is left over from a
         # commit or removal interrupted before deleting it, and was collected
         # above (delta.orphan_overflow).
-        kept = _read_overflow(
-            self.doc_status,
+        kept = self.doc_status.get_lineage_overflow(
             [
                 doc_id
                 for doc_id, record in stored.items()
@@ -542,12 +485,12 @@ class IncrementalIndexer:
             added = _lineage_minus(spilled, kept.get(doc_id))
             if any(added.values()):
                 additions.append(_lineage(doc_id, added))
-        _write_many(self.doc_status, list(self._pending.values()))
+        self.doc_status.put_many(list(self._pending.values()))
         if additions:
             self.doc_status.add_lineage_overflow(additions)
         # A record that now holds its interrupted run's overflow ids itself.
-        _delete_overflow(
-            self.doc_status, [doc_id for doc_id in kept if doc_id not in self._overflow]
+        self.doc_status.delete_lineage_overflow(
+            [doc_id for doc_id in kept if doc_id not in self._overflow]
         )
         logger.info(
             "Recorded %d documents PENDING before indexing the delta%s",
@@ -593,14 +536,14 @@ class IncrementalIndexer:
                 "(an interrupted commit or removal did not delete it)",
                 len(leftover),
             )
-            _delete_overflow(self.doc_status, leftover)
+            self.doc_status.delete_lineage_overflow(leftover)
 
     def _fit(
         self, full: DocStatusRecord, stored: DocStatusRecord | None
     ) -> tuple[DocStatusRecord, DocumentLineage | None]:
         """``full`` as stored: itself when it fits, else a record listing the
         stored lineage (or none) plus the overflow holding the rest."""
-        if _record_fits(self.doc_status, full):
+        if self.doc_status.record_fits(full):
             return full, None
         empty = DocumentLineage(doc_id=full.doc_id)
         for base in (stored, empty):
@@ -609,7 +552,7 @@ class IncrementalIndexer:
             record = full.model_copy(
                 update={name: list(getattr(base, name)) for name in _LINEAGE_FIELDS}
             )
-            if _record_fits(self.doc_status, record):
+            if self.doc_status.record_fits(record):
                 return record, _lineage(full.doc_id, _lineage_minus(full, record))
         raise DataProcessingError(
             f"Doc-status record for '{full.file_path or full.doc_id}' does not "
@@ -643,7 +586,7 @@ class IncrementalIndexer:
                 file_path=lineage.file_path,
                 **{name: getattr(lineage, name) for name in _LINEAGE_FIELDS},
             )
-            if not _record_fits(self.doc_status, record):
+            if not self.doc_status.record_fits(record):
                 too_large.append(
                     f"{lineage.file_path or doc_id} "
                     f"({len(_artifact_ids(lineage))} artifact ids)"
@@ -697,7 +640,7 @@ class IncrementalIndexer:
                 continue
             if held is None:
                 extended = pending.model_copy(update=_union_lineage(pending, lineage))
-                if _record_fits(self.doc_status, extended):
+                if self.doc_status.record_fits(extended):
                     self._pending[doc_id] = extended
                     updated.append(extended)
                     continue
@@ -706,7 +649,7 @@ class IncrementalIndexer:
                 update=_union_lineage(held, _lineage(doc_id, added))
             )
             additions.append(_lineage(doc_id, added))
-        _write_many(self.doc_status, updated)
+        self.doc_status.put_many(updated)
         if additions:
             self.doc_status.add_lineage_overflow(additions)
 
@@ -941,7 +884,7 @@ class IncrementalIndexer:
         """Delete removed documents' records, their lineage overflow first: an
         interruption in between leaves the record, listing artifacts that
         are already gone, rather than overflow nothing references."""
-        _delete_overflow(self.doc_status, doc_ids)
+        self.doc_status.delete_lineage_overflow(doc_ids)
         for doc_id in doc_ids:
             self.doc_status.delete(doc_id)
 
@@ -995,8 +938,7 @@ class IncrementalIndexer:
         records = self.doc_status.list_all()
         # Another run's interrupted PENDING record may keep part of its
         # lineage in overflow (this run's documents have theirs in _prior).
-        overflow = _read_overflow(
-            self.doc_status,
+        overflow = self.doc_status.get_lineage_overflow(
             [
                 r.doc_id
                 for r in records
@@ -1090,8 +1032,7 @@ class IncrementalIndexer:
         # The records as stored before this run's PENDING records (read by
         # write_ahead); the others in one batched read.
         prior = {
-            **_read_many(
-                self.doc_status,
+            **self.doc_status.get_many(
                 [lin.doc_id for lin in lineages if lin.doc_id not in self._pending],
             ),
             **self._prior,
@@ -1139,13 +1080,13 @@ class IncrementalIndexer:
                 community_report_ids=lineage.community_report_ids,
             )
             records.append(record)
-        _write_many(self.doc_status, records)
+        self.doc_status.put_many(records)
         # The committed records replace the PENDING ones: their overflow is
         # no longer referenced (deleted after the write, so an interruption
         # in between leaves overflow next to a committed record, which the
         # next write-ahead ignores and drops).
         committed = [r.doc_id for r in records if r.doc_id in self._overflow]
-        _delete_overflow(self.doc_status, committed)
+        self.doc_status.delete_lineage_overflow(committed)
         for doc_id in committed:
             del self._overflow[doc_id]
         unrecorded = sorted(set(self._pending) - {r.doc_id for r in records})

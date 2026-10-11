@@ -1607,9 +1607,7 @@ class IndexingStage(PipelineStage):
                 if self._record_in_namespaces(record, namespaces, suffixes)
             ]
             # Write-ahead lineage overflow is not listed as records.
-            delete_overflow = getattr(store, "delete_lineage_overflow", None)
-            if delete_overflow is not None and records:
-                delete_overflow([record.doc_id for record in records])
+            store.delete_lineage_overflow([record.doc_id for record in records])
             for record in records:
                 store.delete(record.doc_id)
             logger.info(

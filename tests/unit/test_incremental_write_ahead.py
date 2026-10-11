@@ -246,39 +246,11 @@ def test_commit_reads_and_writes_the_registry_in_batches(mocker) -> None:
 
     get.assert_not_called()
     # One read by write_ahead, nothing re-read by the commit.
-    assert get_many.call_count == 1
+    assert [len(c.args[0]) for c in get_many.call_args_list if c.args[0]] == [len(R0)]
     # The write-ahead records, then the committed ones.
-    assert [len(c.args[0]) for c in put_many.call_args_list] == [len(R0)] * 2
-
-
-def test_custom_store_without_batch_methods_still_works() -> None:
-    class _Plain:
-        """A DocStatusPort implemented before get_many/put_many existed."""
-
-        def __init__(self) -> None:
-            self._fake = FakeDocStatusStore()
-
-        def get(self, doc_id):
-            return self._fake.get(doc_id)
-
-        def put(self, record):
-            self._fake.put(record)
-
-        def delete(self, doc_id):
-            self._fake.delete(doc_id)
-
-        def list_all(self):
-            return self._fake.list_all()
-
-        def diff(self, incoming, scope=None):
-            return self._fake.diff(incoming, scope)
-
-    harness = IncrementalRun()
-    harness.store = _Plain()  # type: ignore[assignment]
-    harness.run(R0)
-    assert harness.run(R1, interrupt="after_removal")
-    harness.run(FOLLOW_UPS["reverted"])
-    assert harness.state() == expected_state(FOLLOW_UPS["reverted"])
+    assert [len(c.args[0]) for c in put_many.call_args_list if c.args[0]] == [
+        len(R0)
+    ] * 2
 
 
 @pytest.mark.parametrize("outcome", ["killed", "failed"])
