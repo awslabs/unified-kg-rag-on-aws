@@ -356,6 +356,9 @@ class DataIngestionPipeline:
                     ),
                 }
             )
+            # _run reports a failed stage on the context instead of raising.
+            if context.status == PipelineStageStatus.FAILED:
+                span.set_error(f"pipeline '{context.pipeline_id}' failed")
             return context
 
     def _run(

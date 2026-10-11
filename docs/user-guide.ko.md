@@ -555,7 +555,7 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `logging.level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` 중 하나입니다. |
 | `logging.log_format` | `"structured"` | `structured` 또는 `plain`입니다. |
 | `logging.log_to_file` | `true` | CLI가 로그를 `log_file_path`(`logs/log.txt`, 실제 파일 이름은 `log_YYYYMMDD.txt`)에도 씁니다. 상대 경로는 작업 디렉터리 기준입니다. 패키지를 라이브러리로 import하면 핸들러나 파일을 설정하지 않으며, 호스트 애플리케이션의 로깅 설정을 따릅니다. |
-| `logging.library_levels` | `{langchain_aws: WARNING, botocore: WARNING, urllib3: WARNING}` | 로그가 많은 라이브러리의 로거별 수준입니다. 이 키를 지정하면 기본 맵 전체가 대체됩니다. |
+| `logging.library_levels` | `{langchain_aws: WARNING, botocore: WARNING, urllib3: WARNING, opentelemetry: ERROR}` | 로그가 많은 라이브러리의 로거별 수준입니다. 이 키를 지정하면 기본 맵 전체가 대체됩니다. |
 
 **로그에 남는 내용.** `INFO` 이상에서 패키지는 사용자 텍스트와 코퍼스 텍스트 대신
 길이, 개수, ID, 짧은 해시만 기록합니다(예: `query: len=42 sha=1a2b3c4d`). 해시는
@@ -694,7 +694,7 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
 `generation`, `embedding`, 검색과 재순위화는 `retriever`, 나머지는 `span`)과
 `capture_content`일 때 `langfuse.observation.input`/`output`이, Phoenix
 (OpenInference)에는 `openinference.span.kind`, `llm.model_name`,
-`llm.token_count.*`와 `capture_content`일 때 `input.value`/`output.value`가
+`llm.provider`, `llm.token_count.*`와 `capture_content`일 때 `input.value`/`output.value`가
 붙습니다.
 
 **세션과 사용자.** 질의의 모든 스팬에 `session.id`(`RAGInput.conversation_id`)와,
@@ -704,18 +704,22 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
 
 **트레이스 구조**
 
-- 수집: `kg_rag.ingestion.run` → `kg_rag.ingestion.stage`(단계마다 하나, 입력·출력
-  수와 상태) → `kg_rag.batch` / `kg_rag.batch.chunk`(항목 수와 실패 수) → 모델
+- 수집: `kg_rag.ingestion.run`(실행이 실패하면 상태 `ERROR`) →
+  `kg_rag.ingestion.stage`(단계마다 하나, 입력·출력 수와 상태, 버린 단위 수 같은
+  단계의 수치 지표를 `kg_rag.stage.<metric>`으로, 단계가 예외로 끝나면 `error.type`과
+  예외) → `kg_rag.batch` / `kg_rag.batch.chunk`(항목 수와 실패 수) → 모델
   호출마다 `chat <model>` 스팬, 임베딩 호출마다 `embeddings <model>` 스팬
 - 질의: `kg_rag.query` → `kg_rag.strategy` → `kg_rag.retrieve`(결과 유형별 적중 수와
   최대 50개의 소스 ID) → `kg_rag.fusion`(입력·출력 수) → `kg_rag.rerank`
   (`kg_rag.rerank.status` = `ok`, `empty`, `error`와 문서 수) →
   `kg_rag.context_build`(사용한 토큰과 토큰 예산) → 답변 생성의 `chat <model>` 스팬
-- 모델 스팬은 OpenTelemetry GenAI 시맨틱 규약을 따릅니다.
-  `gen_ai.request.model`, `gen_ai.usage.input_tokens` / `output_tokens`, Bedrock이
+- 모델 스팬은 OpenTelemetry GenAI 시맨틱 규약을 따릅니다(임베딩, Bedrock 재순위화
+  스팬과 같이 스팬 종류는 `CLIENT`). `gen_ai.request.model`,
+  `gen_ai.request.max_tokens` / `temperature`,
+  `gen_ai.usage.input_tokens` / `output_tokens`, Bedrock이
   프롬프트 캐시 사용량을 알려 주면 `gen_ai.usage.cache_read.input_tokens` /
-  `cache_creation.input_tokens`, 종료 사유, `aws.bedrock.guardrail.intervened`를
-  기록합니다. 비용은 기록하지 않습니다.
+  `cache_creation.input_tokens`, 종료 사유(Bedrock, OpenAI 호환 서버, Ollama),
+  호출이 실패하면 `error.type`, `aws.bedrock.guardrail.intervened`를 기록합니다. 비용은 기록하지 않습니다.
 
 스팬이 활성 상태일 때 남긴 로그 레코드에는 그 스팬의 `trace_id`와 `span_id`가
 들어가므로, 트레이스에서 로그를 찾거나 로그에서 트레이스를 찾을 수 있습니다.
@@ -728,8 +732,9 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
 
 알려진 제한: `stream` / `astream`의 스트리밍 답변은 별도 트레이스로 기록됩니다(검색과
 컨텍스트 구성은 `kg_rag.query` 트레이스에 있음). 비동기 배치 경로는 청크가 아니라
-배치마다 스팬을 하나 기록합니다. 스트리밍 답변의 모델 스팬에는 `session.id`가
-없습니다. CloudWatch로 보내려면 태스크 옆에 ADOT나 OpenTelemetry Collector를 두고
+배치마다 스팬을 하나 기록합니다. 스트리밍 답변의 모델 스팬은 답변 단계 실행
+메타데이터의 `session_id` / `user_id`에서 `session.id` / `user.id`를 가져오므로
+같은 세션으로 묶입니다. CloudWatch로 보내려면 태스크 옆에 ADOT나 OpenTelemetry Collector를 두고
 `backend: otlp`를 쓰세요([운영 런북](operations.ko.md#관측성)에 절차가 있습니다).
 로컬 Langfuse와 Phoenix 절차도 같은 곳에 있습니다.
 

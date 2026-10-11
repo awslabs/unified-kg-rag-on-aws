@@ -456,9 +456,12 @@ traces for the per-query breakdown.
 Spans are exported from a background thread, so an unreachable collector does
 not slow runs down: each export request is bounded by
 `observability.export_timeout_seconds` (10 s; `OTEL_EXPORTER_OTLP_TIMEOUT`
-wins when set), the batch processor waits no longer than that for one export,
-a full queue drops spans instead of blocking, and the exporter logs its
-failures. The final flush at exit waits for about one bounded export at most.
+wins when set), a full queue drops spans instead of blocking, and the exporter
+logs its failures (at `ERROR`; `logging.library_levels` hides its per-retry
+warnings). The flush at exit sends what is still queued, one request per batch
+of up to 512 spans, so against an unreachable collector it takes about one
+timeout per remaining batch, and at most about 30 s (the batch processor's
+shutdown wait) before the process exits and drops the rest.
 In a private VPC the endpoint must be reachable from the tasks: a collector
 sidecar on `localhost`, a Langfuse or Phoenix hosted inside the VPC, or the
 X-Ray interface VPC endpoint for the collector's CloudWatch export. Hosted

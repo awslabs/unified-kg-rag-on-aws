@@ -7,13 +7,15 @@ it never imports OpenTelemetry itself. Until a backend is installed (see
 ``application.observability.configure_observability``, which loads the
 OpenTelemetry adapter only when ``observability.enabled`` is true) every call
 here is a no-op that allocates nothing: ``span`` returns one shared null
-context manager and ``set_attributes`` returns at the first check.
+context manager and ``start_span`` one shared null span.
 
 Attribute keys: keyword arguments are namespaced as ``kg_rag.<name>``
 (``span("kg_rag.retrieve", hits=3)`` records ``kg_rag.hits``); keys in the
 ``attributes`` mapping are recorded verbatim, for standard names such as the
 ``gen_ai.*`` semantic conventions. Values are str/bool/int/float or sequences
-of them; ``None`` values are dropped by the backend.
+of them; ``None`` values are dropped by the backend. ``kind`` is the span kind:
+``"client"`` for a call to a remote model service (the GenAI conventions'
+kind for model spans), ``"internal"`` otherwise.
 
 Session and user: inside :func:`bind_identity` every span opened here also
 carries ``session.id`` / ``user.id``, the names Langfuse and Phoenix
@@ -34,16 +36,14 @@ from collections.abc import Iterator, Mapping
 from contextlib import AbstractContextManager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Protocol
-
-from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
+from typing import Any, Literal, Protocol
 
 __all__ = [
     "NOOP_SPAN",
     "REDACTED",
     "ContentPolicy",
-    "ContextThreadPoolExecutor",
     "SpanHandle",
+    "SpanKind",
     "SESSION_ID",
     "USER_ID",
     "TracerBackend",
@@ -53,7 +53,6 @@ __all__ = [
     "install",
     "installed_settings",
     "is_enabled",
-    "set_attributes",
     "span",
     "start_span",
     "uninstall",
@@ -65,6 +64,8 @@ _NAMESPACE = "kg_rag."
 # what Langfuse and OpenInference read).
 SESSION_ID = "session.id"
 USER_ID = "user.id"
+
+SpanKind = Literal["internal", "client"]
 
 _IDENTITY: ContextVar[Mapping[str, str] | None] = ContextVar(
     "kg_rag_trace_identity", default=None
@@ -90,19 +91,18 @@ class TracerBackend(Protocol):
     """A tracing implementation (the port an adapter implements)."""
 
     def use_span(
-        self, name: str, attributes: Mapping[str, Any]
+        self, name: str, attributes: Mapping[str, Any], kind: SpanKind
     ) -> AbstractContextManager[SpanHandle]:
         """Open a span as the current span; record an escaping exception."""
 
-    def start_span(self, name: str, attributes: Mapping[str, Any]) -> SpanHandle:
+    def start_span(
+        self, name: str, attributes: Mapping[str, Any], kind: SpanKind
+    ) -> SpanHandle:
         """Start a child of the current span without making it current.
 
         For spans that start and end in different callbacks (a model call's
         start and end events); the caller must call ``end``.
         """
-
-    def current_span(self) -> SpanHandle:
-        """The active span (a non-recording one when there is none)."""
 
     def trace_ids(self) -> tuple[str, str] | None:
         """``(trace_id, span_id)`` in hex of the active span, if any."""
@@ -262,7 +262,11 @@ def bind_identity(
 
 
 def span(
-    name: str, attributes: Mapping[str, Any] | None = None, **kwargs: Any
+    name: str,
+    attributes: Mapping[str, Any] | None = None,
+    *,
+    kind: SpanKind = "internal",
+    **kwargs: Any,
 ) -> AbstractContextManager[SpanHandle]:
     """A context manager that runs its block in a span named ``name``.
 
@@ -270,16 +274,21 @@ def span(
     ``contextvars`` context, so it follows ``await`` and the
     :class:`ContextThreadPoolExecutor` / ``asyncio.to_thread`` hops). Do not
     hold one across a ``yield`` of a generator another task resumes. An
-    exception leaving the block is recorded on the span and re-raised.
+    exception leaving the block is recorded on the span (with ``error.type``)
+    and re-raised.
     """
     backend = _active_backend()
     if backend is None:
         return _NOOP_CONTEXT
-    return backend.use_span(name, _with_identity(_merge(attributes, kwargs)))
+    return backend.use_span(name, _with_identity(_merge(attributes, kwargs)), kind)
 
 
 def start_span(
-    name: str, attributes: Mapping[str, Any] | None = None, **kwargs: Any
+    name: str,
+    attributes: Mapping[str, Any] | None = None,
+    *,
+    kind: SpanKind = "internal",
+    **kwargs: Any,
 ) -> SpanHandle:
     """Start a child span of the current one without activating it.
 
@@ -289,15 +298,7 @@ def start_span(
     backend = _active_backend()
     if backend is None:
         return NOOP_SPAN
-    return backend.start_span(name, _with_identity(_merge(attributes, kwargs)))
-
-
-def set_attributes(attributes: Mapping[str, Any] | None = None, **kwargs: Any) -> None:
-    """Set attributes on the current span (no-op without one)."""
-    backend = _active_backend()
-    if backend is None:
-        return
-    backend.current_span().set_attributes(_merge(attributes, kwargs))
+    return backend.start_span(name, _with_identity(_merge(attributes, kwargs)), kind)
 
 
 def current_trace_ids() -> tuple[str, str] | None:

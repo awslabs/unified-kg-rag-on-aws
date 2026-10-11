@@ -845,6 +845,7 @@ logging:
     langchain_aws: "WARNING"
     botocore: "WARNING"
     urllib3: "WARNING"
+    opentelemetry: "ERROR" # the OTLP exporter warns on every retry
 
 # Observability (OpenTelemetry tracing). Off by default; needs the `otel` extra
 # (`uv sync --extra otel`). Spans cover the ingestion run/stages/batches and

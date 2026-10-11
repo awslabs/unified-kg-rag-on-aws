@@ -405,6 +405,7 @@ class BedrockEmbeddingsWrapper(BaseBedrockWrapper, BedrockEmbeddings):
                     "gen_ai.provider.name": "aws.bedrock",
                     "gen_ai.request.model": self.model_id,
                 },
+                kind="client",
                 texts=texts,
                 characters=characters,
             )
@@ -815,11 +816,16 @@ class BedrockLanguageModelFactory(
             GenAITracingCallbackHandler,
         )
 
+        # The InvokeModel path carries the request parameters in model_kwargs,
+        # Converse at the top level (see _build_model_config).
+        params = config.get("model_kwargs", config)
         _append_callback(
             config,
             GenAITracingCallbackHandler(
                 resolved_model_id,
                 purpose=purpose.value,
+                max_tokens=params.get("max_tokens"),
+                temperature=params.get("temperature"),
                 guardrail_detector=_message_guardrail_intervened,
             ),
         )
@@ -1013,6 +1019,7 @@ class BedrockRerankWrapper(BaseBedrockWrapper, BedrockRerank):
                 "gen_ai.provider.name": "aws.bedrock",
                 "gen_ai.request.model": self.model_arn.rsplit("/", 1)[-1],
             },
+            kind="client",
             documents_in=len(documents),
             top_n=self.top_n,
         ) as span:

@@ -15,7 +15,8 @@ request path, and applies, in order:
      ``generation`` from any span with a model attribute, such as rerank) and
      ``langfuse.observation.input`` / ``output`` from captured content.
    * Phoenix (OpenInference): ``openinference.span.kind``,
-     ``llm.model_name``, ``llm.provider``, ``llm.token_count.*`` and
+     ``llm.model_name``, ``llm.provider`` (``aws`` for ``aws.*`` providers,
+     else the provider name), ``llm.token_count.*`` and
      ``input.value`` / ``output.value`` from captured content.
 
    Both read ``session.id`` / ``user.id`` (see
@@ -24,8 +25,9 @@ request path, and applies, in order:
 2. redaction: every ``redact_patterns`` match in a string attribute (string
    list items included), event attribute (an exception message can quote a
    query) and status description becomes ``[REDACTED]``, whatever code set
-   it. Captured content was already redacted when recorded; this covers the
-   rest, including the vendor copies made in step 1.
+   it, including the vendor copies made in step 1. Captured content is
+   redacted here only: capture-time redaction applies just where no exporter
+   of this package runs (backend ``none``).
 
 The mappings are plain functions over attribute dicts, testable without an
 exporter.
@@ -117,8 +119,8 @@ def openinference_attributes(name: str, attributes: Attributes) -> dict[str, Any
         added["llm.model_name"] = model
     if kind == "llm":
         provider = attributes.get(_PROVIDER)
-        if isinstance(provider, str) and provider.startswith("aws."):
-            added["llm.provider"] = "aws"
+        if isinstance(provider, str):
+            added["llm.provider"] = "aws" if provider.startswith("aws.") else provider
         prompt = attributes.get(_INPUT_TOKENS)
         completion = attributes.get(_OUTPUT_TOKENS)
         if isinstance(prompt, int):

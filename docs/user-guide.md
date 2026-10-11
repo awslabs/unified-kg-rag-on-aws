@@ -576,7 +576,7 @@ quotas (`search.local_search.type_quota`) are in the template.
 | `logging.level` | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `logging.log_format` | `"structured"` | `structured` or `plain`. |
 | `logging.log_to_file` | `true` | The CLIs also write logs to `log_file_path` (`logs/log.txt`, dated as `log_YYYYMMDD.txt`; a relative path is resolved against the working directory). Importing the package as a library configures no handler or file: the host application's logging setup applies. |
-| `logging.library_levels` | `{langchain_aws: WARNING, botocore: WARNING, urllib3: WARNING}` | Per-logger levels for chatty libraries. Setting the key replaces the whole map. |
+| `logging.library_levels` | `{langchain_aws: WARNING, botocore: WARNING, urllib3: WARNING, opentelemetry: ERROR}` | Per-logger levels for chatty libraries. Setting the key replaces the whole map. |
 
 **What the logs contain.** At `INFO` and above the package logs only lengths,
 counts, ids and a short hash for user and corpus text, for example
@@ -719,7 +719,7 @@ Langfuse `langfuse.observation.type` (`generation` for model calls,
 `embedding`, `retriever` for retrieval and rerank, `span` otherwise) and, with
 `capture_content`, `langfuse.observation.input`/`output`; Phoenix
 (OpenInference) `openinference.span.kind`, `llm.model_name`,
-`llm.token_count.*` and, with `capture_content`, `input.value`/`output.value`.
+`llm.provider`, `llm.token_count.*` and, with `capture_content`, `input.value`/`output.value`.
 
 **Sessions and users.** Every span of a query carries `session.id` (the
 `RAGInput.conversation_id`) and, when set, `user.id` (`RAGInput.user_id`), the
@@ -728,8 +728,10 @@ spans and exported as given, so pass an opaque id, not an e-mail address.
 
 **Trace shape.**
 
-- Ingestion: `kg_rag.ingestion.run` → `kg_rag.ingestion.stage` (one per stage,
-  with input/output counts and status) → `kg_rag.batch` / `kg_rag.batch.chunk`
+- Ingestion: `kg_rag.ingestion.run` (status `ERROR` when the run failed) →
+  `kg_rag.ingestion.stage` (one per stage, with input/output counts, status,
+  the stage's numeric metrics as `kg_rag.stage.<metric>`, such as dropped
+  units, and `error.type` plus the exception when it crashed) → `kg_rag.batch` / `kg_rag.batch.chunk`
   (item and failure counts) → one `chat <model>` span per model call and
   `embeddings <model>` spans.
 - Query: `kg_rag.query` → `kg_rag.strategy` → `kg_rag.retrieve` (hit counts per
@@ -737,10 +739,13 @@ spans and exported as given, so pass an opaque id, not an e-mail address.
   `kg_rag.rerank` (`kg_rag.rerank.status` = `ok`, `empty` or `error`, document
   counts) → `kg_rag.context_build` (tokens used vs the token budget) → the
   answer's `chat <model>` span.
-- Model spans follow the OpenTelemetry GenAI semantic conventions:
-  `gen_ai.request.model`, `gen_ai.usage.input_tokens` / `output_tokens`,
+- Model spans follow the OpenTelemetry GenAI semantic conventions (span
+  kind `CLIENT`, as for embedding and Bedrock rerank spans):
+  `gen_ai.request.model`, `gen_ai.request.max_tokens` / `temperature`,
+  `gen_ai.usage.input_tokens` / `output_tokens`,
   `gen_ai.usage.cache_read.input_tokens` / `cache_creation.input_tokens` when
-  Bedrock reports prompt-cache use, finish reasons and
+  Bedrock reports prompt-cache use, finish reasons (Bedrock, OpenAI-compatible
+  and Ollama), `error.type` on a failed call and
   `aws.bedrock.guardrail.intervened`. Cost is not recorded.
 
 Log records written while a span is active carry its `trace_id` and `span_id`,
@@ -754,8 +759,10 @@ with `capture_content: true` (and then only on model spans, after
 
 Known limits: the streamed answer of `stream` / `astream` is traced as its own
 trace (retrieval and context building are in the `kg_rag.query` trace), and
-the async batch path records one span per batch, not per chunk; the streamed
-answer's model span carries no `session.id`. For CloudWatch, run an ADOT or
+the async batch path records one span per batch, not per chunk. The streamed
+answer's model span takes `session.id` / `user.id` from the `session_id` /
+`user_id` in the answer step's run metadata, so it still groups with its
+session. For CloudWatch, run an ADOT or
 OpenTelemetry Collector next to the task and use `backend: otlp` (recipe in
 the [runbook](operations.md#observability)). Local Langfuse and Phoenix
 recipes are there too.

@@ -529,6 +529,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - `LangChainEvaluator.evaluate_single` and `_evaluate_with_metric`, a
   synchronous path only the tests called; the evaluation manager always scores
   through `aevaluate_single` (#210).
+- Unused tracing surface: `observability.set_attributes`,
+  `TracerBackend.current_span`, the `ContextThreadPoolExecutor` re-export from
+  `shared.observability` (import it from `shared.utils.concurrency`), and the
+  `export_timeout_millis` passed to the batch span processor, which ignores
+  it. Captured content is no longer redacted twice: with an exporting
+  backend the exporter alone redacts it (#PR).
 - Gleaning config keys `convergence_threshold`, `quality_threshold`,
   `min_improvement_threshold`, `quality_completeness_weight`,
   `initial_quality_entity_scale`, `initial_quality_relationship_scale` and
@@ -630,6 +636,24 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   an article ("A") is scored instead of skipped. The docs no longer claim
   SQuAD v1.1 normalization: scores are not comparable with leaderboard
   numbers (#210).
+- Tracing: model spans never recorded `gen_ai.request.max_tokens` /
+  `temperature` (LangChain's invocation parameters do not carry them for
+  these providers); the Bedrock and local factories now pass them to the
+  handler. Model, embedding and Bedrock rerank spans are `CLIENT` spans, and
+  failed spans carry `error.type`. A `session_id` / `user_id` in a model
+  call's run metadata becomes `session.id` / `user.id`, so a streamed answer
+  groups with its session. Finish reasons are also read from
+  OpenAI-compatible (`finish_reason`) and Ollama (`done_reason`) responses,
+  and Phoenix gets `llm.provider` for local providers too (#PR).
+- Tracing: partial degradations were invisible on ingestion spans. A stage
+  span now carries the stage's numeric metrics (`kg_rag.stage.<metric>`), a
+  crashed stage records the exception and `error.type`, and the run span is
+  `ERROR` when the run failed (#PR).
+- The docs said the exit flush waits for about one export; against an
+  unreachable collector it takes about one export timeout per queued batch,
+  up to the batch processor's 30-second shutdown wait. `opentelemetry` is
+  now at `ERROR` in the default `logging.library_levels`, which hides the
+  exporter's per-retry warnings (#PR).
 - The CDK stack left every OpenSearch index without replicas, even on the
   non-dev two-node, two-AZ domain, so losing one node made shards
   unavailable. The compute stack now injects `OPENSEARCH_NUMBER_OF_REPLICAS`
