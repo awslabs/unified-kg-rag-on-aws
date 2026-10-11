@@ -6,7 +6,7 @@ These exercise the pure orchestration / parsing surface of
 ``unified_kg_rag.shared.utils.langchain`` with plain fake callables (no real LLM,
 no boto3). The wall-clock timeout / chunk-ordering / concurrency cases already
 live in ``test_batch_processor_timeout.py``; this module covers the
-complementary branches: the per-item happy path, run_config overrides,
+complementary branches: the per-item happy path, from_processing,
 empty input, the ``BATCH_ITEM_FAILED`` filler on per-item failure, the retry
 decorator, the async ``aexecute_with_fallback`` path, and the multi-stage
 ``RobustXMLOutputParser`` recovery ladder.
@@ -24,6 +24,7 @@ from langchain_core.output_parsers import XMLOutputParser
 from langchain_core.runnables import RunnableLambda
 
 import unified_kg_rag.shared.utils.langchain as langchain_module
+from unified_kg_rag.domain.models.config import ProcessingConfig
 from unified_kg_rag.shared.utils import ensure_list
 from unified_kg_rag.shared.utils.langchain import (
     BATCH_ITEM_FAILED,
@@ -110,9 +111,14 @@ class TestExecuteWithFallback:
         assert out == list(range(6))
         assert max_in_flight == 2
 
-    def test_run_config_overrides_fields(self) -> None:
-        bp = BatchProcessor(max_concurrency=1, batch_size=99, chunk_concurrency=1)
-        # batch_size override to 1 -> two chunks for two items.
+    def test_from_processing_takes_the_processing_settings(self) -> None:
+        processing = ProcessingConfig(
+            max_concurrency=3, batch_size=1, chunk_concurrency=1, max_attempts=2
+        )
+        bp = BatchProcessor.from_processing(processing, call_timeout_seconds=0)
+        assert (bp.max_concurrency, bp.chunk_concurrency, bp.max_attempts) == (3, 1, 2)
+        assert bp.call_timeout_seconds == 0
+        # batch_size 1 -> two chunks for two items.
         chunk_sizes = []
 
         def prepare(items):  # noqa: ANN001
@@ -124,11 +130,8 @@ class TestExecuteWithFallback:
             prepare_inputs_func=prepare,
             sequential_func=lambda item: {"echo": item["v"]},
             task_name="t",
-            run_config={"max_concurrency": 3, "batch_size": 1, "chunk_concurrency": 1},
             show_progress=False,
         )
-        assert bp.batch_size == 1
-        assert bp.max_concurrency == 3
         assert chunk_sizes == [1, 1]  # split into 2 single-item chunks
         assert out == [{"echo": 1}, {"echo": 2}]
 
@@ -299,11 +302,9 @@ class TestAExecuteWithFallback:
             batch_func=batch,
             sequential_func=None,
             task_name="t",
-            run_config={"max_concurrency": 4, "batch_size": 10},
             show_progress=False,
         )
         assert out == [{"echo": 1}, {"echo": 2}, {"echo": 3}]
-        assert bp.max_concurrency == 4
 
     async def test_empty_results_are_not_failures(self) -> None:
         # A real empty output ({} / None) stays distinguishable from a failure.
@@ -448,17 +449,14 @@ class TestRetryFailedItemsOnly:
         assert fake.calls[7] == 3
         assert all(fake.calls[i] == 1 for i in range(1, 10) if i != 7)
 
-    def test_run_config_sets_the_retry_count(self) -> None:
-        # Ingestion stages pass config.processing as run_config; its
-        # retry setting used to be ignored in favour of the processor default.
+    def test_max_attempts_sets_the_retry_count(self) -> None:
         fake = _CountingRunnable(fail_first={0: None})
-        bp = _fast_bp(batch_size=10, max_attempts=4)
+        bp = _fast_bp(batch_size=10, max_attempts=1)
         bp.execute_with_fallback(
             items_to_process=list(range(3)),
             prepare_inputs_func=lambda items: [{"v": i} for i in items],
             sequential_func=fake.runnable.invoke,
             task_name="t",
-            run_config={"max_attempts": 1},
             show_progress=False,
         )
         assert fake.calls[0] == 2  # first call + one retry

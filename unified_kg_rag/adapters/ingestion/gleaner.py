@@ -279,8 +279,8 @@ class GraphGleaner(BaseProcessor):
         self._dropped_ungrounded_endpoint_name = 0
 
         self.factory = self.providers.llm_factory
-        self.batch_processor = BatchProcessor(
-            is_transient_error=is_transient_bedrock_error
+        self.batch_processor = BatchProcessor.from_processing(
+            self.config.processing, is_transient_error=is_transient_bedrock_error
         )
 
         self.max_entities_per_prompt = self.gleaning_config.max_entities_per_prompt
@@ -575,7 +575,6 @@ class GraphGleaner(BaseProcessor):
                 prepare_inputs_func=prepare_inputs_for_chunk,
                 sequential_func=self.graph_refiner.invoke,
                 task_name="Graph Refinement",
-                run_config=self.config.processing.model_dump(),
                 show_progress=self.show_progress,
             )
         except Exception as e:

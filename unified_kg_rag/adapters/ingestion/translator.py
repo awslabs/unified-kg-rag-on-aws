@@ -90,8 +90,8 @@ class TextUnitTranslator:
         self.stats: TranslationStats | None = None
 
         self.factory = self.providers.llm_factory
-        self.batch_processor = BatchProcessor(
-            is_transient_error=is_transient_bedrock_error
+        self.batch_processor = BatchProcessor.from_processing(
+            self.config.processing, is_transient_error=is_transient_bedrock_error
         )
 
         self.translator = setup_chain(
@@ -153,7 +153,6 @@ class TextUnitTranslator:
                 ),
                 sequential_func=self.translator.invoke,
                 task_name=f"Translation ({target_language.value})",
-                run_config=self.config.processing.model_dump(),
                 show_progress=self.show_progress,
             )
         except Exception as e:

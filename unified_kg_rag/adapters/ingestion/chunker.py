@@ -697,8 +697,8 @@ class IntelligentTextChunker(BaseChunker):
         self.boto_session = self.providers.boto_session
 
         self.factory = self.providers.llm_factory
-        self.batch_processor = BatchProcessor(
-            is_transient_error=is_transient_bedrock_error
+        self.batch_processor = BatchProcessor.from_processing(
+            self.config.processing, is_transient_error=is_transient_bedrock_error
         )
 
         robust_xml_output_parser = create_robust_xml_output_parser(
@@ -830,7 +830,6 @@ class IntelligentTextChunker(BaseChunker):
                 prepare_inputs_func=self._create_chain_inputs,
                 sequential_func=self.chunker.invoke,
                 task_name=f"Processing boundaries for {label}",
-                run_config=self.config.processing.model_dump(),
                 show_progress=self.show_progress,
             )
         except Exception as e:

@@ -131,8 +131,8 @@ class CommunityDetector(BaseProcessor):
         self.show_progress = show_progress
 
         self.factory = self.providers.llm_factory
-        self.batch_processor = BatchProcessor(
-            is_transient_error=is_transient_bedrock_error
+        self.batch_processor = BatchProcessor.from_processing(
+            self.config.processing, is_transient_error=is_transient_bedrock_error
         )
 
         if self.community_detection_config.report_generation.enabled:
@@ -876,7 +876,6 @@ class CommunityDetector(BaseProcessor):
             prepare_inputs_func=self._create_report_chain_inputs,
             sequential_func=self.report_generator.invoke,
             task_name="Community report generation",
-            run_config=self.config.processing.model_dump(),
             show_progress=self.show_progress,
         )
 

@@ -184,6 +184,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#157).
 
 ### Changed
+- The ingestion `BatchProcessor`s are built from `config.processing` once
+  (`BatchProcessor.from_processing`). `execute_with_fallback` and
+  `aexecute_with_fallback` no longer take `run_config`, which overwrote the
+  processor's settings on every call (#PR).
 - **Breaking**: `graph.visualization.embedding_method: "node2vec"` is renamed
   to `"description"`, and `visualization/embeddings/node2vec.py` to
   `node_embedder.py`. The layout never used node2vec random walks; it embeds

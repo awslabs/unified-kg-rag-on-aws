@@ -65,8 +65,8 @@ class DescriptionSummarizer:
         self.providers = Providers.resolve(config, providers, boto_session)
         self.boto_session = self.providers.boto_session
         self.factory = self.providers.llm_factory
-        self.batch_processor = BatchProcessor(
-            is_transient_error=is_transient_bedrock_error
+        self.batch_processor = BatchProcessor.from_processing(
+            self.config.processing, is_transient_error=is_transient_bedrock_error
         )
         self.summarizer = setup_chain(
             model_purpose=ModelPurpose.INGESTION,
@@ -160,7 +160,6 @@ class DescriptionSummarizer:
                 prepare_inputs_func=lambda chunk: chunk,
                 sequential_func=self.summarizer.invoke,
                 task_name="Description Summarization",
-                run_config=self.config.processing.model_dump(),
                 show_progress=False,
             )
         except Exception as e:
