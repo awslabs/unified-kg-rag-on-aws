@@ -284,6 +284,10 @@ Library API (Python callers and custom backends).
   `providers.llm.kind: bedrock` or an explicit `context_window_size` the
   regular default (30,000, clamped to the model's window) applies instead of
   capping a larger model at the small local one's budget (#PR).
+- A follow-up rewrite that opens with an apology or refusal and asks the user
+  to clarify ("I'm sorry, could you clarify which contract?") is discarded
+  like any other refusal; the question mark no longer lets it replace the
+  user's query (#PR).
 - Queries on Ollama retry a transient error (HTTP 408/429/5xx, dropped
   connection, timeout) instead of failing on the first one: the Ollama client
   never retries, so query chains and Ollama embedding calls now get the

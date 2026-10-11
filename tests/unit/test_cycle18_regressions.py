@@ -63,6 +63,13 @@ def test_lone_letter_dash_keeps_one_token() -> None:
         ("I'm sorry, I can't help with that.", False),
         ("I\u2019m sorry, I can\u2019t help with that.", False),
         ("What are the Vendor's payment terms?", True),
+        # An apology that asks the user to clarify is a meta-reply.
+        ("I'm sorry, could you clarify which contract?", False),
+        ("Sorry, which agreement do you mean?", False),
+        ("I'm sorry, please specify the contract.", False),
+        ("I can't tell; are you referring to the Vendor agreement?", False),
+        # Without a refusal opening the same words are a real question.
+        ("Could you clarify which clause of the Vendor agreement applies?", True),
     ],
 )
 def test_rewrite_refusal_guard(rewrite: str, usable: bool) -> None:
