@@ -56,11 +56,13 @@ def _run_on_fresh_loop(coro: Any) -> Any:
         loop.close()
 
 
-def _chain() -> tuple[GraphRAGChain, list[_Retriever]]:
+def _chain(
+    retriever_type: type[_Retriever] = _Retriever,
+) -> tuple[GraphRAGChain, list[_Retriever]]:
     built: list[_Retriever] = []
 
     def build() -> _Retriever:
-        retriever = _Retriever()
+        retriever = retriever_type()
         built.append(retriever)
         return retriever
 
@@ -114,6 +116,43 @@ def test_loop_change_closes_evicted_retrievers() -> None:
     assert [r.closed for r in built] == [1, 1, 1, 1, 0]
     chain.close()
     assert built[-1].closed == 1
+
+
+class _LoopDrivingRetriever(_Retriever):
+    """Closes like gremlinpython's transport: by driving a private loop."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._own_loop = asyncio.new_event_loop()
+
+    def close(self) -> None:
+        # Raises "Cannot run the event loop while another loop is running"
+        # when called on a thread that runs a loop.
+        self._own_loop.run_until_complete(asyncio.sleep(0))
+        self._own_loop.close()
+        super().close()
+
+
+def test_evicted_retriever_whose_close_drives_a_loop_is_closed() -> None:
+    chain, built = _chain(_LoopDrivingRetriever)
+    for _ in range(3):
+        _run_on_fresh_loop(chain.ainvoke({"query": "q"}))  # type: ignore[arg-type]
+
+    # Evicted inside the next query's running loop, their blocking close
+    # still runs to completion (on a worker thread).
+    assert [r.closed for r in built] == [1, 1, 0]
+    chain.close()
+    assert built[-1].closed == 1
+
+
+async def test_aclose_closes_retrievers_of_a_closed_loop_off_the_loop() -> None:
+    chain = GraphRAGChain.__new__(GraphRAGChain)
+    dead = asyncio.new_event_loop()
+    dead.close()
+    retriever = _LoopDrivingRetriever()
+    chain._retriever_cache = {("document", dead): retriever}  # type: ignore[dict-item]
+    await chain.aclose()
+    assert retriever.closed == 1
 
 
 def test_retriever_on_a_live_loop_is_kept_then_closed_there() -> None:

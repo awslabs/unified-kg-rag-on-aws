@@ -269,6 +269,13 @@ Library API (Python callers and custom backends).
   previously only transitive, are now declared (#226).
 
 ### Fixed
+- A `GraphRAGChain` reused across event loops (one `asyncio.run` per query)
+  closes the retrievers of each finished loop again: their synchronous close
+  ran inside the next query's running loop, where the Neptune (Gremlin)
+  client's close fails with "Cannot run the event loop while another loop is
+  running", so every loop left a websocket and its threads open (15 queries
+  grew a process from 5 to over 40 threads). The close now runs on a worker
+  thread (#PR).
 - Switching `processing.claim_extraction` on, or changing its model, limits
   or claim prompts while it is on, now re-extracts an incrementally indexed
   corpus: the extraction fingerprint stopped at graph resolution, so such a
