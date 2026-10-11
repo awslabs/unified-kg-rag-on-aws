@@ -413,9 +413,8 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 - Chunk defaults fit embedding/rerank limits: `max_chunk_size` 8,000,
   `fallback_chunk_size` 4,800, `min_chunk_size` 1,000 (were 50,000/50,000/5,000)
   (#125).
-- Gleaning rounds after the first re-send only units that gained items; a
-  single-child parent community reuses the child's report; short pre-chunks
-  skip the chunking LLM; query embeddings are LRU-cached (#125).
+- Gleaning rounds after the first re-send only units that gained items; short
+  pre-chunks skip the chunking LLM; query embeddings are LRU-cached (#125).
 - AUTO routes among local/mix/global/drift with the fast model
   (`search.auto_routable_strategies`, `strategy_selection_model_id`) (#125).
 - Ingestion visualization output defaults under the synced cache directory;
@@ -821,6 +820,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   that the filter removed (they named a filtered entity) is dropped with them.
   Merged extraction entities list their text units in first-seen order instead
   of set order (#213).
+- Community detection no longer copies a cluster that Leiden leaves on its
+  own (often an isolated one) to every coarser level as a parent identical to
+  its only child; such parents were embedded, indexed and returned once per
+  level. The cluster keeps its level and joins the first coarser community
+  that merges it, so the single-child report reuse is removed (#PR).
 - A full rebuild now replaces an index type that comes out empty: with no
   claims, community reports or communities in run 2, OpenSearch swaps the
   alias onto an empty index and Neptune clears the label instead of serving
