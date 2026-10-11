@@ -784,6 +784,12 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   model in one batch instead of one batch per document, so a corpus of short
   documents no longer runs one call at a time, and the chunking stats logged
   at the end cover the whole stage instead of its last document (#PR).
+- Files under a hidden directory (`.drafts/note.txt`) are no longer parsed
+  while left out of the corpus fingerprint, so editing them no longer resumes
+  stale stage output. Discovery, the document loader, `run-prompt-tuning` and
+  the fingerprint share one rule: a path component below the corpus root that
+  starts with `.` or is `__pycache__` excludes the file (a hidden corpus root
+  itself is fine) (#PR).
 - With `entity_grounding` enabled, the check whether a gleaned
   relationship's endpoint name occurs in its unit (#202) now accepts common
   spelling variants and no longer accepts partial words. Both sides drop

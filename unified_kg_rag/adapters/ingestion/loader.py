@@ -12,6 +12,7 @@ from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.domain.models import Config, Document
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import compute_hash, default_max_workers
+from unified_kg_rag.shared.utils.cache_keys import is_excluded_source_path
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
@@ -53,7 +54,9 @@ class DirectoryLoader:
     # package is installed; .tsv was advertised here but the parser has no .tsv
     # loader, so a .tsv file passed the filter then failed to parse — dropped.
     DEFAULT_SUPPORTED_EXTENSIONS = {".csv", ".json", ".txt"}
-    DEFAULT_EXCLUDE_PATTERNS = {"**/.*", "**/*.pyc", "**/__pycache__/**"}
+    # Hidden paths and __pycache__ are always excluded
+    # (is_excluded_source_path); these patterns exclude more on top.
+    DEFAULT_EXCLUDE_PATTERNS: frozenset[str] = frozenset()
 
     def __init__(
         self,
@@ -166,7 +169,10 @@ class DirectoryLoader:
         )
 
     def _is_excluded(self, path: Path) -> bool:
-        """Match exclude patterns against the path relative to the source root.
+        """Whether ``path`` is outside the corpus or matches an exclude pattern.
+
+        Hidden paths follow the rule discovery and the corpus fingerprint use
+        (:func:`is_excluded_source_path`).
 
         Matching the absolute path let a pattern such as ``**/.*`` fire on a
         hidden *ancestor* of the source directory (a corpus under
@@ -174,6 +180,8 @@ class DirectoryLoader:
         tested both bare (``drafts/*``) and with a leading ``/`` so ``**/``
         patterns also cover top-level entries (``**/.*`` matches ``.env``).
         """
+        if is_excluded_source_path(path, self.source_directory):
+            return True
         try:
             relative = path.relative_to(self.source_directory).as_posix()
         except ValueError:

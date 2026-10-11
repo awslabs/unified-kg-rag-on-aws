@@ -63,6 +63,7 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
+from unified_kg_rag.shared.utils.cache_keys import is_excluded_source_path
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
@@ -726,7 +727,7 @@ class DocumentParsingStage(PipelineStage):
         for file_path in self.source_directory.rglob("*"):
             if (
                 not file_path.is_file()
-                or self._should_exclude_file(file_path)
+                or is_excluded_source_path(file_path, self.source_directory)
                 or any(file_path.resolve().is_relative_to(d) for d in owned_dirs)
             ):
                 continue
@@ -751,16 +752,6 @@ class DocumentParsingStage(PipelineStage):
                 remedy,
             )
         return sorted(files)
-
-    @staticmethod
-    def _should_exclude_file(file_path: Path) -> bool:
-        exclude_patterns = {".*", "*.pyc", "__pycache__"}
-
-        for pattern in exclude_patterns:
-            if file_path.match(pattern):
-                return True
-
-        return False
 
     def _save_parsed_document(
         self, document: Document, original_path: Path, output_directory: Path
