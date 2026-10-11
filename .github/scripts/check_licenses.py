@@ -45,6 +45,11 @@ def _allowed(name: str) -> bool:
 
 def main() -> int:
     packages = json.load(sys.stdin)
+    if not packages:
+        # An empty report means pip-licenses saw no environment, not that
+        # every license passed.
+        print("No packages to check: is the environment synced?")
+        return 1
     denied = [
         (p["Name"], p["Version"], " ".join(p["License"].split())[:80])
         for p in packages
