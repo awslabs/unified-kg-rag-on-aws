@@ -258,3 +258,13 @@ def test_api_key_is_masked() -> None:
         }
     )
     assert "synthetic-secret" not in repr(config.providers.llm)
+
+
+def test_shipped_local_config_selects_local_mode() -> None:
+    raw = yaml.safe_load((_ROOT / "docker/config.local.yaml").read_text("utf-8"))
+    config = Config(**raw)
+    assert config.backend is Backend.LOCAL
+    assert config.providers.llm.kind == "ollama"
+    assert config.providers.doc_status.kind == "sqlite"
+    assert config.doc_status_enabled is True
+    assert config.aws.neptune.use_iam is False

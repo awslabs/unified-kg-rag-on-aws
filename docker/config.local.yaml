@@ -1,12 +1,47 @@
-# Development config for the local stores in docker/compose.local.yaml.
+# Local mode: every component runs on this machine, no AWS account needed.
 #
-# Graph and vector storage run in local containers (Gremlin Server and
-# OpenSearch). Models still come from Amazon Bedrock, so AWS credentials with
-# Bedrock access are required. Every key not listed here uses the default
-# documented in config-template.yaml.
+# backend: local fills in the local providers for every key this file leaves
+# unset (see the user guide's "Local mode" for the full list and the expected
+# differences from AWS mode):
+#   - language models and embeddings: Ollama at localhost:11434
+#   - reranking: a sentence-transformers cross-encoder ([local] extra; without
+#     it queries keep the fused order)
+#   - graph: Gremlin Server, vector/lexical: OpenSearch (docker/compose.local.yaml)
+#   - incremental-indexing registry: SQLite
 #
-#   docker compose -f docker/compose.local.yaml up -d --wait
-#   uv run run-ingestion --config-path docker/config.local.yaml ...
+#   uv sync --extra local
+#   docker compose -f docker/compose.local.yaml --profile models up -d --wait
+#   docker compose -f docker/compose.local.yaml exec ollama ollama pull qwen2.5:7b-instruct
+#   docker compose -f docker/compose.local.yaml exec ollama ollama pull bge-m3
+#   uv run run-ingestion --config-path docker/config.local.yaml --source-directory ./source
+#   uv run run-rag --config-path docker/config.local.yaml --query "..."
+#
+# To keep Bedrock for the models and use only the local stores, set
+# providers.llm/embedding/rerank.kind: bedrock (with model ids from the Bedrock
+# catalog) and provide AWS credentials.
+
+backend: local
+
+providers:
+  llm:
+    # Any model pulled into Ollama. Small models extract noticeably weaker
+    # graphs than the Bedrock defaults; use the largest one your hardware runs.
+    default_model_id: "qwen2.5:7b-instruct"
+    # Chunking, translation, summaries and the global/DRIFT map steps.
+    fast_model_id: null
+    context_window_size: 32768
+    max_output_tokens: 8192
+  embedding:
+    # The dimension is fixed into the OpenSearch mappings: changing the model
+    # or the dimension needs a full re-index.
+    model_id: "bge-m3"
+    dimension: 1024
+  rerank:
+    model_id: "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+  doc_status:
+    # Incremental indexing: re-runs only re-index new and changed documents.
+    enabled: true
+    sqlite_path: ".unified-kg-rag/doc-status.sqlite3"
 
 aws:
   neptune:

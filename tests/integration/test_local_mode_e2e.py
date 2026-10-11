@@ -12,7 +12,6 @@ needs no AWS at all. No network, no model download.
 
 from __future__ import annotations
 
-import json
 import math
 from pathlib import Path
 from typing import Any
@@ -21,7 +20,7 @@ import boto3
 import httpx
 import pytest
 
-from tests.fixtures.fakes.embeddings import HashingEmbeddings
+from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from tests.integration.test_ingestion_stages import _respond
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
@@ -56,54 +55,6 @@ pytestmark = pytest.mark.integration
 
 DIM = 32
 ANSWER = "Vendor supplies widgets to Buyer, and Depot stores them."
-
-
-class FakeOllama:
-    """Answers /api/chat with the scripted extraction model, /api/embed with
-    hashing vectors; records the models each endpoint was asked for."""
-
-    def __init__(self) -> None:
-        self.embedder = HashingEmbeddings(DIM)
-        self.chat_models: list[str] = []
-        self.embed_models: list[str] = []
-        self.answers = 0
-
-    def __call__(self, request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-        if request.url.path == "/api/embed":
-            self.embed_models.append(body["model"])
-            inputs = (
-                body["input"] if isinstance(body["input"], list) else [body["input"]]
-            )
-            return httpx.Response(
-                200,
-                json={
-                    "model": body["model"],
-                    "embeddings": self.embedder.embed_documents(inputs),
-                },
-            )
-        assert request.url.path == "/api/chat", request.url.path
-        self.chat_models.append(body["model"])
-        system = "".join(
-            m["content"] for m in body["messages"] if m["role"] == "system"
-        )
-        human = "".join(m["content"] for m in body["messages"] if m["role"] == "user")
-        try:
-            reply = _respond(system, human)
-        except AssertionError:
-            # Not an ingestion prompt: the query's answer generation.
-            self.answers += 1
-            reply = ANSWER
-        chunk = {
-            "model": body["model"],
-            "created_at": "2026-01-01T00:00:00Z",
-            "message": {"role": "assistant", "content": reply},
-            "done": True,
-            "done_reason": "stop",
-            "prompt_eval_count": 10,
-            "eval_count": 10,
-        }
-        return httpx.Response(200, content=(json.dumps(chunk) + "\n").encode())
 
 
 class FakeCrossEncoder:
@@ -202,7 +153,7 @@ async def test_local_backend_ingests_and_answers_without_aws(
     tmp_path: Path, no_aws
 ) -> None:
     config = _config(tmp_path)
-    server = FakeOllama()
+    server = FakeOllama(_respond, ANSWER, DIM)
     transport = httpx.MockTransport(server)
     graph, vectors = FakeGraphStore(), FakeVectorStore(config.indexing.opensearch)
     encoder = FakeCrossEncoder("synthetic-reranker")

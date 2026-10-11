@@ -13,7 +13,10 @@ unless ``LOCAL_STORES=1``::
 
 Every run writes under its own ``indexing.additional_suffix`` and clears it
 afterwards, so it does not touch other data in the containers. The incremental
-pipeline test keeps the doc-status registry in memory (no DynamoDB).
+pipeline test keeps the doc-status registry in memory (no DynamoDB). The
+local-mode test runs ``backend: local`` end to end (registry-built stores,
+SQLite registry, the Ollama adapters against a fake server), so it needs no
+Ollama container and downloads no model.
 """
 
 from __future__ import annotations
@@ -690,6 +693,110 @@ def test_two_source_scopes_with_the_same_relative_path_keep_their_content(
             "depot.txt",
         ]
     finally:
+        graph.clear([_SUFFIX])
+        vectors.clear([_SUFFIX])
+        graph.close()
+        vectors.close()
+
+
+def test_local_mode_ingests_and_answers_through_the_registry(
+    tmp_path: Path,
+) -> None:
+    # backend: local end to end on the real stores: the registry builds the
+    # Gremlin/OpenSearch indexers and retrievers and the SQLite registry from
+    # docker/config.local.yaml; the models are the local Ollama adapters
+    # against a fake server (no model download).
+    import httpx
+
+    from tests.fixtures.fakes.model_servers import FakeOllama
+    from tests.integration.test_ingestion_stages import _respond
+    from unified_kg_rag.adapters.local.embeddings import OllamaEmbeddingFactory
+    from unified_kg_rag.adapters.local.models import OllamaLanguageModelFactory
+    from unified_kg_rag.adapters.local.sqlite_doc_status import SQLiteDocStatusStore
+    from unified_kg_rag.application.bootstrap import build_providers
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.application.retrieval.rag_chain import (
+        GraphRAGChain,
+        RAGInput,
+        RAGOutput,
+    )
+    from unified_kg_rag.domain.models import (
+        Backend,
+        PipelineConfig,
+        PipelineStageStatus,
+        PipelineStageType,
+        SearchStrategy,
+    )
+    from unified_kg_rag.domain.models.config import ChunkingStrategy
+
+    answer = "Depot stores widgets for Vendor."
+    config = get_config(str(_LOCAL_CONFIG))
+    assert config.backend is Backend.LOCAL
+    config.indexing.additional_suffix = f"local{uuid.uuid4().hex[:8]}"
+    config.providers.doc_status.sqlite_path = str(tmp_path / "doc-status.sqlite3")
+    config.providers.rerank.kind = "none"
+    chunking = config.processing.chunking
+    chunking.chunker_type = ChunkingStrategy.SIMPLE
+    chunking.fallback_chunk_size = 60
+    chunking.chunk_overlap = 0
+    chunking.min_chunk_size = 1
+    config.processing.translation.enabled = False
+    config.processing.gleaning.enabled = False
+    config.processing.claim_extraction.enabled = False
+    config.fixing.enabled = False
+    config.graph.visualization.enabled = False
+    server = FakeOllama(_respond, answer, config.providers.embedding.dimension or 64)
+    transport = httpx.MockTransport(server)
+    providers = build_providers(
+        config,
+        llm_factory=OllamaLanguageModelFactory(config, transport=transport),
+        embedding_factory=OllamaEmbeddingFactory(config, transport=transport),
+    )
+    source = write_corpus(
+        tmp_path / "corpus",
+        {
+            "contract.txt": "Vendor supplies widgets to Buyer.",
+            "logistics.txt": "Depot stores widgets for Vendor.",
+        },
+    )
+    pipeline = DataIngestionPipeline(
+        config,
+        PipelineConfig(
+            stages_enabled=dict.fromkeys(PipelineStageType, True),
+            local_directory=tmp_path / "cache",
+        ),
+        source_directory=source,
+        providers=providers,
+    )
+    for stage in pipeline.stages:
+        if isinstance(stage, ps.GraphResolutionStage):
+            stage.resolver.entity_resolver.use_process_pool = False
+            stage.resolver.relationship_resolver.use_process_pool = False
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        context = pipeline.run(source, pipeline_id="local-mode")
+        assert context.status is PipelineStageStatus.COMPLETED
+        assert isinstance(providers.doc_status, SQLiteDocStatusStore)
+        assert len(providers.doc_status.list_all()) == 2
+
+        out = chain.invoke(
+            RAGInput(
+                query="Who stores the widgets?",
+                search_strategy=SearchStrategy.LOCAL,
+                enable_query_processing=False,
+            )
+        )
+        assert isinstance(out, RAGOutput)
+        assert out.answer == answer
+        assert out.sources
+        assert server.answers == 1
+        assert set(server.embed_models) == {config.providers.embedding.model_id}
+    finally:
+        chain.close()
+        pipeline.close()
+        graph = providers.build_graph_indexer()
+        vectors = providers.build_vector_indexer()
         graph.clear([_SUFFIX])
         vectors.clear([_SUFFIX])
         graph.close()

@@ -191,6 +191,8 @@ $RECYCLE.BIN/
 .run/
 .virtual_documents/
 cache/
+# Local-mode SQLite doc-status registry (providers.doc_status.sqlite_path)
+.unified-kg-rag/
 ipynb/
 inputs/
 logs/

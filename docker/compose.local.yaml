@@ -1,6 +1,7 @@
-# Local stand-ins for the AWS stores, for development only.
+# Local stand-ins for the AWS services, for development and local mode only.
 #
-#   docker compose -f docker/compose.local.yaml up -d --wait
+#   docker compose -f docker/compose.local.yaml up -d --wait                    # stores
+#   docker compose -f docker/compose.local.yaml --profile models up -d --wait   # + Ollama
 #   docker compose -f docker/compose.local.yaml down -v
 #
 # - OpenSearch: single node, security plugin disabled (plain http, no auth),
@@ -9,9 +10,18 @@
 # - Gremlin Server: in-memory TinkerGraph over plain ws:// with no auth. Its
 #   TinkerPop line (3.7) matches the gremlinpython client.
 #
+# - Ollama (profile "models", so the stores alone start without it): serves
+#   the language and embedding models of local mode. No model is pulled
+#   automatically; pull the ones docker/config.local.yaml names, e.g.
+#     docker compose -f docker/compose.local.yaml exec ollama ollama pull qwen2.5:7b-instruct
+#     docker compose -f docker/compose.local.yaml exec ollama ollama pull bge-m3
+#   Models persist in the ollama-models volume. CPU only as written; for an
+#   NVIDIA GPU add a `gpus: all` key to the service (needs the NVIDIA
+#   Container Toolkit), or run Ollama on the host instead.
+#
 # docker/config.local.yaml points the framework at them. Nothing here is
 # hardened: ports bind to 127.0.0.1, the graph lives in memory, and the
-# OpenSearch volume is removed by `down -v`.
+# OpenSearch and model volumes are removed by `down -v`.
 
 name: unified-kg-rag-local
 
@@ -46,5 +56,22 @@ services:
       timeout: 5s
       retries: 30
 
+  ollama:
+    image: ollama/ollama:0.40.2@sha256:b86366bb528bbf7f1424435d165028497a5b69bf6ddb4fa5a87102e2b79f44fb
+    profiles: ["models"]
+    environment:
+      # Keep a model loaded between the pipeline's bursts of calls.
+      OLLAMA_KEEP_ALIVE: 30m
+    ports:
+      - 127.0.0.1:11434:11434
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
 volumes:
   opensearch-data:
+  ollama-models:
