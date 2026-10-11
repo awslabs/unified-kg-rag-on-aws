@@ -1042,8 +1042,8 @@ chunks counts as a failed removal (its registry row is kept for a retry).
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--eval-data-path` | **required** | JSON file of questions + ground truths |
-| `--outputs-directory` | `evaluation.outputs_directory` | Where to save results |
+| `--eval-data-path` | **required** | JSON file of questions + ground truths: a local path or an `s3://bucket/key` URI |
+| `--outputs-directory` | `evaluation.outputs_directory` | Where to save results: a local directory or an `s3://bucket/prefix/` URI |
 | `--suffix` | — (`default`) | [Index suffix](#index-suffix) to evaluate against |
 | `--enable-thinking` | off | Model reasoning |
 | `--search-strategy` | `auto` | Strategy used to answer each question |
@@ -1176,7 +1176,20 @@ run-eval --eval-data-path my_eval_data.json --outputs-directory ./results --conf
 
 run-eval --eval-data-path my_eval_data.json \
   --search-strategy global --search-type vector --config-path config.yaml
+
+run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
+  --outputs-directory s3://my-bucket/eval/results/ --config-path config.yaml
 ```
+
+Either path can be an `s3://` URI, so `run-eval` also runs as a one-off task on
+the CDK stack ([After deploy](../iac/README.md#5-evaluate-from-inside-the-vpc)).
+An `s3://` dataset is downloaded to a temporary file before the run. With an
+`s3://` outputs directory the result files are written to a temporary
+directory and uploaded under the prefix when the run ends, with the
+`aws.s3.encryption` SSE settings the cache uploads use. If any upload fails,
+`run-eval` exits non-zero and keeps the local files (their path is printed).
+S3 calls use `aws.profile_name` and `aws.region_name`. The principal needs
+`s3:GetObject` on the dataset and `s3:PutObject` on the outputs prefix.
 
 Results are written to the outputs directory as
 `evaluation_{results,reports,summary}_<timestamp>.json`; when every answered

@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import argparse
 import logging
+import shutil
 import sys
+import tempfile
 import time
 from importlib.metadata import version
 from pathlib import Path
@@ -12,6 +14,13 @@ from langchain_core.runnables import Runnable
 from rich.panel import Panel
 from rich.table import Table
 
+from unified_kg_rag.adapters.aws.s3_transfer import (
+    download_s3_object,
+    is_s3_uri,
+    parse_s3_uri,
+    s3_client_for,
+    upload_directory_to_s3,
+)
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
@@ -25,7 +34,13 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.evaluation import EvaluationManager
-from unified_kg_rag.shared import get_config, get_logger, setup_logging
+from unified_kg_rag.shared import (
+    AWSServiceError,
+    ConfigurationError,
+    get_config,
+    get_logger,
+    setup_logging,
+)
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.display import console, display_ascii_art
 
@@ -43,6 +58,11 @@ def _failure_rate(value: str) -> float:
     if not 0.0 <= rate <= 1.0:
         raise argparse.ArgumentTypeError("must be between 0.0 and 1.0")
     return rate
+
+
+def _eval_data_path(value: str) -> str | Path:
+    """An ``s3://`` URI stays a string (``Path`` would collapse its ``//``)."""
+    return value if is_s3_uri(value) else Path(value)
 
 
 def failure_budget_breaches(
@@ -97,14 +117,23 @@ class CommandLineInterface:
 
         parser.add_argument(
             "--eval-data-path",
-            type=Path,
+            type=_eval_data_path,
             required=True,
-            help="Path to the unified evaluation data file (JSON format), containing both questions and ground truths.",
+            help=(
+                "Path to the unified evaluation data file (JSON format), containing\n"
+                "both questions and ground truths. Accepts a local path or an\n"
+                "s3://bucket/key URI (downloaded before the run)."
+            ),
         )
         parser.add_argument(
             "--outputs-directory",
             type=str,
-            help="Directory to save evaluation results",
+            help=(
+                "Directory to save evaluation results (default:\n"
+                "evaluation.outputs_directory). Accepts a local path or an\n"
+                "s3://bucket/prefix/ URI (results are uploaded after the run;\n"
+                "a failed upload exits non-zero)."
+            ),
         )
         parser.add_argument(
             "--suffix",
@@ -176,8 +205,24 @@ class EvaluationRunner:
         self.evaluation_manager: EvaluationManager | None = None
         self._validate_args()
 
+    def _outputs_directory(self) -> str:
+        return str(
+            self.args.outputs_directory or self.config.evaluation.outputs_directory
+        )
+
     def _validate_args(self) -> None:
         eval_data_path = self.args.eval_data_path
+        # Malformed S3 URIs fail here, before any model or store is touched.
+        try:
+            if is_s3_uri(eval_data_path):
+                parse_s3_uri(eval_data_path, require_key=True)
+            if is_s3_uri(self._outputs_directory()):
+                parse_s3_uri(self._outputs_directory(), require_key=False)
+        except ConfigurationError as e:
+            console.print(f"[red]Error: {e}[/red]")
+            sys.exit(1)
+        if is_s3_uri(eval_data_path):
+            return
         if eval_data_path and not Path(eval_data_path).exists():
             console.print(
                 f"[red]Error: Evaluation data file not found: '{eval_data_path}'[/red]"
@@ -186,7 +231,7 @@ class EvaluationRunner:
 
     @staticmethod
     def _print_summary(
-        summary: EvaluationSummary, total_time: float, outputs_directory: Path
+        summary: EvaluationSummary, total_time: float, outputs_directory: str
     ) -> None:
         summary_text = (
             f"Total Queries: [bold]{summary.total_queries}[/bold]\n"
@@ -257,6 +302,35 @@ class EvaluationRunner:
         )
 
     async def run(self) -> int:
+        """Evaluate; 0 on success, 1 on a breached failure budget or failed upload.
+
+        An ``s3://`` dataset is downloaded to a temporary directory first; an
+        ``s3://`` outputs directory is written locally and then uploaded.
+        """
+        work_dir = Path(tempfile.mkdtemp(prefix="graphrag-eval-"))
+        keep_work_dir = False
+        try:
+            exit_code, keep_work_dir = await self._run(work_dir)
+            return exit_code
+        finally:
+            if not keep_work_dir:
+                shutil.rmtree(work_dir, ignore_errors=True)
+
+    async def _run(self, work_dir: Path) -> tuple[int, bool]:
+        """Run the evaluation; returns ``(exit code, keep work_dir)``."""
+        eval_data_uri = self.args.eval_data_path
+        outputs_target = self._outputs_directory()
+        s3_client = (
+            s3_client_for(self.config)
+            if is_s3_uri(eval_data_uri) or is_s3_uri(outputs_target)
+            else None
+        )
+        eval_data_path: str | Path = eval_data_uri
+        if s3_client is not None and is_s3_uri(eval_data_uri):
+            eval_data_path = download_s3_object(
+                s3_client, eval_data_uri, work_dir / "dataset" / "eval_data.json"
+            )
+
         display_ascii_art(version=__version__)
         console.rule("[bold]Initializing Evaluation[/bold]", style="blue")
 
@@ -265,7 +339,7 @@ class EvaluationRunner:
         )
 
         queries, ground_truths = self.evaluation_manager.load_data(
-            eval_data_path=self.args.eval_data_path,
+            eval_data_path=eval_data_path,
             base_metadata={
                 "suffix": self.args.suffix,
                 "enable_thinking": self.args.enable_thinking,
@@ -294,23 +368,48 @@ class EvaluationRunner:
             queries=queries,
             ground_truths=ground_truths,
             show_progress=True,
-            dataset_path=self.args.eval_data_path,
+            dataset_path=eval_data_path,
             cli_args=vars(self.args),
         )
         total_time = time.time() - start_time
+        if is_s3_uri(eval_data_uri) and summary.run_manifest:
+            # Record where the dataset came from, not the temporary copy.
+            summary.run_manifest.get("dataset", {})["path"] = eval_data_uri
 
-        outputs_directory = (
-            self.args.outputs_directory or self.config.evaluation.outputs_directory
+        local_outputs = (
+            work_dir / "outputs" if is_s3_uri(outputs_target) else Path(outputs_target)
         )
         self.evaluation_manager.save_results(
             results=results,
             reports=reports,
             summary=summary,
-            outputs_dir=outputs_directory,
+            outputs_dir=local_outputs,
         )
 
+        upload_error: AWSServiceError | None = None
+        if s3_client is not None and is_s3_uri(outputs_target):
+            try:
+                upload_directory_to_s3(
+                    s3_client, local_outputs, outputs_target, self.config
+                )
+            except AWSServiceError as e:
+                upload_error = e
+
         console.rule("[bold]Evaluation Complete[/bold]", style="blue")
-        self._print_summary(summary, total_time, Path(outputs_directory))
+        self._print_summary(
+            summary,
+            total_time,
+            str(local_outputs) if upload_error else outputs_target,
+        )
+
+        exit_code = 0
+        if upload_error:
+            # Keep the local copy so a failed upload loses no results.
+            console.print(
+                f"[red]Error: {upload_error}. Local results kept in "
+                f"'{local_outputs}'.[/red]"
+            )
+            exit_code = 1
 
         breaches = failure_budget_breaches(summary, self.args.max_failure_rate)
         if breaches:
@@ -318,8 +417,8 @@ class EvaluationRunner:
                 f"[red]Failure budget exceeded ({'; '.join(breaches)}; allowed "
                 f"failure rate: {self.args.max_failure_rate}).[/red]"
             )
-            return 1
-        return 0
+            exit_code = 1
+        return exit_code, upload_error is not None
 
 
 def main() -> None:
@@ -360,6 +459,12 @@ def main() -> None:
     except KeyboardInterrupt:
         console.print("\n[yellow]Evaluation interrupted by user.[/yellow]")
         sys.exit(130)
+
+    except (AWSServiceError, ConfigurationError) as e:
+        # e.g. an s3:// dataset that cannot be downloaded.
+        console.print(f"\n[red]Error: {e}[/red]")
+        logger.error("Evaluation failed: %s", e)
+        sys.exit(1)
 
     except Exception as e:
         console.print(f"\n[red]An unexpected error occurred: {e}[/red]")
