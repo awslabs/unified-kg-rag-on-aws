@@ -277,18 +277,134 @@ Secrets Manager나 태스크 시크릿에서 `OTEL_EXPORTER_OTLP_HEADERS`로 넘
   순서로 대체되었으면 `error`, 모델이 쓸 수 있는 결과를 돌려주지 않았으면
   `empty`입니다.
 
+### Langfuse
+
+로컬 Langfuse(v3)는 저장소의 Docker Compose 파일로 실행합니다.
+
+```bash
+git clone --depth 1 https://github.com/langfuse/langfuse.git
+cd langfuse && docker compose up -d     # UI: http://localhost:3000
+```
+
+UI에서 프로젝트와 API 키 쌍을 만든 뒤 다음을 설정합니다.
+
+```bash
+uv sync --extra otel
+export LANGFUSE_HOST=http://localhost:3000
+export LANGFUSE_PUBLIC_KEY=pk-lf-...   # 배포 환경: Secrets Manager에서
+export LANGFUSE_SECRET_KEY=sk-lf-...   # 태스크 시크릿으로 주입, 파일에 두지 않음
+```
+
+```yaml
+observability:
+  enabled: true
+  backend: "langfuse"
+```
+
+질의마다 `kg_rag.query` 트레이스가 생기고, Sessions에서는 대화별로, Users에서는
+`RAGInput.user_id`별로 묶입니다. 모델 호출은 토큰 사용량과 함께 generation으로
+표시됩니다. Langfuse Cloud는 `LANGFUSE_HOST`를 리전 URL(예:
+`https://cloud.langfuse.com`)로 지정합니다. Langfuse는 HTTP OTLP만 받습니다. 두 키
+대신 `OTEL_EXPORTER_OTLP_HEADERS`를 직접 지정할 때는
+`x-langfuse-ingestion-version=4`를 함께 넣어야 트레이스가 몇 분씩 늦게 보이지
+않습니다.
+
+### Arize Phoenix
+
+```bash
+docker run --rm -d --name phoenix -p 6006:6006 -p 4317:4317 \
+  arizephoenix/phoenix:latest            # UI: http://localhost:6006
+uv sync --extra otel
+```
+
+```yaml
+observability:
+  enabled: true
+  backend: "phoenix"
+```
+
+다른 설정이 없으면 스팬은 `http://localhost:6006/v1/traces`로 가고
+`service_name` 이름의 프로젝트에 쌓입니다(`PHOENIX_PROJECT_NAME`이 우선). 원격
+또는 인증이 필요한 Phoenix는 `PHOENIX_COLLECTOR_ENDPOINT`(서버 루트, 예:
+`https://phoenix.example.com`)와 `PHOENIX_API_KEY`를 설정합니다. 스팬에
+OpenInference 종류(`LLM`, `EMBEDDING`, `RETRIEVER`, `RERANKER`, `CHAIN`)가
+붙으므로 모델 호출의 토큰 수가 보이고 Sessions 화면에서 대화의 질의가 묶입니다.
+
+### ADOT 수집기를 거친 CloudWatch
+
+CloudWatch는 `https://xray.<region>.amazonaws.com/v1/traces`에서 SigV4로 서명한
+OTLP 트레이스를 받으므로 키가 필요 없습니다. AWS Distro for OpenTelemetry(ADOT)
+수집기나 `sigv4auth` 확장을 쓰는 OpenTelemetry Collector를 태스크 옆(ECS
+사이드카)에서 실행하고, 패키지는 `backend: otlp`와
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`로 수집기를 가리키게 합니다.
+서명은 수집기가 태스크 역할로 합니다. CloudWatch OTLP 가이드를 따른 수집기 설정은
+다음과 같습니다.
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+exporters:
+  otlphttp/traces:
+    compression: gzip
+    traces_endpoint: https://xray.us-east-1.amazonaws.com/v1/traces
+    auth:
+      authenticator: sigv4auth/traces
+extensions:
+  sigv4auth/traces:
+    region: us-east-1
+    service: xray
+service:
+  extensions: [sigv4auth/traces]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [otlphttp/traces]
+```
+
+사전 조건: 계정과 리전마다 한 번 CloudWatch Transaction Search를 켜야 하며(X-Ray
+스팬 수집이 CloudWatch Logs 과금으로 바뀜), 태스크 역할에 CloudWatch 가이드가
+안내하는 X-Ray 쓰기 권한이 있어야 합니다(관리형 정책
+`CloudWatchAgentServerPolicy`에 포함). CDK 스택은 사이드카를 추가하지 않으며, 배포
+시 선택할 사항입니다.
+
+**계정 수준 보조 수단.** Bedrock 모델 호출 로깅(Bedrock 콘솔의 Settings, 리전별)은
+이 패키지의 추적과 관계없이 모든 `InvokeModel` / `Converse` 요청과 응답(임베딩
+포함)을 CloudWatch Logs나 S3에 기록합니다. Rerank 호출(`bedrock-agent-runtime`)은
+기록하지 않고 프롬프트와 응답 전문을 담으므로, 저장 위치는 수집한 본문과 같은 수준으로
+다루세요. 감사 기록은 이 로깅으로, 질의별 분석은 트레이스로 하세요.
+
+### 전송 제한, 프라이빗 VPC, 개인정보
+
 스팬은 백그라운드 스레드에서 내보내므로 수집기에 연결할 수 없어도 실행이 느려지지
-않습니다. 익스포터는 실패를 로그로 남기며, 종료 시 마지막 전송은
-`OTEL_EXPORTER_OTLP_TIMEOUT`(기본 10초)으로 제한됩니다. 프라이빗 VPC에서는
-태스크가 수집기 엔드포인트에 연결할 수 있어야 합니다. 데이터
+않습니다. 전송 요청 하나는 `observability.export_timeout_seconds`(10초,
+`OTEL_EXPORTER_OTLP_TIMEOUT`이 있으면 우선)로 제한되고, 배치 프로세서도 한 번의
+전송을 그 이상 기다리지 않으며, 큐가 가득 차면 막히지 않고 스팬을 버립니다.
+익스포터는 실패를 로그로 남깁니다. 종료 시 마지막 전송은 제한된 전송 한 번 정도만
+기다립니다. 프라이빗 VPC에서는 태스크가 엔드포인트에 연결할 수 있어야 합니다.
+`localhost`의 수집기 사이드카, VPC 안에서 운영하는 Langfuse나 Phoenix, 또는
+수집기의 CloudWatch 전송을 위한 X-Ray 인터페이스 VPC 엔드포인트를 쓰세요. 호스팅형
+Langfuse나 Phoenix는 인터넷 송신이 필요한데, 프라이빗 모드 스택에는 없습니다. 데이터
 플레인 이미지에는 `--build-arg UV_EXTRAS="--extra otel"`로 빌드했을 때만 extra가
 들어갑니다.
+
+자격 증명(`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`, `PHOENIX_API_KEY`,
+`OTEL_EXPORTER_OTLP_HEADERS`)은 환경 변수에서만 읽습니다. Secrets Manager 값을 ECS
+태스크 시크릿으로 주입하세요. 시작 로그 `Observability exporter for backend '...'`에는
+자격 증명을 뺀 엔드포인트와 헤더 이름만 나오고 값은 나오지 않습니다.
 
 개인정보 기본값: 스팬에는 개수, ID, 모델 이름, 토큰 사용량만 들어갑니다.
 `capture_content: true`로 설정하면 모델 스팬에 프롬프트와 응답 본문이
 (`redact_patterns` 적용 후) 추가되므로, 트레이스 백엔드가 코퍼스 데이터를 보관해도
-되는 환경에서만 켜세요. LangSmith 추적(`LANGSMITH_TRACING=true`)도 켜져 있으면
-LangChain이 이 설정과 관계없이 본문을 LangSmith로 업로드합니다.
+되는 환경에서만 켜세요. `otlp`, `langfuse`, `phoenix`에서는 내보낼 때도 모든 문자열
+속성, 이벤트 속성(예외 메시지에 질의가 들어갈 수 있음), 상태 메시지에
+`redact_patterns`를 적용하며 `session.id`와 `user.id`도 대상입니다. `none`에서는
+호스트 파이프라인이 기록된 그대로 내보내므로 그쪽 수집기에서 가리세요.
+`RAGInput.user_id`는 받은 그대로 내보내므로 불투명한 ID를 넘기세요. LangSmith
+추적(`LANGSMITH_TRACING=true`)도 켜져 있으면 LangChain이 이 설정과 관계없이 본문을
+LangSmith로 업로드합니다.
 
 ## 자주 보는 오류
 

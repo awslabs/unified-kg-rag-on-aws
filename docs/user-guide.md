@@ -614,11 +614,12 @@ OpenTelemetry-related is imported.
 | Key | Default | What it does / when to change |
 |---|---|---|
 | `observability.enabled` | `false` | Emit spans. `OTEL_SDK_DISABLED=true` turns it off regardless. |
-| `observability.backend` | `"none"` | `none`: spans go to the process's global tracer provider, which a host application or `opentelemetry-instrument` sets up. `otlp`: the package installs an OTLP exporter. |
+| `observability.backend` | `"none"` | `none`: spans go to the process's global tracer provider, which a host application or `opentelemetry-instrument` sets up. `otlp`: the package installs an OTLP exporter. `langfuse` / `phoenix`: the same OTLP exporter pointed at Langfuse or Arize Phoenix, with that vendor's attribute names added (see below). |
 | `observability.capture_content` | `false` | Also record prompt and completion text on model spans. Leave off for confidential corpora. |
-| `observability.redact_patterns` | `[]` | Regular expressions replaced with `[REDACTED]` in captured content. |
-| `observability.sample_rate` | `1.0` | Fraction of root traces kept (`otlp`); child spans follow their root. |
-| `observability.service_name` | `"unified-kg-rag"` | `service.name` resource attribute; `OTEL_SERVICE_NAME` wins when set. |
+| `observability.redact_patterns` | `[]` | Regular expressions replaced with `[REDACTED]` in captured content and, with `otlp`/`langfuse`/`phoenix`, in every exported string attribute, event attribute (exception messages) and status message. |
+| `observability.sample_rate` | `1.0` | Fraction of root traces kept (`otlp`, `langfuse`, `phoenix`); child spans follow their root. With `none` the host's tracer provider samples. |
+| `observability.service_name` | `"unified-kg-rag"` | `service.name` resource attribute, and the Phoenix project; `OTEL_SERVICE_NAME` (and `PHOENIX_PROJECT_NAME`) win when set. |
+| `observability.export_timeout_seconds` | `10` | Upper bound on one export request (`otlp`, `langfuse`, `phoenix`); `OTEL_EXPORTER_OTLP_TIMEOUT` wins when set. |
 
 The exporter is configured by the standard OpenTelemetry environment
 variables, never by the config file, so a collector API key never lands in it:
@@ -627,6 +628,29 @@ variables, never by the config file, so a collector API key never lands in it:
 `OTEL_EXPORTER_OTLP_PROTOCOL` (`http/protobuf` by default, `grpc` for port
 4317). Inject headers that carry credentials from Secrets Manager or task
 secrets at run time.
+
+**Langfuse and Phoenix.** Both ingest OTLP, so these backends need only the
+`otel` extra, no vendor SDK. Their settings also come from the environment
+only; a standard `OTEL_EXPORTER_OTLP_*` variable wins over the vendor one.
+
+| Backend | Endpoint | Credentials |
+|---|---|---|
+| `langfuse` | `LANGFUSE_HOST` (e.g. `http://localhost:3000`; the exporter posts to `<host>/api/public/otel/v1/traces`). Required: there is no default host. HTTP only; gRPC fails at start-up. | `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` (required), sent as a Basic `Authorization` header with `x-langfuse-ingestion-version: 4`. |
+| `phoenix` | `PHOENIX_COLLECTOR_ENDPOINT` (default `http://localhost:6006`, or `:4317` with `OTEL_EXPORTER_OTLP_PROTOCOL=grpc`). | `PHOENIX_API_KEY`, when the server needs one, as a Bearer `authorization` header. |
+
+The start-up log names the backend, the endpoint (without credentials), the
+timeout and the header *names*; key values are never logged. Spans keep their
+`gen_ai.*` and `kg_rag.*` attributes and gain the vendor's names on export:
+Langfuse `langfuse.observation.type` (`generation` for model calls,
+`embedding`, `retriever` for retrieval and rerank, `span` otherwise) and, with
+`capture_content`, `langfuse.observation.input`/`output`; Phoenix
+(OpenInference) `openinference.span.kind`, `llm.model_name`,
+`llm.token_count.*` and, with `capture_content`, `input.value`/`output.value`.
+
+**Sessions and users.** Every span of a query carries `session.id` (the
+`RAGInput.conversation_id`) and, when set, `user.id` (`RAGInput.user_id`), the
+names both Langfuse and Phoenix group traces by. `user_id` is recorded only on
+spans and exported as given, so pass an opaque id, not an e-mail address.
 
 **Trace shape.**
 
@@ -656,9 +680,11 @@ with `capture_content: true` (and then only on model spans, after
 
 Known limits: the streamed answer of `stream` / `astream` is traced as its own
 trace (retrieval and context building are in the `kg_rag.query` trace), and
-the async batch path records one span per batch, not per chunk. Langfuse,
-Phoenix and CloudWatch (ADOT) backends are planned
-([#92](https://github.com/awslabs/unified-kg-rag-on-aws/issues/92)).
+the async batch path records one span per batch, not per chunk; the streamed
+answer's model span carries no `session.id`. For CloudWatch, run an ADOT or
+OpenTelemetry Collector next to the task and use `backend: otlp` (recipe in
+the [runbook](operations.md#observability)). Local Langfuse and Phoenix
+recipes are there too.
 
 ---
 

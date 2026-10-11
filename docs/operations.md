@@ -292,18 +292,139 @@ To check it works:
   Rerank call failed and the query fell back to the fused order, and `empty`
   when the model returned nothing usable.
 
+### Langfuse
+
+A local Langfuse (v3) runs from its Docker Compose file:
+
+```bash
+git clone --depth 1 https://github.com/langfuse/langfuse.git
+cd langfuse && docker compose up -d     # UI on http://localhost:3000
+```
+
+Create a project in the UI and an API key pair for it, then:
+
+```bash
+uv sync --extra otel
+export LANGFUSE_HOST=http://localhost:3000
+export LANGFUSE_PUBLIC_KEY=pk-lf-...   # deployments: from Secrets Manager
+export LANGFUSE_SECRET_KEY=sk-lf-...   # as task secrets, never in a file
+```
+
+```yaml
+observability:
+  enabled: true
+  backend: "langfuse"
+```
+
+Each query is a `kg_rag.query` trace, grouped under its conversation in
+Sessions (and under `RAGInput.user_id` in Users); model calls show as
+generations with their token usage. For Langfuse Cloud set `LANGFUSE_HOST` to
+the region's URL (for example `https://cloud.langfuse.com`). Langfuse accepts
+OTLP over HTTP only. If you set `OTEL_EXPORTER_OTLP_HEADERS` yourself instead
+of the two keys, include `x-langfuse-ingestion-version=4`, or traces can take
+minutes to appear.
+
+### Arize Phoenix
+
+```bash
+docker run --rm -d --name phoenix -p 6006:6006 -p 4317:4317 \
+  arizephoenix/phoenix:latest            # UI on http://localhost:6006
+uv sync --extra otel
+```
+
+```yaml
+observability:
+  enabled: true
+  backend: "phoenix"
+```
+
+With nothing else set, spans go to `http://localhost:6006/v1/traces` and land
+in the project named by `service_name` (`PHOENIX_PROJECT_NAME` wins). For a
+remote or authenticated Phoenix set `PHOENIX_COLLECTOR_ENDPOINT` (the server
+root, e.g. `https://phoenix.example.com`) and `PHOENIX_API_KEY`. Spans carry
+OpenInference kinds (`LLM`, `EMBEDDING`, `RETRIEVER`, `RERANKER`, `CHAIN`), so
+model calls show their token counts and the Sessions view groups a
+conversation's queries.
+
+### CloudWatch through an ADOT collector
+
+CloudWatch accepts OTLP traces at `https://xray.<region>.amazonaws.com/v1/traces`
+signed with SigV4, so no key is involved. Run the AWS Distro for
+OpenTelemetry (ADOT) collector, or an OpenTelemetry Collector with the
+`sigv4auth` extension, next to the task (an ECS sidecar); point the package at
+it with `backend: otlp` and `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`;
+the collector signs with the task role. Collector configuration, after the
+CloudWatch OTLP guide:
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+exporters:
+  otlphttp/traces:
+    compression: gzip
+    traces_endpoint: https://xray.us-east-1.amazonaws.com/v1/traces
+    auth:
+      authenticator: sigv4auth/traces
+extensions:
+  sigv4auth/traces:
+    region: us-east-1
+    service: xray
+service:
+  extensions: [sigv4auth/traces]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [otlphttp/traces]
+```
+
+Prerequisites: CloudWatch Transaction Search enabled once per account and
+region (it moves X-Ray span ingestion to CloudWatch Logs billing), and a task
+role with the X-Ray write permissions the CloudWatch guide lists (the
+`CloudWatchAgentServerPolicy` managed policy covers them). The CDK stacks do
+not add the sidecar; it is a deployment choice.
+
+**Account-level backstop.** Bedrock model invocation logging (Bedrock console,
+Settings, per region) records every `InvokeModel` / `Converse` request and
+response, embeddings included, to CloudWatch Logs or S3, whatever this
+package's tracing does. It does not cover the Rerank call
+(`bedrock-agent-runtime`), and it holds full prompt and response text, so
+treat its destination like captured content. Use it as the audit record and
+traces for the per-query breakdown.
+
+### Export limits, private VPCs and privacy
+
 Spans are exported from a background thread, so an unreachable collector does
-not slow runs down; the exporter logs its failures, and the final flush at
-exit is bounded by `OTEL_EXPORTER_OTLP_TIMEOUT` (10 s by default). In a
-private VPC the collector endpoint must be reachable from the tasks. The
-data-plane image includes the extra only when built with
+not slow runs down: each export request is bounded by
+`observability.export_timeout_seconds` (10 s; `OTEL_EXPORTER_OTLP_TIMEOUT`
+wins when set), the batch processor waits no longer than that for one export,
+a full queue drops spans instead of blocking, and the exporter logs its
+failures. The final flush at exit waits for about one bounded export at most.
+In a private VPC the endpoint must be reachable from the tasks: a collector
+sidecar on `localhost`, a Langfuse or Phoenix hosted inside the VPC, or the
+X-Ray interface VPC endpoint for the collector's CloudWatch export. Hosted
+Langfuse or Phoenix needs internet egress, which the private-mode stacks do
+not have. The data-plane image includes the extra only when built with
 `--build-arg UV_EXTRAS="--extra otel"`.
+
+Credentials (`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`, `PHOENIX_API_KEY`,
+`OTEL_EXPORTER_OTLP_HEADERS`) are read from the environment only: inject them
+as ECS task secrets from Secrets Manager. The start-up line
+`Observability exporter for backend '...'` shows the endpoint without
+credentials and the header names, never their values.
 
 Privacy defaults: spans carry counts, ids, model names and token usage only.
 `capture_content: true` adds prompt and completion text to model spans (after
 `redact_patterns`); enable it only where the trace backend may hold corpus
-data. With LangSmith tracing also on (`LANGSMITH_TRACING=true`), LangChain
-uploads content to LangSmith independently of this setting.
+data. With `otlp`, `langfuse` or `phoenix`, `redact_patterns` also applies at
+export to every string attribute, event attribute (an exception message can
+quote a query) and status message, `session.id` and `user.id` included; with
+`none` the host's pipeline exports spans as recorded, so redact in its
+collector. `RAGInput.user_id` is exported as given: pass an opaque id. With
+LangSmith tracing also on (`LANGSMITH_TRACING=true`), LangChain uploads
+content to LangSmith independently of this setting.
 
 ## Common errors
 
