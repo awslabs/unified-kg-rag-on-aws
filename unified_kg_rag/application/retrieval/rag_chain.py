@@ -90,6 +90,7 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
+from unified_kg_rag.shared.genai import GEN_AI_CONVERSATION_ID
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
     parse_llm_json,
@@ -1358,7 +1359,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     def _query_span_attributes(self, rag_input: RAGInput) -> dict[str, Any]:
         """Query-span attributes: the request's settings, never its text."""
         return {
-            "gen_ai.conversation.id": rag_input.conversation_id,
+            GEN_AI_CONVERSATION_ID: rag_input.conversation_id,
             "kg_rag.mode": self.mode,
             "kg_rag.requested_strategy": rag_input.search_strategy,
             "kg_rag.top_k": rag_input.top_k,

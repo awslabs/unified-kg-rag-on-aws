@@ -46,21 +46,33 @@ from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 from opentelemetry.trace import Status
 
 from unified_kg_rag.domain.models.config import ObservabilityBackend
+from unified_kg_rag.shared.genai import (
+    GEN_AI_INPUT_MESSAGES,
+    GEN_AI_OPERATION_NAME,
+    GEN_AI_OUTPUT_MESSAGES,
+    GEN_AI_PROVIDER_NAME,
+    GEN_AI_REQUEST_MODEL,
+    GEN_AI_RESPONSE_MODEL,
+    GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS,
+    GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS,
+    GEN_AI_USAGE_INPUT_TOKENS,
+    GEN_AI_USAGE_OUTPUT_TOKENS,
+)
 from unified_kg_rag.shared.observability import REDACTED
 
 Attributes = Mapping[str, Any]
 AttributeMapper = Callable[[str, Attributes], dict[str, Any]]
 
-_OPERATION = "gen_ai.operation.name"
-_REQUEST_MODEL = "gen_ai.request.model"
-_RESPONSE_MODEL = "gen_ai.response.model"
-_PROVIDER = "gen_ai.provider.name"
-_INPUT_MESSAGES = "gen_ai.input.messages"
-_OUTPUT_MESSAGES = "gen_ai.output.messages"
-_INPUT_TOKENS = "gen_ai.usage.input_tokens"
-_OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
-_CACHE_READ = "gen_ai.usage.cache_read.input_tokens"
-_CACHE_WRITE = "gen_ai.usage.cache_creation.input_tokens"
+_OPERATION = GEN_AI_OPERATION_NAME
+_REQUEST_MODEL = GEN_AI_REQUEST_MODEL
+_RESPONSE_MODEL = GEN_AI_RESPONSE_MODEL
+_PROVIDER = GEN_AI_PROVIDER_NAME
+_INPUT_MESSAGES = GEN_AI_INPUT_MESSAGES
+_OUTPUT_MESSAGES = GEN_AI_OUTPUT_MESSAGES
+_INPUT_TOKENS = GEN_AI_USAGE_INPUT_TOKENS
+_OUTPUT_TOKENS = GEN_AI_USAGE_OUTPUT_TOKENS
+_CACHE_READ = GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS
+_CACHE_WRITE = GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS
 
 _RETRIEVE_SPAN = "kg_rag.retrieve"
 _RERANK_SPAN = "kg_rag.rerank"

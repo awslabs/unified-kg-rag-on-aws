@@ -23,7 +23,8 @@ from unified_kg_rag.adapters.local.models import api_key_value, import_optional
 from unified_kg_rag.domain.models import Config, model_id_value
 from unified_kg_rag.domain.models.provider_config import EmbeddingProviderConfig
 from unified_kg_rag.ports.model_factory import EmbeddingModelInfo
-from unified_kg_rag.shared import EmbeddingModelError, get_logger, observability
+from unified_kg_rag.shared import EmbeddingModelError, get_logger
+from unified_kg_rag.shared.genai import embedding_span
 
 logger = get_logger(__name__)
 
@@ -63,14 +64,9 @@ class TracedEmbeddings(Embeddings):
         return [truncate_to_estimate(text, self.max_input_tokens) for text in texts]
 
     def _span(self, texts: list[str]) -> Any:
-        return observability.span(
-            f"embeddings {self.model_id}",
-            {
-                "gen_ai.operation.name": "embeddings",
-                "gen_ai.provider.name": self.provider_name,
-                "gen_ai.request.model": self.model_id,
-            },
-            kind="client",
+        return embedding_span(
+            self.provider_name,
+            self.model_id,
             texts=len(texts),
             characters=sum(len(t) for t in texts),
         )

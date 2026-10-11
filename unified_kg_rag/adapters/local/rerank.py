@@ -35,6 +35,10 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
+from unified_kg_rag.shared.genai import (
+    GEN_AI_PROVIDER_NAME,
+    GEN_AI_REQUEST_MODEL,
+)
 
 logger = get_logger(__name__)
 
@@ -79,8 +83,8 @@ class CrossEncoderReranker(BaseDocumentCompressor):
         with observability.span(
             "kg_rag.rerank",
             {
-                "gen_ai.provider.name": "sentence_transformers",
-                "gen_ai.request.model": self.model_id,
+                GEN_AI_PROVIDER_NAME: "sentence_transformers",
+                GEN_AI_REQUEST_MODEL: self.model_id,
             },
             documents_in=len(documents),
             top_n=self.top_n,

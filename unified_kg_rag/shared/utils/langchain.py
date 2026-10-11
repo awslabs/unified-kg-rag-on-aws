@@ -10,6 +10,7 @@ from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, Final
 
 import tenacity
+from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
 from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import XMLOutputParser
 from langchain_core.runnables import RunnableConfig
@@ -1158,3 +1159,18 @@ class RobustXMLOutputParser(XMLOutputParser):
 # `create_robust_xml_output_parser`) moved to
 # `unified_kg_rag.adapters.llm.chain_factory` so this kernel module stays free of
 # any adapter dependency (hexagonal dependency rule). Import them from there.
+
+
+def with_callback(callbacks: Any, handler: BaseCallbackHandler) -> Any:
+    """``callbacks`` (None, a handler list or a manager) plus ``handler``.
+
+    Never mutates the caller's value: a manager is caller-owned and may be
+    shared by other models, which must not pick up this model's handler.
+    """
+    if callbacks is None:
+        return [handler]
+    if isinstance(callbacks, BaseCallbackManager):
+        manager = callbacks.copy()
+        manager.add_handler(handler, inherit=False)
+        return manager
+    return [*callbacks, handler]

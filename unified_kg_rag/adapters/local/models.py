@@ -75,6 +75,7 @@ def _tracing_callbacks(
     from unified_kg_rag.adapters.observability.langchain_callback import (
         GenAITracingCallbackHandler,
     )
+    from unified_kg_rag.shared.utils.langchain import with_callback
 
     handler: BaseCallbackHandler = GenAITracingCallbackHandler(
         model_id,
@@ -83,13 +84,7 @@ def _tracing_callbacks(
         max_tokens=max_tokens,
         temperature=temperature,
     )
-    if callbacks is None:
-        return [handler]
-    if isinstance(callbacks, list):
-        return [*callbacks, handler]
-    manager = callbacks.copy()
-    manager.add_handler(handler, inherit=True)
-    return manager
+    return with_callback(callbacks, handler)
 
 
 class _LocalLanguageModelFactory:
