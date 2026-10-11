@@ -257,21 +257,21 @@ Library API (Python callers and custom backends).
 - Claims: when no extracted claim resolves to an entity, or claim resolution
   does not run, no claim is indexed; the unresolved claims (no subject or
   object id) no longer reach the graph, the claims index or the document
-  lineage (#PR).
+  lineage (#220).
 - An entity named only inside a relationship is created under the
   relationship's index suffix and filters, so the edge write no longer fails
   (and the document is no longer retried forever) when ingesting with
-  `index_value` (#PR).
+  `index_value` (#220).
 - Gleaning: a re-proposal of a name or edge type a correction replaced
   merges into the corrected item instead of producing a second entity or
   edge with the same id, and graph resolution merges items that share an id,
-  so Neptune no longer gets two vertices or parallel edges for one id (#PR).
+  so Neptune no longer gets two vertices or parallel edges for one id (#220).
 - Incremental deduplication prefers only documents indexed successfully: a
   near-copy of a document that failed indexing is kept instead of it, so the
-  content is indexed even when the failed copy used up its retries (#PR).
+  content is indexed even when the failed copy used up its retries (#220).
 - Clearing a Neptune label stops after a bounded number of delete requests
   and raises instead of looping when the requests keep reporting full
-  batches (#PR).
+  batches (#220).
 - Parsing: the LLM XML parser keeps `&`, `<`, repeated siblings and
   sections with a missing closing tag; truncated responses fail instead of
   parsing as partial successes (#165, #174, #182, #213).
