@@ -229,7 +229,6 @@ class RAGChainRunner:
             self.rag_chain = await create_rag_chain(
                 config=self.config,
                 mode=ChainMode(self.args.mode),
-                enable_thinking=self.args.enable_thinking,
             )
             console.print("[green]GraphRAG chain initialized successfully![/green]")
         except Exception as e:

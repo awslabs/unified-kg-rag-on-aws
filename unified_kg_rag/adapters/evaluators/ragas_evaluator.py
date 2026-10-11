@@ -85,7 +85,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         embedding_factory: EmbeddingFactoryPort | None = None,
         *,
         providers: Providers | None = None,
-        **kwargs: Any,
+        show_progress: bool = True,
     ) -> None:
         self.embeddings: Embeddings | None = None
         self.llm: BaseLanguageModel | None = None
@@ -104,7 +104,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         super().__init__(
             config=config,
             evaluator_type=EvaluatorType.RAGAS,
-            **kwargs,
+            show_progress=show_progress,
         )
 
     def _initialize_evaluator(self, **kwargs: Any) -> None:

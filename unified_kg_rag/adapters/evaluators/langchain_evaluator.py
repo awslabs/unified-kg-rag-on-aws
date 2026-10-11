@@ -98,7 +98,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         config: Config,
         *,
         providers: Providers | None = None,
-        **kwargs: Any,
+        show_progress: bool = True,
     ) -> None:
         self.llm: BaseLanguageModel | None = None
         self.evaluators: dict[EvaluationMetricType, Any] = {}
@@ -108,7 +108,7 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         super().__init__(
             config=config,
             evaluator_type=EvaluatorType.LANGCHAIN,
-            **kwargs,
+            show_progress=show_progress,
         )
 
     def _initialize_evaluator(self, **kwargs: Any) -> None:
