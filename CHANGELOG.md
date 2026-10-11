@@ -274,6 +274,10 @@ Library API (Python callers and custom backends).
   instead of importing `graspologic`, whose package import loads boto3
   (through gensim and smart_open) and takes about 10 s. Partitions are
   unchanged (#PR).
+- The check that the graph still holds the registry's documents reads past
+  any number of entity-less records, still in batches, instead of stopping
+  after 1,000: a corpus starting with more than 1,000 entity-less pages no
+  longer lets a wiped graph pass as intact (#PR).
 - Re-running `run-ingestion` with an existing `--pipeline-id` resumes again:
   the integrity check built its cache keys before the corpus fingerprint was
   known, so it reported every stage missing and prompted, which crashed
