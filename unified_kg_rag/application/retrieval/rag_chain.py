@@ -804,9 +804,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             )
         processed: ProcessedQuery = state["processed_query"]
         # Ordered dedupe (not set()) so the joined entity query, and hence its
-        # embedding, is reproducible across processes.
-        entity_focus = list(
-            dict.fromkeys(processed.entities + state.get("relevant_entities", []))
+        # embedding, is reproducible across processes. Only a strategy that
+        # reads an entity focus gets one (conversation entities included).
+        entity_focus = (
+            list(dict.fromkeys(processed.entities + state.get("relevant_entities", [])))
+            if self._needs_query_entities(state)
+            else []
         )
 
         resolved_strategy: SearchStrategy = state["resolved_strategy"]

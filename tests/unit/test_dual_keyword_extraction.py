@@ -40,7 +40,7 @@ class TestRegisteredQueryInputs:
         ("strategy", "expected"),
         [
             (SearchStrategy.LOCAL, {QueryInput.ENTITIES}),
-            (SearchStrategy.DRIFT, {QueryInput.ENTITIES}),
+            (SearchStrategy.DRIFT, set()),
             (SearchStrategy.MIX, {QueryInput.DUAL_KEYWORDS}),
             (SearchStrategy.HYBRID, {QueryInput.DUAL_KEYWORDS}),
             (SearchStrategy.NAIVE, set()),

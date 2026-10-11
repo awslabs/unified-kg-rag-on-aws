@@ -2100,7 +2100,8 @@ class DriftSearchConfig(BaseModel):
     n_entities: int = Field(
         default=5,
         ge=1,
-        description="Number of top entities to extract for keyword expansion",
+        description="Entity names passed to keyword expansion, from the "
+        "newest iteration's results first",
     )
     convergence_threshold: float = Field(
         default=0.8,

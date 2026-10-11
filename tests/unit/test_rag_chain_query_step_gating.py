@@ -3,7 +3,7 @@
 """Per-strategy gating of the query-side LLM calls in GraphRAGChain (AWS-free).
 
 Entity extraction is only paid for strategies that read ``entity_focus``
-(local, DRIFT) and dual-keyword extraction only for the LightRAG modes that
+(local) and dual-keyword extraction only for the LightRAG modes that
 read high/low keywords (mix, hybrid). The decision is made on the RESOLVED
 strategy, so AUTO routing to local still extracts entities.
 """
@@ -110,6 +110,7 @@ async def _run_query_side(
     [
         SearchStrategy.SIMPLE,
         SearchStrategy.GLOBAL,
+        SearchStrategy.DRIFT,
         SearchStrategy.MIX,
         SearchStrategy.HYBRID,
         SearchStrategy.NAIVE,
@@ -126,14 +127,13 @@ async def test_no_entity_extraction_when_strategy_ignores_entity_focus(
     assert processed.entities == []
 
 
-@pytest.mark.parametrize("strategy", [SearchStrategy.LOCAL, SearchStrategy.DRIFT])
 async def test_entity_extraction_kept_for_entity_focus_consumers(
-    same_language_config: Config, strategy: SearchStrategy
+    same_language_config: Config,
 ) -> None:
-    # Local seeds from entity_focus; DRIFT sizes its entity candidate pool by it.
+    # Local seeds its graph expansion from entity_focus.
     factory = _FakeFactory()
     processed = await _run_query_side(
-        _chain_with(same_language_config, factory), strategy
+        _chain_with(same_language_config, factory), SearchStrategy.LOCAL
     )
     assert factory.counts[EntityExtractionPrompt] == 1
     assert factory.counts[KeywordsExtractionPrompt] == 0
@@ -262,6 +262,29 @@ async def test_entity_focus_order_is_deterministic(config: Config) -> None:
         "Warehouse",
         "Carrier",
     ]
+
+
+async def test_no_entity_focus_for_strategies_that_do_not_read_it(
+    config: Config,
+) -> None:
+    # Conversation entities reach only a strategy that declares the input.
+    chain = GraphRAGChain(config=config, mode=ChainMode.SEARCH)
+    captured: dict[str, Any] = {}
+
+    class _Strategy:
+        async def asearch(self, query: Any, config=None) -> str:
+            captured["query"] = query
+            return "result"
+
+    chain._get_strategy_instance = lambda _s: _Strategy()  # type: ignore[assignment]
+    await chain._search_step(
+        {
+            "resolved_strategy": SearchStrategy.DRIFT,
+            "processed_query": ProcessedQuery(original_query="q", final_query="q"),
+            "relevant_entities": ["Carrier"],
+        }
+    )
+    assert captured["query"].entity_focus == []
 
 
 async def test_callers_callbacks_reach_the_query_llms_and_the_strategy(

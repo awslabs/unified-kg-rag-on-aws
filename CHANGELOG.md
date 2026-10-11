@@ -528,6 +528,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   score with `rank` and `rating` as tie-breaks, and the fusion with their text
   units reranks the selection. `GlobalSearchStrategy._parse_map_points` is
   removed (use `_parse_map_payload`) (#PR).
+- DRIFT no longer requests query-side entity extraction (saving that LLM call
+  per query): the extracted entities only shrank each iteration's candidate
+  entity lookup (twice the entity count instead of `top_k`). Every iteration
+  now looks candidates up from its own query text. Conversation entities reach
+  only strategies that read an entity focus (local) (#PR).
+- DRIFT runs independent calls concurrently: each iteration's document
+  retrieval alongside its candidate-entity lookup and graph expansion, and the
+  primer's follow-up searches together (deduplicated in follow-up order)
+  (#PR).
 
 ### Deprecated
 - `search.llm_retry`; use `aws.bedrock.transient_retry` (#120).
@@ -1777,6 +1786,10 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   map LLM as community reports, and counted them toward
   `map_reduce_min_results`. Only community reports are mapped now; the text
   units pass through after the synthesized item (#PR).
+- DRIFT keyword expansion received the first results of the whole search, the
+  seed community reports, so it expanded from report titles. It now receives
+  entity names from the newest iteration's results first
+  (`search.drift_search.n_entities` of them) (#PR).
 
 ### Security
 - The task role drops the unused `neptune-db:GetEngineStatus`,
