@@ -95,7 +95,7 @@ class ConfigLoader:
             raise ValueError(f"Configuration validation error: {e}") from e
 
     def _resolve_relative_paths(self) -> None:
-        """Anchor a relative SQLite registry path at the config file's directory.
+        """Resolve a relative SQLite registry path against the config file's directory.
 
         The registry must be the same file on every run against the same
         stores; relative to the working directory, a run started elsewhere
