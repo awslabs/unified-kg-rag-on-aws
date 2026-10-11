@@ -18,6 +18,7 @@ from langchain_aws.chat_models.bedrock import _format_anthropic_messages
 from langchain_aws.chat_models.bedrock_converse import _messages_to_bedrock
 from langchain_core.output_parsers import StrOutputParser
 
+from tests.fixtures.fakes.boto import FakeBotoSession
 from unified_kg_rag.adapters.aws.bedrock import (
     BedrockCrossRegionModelHelper,
     BedrockLanguageModelFactory,
@@ -36,16 +37,6 @@ pytestmark = pytest.mark.unit
 _CACHE_POINT = {"cachePoint": {"type": "default"}}
 
 
-class _FakeSession:
-    profile_name = "default"
-
-    def client(self, service_name: str, **kwargs: Any) -> Any:
-        return object()
-
-    def get_credentials(self) -> Any:
-        return None
-
-
 def _messages(
     mocker: Any, model_id: str, resolved_id: str, prompt_cls: type[BasePrompt]
 ) -> tuple[Any, list[Any]]:
@@ -55,7 +46,7 @@ def _messages(
         return_value=resolved_id,
     )
     factory = BedrockLanguageModelFactory(
-        Config(), boto_session=_FakeSession()  # type: ignore[arg-type]
+        Config(), boto_session=FakeBotoSession()  # type: ignore[arg-type]
     )
     # INGESTION: no query retry wrapper, so the chain is the bare sequence.
     chain = setup_chain(

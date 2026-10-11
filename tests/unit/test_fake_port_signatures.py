@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The fakes and the local adapters must keep the exact call shape of their ports.
+"""The fakes and the adapters must keep the exact call shape of their ports.
 
 They are duck-typed (they do not subclass the ports), so nothing else stops a
 port parameter rename from leaving one behind: tests would keep passing
@@ -13,11 +13,37 @@ import inspect
 
 import pytest
 
+from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from unified_kg_rag.adapters.aws.bedrock import (
+    BedrockEmbeddingModelFactory,
+    BedrockLanguageModelFactory,
+    BedrockRerankModelFactory,
+)
+from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
+from unified_kg_rag.adapters.local.embeddings import (
+    OllamaEmbeddingFactory,
+    OpenAICompatibleEmbeddingFactory,
+)
+from unified_kg_rag.adapters.local.models import (
+    OllamaLanguageModelFactory,
+    OpenAICompatibleLanguageModelFactory,
+)
+from unified_kg_rag.adapters.local.rerank import (
+    CrossEncoderRerankFactory,
+    NoRerankFactory,
+)
 from unified_kg_rag.adapters.local.sqlite_doc_status import SQLiteDocStatusStore
-from unified_kg_rag.ports.doc_status import DocStatusPort
-from unified_kg_rag.ports.indexer import GraphIndexer, VectorIndexer
+from unified_kg_rag.adapters.local.token_counter import LocalTokenCounter
+from unified_kg_rag.ports import (
+    DocStatusPort,
+    GraphIndexer,
+    ModelFactoryPort,
+    TokenCounterPort,
+    VectorIndexer,
+)
 
 
 def _port_methods(port: type) -> list[str]:
@@ -42,6 +68,19 @@ PAIRS = [
     (FakeVectorStore, VectorIndexer),
     (FakeDocStatusStore, DocStatusPort),
     (SQLiteDocStatusStore, DocStatusPort),
+    (ScriptedLLMFactory, ModelFactoryPort),
+    (HashingEmbeddingFactory, ModelFactoryPort),
+    (OpenAICompatibleLanguageModelFactory, ModelFactoryPort),
+    (OllamaLanguageModelFactory, ModelFactoryPort),
+    (OpenAICompatibleEmbeddingFactory, ModelFactoryPort),
+    (OllamaEmbeddingFactory, ModelFactoryPort),
+    (CrossEncoderRerankFactory, ModelFactoryPort),
+    (NoRerankFactory, ModelFactoryPort),
+    (BedrockLanguageModelFactory, ModelFactoryPort),
+    (BedrockEmbeddingModelFactory, ModelFactoryPort),
+    (BedrockRerankModelFactory, ModelFactoryPort),
+    (LocalTokenCounter, TokenCounterPort),
+    (BedrockTokenCounter, TokenCounterPort),
 ]
 
 
@@ -61,5 +100,6 @@ def test_fake_matches_port_signature(fake: type, port: type, method: str) -> Non
 @pytest.mark.parametrize(("fake", "port"), PAIRS)
 def test_port_surface_is_not_empty(fake: type, port: type) -> None:
     # Guards the discovery above: an empty list would make the parametrized
-    # test vacuously pass.
-    assert len(_port_methods(port)) >= 5
+    # test vacuously pass. The smallest ports (model factory, token counter)
+    # have two methods.
+    assert len(_port_methods(port)) >= 2

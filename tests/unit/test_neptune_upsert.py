@@ -1,20 +1,20 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for Neptune idempotent upsert traversal construction (M2).
+"""Unit tests for the Neptune indexer's write path, with no Neptune connection.
 
-The headline M2 guarantee is that an incremental upsert does NOT create
-duplicate vertices/edges or accumulate duplicate property values on re-run.
-These tests assert the *traversal shape* the builder emits — fold/coalesce for
-vertices, drop-edge-by-id before addE, and multi-valued list properties via
-Cardinality.set (not a JSON string) — using a recording fake traversal so no
-Neptune connection is needed.
+Traversal shapes (fold/coalesce upserts, set-cardinality list properties,
+drop-before-re-add edges) are checked against a real Gremlin Server by
+``tests/integration/test_local_stores.py`` (the CI local-stores job). These
+tests cover what a round trip cannot easily force: per-edge failure isolation,
+write concurrency, label scoping and property serialization, using a recording
+fake traversal.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from unified_kg_rag.domain.models import Config, Entity, Relationship
+from unified_kg_rag.domain.models import Config, Relationship
 
 pytestmark = pytest.mark.unit
 
@@ -39,97 +39,6 @@ def indexer(mocker):
     from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 
     return NeptuneIndexer(config=Config())
-
-
-def _run_entity_builder(indexer, entities: list[Entity]) -> list[str]:
-    calls: list[str] = []
-    # Reach the inner builder the same way _index_generic does.
-    builder_factory = None
-
-    def fake_index_generic(items, name, prefix, factory, *, clear_first):
-        nonlocal builder_factory
-        builder_factory = factory("Entity")
-        return None
-
-    import unified_kg_rag.adapters.storage.neptune_indexer as mod  # noqa: F401
-
-    orig = indexer._index_generic
-    indexer._index_generic = fake_index_generic  # type: ignore[assignment]
-    try:
-        indexer.upsert_entities(entities)
-    finally:
-        indexer._index_generic = orig  # type: ignore[assignment]
-
-    builder_factory(RecordingTraversal(calls), entities)
-    return calls
-
-
-def test_upsert_entity_uses_fold_coalesce(indexer) -> None:
-    calls = _run_entity_builder(indexer, [Entity(id="e1", name="Alice")])
-    # Idempotent create-or-match: fold().coalesce(unfold(), addV(...)).
-    assert "fold" in calls
-    assert "coalesce" in calls
-
-
-def test_upsert_entity_sets_list_props_without_json_string(indexer, mocker) -> None:
-    # Spy on _set_properties_on_traversal to capture the props dict passed.
-    captured: dict = {}
-    orig = indexer._set_properties_on_traversal
-
-    def spy(traversal, props):
-        captured.update(props)
-        return orig(traversal, props)
-
-    mocker.patch.object(indexer, "_set_properties_on_traversal", side_effect=spy)
-    _run_entity_builder(
-        indexer, [Entity(id="e1", name="Alice", text_unit_ids=["t1", "t2"])]
-    )
-    # text_unit_ids must remain a real list (multi-valued), not a JSON string.
-    assert isinstance(captured.get("text_unit_ids"), list)
-    assert captured["text_unit_ids"] == ["t1", "t2"]
-
-
-def test_set_properties_list_uses_set_cardinality_and_drop(indexer) -> None:
-    calls: list[str] = []
-    indexer._set_properties_on_traversal(
-        RecordingTraversal(calls), {"text_unit_ids": ["t1", "t2"], "name": "Alice"}
-    )
-    # List property is cleared (sideEffect/drop) then re-added per element.
-    assert "sideEffect" in calls
-    # property() called for each list element + the scalar.
-    assert calls.count("property") == 3
-
-
-def test_upsert_relationship_drops_edge_by_id_before_readd(indexer, mocker) -> None:
-    # Per-edge write path: existing edges are dropped by id (batched) up front,
-    # then each edge is added as its OWN small traversal (not a sideEffect fan-out
-    # off one root — that shape made Neptune ~240x slower per edge). We record the
-    # steps issued on the shared g and the add-edge traversals built per edge.
-    drop_calls: list[str] = []
-    added_edges: list[str] = []
-
-    indexer.neptune_client.g = RecordingTraversal(drop_calls)
-    # _execute_with_retries just iterates the traversal; stub it so no real
-    # traversal .iterate() is needed and count the per-edge add builds instead.
-    mocker.patch.object(indexer, "_execute_with_retries")
-    orig_build = indexer._build_add_edge_traversal
-
-    def spy_build(g, rel, entity_label):
-        added_edges.append(rel.id)
-        return orig_build(g, rel, entity_label)
-
-    mocker.patch.object(indexer, "_build_add_edge_traversal", side_effect=spy_build)
-
-    indexer.upsert_relationships(
-        [
-            Relationship(id="r1", source_id="e1", target_id="e2"),
-            Relationship(id="r2", source_id="e2", target_id="e3"),
-        ]
-    )
-    # Existing edges dropped by id before re-add (idempotency).
-    assert "drop" in drop_calls
-    # Each relationship is written as its own add-edge traversal.
-    assert added_edges == ["r1", "r2"]
 
 
 def test_write_relationships_isolates_a_failing_edge(indexer, mocker) -> None:

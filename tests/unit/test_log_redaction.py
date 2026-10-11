@@ -16,9 +16,9 @@ from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.exceptions import OutputParserException
-from langchain_core.runnables import RunnableLambda
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from unified_kg_rag.adapters.aws import neptune as neptune_module
 from unified_kg_rag.adapters.aws.neptune import NeptuneClient
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
@@ -58,14 +58,6 @@ def _assert_no_secret(caplog: pytest.LogCaptureFixture) -> None:
         assert fragment not in text, text
 
 
-class _FakeModelFactory:
-    def get_model(self, model_id: Any, **kwargs: Any) -> Any:
-        return RunnableLambda(lambda _prompt_value: "Vendor supplies parts.")
-
-    def get_model_info(self, model_id: Any) -> Any:
-        return None
-
-
 class _FakeRetriever:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
@@ -89,7 +81,9 @@ def _chain(config: Config, *, fail: bool = False) -> GraphRAGChain:
     chain = GraphRAGChain(
         config=config,
         mode=ChainMode.RAG,
-        model_factory=_FakeModelFactory(),
+        model_factory=ScriptedLLMFactory(
+            lambda _system, _human: "Vendor supplies parts."
+        ),
         retriever_builders={
             RetrieverRole.DOCUMENT: lambda: retriever,
             RetrieverRole.GRAPH: lambda: retriever,

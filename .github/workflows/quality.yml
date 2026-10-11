@@ -35,8 +35,18 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install patched optional parsers
         run: uv sync --locked --extra unstructured
-      - name: Check optional parsing and private URL rejection
-        run: uv run --frozen pytest tests/unit/test_optional_parser_security.py -q
+      - name: Check the optional parsers are importable
+        # The security test skips itself when unstructured is missing, which
+        # would let this job pass without testing anything.
+        run: uv run --frozen python -c "import unstructured"
+      - name: Check optional parsing, registration and private URL rejection
+        # The parser-factory and loader tests take their unstructured-installed
+        # branch (.md/.html registered and parsed) only in this job.
+        run: >-
+          uv run --frozen pytest -q
+          tests/unit/test_optional_parser_security.py
+          tests/unit/test_parser_factory.py
+          tests/unit/test_loader_logic.py
 
   quality:
     runs-on: ubuntu-latest
@@ -65,16 +75,23 @@ jobs:
       - name: mypy (type check)
         run: uv run mypy unified_kg_rag
 
+      - name: File hygiene hooks
+        # The pre-commit hooks not covered by the steps above: end-of-file,
+        # trailing whitespace, YAML syntax and merge-conflict markers.
+        env:
+          SKIP: ruff,isort,black,mypy
+        run: uv run pre-commit run --all-files --show-diff-on-failure
+
       - name: pytest + coverage
         # The `aws` marker gates tests needing real AWS services; excluded in CI.
         # This one run also covers the property and integration suites. The
-        # coverage floor sits just under the measured level (~90%) so new
+        # coverage floor sits just under the measured level (~93%) so new
         # untested code cannot silently regress it; ratchet it up as it grows.
         run: >-
           uv run pytest -m "not aws"
           --cov=unified_kg_rag --cov-report=term-missing
           --cov-report=xml:coverage.xml --junitxml=report.xml
-          --cov-fail-under=88
+          --cov-fail-under=92
 
       - name: Upload coverage + test report
         # Surface coverage.xml / report.xml as artifacts for inspection on each run.
@@ -228,3 +245,9 @@ jobs:
 
       - name: Build the image
         run: docker build -f docker/Dockerfile -t unified-kg-rag:ci .
+
+      - name: Run the image
+        # The default command (run-ingestion --help) goes through the
+        # entrypoint and the installed console script, so a missing runtime
+        # dependency or a broken entrypoint fails here, not at deploy time.
+        run: docker run --rm unified-kg-rag:ci

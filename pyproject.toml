@@ -255,7 +255,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short --strict-markers"
+addopts = "--tb=short --strict-markers"
 asyncio_mode = "auto"
 # Fail a hung test (e.g. an unmocked network wait or a deadlocked pool) after
 # two minutes instead of letting it burn the whole CI job. The slowest test

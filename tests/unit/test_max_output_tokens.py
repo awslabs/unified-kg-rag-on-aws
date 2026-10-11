@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from langchain_core.output_parsers import StrOutputParser
 
+from tests.fixtures.fakes.boto import FakeBotoSession
 from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.aws.bedrock_models import (
     effective_max_output_tokens,
@@ -43,19 +44,9 @@ SONNET = LanguageModelId.CLAUDE_V5_5_SONNET
 HAIKU = LanguageModelId.CLAUDE_V4_5_HAIKU
 
 
-class _FakeSession:
-    profile_name = "default"
-
-    def client(self, service_name: str, **kwargs: Any) -> Any:
-        return object()
-
-    def get_credentials(self) -> Any:
-        return None
-
-
 def _factory(config: Config | None = None) -> BedrockLanguageModelFactory:
     return BedrockLanguageModelFactory(
-        config or Config(), boto_session=_FakeSession()  # type: ignore[arg-type]
+        config or Config(), boto_session=FakeBotoSession()  # type: ignore[arg-type]
     )
 
 
@@ -214,7 +205,7 @@ def _build(module: str, config: Config, factory: _RecordingFactory) -> None:
     from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
     from unified_kg_rag.adapters.providers import Providers
 
-    providers = Providers(config, boto_session=_FakeSession(), llm_factory=factory)  # type: ignore[arg-type]
+    providers = Providers(config, boto_session=FakeBotoSession(), llm_factory=factory)  # type: ignore[arg-type]
     builders = {
         "graph_extractor": lambda: GraphExtractor(config, providers=providers),
         "gleaner": lambda: GraphGleaner(config, providers=providers),

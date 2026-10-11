@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -548,21 +547,31 @@ async def test_map_phase_transient_failures_still_degrade_when_not_ignored() -> 
 
 
 class _SlowMapChain:
-    """Map chain whose calls take time; records the peak in-flight count."""
+    """Map chain whose calls wait for ``target`` calls in flight (or a timeout).
 
-    def __init__(self) -> None:
+    Records the peak in-flight count. Waiting on the other calls instead of
+    sleeping a fixed time makes the peak independent of runner speed: with
+    enough fan-out every call meets ``target`` peers; with less, each call
+    gives up after ``timeout`` and the peak stays below ``target``.
+    """
+
+    def __init__(self, target: int, timeout: float = 2.0) -> None:
         self.active = 0
         self.max_active = 0
-        self._lock = threading.Lock()
+        self._target = target
+        self._timeout = timeout
+        self._cond = threading.Condition()
 
     def batch(
         self, inputs: list[dict], config: Any = None, return_exceptions: bool = False
     ) -> list[str]:
-        with self._lock:
+        with self._cond:
             self.active += len(inputs)
             self.max_active = max(self.max_active, self.active)
-        time.sleep(0.1)
-        with self._lock:
+            self._cond.notify_all()
+            self._cond.wait_for(
+                lambda: self.max_active >= self._target, timeout=self._timeout
+            )
             self.active -= len(inputs)
         return [_map_payload(("p", 50))] * len(inputs)
 
@@ -577,7 +586,7 @@ async def test_map_phase_runs_max_concurrency_calls_at_once() -> None:
     config.processing.max_concurrency = 20
     config.search.global_search.map_batch_size = 1
     strat = GlobalSearchStrategy(config=config, retrievers={})
-    strat.map_rater = _SlowMapChain()  # type: ignore[assignment]
+    strat.map_rater = _SlowMapChain(target=20)  # type: ignore[assignment]
 
     points, unrated = await strat._run_map_phase(
         _communities(40), SearchQuery(query="q")

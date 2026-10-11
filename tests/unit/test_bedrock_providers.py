@@ -21,6 +21,7 @@ from langchain_core.messages import SystemMessage
 from langchain_core.output_parsers import StrOutputParser
 from pydantic import BaseModel
 
+from tests.fixtures.fakes.boto import FakeBotoSession
 from unified_kg_rag.adapters.aws import bedrock as bedrock_mod
 from unified_kg_rag.adapters.aws.bedrock import (
     BedrockCrossRegionModelHelper,
@@ -47,19 +48,9 @@ NEW_CLAUDE_MODELS = [
 ]
 
 
-class _FakeSession:
-    profile_name = "default"
-
-    def client(self, service_name: str, **kwargs: Any) -> Any:
-        return object()
-
-    def get_credentials(self) -> Any:
-        return None
-
-
 def _factory(config: Config | None = None) -> BedrockLanguageModelFactory:
     return BedrockLanguageModelFactory(
-        config or Config(), boto_session=_FakeSession()  # type: ignore[arg-type]
+        config or Config(), boto_session=FakeBotoSession()  # type: ignore[arg-type]
     )
 
 

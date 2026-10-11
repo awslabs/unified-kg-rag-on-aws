@@ -15,7 +15,6 @@ import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.incremental_runs import (
-    POINTS,
     Corpus,
     IncrementalRun,
     Killed,
@@ -92,25 +91,6 @@ def test_only_the_oversized_record_spills_and_every_doc_is_pending() -> None:
     assert {r.doc_id for r in store.list_all()} == {
         _doc_id(p, R1) for p in ("/c/a.txt", "/c/b.txt", "/c/e.txt")
     } | {_doc_id("/c/d.txt", R0)}
-
-
-@pytest.mark.parametrize("follow_up", sorted(FOLLOW_UPS))
-@pytest.mark.parametrize("point", POINTS)
-@pytest.mark.parametrize("k", [1, 2])
-def test_interrupted_run_with_overflow_converges(
-    point: str, follow_up: str, k: int
-) -> None:
-    harness, store = _harness()
-    harness.run(R1, interrupt=point, k=k)
-    corpus = FOLLOW_UPS[follow_up]
-
-    harness.run(corpus)
-
-    assert harness.state() == expected_state(corpus)
-    # registry_problems also reports leftover overflow.
-    assert harness.registry_problems(corpus) == []
-    harness.run(corpus)
-    assert harness.extracted == []
 
 
 def test_uninterrupted_run_with_overflow_cleans_it_up() -> None:

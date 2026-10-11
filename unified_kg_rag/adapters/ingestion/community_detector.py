@@ -8,7 +8,6 @@ from typing import Any
 
 import boto3
 import networkx as nx
-from graspologic.partition import leiden
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
@@ -305,6 +304,9 @@ class CommunityDetector(BaseProcessor):
             )
             return [{node} for node in target_graph.nodes()]
 
+        # Deferred: importing graspologic costs ~10 s per process (numba/umap).
+        from graspologic.partition import leiden
+
         try:
             config = self.community_detection_config
 
@@ -394,6 +396,7 @@ class CommunityDetector(BaseProcessor):
             self.community_detection_config.auto_resolution_candidates
         )
         canonical = _canonical_graph(graph)
+        from graspologic.partition import leiden
 
         for resolution in resolution_candidates:
             try:
