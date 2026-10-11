@@ -44,7 +44,6 @@ def _make_evaluator(
 
     Returns (evaluator, fake_token_counter).
     """
-    mocker.patch.object(rg_module.boto3, "Session")
     mocker.patch.object(bedrock_module, "get_assumed_role_boto_session")
     mocker.patch.object(bedrock_module, "BedrockEmbeddingModelFactory")
     llm_factory = mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
@@ -604,7 +603,6 @@ class TestInitFailure:
     def test_init_failure_raises_evaluation_exception(self, mocker) -> None:
         from unified_kg_rag.shared import EvaluationException
 
-        mocker.patch.object(rg_module.boto3, "Session")
         mocker.patch.object(bedrock_module, "get_assumed_role_boto_session")
         mocker.patch.object(bedrock_module, "BedrockTokenCounter")
         mocker.patch.object(bedrock_module, "BedrockEmbeddingModelFactory")
@@ -707,7 +705,6 @@ class TestRunConfigAndJudgeEffort:
         assert kwargs["effort"] == "low"
 
     def test_null_judge_effort_inherits_bedrock_effort(self, mocker) -> None:
-        mocker.patch.object(rg_module.boto3, "Session")
         mocker.patch.object(bedrock_module, "get_assumed_role_boto_session")
         mocker.patch.object(bedrock_module, "BedrockEmbeddingModelFactory")
         mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")

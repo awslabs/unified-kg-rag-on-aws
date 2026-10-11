@@ -10,9 +10,8 @@ import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
 from contextlib import AbstractContextManager
 from enum import Enum
-from typing import Any, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
-import boto3
 from langchain_core.output_parsers import (
     BaseOutputParser,
     CommaSeparatedListOutputParser,
@@ -91,12 +90,16 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
+from unified_kg_rag.shared.genai import GEN_AI_CONVERSATION_ID
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
     parse_llm_json,
     strip_embedding_fields,
     text_digest,
 )
+
+if TYPE_CHECKING:
+    import boto3
 
 logger = get_logger(__name__)
 
@@ -281,7 +284,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
+        boto_session: "boto3.Session | None" = None,
         mode: ChainMode = ChainMode.RAG,
         *,
         model_factory: LLMFactoryPort | None = None,
@@ -290,7 +293,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         retriever_builders: (
             dict[RetrieverRole, Callable[[], BaseGraphRAGRetriever]] | None
         ) = None,
-        **kwargs: Any,
     ) -> None:
         super().__init__()
         self.config = config
@@ -1357,7 +1359,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     def _query_span_attributes(self, rag_input: RAGInput) -> dict[str, Any]:
         """Query-span attributes: the request's settings, never its text."""
         return {
-            "gen_ai.conversation.id": rag_input.conversation_id,
+            GEN_AI_CONVERSATION_ID: rag_input.conversation_id,
             "kg_rag.mode": self.mode,
             "kg_rag.requested_strategy": rag_input.search_strategy,
             "kg_rag.top_k": rag_input.top_k,
@@ -1733,7 +1735,7 @@ def _iterate_async_generator(
 
 async def create_rag_chain(
     config: Config,
-    boto_session: boto3.Session | None = None,
+    boto_session: "boto3.Session | None" = None,
     mode: ChainMode = ChainMode.RAG,
     **kwargs: Any,
 ) -> GraphRAGChain:

@@ -5,11 +5,8 @@ import math
 import threading
 from collections.abc import Callable
 from functools import cached_property
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import boto3
-from botocore.auth import SigV4Auth
-from botocore.awsrequest import AWSRequest
 from gremlin_python.driver.driver_remote_connection import DriverRemoteConnection
 from gremlin_python.driver.protocol import GremlinServerError
 from gremlin_python.process.anonymous_traversal import traversal
@@ -17,6 +14,9 @@ from gremlin_python.process.graph_traversal import GraphTraversalSource, __
 
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import AWSServiceError, get_logger
+
+if TYPE_CHECKING:
+    import boto3
 
 logger = get_logger(__name__)
 
@@ -76,7 +76,7 @@ def neptune_pool_size(config: Config) -> int:
 
 
 class NeptuneClient:
-    def __init__(self, config: Config, boto_session: boto3.Session | None = None):
+    def __init__(self, config: Config, boto_session: "boto3.Session | None" = None):
         self.config = config
         self.neptune_config = config.aws.neptune
         if boto_session is not None:
@@ -87,12 +87,15 @@ class NeptuneClient:
         logger.debug("Neptune client initialized")
 
     @cached_property
-    def boto_session(self) -> boto3.Session:
+    def boto_session(self) -> "boto3.Session":
         """The session IAM auth signs with (a default one unless given).
 
         Created on first use, so a client of a store without IAM auth (a
-        local Gremlin Server or OpenSearch) never resolves an AWS profile.
+        local Gremlin Server or OpenSearch) never resolves an AWS profile,
+        nor imports the AWS SDK.
         """
+        import boto3
+
         return boto3.Session(
             profile_name=self.config.aws.profile_name,
             region_name=self.config.aws.region_name,
@@ -168,6 +171,9 @@ class NeptuneClient:
             raise AWSServiceError(
                 "Unable to get AWS credentials for IAM authentication"
             )
+
+        from botocore.auth import SigV4Auth
+        from botocore.awsrequest import AWSRequest
 
         try:
             request = AWSRequest(method="GET", url=url, data=None)

@@ -164,8 +164,7 @@ def test_resolve_prefers_the_given_bundle() -> None:
     config = Config()
     bundle = Providers(config, boto_session=MagicMock())
     assert Providers.resolve(config, bundle) is bundle
-    session = MagicMock()
-    assert Providers.resolve(config, None, session).boto_session is session
+    assert Providers.resolve(config).config is config
 
 
 # --- reach through the query path -------------------------------------------
@@ -294,9 +293,10 @@ def test_strategy_without_providers_still_constructs(mocker) -> None:
     from unified_kg_rag.adapters.search_strategies import LocalSearchStrategy
 
     mocker.patch.object(bedrock_module, "BedrockTokenCounter")
-    session = MagicMock()
-    strategy = LocalSearchStrategy(config=Config(), retrievers={}, boto_session=session)
-    assert strategy.providers.boto_session is session
+    config = Config()
+    strategy = LocalSearchStrategy(config=config, retrievers={})
+    assert isinstance(strategy.providers, Providers)
+    assert strategy.providers.config is config
 
 
 def test_default_token_counter_takes_the_models_estimate_multiplier(mocker) -> None:

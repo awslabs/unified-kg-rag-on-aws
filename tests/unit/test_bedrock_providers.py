@@ -387,7 +387,7 @@ def test_token_manager_disables_count_tokens_for_gpt(mocker) -> None:
     counter_cls = mocker.patch.object(bedrock_module, "BedrockTokenCounter")
     config = Config()
     config.search.answer_generation_model_id = LanguageModelId.GPT_V6_1_SOL
-    tm_module.TokenManager(config, boto_session=mocker.MagicMock())
+    tm_module.TokenManager(config)
     assert counter_cls.call_args.kwargs["api_supported"] is False
     # No CountTokens client is built for a model that cannot use it.
     assert counter_cls.call_args.kwargs["client"] is None

@@ -45,8 +45,10 @@ class _FakeCluster:
     def _match(self, pattern: str) -> list[str]:
         return [n for n in self.indices if fnmatchcase(n, pattern)]
 
-    def create_index(self, index_name, mapping):
+    def create_index(self, index_name, mapping, exist_ok=True):
         self.calls.append(("create_index", index_name))
+        if index_name in self.indices and not exist_ok:
+            raise ValueError(f"Index '{index_name}' already exists")
         self.created.append(index_name)
         self.indices.setdefault(index_name, set())
 
@@ -99,8 +101,8 @@ class _FakeCluster:
 def _ticking_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     """Advance the index-name timestamp by one second per call.
 
-    Index names carry a second-resolution timestamp, so back-to-back runs in
-    a test would otherwise reuse one name.
+    Gives each build its own timestamp; the pinned-clock tests below
+    override it to check that a name collision cannot reuse the live index.
     """
     start = datetime(2026, 1, 1, 0, 0, 0)
     ticks = iter(range(10_000))
@@ -279,7 +281,7 @@ def test_create_index_failure_rolls_back(config) -> None:
     live = f"{_ALIAS}-20251231000000"
     client = _FakeCluster({live: {_ALIAS}})
 
-    def _boom_create(index_name, mapping):
+    def _boom_create(index_name, mapping, exist_ok=True):
         client.created.append(index_name)
         client.indices[index_name] = set()  # partially created before failing
         client.calls.append(("create_index", index_name))
@@ -373,3 +375,64 @@ def test_clear_of_a_suffix_keeps_suffixes_that_extend_it(config) -> None:
     assert indexer.clear(["acme"])
 
     assert client.indices == kept
+
+
+def _pin_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Pinned:
+        @staticmethod
+        def now() -> datetime:
+            return datetime(2026, 10, 11, 12, 0, 0)
+
+    monkeypatch.setattr("unified_kg_rag.shared.utils.store_names.datetime", _Pinned)
+
+
+def test_two_rebuilds_in_one_millisecond_get_separate_indices(
+    config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Under a pinned clock both rebuilds get the same timestamp: the second
+    # must still write a new index and swap onto it, not refill the live one.
+    _pin_clock(monkeypatch)
+    client = _FakeCluster()
+    indexer = _indexer(config, client)
+
+    indexer.index_entities(_entities())
+    first = client.created[-1]
+    indexer.index_entities([], suffixes=["default"])
+    second = client.created[-1]
+
+    assert first == f"{_ALIAS}-20261011120000000"
+    assert second == f"{_ALIAS}-20261011120000001"
+    # The emptied type serves the empty rebuild; the first index is reaped.
+    assert client.indices == {second: {_ALIAS}}
+    assert ("bulk_index", second, 1) not in client.calls
+
+
+def test_new_index_name_reaps_a_legacy_second_resolution_index(
+    config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Indices built before millisecond names (14 digits) still count as this
+    # alias's own: they are reaped after the swap.
+    _pin_clock(monkeypatch)
+    legacy = f"{_ALIAS}-20261011115959"
+    client = _FakeCluster({legacy: {_ALIAS}})
+    indexer = _indexer(config, client)
+
+    indexer.index_entities(_entities())
+
+    assert client.indices == {f"{_ALIAS}-20261011120000000": {_ALIAS}}
+
+
+def test_full_rebuild_refuses_to_write_into_an_existing_index(config) -> None:
+    # Defence in depth: if the new name is taken after all (a concurrent
+    # build), the rebuild fails instead of writing into that index, and does
+    # not delete the live one.
+    live = f"{_ALIAS}-20251231000000"
+    client = _FakeCluster({live: {_ALIAS}})
+    indexer = _indexer(config, client)
+    indexer._new_index_name = lambda *_: live  # type: ignore[method-assign]
+
+    stats = indexer.index_entities(_entities())
+
+    assert stats.failed_items == 1
+    assert client.indices == {live: {_ALIAS}}
+    assert "bulk_index" not in _op_names(client.calls)

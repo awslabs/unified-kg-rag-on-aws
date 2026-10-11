@@ -22,6 +22,7 @@ from unified_kg_rag.adapters.aws.bedrock import (
     BedrockLanguageModelFactory,
     BedrockRerankModelFactory,
 )
+from unified_kg_rag.adapters.aws.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.adapters.aws.token_counter import BedrockTokenCounter
 from unified_kg_rag.adapters.local.embeddings import (
     OllamaEmbeddingFactory,
@@ -68,6 +69,7 @@ PAIRS = [
     (FakeVectorStore, VectorIndexer),
     (FakeDocStatusStore, DocStatusPort),
     (SQLiteDocStatusStore, DocStatusPort),
+    (DynamoDBDocStatusStore, DocStatusPort),
     (ScriptedLLMFactory, ModelFactoryPort),
     (HashingEmbeddingFactory, ModelFactoryPort),
     (OpenAICompatibleLanguageModelFactory, ModelFactoryPort),

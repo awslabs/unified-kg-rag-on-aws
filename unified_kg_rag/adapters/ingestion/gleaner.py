@@ -5,14 +5,13 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-import boto3
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
+from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
@@ -255,13 +254,12 @@ class GraphGleaner(BaseProcessor):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         show_progress: bool = True,
         *,
         providers: Providers | None = None,
     ) -> None:
         super().__init__(config)
-        self.providers = Providers.resolve(config, providers, boto_session)
+        self.providers = Providers.resolve(config, providers)
         self.gleaning_config = self.config.processing.gleaning
         self.ignore_errors = self.config.processing.ignore_errors
         self.show_progress = show_progress
@@ -279,7 +277,8 @@ class GraphGleaner(BaseProcessor):
 
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor.from_processing(
-            self.config.processing, is_transient_error=is_transient_bedrock_error
+            self.config.processing,
+            is_transient_error=transient_error_predicate(self.factory),
         )
 
         self.max_entities_per_prompt = self.gleaning_config.max_entities_per_prompt

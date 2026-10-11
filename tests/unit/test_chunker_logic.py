@@ -526,7 +526,6 @@ class TestChunkProcessorExtra:
 @pytest.fixture
 def _patch_bedrock(mocker):
     """Patch every AWS/Bedrock seam so chunker __init__ never touches AWS."""
-    mocker.patch.object(chunker_module, "boto3")
     mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     mocker.patch.object(chunker_module, "create_robust_xml_output_parser")
     mocker.patch.object(chunker_module, "setup_chain")

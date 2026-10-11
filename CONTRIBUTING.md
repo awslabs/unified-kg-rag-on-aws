@@ -89,7 +89,7 @@ CI ([`.github/workflows/quality.yml`](./.github/workflows/quality.yml)) runs the
 ```bash
 uv run pre-commit run --all-files                       # ruff, isort, black, mypy and file hygiene
 uv run pytest -m "not aws"                              # unit, property and integration suites
-uv run pytest -m "not aws" --cov=unified_kg_rag         # with coverage, as CI measures it
+uv run --extra otel pytest -m "not aws" --cov=unified_kg_rag  # with coverage, as CI measures it
 ```
 
 CI fails below the coverage threshold set by `--cov-fail-under` in `quality.yml`. It also runs the suite on Python

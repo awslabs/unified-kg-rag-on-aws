@@ -61,6 +61,13 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
+from unified_kg_rag.shared.genai import (
+    GEN_AI_PROVIDER_NAME,
+    GEN_AI_REQUEST_MODEL,
+    PROVIDER_AWS_BEDROCK,
+    embedding_span,
+)
+from unified_kg_rag.shared.utils.langchain import with_callback
 
 logger = get_logger(__name__)
 
@@ -402,14 +409,9 @@ class BedrockEmbeddingsWrapper(BaseBedrockWrapper, BedrockEmbeddings):
         if _IN_EMBEDDING_SPAN.get() or not observability.is_enabled():
             return contextlib.nullcontext()
         return _embedding_span_scope(
-            observability.span(
-                f"embeddings {self.model_id}",
-                {
-                    "gen_ai.operation.name": "embeddings",
-                    "gen_ai.provider.name": "aws.bedrock",
-                    "gen_ai.request.model": self.model_id,
-                },
-                kind="client",
+            embedding_span(
+                PROVIDER_AWS_BEDROCK,
+                self.model_id,
                 texts=texts,
                 characters=characters,
             )
@@ -542,21 +544,6 @@ def _message_guardrail_intervened(metadata: dict[str, Any]) -> bool:
     return metadata.get(_GUARDRAIL_ACTION_KEY) == "INTERVENED"
 
 
-def _append_callback(config: dict[str, Any], handler: BaseCallbackHandler) -> None:
-    """Add ``handler`` to the model's ``callbacks`` without touching the caller's."""
-    callbacks = config.get("callbacks")
-    if callbacks is None:
-        config["callbacks"] = [handler]
-    elif isinstance(callbacks, BaseCallbackManager):
-        # Copy first: the manager is caller-owned and may be shared by other
-        # models, which must not pick up this model's handler.
-        manager = callbacks.copy()
-        manager.add_handler(handler, inherit=False)
-        config["callbacks"] = manager
-    else:
-        config["callbacks"] = [*callbacks, handler]
-
-
 class GuardrailInterventionHandler(BaseCallbackHandler):
     """Make guardrail interventions visible instead of silently degrading.
 
@@ -624,10 +611,9 @@ class BedrockLanguageModelFactory(
     def _get_boto_service_name(self) -> str:
         return "bedrock-runtime"
 
-    @staticmethod
-    def is_transient_error(exc: BaseException) -> bool:
-        """Whether ``exc`` is worth a retry (query chains, ``setup_chain``)."""
-        return is_transient_bedrock_error(exc)
+    # Whether an error is worth a retry: the ingestion batch retries and the
+    # query-chain retry of ``setup_chain``.
+    is_transient_error = staticmethod(is_transient_bedrock_error)
 
     @property
     def transient_retry(self) -> TransientRetryConfig:
@@ -833,8 +819,8 @@ class BedrockLanguageModelFactory(
         # The InvokeModel path carries the request parameters in model_kwargs,
         # Converse at the top level (see _build_model_config).
         params = config.get("model_kwargs", config)
-        _append_callback(
-            config,
+        config["callbacks"] = with_callback(
+            config.get("callbacks"),
             GenAITracingCallbackHandler(
                 resolved_model_id,
                 purpose=purpose.value,
@@ -947,8 +933,9 @@ class BedrockLanguageModelFactory(
                 "guardrailVersion": guardrail.version,
                 "trace": guardrail.trace,
             }
-        _append_callback(
-            config, GuardrailInterventionHandler(guardrail.identifier, purpose)
+        config["callbacks"] = with_callback(
+            config.get("callbacks"),
+            GuardrailInterventionHandler(guardrail.identifier, purpose),
         )
         logger.debug(
             "Applied Bedrock guardrail '%s' to %s model",
@@ -1030,8 +1017,8 @@ class BedrockRerankWrapper(BaseBedrockWrapper, BedrockRerank):
         with observability.span(
             "kg_rag.rerank",
             {
-                "gen_ai.provider.name": "aws.bedrock",
-                "gen_ai.request.model": self.model_arn.rsplit("/", 1)[-1],
+                GEN_AI_PROVIDER_NAME: PROVIDER_AWS_BEDROCK,
+                GEN_AI_REQUEST_MODEL: self.model_arn.rsplit("/", 1)[-1],
             },
             kind="client",
             documents_in=len(documents),

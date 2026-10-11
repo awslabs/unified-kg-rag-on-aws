@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import boto3
 import networkx as nx
 
 from unified_kg_rag.adapters.ingestion.community_detector import CommunityDetector
@@ -44,7 +43,6 @@ class GraphVisualizationManager:
         graph_analyzer: GraphAnalyzer,
         community_detector: CommunityDetector,
         outputs_dir: Path | None = None,
-        boto_session: boto3.Session | None = None,
         embedder: BedrockNodeEmbedder | None = None,
         *,
         providers: Providers | None = None,
@@ -56,7 +54,7 @@ class GraphVisualizationManager:
         self.outputs_dir = outputs_dir or Path(
             self.viz_config.outputs_directory or DEFAULT_OUTPUTS_DIRECTORY
         )
-        self.providers = Providers.resolve(config, providers, boto_session)
+        self.providers = Providers.resolve(config, providers)
 
         # Built lazily: with embedding_method == "none" no Bedrock embedding
         # client is ever constructed.

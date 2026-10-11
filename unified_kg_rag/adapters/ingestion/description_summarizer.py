@@ -23,11 +23,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import boto3
 from langchain_core.output_parsers import StrOutputParser
 
-from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, Entity, ModelPurpose, Relationship
@@ -53,7 +52,6 @@ class DescriptionSummarizer:
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         *,
         providers: Providers | None = None,
     ) -> None:
@@ -62,10 +60,11 @@ class DescriptionSummarizer:
             self.config.processing.graph_extraction.description_summarization
         )
         self.target_language = self.config.processing.translation.target_language.value
-        self.providers = Providers.resolve(config, providers, boto_session)
+        self.providers = Providers.resolve(config, providers)
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor.from_processing(
-            self.config.processing, is_transient_error=is_transient_bedrock_error
+            self.config.processing,
+            is_transient_error=transient_error_predicate(self.factory),
         )
         self.summarizer = setup_chain(
             model_purpose=ModelPurpose.INGESTION,

@@ -4,7 +4,6 @@ from collections.abc import Sequence
 from enum import Enum
 from typing import Any, ClassVar
 
-import boto3
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.adapters.aws.token_counter import is_count_tokens_known_unsupported
@@ -91,7 +90,6 @@ class TokenManager(MetricsMixin):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         *,
         providers: Providers | None = None,
         **kwargs: Any,
@@ -101,7 +99,7 @@ class TokenManager(MetricsMixin):
         # The token counter comes from the shared provider bundle, so a chain
         # and its strategies reuse one bedrock-runtime client (and a custom
         # backend's counter) instead of each building its own.
-        providers = Providers.resolve(config, providers, boto_session)
+        providers = Providers.resolve(config, providers)
 
         answer_model_id = config.search.answer_generation_model_id
         self._enable_1m_context = config.aws.bedrock.enable_1m_context

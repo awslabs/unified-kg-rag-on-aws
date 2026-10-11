@@ -42,7 +42,6 @@ PHANTOM = BaseProcessor._generate_entity_id("Phantom Holdings")
 
 @pytest.fixture
 def gleaner(config: Config, mocker) -> GraphGleaner:
-    mocker.patch.object(gleaner_module, "boto3")
     mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     mocker.patch.object(gleaner_module, "create_robust_xml_output_parser")
     mocker.patch.object(gleaner_module, "setup_chain")
@@ -206,7 +205,6 @@ def test_grounding_off_keeps_the_stub(gleaner) -> None:
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def extractor(config: Config, mocker) -> GraphExtractor:
-    mocker.patch.object(extractor_module, "boto3")
     mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     mocker.patch.object(extractor_module, "create_robust_xml_output_parser")
     mocker.patch.object(extractor_module, "setup_chain")

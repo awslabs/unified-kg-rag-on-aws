@@ -6,14 +6,13 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any
 
-import boto3
 import networkx as nx
 
-from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
+from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
@@ -85,13 +84,12 @@ class CommunityDetector(BaseProcessor):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         show_progress: bool = True,
         *,
         providers: Providers | None = None,
     ) -> None:
         super().__init__(config)
-        self.providers = Providers.resolve(config, providers, boto_session)
+        self.providers = Providers.resolve(config, providers)
         self.community_detection_config = self.config.graph.community_detection
         self.ignore_errors = self.config.processing.ignore_errors
 
@@ -103,7 +101,8 @@ class CommunityDetector(BaseProcessor):
 
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor.from_processing(
-            self.config.processing, is_transient_error=is_transient_bedrock_error
+            self.config.processing,
+            is_transient_error=transient_error_predicate(self.factory),
         )
 
         if self.community_detection_config.report_generation.enabled:

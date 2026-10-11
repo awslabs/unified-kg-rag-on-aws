@@ -19,45 +19,46 @@
 # To keep Bedrock for the models and use only the local stores, set
 # providers.llm/embedding/rerank.kind: bedrock (with model ids from the Bedrock
 # catalog) and provide AWS credentials.
+#
+# This file sets only what differs from the preset. The preset's values are
+# shown commented out; uncomment one to change it.
 
 backend: local
 
 providers:
-  llm:
-    # Any model pulled into Ollama. Small models extract noticeably weaker
-    # graphs than the Bedrock defaults; use the largest one your hardware runs.
-    default_model_id: "qwen2.5:7b-instruct"
-    # Chunking, translation, summaries and the global/DRIFT map steps.
-    fast_model_id: null
-    context_window_size: 32768
-    max_output_tokens: 8192
-  embedding:
-    # The dimension is fixed into the OpenSearch mappings: changing the model
-    # or the dimension needs a full re-index.
-    model_id: "bge-m3"
-    dimension: 1024
-  rerank:
-    model_id: "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+  # llm:
+  #   # Any model pulled into Ollama. Small models extract noticeably weaker
+  #   # graphs than the Bedrock defaults; use the largest one your hardware
+  #   # runs. fast_model_id (chunking, translation, summaries, the global/DRIFT
+  #   # map steps) defaults to it.
+  #   default_model_id: "qwen2.5:7b-instruct"
+  # embedding:
+  #   # The dimension is fixed into the OpenSearch mappings: changing the
+  #   # model or the dimension needs a full re-index.
+  #   model_id: "bge-m3"
+  #   dimension: 1024
+  # rerank:
+  #   model_id: "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
   doc_status:
     # Incremental indexing: re-runs only re-index new and changed documents.
     enabled: true
     # Relative to this file: the repository's .unified-kg-rag/ directory.
     sqlite_path: "../.unified-kg-rag/doc-status.sqlite3"
 
-aws:
-  neptune:
-    # TinkerPop Gremlin Server: plain ws://, no SigV4.
-    endpoint: localhost
-    port: 8182
-    use_ssl: false
-    use_iam: false
-  opensearch:
-    # Security plugin disabled: plain http, no auth.
-    endpoint: localhost
-    port: 9200
-    use_ssl: false
-    verify_certs: false
-    allow_anonymous: true
+# aws:
+#   neptune:
+#     # TinkerPop Gremlin Server: plain ws://, no SigV4.
+#     endpoint: localhost
+#     port: 8182
+#     use_ssl: false
+#     use_iam: false
+#   opensearch:
+#     # Security plugin disabled: plain http, no auth.
+#     endpoint: localhost
+#     port: 9200
+#     use_ssl: false
+#     verify_certs: false
+#     allow_anonymous: true
 
 logging:
   log_to_file: false

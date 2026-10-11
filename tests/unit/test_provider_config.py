@@ -16,6 +16,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from tests.fixtures.config_template import commented_key_paths, uncommented_template
 from unified_kg_rag.domain.models import (
     Backend,
     Config,
@@ -39,12 +40,24 @@ _LOCAL_EMBEDDING = {
 
 @pytest.mark.parametrize(
     "path",
-    ["config-template.yaml", "docker/config.yaml", "docker/config.local.yaml"],
+    [
+        "config-template.yaml",
+        "config-template.yaml (uncommented)",
+        "docker/config.yaml",
+        "docker/config.local.yaml",
+    ],
 )
 def test_shipped_yaml_without_providers_keeps_the_aws_providers(path: str) -> None:
-    raw = yaml.safe_load((_ROOT / path).read_text(encoding="utf-8")) or {}
+    # The uncommented template also sets every commented-out key (the
+    # providers section and connection keys) to the default it shows.
+    if path.endswith("(uncommented)"):
+        raw = uncommented_template()
+    else:
+        raw = yaml.safe_load((_ROOT / path).read_text(encoding="utf-8")) or {}
     config = Config(**raw)
-    if "backend" in raw or "providers" in raw:
+    if raw.get("backend", Backend.AWS.value) != Backend.AWS.value:
+        pytest.skip(f"{path} selects another backend")
+    if "providers" in raw and not path.startswith("config-template.yaml"):
         pytest.skip(f"{path} selects providers explicitly")
     assert config.backend is Backend.AWS
     kinds = {
@@ -296,3 +309,28 @@ def test_shipped_local_config_selects_local_mode() -> None:
     assert config.providers.doc_status.kind == "sqlite"
     assert config.doc_status_enabled is True
     assert config.aws.neptune.use_iam is False
+
+
+def test_shipped_local_config_sets_only_what_differs_from_the_preset() -> None:
+    # Its commented-out keys show the preset's values: uncommenting them
+    # changes nothing, and the file itself repeats none of the preset.
+    text = (_ROOT / "docker/config.local.yaml").read_text("utf-8")
+    raw = yaml.safe_load(text)
+    uncommented = uncommented_template(text)
+    assert Config(**uncommented) == Config(**raw)
+    # Only the registry is set: incremental indexing is off in the preset.
+    assert set(raw) == {"backend", "providers", "logging"}
+    assert set(raw["providers"]) == {"doc_status"}
+    assert set(raw["providers"]["doc_status"]) == {"enabled", "sqlite_path"}
+    shown = set(commented_key_paths(text))
+    assert shown == {
+        "providers.llm.default_model_id",
+        "providers.embedding.model_id",
+        "providers.embedding.dimension",
+        "providers.rerank.model_id",
+        *(f"aws.neptune.{k}" for k in ("endpoint", "port", "use_ssl", "use_iam")),
+        *(
+            f"aws.opensearch.{k}"
+            for k in ("endpoint", "port", "use_ssl", "verify_certs", "allow_anonymous")
+        ),
+    }

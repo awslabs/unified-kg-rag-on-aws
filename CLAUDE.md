@@ -134,8 +134,10 @@ Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
 - `tests/integration/test_local_stores.py` needs `LOCAL_STORES=1` and the
   `docker/compose.local.yaml` stores; the CI `local-stores` job runs it.
 - `pytest-asyncio` is in `asyncio_mode = "auto"` — `async def test_*` just works.
-- Property tests (`hypothesis`) cover invariants: hashing determinism, diff
-  partition completeness, merge laws, fusion monotonicity.
+- Property tests (`hypothesis`) cover invariants: merge laws, incremental
+  rounds and interrupted runs converging with a full build, fusion
+  monotonicity; the `DocStatusPort.diff` partition runs against every registry
+  in `tests/integration/test_doc_status_conformance.py`.
 - Coverage gate ratchets up with measured coverage (currently `--cov-fail-under=92`
   in CI, measured ~93%). Run: `uv run pytest -m "not aws" --cov=unified_kg_rag`.
 

@@ -367,6 +367,25 @@ def test_overrides_keep_what_the_file_set() -> None:
     assert config.providers.rerank.kind == "none"
 
 
+def test_backend_aws_over_a_local_file_drops_the_local_preset() -> None:
+    # A `backend: local` file loads with the preset filled in; switching it
+    # to aws must return those keys to the AWS defaults, not only relabel it.
+    local = Config(
+        backend="local",
+        aws={"neptune": {"endpoint": "graph.example"}},
+        providers={"llm": {"default_model_id": "served"}},
+    )
+    config = with_provider_overrides(local, backend="aws")
+    aws = Config(
+        aws={"neptune": {"endpoint": "graph.example"}},
+        providers={"llm": {"default_model_id": "served"}},
+    )
+    assert config.backend is Backend.AWS
+    assert config.providers == aws.providers
+    assert config.aws.neptune == aws.aws.neptune
+    assert config.aws.opensearch == aws.aws.opensearch
+
+
 def test_no_overrides_returns_the_same_config() -> None:
     config = Config()
     assert with_provider_overrides(config) is config
@@ -403,6 +422,53 @@ def test_local_bootstrap_loads_no_aws_or_store_sdk(tmp_path) -> None:
     )
     result = subprocess.run(
         [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
+    )
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == []
+
+
+_CLI_MODULES = (
+    "unified_kg_rag.application.cli",
+    "unified_kg_rag.application.cli.run_ingestion_pipeline",
+    "unified_kg_rag.application.cli.run_rag_chain",
+    "unified_kg_rag.application.cli.run_evaluation",
+    "unified_kg_rag.application.cli.run_visualization",
+    "unified_kg_rag.application.cli.run_prompt_tuning",
+)
+
+
+def test_local_cli_pipeline_chain_and_stores_load_no_aws_sdk(tmp_path) -> None:
+    # A local run, from the CLI imports to the stores it builds, must not
+    # import the AWS SDK: AWS-only modules (S3 sync and transfer, SigV4
+    # signing, the Bedrock adapters) are imported only when selected.
+    script = (
+        "import importlib, json, sys\n"
+        f"for module in {_CLI_MODULES!r}:\n"
+        "    importlib.import_module(module)\n"
+        "from unified_kg_rag.application.ingestion.pipeline import "
+        "DataIngestionPipeline\n"
+        "from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain\n"
+        "from unified_kg_rag.domain.models import Config, PipelineConfig, "
+        "RetrieverRole\n"
+        "config = Config(backend='local', providers={'doc_status': "
+        f"{{'enabled': True, 'sqlite_path': {str(tmp_path / 'r.sqlite3')!r}}}}})\n"
+        "pipeline = DataIngestionPipeline(config, PipelineConfig("
+        f"local_directory={str(tmp_path / 'cache')!r}), "
+        f"source_directory={str(tmp_path)!r})\n"
+        "chain = GraphRAGChain(config)\n"
+        "pipeline.providers.build_graph_indexer()\n"
+        "pipeline.providers.build_vector_indexer()\n"
+        "pipeline.providers.build_doc_status()\n"
+        "for role in RetrieverRole:\n"
+        "    chain.providers.build_retriever(role)\n"
+        "aws = ('boto3', 'botocore', 'langchain_aws')\n"
+        "print(json.dumps(sorted({m.split('.')[0] for m in sys.modules} & set(aws))))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-W", "ignore", "-c", script],
         capture_output=True,
         text=True,
         check=True,

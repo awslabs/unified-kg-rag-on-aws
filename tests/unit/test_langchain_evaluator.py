@@ -49,7 +49,6 @@ def _make_evaluator(mocker, *, langchain_metrics=None) -> LangChainEvaluator:
     """Build a LangChainEvaluator with Bedrock + load_evaluator stubbed."""
     mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     mocker.patch.object(lc_module, "load_evaluator", return_value=object())
-    mocker.patch.object(lc_module.boto3, "Session")
 
     config = Config()
     if langchain_metrics is not None:
@@ -162,7 +161,6 @@ class TestInitialization:
     def test_init_failure_raises_evaluation_exception(self, mocker) -> None:
         from unified_kg_rag.shared import EvaluationException
 
-        mocker.patch.object(lc_module.boto3, "Session")
         mocker.patch.object(
             bedrock_module,
             "BedrockLanguageModelFactory",

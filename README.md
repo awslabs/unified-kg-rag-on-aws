@@ -61,7 +61,7 @@ See the [User Guide §4](./docs/user-guide.md#4-querying-run-rag) for per-strate
 | Path | Graph and vector stores | Models | Start here |
 |---|---|---|---|
 | **Local mode** (development, no AWS) | Gremlin Server and OpenSearch in containers ([`docker/compose.local.yaml`](./docker/compose.local.yaml)), SQLite for incremental indexing | Ollama (or any OpenAI-compatible server), or Amazon Bedrock | Follow [Local mode](./docs/user-guide.md#local-mode-no-aws): start the containers, pull the two Ollama models, then pass `--config-path docker/config.local.yaml` |
-| **Existing AWS resources** | Your Neptune cluster and OpenSearch domain (plus an S3 bucket, and DynamoDB for incremental indexing) | Amazon Bedrock | Copy `config-template.yaml` to `config.yaml` and set the endpoints |
+| **Existing AWS resources** | Your Neptune cluster and OpenSearch domain (plus DynamoDB for incremental indexing, and an S3 bucket only to sync the stage cache or persist the embedding cache) | Amazon Bedrock | Copy `config-template.yaml` to `config.yaml` and set the endpoints |
 | **Bundled CDK stack** | Created by [`iac/`](./iac/README.md), with a Fargate data plane and a Step Functions ingestion pipeline | Amazon Bedrock | [Deploy on AWS](#deploy-on-aws-optional), then [`iac/README.md` After deploy](./iac/README.md#after-deploy) |
 
 The AWS paths call Amazon Bedrock, so enable the

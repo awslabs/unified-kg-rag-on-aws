@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.fixtures.config_template import uncommented_template
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared.config import ConfigLoader, warn_unknown_keys
 
@@ -56,11 +57,19 @@ def test_free_form_dict_fields_are_not_walked(
     assert _unknown(caplog) == []
 
 
+@pytest.mark.parametrize("view", ["as_shipped", "uncommented"])
 def test_config_template_has_no_unknown_keys(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, view: str
 ) -> None:
+    # The uncommented view also covers the keys the template shows commented
+    # out (tests.fixtures.config_template).
+    data = (
+        yaml.safe_load(_TEMPLATE.read_text())
+        if view == "as_shipped"
+        else uncommented_template()
+    )
     with caplog.at_level(logging.WARNING):
-        warn_unknown_keys(yaml.safe_load(_TEMPLATE.read_text()), Config)
+        warn_unknown_keys(data, Config)
     assert _unknown(caplog) == []
 
 

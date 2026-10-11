@@ -5,7 +5,6 @@ import math
 import time
 from typing import Any
 
-import boto3
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
 
@@ -58,10 +57,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         self,
         config: Config,
         retrievers: dict[str, BaseGraphRAGRetriever],
-        boto_session: boto3.Session | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(config, retrievers, boto_session, **kwargs)
+        super().__init__(config, retrievers, **kwargs)
         self.global_search_config = config.search.global_search
         self.ignore_errors = config.processing.ignore_errors
         self.target_language = language_name(

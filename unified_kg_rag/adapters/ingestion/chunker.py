@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
 
-import boto3
 from langchain_text_splitters import (
     HTMLHeaderTextSplitter,
     MarkdownHeaderTextSplitter,
@@ -15,11 +14,11 @@ from langchain_text_splitters import (
 from pydantic import BaseModel, Field
 from tqdm import tqdm
 
-from unified_kg_rag.adapters.aws.bedrock_retry import is_transient_bedrock_error
 from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
+from unified_kg_rag.adapters.llm.retry import transient_error_predicate
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
@@ -686,18 +685,18 @@ class IntelligentTextChunker(BaseChunker):
     def __init__(
         self,
         config: Config,
-        boto_session: boto3.Session | None = None,
         show_progress: bool = True,
         *,
         providers: Providers | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(config, show_progress=show_progress)
-        self.providers = Providers.resolve(config, providers, boto_session)
+        self.providers = Providers.resolve(config, providers)
 
         self.factory = self.providers.llm_factory
         self.batch_processor = BatchProcessor.from_processing(
-            self.config.processing, is_transient_error=is_transient_bedrock_error
+            self.config.processing,
+            is_transient_error=transient_error_predicate(self.factory),
         )
 
         robust_xml_output_parser = create_robust_xml_output_parser(
@@ -1132,7 +1131,6 @@ class ChunkerFactory:
     def create_chunker(
         config: Config,
         chunker_type: ChunkingStrategy = ChunkingStrategy.INTELLIGENT,
-        boto_session: boto3.Session | None = None,
         show_progress: bool = True,
         **kwargs: Any,
     ) -> BaseChunker:
@@ -1140,5 +1138,5 @@ class ChunkerFactory:
         if chunker_type == ChunkingStrategy.SIMPLE:
             return SimpleTextChunker(config, show_progress, **kwargs)
         if chunker_type == ChunkingStrategy.INTELLIGENT:
-            return IntelligentTextChunker(config, boto_session, show_progress, **kwargs)
+            return IntelligentTextChunker(config, show_progress, **kwargs)
         raise DataProcessingError(f"Unknown chunker type: '{chunker_type}'")

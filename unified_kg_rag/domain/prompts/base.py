@@ -4,7 +4,7 @@
 
 ``BasePrompt`` holds only template strings, variable contracts, and custom-prompt
 resolution — NO LangChain/backend imports (the domain dependency rule). The
-adapter layer (``adapters/aws/chain_factory.py``) turns a resolved
+adapter layer (``adapters/llm/chain_factory.py``) turns a resolved
 ``ResolvedPrompt`` into a LangChain ``ChatPromptTemplate``.
 """
 

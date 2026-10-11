@@ -266,7 +266,7 @@ AWS 모드와 다른 점:
 
 | 플래그 | 설정하는 키 |
 |---|---|
-| `--backend {aws,local}` | `backend`. 프리셋은 여전히 설정에서 비워 둔 키만 채웁니다 |
+| `--backend {aws,local}` | `backend`. 프리셋은 여전히 설정에서 비워 둔 키만 채웁니다. `backend: local` 파일에 `--backend aws`를 주면 로컬 프리셋과 같은 값을 모두 버려 해당 키가 AWS 기본값으로 돌아갑니다 |
 | `--llm-provider KIND` | `providers.llm.kind`: `bedrock`, `openai_compatible`, `ollama` |
 | `--llm-model MODEL` | `providers.llm.default_model_id`(Bedrock이 아닌 언어 모델) |
 | `--embedding-provider KIND` | `providers.embedding.kind`: `bedrock`, `openai_compatible`, `ollama` |
@@ -287,7 +287,7 @@ AWS 모드와 다른 점:
 Server(메모리 기반 TinkerGraph), 단일 노드 OpenSearch 2.13, 그리고 `models` 프로필에서
 Ollama를 실행합니다. OpenSearch는 보안 플러그인을 끄고 `analysis-nori` 플러그인을
 설치합니다(한국어 매핑이 `nori`를 쓰며, Amazon OpenSearch Service에는 기본으로 들어
-있습니다). 모델은 자동으로 내려받지 않습니다. `docker/config.local.yaml`은
+있습니다). 모델은 자동으로 내려받지 않습니다. `backend: local` 프리셋은
 `aws.neptune.use_ssl: false`, `use_iam: false`(SigV4 없는 `ws://`)와
 `aws.opensearch.allow_anonymous: true`, `use_ssl: false`(인증 없는 `http://`)로
 프레임워크를 이 컨테이너에 연결합니다.
@@ -334,10 +334,13 @@ WARNING을 남기고 버리므로, 파일을 고치거나 업그레이드한 뒤
 
 첫 릴리스 전에 이름이 바뀐 키(`search.llm_retry`, `aws.bedrock.effort`,
 `processing.max_retries`, `indexing.neptune.max_retries`,
-`evaluation.ragas_max_retries`)는 읽지 않으며 알 수 없는 키로 보고됩니다.
+`evaluation.ragas_max_retries`, `providers.llm.max_retries`,
+`providers.embedding.max_retries`)는 읽지 않으며 알 수 없는 키로 보고됩니다.
 `aws.bedrock.transient_retry`, `aws.bedrock.default_effort`,
 `processing.max_attempts`, `indexing.neptune.max_attempts`,
-`evaluation.ragas_max_attempts`를 사용하세요.
+`evaluation.ragas_max_attempts`, `providers.llm.max_attempts`,
+`providers.embedding.max_attempts`를 사용하세요(기존 `max_retries: N`은
+`max_attempts: N+1`입니다).
 
 `max_attempts` 키는 모두 첫 시도를 포함한 총 시도 횟수이며, `1`이면 재시도하지
 않습니다.

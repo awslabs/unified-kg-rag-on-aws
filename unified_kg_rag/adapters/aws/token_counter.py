@@ -7,8 +7,6 @@ import threading
 from functools import lru_cache
 from typing import Any
 
-from botocore.exceptions import ClientError, ParamValidationError
-
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.shared import get_logger
 
@@ -52,6 +50,9 @@ def is_count_tokens_unsupported_error(error: BaseException) -> bool:
     ``ValidationException`` counts only when its message says the model or
     operation is unsupported; otherwise it is an input problem for that call.
     """
+    # Only a Bedrock call raises these, so botocore is already loaded here.
+    from botocore.exceptions import ClientError, ParamValidationError
+
     if isinstance(error, ClientError):
         err = error.response.get("Error", {})
         code = str(err.get("Code", ""))

@@ -4,17 +4,16 @@
 
 ``build_providers`` checks that every role ``config.providers`` selects has a
 registered builder (failing before any model is paid for) and returns the
-``Providers`` bundle that the CLIs pass to ``GraphRAGChain``,
-``DataIngestionPipeline`` and ``EvaluationManager``; those hand it on to every
-stage, strategy, scorer, token manager, memory manager, evaluator and store
-they build. Code that constructs an orchestrator without a bundle gets the
-same config-driven defaults (``Providers`` resolves each role through the
-same registry), so the bundle is a single place to inject overrides rather
-than a requirement.
+``Providers`` bundle. ``GraphRAGChain``, ``DataIngestionPipeline`` and
+``EvaluationManager`` call it when they are not given a bundle
+(``providers=``) and hand the bundle on to every stage, strategy, scorer,
+token manager, evaluator and store they build, so an injected bundle is the
+single place to override a role.
 
 ``with_provider_overrides`` applies the CLI provider flags (``--backend``,
 ``--llm-provider`` ...) to a loaded config, re-running the ``backend`` preset
-and the model-id defaults as if the file had set them.
+and the model-id defaults as if the file had set them; switching the backend
+drops the values the old one's preset filled in.
 """
 
 from __future__ import annotations
@@ -28,6 +27,7 @@ from unified_kg_rag.adapters.provider_registry import (
 )
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models.provider_config import strip_backend_preset
 from unified_kg_rag.shared import ConfigurationError, get_logger
 
 if TYPE_CHECKING:
@@ -100,7 +100,10 @@ def with_provider_overrides(
     ``None`` leaves a setting as configured. ``base_url`` applies to the LLM
     and embedding servers alike. The preset and the model-id defaults are
     re-applied, so ``backend="local"`` behaves as if the file had said
-    ``backend: local``. Returns ``config`` itself when nothing is given.
+    ``backend: local``. A ``backend`` other than the config's drops the values
+    the config's preset filled in first (any value equal to the preset's), so
+    ``backend="aws"`` over a ``backend: local`` file returns them to the AWS
+    defaults. Returns ``config`` itself when nothing is given.
     """
     providers: dict[str, dict[str, Any]] = {}
 
@@ -120,6 +123,8 @@ def with_provider_overrides(
         return config
     data = config.model_dump(exclude_unset=True)
     if backend is not None:
+        if backend != config.backend.value:
+            data = strip_backend_preset(data, config.backend)
         data["backend"] = backend
     merged = data.get("providers") or {}
     for section, values in providers.items():

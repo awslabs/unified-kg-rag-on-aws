@@ -4,7 +4,6 @@ import asyncio
 import time
 from typing import Any
 
-import boto3
 from langchain_core.runnables import RunnableConfig
 
 from unified_kg_rag.adapters.retrieval.base import (
@@ -36,11 +35,10 @@ class LocalSearchStrategy(BaseSearchStrategy):
         self,
         config: Config,
         retrievers: dict[str, BaseGraphRAGRetriever],
-        boto_session: boto3.Session | None = None,
         entity_focus_multiplier: int = 2,
         **kwargs: Any,
     ):
-        super().__init__(config, retrievers, boto_session, **kwargs)
+        super().__init__(config, retrievers, **kwargs)
         self.entity_focus_multiplier = entity_focus_multiplier
 
     async def asearch(

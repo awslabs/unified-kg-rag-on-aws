@@ -10,6 +10,7 @@ from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, Final
 
 import tenacity
+from langchain_core.callbacks import BaseCallbackHandler, BaseCallbackManager
 from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import XMLOutputParser
 from langchain_core.runnables import RunnableConfig
@@ -148,8 +149,9 @@ class BatchProcessor(BaseModel):
     )
     is_transient_error: Callable[[BaseException], bool] | None = Field(
         default=None,
-        description="Classifies backend errors worth retrying (e.g. "
-        "adapters.aws.bedrock_retry.is_transient_bedrock_error); other errors "
+        description="Classifies backend errors worth retrying (the ingestion "
+        "stages pass the LLM factory's, adapters.llm.retry."
+        "transient_error_predicate); other errors "
         "fail fast. Output-parse failures and call timeouts are always retried. "
         "None retries every error, for callers that span several backends.",
     )
@@ -1157,3 +1159,18 @@ class RobustXMLOutputParser(XMLOutputParser):
 # `create_robust_xml_output_parser`) moved to
 # `unified_kg_rag.adapters.llm.chain_factory` so this kernel module stays free of
 # any adapter dependency (hexagonal dependency rule). Import them from there.
+
+
+def with_callback(callbacks: Any, handler: BaseCallbackHandler) -> Any:
+    """``callbacks`` (None, a handler list or a manager) plus ``handler``.
+
+    Never mutates the caller's value: a manager is caller-owned and may be
+    shared by other models, which must not pick up this model's handler.
+    """
+    if callbacks is None:
+        return [handler]
+    if isinstance(callbacks, BaseCallbackManager):
+        manager = callbacks.copy()
+        manager.add_handler(handler, inherit=False)
+        return manager
+    return [*callbacks, handler]

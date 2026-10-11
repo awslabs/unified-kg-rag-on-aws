@@ -32,7 +32,6 @@ U1 = TextUnit(id="u1", text="Acme Corp supplies the Depot.")
 
 @pytest.fixture
 def gleaner(config: Config, mocker) -> GraphGleaner:
-    mocker.patch.object(gleaner_module, "boto3")
     mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
     mocker.patch.object(gleaner_module, "create_robust_xml_output_parser")
     mocker.patch.object(gleaner_module, "setup_chain")

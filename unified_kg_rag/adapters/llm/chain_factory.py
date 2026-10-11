@@ -452,12 +452,14 @@ def setup_chain(
     ``QUERY`` (the default, so an unmarked call site stays on the guarded,
     conservative side) gets the query guardrail scope (``guardrail.apply_to``,
     applied by the factory) and, when the factory classifies transient errors
-    (``is_transient_error``, the Bedrock factory), a transient-error retry
-    around the whole chain under its ``transient_retry`` policy. Ingestion and evaluation call sites pass their
+    and has a chain retry policy (``is_transient_error`` and
+    ``transient_retry``, the Bedrock factory), a transient-error retry around
+    the whole chain. Ingestion and evaluation call sites pass their
     purpose explicitly: they run unguarded under ``apply_to: query`` and get no
     chain-level retry, because ``BatchProcessor`` already retries them and a
-    second layer would multiply the attempts. A factory without the hook
-    (the local ones) owns its own retry policy. ``min_output_tokens`` overrides the prompt's static
+    second layer would multiply the attempts. A factory without a
+    ``transient_retry`` policy (the local ones) leaves query retries to its
+    client. ``min_output_tokens`` overrides the prompt's static
     floor with one derived from the config (``BasePrompt.output_floor``).
     """
     try:
