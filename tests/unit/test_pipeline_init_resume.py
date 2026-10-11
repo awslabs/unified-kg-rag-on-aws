@@ -28,7 +28,9 @@ from unified_kg_rag.domain.models import (
     PipelineStageResult,
     PipelineStageStatus,
     PipelineStageType,
+    validate_path_segment,
 )
+from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.unit
 
@@ -559,3 +561,44 @@ def test_real_stage_init_signatures_accept_injected_kwargs() -> None:
     pipe.STAGE_CLASSES = {st: _binding_stub(st, cls) for st, cls in real.items()}
     stages, _ = pipe._initialize_stages()
     assert len(stages) == len(real)
+
+
+def test_generated_pipeline_ids_differ_within_one_second(tmp_path) -> None:
+    ids = {DataIngestionPipeline._generate_pipeline_id(tmp_path) for _ in range(20)}
+    assert len(ids) == 20
+    for pid in ids:
+        validate_path_segment(pid, "pipeline_id")
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [("GRAPH_EXTRACTION", "graph_extraction"), (" Indexing ", "indexing")],
+)
+def test_normalize_stage_name(name, expected) -> None:
+    assert DataIngestionPipeline.normalize_stage_name(name) == expected
+
+
+def test_normalize_stage_name_rejects_an_unknown_stage() -> None:
+    with pytest.raises(ConfigurationError, match="graph_extraction"):
+        DataIngestionPipeline.normalize_stage_name("grpah_extraction")
+
+
+@pytest.mark.parametrize(
+    ("start", "expected"),
+    [
+        (None, 0),
+        ("graph_resolution", 1),
+        # Not enabled here: the first enabled stage after it.
+        ("gleaning", 1),
+        ("claim_extraction", 2),
+        # Past every enabled stage: nothing to run.
+        ("indexing", 3),
+    ],
+)
+def test_start_index_maps_a_disabled_start_stage(start, expected) -> None:
+    pipe = object.__new__(DataIngestionPipeline)
+    pipe.stages = [
+        SimpleNamespace(name=name)
+        for name in ("graph_extraction", "graph_resolution", "graph_analysis")
+    ]
+    assert pipe._start_index(start) == expected

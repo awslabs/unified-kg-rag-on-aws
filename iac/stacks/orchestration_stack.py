@@ -4,9 +4,11 @@
 pipeline as four resumable phases on Fargate.
 
 Each phase is the SAME container image invoked with ``run-ingestion`` and a
-different ``--resume-from-stage`` + ``--enabled-stages`` window, sharing one
-``--pipeline-id`` so the app's S3-backed stage checkpoints hand off between
-phases:
+different ``--enabled-stages`` window, sharing one ``--pipeline-id`` so the
+app's S3-backed stage checkpoints hand off between phases. A phase auto-resumes:
+it skips the stages of its window whose cached output is still valid and runs
+the rest, so re-running a failed execution with the same ``pipeline_id`` redoes
+only the failed stage onward:
 
   prep         document_parsing, document_loading, text_chunking, translation
   graph-build  graph_extraction, gleaning, graph_resolution, claim_*
@@ -38,18 +40,16 @@ from iac.config import DeploymentConfig
 from iac.stacks.compute_stack import ComputeStack
 from iac.stacks.networking_stack import NetworkingStack
 
-# Phase -> ordered pipeline stages (the resume window). Phase N resumes from its
-# first stage; the app runs that stage onward but --enabled-stages bounds it to
-# this phase's stages so the next phase picks up the rest.
-PHASES: list[tuple[str, str, list[str]]] = [
+# Phase -> ordered pipeline stages (the resume window). The command passes no
+# --resume-from-stage, which would re-run the whole window: the app resumes
+# after the last completed stage, within --enabled-stages.
+PHASES: list[tuple[str, list[str]]] = [
     (
         "Prep",
-        "document_parsing",
         ["document_parsing", "document_loading", "text_chunking", "translation"],
     ),
     (
         "GraphBuild",
-        "graph_extraction",
         [
             "graph_extraction",
             "gleaning",
@@ -58,8 +58,8 @@ PHASES: list[tuple[str, str, list[str]]] = [
             "claim_resolution",
         ],
     ),
-    ("Analysis", "graph_analysis", ["graph_analysis", "community_detection"]),
-    ("Index", "indexing", ["indexing"]),
+    ("Analysis", ["graph_analysis", "community_detection"]),
+    ("Index", ["indexing"]),
 ]
 
 
@@ -188,9 +188,7 @@ class OrchestrationStack(Stack):
         CfnOutput(self, "StateMachineArn", value=self.state_machine.state_machine_arn)
 
     # --------------------------------------------------------- phase task
-    def _phase_task(
-        self, phase_name: str, resume_from: str, stages: list[str]
-    ) -> tasks.EcsRunTask:
+    def _phase_task(self, phase_name: str, stages: list[str]) -> tasks.EcsRunTask:
         container = self.compute.task_definition.default_container
         assert container is not None
 
@@ -218,8 +216,6 @@ class OrchestrationStack(Stack):
                         "run-ingestion",
                         "--config-path",
                         "/app/config.yaml",
-                        "--resume-from-stage",
-                        resume_from,
                         "--enabled-stages",
                         ",".join(stages),
                         "--metrics-sink",
@@ -260,7 +256,7 @@ class OrchestrationStack(Stack):
 
     # ---------------------------------------------------------- definition
     def _build_definition(self) -> sfn.IChainable:
-        phase_tasks = [self._phase_task(name, rf, st) for name, rf, st in PHASES]
+        phase_tasks = [self._phase_task(name, st) for name, st in PHASES]
         chain: sfn.IChainable = phase_tasks[0]
         cursor = phase_tasks[0]
         for nxt in phase_tasks[1:]:

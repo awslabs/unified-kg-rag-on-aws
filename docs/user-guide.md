@@ -812,19 +812,20 @@ OpenSearch + Neptune.
 | `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | Directory of source documents. Required to run; if the flag is omitted it falls back to the `GRAPHRAG_SOURCE_DIRECTORY` environment variable. |
 | `--target-directory` | none (no export) | Export parsed documents as JSON here for inspection (must not be the source directory) |
 | `--cache-directory` | `cache` | Pipeline cache + intermediate results |
-| `--force-rebuild` | off | Ignore all existing cache; rebuild from scratch |
+| `--force-rebuild` | off | Recompute every stage, ignoring the cached stage outputs; the cache is rewritten with the new outputs |
 | `--s3-sync` | off | Sync cache to S3 (requires `--s3-bucket-name`) |
 | `--s3-bucket-name` | — | S3 bucket for cache sync |
 | `--s3-prefix` | `pipeline-runs` | S3 key prefix for cache files |
 | `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | Existing run to resume/inspect. If the flag is omitted it falls back to the `GRAPHRAG_PIPELINE_ID` environment variable. The id names the run's cache directory and S3 prefix, so only lowercase letters, digits, hyphens and underscores are accepted. |
-| `--resume-from-stage` | — | Stage to resume from (requires `--pipeline-id`) |
-| `--verify-metadata` | off | Verify pipeline metadata integrity (needs `--pipeline-id`); exits non-zero when it is corrupt |
-| `--repair-metadata` | off | Attempt metadata repair (needs `--pipeline-id`); exits non-zero when the repair fails |
-| `--continue-on-error` | off | Keep going when a stage errors |
+| `--resume-from-stage` | — | Stage to resume from, by name, case-insensitive (requires `--pipeline-id`); an unknown name is a usage error (exit 2) |
+| `--verify-metadata` | off | Verify pipeline metadata integrity (needs `--pipeline-id`); exits non-zero when it is corrupt or the run is not found |
+| `--repair-metadata` | off | Attempt metadata repair (needs `--pipeline-id`); asks for confirmation, and exits non-zero when the repair fails |
+| `--yes`, `-y` | off | Answer yes to confirmation prompts (continuing after a failed integrity check, `--repair-metadata`). Without a terminal on stdin a prompt cannot be asked, so the run fails unless `--yes` is passed |
+| `--continue-on-error` | off | Keep going when a stage errors. The documents a crashed extraction, resolution or community stage left without artifacts are recorded FAILED, so the next incremental run re-processes them |
 | `--enabled-stages` | all | Comma-separated stage list to run |
-| `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout as dimensionless series; `pipeline_id` is recorded as a log property, not a dimension, so runs add no new metric series) |
+| `--metrics-sink` | `none` | `none`, or `cloudwatch` (emits CloudWatch EMF — Embedded Metric Format — metrics to stdout as dimensionless series; `pipeline_id` is recorded as a log property, not a dimension, so runs add no new metric series). A run emits the metrics of the stages it executed, so the phases of a phased run do not repeat each other's counts |
 | `--retire-source-scope SCOPE` | — | Incremental runs: treat every registry record of the former source scope `SCOPE` (in this run's index suffix) as deleted, removing its exclusive content. Repeatable; added to `indexing.retire_source_scopes`. Fails when `SCOPE` is the run's own scope. See §5 Deletion scope. |
-| `--config-path` | — | Path to `config.yaml` |
+| `--config-path` | — | Path to `config.yaml`; a missing file is a usage error (exit 2) |
 | `--backend`, `--llm-provider`, ... | — | Provider selection; see [Provider flags](#provider-flags) |
 
 ### The 12 pipeline stages
@@ -878,8 +879,14 @@ run-ingestion --source-directory ./documents --config-path config.yaml --metrics
 **Resume vs. force-rebuild:** without `--force-rebuild`, completed stages are
 cached and skipped on re-run. Pass `--pipeline-id` to resume a specific prior
 run; with `--resume-from-stage` you re-run from a chosen stage onward, otherwise
-the pipeline auto-detects the first failed/incomplete stage. `--force-rebuild`
-discards all cache and starts over.
+the pipeline resumes at the first failed or incomplete stage (with
+`--enabled-stages`, the first such stage in that set). Before resuming, the CLI
+checks that every completed stage's output is still cached under the current
+inputs; when it is not (the corpus or config changed), it lists the stages and
+asks before going on, and the resume recomputes them. Without a terminal, pass
+`--yes` to go on. `--force-rebuild` ignores the cached outputs, recomputes
+every stage and writes the new outputs to the cache, so a later run resumes
+from them. A run without `--pipeline-id` gets a new generated id.
 
 **S3 sync** keeps the stage cache in `s3://<bucket>/<prefix>/...`, so a fresh
 process (e.g. a new Fargate task) can resume without recomputing finished

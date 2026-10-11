@@ -72,6 +72,24 @@ class PipelineStateManager:
 
     def __init__(self, cache_manager: "CacheManager") -> None:
         self.cache_manager = cache_manager
+        # Canonical position of the earliest stage this run re-executes. The
+        # persisted results downstream of it describe outputs computed from the
+        # old output, so the merge drops them (see mark_rerun).
+        self._rerun_from: int | None = None
+
+    def mark_rerun(self, stage_name: str | None) -> None:
+        """Record that ``stage_name`` runs again in this run (``None`` resets).
+
+        Persisted results of stages downstream of it no longer describe valid
+        outputs, so later saves drop them unless this run produces its own: a
+        later phase must run them again rather than skip them as completed.
+        """
+        if stage_name is None:
+            self._rerun_from = None
+            return
+        position = _canonical_index(stage_name)
+        if self._rerun_from is None or position < self._rerun_from:
+            self._rerun_from = position
 
     def create_context_from_metadata(self, metadata: dict) -> PipelineContext:
         context_data = {
@@ -202,8 +220,9 @@ class PipelineStateManager:
         """Union the context's stage_results with any already on disk.
 
         Keyed by stage_name: the in-memory result (this phase's fresh run) wins
-        over a previously persisted one for the same stage; stages only present
-        on disk (earlier phases) are preserved. The merged list is sorted into
+        over a previously persisted one for the same stage; completed stages
+        only present on disk (earlier phases) are preserved, up to the first
+        persisted stage that did not complete. The merged list is sorted into
         canonical pipeline order so downstream resume logic sees a coherent,
         cumulative history across phases.
         """
@@ -221,13 +240,29 @@ class PipelineStateManager:
             )
             return
 
-        merged: dict[str, PipelineStageResult] = {}
+        persisted_results: list[PipelineStageResult] = []
         for raw in persisted.get("stage_results", []):
             try:
-                result = PipelineStageResult.model_validate(raw)
+                persisted_results.append(PipelineStageResult.model_validate(raw))
             except Exception as e:  # noqa: BLE001 - skip unparseable legacy entries
                 logger.warning("Skipping unparseable persisted stage result: %s", e)
-                continue
+
+        # Only completed results are durable history. A failed or unfinished
+        # result on disk comes from an earlier attempt: the stage is run again
+        # (by this run or by the phase that owns it), so carrying it forward
+        # would mark every later attempt failed. Results downstream of it are
+        # dropped too, since they were computed from the failed stage's output.
+        merged: dict[str, PipelineStageResult] = {}
+        for result in sorted(
+            persisted_results, key=lambda r: _canonical_index(r.stage_name)
+        ):
+            if result.status != PipelineStageStatus.COMPLETED:
+                break
+            if (
+                self._rerun_from is not None
+                and _canonical_index(result.stage_name) > self._rerun_from
+            ):
+                break
             merged[result.stage_name] = result
 
         # This phase's in-memory results take precedence for the same stage.
@@ -490,9 +525,20 @@ class PipelineResumeManager:
                 break
 
         if resume_stage is None:
-            resume_stage = (
-                stage_results[-1]["stage_name"] if stage_results else "document_loading"
-            )
+            # Every recorded stage completed: resume at the stage after the
+            # last one, so a phased run picks up its own window instead of
+            # re-running the previous phase's last stage. A run whose last
+            # recorded stage is the final one re-runs it.
+            if not stage_results:
+                resume_stage = "document_loading"
+            else:
+                last = stage_results[-1]["stage_name"]
+                position = _canonical_index(last)
+                resume_stage = (
+                    _CANONICAL_STAGE_ORDER[position + 1]
+                    if position + 1 < len(_CANONICAL_STAGE_ORDER)
+                    else last
+                )
 
         return resume_stage, completed_stages
 

@@ -145,3 +145,31 @@ def test_phases_retry_only_task_start_errors(template: Template) -> None:
 def test_state_machine_timeout_is_configurable() -> None:
     template = _orchestration_template({"sfn_timeout_hours": 12})
     assert _definition(template)["TimeoutSeconds"] == 12 * 3600
+
+
+def test_phases_auto_resume_within_their_stage_window(template: Template) -> None:
+    # Each phase passes its window and no --resume-from-stage: an explicit
+    # start would re-run the whole window on a retried execution instead of
+    # skipping the stages a previous attempt completed.
+    states = _definition(template)["States"]
+    windows = []
+    for name in ("PrepPhase", "GraphBuildPhase", "AnalysisPhase", "IndexPhase"):
+        (override,) = states[name]["Parameters"]["Overrides"]["ContainerOverrides"]
+        command = override["Command"]
+        assert "--resume-from-stage" not in command
+        windows.append(command[command.index("--enabled-stages") + 1].split(","))
+    # Together the windows cover every stage once, in pipeline order.
+    assert [stage for window in windows for stage in window] == [
+        "document_parsing",
+        "document_loading",
+        "text_chunking",
+        "translation",
+        "graph_extraction",
+        "gleaning",
+        "graph_resolution",
+        "claim_extraction",
+        "claim_resolution",
+        "graph_analysis",
+        "community_detection",
+        "indexing",
+    ]
