@@ -1,0 +1,309 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Re-runs, resumes, force rebuilds and phased runs of ``run-ingestion``.
+
+The CLI runs in-process over a tiny synthetic corpus with a scripted chat
+model and the in-memory stores and doc-status registry (AWS-free), the way an
+operator re-runs it: same ``--pipeline-id``, no terminal on stdin.
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import shutil
+import sys
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+
+from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from tests.fixtures.fakes.doc_status import FakeDocStatusStore
+from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
+from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from tests.integration import test_ingestion_stages as stages_test
+from unified_kg_rag.application import bootstrap
+from unified_kg_rag.application.cli import run_ingestion_pipeline as cli
+from unified_kg_rag.application.ingestion import pipeline as pipeline_module
+from unified_kg_rag.application.ingestion import pipeline_stages as ps
+from unified_kg_rag.domain.models import Config, DocStatus
+from unified_kg_rag.shared.metrics import MetricsSink
+
+pytestmark = pytest.mark.integration
+
+# The Step Functions phases (iac/stacks/orchestration_stack.PHASES).
+_PHASES = [
+    ["document_parsing", "document_loading", "text_chunking", "translation"],
+    [
+        "graph_extraction",
+        "gleaning",
+        "graph_resolution",
+        "claim_extraction",
+        "claim_resolution",
+    ],
+    ["graph_analysis", "community_detection"],
+    ["indexing"],
+]
+
+
+class _RecordingSink(MetricsSink):
+    def __init__(self) -> None:
+        self.emitted: list[dict[str, Any]] = []
+
+    def emit(self, namespace, metrics, dimensions=None) -> None:  # type: ignore[no-untyped-def]
+        self.emitted.append(dict(metrics))
+
+
+class _Harness:
+    """Runs the CLI against one set of fake stores across invocations."""
+
+    def __init__(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.tmp_path = tmp_path
+        self.source = tmp_path / "corpus"
+        self.source.mkdir()
+        (self.source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
+        (self.source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
+        self.config = stages_test._config()
+        self.config.processing.claim_extraction.enabled = False
+        self.config.aws.neptune.endpoint = "neptune.example.internal"
+        self.config.aws.opensearch.endpoint = "opensearch.example.internal"
+        self.registry = FakeDocStatusStore()
+        self.graph = FakeGraphStore()
+        self.vectors = FakeVectorStore(self.config.indexing.opensearch)
+        self.llm_calls = 0
+        # With the doc-status registry (incremental indexing) on.
+        self.incremental = True
+        self.sink = _RecordingSink()
+
+        def respond(system: str, human: str) -> str:
+            self.llm_calls += 1
+            return stages_test._respond(system, human)
+
+        def build_providers(config: Config, boto_session=None, **overrides):  # type: ignore[no-untyped-def]
+            registry = {"doc_status": self.registry} if self.incremental else {}
+            return bootstrap.build_providers(
+                config,
+                MagicMock(),
+                llm_factory=ScriptedLLMFactory(respond),
+                embedding_factory=HashingEmbeddingFactory(),
+                graph_indexer_factory=lambda: self.graph,
+                vector_indexer_factory=lambda: self.vectors,
+                **registry,
+            )
+
+        monkeypatch.setattr(pipeline_module, "build_providers", build_providers)
+        monkeypatch.setattr(cli, "get_config", lambda path=None: self.config)
+        monkeypatch.setattr(cli, "setup_logging", lambda config: None)
+        monkeypatch.setattr(
+            cli.IngestionPipelineRunner,
+            "_build_metrics_sink",
+            lambda runner: self.sink,
+        )
+        # No process pool in-process.
+        original_init = ps.GraphResolutionStage.__init__
+
+        def init(stage, *args, **kwargs):  # type: ignore[no-untyped-def]
+            original_init(stage, *args, **kwargs)
+            stage.resolver.entity_resolver.use_process_pool = False
+            stage.resolver.relationship_resolver.use_process_pool = False
+
+        monkeypatch.setattr(ps.GraphResolutionStage, "__init__", init)
+        # No terminal: a confirmation prompt must not be asked.
+        monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+
+    def run(self, *flags: str, cache: str = "cache") -> int:
+        argv = [
+            "run-ingestion",
+            "--source-directory",
+            str(self.source),
+            "--cache-directory",
+            str(self.tmp_path / cache),
+            *flags,
+        ]
+        sys.argv = argv
+        try:
+            cli.main()
+        except SystemExit as e:
+            return e.code if isinstance(e.code, int) else 1
+        return 0
+
+    def metadata(self, pipeline_id: str, cache: str = "cache") -> dict[str, Any]:
+        path = self.tmp_path / cache / pipeline_id / "pipeline_metadata.json"
+        return json.loads(path.read_text())
+
+
+@pytest.fixture
+def harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Harness:
+    monkeypatch.setattr(sys, "argv", list(sys.argv))
+    return _Harness(tmp_path, monkeypatch)
+
+
+def test_rerun_with_the_same_pipeline_id_resumes_without_a_prompt(
+    harness: _Harness,
+) -> None:
+    assert harness.run("--pipeline-id", "p1") == 0
+    calls = harness.llm_calls
+
+    # Same id, no terminal: the integrity check uses the run's own cache keys,
+    # finds every stage cached and asks nothing; only indexing re-runs.
+    assert harness.run("--pipeline-id", "p1") == 0
+    assert harness.llm_calls == calls
+
+    # An explicit, upper-case resume stage re-runs from there.
+    assert harness.run("--pipeline-id", "p1", "--resume-from-stage", "GLEANING") == 0
+    assert harness.llm_calls > calls
+
+
+def test_a_failed_integrity_check_without_a_terminal_needs_yes(
+    harness: _Harness,
+) -> None:
+    assert harness.run("--pipeline-id", "p1") == 0
+    # Editing the corpus changes every cache key: the completed stages are no
+    # longer backed by the cache, and the operator has to confirm.
+    (harness.source / "contract.txt").write_text("Vendor sells gadgets to Buyer.")
+    assert harness.run("--pipeline-id", "p1") == 1
+    assert harness.run("--pipeline-id", "p1", "--yes") == 0
+
+
+def test_force_rebuild_rewrites_the_stage_cache(harness: _Harness) -> None:
+    # A full (non-incremental) run, so the rebuild re-extracts every document
+    # instead of skipping them as unchanged in the registry.
+    harness.incremental = False
+    assert harness.run("--pipeline-id", "p1") == 0
+    index = harness.tmp_path / "cache" / "p1"
+    before = {
+        p.name: p.stat().st_mtime_ns for p in index.rglob("*") if "entities" in p.name
+    }
+    assert before
+    calls = harness.llm_calls
+
+    assert harness.run("--pipeline-id", "p1", "--force-rebuild") == 0
+    assert harness.llm_calls > calls
+    after = {
+        p.name: p.stat().st_mtime_ns for p in index.rglob("*") if "entities" in p.name
+    }
+    assert all(after[name] > mtime for name, mtime in before.items())
+
+    # The next plain run resumes from what the rebuild wrote.
+    calls = harness.llm_calls
+    assert harness.run("--pipeline-id", "p1") == 0
+    assert harness.llm_calls == calls
+
+
+@pytest.mark.parametrize(
+    "stage_class", [ps.GraphExtractionStage, ps.CommunityDetectionStage]
+)
+def test_a_crashed_artifact_stage_never_commits_documents_processed(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, stage_class: type
+) -> None:
+    crash = {"on": True}
+    original = stage_class.execute
+
+    def execute(stage, context):  # type: ignore[no-untyped-def]
+        if crash["on"]:
+            raise RuntimeError("throttled beyond retries")
+        return original(stage, context)
+
+    monkeypatch.setattr(stage_class, "execute", execute)
+    assert harness.run("--continue-on-error") == 1
+    records = harness.registry.list_all()
+    assert records and {r.status for r in records} == {DocStatus.FAILED}
+
+    # The next run re-processes them instead of skipping them as unchanged.
+    crash["on"] = False
+    assert harness.run() == 0
+    assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}
+    assert harness.graph.ids("entities")
+    assert harness.graph.ids("communities")
+
+
+@pytest.mark.parametrize("stage_class", [ps.DocumentParsingStage, ps.TextChunkingStage])
+def test_a_crashed_corpus_stage_skips_indexing(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, stage_class: type
+) -> None:
+    # With no documents (or text units) a commit would read every stored
+    # document as deleted, or record new ones processed with no content.
+    assert harness.run() == 0
+    entities = harness.graph.ids("entities")
+    records = {(r.doc_id, r.status) for r in harness.registry.list_all()}
+    assert entities and records
+
+    def execute(stage, context):  # type: ignore[no-untyped-def]
+        raise RuntimeError("parser crashed")
+
+    monkeypatch.setattr(stage_class, "execute", execute)
+    (harness.source / "new.txt").write_text("Buyer pays Depot.")
+    assert harness.run("--continue-on-error") == 1
+    assert harness.graph.ids("entities") == entities
+    assert {(r.doc_id, r.status) for r in harness.registry.list_all()} == records
+
+
+def _run_phases(harness: _Harness, pipeline_id: str, attempt: int) -> list[int]:
+    codes = []
+    for number, stages in enumerate(_PHASES):
+        # Every phase runs in a fresh task: copy the shared checkpoint (S3 in
+        # the deployment) into a cache directory of its own.
+        cache = f"cache-{attempt}-{number}"
+        shared = harness.tmp_path / "shared" / pipeline_id
+        if shared.exists():
+            shutil.copytree(shared, harness.tmp_path / cache / pipeline_id)
+        code = harness.run(
+            "--pipeline-id",
+            pipeline_id,
+            "--enabled-stages",
+            ",".join(stages),
+            cache=cache,
+        )
+        codes.append(code)
+        shutil.rmtree(shared, ignore_errors=True)
+        shutil.copytree(harness.tmp_path / cache / pipeline_id, shared)
+        if code:
+            break
+    return codes
+
+
+def test_a_failed_phased_run_resumes_at_the_failed_stage(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fail = {"on": True}
+    original = ps.IndexingStage.execute
+
+    def execute(stage, context):  # type: ignore[no-untyped-def]
+        if fail["on"]:
+            raise RuntimeError("graph store unreachable")
+        return original(stage, context)
+
+    monkeypatch.setattr(ps.IndexingStage, "execute", execute)
+    assert _run_phases(harness, "run-001", attempt=1) == [0, 0, 0, 1]
+    calls = harness.llm_calls
+    assert calls > 0
+    emitted_first = list(harness.sink.emitted)
+
+    # Re-running the execution with the same pipeline id: the earlier phases
+    # find their stages completed and skip them (no LLM call); the index
+    # phase runs the failed stage again.
+    fail["on"] = False
+    harness.sink.emitted.clear()
+    assert _run_phases(harness, "run-001", attempt=2) == [0, 0, 0, 0]
+    assert harness.llm_calls == calls
+    assert {r.status for r in harness.registry.list_all()} == {DocStatus.PROCESSED}
+    statuses = {
+        r["stage_name"]: r["status"]
+        for r in harness.metadata("run-001", cache="cache-2-3")["stage_results"]
+    }
+    assert set(statuses.values()) == {"completed"}
+
+    # Each phase emits only the counts of the stages it ran: summed over the
+    # first attempt's phases, every count is reported once.
+    entity_counts = [
+        m["total_entities_extracted"]
+        for m in emitted_first
+        if "total_entities_extracted" in m
+    ]
+    assert len(entity_counts) == 1
+    assert [m for m in harness.sink.emitted if "total_items_indexed" in m] == [
+        harness.sink.emitted[-1]
+    ]
+    assert all("total_entities_extracted" not in m for m in harness.sink.emitted)

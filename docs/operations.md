@@ -59,7 +59,7 @@ Three operations look alike but act on different state:
 
 | Goal | How | Stage cache | Stores and registry |
 |---|---|---|---|
-| Finish an interrupted run | Re-run with the same `--pipeline-id`; it resumes at the first failed or incomplete stage. `--resume-from-stage <stage>` picks the stage. | Reused | Written by the stages that run |
+| Finish an interrupted run | Re-run with the same `--pipeline-id` (on the CDK stack, start a new execution with the same `pipeline_id`); it resumes at the first failed or incomplete stage, and each Step Functions phase skips the stages of its window that completed. `--resume-from-stage <stage>` picks the stage. | Reused | Written by the stages that run |
 | Recompute every stage | `--force-rebuild` | Ignored and rewritten | Written as usual (incremental when enabled) |
 | Rebuild the stores from scratch | `indexing.reset: true` for one run | Unchanged | Cleared for the run's index namespace (other namespaces in the table keep their records), then the whole corpus is indexed and every document recorded again |
 
@@ -154,10 +154,15 @@ custom policy needs `dynamodb:BatchWriteItem` as well as `BatchGetItem`
 ## Failed documents
 
 A document is recorded `FAILED` when translation, graph extraction, gleaning
-or claim extraction failed on any of its text units, or when the write of one
+or claim extraction failed on any of its text units, when one of the stages
+that build its artifacts (translation through community detection) crashed in
+a `--continue-on-error` run, or when the write of one
 of its artifacts (text unit, entity, relationship, claim, community, report)
 to OpenSearch or Neptune failed. The next run treats it as changed: it removes
-what the failed run wrote and processes the document again.
+what the failed run wrote and processes the document again. When parsing,
+loading or chunking crashed in a
+`--continue-on-error` run, the indexing stage does not run at all, so the
+stores and the registry keep their previous state.
 
 - After `indexing.max_document_failures` (default `3`) consecutive failures
   with unchanged content, the document is no longer retried. It stays
@@ -192,7 +197,7 @@ The alarms have a subscriber only when the stack was deployed with
 
 | Cache | Location | Notes |
 |---|---|---|
-| Stage checkpoints (local) | `<--cache-directory>/<pipeline_id>/` (default `cache/`) | Reused on resume; `--force-rebuild` ignores it |
+| Stage checkpoints (local) | `<--cache-directory>/<pipeline_id>/` (default `cache/`) | Reused on resume; `--force-rebuild` ignores it and writes the recomputed outputs |
 | Stage checkpoints (S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (default prefix `pipeline-runs`) | With `--s3-sync`; how the Step Functions phases hand off. A failed sync fails the run with `CacheSyncError` |
 | Embedding cache | `s3://<aws.s3.bucket_name>/embedding-cache/cache.json` (`indexing.opensearch.embedding_cache_s3_key`) | Only with `indexing.opensearch.persist_embedding_cache: true` |
 | Visualization data | `<cache directory>/<pipeline_id>/visualization/` unless `graph.visualization.outputs_directory` is set | Synced with the stage cache (`.json` only) |
@@ -479,6 +484,9 @@ content to LangSmith independently of this setting.
 | `--s3-bucket-name must be specified for S3 sync` | `--s3-sync` without a bucket | Pass `--s3-bucket-name` |
 | `--pipeline-id is required for --resume-from-stage` | Resuming needs the earlier run | Pass that run's `--pipeline-id` |
 | `Invalid stage names provided: ...` | `--enabled-stages` names an unknown stage | Use a name from the list the CLI prints |
+| `argument --resume-from-stage: Unknown pipeline stage ...` (exit 2) | `--resume-from-stage` names an unknown stage | Use a name from the list in the message (any case) |
+| `... needs confirmation, but stdin is not a terminal` | A re-run found completed stages whose output is no longer cached under the current inputs (or `--repair-metadata` ran) without a terminal to ask on | Pass `--yes` to go on (the resume recomputes those stages), or use a new `--pipeline-id` |
+| `Stage '<stage>', upstream of this run's enabled stages, has not completed` | An `--enabled-stages` window (a Step Functions phase) resumed while an earlier stage failed or lost its cached output | Run the earlier stages first; on the CDK stack, start a new execution with the same `pipeline_id` |
 | `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` | The graph lost what the registry records (a restarted Gremlin Server, `docker compose ... down -v`, a restored or replaced graph) | Re-run with `indexing.reset: true`, or delete the namespace's registry records (local mode: the SQLite file) |
 | `... processed N inputs but produced 0 outputs`, with `Connection refused` in the log (local mode) | Ollama or the OpenAI-compatible server is not reachable at `providers.llm.base_url` / `providers.embedding.base_url` | Start it (`docker compose -f docker/compose.local.yaml --profile models up -d --wait`), check `base_url` (or `--model-base-url`), and pull the models |
 | `observability.enabled is true but OpenTelemetry is not installed` | Tracing is on but the `otel` extra is missing | `uv sync --extra otel`, or set `observability.enabled: false` |

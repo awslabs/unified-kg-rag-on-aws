@@ -807,10 +807,70 @@ async def test_rag_run_query_raises_without_chain(config, mocker) -> None:
 def _metadata_runner(config, mocker, *flags: str):
     mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
     mocker.patch.object(run_ingestion_pipeline.Confirm, "ask", return_value=True)
+    mocker.patch.object(run_ingestion_pipeline.sys.stdin, "isatty", return_value=True)
     args = _ing_parser().parse_args([*flags, "--pipeline-id", "pid"])
     runner = run_ingestion_pipeline.IngestionPipelineRunner(args)
     runner.pipeline = mocker.MagicMock()
     return runner
+
+
+def test_verify_metadata_unknown_pipeline_reports_not_found(config, mocker) -> None:
+    from unified_kg_rag.shared import PipelineExecutionError
+
+    runner = _metadata_runner(config, mocker, "--verify-metadata")
+    runner.pipeline.state_manager.pipeline_exists.return_value = False
+    with pytest.raises(PipelineExecutionError, match="not found"):
+        runner._handle_metadata_operations()
+    runner.pipeline.verify_pipeline_metadata.assert_not_called()
+
+
+def test_repair_metadata_without_a_terminal_needs_yes(config, mocker) -> None:
+    from unified_kg_rag.shared import PipelineExecutionError
+
+    runner = _metadata_runner(config, mocker, "--repair-metadata")
+    mocker.patch.object(run_ingestion_pipeline.sys.stdin, "isatty", return_value=False)
+    with pytest.raises(PipelineExecutionError, match="--yes"):
+        runner._handle_metadata_operations()
+    run_ingestion_pipeline.Confirm.ask.assert_not_called()
+    runner.pipeline.repair_pipeline_metadata.assert_not_called()
+
+    runner.args.yes = True
+    runner.pipeline.repair_pipeline_metadata.return_value = True
+    assert runner._handle_metadata_operations() is True
+    run_ingestion_pipeline.Confirm.ask.assert_not_called()
+
+
+@pytest.mark.parametrize("name", ["GRAPH_EXTRACTION", "Graph_Extraction", " gleaning"])
+def test_resume_from_stage_is_case_insensitive(name) -> None:
+    args = _ing_parser().parse_args(["--resume-from-stage", name])
+    assert args.resume_from_stage == name.strip().lower()
+
+
+def test_resume_from_stage_rejects_an_unknown_stage(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        _ing_parser().parse_args(["--resume-from-stage", "grpah_extraction"])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "grpah_extraction" in err and "graph_extraction" in err
+
+
+def test_missing_config_path_is_a_usage_error(tmp_path, capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        _ing_parser().parse_args(["--config-path", str(tmp_path / "nope.yaml")])
+    assert exc.value.code == 2
+    assert "configuration file not found" in capsys.readouterr().err
+
+
+def test_force_rebuild_still_writes_the_stage_cache(config, mocker, tmp_path) -> None:
+    mocker.patch.object(run_ingestion_pipeline, "get_config", return_value=config)
+    src = tmp_path / "src"
+    src.mkdir()
+    args = _ing_parser().parse_args(["--source-directory", str(src), "--force-rebuild"])
+    pipeline_config = run_ingestion_pipeline.IngestionPipelineRunner(
+        args
+    )._create_pipeline_config()
+    assert pipeline_config.force_rebuild is True
+    assert pipeline_config.cache_enabled is True
 
 
 def test_verify_metadata_valid_is_handled(config, mocker) -> None:

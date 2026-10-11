@@ -358,7 +358,9 @@ aws logs tail /graphrag/tasks --region "$REGION" --follow
   container entrypoint (`docker/entrypoint.sh`) syncs it to local scratch
   before running the CLI. `pipeline_id` accepts lowercase letters, digits,
   hyphens and underscores; reuse an id to resume a failed run from its S3
-  checkpoints.
+  checkpoints: start a new execution with the same input, and each phase
+  skips the stages of its window that already completed, so only the failed
+  stage onward runs again.
 - The task role can read and write the cache bucket only. To read a corpus
   from another bucket, deploy with `-c corpus_bucket_name=<bucket>`. In
   `private` mode the S3 and DynamoDB gateway endpoints only allow this

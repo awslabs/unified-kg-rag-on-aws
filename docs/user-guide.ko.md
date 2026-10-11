@@ -776,19 +776,20 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
 | `--source-directory` | `$GRAPHRAG_SOURCE_DIRECTORY` | 소스 문서 디렉터리입니다. 실행에 필요하며, 플래그를 생략하면 환경 변수 `GRAPHRAG_SOURCE_DIRECTORY`를 씁니다. |
 | `--target-directory` | 없음(내보내지 않음) | 파싱한 문서를 확인용 JSON으로 내보낼 위치(소스 디렉터리는 지정 불가) |
 | `--cache-directory` | `cache` | 파이프라인 캐시와 중간 결과 |
-| `--force-rebuild` | off | 기존 캐시를 모두 무시하고 처음부터 다시 구축 |
+| `--force-rebuild` | off | 캐시된 단계 출력을 무시하고 모든 단계를 다시 계산. 새 출력으로 캐시를 다시 씀 |
 | `--s3-sync` | off | 캐시를 S3에 동기화(`--s3-bucket-name` 필요) |
 | `--s3-bucket-name` | — | 캐시 동기화용 S3 버킷 |
 | `--s3-prefix` | `pipeline-runs` | 캐시 파일의 S3 키 접두사 |
 | `--pipeline-id` | `$GRAPHRAG_PIPELINE_ID` | 재개하거나 검사할 기존 실행입니다. 플래그를 생략하면 환경 변수 `GRAPHRAG_PIPELINE_ID`를 씁니다. 이 ID가 실행의 캐시 디렉터리와 S3 접두사 이름이 되므로 영문 소문자, 숫자, 하이픈, 밑줄만 쓸 수 있습니다. |
-| `--resume-from-stage` | — | 재개할 단계(`--pipeline-id` 필요) |
-| `--verify-metadata` | off | 파이프라인 메타데이터 무결성 확인(`--pipeline-id` 필요). 손상되었으면 0이 아닌 코드로 종료 |
-| `--repair-metadata` | off | 메타데이터 복구 시도(`--pipeline-id` 필요). 복구에 실패하면 0이 아닌 코드로 종료 |
-| `--continue-on-error` | off | 단계에서 오류가 나도 계속 진행 |
+| `--resume-from-stage` | — | 재개할 단계 이름(대소문자 무관, `--pipeline-id` 필요). 없는 이름이면 사용법 오류(종료 코드 2) |
+| `--verify-metadata` | off | 파이프라인 메타데이터 무결성 확인(`--pipeline-id` 필요). 손상되었거나 실행을 찾지 못하면 0이 아닌 코드로 종료 |
+| `--repair-metadata` | off | 메타데이터 복구 시도(`--pipeline-id` 필요). 확인을 묻고, 복구에 실패하면 0이 아닌 코드로 종료 |
+| `--yes`, `-y` | off | 확인 질문(무결성 검사 실패 후 계속 진행, `--repair-metadata`)에 모두 예로 답함. stdin이 터미널이 아니면 질문할 수 없으므로 `--yes` 없이는 실행이 실패 |
+| `--continue-on-error` | off | 단계에서 오류가 나도 계속 진행. 추출·해석·커뮤니티 단계가 비정상 종료해 산출물이 빠진 문서는 FAILED로 기록되어 다음 증분 실행이 다시 처리 |
 | `--enabled-stages` | 전체 | 실행할 단계 목록(쉼표로 구분) |
-| `--metrics-sink` | `none` | `none` 또는 `cloudwatch`(CloudWatch EMF — Embedded Metric Format — 지표를 차원 없는 시계열로 stdout에 출력. `pipeline_id`는 차원이 아니라 로그 속성으로 기록하므로 실행마다 지표 시계열이 늘지 않음) |
+| `--metrics-sink` | `none` | `none` 또는 `cloudwatch`(CloudWatch EMF — Embedded Metric Format — 지표를 차원 없는 시계열로 stdout에 출력. `pipeline_id`는 차원이 아니라 로그 속성으로 기록하므로 실행마다 지표 시계열이 늘지 않음). 실행은 자신이 실행한 단계의 지표만 내보내므로, 단계 묶음으로 나눈 실행에서 각 묶음이 서로의 수치를 다시 보내지 않음 |
 | `--retire-source-scope SCOPE` | — | 증분 실행에서 이전 소스 범위 `SCOPE`(이번 실행의 인덱스 접미사)의 레지스트리 레코드를 모두 삭제된 문서로 처리해 그 문서에만 속한 내용을 지웁니다. 여러 번 지정할 수 있고 `indexing.retire_source_scopes`에 더해집니다. `SCOPE`가 실행 자신의 범위이면 실패합니다(§5 삭제 범위 참고). |
-| `--config-path` | — | `config.yaml` 경로 |
+| `--config-path` | — | `config.yaml` 경로. 파일이 없으면 사용법 오류(종료 코드 2) |
 | `--backend`, `--llm-provider` 등 | — | 공급자 선택. [공급자 플래그](#공급자-플래그) 참고 |
 
 ### 파이프라인 단계 12개
@@ -842,8 +843,13 @@ run-ingestion --source-directory ./documents --config-path config.yaml --metrics
 **재개와 강제 재구축:** `--force-rebuild` 없이 다시 실행하면 완료된 단계는 캐시를
 쓰고 건너뜁니다. 특정 실행을 재개하려면 `--pipeline-id`를 넘기세요.
 `--resume-from-stage`를 함께 쓰면 지정한 단계부터 다시 실행하고, 쓰지 않으면
-파이프라인이 처음으로 실패했거나 완료되지 않은 단계를 자동으로 찾습니다.
-`--force-rebuild`는 캐시를 모두 버리고 처음부터 시작합니다.
+처음으로 실패했거나 완료되지 않은 단계부터 재개합니다(`--enabled-stages`를 쓰면 그
+목록 안에서 처음인 단계). 재개하기 전에 CLI는 완료된 단계의 출력이 현재 입력 기준으로
+캐시에 남아 있는지 확인합니다. 남아 있지 않으면(코퍼스나 설정이 바뀐 경우) 해당 단계를
+보여 주고 계속할지 묻고, 재개하면서 그 단계를 다시 계산합니다. 터미널이 없으면 `--yes`를
+넘겨야 계속합니다. `--force-rebuild`는 캐시된 출력을 무시하고 모든 단계를 다시 계산한 뒤
+새 출력을 캐시에 쓰므로, 이후 실행은 그 출력부터 재개합니다. `--pipeline-id` 없이 실행하면
+새 ID를 생성합니다.
 
 **S3 동기화**는 단계 캐시를 `s3://<bucket>/<prefix>/...`에 보관하므로, 새
 프로세스(예: 새 Fargate 태스크)가 끝난 단계를 다시 계산하지 않고 재개할 수 있습니다.

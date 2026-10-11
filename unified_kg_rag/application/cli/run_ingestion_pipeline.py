@@ -28,6 +28,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.shared import (
     CloudWatchEMFSink,
+    ConfigurationError,
     MetricsSink,
     NullMetricsSink,
     PipelineExecutionError,
@@ -52,6 +53,22 @@ def _pipeline_id_arg(value: str) -> str | None:
         return validate_path_segment(value, "pipeline_id")
     except ValueError as e:
         raise argparse.ArgumentTypeError(str(e)) from e
+
+
+def _stage_name_arg(value: str) -> str:
+    """A pipeline stage name, case-insensitive; unknown names are a usage error."""
+    try:
+        normalized = DataIngestionPipeline.normalize_stage_name(value)
+    except ConfigurationError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
+    assert normalized is not None
+    return normalized
+
+
+def _config_path_arg(value: str) -> str:
+    if not Path(value).is_file():
+        raise argparse.ArgumentTypeError(f"configuration file not found: '{value}'")
+    return value
 
 
 try:
@@ -97,7 +114,8 @@ class CommandLineInterface:
         parser.add_argument(
             "--force-rebuild",
             action="store_true",
-            help="Force complete pipeline rebuild, ignoring all existing cache data",
+            help="Recompute every stage, ignoring existing cached stage outputs "
+            "(the stage cache is rewritten with the new outputs)",
         )
         parser.add_argument(
             "--s3-sync",
@@ -126,8 +144,9 @@ class CommandLineInterface:
         )
         parser.add_argument(
             "--resume-from-stage",
-            type=str,
-            help="Specific pipeline stage to resume execution from (requires --pipeline-id)",
+            type=_stage_name_arg,
+            help="Specific pipeline stage to resume execution from, by name "
+            "(case-insensitive; requires --pipeline-id)",
         )
         parser.add_argument(
             "--verify-metadata",
@@ -138,6 +157,14 @@ class CommandLineInterface:
             "--repair-metadata",
             action="store_true",
             help="Attempt automatic repair of corrupted or inconsistent metadata files",
+        )
+        parser.add_argument(
+            "--yes",
+            "-y",
+            action="store_true",
+            help="Answer yes to confirmation prompts (continuing after a failed "
+            "integrity check, --repair-metadata). Without it, a prompt that "
+            "cannot be asked because stdin is not a terminal fails the run",
         )
         parser.add_argument(
             "--continue-on-error",
@@ -171,7 +198,7 @@ class CommandLineInterface:
         )
         parser.add_argument(
             "--config-path",
-            type=str,
+            type=_config_path_arg,
             help="Path to custom configuration file",
         )
         add_provider_arguments(parser)
@@ -311,7 +338,9 @@ class IngestionPipelineRunner:
         return PipelineConfig(
             stages_enabled=stages,
             continue_on_error=self.args.continue_on_error,
-            cache_enabled=not self.args.force_rebuild,
+            # force_rebuild ignores cached outputs on read (FORCE_REFRESH) but
+            # still saves the recomputed ones, so the next run resumes from them.
+            cache_enabled=True,
             local_directory=self.args.cache_directory,
             s3_sync_enabled=self.args.s3_sync,
             s3_bucket_name=self.args.s3_bucket_name,
@@ -320,6 +349,22 @@ class IngestionPipelineRunner:
             pipeline_id=self.args.pipeline_id,
             resume_from_stage=self.args.resume_from_stage,
         )
+
+    def _confirm(self, question: str) -> bool:
+        """Ask ``question``; ``--yes`` answers it, and without a terminal to
+        ask on the run fails rather than blocking or reading EOF."""
+        if getattr(self.args, "yes", False):
+            console.print(f"{question} [dim](--yes)[/dim]")
+            return True
+        if not sys.stdin.isatty():
+            console.print(
+                f"[red]Error: {question} needs confirmation, but stdin is not a "
+                "terminal. Re-run with --yes to proceed.[/red]"
+            )
+            raise PipelineExecutionError(
+                f"Confirmation required ({question}); pass --yes"
+            )
+        return Confirm.ask(question)
 
     def _handle_metadata_operations(self) -> bool:
         if not self.pipeline:
@@ -332,6 +377,15 @@ class IngestionPipelineRunner:
             console.print(
                 f"\n[yellow]Verifying metadata for pipeline: '{self.args.pipeline_id}'[/yellow]"
             )
+            if not self.pipeline.state_manager.pipeline_exists(self.args.pipeline_id):
+                console.print(
+                    f"[red]✗ No metadata found for pipeline "
+                    f"'{self.args.pipeline_id}' under "
+                    f"'{self.args.cache_directory}'[/red]"
+                )
+                raise PipelineExecutionError(
+                    f"Pipeline '{self.args.pipeline_id}' not found"
+                )
             if self.pipeline.verify_pipeline_metadata(self.args.pipeline_id):
                 console.print("[green]✓ Metadata file is valid[/green]")
             else:
@@ -348,7 +402,7 @@ class IngestionPipelineRunner:
             console.print(
                 f"\n[yellow]Attempting to repair metadata for pipeline: {self.args.pipeline_id}[/yellow]"
             )
-            if not Confirm.ask("This may overwrite existing metadata. Continue?"):
+            if not self._confirm("This may overwrite existing metadata. Continue?"):
                 console.print("[yellow]Repair operation cancelled.[/yellow]")
                 return True
 
@@ -396,11 +450,16 @@ class IngestionPipelineRunner:
         if not self.pipeline:
             raise ValueError("Pipeline not initialized")
 
-        if self.args.pipeline_id and self.pipeline.state_manager.pipeline_exists(
+        # A force rebuild reads no cached output, so there is nothing to check.
+        if (
             self.args.pipeline_id
+            and not self.args.force_rebuild
+            and self.pipeline.state_manager.pipeline_exists(self.args.pipeline_id)
         ):
-            is_valid, errors = self.pipeline.resume_manager.validate_pipeline_integrity(
-                self.args.pipeline_id
+            # Checked under the cache keys the run will read (they include the
+            # corpus fingerprint), not keys built before the corpus is known.
+            is_valid, errors = self.pipeline.validate_resume_integrity(
+                self.args.source_directory, self.args.pipeline_id
             )
             if not is_valid:
                 console.print(
@@ -408,7 +467,11 @@ class IngestionPipelineRunner:
                 )
                 for error in errors:
                     console.print(f"  • {error}")
-                if not Confirm.ask("Continue despite integrity issues?"):
+                console.print(
+                    "[yellow]The inputs changed since these stages ran, or the "
+                    "cache is incomplete; a resume without --resume-from-stage recomputes them.[/yellow]"
+                )
+                if not self._confirm("Continue despite integrity issues?"):
                     console.print("[yellow]Pipeline execution cancelled.[/yellow]")
                     return False
         return True

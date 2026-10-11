@@ -57,7 +57,7 @@ CDK 스택에서 `start-execution` 한 번은 네 단계를 차례로 실행하�
 
 | 목적 | 방법 | 단계 캐시 | 저장소와 레지스트리 |
 |---|---|---|---|
-| 중단된 실행 마무리 | 같은 `--pipeline-id`로 다시 실행합니다. 처음으로 실패했거나 끝나지 않은 단계부터 재개하며, `--resume-from-stage <stage>`로 단계를 지정할 수 있습니다. | 재사용 | 실행되는 단계가 기록 |
+| 중단된 실행 마무리 | 같은 `--pipeline-id`로 다시 실행합니다(CDK 스택에서는 같은 `pipeline_id`로 새 실행을 시작). 처음으로 실패했거나 끝나지 않은 단계부터 재개하며, Step Functions의 각 단계 묶음은 이미 완료된 단계를 건너뜁니다. `--resume-from-stage <stage>`로 단계를 지정할 수 있습니다. | 재사용 | 실행되는 단계가 기록 |
 | 모든 단계 다시 계산 | `--force-rebuild` | 무시하고 새로 기록 | 평소대로 기록(활성화 시 증분) |
 | 저장소를 처음부터 재구축 | 한 번의 실행에만 `indexing.reset: true` | 변경 없음 | 비운 뒤 코퍼스 전체를 인덱싱하고 모든 문서를 다시 기록 |
 
@@ -147,10 +147,13 @@ CDK 스택에서 `start-execution` 한 번은 네 단계를 차례로 실행하�
 ## 실패한 문서
 
 번역, 그래프 추출, gleaning, 주장 추출 중 하나가 문서의 텍스트 단위 일부에서
-실패하거나, 문서의 산출물(텍스트 단위, 엔티티, 관계, 주장, 커뮤니티, 보고서)을
+실패하거나, `--continue-on-error` 실행에서 문서의 산출물을 만드는 단계(번역부터
+커뮤니티 탐지까지)가 비정상 종료하거나, 문서의 산출물(텍스트 단위, 엔티티, 관계, 주장, 커뮤니티, 보고서)을
 OpenSearch나 Neptune에 쓰는 데 실패하면 그 문서는 `FAILED`로 기록됩니다. 다음
 실행은 이 문서를 바뀐 문서로 취급해 실패한 실행이 쓴 내용을 지우고 다시
-처리합니다.
+처리합니다. `--continue-on-error` 실행에서 파싱, 로딩, 청킹 단계가 비정상
+종료하면 인덱싱 단계를 아예 실행하지 않으므로 저장소와 레지스트리는 이전 상태를
+유지합니다.
 
 - 내용이 그대로인 채로 `indexing.max_document_failures`(기본값 `3`)번 연속
   실패하면 더 이상 재시도하지 않습니다. 문서는 `FAILED`로 남아 인덱싱된 내용을
@@ -183,7 +186,7 @@ OpenSearch나 Neptune에 쓰는 데 실패하면 그 문서는 `FAILED`로 기�
 
 | 캐시 | 위치 | 참고 |
 |---|---|---|
-| 단계 체크포인트(로컬) | `<--cache-directory>/<pipeline_id>/` (기본값 `cache/`) | 재개할 때 재사용하며, `--force-rebuild`는 무시합니다 |
+| 단계 체크포인트(로컬) | `<--cache-directory>/<pipeline_id>/` (기본값 `cache/`) | 재개할 때 재사용하며, `--force-rebuild`는 읽지 않고 다시 계산한 출력을 씁니다 |
 | 단계 체크포인트(S3) | `s3://<bucket>/<--s3-prefix>/<pipeline_id>/` (기본 접두사 `pipeline-runs`) | `--s3-sync` 사용 시. Step Functions 단계 사이의 인계에 쓰이며, 동기화가 실패하면 `CacheSyncError`로 실행이 실패합니다 |
 | 임베딩 캐시 | `s3://<aws.s3.bucket_name>/embedding-cache/cache.json` (`indexing.opensearch.embedding_cache_s3_key`) | `indexing.opensearch.persist_embedding_cache: true`일 때만 |
 | 시각화 데이터 | `graph.visualization.outputs_directory`가 없으면 `<cache directory>/<pipeline_id>/visualization/` | 단계 캐시와 함께 동기화(`.json`만) |
@@ -459,6 +462,9 @@ LangSmith로 업로드합니다.
 | `--s3-bucket-name must be specified for S3 sync` | 버킷 없이 `--s3-sync`를 지정함 | `--s3-bucket-name`을 넘김 |
 | `--pipeline-id is required for --resume-from-stage` | 재개하려면 이전 실행이 필요함 | 그 실행의 `--pipeline-id`를 넘김 |
 | `Invalid stage names provided: ...` | `--enabled-stages`에 없는 단계 이름이 있음 | CLI가 출력하는 목록의 이름을 사용 |
+| `argument --resume-from-stage: Unknown pipeline stage ...`(종료 코드 2) | `--resume-from-stage`에 없는 단계 이름을 넘김 | 메시지에 나온 목록의 이름을 사용(대소문자 무관) |
+| `... needs confirmation, but stdin is not a terminal` | 다시 실행할 때 완료된 단계의 출력이 현재 입력 기준으로 캐시에 없거나 `--repair-metadata`를 실행했는데, 물어볼 터미널이 없음 | `--yes`를 넘겨 계속(재개하면서 그 단계를 다시 계산)하거나 새 `--pipeline-id`를 사용 |
+| `Stage '<stage>', upstream of this run's enabled stages, has not completed` | `--enabled-stages` 범위(Step Functions 단계 묶음)를 재개했는데 앞 단계가 실패했거나 캐시된 출력이 없음 | 앞 단계를 먼저 실행. CDK 스택에서는 같은 `pipeline_id`로 새 실행을 시작 |
 | `The doc-status registry lists indexed documents of this namespace whose entities the graph store does not hold` | 레지스트리에 기록된 내용을 그래프가 잃음(Gremlin Server 재시작, `docker compose ... down -v`, 복원하거나 교체한 그래프) | `indexing.reset: true`로 다시 실행하거나 해당 네임스페이스의 레지스트리 레코드를 삭제(로컬 모드에서는 SQLite 파일) |
 | 로그에 `Connection refused`와 함께 `... processed N inputs but produced 0 outputs`(로컬 모드) | `providers.llm.base_url` / `providers.embedding.base_url`에서 Ollama나 OpenAI 호환 서버에 연결할 수 없음 | 서버를 띄우고(`docker compose -f docker/compose.local.yaml --profile models up -d --wait`), `base_url`(또는 `--model-base-url`)을 확인하고, 모델을 내려받음 |
 | `observability.enabled is true but OpenTelemetry is not installed` | 추적을 켰지만 `otel` extra가 설치되지 않음 | `uv sync --extra otel`을 실행하거나 `observability.enabled: false` 설정 |

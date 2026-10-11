@@ -629,3 +629,59 @@ def test_resume_after_gleaning_restores_gleaned_relationships(tmp_path) -> None:
     )
     assert [r.id for r in context.relationships] == ["r1", "r2"]
     assert context.rejected_entities == rejected
+
+
+# --- retrying failed runs and phased resumes ------------------------------
+
+
+def test_handle_auto_resume_all_completed_resumes_at_the_next_stage() -> None:
+    # A phased run: the previous phase completed through translation, so the
+    # next phase resumes at graph_extraction, not at translation again.
+    results = [
+        {"stage_name": "document_parsing", "status": "completed"},
+        {"stage_name": "translation", "status": "completed"},
+    ]
+    start, completed = PipelineResumeManager._handle_auto_resume(results)
+    assert start == "graph_extraction"
+    assert completed == ["document_parsing", "translation"]
+
+
+def test_merge_drops_a_failed_result_of_an_earlier_attempt(tmp_path) -> None:
+    # A failed (or unfinished) persisted result is not final: merging it into
+    # a later attempt would fail every phase of the retry.
+    state = PipelineStateManager(_StubCacheManager(tmp_path))
+    state.save_pipeline_metadata(
+        _context(
+            "pid",
+            [
+                _stage_result("document_parsing"),
+                _stage_result("graph_extraction", "failed"),
+                _stage_result("graph_analysis"),
+            ],
+        )
+    )
+    retry = _context("pid", [])
+    state.save_pipeline_metadata(retry)
+    assert [r.stage_name for r in retry.stage_results] == ["document_parsing"]
+    assert retry.status == PipelineStageStatus.COMPLETED
+
+
+def test_merge_drops_results_downstream_of_a_rerun_stage(tmp_path) -> None:
+    state = PipelineStateManager(_StubCacheManager(tmp_path))
+    state.save_pipeline_metadata(
+        _context(
+            "pid",
+            [
+                _stage_result("document_parsing"),
+                _stage_result("graph_extraction"),
+                _stage_result("graph_analysis"),
+            ],
+        )
+    )
+    state.mark_rerun("graph_extraction")
+    rerun = _context("pid", [_stage_result("graph_extraction", "running")])
+    state.save_pipeline_metadata(rerun)
+    assert [r.stage_name for r in rerun.stage_results] == [
+        "document_parsing",
+        "graph_extraction",
+    ]

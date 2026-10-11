@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import secrets
 import time
 from collections.abc import Callable, Mapping
 from datetime import datetime
@@ -128,6 +129,66 @@ class DataIngestionPipeline:
         stage: {attr: (model, attr) for attr, model in outputs.items()}
         for stage, outputs in STAGE_OUTPUTS.items()
     }
+
+    # Stages whose failure leaves the run's documents without some of their
+    # artifacts (graph, claims, communities). When one crashes under
+    # continue_on_error, every text unit of the run is recorded as failed for
+    # it, so an incremental commit records the documents FAILED (re-extracted
+    # next run) instead of PROCESSED with a partial graph.
+    ARTIFACT_STAGES: frozenset[PipelineStageType] = frozenset(
+        {
+            PipelineStageType.TRANSLATION,
+            PipelineStageType.GRAPH_EXTRACTION,
+            PipelineStageType.GLEANING,
+            PipelineStageType.GRAPH_RESOLUTION,
+            PipelineStageType.CLAIM_EXTRACTION,
+            PipelineStageType.CLAIM_RESOLUTION,
+            PipelineStageType.GRAPH_ANALYSIS,
+            PipelineStageType.COMMUNITY_DETECTION,
+        }
+    )
+
+    # Stages that build the run's documents and text units. When one failed
+    # (under continue_on_error), the run holds no per-unit record of what is
+    # missing, so indexing does not run: an incremental commit would record
+    # the documents PROCESSED without content, or remove every stored
+    # document as deleted after a parsing crash.
+    CORPUS_STAGES: tuple[PipelineStageType, ...] = (
+        PipelineStageType.DOCUMENT_PARSING,
+        PipelineStageType.DOCUMENT_LOADING,
+        PipelineStageType.TEXT_CHUNKING,
+    )
+
+    # Emitted metric -> the stages whose execution produces it. A phased run
+    # restores upstream outputs from the cache, so a metric is emitted only by
+    # the run that executed its stage; otherwise every phase would re-emit the
+    # cumulative counts and Sum dashboards would over-count.
+    METRIC_STAGES: dict[str, frozenset[str]] = {
+        "total_documents_processed": frozenset(
+            {"document_parsing", "document_loading"}
+        ),
+        "total_text_units_created": frozenset({"text_chunking"}),
+        "total_translated_units": frozenset({"translation"}),
+        "total_entities_extracted": frozenset({"graph_extraction", "gleaning"}),
+        "total_relationships_extracted": frozenset({"graph_extraction", "gleaning"}),
+        "total_claims_extracted": frozenset({"claim_extraction"}),
+        "total_communities_detected": frozenset({"community_detection"}),
+        "total_community_reports_generated": frozenset({"community_detection"}),
+        "gleaning_improvement_rate": frozenset({"gleaning"}),
+        "entity_resolution_merge_rate": frozenset({"graph_resolution"}),
+        "relationship_resolution_merge_rate": frozenset({"graph_resolution"}),
+        "claim_resolution_merge_rate": frozenset({"claim_resolution"}),
+        "community_modularity_score": frozenset({"community_detection"}),
+        "total_items_indexed": frozenset({"indexing"}),
+        "total_items_index_failed": frozenset({"indexing"}),
+        "relationships_indexed": frozenset({"indexing"}),
+        "total_extraction_failures": frozenset({"graph_extraction"}),
+        "total_gleaning_failures": frozenset({"gleaning"}),
+        "total_claim_extraction_failures": frozenset({"claim_extraction"}),
+    }
+
+    # Names of the stages the current run executed (not skipped as completed).
+    _executed_stages: frozenset[str] = frozenset()
 
     # Fingerprint of the run's corpus contents, computed in run(); part of every
     # stage cache key so a changed corpus is a cache miss, not a stale resume.
@@ -391,7 +452,7 @@ class DataIngestionPipeline:
             # included, carries the id (also in worker threads, see
             # ContextThreadPoolExecutor).
             log_context = bind_contextvars(pipeline_id=resolved_pipeline_id)
-            resolved_resume_stage = (
+            resolved_resume_stage = self.normalize_stage_name(
                 resume_from_stage or self.pipeline_config.resume_from_stage
             )
 
@@ -402,8 +463,7 @@ class DataIngestionPipeline:
 
             # Part of every stage cache key, so it must be set before the
             # resume decision reads the cache.
-            self.corpus_fingerprint = self._compute_corpus_fingerprint(source_path)
-            self.resume_manager.corpus_fingerprint = self.corpus_fingerprint
+            self._set_corpus_fingerprint(source_path)
 
             # force_rebuild must ignore ALL existing cache: skip the resume path
             # entirely so the run re-executes from the beginning even when a
@@ -448,6 +508,41 @@ class DataIngestionPipeline:
             raise PipelineExecutionError(f"Failed to run pipeline: {e}") from e
         finally:
             reset_contextvars(**log_context)
+
+    @classmethod
+    def normalize_stage_name(cls, stage_name: str | None) -> str | None:
+        """Return the canonical (lowercase) name of ``stage_name``.
+
+        Raises:
+            ConfigurationError: ``stage_name`` names no pipeline stage.
+        """
+        if stage_name is None:
+            return None
+        normalized = stage_name.strip().lower()
+        valid = [stage.value for stage in cls.STAGE_CLASSES]
+        if normalized not in valid:
+            raise ConfigurationError(
+                f"Unknown pipeline stage '{stage_name}'. Valid stages: "
+                f"{', '.join(valid)}"
+            )
+        return normalized
+
+    def _set_corpus_fingerprint(self, source_directory: Path) -> None:
+        self.corpus_fingerprint = self._compute_corpus_fingerprint(source_directory)
+        self.resume_manager.corpus_fingerprint = self.corpus_fingerprint
+
+    def validate_resume_integrity(
+        self, source_directory: str | Path, pipeline_id: str
+    ) -> tuple[bool, list[str]]:
+        """Check that every completed stage of ``pipeline_id`` is still cached.
+
+        Uses the cache keys the run itself will read, so the corpus
+        fingerprint of ``source_directory`` is computed first. A failed check
+        is not fatal for an auto resume: the run rewinds to the first stage
+        whose output is missing and recomputes it.
+        """
+        self._set_corpus_fingerprint(Path(source_directory).resolve())
+        return self.resume_manager.validate_pipeline_integrity(pipeline_id)
 
     def _compute_corpus_fingerprint(self, source_directory: Path) -> str:
         """Fingerprint the files this run can ingest (see cache_keys)."""
@@ -504,10 +599,12 @@ class DataIngestionPipeline:
 
     @staticmethod
     def _generate_pipeline_id(source_directory: Path | None = None) -> str:
+        # A random suffix keeps two runs started within the same second (one
+        # per corpus subdirectory, say) from sharing a cache directory.
+        timestamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(3)}"
         if source_directory is None:
-            return f"pipeline-{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            return f"pipeline-{timestamp}"
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         subdirs = [
             str(path.relative_to(source_directory))
             for path in source_directory.rglob("*")
@@ -568,6 +665,7 @@ class DataIngestionPipeline:
                 )
             )
 
+            self._check_upstream_complete(pipeline_id, start_stage_name)
             context = self.resume_manager.restore_pipeline_context(
                 pipeline_id, completed_stages
             )
@@ -584,6 +682,32 @@ class DataIngestionPipeline:
                 "Failed to prepare resume for pipeline '%s': %s", pipeline_id, e
             )
             raise PipelineExecutionError(f"Pipeline resume failed: {e}") from e
+
+    def _check_upstream_complete(self, pipeline_id: str, start_stage_name: str) -> None:
+        """Fail when the resume point is a recorded stage upstream of every
+        enabled stage: an earlier stage failed or lost its cached output, so
+        this run's stages (a later phase, say) would run on missing inputs.
+        A resume point downstream of the enabled stages means they are all
+        done, and the run skips them."""
+        if not self.stages:
+            return
+        canonical_order = [st.value for st in self.STAGE_CLASSES]
+        if start_stage_name not in canonical_order or start_stage_name in {
+            stage.name for stage in self.stages
+        }:
+            return
+        first_enabled = canonical_order.index(self.stages[0].name)
+        if canonical_order.index(start_stage_name) > first_enabled:
+            return
+        metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
+        recorded = {r.get("stage_name") for r in metadata.get("stage_results", [])}
+        if start_stage_name in recorded:
+            raise PipelineResumeError(
+                f"Stage '{start_stage_name}', upstream of this run's enabled "
+                f"stages, has not completed (or its cached output is gone). "
+                f"Run it first, e.g. with --enabled-stages including "
+                f"'{start_stage_name}'."
+            )
 
     def _prepare_context_for_resume(
         self, context: PipelineContext, start_stage_name: str
@@ -639,23 +763,15 @@ class DataIngestionPipeline:
         self, context: PipelineContext, start_stage_name: str | None
     ) -> None:
         total_start_time = time.time()
+        self._executed_stages = frozenset()
+        self.state_manager.mark_rerun(None)
         self._execute_pipeline_stages(context, start_stage_name)
         self._finalize_pipeline_execution(context, total_start_time)
 
     def _execute_pipeline_stages(
         self, context: PipelineContext, start_stage_name: str | None
     ) -> None:
-        stage_names = [stage.name for stage in self.stages]
-        start_index = 0
-
-        if start_stage_name:
-            try:
-                start_index = stage_names.index(start_stage_name)
-            except ValueError:
-                logger.warning(
-                    "Start stage '%s' not found, starting from beginning",
-                    start_stage_name,
-                )
+        start_index = self._start_index(start_stage_name)
 
         completed_stage_names = {
             r.stage_name
@@ -691,7 +807,112 @@ class DataIngestionPipeline:
                     )
                     break
 
+    def _start_index(self, start_stage_name: str | None) -> int:
+        """Index in ``self.stages`` of the first stage to run.
+
+        A start stage that is not enabled in this run (a phased run's window
+        omits it, or its config section turns it off) maps to the first
+        enabled stage at or after it in pipeline order; none means there is
+        nothing left to run.
+        """
+        stage_names = [stage.name for stage in self.stages]
+        if not start_stage_name:
+            return 0
+        if start_stage_name in stage_names:
+            return stage_names.index(start_stage_name)
+        canonical_order = [st.value for st in self.STAGE_CLASSES]
+        if start_stage_name not in canonical_order:
+            logger.warning(
+                "Start stage '%s' not found, starting from beginning",
+                start_stage_name,
+            )
+            return 0
+        start_position = canonical_order.index(start_stage_name)
+        for index, name in enumerate(stage_names):
+            if canonical_order.index(name) >= start_position:
+                logger.info(
+                    "Start stage '%s' is not enabled in this run; starting "
+                    "from '%s'",
+                    start_stage_name,
+                    name,
+                )
+                return index
+        logger.info(
+            "Resume point '%s' is past every enabled stage; nothing to run",
+            start_stage_name,
+        )
+        return len(stage_names)
+
     def _execute_stage(
+        self, stage: PipelineStage, context: PipelineContext
+    ) -> PipelineStageResult:
+        self._executed_stages = self._executed_stages | {stage.name}
+        # The persisted results downstream of this stage are now stale.
+        self.state_manager.mark_rerun(stage.name)
+        # A failure recorded for this stage by an earlier attempt is replaced
+        # by what this execution reports.
+        context.failed_text_unit_ids.pop(stage.name, None)
+        blocked_by = self._failed_corpus_stage(stage, context)
+        if blocked_by is not None:
+            result = PipelineStageResult(
+                stage_name=stage.name,
+                status=PipelineStageStatus.FAILED,
+                start_time=datetime.now(),
+                end_time=datetime.now(),
+                error_message=(
+                    f"Not indexing: stage '{blocked_by}' failed, so this run "
+                    "does not hold every document's text units; committing "
+                    "would record documents as processed without their content, "
+                    "or delete them as missing from the corpus. Fix the failure "
+                    "and resume with the same pipeline id."
+                ),
+            )
+            logger.error("%s", result.error_message)
+            self.state_manager.update_stage_result(context, result)
+            return result
+        result = self._run_stage(stage, context)
+        if result.status == PipelineStageStatus.FAILED:
+            self._mark_units_failed(stage, context)
+        return result
+
+    def _failed_corpus_stage(
+        self, stage: PipelineStage, context: PipelineContext
+    ) -> str | None:
+        """The failed corpus stage that blocks ``stage`` (indexing), if any."""
+        if self.name_to_type_map.get(stage.name) is not PipelineStageType.INDEXING:
+            return None
+        corpus_stages = {st.value for st in self.CORPUS_STAGES}
+        for result in context.stage_results:
+            if (
+                result.stage_name in corpus_stages
+                and result.status == PipelineStageStatus.FAILED
+            ):
+                return result.stage_name
+        return None
+
+    def _mark_units_failed(
+        self, stage: PipelineStage, context: PipelineContext
+    ) -> None:
+        """Record every text unit as failed for a crashed artifact stage.
+
+        Under continue_on_error the run goes on to indexing; without this the
+        incremental commit would record the documents PROCESSED, and the next
+        run would skip them as unchanged although their graph is partial.
+        """
+        if self.name_to_type_map.get(stage.name) not in self.ARTIFACT_STAGES:
+            return
+        units = context.translated_units or context.text_units or []
+        context.failed_text_unit_ids[stage.name] = [unit.id for unit in units]
+        self.state_manager.save_pipeline_metadata(context)
+        if units:
+            logger.warning(
+                "Stage '%s' failed: recording all %s text units as failed so "
+                "their documents are not committed as processed",
+                stage.name,
+                len(units),
+            )
+
+    def _run_stage(
         self, stage: PipelineStage, context: PipelineContext
     ) -> PipelineStageResult:
         running_result = PipelineStageResult(
@@ -851,7 +1072,9 @@ class DataIngestionPipeline:
         total_duration = time.time() - start_time
         context.duration_seconds = total_duration
         context.global_metrics = self._create_pipeline_metrics(context)
-        self._emit_metrics(context.global_metrics, context.pipeline_id)
+        self._emit_metrics(
+            context.global_metrics, context.pipeline_id, self._executed_stages
+        )
 
         failed_stages = [
             r for r in context.stage_results if r.status == PipelineStageStatus.FAILED
@@ -950,19 +1173,43 @@ class DataIngestionPipeline:
         }
         return PipelineMetrics(**metric_data)
 
-    def _emit_metrics(self, metrics: PipelineMetrics, pipeline_id: str) -> None:
-        """Forward scalar pipeline metrics to the configured sink (best-effort)."""
+    def _emit_metrics(
+        self,
+        metrics: PipelineMetrics,
+        pipeline_id: str,
+        executed_stages: frozenset[str] | None = None,
+    ) -> None:
+        """Forward scalar pipeline metrics to the configured sink (best-effort).
+
+        With ``executed_stages``, a stage metric (``METRIC_STAGES``) is
+        emitted only when one of its stages ran in this run: a phased run
+        restores the other phases' outputs, and re-emitting their counts
+        would make Sum widgets over-count.
+        """
+
+        def emitted(name: str) -> bool:
+            stages = self.METRIC_STAGES.get(name)
+            return (
+                executed_stages is None
+                or stages is None
+                or not stages.isdisjoint(executed_stages)
+            )
+
         try:
             dumped = metrics.model_dump()
             scalars = {
                 k: v
                 for k, v in dumped.items()
-                if isinstance(v, (int, float)) and not isinstance(v, bool)
+                if isinstance(v, (int, float))
+                and not isinstance(v, bool)
+                and emitted(k)
             }
             # Flatten the per-stage duration map into individual scalar metrics so
             # they actually reach the sink (the dict member is otherwise dropped
             # by the scalar filter, leaving only total_duration_seconds emitted).
             for stage_name, duration in (metrics.stage_durations or {}).items():
+                if executed_stages is not None and stage_name not in executed_stages:
+                    continue
                 if isinstance(duration, (int, float)):
                     scalars[f"duration_{stage_name}_seconds"] = duration
             self.metrics_sink.emit(

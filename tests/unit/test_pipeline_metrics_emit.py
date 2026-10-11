@@ -99,3 +99,37 @@ def test_relationships_indexed_zero_is_visible_when_extracted() -> None:
     emitted = _emit(m)
     assert emitted["total_relationships_extracted"] == 20
     assert emitted["relationships_indexed"] == 0
+
+
+def test_a_phase_emits_only_the_metrics_of_the_stages_it_ran() -> None:
+    # A phased run restores the other phases' outputs from the cache; their
+    # counts must not be emitted again, or Sum widgets over-count.
+    m = PipelineMetrics(
+        pipeline_id="p",
+        total_duration_seconds=1.0,
+        total_documents_processed=2,
+        total_text_units_created=3,
+        total_translated_units=0,
+        total_entities_extracted=10,
+        total_relationships_extracted=20,
+        total_claims_extracted=0,
+        total_communities_detected=1,
+        total_community_reports_generated=1,
+        total_items_indexed=30,
+        stage_durations={"indexing": 2.5, "graph_extraction": 1.0},
+    )
+    pipe = DataIngestionPipeline.__new__(DataIngestionPipeline)
+    sink = _RecordingSink()
+    pipe.metrics_sink = sink
+    pipe._emit_metrics(m, "pid", {"indexing"})
+    emitted = sink.metrics
+    assert emitted["total_items_indexed"] == 30
+    assert emitted["duration_indexing_seconds"] == 2.5
+    assert emitted["total_duration_seconds"] == 1.0
+    for name in (
+        "total_documents_processed",
+        "total_entities_extracted",
+        "total_communities_detected",
+        "duration_graph_extraction_seconds",
+    ):
+        assert name not in emitted
