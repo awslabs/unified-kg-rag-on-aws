@@ -27,12 +27,22 @@ from unified_kg_rag.adapters.ingestion.parser import (
 )
 from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.application.ingestion.incremental import (
+    clear_registry_namespaces,
+    context_lineages,
+    documents_with_failed_units,
+    filter_to_delta,
+    index_delta,
+    indexed_documents,
+    reset_namespaces,
+    reset_suffixes,
+    run_incremental_indexer,
+    warn_about_unapplied_retired_scopes,
+)
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
 from unified_kg_rag.domain.ingestion.delta_detector import (
     assign_document_identity,
-    document_doc_id,
-    scope_namespace,
 )
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
@@ -42,11 +52,7 @@ from unified_kg_rag.domain.models import (
     Community,
     CommunityReport,
     Config,
-    Constants,
-    DocStatusRecord,
     Document,
-    DocumentDelta,
-    DocumentLineage,
     Entity,
     PipelineContext,
     PipelineStageResult,
@@ -56,8 +62,6 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.shared import (
-    ConfigurationError,
-    DocStatusRegistryError,
     PipelineStageError,
     get_logger,
     observability,
@@ -65,7 +69,6 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.utils.cache_keys import is_excluded_source_path
 
 if TYPE_CHECKING:
-    from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
     from unified_kg_rag.ports import DocStatusPort
 
 logger = get_logger(__name__)
@@ -368,7 +371,16 @@ class DocumentLoadingStage(PipelineStage):
 
         incremental = self._doc_status is not None or self.config.doc_status_enabled
         if self.config.processing.deduplicate:
-            documents = self._deduplicate(documents, context, incremental)
+            keep = None
+            if incremental and not self.config.indexing.reset:
+                keep = indexed_documents(
+                    documents,
+                    context,
+                    self.config,
+                    self._build_doc_status_store,
+                    self.loader.source_directory,
+                )
+            documents = self.loader.deduplicate_documents(documents, keep=keep)
 
         # Incremental indexing: when a doc-status registry is injected or the
         # DynamoDB one is enabled, diff against it, stash the delta/fingerprints
@@ -400,43 +412,16 @@ class DocumentLoadingStage(PipelineStage):
 
         return input_count, output_count, metrics
 
-    def _deduplicate(
-        self, documents: list[Document], context: PipelineContext, incremental: bool
-    ) -> list[Document]:
-        """Drop near-duplicate documents, keeping indexed ones in incremental mode.
-
-        The incremental diff treats a dropped document as deleted, so a new
-        near-copy that happened to be kept would delete the indexed original
-        and index itself instead. A document the registry already holds (under
-        its key or its legacy key) is therefore kept over one it does not.
-        """
-        if not incremental or self.config.indexing.reset:
-            return self.loader.deduplicate_documents(documents)
-
-        from unified_kg_rag.domain.ingestion.delta_detector import (
-            assign_registry_source,
-            legacy_doc_id,
-        )
-
-        _, _, source_scope, _ = self._registry_scope(context)
-        keys: dict[int, tuple[str, str]] = {}
-        for document in documents:
-            assign_registry_source(document, source_scope)
-            keys[id(document)] = (
-                document_doc_id(document),
-                legacy_doc_id(document),
-            )
-        try:
-            stored = self._build_doc_status_store().get_many(
-                {key for pair in keys.values() for key in pair}
-            )
-        except Exception as e:
-            raise DocStatusRegistryError(
-                f"Doc-status registry: could not read it to deduplicate the "
-                f"corpus ({type(e).__name__}: {e})"
-            ) from e
-        return self.loader.deduplicate_documents(
-            documents, keep=lambda doc: any(key in stored for key in keys[id(doc)])
+    def _apply_incremental_filter(
+        self, documents: list[Document], context: PipelineContext
+    ) -> tuple[list[Document], int]:
+        """Keep the new and changed documents (see ``incremental.filter_to_delta``)."""
+        return filter_to_delta(
+            documents,
+            context,
+            self.config,
+            self._build_doc_status_store,
+            self.loader.source_directory,
         )
 
     @staticmethod
@@ -445,178 +430,6 @@ class DocumentLoadingStage(PipelineStage):
             r.stage_name == PipelineStageType.DOCUMENT_PARSING.value
             and r.status == PipelineStageStatus.COMPLETED
             for r in context.stage_results
-        )
-
-    def _apply_incremental_filter(
-        self, documents: list[Document], context: PipelineContext
-    ) -> tuple[list[Document], int]:
-        """Keep only new/changed documents per the DynamoDB doc-status registry.
-
-        Also stashes the computed delta + fingerprints on the context so the
-        IndexingStage can prune stale artifacts, propagate deletions, and record
-        per-document lineage (the full incremental commit path).
-
-        Raises :class:`DocStatusRegistryError` when the registry cannot be
-        read. There is no safe fallback: without a delta the indexing stage
-        takes the full-rebuild path, which replaces the suffix's live index
-        content with this run's documents and never records them, so other
-        scopes' documents would be lost and every later run would rebuild.
-        Imported lazily to avoid a hard dependency when the feature is off.
-        """
-        from unified_kg_rag.domain.ingestion.delta_detector import (
-            assign_registry_source,
-            detect_delta,
-            filter_documents_to_process,
-            fingerprint_documents,
-            legacy_doc_id,
-            validate_retired_scopes,
-        )
-
-        scope, namespace, source_scope, failed_doc_ids = self._registry_scope(context)
-        # Fails before any registry read or write when the run would retire
-        # its own scope.
-        retired = validate_retired_scopes(
-            self.config.indexing.retire_source_scopes, source_scope, namespace
-        )
-        for document in documents:
-            assign_registry_source(document, source_scope)
-        if self.config.indexing.reset:
-            # A reset clears the stores and the registry before indexing, so
-            # every document is new: diffing against the registry here would
-            # rebuild from the delta alone and lose the unchanged documents.
-            fingerprints = fingerprint_documents(documents)
-            context.incremental_delta = DocumentDelta(new=list(fingerprints))
-            context.incremental_fingerprints = fingerprints
-            context.incremental_scope = scope
-            logger.info(
-                "Incremental filter skipped (indexing.reset): processing all "
-                "%d documents",
-                len(documents),
-            )
-            if retired:
-                logger.info(
-                    "indexing.retire_source_scopes ignored: the reset clears "
-                    "every record"
-                )
-            return documents, 0
-
-        try:
-            store = self._build_doc_status_store()
-            delta, fingerprints = detect_delta(
-                documents,
-                store,
-                scope=scope,
-                failed_doc_ids=list(failed_doc_ids),
-                max_failures=self.config.indexing.max_document_failures,
-                legacy_doc_ids={
-                    **failed_doc_ids,
-                    **{
-                        document_doc_id(document): legacy_doc_id(document)
-                        for document in documents
-                    },
-                },
-                retired_scopes=retired,
-            )
-        except (DocStatusRegistryError, ConfigurationError):
-            raise
-        except Exception as e:
-            raise DocStatusRegistryError(
-                f"Doc-status registry: could not diff the corpus against the "
-                f"registry ({type(e).__name__}: {e}). Incremental indexing needs "
-                "the registry; fix it and re-run, or turn incremental indexing off "
-                "(aws.dynamodb.enabled / providers.doc_status.enabled: false) to "
-                "run without it."
-            ) from e
-        context.incremental_delta = delta
-        context.incremental_fingerprints = fingerprints
-        context.incremental_scope = scope
-        context.incremental_retired_scopes = list(
-            self.config.indexing.retire_source_scopes
-        )
-        if delta.new and not self.config.processing.document_parsing.source_scope:
-            self._warn_about_other_local_scopes(delta, scope, namespace, retired)
-        if delta.is_empty:
-            logger.info("Incremental: no new/changed documents detected")
-        to_process = filter_documents_to_process(documents, delta)
-        skipped = len(documents) - len(to_process)
-        logger.info(
-            "Incremental filter: %d to process, %d unchanged (skipped), %d deleted",
-            len(to_process),
-            skipped,
-            len(delta.deleted),
-        )
-        return to_process, skipped
-
-    @staticmethod
-    def _warn_about_other_local_scopes(
-        delta: DocumentDelta, scope: str, namespace: str, retired: list[str]
-    ) -> None:
-        """Name the other local source directories of the run's namespace.
-
-        Only a run whose scope defaulted to its source directory and that has
-        new documents gets here: that is what a moved corpus looks like. The
-        records stay: a directory that is missing here may be another host's
-        corpus sharing the registry, so only the user can tell a move from a
-        second corpus. Uses the scopes the diff already read.
-        """
-        from unified_kg_rag.domain.ingestion.delta_detector import (
-            other_local_scopes,
-        )
-
-        others = other_local_scopes(delta, scope, namespace, retired)
-        if not others:
-            return
-        logger.warning(
-            "The doc-status registry also holds records of index namespace %r "
-            "under other local source directories: %s. If this corpus was "
-            "moved from one of them, its old records keep the previous "
-            "content indexed: run once with --retire-source-scope <old "
-            "directory> (indexing.retire_source_scopes) to remove it. If they "
-            "are other corpora, set document_parsing.source_scope to a stable "
-            "name per corpus.",
-            namespace,
-            ", ".join(others),
-        )
-
-    def _registry_scope(
-        self, context: PipelineContext
-    ) -> tuple[str, str, str, dict[str, str]]:
-        """The run's registry scope, namespace, source scope and failed files.
-
-        The scope is the index namespace the run writes (``index_value`` +
-        ``indexing.additional_suffix``) and the corpus source
-        (``document_parsing.source_scope``, else the resolved source
-        directory), so a run never deletes another tenant's or another
-        corpus's documents. The source scope is also part of every document's
-        registry key, so two corpora written to one namespace never share a
-        record. Failed files are keyed the same way their documents would have
-        been, mapped to their legacy key (see ``legacy_doc_id``).
-        """
-        from unified_kg_rag.domain.ingestion.delta_detector import registry_scope
-        from unified_kg_rag.shared.utils.document_identity import (
-            compute_doc_id,
-            normalize_source_path,
-            registry_namespace,
-            relative_source_path,
-        )
-
-        parsing = self.config.processing.document_parsing
-        namespace = registry_namespace(
-            parsing.index_value, self.config.indexing.additional_suffix
-        )
-        root = self.loader.source_directory
-        source_scope = parsing.source_scope or root.as_posix()
-        failed_doc_ids: dict[str, str] = {}
-        for path in context.failed_source_files:
-            relative = relative_source_path(path, root) or normalize_source_path(path)
-            failed_doc_ids[compute_doc_id(relative, namespace, source_scope)] = (
-                compute_doc_id(relative, namespace)
-            )
-        return (
-            registry_scope(namespace, source_scope),
-            namespace,
-            source_scope,
-            failed_doc_ids,
         )
 
     def _build_doc_status_store(self) -> "DocStatusPort":
@@ -1466,109 +1279,6 @@ class IndexingStage(PipelineStage):
             return self._doc_status
         return self.providers.build_doc_status()
 
-    def _reset_suffixes(self, text_units: list[TextUnit]) -> set[str]:
-        """The item suffixes whose stores a reset clears.
-
-        ``clear_all_data`` clears the suffixes of the run's text units; the
-        run's own suffix (``index_value``, ``default`` when unset) is always
-        included, as in ``_reset_namespaces``.
-        """
-        from unified_kg_rag.ports.indexer import BaseIndexer
-        from unified_kg_rag.shared.utils.document_identity import DEFAULT_NAMESPACE
-
-        suffixes = {BaseIndexer.get_suffix(unit) for unit in text_units}
-        suffixes.add(
-            self.config.processing.document_parsing.index_value or DEFAULT_NAMESPACE
-        )
-        return suffixes
-
-    def _reset_namespaces(
-        self, context: PipelineContext, text_units: list[TextUnit]
-    ) -> set[str]:
-        """The registry namespaces whose stores a reset clears.
-
-        ``clear_all_data`` clears the suffixes of the run's text units under
-        ``indexing.additional_suffix``; the run's own namespace (its registry
-        scope, else the configured ``index_value``) is always included.
-        """
-        from unified_kg_rag.ports.indexer import BaseIndexer
-        from unified_kg_rag.shared.utils.document_identity import registry_namespace
-
-        additional = self.config.indexing.additional_suffix
-        namespaces = {
-            registry_namespace(BaseIndexer.get_suffix(unit), additional)
-            for unit in text_units
-        }
-        namespaces.add(
-            scope_namespace(context.incremental_scope)
-            or registry_namespace(
-                self.config.processing.document_parsing.index_value, additional
-            )
-        )
-        return namespaces
-
-    @staticmethod
-    def _record_in_namespaces(
-        record: DocStatusRecord, namespaces: set[str], suffixes: set[str]
-    ) -> bool:
-        """Whether a reset of ``namespaces`` (item ``suffixes``) clears ``record``.
-
-        A scoped record belongs to its scope's namespace. A record without a
-        scope that stores its ``file_path`` belongs to the namespace whose
-        legacy key ``compute_doc_id(file_path, namespace)`` is its key (even
-        if its ``suffix`` field does not match), so a reset of one namespace
-        keeps such a record of another namespace on the same suffix. A record
-        without a scope or ``file_path`` (the initial release, keyed by the
-        file path alone) names no namespace: it is cleared with its suffix,
-        since removal planning treats it as a survivor in every namespace of
-        its suffix and would otherwise never delete the entities it lists.
-        """
-        from unified_kg_rag.shared.utils.document_identity import compute_doc_id
-
-        if record.scope is not None:
-            return scope_namespace(record.scope) in namespaces
-        if record.file_path is None:
-            return record.suffix in suffixes
-        return any(
-            record.doc_id == compute_doc_id(record.file_path, namespace)
-            for namespace in namespaces
-        )
-
-    def _clear_doc_status_registry(
-        self, namespaces: set[str], suffixes: set[str]
-    ) -> None:
-        """Delete the registry records of ``namespaces`` (reset path).
-
-        Only the namespaces whose stores the reset cleared: other index
-        suffixes sharing the table keep their records, which still describe
-        their intact stores. A record without a scope is cleared when its key
-        is a cleared namespace's legacy key for its ``file_path``, or, with no
-        ``file_path``, when its suffix is one of the cleared ``suffixes`` (see
-        ``_record_in_namespaces``); else it is kept.
-
-        Uses the port's list_all + delete so no new port method is needed.
-        Best-effort: a registry-clear failure should not abort the reset run
-        (the graph/index were already cleared).
-        """
-        try:
-            store = self._build_doc_status_store()
-            records = [
-                record
-                for record in store.list_all()
-                if self._record_in_namespaces(record, namespaces, suffixes)
-            ]
-            # Write-ahead lineage overflow is not listed as records.
-            store.delete_lineage_overflow([record.doc_id for record in records])
-            for record in records:
-                store.delete(record.doc_id)
-            logger.info(
-                "Cleared %s doc-status registry records of namespaces %s on reset",
-                len(records),
-                ", ".join(sorted(namespaces)),
-            )
-        except Exception as e:  # noqa: BLE001 - reset cleanup is best-effort
-            logger.warning("Failed to clear doc-status registry on reset: %s", e)
-
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
@@ -1588,9 +1298,10 @@ class IndexingStage(PipelineStage):
             # leave rows for docs no longer in the corpus. Only relevant when the
             # registry is in use (incremental mode).
             if self._doc_status is not None or self.config.doc_status_enabled:
-                self._clear_doc_status_registry(
-                    self._reset_namespaces(context, text_units),
-                    self._reset_suffixes(text_units),
+                clear_registry_namespaces(
+                    self._build_doc_status_store,
+                    reset_namespaces(self.config, context, text_units),
+                    reset_suffixes(self.config, text_units),
                 )
 
         if not self.indexing_manager.initialize():
@@ -1632,7 +1343,7 @@ class IndexingStage(PipelineStage):
             )
 
         if context.incremental_delta is not None and not self.config.indexing.reset:
-            self._warn_about_unapplied_retired_scopes(context)
+            warn_about_unapplied_retired_scopes(self.config, context)
             indexing_results = self._index_incremental(
                 context,
                 text_units,
@@ -1649,8 +1360,13 @@ class IndexingStage(PipelineStage):
                 # the stores, so record the rebuilt corpus for the next delta
                 # run, PENDING first (see IncrementalIndexer.write_ahead) so an
                 # interrupted rebuild leaves nothing unreferenced.
-                incremental = self._incremental_indexer(context, text_units)
-                lineages = self._document_lineages(
+                incremental = run_incremental_indexer(
+                    self._build_doc_status_store(),
+                    self.indexing_manager,
+                    context,
+                    text_units,
+                )
+                lineages = context_lineages(
                     context,
                     incremental.suffix,
                     text_units,
@@ -1676,7 +1392,7 @@ class IndexingStage(PipelineStage):
                     lineages,
                     context.incremental_fingerprints,
                     indexing_results,
-                    self._documents_with_failed_units(context, text_units),
+                    documents_with_failed_units(context, text_units),
                 )
 
         total_indexed = sum(
@@ -1727,190 +1443,17 @@ class IndexingStage(PipelineStage):
         community_reports: list[CommunityReport],
         claims: list[Claim],
     ) -> dict[str, Any]:
-        """Idempotent delta indexing + stale-artifact pruning + registry write-back.
-
-        Routed to when a doc-status delta is present (incremental mode). The new
-        and changed documents are first recorded PENDING (write-ahead), then
-        the stale artifacts of changed/deleted documents are removed, the
-        freshly extracted delta is upserted and the PENDING records replaced
-        with per-document lineage so subsequent runs diff correctly.
-        """
-        delta = context.incremental_delta
-        if delta is None:  # defensive; caller already guards
-            return self.indexing_manager.index_all_data(
-                text_units=text_units,
-                entities=entities,
-                relationships=relationships,
-                communities=communities,
-                community_reports=community_reports,
-                claims=claims,
-            )
-        incremental = self._incremental_indexer(context, text_units)
-        lineages = self._document_lineages(
+        """Index the run's delta (see ``incremental.index_delta``)."""
+        return index_delta(
+            self._build_doc_status_store,
+            self.indexing_manager,
             context,
-            incremental.suffix,
             text_units,
             entities,
             relationships,
             communities,
             community_reports,
             claims,
-        )
-        # Write ahead before any store write: the new and changed docs are
-        # recorded PENDING with their stored + planned lineage, so a run
-        # interrupted from here on is repaired by the next one (the docs
-        # read as changed, or as deleted when gone, and every artifact this
-        # run may write is found by their lineage).
-        incremental.check_graph_holds_registry(delta)
-        incremental.write_ahead(delta, lineages)
-
-        # Drop the stale artifacts of changed and deleted docs in ONE removal
-        # plan (before re-upsert): planning them separately keeps whatever a
-        # changed and a deleted doc share, orphaning it. A failed removal must
-        # stop the run before commit when docs changed: committing would
-        # overwrite their lineage and orphan the stale artifacts. A failure
-        # that only concerns deleted docs keeps their registry rows for a
-        # retry and need not hold back the delta, so it fails the stage only
-        # after the commit.
-        removed = incremental.remove_changed_and_deleted(delta)
-        if not removed and delta.changed:
-            raise PipelineStageError(
-                "Removing stale artifacts of changed or deleted documents "
-                "failed; not committing the delta so the registry keeps their "
-                "PENDING records (old + planned lineage) and the next run "
-                "retries the removal"
-            )
-
-        results = incremental.commit(
-            lineages=lineages,
-            fingerprints=context.incremental_fingerprints,
-            failed_doc_ids=self._documents_with_failed_units(context, text_units),
-            text_units=text_units,
-            entities=entities,
-            relationships=relationships,
-            communities=communities,
-            community_reports=community_reports,
-            claims=claims,
-        )
-        if not removed:
-            raise PipelineStageError(
-                "Removing the artifacts of deleted documents failed; their "
-                "registry records are kept so the next run retries the removal"
-            )
-        return results
-
-    def _warn_about_unapplied_retired_scopes(self, context: PipelineContext) -> None:
-        """Warn about ``indexing.retire_source_scopes`` the delta did not apply.
-
-        Scopes are retired when the document_loading stage computes the
-        delta. A run resumed after it indexes the delta an earlier run
-        computed, so scopes added since then are not removed by this run.
-        """
-        from unified_kg_rag.shared.utils.document_identity import (
-            normalize_source_scope,
-        )
-
-        if context.incremental_retired_scopes is None:
-            # Saved before the delta recorded its retired scopes: whether
-            # they were applied is unknown.
-            if self.config.indexing.retire_source_scopes:
-                logger.warning(
-                    "indexing.retire_source_scopes / --retire-source-scope %s may "
-                    "not have been applied: this run resumed after the "
-                    "document_loading stage from a pipeline context that does "
-                    "not record which scopes its delta retired. Re-run from "
-                    "document_loading (--resume-from-stage document_loading) to "
-                    "make sure they are retired.",
-                    ", ".join(
-                        repr(s) for s in self.config.indexing.retire_source_scopes
-                    ),
-                )
-            return
-        applied = {
-            normalize_source_scope(s) for s in context.incremental_retired_scopes
-        }
-        ignored = [
-            scope
-            for scope in self.config.indexing.retire_source_scopes
-            if normalize_source_scope(scope) not in applied
-        ]
-        if ignored:
-            logger.warning(
-                "indexing.retire_source_scopes / --retire-source-scope %s NOT "
-                "applied: this run resumed after the document_loading stage and "
-                "indexes the delta an earlier run computed without them, so "
-                "their records and exclusive artifacts are kept. Re-run from "
-                "document_loading (--resume-from-stage document_loading) to "
-                "retire them.",
-                ", ".join(repr(s) for s in ignored),
-            )
-
-    @staticmethod
-    def _documents_with_failed_units(
-        context: PipelineContext, text_units: list[TextUnit]
-    ) -> set[str]:
-        """Registry ids of the documents an extraction stage failed on."""
-        failed_units = {
-            unit_id for ids in context.failed_text_unit_ids.values() for unit_id in ids
-        }
-        run_document_ids = {
-            document_id
-            for unit in text_units
-            if unit.id in failed_units
-            for document_id in unit.document_ids or []
-        }
-        return {
-            document_doc_id(document)
-            for document in context.documents
-            if document.document_id in run_document_ids
-        }
-
-    def _incremental_indexer(
-        self, context: PipelineContext, text_units: list[TextUnit]
-    ) -> "IncrementalIndexer":
-        from unified_kg_rag.application.ingestion.incremental import (
-            IncrementalIndexer,
-        )
-        from unified_kg_rag.ports.indexer import BaseIndexer
-
-        # Artifacts carry their own index suffix (multi-tenant/version aware);
-        # derive the run's suffix from the text units the same way the indexers do.
-        suffix = (
-            BaseIndexer.get_suffix(text_units[0])
-            if text_units
-            else Constants.DEFAULT_SUFFIX.value
-        )
-        return IncrementalIndexer(
-            self._build_doc_status_store(),
-            self.indexing_manager,
-            suffix=suffix,
-            scope=context.incremental_scope,
-        )
-
-    @staticmethod
-    def _document_lineages(
-        context: PipelineContext,
-        suffix: str,
-        text_units: list[TextUnit],
-        entities: list[Entity],
-        relationships: list[Relationship],
-        communities: list[Community],
-        community_reports: list[CommunityReport],
-        claims: list[Claim],
-    ) -> list[DocumentLineage]:
-        from unified_kg_rag.application.ingestion.incremental import (
-            build_document_lineage,
-        )
-
-        return build_document_lineage(
-            documents=context.documents,
-            text_units=text_units,
-            entities=entities,
-            relationships=relationships,
-            communities=communities,
-            claims=claims,
-            community_reports=community_reports,
-            suffix=suffix,
         )
 
     def _validate_backend_success(self, indexing_results: dict[str, Any]) -> None:

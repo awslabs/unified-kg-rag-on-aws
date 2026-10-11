@@ -184,6 +184,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#157).
 
 ### Changed
+- The incremental-registry steps of the document_loading and indexing stages
+  (run scope, dedup preference, delta filter, reset namespaces and registry
+  clearing, delta indexing) live in `application/ingestion/incremental.py`
+  as functions; the stages only delegate to them. Behaviour is unchanged
+  (#PR).
 - **Breaking:** one injection path per component. `DataIngestionPipeline`'s
   `doc_status=`, `vector_indexer=` and `graph_indexer=`, and `GraphRAGChain`'s
   `model_factory=` and `retriever_builders=`, are shorthand for a bundle built
