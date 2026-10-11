@@ -277,6 +277,18 @@ def test_providers_and_model_factory_are_exclusive() -> None:
         )
 
 
+def test_providers_and_boto_session_are_exclusive() -> None:
+    # The bundle's session is the one every component uses, so a separate
+    # boto_session would be silently ignored.
+    config = Config()
+    with pytest.raises(ValueError, match="boto_session either to GraphRAGChain"):
+        GraphRAGChain(
+            config=config,
+            boto_session=MagicMock(),
+            providers=_fake_providers(config),
+        )
+
+
 def test_strategy_without_providers_still_constructs(mocker) -> None:
     # Backward compatibility: direct construction builds a default bundle.
     from unified_kg_rag.adapters.search_strategies import LocalSearchStrategy

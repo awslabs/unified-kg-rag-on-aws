@@ -263,6 +263,8 @@ Library API (Python callers and custom backends).
   cut to 1,000 characters) (#PR).
 - An empty or refusing follow-up rewrite no longer replaces the user's
   question; the query is used as is (#PR).
+- `GraphRAGChain(providers=..., boto_session=...)` raises instead of silently
+  ignoring the session (#PR).
 - Evaluation: `answer_match` no longer counts a different number or name as
   a match; judge failures are recorded per query instead of discarding the
   run; non-zero exit codes on failed scoring (#158, #210).

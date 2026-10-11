@@ -305,6 +305,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 "or on the Providers bundle (llm_factory=, retriever_builders=), "
                 "not both."
             )
+        if providers is not None and boto_session is not None:
+            raise ValueError(
+                "Pass boto_session either to GraphRAGChain or on the Providers "
+                "bundle (Providers(config, boto_session=...)), not both: the "
+                "bundle's session is the one every component uses."
+            )
         # Composition root (hexagonal): ONE provider bundle — session plus
         # LLM/embedding/rerank/token-counter factories — built here (or
         # injected) and passed explicitly to every component the chain builds
