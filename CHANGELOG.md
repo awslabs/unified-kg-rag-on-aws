@@ -572,6 +572,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   (#169).
 
 ### Fixed
+- `graph_analysis_report.html` shows a density or average clustering of 0 as
+  `0.0000` instead of `N/A`, shows `N/A` instead of a fabricated 0 for
+  communities and modularity when community detection produced no metrics,
+  and links only the visualizations the renderers actually wrote (a skipped
+  or failed renderer used to leave a dead link) (#PR).
 - Node centrality (exact or sampled betweenness is O(V*E)) is computed once
   per graph instead of up to four times per ingest: `GraphAnalyzer` memoizes
   `calculate_centrality` until its graph is replaced, so the visualization

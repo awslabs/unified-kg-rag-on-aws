@@ -104,8 +104,8 @@ class GraphVisualizationManager:
 
         layout = self._generate_layout()
 
-        self._generate_visualizations(self.outputs_dir, layout)
-        self._export_summary_report(self.outputs_dir)
+        written = self._generate_visualizations(self.outputs_dir, layout)
+        self._export_summary_report(self.outputs_dir, written)
         self.export_visualization_data(
             self.outputs_dir / VISUALIZATION_DATA_FILENAME, layout=layout
         )
@@ -154,9 +154,10 @@ class GraphVisualizationManager:
 
     def _generate_visualizations(
         self, outputs_dir: Path, layout: dict[str, Any]
-    ) -> None:
+    ) -> list[Path]:
+        """Run every registered renderer; return the files they wrote."""
         if not self.analyzer.graph:
-            return
+            return []
 
         # Drive the registered renderers through the shared registry so the
         # manager and the standalone CLI use one rendering path.
@@ -181,12 +182,14 @@ class GraphVisualizationManager:
                 logger.warning("Renderer '%s' failed: %s", name, e)
         if not written:
             logger.warning("No visualization files were rendered.")
+        return written
 
-    def _export_summary_report(self, outputs_dir: Path) -> None:
+    def _export_summary_report(self, outputs_dir: Path, written: list[Path]) -> None:
         report_data = {
             "graph_stats": self.analyzer.get_graph_statistics(),
             "centrality_data": self.analyzer.calculate_centrality(),
             "community_metrics": self.community_detector.get_community_metrics(),
+            "visualizations": written,
         }
         self.html_exporter.create_report(outputs_dir, report_data)
 
