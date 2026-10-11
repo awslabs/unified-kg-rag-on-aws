@@ -13,6 +13,7 @@ from unified_kg_rag.adapters.ingestion.description_summarizer import (
 )
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
+from unified_kg_rag.domain.ingestion.graph_rank import with_graph_ranks
 from unified_kg_rag.domain.ingestion.merge import (
     merge_entities,
     merge_relationships,
@@ -453,11 +454,33 @@ class IndexingManager:
                 relationship_remap = relationship_id_remap(
                     relationships, merged_relationships, entity_id_remap
                 )
+        merged_entities, merged_relationships = self._rank_with_stored_graph(
+            suffix, merged_entities, merged_relationships
+        )
         return (
             merged_entities,
             merged_relationships,
             {**entity_id_remap, **relationship_remap},
         )
+
+    def _rank_with_stored_graph(
+        self,
+        suffix: str,
+        entities: list[Entity],
+        relationships: list[Relationship],
+    ) -> tuple[list[Entity], list[Relationship]]:
+        """Recompute the ranks (degrees) of the items the delta writes over the
+        stored graph plus the delta's relationships.
+
+        A stored entity the delta does not write keeps its rank until a full
+        rebuild, also when a removed document dropped one of its edges.
+        """
+        ids = sorted(
+            {e.id for e in entities}
+            | {i for r in relationships for i in (r.source_id, r.target_id)}
+        )
+        stored_neighbors = self.neptune_indexer.read_neighbor_ids(ids, suffix=suffix)
+        return with_graph_ranks(entities, relationships, stored_neighbors)
 
     def _match_stored_names(
         self, suffix: str, entities: list[Entity]

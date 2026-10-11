@@ -276,6 +276,18 @@ class GraphIndexer(BaseIndexer):
         the projection to one tenant/version's label."""
         return []
 
+    def read_neighbor_ids(
+        self, entity_ids: list[str], suffix: str | None = None
+    ) -> dict[str, list[str]]:
+        """Return ``{entity id: ids of the entities it is related to}``.
+
+        Scoped to ``suffix``'s graph. Used to recompute the rank (degree) of
+        the entities an incremental merge writes. Default returns ``{}`` (the
+        rank then counts the delta's relationships only); adapters that can
+        read the graph override it and raise when the read fails.
+        """
+        return {}
+
     @abstractmethod
     def delete_by_id(self, ids: list[str], suffix: str | None = None) -> IndexingStats:
         """Delete vertices/edges by id (for removed/changed documents).

@@ -374,7 +374,7 @@ class OpenSearchIndexer(VectorIndexer):
             "description": entity.description or "",
             "description_embedding": embeddings[1],
             "type": entity.type or "",
-            "rank": entity.rank or 1.0,
+            "rank": entity.rank if entity.rank is not None else 1.0,
             "confidence": (entity.confidence if entity.confidence is not None else 1.0),
             # Chunk lineage: lets LightRAG mix follow entity -> source chunks
             # instead of relying solely on a separate naive vector query.
@@ -394,7 +394,7 @@ class OpenSearchIndexer(VectorIndexer):
             "description": rel.description or "",
             "description_embedding": embeddings[0],
             "weight": rel.weight if rel.weight is not None else 1.0,
-            "rank": rel.rank or 1.0,
+            "rank": rel.rank if rel.rank is not None else 1.0,
             # Chunk lineage: lets LightRAG mix follow relationship -> source
             # chunks (LightRAG's _find_related_text_unit_from_relationships).
             "text_unit_ids": list(rel.text_unit_ids or []),

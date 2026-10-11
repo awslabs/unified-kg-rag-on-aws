@@ -215,6 +215,23 @@ class FakeGraphStore:
             if s == scope
         ]
 
+    def read_neighbor_ids(
+        self, entity_ids: list[str], suffix: str | None = None
+    ) -> dict[str, list[str]]:
+        scope = suffix or Constants.DEFAULT_SUFFIX.value
+        stored = {i for s, i in self.data.get("entities", {}) if s == scope}
+        neighbors: dict[str, set[str]] = {i: set() for i in entity_ids if i in stored}
+        for (s, _), edge in self.data.get("relationships", {}).items():
+            if s != scope:
+                continue
+            for a, b in (
+                (edge["source_id"], edge["target_id"]),
+                (edge["target_id"], edge["source_id"]),
+            ):
+                if a in neighbors and b in stored:
+                    neighbors[a].add(b)
+        return {i: sorted(ids) for i, ids in neighbors.items()}
+
     def find_incident_relationship_ids(
         self, entity_ids: list[str], suffix: str | None = None
     ) -> list[str]:

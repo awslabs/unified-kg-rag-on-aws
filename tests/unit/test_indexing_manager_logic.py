@@ -250,9 +250,10 @@ def test_merge_with_existing_graph_passthrough_when_nothing_existing(manager) ->
     result = mgr.merge_with_existing_graph(new_e, new_r)
     merged_e, merged_r = result.entities, result.relationships
 
-    # No existing rows read back -> returns the inputs unchanged (overwrite mode).
-    assert merged_e == new_e
-    assert merged_r == new_r
+    # No existing rows read back -> returns the inputs (overwrite mode), ranked
+    # by the delta's relationships.
+    assert merged_e == [new_e[0].model_copy(update={"rank": 1})]
+    assert merged_r == [new_r[0].model_copy(update={"rank": 2})]
 
 
 def test_merge_with_existing_graph_handles_empty_inputs(manager) -> None:

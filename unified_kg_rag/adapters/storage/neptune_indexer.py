@@ -161,6 +161,37 @@ class NeptuneIndexer(GraphIndexer):
         except Exception as e:
             raise AWSServiceError(f"Neptune read_relationships failed: {e}") from e
 
+    def read_neighbor_ids(
+        self, entity_ids: list[str], suffix: str | None = None
+    ) -> dict[str, list[str]]:
+        """Read the ids of the entities each entity is related to.
+
+        Scoped to this suffix's entity label (community vertices are not
+        neighbours). Raises :class:`AWSServiceError` when the read fails, as
+        :meth:`read_entities` does.
+        """
+        if not entity_ids:
+            return {}
+        entity_label = self._get_label(self.neptune_config.entity_label_prefix, suffix)
+        try:
+            g = self.neptune_client.g
+            neighbors: dict[str, list[str]] = {}
+            for id_batch in self._batch_iterator(entity_ids):
+                rows = (
+                    g.V()
+                    .hasLabel(entity_label)
+                    .has("id", P.within(id_batch))
+                    .project("id", "neighbors")
+                    .by("id")
+                    .by(__.both().hasLabel(entity_label).values("id").dedup().fold())
+                    .toList()
+                )
+                for row in rows:
+                    neighbors[str(row["id"])] = [str(n) for n in row["neighbors"]]
+            return neighbors
+        except Exception as e:
+            raise AWSServiceError(f"Neptune read_neighbor_ids failed: {e}") from e
+
     def read_entity_names(self, suffix: str | None = None) -> list[tuple[str, str]]:
         """Project ``(id, name)`` for all existing entities in the suffix's label.
 

@@ -301,7 +301,18 @@ class _FailingChain(_ReadChain):
         return super().__getattr__(name)
 
 
-@pytest.mark.parametrize("read", ["read_entities", "read_relationships"])
+def test_neighbor_ids_read_back_per_entity_in_the_suffix_label(indexer) -> None:
+    steps = _serve(indexer, [{"id": "e-vendor", "neighbors": ["e-buyer", "e-bank"]}])
+
+    neighbors = indexer.read_neighbor_ids(["e-vendor"], suffix="tenant-a")
+
+    assert neighbors == {"e-vendor": ["e-buyer", "e-bank"]}
+    assert ("hasLabel", ("Entity-tenant-a",)) in _flatten_steps(steps)
+
+
+@pytest.mark.parametrize(
+    "read", ["read_entities", "read_relationships", "read_neighbor_ids"]
+)
 def test_a_failed_read_raises_instead_of_reading_as_not_stored(indexer, read) -> None:
     # An empty result means "not stored": the merge would overwrite the stored
     # lineage and the text-unit removal would report success without a write.

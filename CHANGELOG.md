@@ -820,6 +820,15 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   that the filter removed (they named a filtered entity) is dropped with them.
   Merged extraction entities list their text units in first-seen order instead
   of set order (#213).
+- **Behaviour change:** entity and relationship `rank` are now computed (MS
+  GraphRAG parity): an entity's rank is its degree and a relationship's the
+  sum of its endpoints' degrees. They stayed 1, so degree-first ordering and
+  the default `indexing.neptune.entity_importance_source: "rank"` sorted by a
+  constant. Graph resolution sets them for a full build; an incremental merge
+  recomputes them for the items it writes over the stored graph
+  (`GraphIndexer.read_neighbor_ids`, default `{}`), and a stored entity the
+  delta does not write keeps its rank until the next full build. A rank of 0
+  is indexed as 0, not 1 (#PR).
 - Community detection no longer copies a cluster that Leiden leaves on its
   own (often an isolated one) to every coarser level as a parent identical to
   its only child; such parents were embedded, indexed and returned once per

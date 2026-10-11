@@ -14,6 +14,7 @@ from unified_kg_rag.domain.ingestion.base_resolver import (
     FuzzyMatcher,
     normalize_entity_type,
 )
+from unified_kg_rag.domain.ingestion.graph_rank import with_graph_ranks
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     cite_relationship_endpoints,
 )
@@ -368,7 +369,6 @@ class EntityResolver(BaseResolver):
             community_ids=self._merge_lists(
                 [e.community_ids for e in entities if e.community_ids]
             ),
-            rank=max((e.rank for e in entities if e.rank is not None), default=1),
             # Recompute from text-unit support (pre-existing frequencies are
             # typically None in a full build), so frequency is a real signal.
             frequency=len(merged_text_unit_ids),
@@ -508,7 +508,6 @@ class RelationshipResolver(BaseResolver):
             ),
             description_embedding=primary_rel.description_embedding,
             text_unit_ids=merged_text_unit_ids,
-            rank=max((r.rank for r in relationships if r.rank is not None), default=1),
             attributes=self._merge_attributes(
                 [r.attributes for r in relationships if r.attributes]
             ),
@@ -561,6 +560,9 @@ class GraphResolver:
             resolved_relationships,
             relationship_stats,
         ) = self.relationship_resolver.resolve(relationships, entity_mapping)
+        resolved_entities, resolved_relationships = with_graph_ranks(
+            resolved_entities, resolved_relationships
+        )
 
         stats = GraphResolutionStats(
             entity_stats=entity_stats,

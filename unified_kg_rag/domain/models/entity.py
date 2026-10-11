@@ -20,8 +20,10 @@ class Entity(Named):
         None, description="The community IDs of the entity"
     )
     rank: int | None = Field(
-        1,
-        description="Rank of the entity, used for sorting. Higher rank indicates more important entity",
+        default=1,
+        description="Graph degree of the entity (the number of distinct entities "
+        "it is related to), set at graph resolution and on incremental merges; "
+        "higher is more important",
     )
     frequency: int | None = Field(
         None,

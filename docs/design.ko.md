@@ -169,6 +169,8 @@ class LocalSearchStrategy(BaseSearchStrategy): ...
 - `DocStatus`(상태 머신: PENDING→PARSING→PROCESSING→PROCESSED|FAILED), `DocStatusRecord`(콘텐츠 해시 + 산출물 계보 + 접미사), `DocumentDelta`(new/changed/unchanged/deleted), `DocumentLineage`(문서별 산출물 귀속)
 - `SearchQuery`/`SearchResult`/`RetrievalResult`, `SearchStrategy`/`SearchType`/`RetrieverRole`
 
+**Rank(MS GraphRAG와 동등)**: 엔티티의 `rank`는 degree(관계로 이어진 서로 다른 엔티티 수)이고, 관계의 `rank`는 두 끝점 degree의 합입니다(`domain/ingestion/graph_rank.py`). 전체 빌드에서는 그래프 해석이 값을 정하고, 증분 병합은 쓰는 엔티티와 관계마다 저장된 그래프의 이웃(`GraphIndexer.read_neighbor_ids`)과 델타의 관계를 합쳐 다시 계산합니다. 델타가 쓰지 않는 저장된 엔티티는 다음 전체 빌드까지 rank를 유지하며, 삭제된 문서가 그 간선을 없앤 경우도 마찬가지입니다.
+
 **계보가 핵심 데이터입니다.** 엔티티와 관계는 추출할 때 자신이 나온 `text_unit_ids`를 기록합니다. "이 엔티티가 이 텍스트 단위와 관련 있는가?"는 토큰 중첩 휴리스틱이 아니라 이 계보로 판단하므로 정확하고 언어에 상관없이 동작합니다.
 
 **인덱스 접미사**: 모든 OpenSearch 인덱스와 Neptune 레이블 이름은 `<prefix>-<suffix>[-<additional_suffix>]` 형식입니다. 접미사는 수집할 때 `processing.document_parsing.index_value`에서 기록하고, 질의할 때 `RAGInput.suffix`(`run-rag`/`run-eval`의 `--suffix`)로 고릅니다. 두 값의 기본값은 모두 `default`이며, `indexing.additional_suffix`는 양쪽에 같은 두 번째 구간을 덧붙입니다. 이 문서는 그 결과 값을 *인덱스 접미사*라고 부릅니다. 테넌트나 코퍼스 버전마다 하나씩 쓰는 것이 의도된 사용법입니다.

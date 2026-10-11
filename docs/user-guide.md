@@ -521,7 +521,7 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `indexing.neptune.max_attempts` | `4` | Attempts per Neptune write, including the first. Failures are retried with jittered exponential backoff from `retry_delay_seconds` (`2`), except errors a retry cannot fix (malformed query, access denied, bad parameter), which fail on the first attempt. `1` disables the retry. |
 | `indexing.neptune.max_hops` | `3` | Neighbour-expansion depth at retrieval time. |
 | `indexing.neptune.property_max_length` | `4000` | Character cap per Neptune property value. Keep it above the longest description that is not re-summarized (summarization triggers above 600 tokens, ~2,400 characters). Takes effect on re-ingestion. |
-| `indexing.neptune.entity_importance_source` | `"rank"` | Entity importance in graph-expansion relevance: `rank` (indexed entity rank), `degree` (edge count at query time) or `none` (neutral 0.5 for every entity). |
+| `indexing.neptune.entity_importance_source` | `"rank"` | Entity importance in graph-expansion relevance: `rank` (indexed entity rank, its degree), `degree` (edge count at query time) or `none` (neutral 0.5 for every entity). |
 | `indexing.neptune.traversal_fetch_multiplier` | `3` | Graph expansion fetches this many times the result width, ranks, then cuts. `1` = cut in traversal order. |
 
 ### 2.6 `search` — retrieval, fusion, reranking, per-strategy knobs

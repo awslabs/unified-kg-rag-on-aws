@@ -169,6 +169,8 @@ The `domain/models/` package contains pure Pydantic models with no infrastructur
 - `DocStatus` (state machine: PENDING→PARSING→PROCESSING→PROCESSED|FAILED), `DocStatusRecord` (content hash + artifact lineage + suffix), `DocumentDelta` (new/changed/unchanged/deleted), `DocumentLineage` (per-document artifact attribution)
 - `SearchQuery`/`SearchResult`/`RetrievalResult`, `SearchStrategy`/`SearchType`/`RetrieverRole`
 
+**Rank (MS GraphRAG parity)**: an entity's `rank` is its degree (the number of distinct entities it is related to) and a relationship's `rank` the sum of its endpoints' degrees (`domain/ingestion/graph_rank.py`). Graph resolution sets them for a full build; an incremental merge recomputes them for every entity and relationship it writes, over the stored graph's neighbours (`GraphIndexer.read_neighbor_ids`) plus the delta's relationships. A stored entity the delta does not write keeps its rank until the next full build, including when a removed document dropped one of its edges.
+
 **Lineage is the core data.** Entities/relationships record the `text_unit_ids` they appeared in at extraction time, and this lineage, rather than a token-overlap heuristic, decides "is this entity related to this text unit?" accurately and language-independently.
 
 **Index suffix**: every OpenSearch index and Neptune label is named `<prefix>-<suffix>[-<additional_suffix>]`. The suffix is written at ingestion from `processing.document_parsing.index_value` and selected at query time by `RAGInput.suffix` (`--suffix` on `run-rag`/`run-eval`); both default to `default`, and `indexing.additional_suffix` appends the same second segment on both sides. This document calls the resulting value the *index suffix*; one per tenant or corpus version is the intended use.
