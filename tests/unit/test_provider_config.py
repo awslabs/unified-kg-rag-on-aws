@@ -16,6 +16,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from tests.fixtures.config_template import uncommented_template
 from unified_kg_rag.domain.models import (
     Backend,
     Config,
@@ -39,12 +40,24 @@ _LOCAL_EMBEDDING = {
 
 @pytest.mark.parametrize(
     "path",
-    ["config-template.yaml", "docker/config.yaml", "docker/config.local.yaml"],
+    [
+        "config-template.yaml",
+        "config-template.yaml (uncommented)",
+        "docker/config.yaml",
+        "docker/config.local.yaml",
+    ],
 )
 def test_shipped_yaml_without_providers_keeps_the_aws_providers(path: str) -> None:
-    raw = yaml.safe_load((_ROOT / path).read_text(encoding="utf-8")) or {}
+    # The uncommented template also sets every commented-out key (the
+    # providers section and connection keys) to the default it shows.
+    if path.endswith("(uncommented)"):
+        raw = uncommented_template()
+    else:
+        raw = yaml.safe_load((_ROOT / path).read_text(encoding="utf-8")) or {}
     config = Config(**raw)
-    if "backend" in raw or "providers" in raw:
+    if raw.get("backend", Backend.AWS.value) != Backend.AWS.value:
+        pytest.skip(f"{path} selects another backend")
+    if "providers" in raw and not path.startswith("config-template.yaml"):
         pytest.skip(f"{path} selects providers explicitly")
     assert config.backend is Backend.AWS
     kinds = {

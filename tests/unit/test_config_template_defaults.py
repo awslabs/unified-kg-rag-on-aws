@@ -9,30 +9,50 @@ the model default reads as authoritative while the running system does
 something else. Intentional differences are listed in ``_INTENTIONAL`` with the
 reason; anything else is drift to fix in the template or the model.
 
+The keys the template shows commented out (the connection keys
+``backend: local`` fills in, the ``providers`` section, model ids that follow
+it) are checked through the uncommented view of the template
+(``tests.fixtures.config_template``): against ``Config()``, and, for the keys
+``LOCAL_PRESET`` sets, by checking that ``backend: local`` alone switches the
+template to the preset.
+
 AWS-free: only YAML parsing and Pydantic validation.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
 
+from tests.fixtures.config_template import (
+    TEMPLATE_PATH,
+    commented_key_paths,
+    uncommented_template,
+)
 from unified_kg_rag.adapters.renderers.interactive import InteractiveRenderer
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models.provider_config import LOCAL_PRESET
 
 pytestmark = pytest.mark.unit
 
-_TEMPLATE = Path(__file__).resolve().parents[2] / "config-template.yaml"
+_TEMPLATE = TEMPLATE_PATH
 
 # Dotted template path -> why the template value may differ from Config().
 _INTENTIONAL: dict[str, str] = {
     "graph.visualization.interactive.max_nodes": (
         "free-form renderer dict; the default lives in "
         "InteractiveRenderer.DEFAULT_MAX_NODES (checked separately below)"
+    ),
+}
+
+# Commented-out keys that show an example rather than the default, and why.
+_COMMENTED_EXAMPLES: dict[str, str] = {
+    "graph.visualization.outputs_directory": (
+        "unset by default (outputs go under the pipeline cache directory); "
+        "the comment shows a path to set"
     ),
 }
 
@@ -67,16 +87,56 @@ def test_template_loads_as_config(raw_template: dict[str, Any]) -> None:
     Config(**raw_template)
 
 
-def test_template_values_equal_model_defaults(raw_template: dict[str, Any]) -> None:
+@pytest.fixture(scope="module")
+def full_template() -> dict[str, Any]:
+    """The template with its commented-out keys uncommented."""
+    return uncommented_template()
+
+
+def test_uncommented_view_finds_the_commented_defaults() -> None:
+    # Guards the parser: a template edit that breaks the commented-key layout
+    # would otherwise silently shrink what the drift checks below compare.
+    paths = set(commented_key_paths())
+    assert {
+        "aws.neptune.port",
+        "aws.neptune.use_iam",
+        "aws.opensearch.allow_anonymous",
+        "providers.llm.kind",
+        "providers.embedding.dimension",
+        "providers.rerank.batch_size",
+        "providers.doc_status.sqlite_path",
+        "indexing.opensearch.embedding_model_id",
+        "search.reranking.rerank_model_id",
+        "evaluation.embedding_model_id",
+    } <= paths
+    assert len(paths) >= 40
+    # Examples under free-form mappings and prose stay comments.
+    assert not any(
+        p.startswith(("aws.bedrock.model_overrides", "graph.visualization.embeddings"))
+        for p in paths
+    )
+
+
+def test_uncommented_template_loads_as_config(full_template: dict[str, Any]) -> None:
+    Config(**full_template)
+
+
+@pytest.mark.parametrize("view", ["as_shipped", "uncommented"])
+def test_template_values_equal_model_defaults(
+    raw_template: dict[str, Any], full_template: dict[str, Any], view: str
+) -> None:
     # Compare validated values, so "0.5" vs 0.5 or an enum vs its string value
     # are not reported as drift.
-    from_template = Config(**raw_template).model_dump(mode="json")
+    shown_template = raw_template if view == "as_shipped" else full_template
+    from_template = Config(**shown_template).model_dump(mode="json")
     defaults = Config().model_dump(mode="json")
 
     drift = []
-    for path in _leaves(raw_template):
+    for path in _leaves(shown_template):
         dotted = ".".join(path)
-        if dotted in _INTENTIONAL:
+        if dotted in _INTENTIONAL or (
+            view == "uncommented" and dotted in _COMMENTED_EXAMPLES
+        ):
             continue
         shown = _lookup(from_template, path)
         default = _lookup(defaults, path)
@@ -107,8 +167,38 @@ def test_intentional_differences_are_still_present(
     assert not stale, f"stale _INTENTIONAL entries: {stale}"
 
 
+def test_commented_examples_are_still_commented_examples(
+    full_template: dict[str, Any],
+) -> None:
+    defaults = Config().model_dump(mode="json")
+    shown = Config(**full_template).model_dump(mode="json")
+    stale = [
+        dotted
+        for dotted in _COMMENTED_EXAMPLES
+        if dotted not in commented_key_paths()
+        or _lookup(shown, tuple(dotted.split(".")))
+        == _lookup(defaults, tuple(dotted.split(".")))
+    ]
+    assert not stale, f"stale _COMMENTED_EXAMPLES entries: {stale}"
+
+
 def test_interactive_max_nodes_matches_renderer_default(
     raw_template: dict[str, Any],
 ) -> None:
     shown = raw_template["graph"]["visualization"]["interactive"]["max_nodes"]
     assert shown == InteractiveRenderer.DEFAULT_MAX_NODES
+
+
+def test_backend_local_alone_switches_the_template_to_the_preset(
+    raw_template: dict[str, Any],
+) -> None:
+    # The keys LOCAL_PRESET fills are commented out in the template, so a copy
+    # with only `backend: local` changed gets every preset value.
+    local = Config(**{**raw_template, "backend": "local"}).model_dump(mode="json")
+    preset = Config(**LOCAL_PRESET).model_dump(mode="json")
+    differ = [
+        ".".join(path)
+        for path in _leaves(LOCAL_PRESET)
+        if _lookup(local, path) != _lookup(preset, path)
+    ]
+    assert not differ, f"template keys override the local preset: {differ}"
