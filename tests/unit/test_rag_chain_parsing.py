@@ -355,8 +355,8 @@ async def test_follow_up_is_searched_and_answered_as_the_standalone_question(
     chain._get_chain_for_prompt = _chain_for  # type: ignore[assignment]
     mocker.patch.object(
         chain.memory_manager,
-        "load_context",
-        mocker.AsyncMock(return_value=("Human: Tell me about the Widget", [])),
+        "load_history",
+        mocker.AsyncMock(return_value="Human: Tell me about the Widget"),
     )
     mocker.patch.object(chain.memory_manager, "add_turn", mocker.AsyncMock())
     searched: list[str] = []
@@ -394,7 +394,6 @@ async def test_load_memory_step_skips_without_memory(config: Config) -> None:
     state = {"use_memory": False}
     out = await chain._load_memory_step(state)
     assert out["history"] == ""
-    assert out["relevant_entities"] == []
 
 
 async def test_load_memory_step_skips_without_conversation_id(config: Config) -> None:
@@ -402,7 +401,6 @@ async def test_load_memory_step_skips_without_conversation_id(config: Config) ->
     state = {"use_memory": True, "conversation_id": None}
     out = await chain._load_memory_step(state)
     assert out["history"] == ""
-    assert out["relevant_entities"] == []
 
 
 # --- _resolve_strategy ---------------------------------------------------

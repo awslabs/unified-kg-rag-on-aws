@@ -1095,14 +1095,16 @@ Interactive mode auto-enables memory. In-session commands:
 For single-shot multi-turn from the CLI, reuse the same `--conversation-id` with
 `--use-memory`. Memory limits are under the `memory` config section.
 
-Memory also tracks entities across turns: after each user message an LLM call
-(`search.entity_extraction_model_id`) extracts the entities it mentions, and the
-five most recently mentioned ones are added to the next query's entity focus.
 Before retrieval, a follow-up is rewritten from the history as a standalone
 question (one `search.query_rewrite_model_id` call per turn that has history;
 prompt override key `query_rewrite`), so "what about its suppliers?" is routed,
 searched and answered as a question that names the entity from the earlier
-turn.
+turn. The rewrite reads the last `memory.max_messages_per_conversation`
+messages, each earlier answer cut to its first 1,000 characters. It runs
+whenever `use_memory` finds history, also with `enable_query_processing`
+off: that flag covers translation and entity/keyword extraction, while
+without the rewrite a follow-up would retrieve nothing useful. Memory adds no
+other LLM call per turn.
 
 ---
 

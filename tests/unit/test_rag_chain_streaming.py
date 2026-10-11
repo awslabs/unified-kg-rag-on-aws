@@ -94,10 +94,10 @@ class _RecordingMemoryManager:
     def __init__(self) -> None:
         self.messages: list[tuple[str, str, str]] = []
 
-    async def load_context(self, conv_id: str) -> tuple[str, list[str]]:
-        return "", []
+    async def load_history(self, conv_id: str) -> str:
+        return ""
 
-    async def add_turn(self, conv_id: str, user: str, assistant: str, **_: Any) -> None:
+    async def add_turn(self, conv_id: str, user: str, assistant: str) -> None:
         self.messages.append((conv_id, "user", user))
         self.messages.append((conv_id, "assistant", assistant))
 

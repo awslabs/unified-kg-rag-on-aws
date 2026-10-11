@@ -1047,13 +1047,14 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
 CLI에서 한 번씩 실행하며 여러 턴을 이어 가려면 같은 `--conversation-id`와
 `--use-memory`를 함께 쓰세요. 메모리 한도는 `memory` 설정 섹션에 있습니다.
 
-메모리는 턴 사이의 엔티티도 추적합니다. 사용자 메시지마다 LLM 호출
-(`search.entity_extraction_model_id`)이 메시지에 나온 엔티티를 추출하고, 가장 최근에
-언급된 엔티티 다섯 개를 다음 질의의 엔티티 초점에 더합니다. 검색 전에는 후속 질문을
-대화 이력으로 독립된 질문으로 다시 씁니다(이력이 있는 턴마다
+검색 전에는 후속 질문을 대화 이력으로 독립된 질문으로 다시 씁니다(이력이 있는 턴마다
 `search.query_rewrite_model_id` 호출 한 번, 프롬프트 재정의 키 `query_rewrite`). 그래서
 "그 회사의 공급업체는?" 같은 후속 질문도 앞선 턴의 엔티티 이름이 들어간 질문으로
-라우팅, 검색, 답변됩니다.
+라우팅, 검색, 답변됩니다. 재작성은 최근 `memory.max_messages_per_conversation`개
+메시지를 읽고, 앞선 답변은 각각 앞 1,000자까지만 씁니다. `use_memory`로 이력을 찾으면
+`enable_query_processing`을 꺼도 재작성은 실행됩니다. 이 플래그는 번역과 엔티티·키워드
+추출을 끄는 설정이고, 재작성 없이는 후속 질문으로 쓸 만한 결과를 찾지 못하기
+때문입니다. 메모리는 이 외에 턴마다 LLM을 추가로 호출하지 않습니다.
 
 ---
 

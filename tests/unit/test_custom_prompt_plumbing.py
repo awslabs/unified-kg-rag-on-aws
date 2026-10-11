@@ -59,11 +59,6 @@ _COMPONENTS: dict[str, tuple[str, str, dict[str, Any]]] = {
         {},
     ),
     "prompt_tuner": ("unified_kg_rag.application.prompts.tuner", "PromptTuner", {}),
-    "memory": (
-        "unified_kg_rag.adapters.retrieval.memory_manager",
-        "GraphRAGChatMessageHistory",
-        {"conversation_id": "c-1"},
-    ),
     "drift": (f"{_STRATEGIES}.drift_search", "DriftSearchStrategy", {"retrievers": {}}),
     "global": (
         f"{_STRATEGIES}.global_search",

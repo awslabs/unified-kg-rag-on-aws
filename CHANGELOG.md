@@ -146,7 +146,10 @@ Library API (Python callers and custom backends).
 - Removed APIs: `IncrementalIndexer.plan` / `prune_changed` /
   `remove_deleted` (use `detect_delta` and `remove_changed_and_deleted`)
   (#214); the LangChain-memory wrapper, `MemoryManager.get_langchain_memory`
-  / `add_message` (use `load_context` / `add_turn`) (#212); the
+  / `add_message` (use `load_history` / `add_turn`) (#212); conversation
+  entity tracking: `MemoryManager.load_context` (now `load_history`),
+  `add_turn(entities=)`, `MemoryManager(providers=)` and the history's entity
+  extractor (#PR); the
   `Document` page-element model and `Document.detected_language` (#216);
   `OptimizedContext.quality_score` and other unused parameters and
   test-only methods (#169).
@@ -211,9 +214,8 @@ Library API (Python callers and custom backends).
   (#125); descriptions are written in the target language (#179); gleaning
   stops per unit once it adds nothing new (#171); output-token floors follow
   the configured limits (#179).
-- Conversation memory is process-wide by default and keeps the most recent
-  entities in focus; `memory.max_conversation_age_hours` is enforced
-  (#176, #212).
+- Conversation memory is process-wide by default;
+  `memory.max_conversation_age_hours` is enforced (#176, #212).
 - A doc-status registry that cannot be read fails the loading stage
   (`DocStatusRegistryError`) instead of silently rebuilding (#186). A
   relative `providers.doc_status.sqlite_path` resolves against the config
@@ -254,6 +256,11 @@ Library API (Python callers and custom backends).
 - Local search: the entity frequency filter no longer drops the query's own
   matched entities, so a hub-heavy graph cannot leave the context with no
   entities; only expanded entities above the threshold are dropped (#PR).
+- Conversation memory: earlier turns' entities no longer leak into the entity
+  focus of a rewritten follow-up, and a turn no longer pays an
+  entity-extraction LLM call (for DRIFT and global search too); the rewrite
+  resolves references instead and reads a bounded history (earlier answers
+  cut to 1,000 characters) (#PR).
 - Evaluation: `answer_match` no longer counts a different number or name as
   a match; judge failures are recorded per query instead of discarding the
   run; non-zero exit codes on failed scoring (#158, #210).

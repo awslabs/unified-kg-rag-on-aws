@@ -236,7 +236,6 @@ def test_local_backend_reaches_every_query_component(no_aws, tmp_path) -> None:
     providers = chain.providers
     assert isinstance(chain.factory, OllamaLanguageModelFactory)
     assert isinstance(chain.token_manager._token_counter, LocalTokenCounter)
-    assert chain.memory_manager.providers is providers
     for strategy in [s for s in SearchStrategy if s is not SearchStrategy.AUTO]:
         instance = chain._get_strategy_instance(strategy)
         assert instance.providers is providers, strategy
@@ -326,7 +325,6 @@ def test_local_backend_reaches_evaluators_and_prompt_tuning(no_aws, tmp_path) ->
 def test_standalone_components_follow_the_config(no_aws, tmp_path) -> None:
     # Built without a bundle, each component still resolves config.providers.
     from unified_kg_rag.adapters.ingestion.chunker import IntelligentTextChunker
-    from unified_kg_rag.adapters.retrieval.memory_manager import MemoryManager
     from unified_kg_rag.adapters.retrieval.token_manager import TokenManager
 
     config = _local_config(tmp_path)
@@ -334,9 +332,6 @@ def test_standalone_components_follow_the_config(no_aws, tmp_path) -> None:
         IntelligentTextChunker(config).factory, OllamaLanguageModelFactory
     )
     assert isinstance(TokenManager(config)._token_counter, LocalTokenCounter)
-    assert isinstance(
-        MemoryManager(config).providers.llm_factory, OllamaLanguageModelFactory
-    )
 
 
 # --- CLI overrides ------------------------------------------------------------
