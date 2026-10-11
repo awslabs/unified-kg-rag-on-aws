@@ -196,7 +196,7 @@ The `DataIngestionPipeline` in `application/ingestion/pipeline.py` runs 12 stage
 | 9 | Claim resolution (optional) | `claim_resolver.py` | |
 | 10 | Graph analysis | `graph_analyzer.py` | centrality (degree/betweenness/PageRank/eigenvector), statistics |
 | 11 | Community detection | `community_detector.py` | hierarchical Leiden, community report generation (degree-sort + token-budget pack) |
-| 12 | Indexing | `application/storage/indexing_manager.py` | OpenSearch + Neptune |
+| 12 | Indexing | `application/storage/indexing_manager.py` | OpenSearch + Neptune; a full build replaces every index type of the run's suffixes, emptying one the run has nothing of |
 
 > The stage order is single-sourced in `DataIngestionPipeline.STAGE_CLASSES` (`application/ingestion/pipeline.py`). Stages that require Bedrock are declared in `DataIngestionPipeline.BOTO_REQUIRED_STAGES`; **graph resolution (7) is in this set** because it re-summarizes merged descriptions with an LLM.
 

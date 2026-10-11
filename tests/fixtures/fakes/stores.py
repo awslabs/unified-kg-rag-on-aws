@@ -11,6 +11,7 @@ OpenSearch.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any
 
 from unified_kg_rag.adapters.storage.neptune_codec import (
@@ -98,8 +99,10 @@ class FakeGraphStore:
 
     # --- writes ------------------------------------------------------------
 
-    def index_entities(self, entities: list[Any]) -> IndexingStats:
-        for suffix in {BaseIndexer.get_suffix(e) for e in entities}:
+    def index_entities(
+        self, entities: list[Any], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
+        for suffix in {BaseIndexer.get_suffix(e) for e in entities} | set(suffixes):
             self._drop_vertices(suffix, list(self.ids("entities")))
         return self.upsert_entities(entities)
 
@@ -135,7 +138,13 @@ class FakeGraphStore:
             stats.add_success()
         return stats
 
-    def index_communities(self, communities: list[Any]) -> IndexingStats:
+    def index_communities(
+        self, communities: list[Any], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
+        bucket = self.data.setdefault("communities", {})
+        replaced = {BaseIndexer.get_suffix(c) for c in communities} | set(suffixes)
+        for key in [key for key in bucket if key[0] in replaced]:
+            del bucket[key]
         return self.upsert_communities(communities)
 
     def upsert_communities(self, communities: list[Any]) -> IndexingStats:
@@ -241,20 +250,43 @@ class FakeVectorStore(_Recorder):
     def initialize(self) -> bool:
         return True
 
-    def index_text_units(self, text_units: list[Any]) -> IndexingStats:
-        return self._put("text_units", text_units)
+    def _replace(
+        self, collection: str, items: list[Any], suffixes: Collection[str]
+    ) -> IndexingStats:
+        """Full build: the items replace those of their and ``suffixes``'s
+        suffixes (the alias swap onto a new index)."""
+        bucket = self.data.setdefault(collection, {})
+        replaced = {BaseIndexer.get_suffix(item) for item in items} | set(suffixes)
+        for item_id in [
+            i for i, item in bucket.items() if BaseIndexer.get_suffix(item) in replaced
+        ]:
+            del bucket[item_id]
+        return self._put(collection, items)
 
-    def index_entities(self, entities: list[Any]) -> IndexingStats:
-        return self._put("entities", entities)
+    def index_text_units(
+        self, text_units: list[Any], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
+        return self._replace("text_units", text_units, suffixes)
 
-    def index_relationships(self, relationships: list[Any]) -> IndexingStats:
-        return self._put("relationships", relationships)
+    def index_entities(
+        self, entities: list[Any], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
+        return self._replace("entities", entities, suffixes)
 
-    def index_community_reports(self, reports: list[Any]) -> IndexingStats:
-        return self._put("community_reports", reports)
+    def index_relationships(
+        self, relationships: list[Any], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
+        return self._replace("relationships", relationships, suffixes)
 
-    def index_claims(self, claims: list[Any]) -> IndexingStats:
-        return self._put("claims", claims)
+    def index_community_reports(
+        self, reports: list[Any], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
+        return self._replace("community_reports", reports, suffixes)
+
+    def index_claims(
+        self, claims: list[Any], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
+        return self._replace("claims", claims, suffixes)
 
     def upsert_text_units(self, text_units: list[Any]) -> IndexingStats:
         return self._put("text_units", text_units)

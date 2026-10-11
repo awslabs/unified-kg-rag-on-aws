@@ -57,7 +57,7 @@ def _run_full_entity_builder(indexer, entities: list[Entity]) -> list[str]:
     calls: list[str] = []
     captured_factory = None
 
-    def fake_index_generic(items, name, prefix, factory, *, clear_first):
+    def fake_index_generic(items, name, prefix, factory, *, clear_first, suffixes):
         nonlocal captured_factory
         captured_factory = factory("Entity")
         return None
@@ -100,7 +100,7 @@ def test_index_entities_passes_full_label_to_factory(indexer, mocker) -> None:
     # prefix, clearing that label first (full index rebuilds its own label).
     captured: dict = {}
 
-    def fake_index_generic(items, name, prefix, factory, *, clear_first):
+    def fake_index_generic(items, name, prefix, factory, *, clear_first, suffixes):
         captured.update({"name": name, "prefix": prefix, "clear": clear_first})
 
     indexer._index_generic = fake_index_generic  # type: ignore[assignment]
@@ -117,7 +117,7 @@ def test_index_entities_writes_list_props_multi_valued(indexer) -> None:
     calls: list[str] = []
     captured_factory = None
 
-    def fake_index_generic(items, name, prefix, factory, *, clear_first):
+    def fake_index_generic(items, name, prefix, factory, *, clear_first, suffixes):
         nonlocal captured_factory
         captured_factory = factory("Entity")
 
@@ -226,6 +226,22 @@ def test_index_communities_empty_returns_empty_stats(indexer) -> None:
     stats = indexer.index_communities([])
     assert stats.total_items == 0
     assert stats.successful_items == 0
+
+
+@pytest.mark.parametrize("method", ["index_communities", "index_entities"])
+def test_full_index_without_items_clears_the_suffix_label(
+    indexer, mocker, method
+) -> None:
+    # A rebuild with nothing of this type for the suffix empties its label
+    # instead of leaving the previous build's vertices in place.
+    clear = mocker.patch.object(indexer, "_clear_existing_data_by_label")
+    batch = mocker.patch.object(indexer, "_execute_batch_traversal")
+
+    getattr(indexer, method)([], suffixes=["tenant-a"])
+
+    (label,) = [call.args[0] for call in clear.call_args_list]
+    assert label.endswith("tenant-a")
+    batch.assert_not_called()
 
 
 def test_index_communities_skips_member_edges_when_no_entities(indexer, mocker) -> None:

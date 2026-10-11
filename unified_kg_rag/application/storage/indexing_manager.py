@@ -3,6 +3,7 @@
 import time
 from collections.abc import Callable
 from concurrent.futures import as_completed
+from functools import partial
 from typing import Any, NamedTuple
 
 from pydantic import BaseModel, Field
@@ -53,6 +54,8 @@ class IndexingTask(NamedTuple):
     fn: Callable
     args: list
     key: str
+    # Run even without items (a full build replacing a type with nothing).
+    run_empty: bool = False
 
 
 class IndexingManager:
@@ -170,35 +173,54 @@ class IndexingManager:
         community_reports: list[CommunityReport] | None = None,
         claims: list[Claim] | None = None,
     ) -> dict[str, IndexingStats]:
+        """Replace the stored artifacts of the run's suffixes (full build).
+
+        Every index type is rebuilt for every suffix the run's artifacts carry,
+        including a type the run has none of (no claims, no reports): its index
+        is emptied rather than left serving a previous run's items.
+        """
         start_time = time.time()
         results: dict[str, IndexingStats] = {}
 
         self._enrich_text_units(text_units, communities)
+        suffixes = self._discover_suffixes(
+            [
+                *(text_units or []),
+                *(entities or []),
+                *(relationships or []),
+                *(communities or []),
+                *(community_reports or []),
+                *(claims or []),
+            ]
+        )
+
+        def replace(fn: Callable, items: list[Any] | None, key: str) -> IndexingTask:
+            return IndexingTask(
+                partial(fn, suffixes=suffixes), [items or []], key, run_empty=True
+            )
 
         phase1_tasks = [
-            IndexingTask(
+            replace(
                 self.opensearch_indexer.index_text_units,
-                [text_units],
+                text_units,
                 "opensearch_text_units",
             ),
-            IndexingTask(
+            replace(
                 self.opensearch_indexer.index_entities,
-                [entities],
+                entities,
                 "opensearch_entities",
             ),
-            IndexingTask(
+            replace(
                 self.opensearch_indexer.index_community_reports,
-                [community_reports],
+                community_reports,
                 "opensearch_community_reports",
             ),
-            IndexingTask(
+            replace(
                 self.opensearch_indexer.index_claims,
-                [claims],
+                claims,
                 "opensearch_claims",
             ),
-            IndexingTask(
-                self.neptune_indexer.index_entities, [entities], "neptune_entities"
-            ),
+            replace(self.neptune_indexer.index_entities, entities, "neptune_entities"),
         ]
         # The OpenSearch relationship VECTOR index is only consumed by LightRAG
         # high-level keyword retrieval (mix/hybrid). Skip it for a GraphRAG-only
@@ -207,9 +229,9 @@ class IndexingManager:
         # them for graph expansion.
         if self.config.indexing.opensearch.build_relationship_vector_index:
             phase1_tasks.append(
-                IndexingTask(
+                replace(
                     self.opensearch_indexer.index_relationships,
-                    [relationships],
+                    relationships,
                     "opensearch_relationships",
                 )
             )
@@ -218,14 +240,15 @@ class IndexingManager:
         results.update(self._run_indexing_phase(phase1_tasks))
 
         phase2_tasks = [
+            # Replacing the entity vertices already dropped the old edges.
             IndexingTask(
                 self.neptune_indexer.index_relationships,
                 [relationships],
                 "neptune_relationships",
             ),
-            IndexingTask(
+            replace(
                 self.neptune_indexer.index_communities,
-                [communities],
+                communities,
                 "neptune_communities",
             ),
         ]
@@ -561,13 +584,13 @@ class IndexingManager:
         self, tasks: list[IndexingTask]
     ) -> dict[str, IndexingStats]:
         phase_results: dict[str, IndexingStats] = {}
-        valid_tasks = [task for task in tasks if task.args and task.args[0]]
+        valid_tasks = [task for task in tasks if task.run_empty or task.args[0]]
 
         if not valid_tasks:
             logger.info("No tasks to run in this phase.")
             return phase_results
 
-        total_items = sum(len(task.args[0]) for task in valid_tasks)
+        total_items = sum(len(task.args[0] or []) for task in valid_tasks)
         logger.info(
             "Executing %s tasks with %s total items...", len(valid_tasks), total_items
         )

@@ -3,6 +3,7 @@
 import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from collections.abc import Collection
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -168,8 +169,13 @@ class BaseIndexer(ABC):
         """Graph vertex label for ``prefix`` under ``suffix``."""
         return graph_label(prefix, suffix, self.config.indexing.additional_suffix)
 
-    def _group_items_by_suffix(self, items: list[Any]) -> dict[str, list[Any]]:
-        grouped = defaultdict(list)
+    def _group_items_by_suffix(
+        self, items: list[Any], suffixes: Collection[str] = ()
+    ) -> dict[str, list[Any]]:
+        """``items`` by suffix; each of ``suffixes`` is present, if empty."""
+        grouped: dict[str, list[Any]] = defaultdict(list)
+        for suffix in suffixes:
+            grouped[suffix] = []
         for item in items:
             grouped[self.get_suffix(item)].append(item)
 
@@ -189,18 +195,27 @@ class GraphIndexer(BaseIndexer):
     used by :class:`~unified_kg_rag.application.ingestion.incremental.IncrementalIndexer`.
     Adapters (e.g. NeptuneIndexer) implement it; nothing depends on a concrete
     backend.
+
+    A full-run ``index_*`` replaces the stored items of every suffix its items
+    carry and of every one in ``suffixes``: a suffix the rebuild has none of
+    is emptied rather than left serving the previous run's items.
     """
 
     @abstractmethod
-    def index_entities(self, entities: list[Entity]) -> IndexingStats:
+    def index_entities(
+        self, entities: list[Entity], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         pass
 
     @abstractmethod
     def index_relationships(self, relationships: list[Relationship]) -> IndexingStats:
-        pass
+        """Write the edges; replacing ``index_entities`` already dropped the
+        suffix's old ones with their vertices."""
 
     @abstractmethod
-    def index_communities(self, communities: list[Community]) -> IndexingStats:
+    def index_communities(
+        self, communities: list[Community], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         pass
 
     @abstractmethod
@@ -287,27 +302,38 @@ class VectorIndexer(BaseIndexer):
 
     Single write-side contract for vector stores: full-run ``index_*`` plus the
     incremental ``upsert_*``/``delete_by_id`` surface. Adapters (e.g.
-    OpenSearchIndexer) implement it.
+    OpenSearchIndexer) implement it. A full-run ``index_*`` replaces its
+    suffixes' items, those in ``suffixes`` included (see :class:`GraphIndexer`).
     """
 
     @abstractmethod
-    def index_text_units(self, text_units: list[TextUnit]) -> IndexingStats:
+    def index_text_units(
+        self, text_units: list[TextUnit], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         pass
 
     @abstractmethod
-    def index_entities(self, entities: list[Entity]) -> IndexingStats:
+    def index_entities(
+        self, entities: list[Entity], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         pass
 
     @abstractmethod
-    def index_community_reports(self, reports: list[CommunityReport]) -> IndexingStats:
+    def index_community_reports(
+        self, reports: list[CommunityReport], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         pass
 
     @abstractmethod
-    def index_relationships(self, relationships: list[Relationship]) -> IndexingStats:
+    def index_relationships(
+        self, relationships: list[Relationship], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         """Embed and index relationship descriptions (LightRAG global)."""
 
     @abstractmethod
-    def index_claims(self, claims: list[Claim]) -> IndexingStats:
+    def index_claims(
+        self, claims: list[Claim], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         """Embed and index claim (covariate) descriptions as searchable vectors."""
 
     @abstractmethod

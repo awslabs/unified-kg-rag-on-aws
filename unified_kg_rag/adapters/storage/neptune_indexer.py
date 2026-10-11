@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import random
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from concurrent.futures import as_completed
 from typing import Any, cast
 
@@ -195,7 +195,9 @@ class NeptuneIndexer(GraphIndexer):
     def initialize(self) -> bool:
         return True
 
-    def index_entities(self, entities: list[Entity]) -> IndexingStats:
+    def index_entities(
+        self, entities: list[Entity], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         def get_traversal_builder(label: str) -> Callable:
             def builder(g: GraphTraversalSource, batch: list[Entity]) -> GraphTraversal:
                 t = g
@@ -216,6 +218,7 @@ class NeptuneIndexer(GraphIndexer):
             self.neptune_config.entity_label_prefix,
             get_traversal_builder,
             clear_first=True,
+            suffixes=suffixes,
         )
 
     def index_relationships(self, relationships: list[Relationship]) -> IndexingStats:
@@ -224,8 +227,10 @@ class NeptuneIndexer(GraphIndexer):
         # behavioural difference to justify two code paths.
         return self._write_relationships(relationships)
 
-    def index_communities(self, communities: list[Community]) -> IndexingStats:
-        return self._index_communities(communities, upsert=False)
+    def index_communities(
+        self, communities: list[Community], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
+        return self._index_communities(communities, upsert=False, suffixes=suffixes)
 
     def upsert_communities(self, communities: list[Community]) -> IndexingStats:
         """Idempotently merge communities into the live graph (delta semantics).
@@ -239,13 +244,17 @@ class NeptuneIndexer(GraphIndexer):
         return self._index_communities(communities, upsert=True)
 
     def _index_communities(
-        self, communities: list[Community], *, upsert: bool
+        self,
+        communities: list[Community],
+        *,
+        upsert: bool,
+        suffixes: Collection[str] = (),
     ) -> IndexingStats:
-        if not communities:
+        if not communities and not suffixes:
             return IndexingStats()
 
         total_stats = IndexingStats()
-        grouped_items = self._group_items_by_suffix(communities)
+        grouped_items = self._group_items_by_suffix(communities, suffixes)
 
         for suffix, comms in grouped_items.items():
             stats = IndexingStats()
@@ -259,6 +268,8 @@ class NeptuneIndexer(GraphIndexer):
 
             if not upsert:
                 self._clear_existing_data_by_label(community_label)
+            if not comms:
+                continue
 
             def community_vertex_builder(
                 g: GraphTraversalSource,
@@ -642,17 +653,20 @@ class NeptuneIndexer(GraphIndexer):
         traversal_builder_func: Callable,
         *,
         clear_first: bool,
+        suffixes: Collection[str] = (),
     ) -> IndexingStats:
-        if not items:
+        if not items and not suffixes:
             return IndexingStats()
 
-        grouped_items = self._group_items_by_suffix(items)
+        grouped_items = self._group_items_by_suffix(items, suffixes)
         total_stats = IndexingStats()
 
         for suffix, chunk in grouped_items.items():
             label = self._get_label(label_prefix, suffix)
             if clear_first:
                 self._clear_existing_data_by_label(label)
+            if not chunk:
+                continue
 
             start_time = time.time()
 

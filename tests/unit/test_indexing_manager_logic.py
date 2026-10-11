@@ -370,3 +370,41 @@ def test_relationship_vector_index_disabled_in_delta(manager) -> None:
     mgr.index_delta(relationships=[_rel()], entities=[])
     assert "relationships" not in vector.data
     assert "relationships" in graph.data
+
+
+def test_full_rebuild_empties_an_index_type_the_run_has_none_of(manager) -> None:
+    # Run 2 has no claims, reports or communities: it must not keep serving
+    # run 1's.
+    from unified_kg_rag.domain.models import Claim, CommunityReport
+
+    mgr, graph, vector, _ = manager
+    community = Community(
+        id="c1", name="C1", level="0", parent="", children=[], entity_ids=["e1"]
+    )
+    mgr.index_all_data(
+        text_units=[TextUnit(id="t1", text="a")],
+        entities=[Entity(id="e1", name="Vendor")],
+        communities=[community],
+        community_reports=[CommunityReport(id="cr1", name="R1", community_id="c1")],
+        claims=[
+            Claim(
+                id="cl1",
+                subject_id="e1",
+                subject_name="Vendor",
+                object_name="100",
+                type="OWES",
+            )
+        ],
+    )
+    assert vector.ids("claims") == {"cl1"}
+
+    mgr.index_all_data(
+        text_units=[TextUnit(id="t2", text="b")],
+        entities=[Entity(id="e2", name="Buyer")],
+    )
+
+    assert vector.ids("claims") == set()
+    assert vector.ids("community_reports") == set()
+    assert graph.ids("communities") == set()
+    assert vector.ids("text_units") == {"t2"}
+    assert graph.ids("entities") == {"e2"}

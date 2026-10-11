@@ -157,6 +157,27 @@ def test_full_index_creates_then_swaps_alias_then_cleans_stale(config) -> None:
     assert stats.successful_items == 1
 
 
+def test_full_index_without_items_swaps_onto_an_empty_index(config) -> None:
+    # A rebuild with nothing of this type for the suffix must stop serving the
+    # previous build's documents.
+    old = f"{_ALIAS}-20251231000000"
+    client = _FakeCluster({old: {_ALIAS}})
+    indexer = _indexer(config, client)
+
+    stats = indexer.index_entities([], suffixes=["default"])
+
+    (new,) = client.created
+    assert client.indices == {new: {_ALIAS}}
+    assert "bulk_index" not in _op_names(client.calls)
+    assert stats.failed_items == 0
+
+
+def test_full_index_without_items_or_suffixes_is_a_no_op(config) -> None:
+    client = _FakeCluster({f"{_ALIAS}-20251231000000": {_ALIAS}})
+    _indexer(config, client).index_entities([])
+    assert client.calls == []
+
+
 def test_repeated_full_runs_leave_exactly_one_index(config) -> None:
     # Regression: stale indices were looked up through the alias-name API with
     # an index-name pattern, matched nothing, and leaked one index per run.

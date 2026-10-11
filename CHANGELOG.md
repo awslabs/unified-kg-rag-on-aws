@@ -821,6 +821,13 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   that the filter removed (they named a filtered entity) is dropped with them.
   Merged extraction entities list their text units in first-seen order instead
   of set order (#213).
+- A full rebuild now replaces an index type that comes out empty: with no
+  claims, community reports or communities in run 2, OpenSearch swaps the
+  alias onto an empty index and Neptune clears the label instead of serving
+  run 1's data. **Breaking** for custom indexers: the full-build `index_*`
+  methods of `VectorIndexer` and `index_entities`/`index_communities` of
+  `GraphIndexer` take a keyword-only `suffixes` argument naming the suffixes
+  they replace even without items (#PR).
 - An incremental commit whose entities or relationships merged into stored
   ones under another id now points the delta's communities
   (`entity_ids`/`relationship_ids`, deduplicated) and claims

@@ -3,7 +3,7 @@
 import re
 import time
 from array import array
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from typing import TYPE_CHECKING, Any
 
 import boto3
@@ -218,9 +218,12 @@ class OpenSearchIndexer(VectorIndexer):
         }
         self.opensearch_client.create_search_pipeline(pipeline_name, body)
 
-    def index_text_units(self, text_units: list[TextUnit]) -> IndexingStats:
+    def index_text_units(
+        self, text_units: list[TextUnit], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         return self._index_item_type(
             items=text_units,
+            suffixes=suffixes,
             item_type_name="text units",
             alias_prefix=self.opensearch_config.text_units_index_prefix,
             mapping_func=self._get_text_units_mapping,
@@ -228,9 +231,12 @@ class OpenSearchIndexer(VectorIndexer):
             prepare_doc_func=self._prepare_text_unit_doc,
         )
 
-    def index_entities(self, entities: list[Entity]) -> IndexingStats:
+    def index_entities(
+        self, entities: list[Entity], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         return self._index_item_type(
             items=entities,
+            suffixes=suffixes,
             item_type_name="entities",
             alias_prefix=self.opensearch_config.entities_index_prefix,
             mapping_func=self._get_entities_mapping,
@@ -264,9 +270,12 @@ class OpenSearchIndexer(VectorIndexer):
             "document_ids": list(report.document_ids or []),
         }
 
-    def index_community_reports(self, reports: list[CommunityReport]) -> IndexingStats:
+    def index_community_reports(
+        self, reports: list[CommunityReport], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         return self._index_item_type(
             items=reports,
+            suffixes=suffixes,
             item_type_name="community reports",
             alias_prefix=self.opensearch_config.community_reports_index_prefix,
             mapping_func=self._get_community_reports_mapping,
@@ -391,7 +400,9 @@ class OpenSearchIndexer(VectorIndexer):
             "text_unit_ids": list(rel.text_unit_ids or []),
         }
 
-    def index_relationships(self, relationships: list[Relationship]) -> IndexingStats:
+    def index_relationships(
+        self, relationships: list[Relationship], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         """Embed and index relationship descriptions (LightRAG global retrieval).
 
         Relationships are embedded as first-class vectors so high-level keywords
@@ -399,6 +410,7 @@ class OpenSearchIndexer(VectorIndexer):
         """
         return self._index_item_type(
             items=relationships,
+            suffixes=suffixes,
             item_type_name="relationships",
             alias_prefix=self.opensearch_config.relationships_index_prefix,
             mapping_func=self._get_relationships_mapping,
@@ -434,7 +446,9 @@ class OpenSearchIndexer(VectorIndexer):
             "source_text": claim.source_text or "",
         }
 
-    def index_claims(self, claims: list[Claim]) -> IndexingStats:
+    def index_claims(
+        self, claims: list[Claim], *, suffixes: Collection[str] = ()
+    ) -> IndexingStats:
         """Embed and index claim (covariate) descriptions as searchable vectors.
 
         Connects claim extraction to retrieval: claims become first-class
@@ -442,6 +456,7 @@ class OpenSearchIndexer(VectorIndexer):
         """
         return self._index_item_type(
             items=claims,
+            suffixes=suffixes,
             item_type_name="claims",
             alias_prefix=self.opensearch_config.claims_index_prefix,
             mapping_func=self._get_claims_mapping,
@@ -632,14 +647,20 @@ class OpenSearchIndexer(VectorIndexer):
         mapping_func: Callable[[], dict[str, Any]],
         embedding_field_extractors: list[Callable[[Any], str]],
         prepare_doc_func: Callable[[Any, tuple[list[float], ...]], dict[str, Any]],
+        suffixes: Collection[str] = (),
     ) -> IndexingStats:
-        if not items:
+        """Build a new index per suffix and swap the alias onto it.
+
+        A suffix in ``suffixes`` without items gets an empty index, so the
+        alias stops serving the previous build's documents.
+        """
+        if not items and not suffixes:
             return IndexingStats()
 
         logger.info("Indexing %s %s", len(items), item_type_name)
         total_stats = IndexingStats()
 
-        for suffix, chunk_items in self._group_items_by_suffix(items).items():
+        for suffix, chunk_items in self._group_items_by_suffix(items, suffixes).items():
             alias_name = self._get_name(alias_prefix, suffix)
             index_name = self._get_name(alias_prefix, suffix, add_timestamp=True)
 
@@ -660,16 +681,20 @@ class OpenSearchIndexer(VectorIndexer):
                         ids=failed_ids,
                     )
 
-                swapped = False
+                # Swap onto the new index when it holds something, or when the
+                # rebuild has nothing of this type for the suffix.
+                swap = not chunk_items
                 if docs:
                     indexing_stats = self._perform_indexing(index_name, docs)
                     total_stats.merge(indexing_stats)
+                    swap = indexing_stats.successful_items > 0
 
-                    if indexing_stats.successful_items > 0:
-                        self.opensearch_client.update_alias(
-                            alias_name, index_name, remove_pattern=f"{alias_name}-*"
-                        )
-                        swapped = True
+                swapped = False
+                if swap:
+                    self.opensearch_client.update_alias(
+                        alias_name, index_name, remove_pattern=f"{alias_name}-*"
+                    )
+                    swapped = True
 
                 if swapped:
                     self._reap_stale_indices(alias_name, index_name)
@@ -682,8 +707,11 @@ class OpenSearchIndexer(VectorIndexer):
                 logger.error(
                     "Failed to index %s (suffix=%s): %s", item_type_name, suffix, e
                 )
+                # A failed empty replacement still fails the run.
                 total_stats.add_error(
-                    str(e), len(chunk_items), ids=[item.id for item in chunk_items]
+                    str(e),
+                    max(1, len(chunk_items)),
+                    ids=[item.id for item in chunk_items],
                 )
                 self._drop_unswapped_index(alias_name, index_name)
 
