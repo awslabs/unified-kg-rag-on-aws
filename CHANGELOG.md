@@ -34,6 +34,26 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `observability.redact_patterns` (#PR, #92).
 - Log records written inside a span carry its `trace_id` and `span_id` (#PR,
   #92).
+- Observability backends `langfuse` and `phoenix` (Arize Phoenix): the `otel`
+  extra's OTLP exporter pointed at the vendor, with no vendor SDK. Endpoints
+  and keys come from the environment only (`OTEL_EXPORTER_OTLP_*` first, then
+  `LANGFUSE_HOST` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` or
+  `PHOENIX_COLLECTOR_ENDPOINT` / `PHOENIX_API_KEY`), and the start-up log
+  shows header names, never values. Spans gain Langfuse observation types or
+  OpenInference span kinds and token counts on export. Langfuse without a host
+  or keys, or over gRPC, fails at start-up (#PR, #92).
+- Query spans carry `session.id` (the conversation id) and `user.id` (new
+  optional `RAGInput.user_id`), which Langfuse and Phoenix group traces by
+  (#PR, #92).
+- `observability.redact_patterns` now also applies at export, for the
+  `otlp`/`langfuse`/`phoenix` backends, to every string attribute, event
+  attribute (exception messages) and status message, not only captured
+  content (#PR, #92).
+- `observability.export_timeout_seconds` (default `10`) bounds each span
+  export and the batch processor's wait for it; `sample_rate` applies to every
+  exporting backend. The runbook adds Langfuse, Phoenix and ADOT/CloudWatch
+  (SigV4) recipes and Bedrock model invocation logging as the account-level
+  backstop (#PR, #92).
 - Each `run-*` CLI's `--help` ends with one example invocation and a link to
   its user-guide section.
 - `indexing.max_document_failures` (default `3`): an incremental run stops

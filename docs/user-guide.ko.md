@@ -598,11 +598,12 @@ extra 없이 추적을 켜면 시작할 때 extra 이름을 알려 주는 `Confi
 | 키 | 기본값 | 역할과 변경 시점 |
 |---|---|---|
 | `observability.enabled` | `false` | 스팬을 기록합니다. `OTEL_SDK_DISABLED=true`이면 이 값과 관계없이 꺼집니다. |
-| `observability.backend` | `"none"` | `none`: 호스트 애플리케이션이나 `opentelemetry-instrument`가 설정한 프로세스 전역 트레이서 프로바이더로 스팬을 보냅니다. `otlp`: 패키지가 OTLP 익스포터를 직접 설치합니다. |
+| `observability.backend` | `"none"` | `none`: 호스트 애플리케이션이나 `opentelemetry-instrument`가 설정한 프로세스 전역 트레이서 프로바이더로 스팬을 보냅니다. `otlp`: 패키지가 OTLP 익스포터를 직접 설치합니다. `langfuse` / `phoenix`: 같은 OTLP 익스포터를 Langfuse나 Arize Phoenix로 향하게 하고 해당 서비스의 속성 이름을 더합니다(아래 참고). |
 | `observability.capture_content` | `false` | 모델 스팬에 프롬프트와 응답 본문도 기록합니다. 기밀 코퍼스에서는 끈 채로 두세요. |
-| `observability.redact_patterns` | `[]` | 기록하는 본문에서 `[REDACTED]`로 바꿀 정규식 목록입니다. |
-| `observability.sample_rate` | `1.0` | 남길 루트 트레이스의 비율입니다(`otlp`). 하위 스팬은 루트의 결정을 따릅니다. |
-| `observability.service_name` | `"unified-kg-rag"` | `service.name` 리소스 속성입니다. `OTEL_SERVICE_NAME`이 설정되어 있으면 그 값이 우선합니다. |
+| `observability.redact_patterns` | `[]` | `[REDACTED]`로 바꿀 정규식 목록입니다. 기록하는 본문에 적용하고, `otlp`/`langfuse`/`phoenix`에서는 내보내는 모든 문자열 속성, 이벤트 속성(예외 메시지), 상태 메시지에도 적용합니다. |
+| `observability.sample_rate` | `1.0` | 남길 루트 트레이스의 비율입니다(`otlp`, `langfuse`, `phoenix`). 하위 스팬은 루트의 결정을 따릅니다. `none`에서는 호스트의 트레이서 프로바이더가 샘플링합니다. |
+| `observability.service_name` | `"unified-kg-rag"` | `service.name` 리소스 속성이자 Phoenix 프로젝트 이름입니다. `OTEL_SERVICE_NAME`(과 `PHOENIX_PROJECT_NAME`)이 설정되어 있으면 그 값이 우선합니다. |
+| `observability.export_timeout_seconds` | `10` | 전송 요청 하나의 상한(초)입니다(`otlp`, `langfuse`, `phoenix`). `OTEL_EXPORTER_OTLP_TIMEOUT`이 있으면 그 값이 우선합니다. |
 
 익스포터는 설정 파일이 아니라 OpenTelemetry 표준 환경 변수로 설정하므로 수집기 API
 키가 설정 파일에 들어가지 않습니다. `OTEL_EXPORTER_OTLP_ENDPOINT`(기본값
@@ -610,6 +611,29 @@ extra 없이 추적을 켜면 시작할 때 extra 이름을 알려 주는 `Confi
 `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_PROTOCOL`(기본값
 `http/protobuf`, 4317 포트는 `grpc`)을 씁니다. 자격 증명이 담긴 헤더는 실행 시점에
 Secrets Manager나 태스크 시크릿에서 주입하세요.
+
+**Langfuse와 Phoenix.** 둘 다 OTLP를 받으므로 이 백엔드에는 `otel` extra만 있으면
+되고 벤더 SDK는 필요 없습니다. 설정은 역시 환경 변수에서만 읽으며, 표준
+`OTEL_EXPORTER_OTLP_*` 변수가 벤더 변수보다 우선합니다.
+
+| 백엔드 | 엔드포인트 | 자격 증명 |
+|---|---|---|
+| `langfuse` | `LANGFUSE_HOST`(예: `http://localhost:3000`, 익스포터는 `<host>/api/public/otel/v1/traces`로 보냄). 기본 호스트가 없으므로 필수입니다. HTTP만 지원하며 gRPC면 시작할 때 실패합니다. | `LANGFUSE_PUBLIC_KEY`와 `LANGFUSE_SECRET_KEY`(필수). Basic `Authorization` 헤더와 `x-langfuse-ingestion-version: 4`로 보냅니다. |
+| `phoenix` | `PHOENIX_COLLECTOR_ENDPOINT`(기본값 `http://localhost:6006`, `OTEL_EXPORTER_OTLP_PROTOCOL=grpc`이면 `:4317`). | 서버가 요구할 때 `PHOENIX_API_KEY`를 Bearer `authorization` 헤더로 보냅니다. |
+
+시작 로그에는 백엔드, 자격 증명을 뺀 엔드포인트, 타임아웃, 헤더 *이름*만 나오고 키
+값은 기록하지 않습니다. 스팬은 `gen_ai.*`, `kg_rag.*` 속성을 그대로 두고 내보낼 때
+벤더 속성이 더해집니다. Langfuse에는 `langfuse.observation.type`(모델 호출은
+`generation`, `embedding`, 검색과 재순위화는 `retriever`, 나머지는 `span`)과
+`capture_content`일 때 `langfuse.observation.input`/`output`이, Phoenix
+(OpenInference)에는 `openinference.span.kind`, `llm.model_name`,
+`llm.token_count.*`와 `capture_content`일 때 `input.value`/`output.value`가
+붙습니다.
+
+**세션과 사용자.** 질의의 모든 스팬에 `session.id`(`RAGInput.conversation_id`)와,
+지정한 경우 `user.id`(`RAGInput.user_id`)가 붙습니다. Langfuse와 Phoenix 모두 이
+이름으로 트레이스를 묶습니다. `user_id`는 스팬에만 기록되고 받은 그대로 내보내므로
+이메일 주소가 아닌 불투명한 ID를 넘기세요.
 
 **트레이스 구조**
 
@@ -637,8 +661,10 @@ Secrets Manager나 태스크 시크릿에서 주입하세요.
 
 알려진 제한: `stream` / `astream`의 스트리밍 답변은 별도 트레이스로 기록됩니다(검색과
 컨텍스트 구성은 `kg_rag.query` 트레이스에 있음). 비동기 배치 경로는 청크가 아니라
-배치마다 스팬을 하나 기록합니다. Langfuse, Phoenix, CloudWatch(ADOT) 백엔드는
-계획되어 있습니다([#92](https://github.com/awslabs/unified-kg-rag-on-aws/issues/92)).
+배치마다 스팬을 하나 기록합니다. 스트리밍 답변의 모델 스팬에는 `session.id`가
+없습니다. CloudWatch로 보내려면 태스크 옆에 ADOT나 OpenTelemetry Collector를 두고
+`backend: otlp`를 쓰세요([운영 런북](operations.ko.md#관측성)에 절차가 있습니다).
+로컬 Langfuse와 Phoenix 절차도 같은 곳에 있습니다.
 
 ---
 
