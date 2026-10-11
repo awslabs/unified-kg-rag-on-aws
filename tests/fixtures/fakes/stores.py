@@ -320,6 +320,26 @@ class FakeVectorStore(_Recorder):
     def upsert_community_reports(self, reports: list[Any]) -> IndexingStats:
         return self._put("community_reports", reports)
 
+    def _update(
+        self, collection: str, items: list[Any], fields: tuple[str, ...]
+    ) -> IndexingStats:
+        """Partial update: only stored documents, only ``fields``."""
+        stats = IndexingStats(total_items=len(items))
+        bucket = self.data.setdefault(collection, {})
+        for item in items:
+            if item.id in bucket:
+                bucket[item.id] = bucket[item.id].model_copy(
+                    update={name: getattr(item, name) for name in fields}
+                )
+            stats.add_success()
+        return stats
+
+    def update_entity_lineage(self, entities: list[Any]) -> IndexingStats:
+        return self._update("entities", entities, ("text_unit_ids",))
+
+    def update_relationship_lineage(self, relationships: list[Any]) -> IndexingStats:
+        return self._update("relationships", relationships, ("text_unit_ids", "weight"))
+
     def delete_by_id(
         self, ids: list[str], alias_prefix: str, suffix: str
     ) -> IndexingStats:

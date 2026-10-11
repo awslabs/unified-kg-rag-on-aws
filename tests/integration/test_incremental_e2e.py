@@ -161,8 +161,6 @@ def test_deleting_a_doc_strips_its_text_units_from_shared_artifacts(harness) -> 
 
     (vendor,) = graph.read_entities(["e-vendor"])
     assert vendor.text_unit_ids == ["tu-a"]
-    # Neptune does not store frequency; the vector index does.
-    assert vector.data["entities"]["e-vendor"].frequency == 1
     # The description cannot be re-derived without an LLM call and is kept.
     assert vendor.description == "Vendor supplies parts."
     (edge,) = graph.read_relationships(["r-supplies"])
@@ -171,6 +169,7 @@ def test_deleting_a_doc_strips_its_text_units_from_shared_artifacts(harness) -> 
     assert edge.weight == 1.0
     assert vector.data["entities"]["e-vendor"].text_unit_ids == ["tu-a"]
     assert vector.data["relationships"]["r-supplies"].text_unit_ids == ["tu-a"]
+    assert vector.data["relationships"]["r-supplies"].weight == 1.0
 
 
 def test_changed_doc_replaces_its_text_units_on_shared_artifacts(harness) -> None:

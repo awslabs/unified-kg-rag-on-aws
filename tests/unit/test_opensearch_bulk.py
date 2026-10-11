@@ -133,3 +133,37 @@ def test_bulk_index_reports_items_still_rejected_after_the_retries(mocker) -> No
     assert out["errors"] is True
     assert [item["index"]["_id"] for item in out["items"]] == ["a"]
     assert out["items"][0]["index"]["status"] == 429
+
+
+def test_bulk_update_sends_partial_docs_and_skips_missing_ones(mocker) -> None:
+    sent: list[dict] = []
+
+    def fake_streaming_bulk(client, actions, **kwargs):
+        for action in actions:
+            sent.append(action)
+            if action["_id"] == "gone":
+                yield False, {"update": {"_id": "gone", "status": 404}}
+            elif action["_id"] == "bad":
+                yield False, {"update": {"_id": "bad", "status": 400}}
+            else:
+                yield True, {"update": {"_id": action["_id"], "status": 200}}
+
+    mocker.patch.object(
+        opensearch_mod, "streaming_bulk", side_effect=fake_streaming_bulk
+    )
+    out = _client().bulk_update(
+        "idx",
+        [
+            {"id": "a", "text_unit_ids": ["t1"]},
+            {"id": "gone", "text_unit_ids": []},
+            {"id": "bad", "text_unit_ids": []},
+        ],
+    )
+
+    assert sent[0] == {
+        "_op_type": "update",
+        "_index": "idx",
+        "_id": "a",
+        "doc": {"text_unit_ids": ["t1"]},
+    }
+    assert [item["update"]["_id"] for item in out["items"]] == ["bad"]

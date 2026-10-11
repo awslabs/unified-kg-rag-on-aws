@@ -372,6 +372,21 @@ class VectorIndexer(BaseIndexer):
     def upsert_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Upsert relationship vectors by id into the live index (delta)."""
 
+    def update_entity_lineage(self, entities: list[Entity]) -> IndexingStats:
+        """Rewrite stored entities' ``text_unit_ids`` (text-unit removal).
+
+        Their embedded text is unchanged, so an adapter that can update
+        fields in place overrides this; the default re-upserts them.
+        """
+        return self.upsert_entities(entities)
+
+    def update_relationship_lineage(
+        self, relationships: list[Relationship]
+    ) -> IndexingStats:
+        """Rewrite stored relationships' ``text_unit_ids`` and ``weight``
+        (see :meth:`update_entity_lineage`)."""
+        return self.upsert_relationships(relationships)
+
     @abstractmethod
     def delete_by_id(
         self, ids: list[str], alias_prefix: str, suffix: str

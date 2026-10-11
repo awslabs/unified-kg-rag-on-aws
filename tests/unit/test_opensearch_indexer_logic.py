@@ -467,3 +467,37 @@ def test_delete_document_artifacts_empty_ids_is_noop(indexer, mocker) -> None:
     results = indexer.delete_document_artifacts([], "default")
     assert results == {}
     assert calls == {}
+
+
+def test_lineage_update_sets_fields_in_place_without_embedding(indexer, mocker) -> None:
+    from unified_kg_rag.domain.models import Relationship
+
+    client = mocker.MagicMock()
+    client.get_index_name_by_alias.return_value = "live-index"
+    client.bulk_update.return_value = {"errors": False, "items": []}
+    indexer.opensearch_client = client
+    embed = mocker.patch.object(indexer, "_batch_embed")
+
+    entity_stats = indexer.update_entity_lineage(
+        [Entity(id="e1", name="Vendor", text_unit_ids=["t1"])]
+    )
+    rel_stats = indexer.update_relationship_lineage(
+        [Relationship(id="r1", source_id="e1", target_id="e2", weight=2.0)]
+    )
+
+    embed.assert_not_called()
+    entity_call, rel_call = client.bulk_update.call_args_list
+    assert entity_call.args == ("live-index", [{"id": "e1", "text_unit_ids": ["t1"]}])
+    assert rel_call.args[1] == [{"id": "r1", "text_unit_ids": [], "weight": 2.0}]
+    assert entity_stats.successful_items == rel_stats.successful_items == 1
+
+
+def test_lineage_update_reports_failed_items(indexer, mocker) -> None:
+    client = mocker.MagicMock()
+    client.get_index_name_by_alias.return_value = "live-index"
+    client.bulk_update.side_effect = RuntimeError("timeout")
+    indexer.opensearch_client = client
+
+    stats = indexer.update_entity_lineage([Entity(id="e1", name="Vendor")])
+
+    assert (stats.failed_items, stats.failed_ids) == (1, ["e1"])

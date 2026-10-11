@@ -500,6 +500,67 @@ class OpenSearchIndexer(VectorIndexer):
             prepare_doc_func=self._prepare_entity_doc,
         )
 
+    def update_entity_lineage(self, entities: list[Entity]) -> IndexingStats:
+        """Set stored entities' ``text_unit_ids`` in place (no re-embedding)."""
+        return self._update_fields(
+            entities,
+            self.opensearch_config.entities_index_prefix,
+            lambda e: {"text_unit_ids": list(e.text_unit_ids or [])},
+        )
+
+    def update_relationship_lineage(
+        self, relationships: list[Relationship]
+    ) -> IndexingStats:
+        """Set stored relationships' ``text_unit_ids`` and ``weight`` in place."""
+        return self._update_fields(
+            relationships,
+            self.opensearch_config.relationships_index_prefix,
+            lambda r: {
+                "text_unit_ids": list(r.text_unit_ids or []),
+                "weight": r.weight if r.weight is not None else 1.0,
+            },
+        )
+
+    def _update_fields(
+        self,
+        items: list[Any],
+        alias_prefix: str,
+        fields: Callable[[Any], dict[str, Any]],
+    ) -> IndexingStats:
+        """Partially update ``items`` by id in their suffix's live index.
+
+        A suffix without a live index, or an item without a document, has
+        nothing to update.
+        """
+        stats = IndexingStats(total_items=len(items))
+        for suffix, chunk in self._group_items_by_suffix(items).items():
+            alias_name = self._get_name(alias_prefix, suffix)
+            try:
+                index_name = self.opensearch_client.get_index_name_by_alias(alias_name)
+                if not index_name:
+                    stats.add_success(len(chunk))
+                    continue
+                response = self.opensearch_client.bulk_update(
+                    index_name,
+                    [{"id": item.id, **fields(item)} for item in chunk],
+                    refresh=self.opensearch_config.refresh_after_batch,
+                )
+                failed = [next(iter(r.values())) for r in response.get("items", [])]
+                stats.add_success(len(chunk) - len(failed))
+                if failed:
+                    stats.add_error(
+                        f"Bulk update errors: {len(failed)}",
+                        len(failed),
+                        ids=[str(f["_id"]) for f in failed if "_id" in f],
+                    )
+            except Exception as e:
+                stats.add_error(
+                    f"Update of '{alias_name}' failed: {e}",
+                    len(chunk),
+                    ids=[item.id for item in chunk],
+                )
+        return stats
+
     def delete_by_id(
         self, ids: list[str], alias_prefix: str, suffix: str
     ) -> IndexingStats:

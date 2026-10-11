@@ -525,9 +525,10 @@ class IndexingManager:
 
         Reads the stored items back, removes ``text_unit_ids`` from their
         lineage (recomputing frequency/weight, see ``remove_text_units``) and
-        upserts every item read back to both stores, so a retry also repairs
-        a store an earlier, interrupted strip did not reach. A graph adapter
-        without read-back leaves them unchanged.
+        writes every item read back to both stores (the vector store updates
+        only those fields in place), so a retry also repairs a store an earlier,
+        interrupted strip did not reach. A graph adapter without read-back
+        leaves them unchanged.
 
         A failed read is reported as failed items, so the caller keeps the
         documents' registry rows and retries the removal.
@@ -570,7 +571,39 @@ class IndexingManager:
             len(relationships),
             suffix,
         )
-        return self.index_delta(entities=entities, relationships=relationships)
+        # Only lineage and weight changed: the vector store updates them in
+        # place instead of re-embedding unchanged text.
+        phase1 = [
+            IndexingTask(
+                self.neptune_indexer.upsert_entities, [entities], "neptune_entities"
+            ),
+            IndexingTask(
+                self.opensearch_indexer.update_entity_lineage,
+                [entities],
+                "opensearch_entities",
+            ),
+        ]
+        if self.config.indexing.opensearch.build_relationship_vector_index:
+            phase1.append(
+                IndexingTask(
+                    self.opensearch_indexer.update_relationship_lineage,
+                    [relationships],
+                    "opensearch_relationships",
+                )
+            )
+        results = self._run_indexing_phase(phase1)
+        results.update(
+            self._run_indexing_phase(
+                [
+                    IndexingTask(
+                        self.neptune_indexer.upsert_relationships,
+                        [relationships],
+                        "neptune_relationships",
+                    )
+                ]
+            )
+        )
+        return results
 
     def delete_documents(
         self, ids_by_suffix: dict[str, list[str]]

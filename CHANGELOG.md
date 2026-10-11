@@ -820,6 +820,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   that the filter removed (they named a filtered entity) is dropped with them.
   Merged extraction entities list their text units in first-seen order instead
   of set order (#213).
+- Removing a changed or deleted document's text units from the entities and
+  relationships it shares with other documents no longer re-embeds them: the
+  OpenSearch copies get a partial update of `text_unit_ids` (and `weight`)
+  through the new `VectorIndexer.update_entity_lineage` /
+  `update_relationship_lineage` (default: re-upsert) (#PR).
 - **Behaviour change:** entity and relationship `rank` are now computed (MS
   GraphRAG parity): an entity's rank is its degree and a relationship's the
   sum of its endpoints' degrees. They stayed 1, so degree-first ordering and

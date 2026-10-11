@@ -280,3 +280,29 @@ def test_read_back_entity_without_attributes_keeps_the_delta_suffix(manager) -> 
 
     assert merged is not None
     assert [BaseIndexer.get_suffix(e) for e in merged] == ["tenant-a"]
+
+
+def test_text_unit_removal_updates_vectors_in_place(manager) -> None:
+    # Stripping a removed text unit changes lineage and weight only: the
+    # vector store must not re-embed the unchanged text.
+    mgr, os_indexer, neptune_indexer = manager
+    neptune_indexer.read_entities.return_value = [
+        Entity(id="e1", name="Vendor", text_unit_ids=["t1", "t2"])
+    ]
+    neptune_indexer.read_relationships.return_value = [
+        Relationship(id="r1", source_id="e1", target_id="e2", text_unit_ids=["t2"])
+    ]
+    os_indexer.update_entity_lineage.return_value = IndexingStats()
+    os_indexer.update_relationship_lineage.return_value = IndexingStats()
+
+    mgr.remove_text_units_from_shared(
+        "default", entity_ids=["e1"], relationship_ids=["r1"], text_unit_ids=["t2"]
+    )
+
+    os_indexer.upsert_entities.assert_not_called()
+    os_indexer.upsert_relationships.assert_not_called()
+    (entities,) = os_indexer.update_entity_lineage.call_args.args
+    assert entities[0].text_unit_ids == ["t1"]
+    os_indexer.update_relationship_lineage.assert_called_once()
+    neptune_indexer.upsert_entities.assert_called_once()
+    neptune_indexer.upsert_relationships.assert_called_once()
