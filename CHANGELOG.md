@@ -283,11 +283,11 @@ Library API (Python callers and custom backends).
   `5`, `3.5%` is not `3.5 million`); a dash between words is a space
   (`1990-1995` is two numbers, `5-year` = `5 year`); a yes/no gold reads the
   first yes/no that answers the question, past Markdown headings,
-  abbreviations and "there is no ..." (#PR).
+  abbreviations and "there is no ..." (#219).
 - RAGAS: a failed run marks only its own metrics failed. A failure in the
   run for rows without a reference no longer drops their skipped reference
   metrics, and a failed `context_precision` run (or the run beside it) keeps
-  the scores of the other (#PR).
+  the scores of the other (#219).
 - CLIs and config: an empty config loads the defaults; `custom_prompts`
   overrides are validated at load; `run-rag` exits cleanly on usage errors;
   importing the package no longer configures logging (#158, #178).
@@ -298,7 +298,7 @@ Library API (Python callers and custom backends).
 - IaC: the pipeline-failure notification renders the whole error, so an
   error without a `Cause` no longer fails the SNS publish; the Neptune
   Gremlin-errors alarm needs errors in 3 consecutive minutes, so retried
-  write conflicts during parallel writes do not page (#PR).
+  write conflicts during parallel writes do not page (#219).
 
 ### Security
 - Prompts delimit corpus and retrieved text as data, and inputs cannot close
@@ -309,7 +309,7 @@ Library API (Python callers and custom backends).
 - Captured prompt and completion text is redacted as raw text on every
   tracing backend: with `otlp`, `langfuse` or `phoenix` it was redacted only
   at export, JSON-encoded, where a `\b` or `\s` pattern next to a newline
-  missed the match (#PR).
+  missed the match (#219).
 - `pipeline_id` must be a single path segment (#173).
 - The persisted embedding cache honours `aws.s3.encryption` (#173).
 - Metadata filters are documented as relevance filters, not an
