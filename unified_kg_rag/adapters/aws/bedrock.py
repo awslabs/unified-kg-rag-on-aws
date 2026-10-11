@@ -1,8 +1,11 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import contextlib
+import contextvars
 import threading
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import AbstractContextManager
 from typing import Any, ClassVar, Generic, Literal, TypeVar
 from uuid import UUID
 
@@ -52,6 +55,7 @@ from unified_kg_rag.shared import (
     LanguageModelError,
     RerankModelError,
     get_logger,
+    observability,
 )
 
 logger = get_logger(__name__)
@@ -382,6 +386,29 @@ class BedrockEmbeddingsWrapper(BaseBedrockWrapper, BedrockEmbeddings):
             policy=self.transient_retry,
         )
 
+    def _embedding_span(
+        self, texts: int, characters: int
+    ) -> AbstractContextManager[Any]:
+        """One GenAI ``embeddings`` span per embed call (no text content).
+
+        The async batch path fans out to one ``embed_query`` per text; the
+        nested calls stay inside the batch's span instead of adding their own.
+        """
+        if _IN_EMBEDDING_SPAN.get() or not observability.is_enabled():
+            return contextlib.nullcontext()
+        return _embedding_span_scope(
+            observability.span(
+                f"embeddings {self.model_id}",
+                {
+                    "gen_ai.operation.name": "embeddings",
+                    "gen_ai.provider.name": "aws.bedrock",
+                    "gen_ai.request.model": self.model_id,
+                },
+                texts=texts,
+                characters=characters,
+            )
+        )
+
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             logger.warning("No texts provided for embedding")
@@ -392,13 +419,37 @@ class BedrockEmbeddingsWrapper(BaseBedrockWrapper, BedrockEmbeddings):
             )
             for text in texts
         ]
-        return super().embed_documents(truncated_texts)
+        with self._embedding_span(len(texts), sum(len(t) for t in truncated_texts)):
+            return super().embed_documents(truncated_texts)
+
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        with self._embedding_span(len(texts), sum(len(t) for t in texts)):
+            return await super().aembed_documents(texts)
 
     def embed_query(self, text: str) -> list[float]:
         truncated_text = self._truncate_text(
             text, self.max_sequence_length, self.max_sequence_tokens, "query"
         )
-        return super().embed_query(truncated_text)
+        with self._embedding_span(1, len(truncated_text)):
+            return super().embed_query(truncated_text)
+
+
+# Set while an embeddings span is open, so nested embed calls add none.
+_IN_EMBEDDING_SPAN: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_IN_EMBEDDING_SPAN", default=False
+)
+
+
+@contextlib.contextmanager
+def _embedding_span_scope(
+    span_context: AbstractContextManager[Any],
+) -> Iterator[Any]:
+    token = _IN_EMBEDDING_SPAN.set(True)
+    try:
+        with span_context as span:
+            yield span
+    finally:
+        _IN_EMBEDDING_SPAN.reset(token)
 
 
 class BedrockEmbeddingModelFactory(
@@ -477,6 +528,21 @@ def _message_guardrail_intervened(metadata: dict[str, Any]) -> bool:
     if stop_reason == _GUARDRAIL_INTERVENED_STOP_REASON:
         return True
     return metadata.get(_GUARDRAIL_ACTION_KEY) == "INTERVENED"
+
+
+def _append_callback(config: dict[str, Any], handler: BaseCallbackHandler) -> None:
+    """Add ``handler`` to the model's ``callbacks`` without touching the caller's."""
+    callbacks = config.get("callbacks")
+    if callbacks is None:
+        config["callbacks"] = [handler]
+    elif isinstance(callbacks, BaseCallbackManager):
+        # Copy first: the manager is caller-owned and may be shared by other
+        # models, which must not pick up this model's handler.
+        manager = callbacks.copy()
+        manager.add_handler(handler, inherit=False)
+        config["callbacks"] = manager
+    else:
+        config["callbacks"] = [*callbacks, handler]
 
 
 class GuardrailInterventionHandler(BaseCallbackHandler):
@@ -589,6 +655,11 @@ class BedrockLanguageModelFactory(
         kwargs.setdefault("model_tier", self.config.aws.bedrock.model_tier(model_id))
         model_config = self._build_model_config(
             model_info, resolved_model_id, use_converse, **kwargs
+        )
+        self._apply_tracing(
+            model_config,
+            resolved_model_id,
+            ModelPurpose(kwargs.get("model_purpose", ModelPurpose.QUERY)),
         )
         model_class = ChatBedrockConverse if use_converse else ChatBedrock
         model = model_class(**model_config)
@@ -722,6 +793,30 @@ class BedrockLanguageModelFactory(
             ModelPurpose(kwargs.get("model_purpose", ModelPurpose.QUERY)),
         )
 
+    @staticmethod
+    def _apply_tracing(
+        config: dict[str, Any], resolved_model_id: str, purpose: ModelPurpose
+    ) -> None:
+        """Attach the GenAI tracing handler when observability is enabled.
+
+        Every model the factory builds gets it, so each LLM call is a span with
+        its token usage. With tracing off nothing is attached (or imported).
+        """
+        if not observability.is_enabled():
+            return
+        from unified_kg_rag.adapters.observability.langchain_callback import (
+            GenAITracingCallbackHandler,
+        )
+
+        _append_callback(
+            config,
+            GenAITracingCallbackHandler(
+                resolved_model_id,
+                purpose=purpose.value,
+                guardrail_detector=_message_guardrail_intervened,
+            ),
+        )
+
     def _build_thinking_config(
         self, model_info: LanguageModelInfo, **kwargs: Any
     ) -> dict[str, Any]:
@@ -825,18 +920,9 @@ class BedrockLanguageModelFactory(
                 "guardrailVersion": guardrail.version,
                 "trace": guardrail.trace,
             }
-        handler = GuardrailInterventionHandler(guardrail.identifier, purpose)
-        callbacks = config.get("callbacks")
-        if callbacks is None:
-            config["callbacks"] = [handler]
-        elif isinstance(callbacks, BaseCallbackManager):
-            # Copy first: the manager is caller-owned and may be shared by other
-            # (unguarded) models, which must not start counting interventions.
-            manager = callbacks.copy()
-            manager.add_handler(handler, inherit=False)
-            config["callbacks"] = manager
-        else:
-            config["callbacks"] = [*callbacks, handler]
+        _append_callback(
+            config, GuardrailInterventionHandler(guardrail.identifier, purpose)
+        )
         logger.debug(
             "Applied Bedrock guardrail '%s' to %s model",
             guardrail.identifier,
@@ -912,13 +998,33 @@ class BedrockRerankWrapper(BaseBedrockWrapper, BedrockRerank):
                 "document",
             )
 
-        try:
-            result = super().compress_documents(
-                documents, truncated_query, callbacks=callbacks
+        # Status and counts only (no query or document text): "ok", "empty"
+        # (the caller then keeps the pre-rerank order) or "error".
+        with observability.span(
+            "kg_rag.rerank",
+            {
+                "gen_ai.provider.name": "aws.bedrock",
+                "gen_ai.request.model": self.model_arn.rsplit("/", 1)[-1],
+            },
+            documents_in=len(documents),
+            top_n=self.top_n,
+        ) as span:
+            try:
+                result = list(
+                    super().compress_documents(
+                        documents, truncated_query, callbacks=callbacks
+                    )
+                )
+            except Exception as e:
+                span.set_attribute("kg_rag.rerank.status", "error")
+                raise RerankModelError(f"Reranking failed: {e}") from e
+            span.set_attributes(
+                {
+                    "kg_rag.rerank.status": "ok" if result else "empty",
+                    "kg_rag.documents_out": len(result),
+                }
             )
-            return list(result)
-        except Exception as e:
-            raise RerankModelError(f"Reranking failed: {e}") from e
+            return result
 
 
 class BedrockRerankModelFactory(

@@ -61,6 +61,7 @@ from unified_kg_rag.shared import (
     DocStatusRegistryError,
     PipelineStageError,
     get_logger,
+    observability,
 )
 
 if TYPE_CHECKING:
@@ -139,6 +140,20 @@ class PipelineStage(ABC):
         """
 
     def execute(self, context: PipelineContext) -> PipelineStageResult:
+        with observability.span("kg_rag.ingestion.stage", stage=self.name) as span:
+            result = self._execute_logged(context)
+            span.set_attributes(
+                {
+                    "kg_rag.stage.status": result.status,
+                    "kg_rag.input_count": result.input_count,
+                    "kg_rag.output_count": result.output_count,
+                }
+            )
+            if result.status == PipelineStageStatus.FAILED:
+                span.set_error(f"stage '{self.name}' failed")
+            return result
+
+    def _execute_logged(self, context: PipelineContext) -> PipelineStageResult:
         tokens = bind_contextvars(stage=self.name)
         logger.info("Starting stage: '%s'", self.name)
         start_time = datetime.now()

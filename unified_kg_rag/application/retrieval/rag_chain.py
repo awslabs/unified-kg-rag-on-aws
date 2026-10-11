@@ -57,6 +57,7 @@ from unified_kg_rag.adapters.search_strategies import (  # noqa: F401
     SimpleSearchStrategy,
 )
 from unified_kg_rag.adapters.storage.filter_schema import union_filter_fields
+from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -82,7 +83,12 @@ from unified_kg_rag.domain.retrieval.strategy_registry import (
     get_strategy_spec,
 )
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
-from unified_kg_rag.shared import InvalidFilterError, LanguageModelError, get_logger
+from unified_kg_rag.shared import (
+    InvalidFilterError,
+    LanguageModelError,
+    get_logger,
+    observability,
+)
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
     parse_llm_json,
@@ -269,6 +275,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
     ) -> None:
         super().__init__()
         self.config = config
+        # Before any model is built, so the factory attaches the tracing
+        # callback (no-op unless observability.enabled).
+        configure_observability(config.observability)
         if providers is not None and model_factory is not None:
             raise ValueError(
                 "Pass either model_factory or providers, not both; set the LLM "
@@ -762,7 +771,22 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             # naive), so it reads the resolved mode from here.
             metadata={"search_strategy": resolved_strategy.value},
         )
-        return await strategy_instance.asearch(search_query, config=config)
+        with observability.span(
+            "kg_rag.strategy",
+            strategy=resolved_strategy.value,
+            search_type=search_query.search_type,
+            top_k=search_query.top_k,
+            filtered=bool(search_query.filters),
+        ) as span:
+            result = await strategy_instance.asearch(search_query, config=config)
+            if observability.is_enabled():
+                span.set_attributes(
+                    {
+                        "kg_rag.results": len(result.results),
+                        "kg_rag.total_results": result.total_results,
+                    }
+                )
+            return result
 
     @staticmethod
     def _validate_filter_keys(
@@ -1257,6 +1281,49 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 ``metadata["error"] = True`` is returned instead.
         """
         rag_input, input_dict = self._prepare_invoke(input)
+        # The root span of a query trace: the strategy, retrieval, fusion,
+        # rerank, context build and model calls nest under it.
+        with observability.span(
+            "kg_rag.query", self._query_span_attributes(rag_input)
+        ) as span:
+            result = await self._ainvoke(rag_input, input_dict, config)
+            span.set_attributes(self._query_outcome_attributes(result))
+            return result
+
+    def _query_span_attributes(self, rag_input: RAGInput) -> dict[str, Any]:
+        """Query-span attributes: the request's settings, never its text."""
+        return {
+            "gen_ai.conversation.id": rag_input.conversation_id,
+            "kg_rag.mode": self.mode,
+            "kg_rag.requested_strategy": rag_input.search_strategy,
+            "kg_rag.top_k": rag_input.top_k,
+            "kg_rag.use_memory": rag_input.use_memory,
+        }
+
+    @staticmethod
+    def _query_outcome_attributes(
+        output: RAGOutput | dict[str, Any],
+    ) -> dict[str, Any]:
+        metadata: dict[str, Any] = (
+            output.metadata
+            if isinstance(output, RAGOutput)
+            else dict(output.get("metadata") or {})
+        )
+        attributes: dict[str, Any] = {
+            "kg_rag.error": bool(metadata.get("error")),
+            "kg_rag.abstained": bool(metadata.get("abstained")),
+        }
+        if isinstance(output, RAGOutput):
+            attributes["kg_rag.strategy"] = output.search_results.search_strategy
+            attributes["kg_rag.sources"] = len(output.sources)
+        return attributes
+
+    async def _ainvoke(
+        self,
+        rag_input: RAGInput,
+        input_dict: dict[str, Any],
+        config: RunnableConfig | None,
+    ) -> RAGOutput | dict[str, Any]:
         tokens = bind_contextvars(
             query_id=uuid.uuid4().hex[:12], conversation_id=rag_input.conversation_id
         )
@@ -1432,9 +1499,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
                 conversation_id=rag_input.conversation_id,
             )
             try:
-                state: dict[str, Any] = await self._stream_context_chain.ainvoke(
-                    input_dict, config
-                )
+                # Only the steps before the first yield are traced here, for the
+                # same reason; the streamed answer call gets its own model span.
+                with observability.span(
+                    "kg_rag.query", self._query_span_attributes(rag_input)
+                ):
+                    state: dict[str, Any] = await self._stream_context_chain.ainvoke(
+                        input_dict, config
+                    )
             finally:
                 reset_contextvars(**tokens)
             answer_runnable = self._answer_generation_step(state)

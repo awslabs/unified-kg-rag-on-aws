@@ -17,7 +17,7 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, RetrievalResult
 from unified_kg_rag.domain.prompts import AnswerGenerationPrompt
 from unified_kg_rag.domain.retrieval.mixins import MetricsMixin
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 
 logger = get_logger(__name__)
@@ -211,6 +211,30 @@ class TokenManager(MetricsMixin):
         max_tokens: int | None = None,
         max_context_tokens_buffer: int = 512,
     ) -> OptimizedContext:
+        with observability.span(
+            "kg_rag.context_build", results_in=len(retrieval_results)
+        ) as span:
+            optimized, budget = self._optimize_context(
+                retrieval_results, query, max_tokens, max_context_tokens_buffer
+            )
+            # Tokens used vs the budget the sections had to fit in.
+            span.set_attributes(
+                {
+                    "kg_rag.context.tokens_used": optimized.total_tokens,
+                    "kg_rag.context.token_budget": budget,
+                    "kg_rag.context.sections_included": optimized.sections_included,
+                    "kg_rag.context.sections_excluded": optimized.sections_excluded,
+                }
+            )
+            return optimized
+
+    def _optimize_context(
+        self,
+        retrieval_results: list[RetrievalResult],
+        query: str,
+        max_tokens: int | None,
+        max_context_tokens_buffer: int,
+    ) -> tuple[OptimizedContext, int]:
         # A caller-supplied budget is still capped by what the answer model can
         # accept, so a large --top-k / RAGInput.max_tokens cannot overflow it.
         target_tokens = (
@@ -228,11 +252,14 @@ class TokenManager(MetricsMixin):
                 target_tokens,
                 max_context_tokens_buffer,
             )
-            return OptimizedContext(
-                sections=[],
-                total_tokens=0,
-                sections_included=0,
-                sections_excluded=len(retrieval_results),
+            return (
+                OptimizedContext(
+                    sections=[],
+                    total_tokens=0,
+                    sections_included=0,
+                    sections_excluded=len(retrieval_results),
+                ),
+                available_tokens,
             )
 
         all_sections = self._create_context_sections(retrieval_results)
@@ -248,11 +275,14 @@ class TokenManager(MetricsMixin):
             total_tokens, sections_included, sections_excluded
         )
 
-        return OptimizedContext(
-            sections=selected_sections,
-            total_tokens=total_tokens,
-            sections_included=sections_included,
-            sections_excluded=sections_excluded,
+        return (
+            OptimizedContext(
+                sections=selected_sections,
+                total_tokens=total_tokens,
+                sections_included=sections_included,
+                sections_excluded=sections_excluded,
+            ),
+            available_tokens,
         )
 
     def _create_context_sections(

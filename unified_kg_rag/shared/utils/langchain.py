@@ -19,7 +19,7 @@ from tenacity import RetryCallState
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
 
-from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 from unified_kg_rag.shared.utils.common import text_digest
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
@@ -46,6 +46,15 @@ BATCH_ITEM_FAILED: Final = _BatchItemFailed()
 returned in place as this marker. Test it with ``result is BATCH_ITEM_FAILED``;
 an empty result (``{}``, ``""``) is a real LLM output, not a failure.
 """
+
+
+def _chunk_outcome(items: list[Any], results: list[Any]) -> dict[str, Any]:
+    """Span attributes for a batch or chunk: item and failure counts."""
+    return {
+        "kg_rag.items": len(items),
+        "kg_rag.results": len(results),
+        "kg_rag.failed": sum(1 for r in results if r is BATCH_ITEM_FAILED),
+    }
 
 
 class ProgressLogger:
@@ -209,6 +218,29 @@ class BatchProcessor(BaseModel):
         are 1:1 with the prepared inputs; an item that failed every attempt is
         :data:`BATCH_ITEM_FAILED`.
         """
+        with observability.span(
+            "kg_rag.batch", task=task_name, items=len(items_to_process)
+        ) as span:
+            results = self._execute_with_fallback(
+                items_to_process,
+                prepare_inputs_func,
+                sequential_func,
+                task_name,
+                run_config,
+                show_progress,
+            )
+            span.set_attributes(_chunk_outcome(items_to_process, results))
+            return results
+
+    def _execute_with_fallback(
+        self,
+        items_to_process: list[Any],
+        prepare_inputs_func: Callable[[list[Any]], list[dict[str, Any]]],
+        sequential_func: Callable[[dict[str, Any]], Any],
+        task_name: str,
+        run_config: dict[str, Any] | None,
+        show_progress: bool,
+    ) -> list[Any]:
         if not items_to_process:
             return []
 
@@ -254,6 +286,14 @@ class BatchProcessor(BaseModel):
         ]
 
         def process_chunk(chunk_num: int, chunk_items: list[Any]) -> list[Any]:
+            with observability.span(
+                "kg_rag.batch.chunk", task=task_name, chunk=chunk_num
+            ) as span:
+                results = _process_chunk(chunk_num, chunk_items)
+                span.set_attributes(_chunk_outcome(chunk_items, results))
+                return results
+
+        def _process_chunk(chunk_num: int, chunk_items: list[Any]) -> list[Any]:
             chunk_inputs = prepare_inputs_func(chunk_items)
             if not chunk_inputs:
                 logger.warning(
@@ -474,6 +514,31 @@ class BatchProcessor(BaseModel):
         task_name: str,
         run_config: dict[str, Any] | None = None,
         show_progress: bool = True,
+    ) -> list[Any]:
+        with observability.span(
+            "kg_rag.batch", task=task_name, items=len(items_to_process)
+        ) as span:
+            results = await self._aexecute_with_fallback(
+                items_to_process,
+                prepare_inputs_func,
+                batch_func,
+                sequential_func,
+                task_name,
+                run_config,
+                show_progress,
+            )
+            span.set_attributes(_chunk_outcome(items_to_process, results))
+            return results
+
+    async def _aexecute_with_fallback(
+        self,
+        items_to_process: list[Any],
+        prepare_inputs_func: Callable[[list[Any]], list[dict[str, Any]]],
+        batch_func: Callable[..., Any],
+        sequential_func: Callable[..., Any],
+        task_name: str,
+        run_config: dict[str, Any] | None,
+        show_progress: bool,
     ) -> list[Any]:
         if not items_to_process:
             return []
