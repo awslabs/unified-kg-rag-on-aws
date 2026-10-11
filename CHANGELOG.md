@@ -202,6 +202,9 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   through the Markdown header splitter, which dropped blank lines and
   indentation and made any line starting with `#` a heading. Chunk boundaries
   of plain-text corpora change, so the chunking stage re-runs (#213).
+- Adopting registry records stored under a legacy key writes them under
+  their new keys in one batched write (`DocStatusPort.put_many`) instead of
+  one request per record (#PR).
 - **Breaking:** entity resolution no longer merges names that are only
   similar by default. Names merge when they are equal after normalization,
   legal-form removal ("Acme Inc" / "Acme") and dense-script spacing; the new

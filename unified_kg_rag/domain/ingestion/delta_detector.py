@@ -596,18 +596,19 @@ def _rekey(
 ) -> dict[str, DocStatusRecord]:
     """Move each ``{doc_id: record}`` to ``doc_id`` and ``scope``.
 
-    The record is written under the new key before its old key is deleted,
-    so an interrupted run leaves a duplicate (cleaned up by the next run)
-    rather than losing the lineage. A ``doc_id`` in ``keep`` already has its
-    record: only the old key is deleted. Returns the records written, by
-    their new key.
+    The records are written under their new keys (one batched write) before
+    any old key is deleted, so an interrupted run leaves duplicates (cleaned
+    up by the next run) rather than losing the lineage. A ``doc_id`` in
+    ``keep`` already has its record: only the old key is deleted. Returns the
+    records written, by their new key.
     """
-    written: dict[str, DocStatusRecord] = {}
-    for doc_id, record in records.items():
-        if doc_id not in keep:
-            moved = record.model_copy(update={"doc_id": doc_id, "scope": scope})
-            doc_status.put(moved)
-            written[doc_id] = moved
+    written = {
+        doc_id: record.model_copy(update={"doc_id": doc_id, "scope": scope})
+        for doc_id, record in records.items()
+        if doc_id not in keep
+    }
+    doc_status.put_many(list(written.values()))
+    for record in records.values():
         doc_status.delete(record.doc_id)
     return written
 
