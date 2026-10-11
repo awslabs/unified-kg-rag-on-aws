@@ -299,6 +299,10 @@ Library API (Python callers and custom backends).
   logging an ERROR and answering "could not find" with exit code 0: the async
   OpenSearch client reports the 404 body as raw JSON text, which the
   `index_not_found_exception` check did not read (#PR).
+- `DataIngestionPipeline.run(source_directory)` ingests the directory it is
+  given. The parsing and loading stages kept the constructor's directory (or
+  the configured default), so a run over another directory read the old
+  corpus and diffed the incremental registry under the old source scope (#PR).
 - Queries on Ollama retry a transient error (HTTP 408/429/5xx, dropped
   connection, timeout) instead of failing on the first one: the Ollama client
   never retries, so query chains and Ollama embedding calls now get the

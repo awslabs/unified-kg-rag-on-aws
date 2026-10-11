@@ -392,7 +392,10 @@ class DataIngestionPipeline:
         """Run the pipeline over ``source_directory`` and return its context.
 
         Args:
-            source_directory: The corpus root.
+            source_directory: The corpus root. When it differs from the
+                directory the pipeline was built with, the parsing and loading
+                stages (and with them the incremental registry's source scope)
+                are rebuilt for it, so the run reads and diffs this corpus.
             pipeline_id: The run to resume (its cache and metadata); a new id
                 is generated when neither this nor ``pipeline_config`` sets
                 one.
@@ -445,6 +448,7 @@ class DataIngestionPipeline:
             )
 
             self._validate_source_directory(source_path)
+            self._use_source_directory(Path(source_directory))
             self._validate_retired_scopes(source_path)
 
             resolved_pipeline_id = self._resolve_pipeline_id(source_path, pipeline_id)
@@ -526,6 +530,43 @@ class DataIngestionPipeline:
                 f"{', '.join(valid)}"
             )
         return normalized
+
+    def _use_source_directory(self, source_directory: Path) -> None:
+        """Point the stages at ``source_directory`` if they read another one.
+
+        The parsing and loading stages capture the corpus root when they are
+        built (parsing and discovery read it; the loading stage derives
+        document ids and the registry's source scope from it), so running over
+        another directory rebuilds those two rather than ingesting and diffing
+        the old corpus. The other stages, which hold the backend clients, are
+        kept.
+        """
+        if Path(self.source_directory).resolve() == source_directory.resolve():
+            return
+        logger.info(
+            "Source directory changed from '%s' to '%s'; rebuilding the parsing "
+            "and loading stages",
+            self.source_directory,
+            source_directory,
+        )
+        self.source_directory = source_directory
+        for index, stage in enumerate(self.stages):
+            if isinstance(stage, DocumentParsingStage):
+                self.stages[index] = type(stage)(
+                    config=self.config,
+                    providers=self.providers,
+                    source_directory=source_directory,
+                    target_directory=stage.target_directory,
+                    cache_directory=stage.cache_directory,
+                )
+            elif isinstance(stage, DocumentLoadingStage):
+                self.stages[index] = type(stage)(
+                    config=self.config,
+                    providers=self.providers,
+                    source_directory=source_directory,
+                    parse_files=stage.loader.parse_files,
+                    doc_status=stage._doc_status,
+                )
 
     def _set_corpus_fingerprint(self, source_directory: Path) -> None:
         self.corpus_fingerprint = self._compute_corpus_fingerprint(source_directory)

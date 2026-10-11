@@ -1746,6 +1746,9 @@ config = get_config("config.yaml")
 
 # Ingest. PipelineConfig carries the run options the run-ingestion flags set
 # (pipeline_id, cache directory, S3 sync, enabled stages, force_rebuild).
+# run() ingests the directory it is given (the constructor's source_directory
+# defaults to processing.document_parsing.source_directory and is replaced by
+# it): parsing, loading and the incremental registry scope all use it.
 pipeline = DataIngestionPipeline(config, PipelineConfig(pipeline_id="run-001"))
 try:
     context = pipeline.run("./source")
