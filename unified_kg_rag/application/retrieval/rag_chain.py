@@ -422,12 +422,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
             state["resolved_strategy"] = strategy
             return state
 
+        routable = tuple(self.config.search.auto_routable_strategies)
         try:
             router = self._get_chain_for_prompt(
                 StrategySelectionPrompt, StrOutputParser()
             )
             query = self._question(state)
-            routable = tuple(self.config.search.auto_routable_strategies)
             selected_strategy_str = await router.ainvoke(
                 {
                     "query": query,
@@ -440,10 +440,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         except Exception as e:
             if not self.ignore_errors:
                 raise
+            strategy = self._fallback_strategy(routable)
             logger.warning(
-                "Strategy auto-selection failed, using LOCAL as fallback: %s", e
+                "Strategy auto-selection failed, using '%s' as fallback: %s",
+                strategy.value,
+                e,
             )
-            strategy = SearchStrategy.LOCAL
 
         state["resolved_strategy"] = strategy
         return state
@@ -459,20 +461,31 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput | dict[str, Any]]):
         tokens and the FIRST token naming a routable strategy wins, so the
         result depends on what the model wrote, not on the order strategies
         are listed in (a substring scan picked whichever name it checked
-        first). Defaults to LOCAL, a general-purpose graph strategy, not the
-        costliest one.
+        first). Defaults to :meth:`_fallback_strategy`.
         """
         allowed = routable or tuple(SearchConfig().auto_routable_strategies)
         by_value = {strat.value: strat for strat in allowed}
         for token in re.findall(r"[a-z]+", (raw or "").lower()):
             if token in by_value:
                 return by_value[token]
+        fallback = GraphRAGChain._fallback_strategy(allowed)
         logger.warning(
-            "Router returned unrecognized strategy (%s); defaulting to LOCAL",
+            "Router returned unrecognized strategy (%s); defaulting to '%s'",
             text_digest(raw),
+            fallback.value,
         )
         logger.debug("Unrecognized router output: '%s'", raw)
-        return SearchStrategy.LOCAL
+        return fallback
+
+    @staticmethod
+    def _fallback_strategy(routable: tuple[SearchStrategy, ...]) -> SearchStrategy:
+        """The strategy AUTO uses when routing fails: LOCAL, a general-purpose
+        graph strategy and not the costliest one, when it is routable; else
+        the first routable strategy, so a configuration that excludes LOCAL
+        (its stores may not be provisioned) is never routed to it."""
+        if not routable or SearchStrategy.LOCAL in routable:
+            return SearchStrategy.LOCAL
+        return routable[0]
 
     def _get_chain_for_prompt(
         self,

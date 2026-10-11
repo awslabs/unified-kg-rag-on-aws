@@ -307,6 +307,9 @@ Library API (Python callers and custom backends).
   The CLIs load only `./.env` in the working directory, never one found in a
   parent directory (a `~/.env` with `AWS_PROFILE` could switch accounts), and
   never override a variable already set (#PR).
+- AUTO routing falls back to `local` only when it is routable; with
+  `search.auto_routable_strategies` excluding it, a failed or unparseable
+  routing call uses the first routable strategy (#PR).
 - An incremental run that skips unchanged documents no longer replaces
   `visualization_data.json` with a graph of its delta only: it skips the
   export and the render and logs how to visualize the whole graph (a full
