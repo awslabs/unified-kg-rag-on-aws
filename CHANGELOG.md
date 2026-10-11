@@ -308,6 +308,14 @@ Library API (Python callers and custom backends).
   Ollama chat and embedding models kept one async HTTP client, bound to the
   first loop, and failed later calls with "Event loop is closed"; they now
   get one client per loop (#PR).
+- IaC: a zone-aware OpenSearch domain spans as many AZs as it has data
+  nodes, up to 3 and up to the VPC's AZs, so `opensearch_count=3` with
+  `max_azs=3` uses three zones instead of two. `bedrock_model_arns` that
+  list only foundation models keep the inference-profile grants, so models
+  offered only through a profile stay callable (the profile call is still
+  authorized against the listed models). The README documents both, and
+  its cross-region guardrail example now sets `network_mode=public`, which
+  a `bedrock_region` other than the deploy region requires (#PR).
 - Queries on Ollama retry a transient error (HTTP 408/429/5xx, dropped
   connection, timeout) instead of failing on the first one: the Ollama client
   never retries, so query chains and Ollama embedding calls now get the

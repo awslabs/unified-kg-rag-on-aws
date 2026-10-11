@@ -95,3 +95,31 @@ def test_cache_expiry_never_applies_bucket_wide() -> None:
     rules = cache["Properties"]["LifecycleConfiguration"]["Rules"]
     expiring = [r for r in rules if "ExpirationInDays" in r]
     assert sorted(r.get("Prefix") for r in expiring) == sorted(CACHE_EXPIRY_PREFIXES)
+
+
+@pytest.mark.parametrize(
+    ("context", "azs", "zones"),
+    [
+        ({"env_name": "prod"}, 3, 2),
+        ({"opensearch_count": 3, "max_azs": 3}, 3, 3),
+        ({"opensearch_count": 6, "max_azs": 3}, 3, 3),
+        ({"opensearch_count": 3, "max_azs": 2}, 3, 2),
+    ],
+    ids=["two-nodes", "three-nodes-three-azs", "six-nodes-three-azs", "two-azs"],
+)
+def test_opensearch_spans_as_many_zones_as_nodes_and_azs_allow(
+    context: dict[str, Any], azs: int, zones: int
+) -> None:
+    # The AZ lookup the created VPC reads, so the test needs no account.
+    lookup = f"availability-zones:account={_ENV.account}:region={_ENV.region}"
+    context = {**context, lookup: [f"us-west-2{c}" for c in "abcd"[:azs]]}
+    (domain,) = (
+        _storage_template(context)
+        .find_resources("AWS::OpenSearchService::Domain")
+        .values()
+    )
+    properties = domain["Properties"]
+    cluster = properties["ClusterConfig"]
+    assert cluster["ZoneAwarenessEnabled"] is True
+    assert cluster["ZoneAwarenessConfig"]["AvailabilityZoneCount"] == zones
+    assert len(properties["VPCOptions"]["SubnetIds"]) == zones
