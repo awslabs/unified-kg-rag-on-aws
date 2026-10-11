@@ -498,7 +498,8 @@ LLM 단계는 Bedrock I/O가 병목이므로 동시성을 CPU 수보다 훨씬 �
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | 리포트 프롬프트 하나에 넣는 엔티티·관계 컨텍스트의 토큰 예산입니다. |
 | `graph.community_detection.report_generation.content_length` | `"medium"` | 리포트 길이로, 리포트마다 요청할 findings 수입니다. `short`(5-7), `medium`(7-10), `long`(10-15) 중 하나입니다. |
 | `graph.analysis.centrality.calculate_betweenness` | `true` | 매개 중심성을 계산합니다. 노드가 `betweenness_auto_sample_threshold`(`2000`)보다 많은 그래프에서는 정확히 계산하지 않고 샘플링합니다. |
-| `graph.visualization.enabled` | `false` | 수집 중에 시각화를 렌더링하고 시각화 데이터를 내보냅니다(수집마다 노드당 임베딩 호출 한 번과 레이아웃 차원 축소가 추가됨). |
+| `graph.visualization.enabled` | `false` | 수집 중에 시각화를 렌더링하고 레이아웃을 포함한 시각화 데이터를 내보냅니다(수집마다 노드당 임베딩 호출 한 번과 레이아웃 차원 축소가 추가됨). |
+| `graph.visualization.export_data` | `true` | `enabled: false`여도 `visualization_data.json`(그래프와 커뮤니티. 레이아웃과 중심성은 없음)을 기록해 `run-visualization`으로 필요할 때 렌더링할 수 있게 합니다. 그래프를 한 번 훑을 뿐이며 모델 호출이 없습니다. |
 | `graph.visualization.outputs_directory` | `null` | 지정하지 않으면 `<cache dir>/<pipeline_id>/visualization`에 기록하므로 데이터가 캐시와 함께 S3로 동기화됩니다. |
 | `graph.visualization.layout_method` | `"umap"` | `umap`, `tsne`, `pca` 중 하나입니다. |
 | `graph.visualization.interactive.max_nodes` | `2000` | `interactive_graph.html`에 남길 차수 기준 상위 N개 노드입니다. `0`이나 `null`이면 제한하지 않습니다. `interactive`를 지정하면 기본 딕셔너리가 통째로 대체되므로, physics를 끈 상태로 두려면 `physics_enabled: false`도 함께 지정하세요. |
@@ -1250,19 +1251,23 @@ DynamoDB 레지스트리는 문서마다 산출물 ID(텍스트 단위, 엔티�
   있으면 `metadata` 쪽을 씀)를 기준으로 계산해 그중 최댓값을 씁니다.
   **`answer_contains`**(정답이나 별칭이 생성된 답변에 단어 단위 구문으로 나오면 1.0)가
   대표 결정적 지표입니다. 긴 RAG 답변이 짧은 정답 구간과 똑같은 경우는 드물기 때문에,
-  이 지표가 exact match보다 정답 여부를 훨씬 잘 반영합니다. 한국어 조사는 숫자만으로
-  된 단어를 뺀 모든 단어 뒤에서 허용합니다(정답 `서울 특별시`는 `서울 특별시는`과,
-  `AWS`는 `AWS는`과 일치). 숫자 뒤의 한글은 대개 단위이므로 `3`은 `3억`과, `2`는
-  `2개월`과 일치하지 않습니다. 단위가 필요하면 정답이나 별칭에 넣으세요. CJK 문자 옆의
+  이 지표가 exact match보다 정답 여부를 훨씬 잘 반영합니다. 한국어 조사는 단어 뒤에서
+  허용합니다(정답 `서울 특별시`는 `서울 특별시는`과, `AWS`는 `AWS는`과 일치). 숫자만으로
+  된 정답 뒤에는 단위와 조사도 허용하지만(`2024`는 `2024년에`와, `2`는 `2개월`과 일치),
+  값을 바꾸는 크기 단위는 허용하지 않습니다(`3`은 `3억`과, `5`는 `5천만`과 일치하지
+  않음). CJK 문자 옆의
   띄어쓰기는 무시합니다(`3억 원` = `3억원`, `가나다 상사` = `가나다상사`). 단어 하나인
   CJK 정답은 부분 문자열로 비교하지만, 더 긴 숫자나 영문 단어 안에서는 일치로 보지
   않습니다(`2년`은 `12년`과 일치하지 않음). 정답이 `yes`/`no`이면 긴 답변에는 거의 항상
-  "no"가 들어 있으므로, HotpotQA처럼 답변 첫 문장의 첫 `yes`/`no`로 채점합니다. SQuAD
+  "no"가 들어 있으므로, HotpotQA처럼 질문에 답하는 첫 `yes`/`no`로 채점합니다. Markdown
+  제목 줄과, 뒤에 단어(`there is no clause`)나 숫자(`No. 5`)가 오는 `no`는 건너뜁니다. SQuAD
   방식의 `exact_match`와 `token_f1`도 출력합니다. 텍스트는 NFKC로 정규화한 뒤 SQuAD
   v1.1 스크립트처럼 소문자로 바꾸고, 문장 부호를 지우고, 영어 관사를 빼고, 공백을 하나로
   합칩니다. 다만 유니코드 문장 부호도 지우고, 의미를 바꾸는 문장 부호는 남깁니다. 숫자
-  사이의 소수점과 쉼표(`1.5`는 `15`와 다름. 천 단위 구분 기호는 지우므로 `1,000` =
-  `1000`)와 단어 끝의 `+`/`#`(`C++`, `C#`)입니다. 관사만으로 된 정답(`A`)은 그대로
+  앞의 음수 부호(`-5`는 `5`와 다름), 숫자 사이의 소수점과 쉼표(`1.5`는 `15`와 다름. 천
+  단위 구분 기호는 지우므로 `1,000` = `1000`), 숫자 뒤의 퍼센트 기호(`3.5%`는 `3.5`나
+  `35%`와 다름)와 단어 끝의 `+`/`#`(`C++`, `C#`)입니다. 두 단어나 숫자 사이의 하이픈은
+  공백으로 보므로 `1990-1995`는 숫자 두 개이고 `5-year` = `5 year`입니다. 관사만으로 된 정답(`A`)은 그대로
   둡니다. 따라서 점수는 공식 스크립트로 계산한 리더보드 수치와 비슷하지만 직접 비교할
   수는 없습니다. Token F1은 공백으로 나누므로 중국어·일본어 텍스트에서는 exact match와
   같아지며, 한국어 조사(`서울은`) 때문에 두 지표 모두 실제보다 낮게 나옵니다.
@@ -1362,15 +1367,20 @@ run-eval --eval-data-path s3://my-bucket/eval/my_eval_data.json \
 이미 내보낸 시각화 데이터 JSON으로 그림을 그리는 **독립** 렌더러입니다. 수집을 다시
 실행하거나 AWS에 접근하지 **않습니다**.
 
-`graph.visualization.enabled`가 `true`이면(기본값은 `false`. 수집마다 노드당 임베딩
-호출과 레이아웃 차원 축소가 추가되기 때문) `run-ingestion`의 커뮤니티 탐지 단계가
-시각화를 렌더링하고 `visualization_data.json`도 `graph.visualization.outputs_directory`에
-씁니다. 이 값을 지정하지 않으면(기본값) `<cache.local_directory>/<pipeline_id>/visualization/`에
+`run-ingestion`의 커뮤니티 탐지 단계는 실행할 때마다 `visualization_data.json`을
+`graph.visualization.outputs_directory`에 씁니다. 기본값(`graph.visualization.export_data:
+true`)에서는 그래프와 커뮤니티 계층만 담습니다. 그래프를 한 번 훑어 쓰므로 임베딩이나
+모델 호출이 없고, `run-visualization`이 렌더링할 때 그래프 토폴로지로 시드를 고정한
+spring 레이아웃과 설정한 중심성 지표를 계산합니다. `graph.visualization.enabled`가
+`true`이면(기본값은 `false`. 수집마다 노드당 임베딩 호출과 레이아웃 차원 축소가
+추가되기 때문) 이 단계가 시각화도 렌더링하고, 파일에 임베딩 기반 레이아웃과 중심성이
+들어갑니다. `outputs_directory`를 지정하지 않으면(기본값) `<cache.local_directory>/<pipeline_id>/visualization/`에
 쓰므로, S3 캐시 동기화를 켜면 `visualization_data.json`이 캐시와 함께 업로드됩니다(동기화는
 `.json` 파일만 복사하므로 HTML은 로컬에서 `run-visualization`으로 다시 렌더링하세요).
 이 파일이 `--data-path` 입력입니다. 대화형 그래프는 큰 그래프도 브라우저에서 렌더링할 수
 있도록 차수 기준 상위 `interactive.max_nodes`개 노드(기본 2000)만 남깁니다. 파일에는
-그래프 노드와 간선, 계산된 `layout`, 커뮤니티 계층, 중심성이 들어 있으며, 파일 크기를
+그래프 노드와 간선, 커뮤니티 계층과, 수집 중에 렌더링했다면 계산된 `layout`과 중심성이
+들어 있으며, 파일 크기를
 줄이려고 벡터 속성(`embedding`, `*_embedding`)은 뺍니다.
 
 레이아웃과 오류 처리 방식은 다음과 같습니다.

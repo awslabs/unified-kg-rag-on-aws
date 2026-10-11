@@ -128,6 +128,28 @@ class TestRunVisualization:
         assert written == [out_dir / "fake.txt"]
         assert (out_dir / "fake.txt").read_text() == "ok"
 
+    def test_data_only_export_gets_a_layout_and_centrality(
+        self, tmp_path: Path, config: Config
+    ) -> None:
+        # The file ingestion writes with graph.visualization.enabled false.
+        from unified_kg_rag.domain.ingestion.visualization_data import graph_data
+
+        graph = nx.Graph()
+        graph.add_edge("e1", "e2")
+        graph.add_edge("e2", "e3")
+        path = tmp_path / "data.json"
+        path.write_text(
+            json.dumps(graph_data(graph, {"hierarchy": []})), encoding="utf-8"
+        )
+        written = run_visualization(
+            path, tmp_path / "out", ["interactive", "static"], config
+        )
+        assert written
+        context = load_render_context(path)
+        cli_module._fill_missing_analysis(context, config)
+        assert set(context.layout) == {"e1", "e2", "e3"}
+        assert context.centrality["e2"].degree == 1.0
+
 
 class TestRendererRegistry:
     def test_builtin_renderers_registered(self) -> None:

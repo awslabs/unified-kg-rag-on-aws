@@ -524,7 +524,8 @@ LLM stages are Bedrock-I/O-bound, so concurrency can far exceed the CPU count.
 | `graph.community_detection.report_generation.max_report_context_tokens` | `4000` | Token budget for the entity/relationship context in one report prompt. |
 | `graph.community_detection.report_generation.content_length` | `"medium"` | Report length as findings per report: `short` (5-7), `medium` (7-10), `long` (10-15). |
 | `graph.analysis.centrality.calculate_betweenness` | `true` | Betweenness centrality. On graphs larger than `betweenness_auto_sample_threshold` (`2000`) nodes it is sampled instead of computed exactly. |
-| `graph.visualization.enabled` | `false` | Render visualizations and export visualization data during ingestion (one embedding call per node plus a layout reduction per ingest). |
+| `graph.visualization.enabled` | `false` | Render visualizations during ingestion and export their data with the layout (one embedding call per node plus a layout reduction per ingest). |
+| `graph.visualization.export_data` | `true` | With `enabled: false`, still write `visualization_data.json` (graph and communities, no layout or centrality; one pass over the graph, no model call) so `run-visualization` can render on demand. |
 | `graph.visualization.outputs_directory` | `null` | Unset writes to `<cache dir>/<pipeline_id>/visualization`, so the data syncs to S3 with the cache. |
 | `graph.visualization.layout_method` | `"umap"` | `umap`, `tsne`, or `pca`. |
 | `graph.visualization.interactive.max_nodes` | `2000` | Top-N nodes by degree kept in `interactive_graph.html`; `0` or `null` disables the cap. Setting `interactive` replaces its default dict, so also set `physics_enabled: false` to keep physics off. |
@@ -1325,21 +1326,26 @@ set `enabled_evaluators: [answer_match, retrieval, graph_aware]`.
   generated answer as a whole-word phrase) is the headline deterministic
   metric: long-form RAG answers rarely equal a short gold span, so it tracks
   correctness far better than exact match. Korean particles are tolerated
-  after any word except a bare number (gold `서울 특별시` matches
-  `서울 특별시는`, `AWS` matches `AWS는`, but `3` does not match `3억` or `2`
-  `2개월`: Hangul after a number is usually a unit, so put the unit in the gold
-  or an alias), and spacing next to CJK letters is ignored (`3억 원` = `3억원`,
+  after a word (gold `서울 특별시` matches `서울 특별시는`, `AWS` matches
+  `AWS는`); a bare number may also carry a Korean unit (`2024` matches
+  `2024년에`, `2` matches `2개월`) but not a magnitude numeral (`3` does not
+  match `3억`, `5` does not match `5천만`, since that changes the value), and
+  spacing next to CJK letters is ignored (`3억 원` = `3억원`,
   `가나다 상사` = `가나다상사`). A single-word CJK gold is matched as a
   substring, but not inside a longer number or Latin word (`2년` does not
-  match `12년`). A `yes`/`no` gold is scored by the answer's leading polarity
-  (the first `yes`/`no` in its first sentence), as in HotpotQA, since almost
-  any long answer contains the word "no". SQuAD-style `exact_match` and
+  match `12년`). A `yes`/`no` gold is scored by the answer's polarity, as in
+  HotpotQA, since almost any long answer contains the word "no": the first
+  `yes`/`no` that answers the question, skipping Markdown headings and a `no`
+  followed by a word (`there is no clause`) or a number (`No. 5`). SQuAD-style `exact_match` and
   `token_f1` are also emitted. Text is NFKC-normalized, then lowercased,
   punctuation deleted, English articles dropped and whitespace collapsed, as
   in the SQuAD v1.1 script, except that Unicode punctuation is deleted too and
-  punctuation that changes meaning is kept: a decimal point or comma between
-  digits (`1.5` is not `15`; thousands separators are dropped, so `1,000` =
-  `1000`) and a trailing `+`/`#` (`C++`, `C#`). A gold that is only an article
+  punctuation that changes meaning is kept: a leading minus (`-5` is not
+  `5`), a decimal point or comma between digits (`1.5` is not `15`;
+  thousands separators are dropped, so `1,000` = `1000`), a percent sign after
+  a number (`3.5%` is not `3.5` or `35%`) and a trailing `+`/`#` (`C++`,
+  `C#`). A dash between two words or numbers is a space, so `1990-1995` is two
+  numbers and `5-year` = `5 year`. A gold that is only an article
   (`A`) is kept as is. Scores are therefore close to, but not comparable with,
   leaderboard numbers from the official scripts. Token F1 splits on whitespace,
   so for Chinese/Japanese text it degrades to exact match; Korean particles
@@ -1442,18 +1448,25 @@ order, the file names it is attributed to (`[]` when unattributable).
 This is a **standalone** renderer that draws from an already-exported
 visualization-data JSON. It does **not** re-run ingestion or touch AWS.
 
-When `graph.visualization.enabled` is `true` (default `false`, since it adds
-an embedding call per node and a layout reduction to every ingest), the
-community-detection stage of `run-ingestion` renders the visualizations and also writes
-`visualization_data.json` into `graph.visualization.outputs_directory`. When
+The community-detection stage of `run-ingestion` writes
+`visualization_data.json` into `graph.visualization.outputs_directory` on
+every run. By default (`graph.visualization.export_data: true`) it holds the
+graph and the community hierarchy only: writing it is one pass over the graph,
+with no embedding or model call, and `run-visualization` computes a seeded
+spring layout from the graph topology and the configured centrality metrics
+when it renders. With `graph.visualization.enabled: true` (default `false`,
+since it adds an embedding call per node and a layout reduction to every
+ingest) the stage also renders the visualizations, and the file carries the
+embedding-based layout and centrality. When
 that is unset (the default), ingestion writes to
 `<cache.local_directory>/<pipeline_id>/visualization/`, so with S3 cache sync
 enabled `visualization_data.json` is uploaded with the cache (the sync copies
 `.json` files only; re-render the HTML locally with `run-visualization`). That
 file is the `--data-path` input. The interactive graph keeps only the top
 `interactive.max_nodes` nodes by degree (default 2000) so large graphs still
-render in a browser. It holds the graph nodes/edges, the computed `layout`, the
-community hierarchy, and centrality; vector attributes (`embedding`,
+render in a browser. It holds the graph nodes/edges, the community hierarchy
+and, when rendered at ingestion, the computed `layout` and centrality; vector
+attributes (`embedding`,
 `*_embedding`) are omitted to keep the file small.
 
 Layout and error behaviour:

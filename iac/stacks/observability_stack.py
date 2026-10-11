@@ -209,13 +209,14 @@ class ObservabilityStack(Stack):
             comparison: cw.ComparisonOperator = (
                 cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
             ),
+            evaluation_periods: int = 1,
         ) -> None:
             alarm = cw.Alarm(
                 self,
                 ident,
                 metric=metric,
                 threshold=threshold,
-                evaluation_periods=1,
+                evaluation_periods=evaluation_periods,
                 comparison_operator=comparison,
                 treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
                 alarm_description=description,
@@ -272,13 +273,13 @@ class ObservabilityStack(Stack):
             "DBClusterIdentifier": neptune_cluster.cluster_identifier,
         }
 
-        def _neptune_metric(metric_name: str) -> cw.Metric:
+        def _neptune_metric(metric_name: str, minutes: int = 5) -> cw.Metric:
             return cw.Metric(
                 namespace="AWS/Neptune",
                 metric_name=metric_name,
                 dimensions_map=neptune_dims,
                 statistic="Average",
-                period=Duration.minutes(5),
+                period=Duration.minutes(minutes),
             )
 
         _alarm(
@@ -297,10 +298,15 @@ class ObservabilityStack(Stack):
         )
         # The app talks Gremlin over WebSocket, which the deprecated HTTP-only
         # GremlinHttp5xx never counts; this per-second rate covers both.
+        # Parallel edge writes hit ConcurrentModificationException, which the
+        # writer retries, so a burst of errors is expected: alarm only when
+        # errors persist in each of three consecutive minutes.
         _alarm(
             "NeptuneGremlinErrors",
-            _neptune_metric("GremlinServerErrorsPerSec"),
+            _neptune_metric("GremlinServerErrorsPerSec", minutes=1),
             0,
-            "Neptune is returning Gremlin server errors (write/query failures)",
+            "Neptune has returned Gremlin server errors for 3 consecutive "
+            "minutes (sustained write/query failures, not retried conflicts)",
             comparison=cw.ComparisonOperator.GREATER_THAN_THRESHOLD,
+            evaluation_periods=3,
         )

@@ -484,6 +484,10 @@ graph:
     # Off by default: rendering during ingestion embeds every node and reduces
     # the embeddings to a layout on each run.
     enabled: false
+    # With enabled: false, still write visualization_data.json (graph and
+    # communities; no embedding call, layout or centrality) so run-visualization
+    # can render on demand.
+    export_data: true
     # Unset (default): ingestion writes to <cache dir>/<pipeline_id>/visualization,
     # so visualization_data.json is uploaded with the S3 cache sync (the sync
     # copies .json only; re-render the HTML with run-visualization). Set a path

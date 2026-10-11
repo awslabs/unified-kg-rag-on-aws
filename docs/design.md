@@ -433,7 +433,7 @@ CLI: `run-eval --eval-data-path <json> [--search-strategy ...]`.
 
 - `InteractiveRenderer` (pyvis network + community hierarchy), `StaticRenderer` (Bokeh degree/centrality/community-size)
 - Layout: embeddings of each node's `name: description` + UMAP dimensionality reduction (spring layout on failure)
-- **Standalone execution** (`application/cli/run_visualization.py`): Reads exported graph JSON without ingestion (`export_visualization_data` output format: `nodes`/`edges`/`layout`/`communities.hierarchy`), rehydrates it into typed objects, and renders with the registered renderers.
+- **Standalone execution** (`application/cli/run_visualization.py`): Reads exported graph JSON without ingestion (`export_visualization_data` output format: `nodes`/`edges`/`layout`/`communities.hierarchy`), rehydrates it into typed objects, and renders with the registered renderers. The data-only file ingestion writes when rendering is off (`graph.visualization.export_data`, `domain/ingestion/visualization_data.py`) has an empty `layout` and no centrality; the CLI computes a seeded spring layout and the configured centrality for it.
 
 ---
 

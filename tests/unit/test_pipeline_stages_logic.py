@@ -376,6 +376,74 @@ def test_visualization_without_cache_dir_falls_back(tmp_path) -> None:
     assert _viz_dir(None, None) is None
 
 
+def _data_export_stage(mocker, tmp_path, *, export_data: bool):
+    import networkx as nx
+
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+
+    detector = mocker.MagicMock()
+    detector.generate_community_objects.return_value = []
+    detector.generate_reports.return_value = ([], [])
+    detector.get_community_metrics.return_value = None
+    detector.export_community_data.return_value = {"hierarchy": [{"nodes": ["e1"]}]}
+    mocker.patch.object(ps, "CommunityDetector", return_value=detector)
+    config = Config()
+    config.graph.visualization.enabled = False
+    config.graph.visualization.export_data = export_data
+    config.graph.visualization.outputs_directory = str(tmp_path / "viz")
+    stage = ps.CommunityDetectionStage(config=config)
+    ctx = _context()
+    graph = nx.Graph()
+    graph.add_node("e1", name="Vendor", embedding=[0.1, 0.2])
+    graph.add_node("e2", name="Buyer")
+    graph.add_edge("e1", "e2", weight=2.0)
+    ctx.knowledge_graph = graph
+    return stage, ctx, detector
+
+
+def test_community_stage_exports_visualization_data_without_rendering(
+    mocker, tmp_path
+) -> None:
+    # Rendering is off by default, but run-visualization needs the data file;
+    # writing it costs one pass over the graph and no embedding call.
+    import json
+
+    stage, ctx, _ = _data_export_stage(mocker, tmp_path, export_data=True)
+    manager = mocker.patch("unified_kg_rag.visualization.GraphVisualizationManager")
+
+    stage._execute_core(ctx)
+
+    manager.assert_not_called()
+    data = json.loads((tmp_path / "viz" / "visualization_data.json").read_text())
+    assert [n["id"] for n in data["nodes"]] == ["e1", "e2"]
+    assert "embedding" not in data["nodes"][0]["attributes"]
+    assert data["edges"] == [
+        {"source": "e1", "target": "e2", "attributes": {"weight": 2.0}}
+    ]
+    assert data["layout"] == {}
+    assert data["communities"] == {"hierarchy": [{"nodes": ["e1"]}]}
+
+
+def test_community_stage_skips_the_export_when_disabled(mocker, tmp_path) -> None:
+    stage, ctx, _ = _data_export_stage(mocker, tmp_path, export_data=False)
+
+    stage._execute_core(ctx)
+
+    assert not (tmp_path / "viz").exists()
+
+
+def test_failed_visualization_data_export_does_not_fail_the_stage(
+    mocker, tmp_path
+) -> None:
+    stage, ctx, detector = _data_export_stage(mocker, tmp_path, export_data=True)
+    detector.export_community_data.side_effect = RuntimeError("no communities")
+
+    _, _, metrics = stage._execute_core(ctx)
+
+    assert metrics is not None
+    assert not (tmp_path / "viz" / "visualization_data.json").exists()
+
+
 # --- extraction stages: failed text units reach the context ---------------
 
 

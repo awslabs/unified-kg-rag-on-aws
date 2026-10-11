@@ -148,9 +148,11 @@ class OrchestrationStack(Stack):
         )
 
         # One failure handler for every phase: the Catch keeps the state input
-        # and adds the error under $.error, so the message carries the run id,
-        # the error name and its cause (the stopped ECS task, with its exit
-        # code and the phase's command).
+        # and adds the error under $.error, so the message carries the run id
+        # and the error (its name and, when the error has one, its cause: the
+        # stopped ECS task, with its exit code and the phase's command). The
+        # error is rendered whole: a path to an absent Cause would fail the
+        # publish itself.
         self.notify_failure = tasks.SnsPublish(
             self,
             "NotifyFailure",
@@ -160,8 +162,9 @@ class OrchestrationStack(Stack):
                 {
                     "execution_id": sfn.JsonPath.execution_id,
                     "pipeline_id": sfn.JsonPath.string_at("$.pipeline_id"),
-                    "error": sfn.JsonPath.string_at("$.error.Error"),
-                    "cause": sfn.JsonPath.string_at("$.error.Cause"),
+                    "error": sfn.JsonPath.json_to_string(
+                        sfn.JsonPath.object_at("$.error")
+                    ),
                 }
             ),
             result_path=sfn.JsonPath.DISCARD,

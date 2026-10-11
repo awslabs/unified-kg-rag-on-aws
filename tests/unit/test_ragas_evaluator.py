@@ -488,6 +488,88 @@ class TestAevaluateBatch:
             "faithfulness",
         }
 
+    async def test_failed_no_reference_run_fails_its_metrics_and_skips_reference(
+        self, mocker
+    ) -> None:
+        ev, _ = _make_evaluator(
+            mocker,
+            ragas_metrics=[
+                EvaluationMetricType.ANSWER_CORRECTNESS,
+                EvaluationMetricType.FAITHFULNESS,
+            ],
+        )
+
+        class _FakeRagasResult:
+            def __init__(self, dataset, metrics) -> None:
+                self.frame = pd.DataFrame(
+                    {m.name: [0.5] * len(dataset["question"]) for m in metrics}
+                )
+
+            def to_pandas(self):
+                return self.frame
+
+        def fake_evaluate(*, dataset, metrics, **kwargs):
+            if dataset["question"] == ["A?"]:
+                raise RuntimeError("judge throttled")
+            return _FakeRagasResult(dataset, metrics)
+
+        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
+        queries = [
+            EvaluationQuery(query_id="no-ref", question="A?"),
+            EvaluationQuery(query_id="ref", question="B?"),
+        ]
+        no_ref, ref = await ev.aevaluate_batch(
+            queries, [_result(), _result()], ["", "truth"]
+        )
+        assert no_ref.metrics == []
+        assert set(no_ref.metadata["failed_metrics"]) == {"faithfulness"}
+        assert "judge throttled" in no_ref.metadata["failed_metrics"]["faithfulness"]
+        assert no_ref.metadata["skipped_metrics"] == {
+            "answer_correctness": "empty_reference"
+        }
+        assert {m.metric_type.value: m.value for m in ref.metrics} == {
+            "answer_correctness": 0.5,
+            "faithfulness": 0.5,
+        }
+        assert "failed_metrics" not in ref.metadata
+
+    @pytest.mark.parametrize("failing", ["faithfulness", "context_precision"])
+    async def test_failed_split_run_keeps_the_other_runs_scores(
+        self, mocker, failing: str
+    ) -> None:
+        ev, _ = _make_evaluator(
+            mocker,
+            ragas_metrics=[
+                EvaluationMetricType.CONTEXT_PRECISION,
+                EvaluationMetricType.FAITHFULNESS,
+            ],
+            ragas_max_contexts=1,
+        )
+
+        class _FakeRagasResult:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            def to_pandas(self):
+                return pd.DataFrame({self.name: [0.75]})
+
+        def fake_evaluate(*, dataset, metrics, **kwargs):
+            name = metrics[0].name
+            if name == failing:
+                raise RuntimeError("judge timed out")
+            return _FakeRagasResult(name)
+
+        mocker.patch.object(rg_module, "evaluate", side_effect=fake_evaluate)
+        mocker.patch.object(rg_module.Dataset, "from_dict", side_effect=lambda d: d)
+        (report,) = await ev.aevaluate_batch(
+            [_query()], [_result(contexts=["c1", "c2"])], ["truth"]
+        )
+        kept = ({"faithfulness", "context_precision"} - {failing}).pop()
+        assert {m.metric_type.value: m.value for m in report.metrics} == {kept: 0.75}
+        assert set(report.metadata["failed_metrics"]) == {failing}
+        assert "judge timed out" in report.metadata["failed_metrics"][failing]
+
     async def test_only_reference_metrics_and_no_reference_skips_all(
         self, mocker
     ) -> None:

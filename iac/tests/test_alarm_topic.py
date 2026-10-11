@@ -136,7 +136,10 @@ def test_phases_retry_only_task_start_errors(template: Template) -> None:
         }
     message = states["NotifyFailure"]["Parameters"]["Message"]
     assert message["execution_id.$"] == "$$.Execution.Id"
-    assert message["cause.$"] == "$.error.Cause"
+    # The whole error object: a States.TaskFailed or States.Timeout error may
+    # carry no Cause, and a "$.error.Cause" path would fail the publish.
+    assert message["error.$"] == "States.JsonToString($.error)"
+    assert not [v for v in message.values() if "$.error." in str(v)]
 
 
 def test_state_machine_timeout_is_configurable() -> None:

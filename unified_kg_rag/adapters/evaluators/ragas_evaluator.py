@@ -196,7 +196,15 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         results: list[EvaluationResult],
         ground_truths: list[str] | None = None,
         judge_inputs: list[dict[str, int]] | None = None,
+        failed_runs: dict[EvaluationMetricType, str] | None = None,
     ) -> list[EvaluationReport]:
+        """One report per query from the RAGAS frame.
+
+        A metric of a run that raised (``failed_runs``: metric -> reason) is
+        failed with that reason; a reference metric on a row without a
+        reference is skipped, whether or not its run failed.
+        """
+        failed_runs = failed_runs or {}
         reports = []
         for i, query in enumerate(queries):
             row = ragas_df.iloc[i]
@@ -209,6 +217,9 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                     continue
                 if metric_type in self.REFERENCE_METRICS and not has_reference:
                     skipped[metric_type.value] = SKIP_REASON_EMPTY_REFERENCE
+                    continue
+                if metric_type in failed_runs:
+                    failed[metric_type.value] = failed_runs[metric_type]
                     continue
                 if metric_name not in row:
                     failed[metric_type.value] = "metric missing from RAGAS output"
@@ -332,33 +343,37 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             ]
         )
 
-        try:
-            frames = [
-                await self._run_ragas(
-                    queries,
-                    results,
-                    [ctx for ctx, _ in contexts],
-                    ground_truths,
-                    [self.RAGAS_METRICS[m] for m in m_types],
+        # Each run fails alone: a failed run marks only its own metrics
+        # failed and keeps the scores the other run produced.
+        frames: list[pd.DataFrame] = []
+        failed_runs: dict[EvaluationMetricType, str] = {}
+        for m_types, contexts in groups:
+            try:
+                frames.append(
+                    await self._run_ragas(
+                        queries,
+                        results,
+                        [ctx for ctx, _ in contexts],
+                        ground_truths,
+                        [self.RAGAS_METRICS[m] for m in m_types],
+                    )
                 )
-                for m_types, contexts in groups
-            ]
-        except Exception as e:
-            logger.error("Ragas evaluation failed for batch: %s", e)
-            return [
-                self._create_empty_report(
-                    q.query_id,
-                    reason=f"Ragas batch evaluation failed: {e}",
-                    metric_types=metric_types,
+            except Exception as e:
+                logger.error("Ragas evaluation failed for batch: %s", e)
+                failed_runs.update(
+                    dict.fromkeys(m_types, f"Ragas batch evaluation failed: {e}")
                 )
-                for q in queries
-            ]
         return self._parse_ragas_reports(
-            pd.concat(frames, axis=1),
+            (
+                pd.concat(frames, axis=1)
+                if frames
+                else pd.DataFrame(index=range(len(queries)))
+            ),
             queries,
             results,
             ground_truths,
             judge_inputs,
+            failed_runs=failed_runs,
         )
 
     async def _run_ragas(

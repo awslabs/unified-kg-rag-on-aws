@@ -71,7 +71,10 @@ ignored, so check the start-up warnings after upgrading.
 
 Defaults. Set the old value explicitly to keep the previous behaviour.
 - `graph.visualization.enabled` defaults to `false`; set it to `true` or
-  render on demand with `run-visualization` (#210).
+  render on demand with `run-visualization` from the `visualization_data.json`
+  that ingestion still writes (`graph.visualization.export_data`, default
+  `true`: graph and communities, no model call; `run-visualization` computes
+  a spring layout and centrality) (#210, #PR).
 - Entity resolution merges only names equal after normalization, legal-form
   removal and dense-script spacing. Similarity matching is opt-in
   (`processing.fuzzy_entity_resolution: true`), and
@@ -181,7 +184,8 @@ Library API (Python callers and custom backends).
   stages, batches and each query step, GenAI model-call spans with token
   usage, log/trace correlation, `session.id` / `user.id`
   (`RAGInput.user_id`), opt-in content capture with `redact_patterns`
-  applied at export, and `export_timeout_seconds` (#207, #208, #211).
+  applied at capture and again at export, and `export_timeout_seconds`
+  (#207, #208, #211, #PR).
 - Incremental-indexing controls: `indexing.max_document_failures` (#175),
   `indexing.retire_source_scopes` / `--retire-source-scope` (#192) and
   `processing.document_parsing.source_scope` (#134).
@@ -273,6 +277,17 @@ Library API (Python callers and custom backends).
 - Evaluation: `answer_match` no longer counts a different number or name as
   a match; judge failures are recorded per query instead of discarding the
   run; non-zero exit codes on failed scoring (#158, #210).
+- `answer_match` and `graph_aware`: a bare number matches it followed by a
+  Korean unit (`2024` in `2024년에`) but still not a magnitude (`3` is not
+  `3억`); a minus sign and a percent sign stay part of a number (`-5` is not
+  `5`, `3.5%` is not `3.5 million`); a dash between words is a space
+  (`1990-1995` is two numbers, `5-year` = `5 year`); a yes/no gold reads the
+  first yes/no that answers the question, past Markdown headings,
+  abbreviations and "there is no ..." (#219).
+- RAGAS: a failed run marks only its own metrics failed. A failure in the
+  run for rows without a reference no longer drops their skipped reference
+  metrics, and a failed `context_precision` run (or the run beside it) keeps
+  the scores of the other (#219).
 - CLIs and config: an empty config loads the defaults; `custom_prompts`
   overrides are validated at load; `run-rag` exits cleanly on usage errors;
   importing the package no longer configures logging (#158, #178).
@@ -280,6 +295,10 @@ Library API (Python callers and custom backends).
   cache prefixes, OpenSearch indices get replicas on multi-node domains,
   timed-out or aborted pipeline runs alarm, and `cdk destroy` leaves no
   fixed-name resources (#157, #166, #211).
+- IaC: the pipeline-failure notification renders the whole error, so an
+  error without a `Cause` no longer fails the SNS publish; the Neptune
+  Gremlin-errors alarm needs errors in 3 consecutive minutes, so retried
+  write conflicts during parallel writes do not page (#219).
 
 ### Security
 - Prompts delimit corpus and retrieved text as data, and inputs cannot close
@@ -287,6 +306,10 @@ Library API (Python callers and custom backends).
 - INFO-level logs no longer carry query text, entity names or model output;
   `run-rag` strips terminal control characters from output; the CLIs warn
   when LangSmith tracing is on (#156, #173).
+- Captured prompt and completion text is redacted as raw text on every
+  tracing backend: with `otlp`, `langfuse` or `phoenix` it was redacted only
+  at export, JSON-encoded, where a `\b` or `\s` pattern next to a newline
+  missed the match (#219).
 - `pipeline_id` must be a single path segment (#173).
 - The persisted embedding cache honours `aws.s3.encryption` (#173).
 - Metadata filters are documented as relevance filters, not an

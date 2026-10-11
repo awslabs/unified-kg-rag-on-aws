@@ -1120,6 +1120,35 @@ class CommunityDetectionStage(PipelineStage):
             return None
         return self.cache_directory / context.pipeline_id / "visualization"
 
+    def _export_visualization_data(self, context: PipelineContext) -> None:
+        """Write the graph and communities for ``run-visualization`` (no render).
+
+        Best effort, like rendering: a failed write never fails the stage.
+        """
+        import json
+
+        from unified_kg_rag.domain.ingestion.visualization_data import (
+            DEFAULT_OUTPUTS_DIRECTORY,
+            VISUALIZATION_DATA_FILENAME,
+            graph_data,
+        )
+
+        viz = self.config.graph.visualization
+        outputs_dir = self._visualization_outputs_dir(context) or Path(
+            viz.outputs_directory or DEFAULT_OUTPUTS_DIRECTORY
+        )
+        path = outputs_dir / VISUALIZATION_DATA_FILENAME
+        try:
+            data = graph_data(
+                context.knowledge_graph, self.detector.export_community_data()
+            )
+            outputs_dir.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(data, default=str), encoding="utf-8")
+        except Exception as e:
+            logger.warning("Visualization data export failed: %s", e)
+            return
+        logger.info("Exported visualization data to '%s'", path)
+
     def _check_report_failures(
         self, communities: list[Community], failed_community_ids: list[str]
     ) -> list[str]:
@@ -1228,6 +1257,8 @@ class CommunityDetectionStage(PipelineStage):
                 logger.info("Graph visualizations generated successfully")
             except Exception as e:
                 logger.warning("Visualization generation failed: %s", e)
+        elif self.config.graph.visualization.export_data and context.knowledge_graph:
+            self._export_visualization_data(context)
 
         communities_count = len(context.communities)
         reports_count = len(context.community_reports)

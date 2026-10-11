@@ -484,18 +484,14 @@ def test_redaction_covers_every_exported_string(
         assert "[REDACTED] balance" in span.attributes[vendor_input]
 
 
-@pytest.mark.parametrize(
-    ("backend", "capture_patterns"),
-    [("langfuse", 0), ("phoenix", 0), ("otlp", 0), ("none", 1)],
-)
-def test_content_is_redacted_once(
+@pytest.mark.parametrize("backend", ["otlp", "langfuse", "phoenix", "none"])
+def test_content_is_redacted_at_capture_on_every_backend(
     backend: str,
-    capture_patterns: int,
     no_global_provider: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # An exporting backend redacts at export, so capture-time redaction would
-    # only repeat it; backend none has no exporter of ours and keeps it.
+    # Export-time redaction sees content JSON-encoded, where a newline is the
+    # two characters backslash-n, so it cannot be the only layer.
     from unified_kg_rag.application.observability import configure_observability
 
     build = otel.build_backend
@@ -509,7 +505,51 @@ def test_content_is_redacted_once(
     configure_observability(
         _config(backend, capture_content=True, redact_patterns=[r"ACCT-\d+"])
     )
-    assert len(observability.content_policy().redact_patterns) == capture_patterns
+    assert len(observability.content_policy().redact_patterns) == 1
+
+
+@pytest.mark.parametrize("backend", ["otlp", "langfuse", "phoenix"])
+def test_word_boundary_pattern_next_to_a_newline_is_redacted(
+    backend: str,
+    no_global_provider: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from langchain_core.language_models.fake_chat_models import (
+        GenericFakeChatModel,
+    )
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from unified_kg_rag.adapters.observability.langchain_callback import (
+        GenAITracingCallbackHandler,
+    )
+    from unified_kg_rag.application.observability import configure_observability
+
+    exporter = InMemorySpanExporter()
+    build = otel.build_backend
+
+    def _in_memory(config: ObservabilityConfig, tracer_provider: Any = None) -> Any:
+        return build(config, span_exporter=exporter, environ=_LANGFUSE_ENV)
+
+    monkeypatch.setattr(otel, "build_backend", _in_memory)
+    configure_observability(
+        _config(
+            backend,
+            capture_content=True,
+            redact_patterns=[r"\b\d{3}-\d{2}-\d{4}\b"],
+        )
+    )
+    model = GenericFakeChatModel(
+        messages=iter([AIMessage(content="Noted:\n987-65-4321")]),
+        callbacks=[GenAITracingCallbackHandler("vendor.model-v1")],
+    )
+    model.invoke([HumanMessage(content="Customer record:\n123-45-6789")])
+    spans = _flushed(exporter)
+    exported = " ".join(
+        str(value) for span in spans.values() for value in span.attributes.values()
+    )
+    assert "123-45-6789" not in exported
+    assert "987-65-4321" not in exported
+    assert "Customer record:\\n[REDACTED]" in exported
 
 
 def test_no_patterns_exports_spans_unchanged(no_global_provider: None) -> None:

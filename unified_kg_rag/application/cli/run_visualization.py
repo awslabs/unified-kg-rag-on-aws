@@ -4,8 +4,10 @@
 
 Renders visualizations from a previously exported visualization-data JSON
 (``visualization_data.json``, written into ``graph.visualization.outputs_directory``
-by ``GraphVisualizationManager.run`` during ingestion) WITHOUT re-running
-ingestion. Drives the renderer registry, so any registered renderer
+during ingestion: by ``GraphVisualizationManager.run`` with a layout and
+centrality when ``graph.visualization.enabled``, else as graph and communities
+only, ``export_data``) WITHOUT re-running ingestion. A data-only file gets a
+spring layout and the configured centrality metrics here. Drives the renderer registry, so any registered renderer
 (``--renderers interactive static``) can be produced independently.
 """
 
@@ -25,7 +27,10 @@ from unified_kg_rag.adapters.renderers import (
     registered_renderers,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
-from unified_kg_rag.domain.ingestion.graph_analyzer import CentralityMetrics
+from unified_kg_rag.domain.ingestion.graph_analyzer import (
+    CentralityMetrics,
+    GraphAnalyzer,
+)
 from unified_kg_rag.domain.models import Community, HierarchicalCommunity
 from unified_kg_rag.shared import get_config, get_logger, setup_logging
 
@@ -109,12 +114,32 @@ def load_render_context(data_path: Path) -> RenderContext:
     )
 
 
+def _fill_missing_analysis(context: RenderContext, config: Any) -> None:
+    """Compute what a data-only export (``graph.visualization.export_data``)
+    leaves out: a seeded spring layout from the graph topology and the
+    configured centrality metrics."""
+    if context.graph.number_of_nodes() == 0:
+        return
+    if not context.layout:
+        logger.info(
+            "No layout in the data (exported without rendering); using a spring "
+            "layout from the graph topology."
+        )
+        context.layout = {
+            str(node): position.tolist()
+            for node, position in nx.spring_layout(context.graph, seed=42).items()
+        }
+    if not context.centrality:
+        context.centrality = GraphAnalyzer(config, context.graph).calculate_centrality()
+
+
 def run_visualization(
     data_path: Path, output_dir: Path, renderer_names: list[str], config: Any
 ) -> list[Path]:
     """Render the requested renderers from exported data; return written paths."""
     output_dir.mkdir(parents=True, exist_ok=True)
     context = load_render_context(data_path)
+    _fill_missing_analysis(context, config)
     viz_config = config.graph.visualization
 
     written: list[Path] = []
