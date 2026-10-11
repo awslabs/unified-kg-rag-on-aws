@@ -285,6 +285,25 @@ def test_performance_summary_without_metrics(cap) -> None:
     assert "Stages Executed" in out
 
 
+def test_performance_summary_counts_restored_stages_as_cached() -> None:
+    # A resume keeps the earlier run's COMPLETED results of the stages it
+    # restored from the cache; only the stages it ran count as executed.
+    results = [
+        _stage_result("document_parsing"),
+        _stage_result("text_chunking"),
+        _stage_result("indexing"),
+    ]
+    table = display._create_performance_metrics_table(results, None, {"indexing"})
+    rows = dict(zip(table.columns[0]._cells, table.columns[1]._cells, strict=True))
+    assert rows["Stages Executed"] == "1"
+    assert rows["Stages from Cache"] == "2"
+    # Without the executed set every completed stage counts as executed.
+    table = display._create_performance_metrics_table(results, None)
+    rows = dict(zip(table.columns[0]._cells, table.columns[1]._cells, strict=True))
+    assert rows["Stages Executed"] == "3"
+    assert rows["Stages from Cache"] == "0"
+
+
 def test_performance_summary_with_metrics(cap) -> None:
     metrics = PipelineMetrics(
         pipeline_id="pid",

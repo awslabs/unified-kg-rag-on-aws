@@ -330,6 +330,9 @@ Library API (Python callers and custom backends).
   unexpected error occurred" and a traceback, and rejects an `answer_aliases`
   that is not a string or a list of strings at load instead of failing every
   query. The random part of the result file names is documented (#PR).
+- The `run-ingestion` performance summary of a resumed run counts the stages
+  restored from the stage cache under "Stages from Cache" instead of
+  reporting 0 and every completed stage as executed (#PR).
 - Queries on Ollama retry a transient error (HTTP 408/429/5xx, dropped
   connection, timeout) instead of failing on the first one: the Ollama client
   never retries, so query chains and Ollama embedding calls now get the

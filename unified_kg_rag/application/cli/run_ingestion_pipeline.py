@@ -515,7 +515,9 @@ class IngestionPipelineRunner:
             context = self._execute_pipeline()
 
             if context:
-                display_pipeline_results(context)
+                display_pipeline_results(
+                    context, executed_stages=self.pipeline.executed_stages
+                )
                 # A soft stage failure stops the run but does NOT raise — the
                 # pipeline returns a context with status=FAILED. Without this
                 # check the CLI would print success and exit 0, so Step Functions

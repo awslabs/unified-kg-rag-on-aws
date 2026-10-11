@@ -534,6 +534,12 @@ class DataIngestionPipeline:
             )
         return normalized
 
+    @property
+    def executed_stages(self) -> frozenset[str]:
+        """Names of the stages the last run executed; the other completed
+        stages of a resumed run were restored from the stage cache."""
+        return self._executed_stages
+
     def _use_source_directory(self, source_directory: Path) -> None:
         """Point the stages at ``source_directory`` if they read another one.
 
