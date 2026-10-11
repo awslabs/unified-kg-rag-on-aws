@@ -266,7 +266,7 @@ AWS 모드와 다른 점:
 
 | 플래그 | 설정하는 키 |
 |---|---|
-| `--backend {aws,local}` | `backend`. 프리셋은 여전히 설정에서 비워 둔 키만 채웁니다 |
+| `--backend {aws,local}` | `backend`. 프리셋은 여전히 설정에서 비워 둔 키만 채웁니다. `backend: local` 파일에 `--backend aws`를 주면 로컬 프리셋과 같은 값을 모두 버려 해당 키가 AWS 기본값으로 돌아갑니다 |
 | `--llm-provider KIND` | `providers.llm.kind`: `bedrock`, `openai_compatible`, `ollama` |
 | `--llm-model MODEL` | `providers.llm.default_model_id`(Bedrock이 아닌 언어 모델) |
 | `--embedding-provider KIND` | `providers.embedding.kind`: `bedrock`, `openai_compatible`, `ollama` |

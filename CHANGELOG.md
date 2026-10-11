@@ -299,6 +299,9 @@ Library API (Python callers and custom backends).
   indexed documents that list entities, reading past entity-less ones (up to
   1,000 records), so a corpus starting with 20 entity-less pages no longer
   lets a wiped graph pass as intact (#PR).
+- `--backend aws` over a `backend: local` config file no longer keeps the
+  local preset's providers and connection keys under the `aws` label: values
+  equal to the local preset's return to the AWS defaults (#PR).
 - Parsing: the LLM XML parser keeps `&`, `<`, repeated siblings and
   sections with a missing closing tag; truncated responses fail instead of
   parsing as partial successes (#165, #174, #182, #213).

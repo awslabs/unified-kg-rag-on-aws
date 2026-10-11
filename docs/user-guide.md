@@ -275,7 +275,7 @@ included; an omitted flag leaves the config as it is.
 
 | Flag | Sets |
 |---|---|
-| `--backend {aws,local}` | `backend`. The preset still fills in only the keys the config leaves unset |
+| `--backend {aws,local}` | `backend`. The preset still fills in only the keys the config leaves unset. `--backend aws` over a `backend: local` file drops every value equal to the local preset's, so those keys return to the AWS defaults |
 | `--llm-provider KIND` | `providers.llm.kind`: `bedrock`, `openai_compatible` or `ollama` |
 | `--llm-model MODEL` | `providers.llm.default_model_id` (non-Bedrock language models) |
 | `--embedding-provider KIND` | `providers.embedding.kind`: `bedrock`, `openai_compatible` or `ollama` |

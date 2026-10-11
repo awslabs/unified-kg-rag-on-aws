@@ -367,6 +367,25 @@ def test_overrides_keep_what_the_file_set() -> None:
     assert config.providers.rerank.kind == "none"
 
 
+def test_backend_aws_over_a_local_file_drops_the_local_preset() -> None:
+    # A `backend: local` file loads with the preset filled in; switching it
+    # to aws must return those keys to the AWS defaults, not only relabel it.
+    local = Config(
+        backend="local",
+        aws={"neptune": {"endpoint": "graph.example"}},
+        providers={"llm": {"default_model_id": "served"}},
+    )
+    config = with_provider_overrides(local, backend="aws")
+    aws = Config(
+        aws={"neptune": {"endpoint": "graph.example"}},
+        providers={"llm": {"default_model_id": "served"}},
+    )
+    assert config.backend is Backend.AWS
+    assert config.providers == aws.providers
+    assert config.aws.neptune == aws.aws.neptune
+    assert config.aws.opensearch == aws.aws.opensearch
+
+
 def test_no_overrides_returns_the_same_config() -> None:
     config = Config()
     assert with_provider_overrides(config) is config
