@@ -7,17 +7,22 @@ merge-to-convergence loop, hierarchy construction (cluster graph + level
 building), modularity/resolution selection, and the report-input shaping that
 turns node ids into entity *names* — without touching Bedrock. Report
 generation is disabled so ``__init__`` never builds an LLM chain; the Leiden
-call (graspologic) is real CPU on tiny hand-built graphs.
+call (graspologic_native) is real CPU on tiny hand-built graphs.
 """
 
 from __future__ import annotations
+
+import warnings
+from typing import Any
 
 import networkx as nx
 import pytest
 
 from unified_kg_rag.adapters.ingestion.community_detector import (
     CommunityDetector,
+    _canonical_graph,
     community_content_id,
+    leiden,
 )
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.models import (
@@ -1116,3 +1121,64 @@ class TestStableCommunityIds:
         assert vector_store.ids("community_reports") == {
             r.id for r in corpus_reports + delta_reports
         }
+
+
+class TestLeidenWrapper:
+    """``leiden`` calls graspologic_native as graspologic's wrapper does."""
+
+    @staticmethod
+    def _graphs() -> list[nx.Graph]:
+        weighted = nx.Graph()
+        for i in range(60):
+            for step, weight in ((1, 1.0), (7, 2.5), (19, 0.3)):
+                weighted.add_edge(f"e{i}", f"e{(i * step + 3) % 60}", weight=weight)
+        weighted.add_node("isolated")
+        return [nx.karate_club_graph(), nx.les_miserables_graph(), weighted]
+
+    @pytest.mark.parametrize(
+        ("seed", "resolution", "trials", "extra_forced_iterations"),
+        [(42, 1.0, 3, 2), (7, 0.5, 1, 0), (42, 2.0, 1, 0)],
+    )
+    def test_partitions_match_graspologic(
+        self, seed: int, resolution: float, trials: int, extra_forced_iterations: int
+    ) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            from graspologic.partition import leiden as graspologic_leiden
+
+        for graph in self._graphs():
+            canonical = _canonical_graph(graph)
+            kwargs: dict[str, Any] = {
+                "resolution": resolution,
+                "random_seed": seed,
+                "trials": trials,
+                "extra_forced_iterations": extra_forced_iterations,
+            }
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                expected = graspologic_leiden(canonical, **kwargs)
+            assert leiden(canonical, **kwargs) == expected
+
+    def test_isolated_nodes_are_left_out(self) -> None:
+        graph = _two_triangle_graph()
+        graph.add_node("alone")
+        partition = leiden(graph, random_seed=42)
+        assert "alone" not in partition
+        assert set(partition) == {f"n{i}" for i in range(6)}
+
+    @pytest.mark.parametrize(
+        ("graph", "kwargs"),
+        [
+            (nx.DiGraph([("a", "b")]), {}),
+            (nx.Graph([(1, "1")]), {}),
+            (nx.Graph([("a", "b")]), {"random_seed": 0}),
+            (nx.Graph([("a", "b")]), {"resolution": 0.0}),
+            (nx.Graph([("a", "b")]), {"trials": 0}),
+            (nx.Graph([("a", "b")]), {"extra_forced_iterations": -1}),
+        ],
+    )
+    def test_invalid_input_is_rejected(
+        self, graph: nx.Graph, kwargs: dict[str, Any]
+    ) -> None:
+        with pytest.raises(ValueError):
+            leiden(graph, **kwargs)

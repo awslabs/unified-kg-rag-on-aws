@@ -289,7 +289,7 @@ class ModelFactoryPort(Protocol[ModelIdT, ModelT, InfoT]):
     names botocore's, the local ones network errors and HTTP 408/429/5xx). The
     ingestion stages' batch retries use it, and without it fall back to
     ``adapters.llm.retry.looks_transient``. A factory that also defines
-    ``transient_retry`` (the Bedrock one) gets a chain-level retry of query
+    ``transient_retry`` (the Bedrock and Ollama ones) gets a chain-level retry of query
     chains from ``setup_chain`` under that policy.
     """
 

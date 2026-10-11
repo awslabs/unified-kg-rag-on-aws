@@ -466,6 +466,32 @@ def test_the_graph_probe_reads_past_documents_without_entities(
         inc.check_graph_holds_registry(delta)
 
 
+def test_the_graph_probe_reads_every_record_until_it_finds_entities(
+    harness, mocker
+) -> None:
+    # More entity-less documents than any fixed scan bound would read: the
+    # only document with entities comes after 1001 of them.
+    inc, store, graph, _ = harness
+    blanks = [_doc(f"/blank{i:04d}.txt", f"cover {i}") for i in range(1001)]
+    parties = _doc("/parties.txt", "Vendor meets Buyer.")
+    _commit(inc, blanks, [], [])
+    tus, ents = _artifacts_for(parties, ["e-vendor"])
+    _commit(inc, [parties], tus, ents)
+    delta, _ = detect_delta([*blanks, parties, _doc("/new.txt", "y")], store)
+    stored = [*delta.unchanged, *delta.changed]
+    records = store.get_many(stored)
+    assert [d for d in stored if records[d].entity_ids] == stored[1001:]
+
+    inc.check_graph_holds_registry(delta)
+
+    graph.clear(["default"])
+    reads = mocker.spy(store, "get_many")
+    with pytest.raises(DataProcessingError, match="indexing.reset"):
+        inc.check_graph_holds_registry(delta)
+    # Still read in batches, not in one request for the whole registry.
+    assert max(len(call.args[0]) for call in reads.call_args_list) <= 20
+
+
 def test_the_graph_probe_skips_a_registry_without_indexed_documents(harness) -> None:
     inc, store, _, _ = harness
     inc.check_graph_holds_registry(detect_delta([_doc("/a.txt", "x")], store)[0])

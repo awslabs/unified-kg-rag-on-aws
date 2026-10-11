@@ -25,6 +25,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from unified_kg_rag.adapters.llm.retry import looks_transient
 from unified_kg_rag.domain.models import Config, ModelPurpose
+from unified_kg_rag.domain.models.config import TransientRetryConfig
 from unified_kg_rag.domain.models.provider_config import (
     EndpointConfig,
     LLMProviderConfig,
@@ -87,6 +88,15 @@ def _tracing_callbacks(
     return with_callback(callbacks, handler)
 
 
+def local_transient_retry(endpoint: EndpointConfig) -> TransientRetryConfig:
+    """Retry policy for a client that does not retry on its own (Ollama).
+
+    ``endpoint.max_attempts`` attempts with the default backoff and wall-clock
+    budget of :class:`TransientRetryConfig`.
+    """
+    return TransientRetryConfig(max_attempts=endpoint.max_attempts)
+
+
 class _LocalLanguageModelFactory:
     """Shared request shaping; subclasses build the provider's chat model."""
 
@@ -109,8 +119,9 @@ class _LocalLanguageModelFactory:
 
         Connect/read timeouts and dropped connections (httpx, the OpenAI
         client) and HTTP 408/429/5xx (``openai.APIStatusError``,
-        ``ollama.ResponseError``). The Ollama client never retries on its own,
-        so these retries are the only ones a local ingestion run gets.
+        ``ollama.ResponseError``). The ingestion batch retries use it on both
+        servers, and ``setup_chain`` the query-chain retry on Ollama
+        (``transient_retry``).
         """
         return looks_transient(exc)
 
@@ -170,6 +181,10 @@ class OpenAICompatibleLanguageModelFactory(_LocalLanguageModelFactory):
 
     ``providers.llm.base_url`` points at the server's ``/v1`` root (vLLM,
     llama.cpp server, LM Studio, or OpenAI itself when unset).
+
+    The OpenAI client retries transient errors itself
+    (``providers.llm.max_attempts``), so this factory defines no
+    ``transient_retry`` and query chains are not wrapped in a second retry.
     """
 
     provider_name = "openai"
@@ -210,10 +225,19 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
     ``providers.llm.context_window_size`` is sent as ``num_ctx``: Ollama's own
     default window is far smaller than the prompts the pipeline sends, and it
     truncates the prompt silently when it does not fit.
+
+    The Ollama client never retries, so ``transient_retry`` (from
+    ``providers.llm.max_attempts``) gives query chains the chain-level retry
+    of ``setup_chain``; ingestion chains keep the batch retries.
     """
 
     provider_name = "ollama"
     kind = "ollama"
+
+    @property
+    def transient_retry(self) -> TransientRetryConfig:
+        """The retry policy ``setup_chain`` applies to query chains."""
+        return local_transient_retry(self.settings)
 
     def _build(
         self, model_id: str, max_tokens: int, temperature: float, callbacks: Any

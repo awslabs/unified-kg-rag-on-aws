@@ -76,8 +76,11 @@ class EndpointConfig(BaseModel):
         default=3,
         ge=1,
         description=(
-            "Attempts per request, including the first (OpenAI-compatible "
-            "servers; the Ollama client does not retry). 1 disables the retry."
+            "Attempts per request on transient errors, including the first. "
+            "The OpenAI client retries itself; on Ollama, whose client does not, "
+            "query chains and embedding calls are retried by the framework "
+            "(ingestion chains keep processing.max_attempts). 1 disables the "
+            "retry."
         ),
     )
 
