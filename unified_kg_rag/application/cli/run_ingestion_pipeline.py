@@ -14,6 +14,10 @@ from rich.prompt import Confirm
 
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import missing_endpoints_error
+from unified_kg_rag.application.cli.provider_args import (
+    add_provider_arguments,
+    apply_provider_arguments,
+)
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import (
     PipelineConfig,
@@ -171,6 +175,7 @@ class CommandLineInterface:
             type=str,
             help="Path to custom configuration file",
         )
+        add_provider_arguments(parser)
         return parser
 
     def parse_args(self) -> argparse.Namespace:
@@ -180,7 +185,9 @@ class CommandLineInterface:
 class IngestionPipelineRunner:
     def __init__(self, args: argparse.Namespace):
         self.args = args
-        self.config = get_config(Path(args.config_path) if args.config_path else None)
+        self.config = apply_provider_arguments(
+            get_config(Path(args.config_path) if args.config_path else None), args
+        )
         retired = getattr(args, "retire_source_scope", None) or []
         if retired:
             indexing = self.config.indexing
