@@ -27,14 +27,10 @@ from unified_kg_rag.application.ingestion.incremental import (
 from unified_kg_rag.application.storage.indexing_manager import CrossRunMergeResult
 from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
 from unified_kg_rag.domain.ingestion.merge import (
-    merge_communities,
-    merge_community_reports,
     merge_entities,
     merge_relationships,
 )
 from unified_kg_rag.domain.models import (
-    Community,
-    CommunityReport,
     Document,
     DocumentLineage,
     Entity,
@@ -646,46 +642,6 @@ class TestMergeLaws:
         m1, _ = merge_entities(old, d_ab)
         m2, _ = merge_entities(old, d_ba)
         assert {e.name for e in m1} == {e.name for e in m2} == {"Alice", "Bob", "Carol"}
-
-    def test_communities_reapply_idempotent_no_double_suffix(self) -> None:
-        old = [Community(id="c1", name="A", level="0", parent="", children=[])]
-        delta = [Community(id="c1", name="B", level="0", parent="", children=[])]
-        once = merge_communities(old, delta)
-        twice = merge_communities(once, delta)
-        thrice = merge_communities(twice, delta)
-        # c1-delta must never grow into c1-delta-delta on repeated runs.
-        assert [c.id for c in thrice] == ["c1", "c1-delta"]
-
-    def test_community_collision_disambiguated_not_dropped(self) -> None:
-        # Regression for the silent-drop bug: a genuine collision must be
-        # disambiguated with a counter (-delta, -delta-2, ...), never dropped,
-        # even when an earlier delta community was literally named 'c1-delta'.
-        existing = [Community(id="c1", name="A", level="0", parent="", children=[])]
-        # A delta community literally named 'c1-delta' (not a collision on c1).
-        d1 = [
-            Community(id="c1-delta", name="Verbatim", level="0", parent="", children=[])
-        ]
-        merged = merge_communities(existing, d1)
-        assert [c.id for c in merged] == ["c1", "c1-delta"]
-
-        # A genuine collision on base 'c1': 'c1-delta' is taken, so it must
-        # fall through to 'c1-delta-2' — NOT be silently skipped.
-        d2 = [
-            Community(id="c1", name="RealCollision", level="0", parent="", children=[])
-        ]
-        merged2 = merge_communities(merged, d2)
-        names = {c.name for c in merged2}
-        assert "RealCollision" in names  # no longer dropped
-        by_id = {c.id: c.name for c in merged2}
-        assert by_id["c1-delta"] == "Verbatim"  # the verbatim one is untouched
-        assert by_id["c1-delta-2"] == "RealCollision"  # collision disambiguated
-
-    def test_community_reports_reapply_idempotent(self) -> None:
-        old = [CommunityReport(id="cr1", community_id="c1", name="R1")]
-        delta = [CommunityReport(id="cr1", community_id="c1", name="R2")]
-        once = merge_community_reports(old, delta)
-        twice = merge_community_reports(once, delta)
-        assert [r.id for r in once] == [r.id for r in twice] == ["cr1", "cr1-delta"]
 
     def test_lineage_union_then_trim_on_partial_delete(self, rig) -> None:
         # Lineage union (shared artifact attributed to both docs) followed by a
