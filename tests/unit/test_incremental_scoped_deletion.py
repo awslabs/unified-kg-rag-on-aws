@@ -137,6 +137,40 @@ def test_another_tenants_run_does_not_delete_this_tenants_documents(
     assert len(store.list_all()) == 2
 
 
+@pytest.mark.parametrize("copy_name", ["a_copy.txt", "z_copy.txt"])
+def test_dedup_keeps_the_indexed_original_over_a_new_copy(
+    tmp_path, mocker, copy_name
+) -> None:
+    # The diff reads a document deduplication dropped as deleted: keeping a new
+    # near-copy that sorts first would delete the indexed original.
+    root = tmp_path / "corpus"
+    store = FakeDocStatusStore()
+    config = _config()
+    config.processing.deduplicate = True
+    text = "Vendor A supplies parts to Buyer under the yearly framework agreement."
+    _write(root, {"original.txt": text})
+    _run(root, store, config, mocker)
+
+    _write(root, {copy_name: text})
+    context = PipelineContext(
+        pipeline_id="pid",
+        config={},
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime(2026, 1, 1),
+        source_directory=root,
+    )
+    context.add_stage_result(
+        DocumentParsingStage(config, source_directory=root).execute(context)
+    )
+    DocumentLoadingStage(config, source_directory=root, doc_status=store).execute(
+        context
+    )
+
+    delta = context.incremental_delta
+    assert (delta.new, delta.changed, delta.deleted) == ([], [], [])
+    assert context.documents == []
+
+
 def test_a_file_that_fails_to_parse_is_not_deleted(tmp_path, mocker) -> None:
     root = _write(
         tmp_path / "corpus",

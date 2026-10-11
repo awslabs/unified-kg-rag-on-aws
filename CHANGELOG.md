@@ -794,6 +794,14 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
   `target_language` / `additional_target_languages` was translated and
   counted twice) and no longer calls the model to "translate" text into its
   own `source_language`: that language keeps the original text (#PR).
+- With `processing.deduplicate` and incremental indexing on, a new near-copy
+  of an indexed document no longer replaces it: deduplication keeps the
+  document the doc-status registry already holds, where it used to keep
+  whichever copy came first and the diff then deleted the indexed original.
+  Documents load in file order instead of completion order, so the copy kept
+  no longer varies between runs, and the Jaccard check of a candidate pair runs
+  in-process instead of sending every document's MinHash to a worker per
+  pair (#PR).
 - With `entity_grounding` enabled, the check whether a gleaned
   relationship's endpoint name occurs in its unit (#202) now accepts common
   spelling variants and no longer accepts partial words. Both sides drop

@@ -19,7 +19,6 @@ import pytest
 
 from unified_kg_rag.adapters.ingestion.loader import (
     DirectoryLoader,
-    compute_jaccard_similarity,
     compute_minhash,
 )
 from unified_kg_rag.domain.models import Config, Document
@@ -366,24 +365,22 @@ def test_compute_minhash_identical_content_gives_full_similarity() -> None:
     assert r1[1].jaccard(r2[1]) == pytest.approx(1.0)
 
 
-def test_compute_jaccard_similarity_returns_score() -> None:
-    text = "shared shingled text for jaccard estimation across two minhashes"
-    m0 = compute_minhash((0, text), num_permutations=64, n_grams=3)
-    m1 = compute_minhash((1, text), num_permutations=64, n_grams=3)
-    assert m0 is not None and m1 is not None
-    minhashes = {0: m0[1], 1: m1[1]}
-    result = compute_jaccard_similarity((0, 1), minhashes)
-    assert result is not None
-    i, j, sim = result
-    assert (i, j) == (0, 1)
-    assert sim == pytest.approx(1.0)
+def test_dedup_keeps_the_preferred_copy(tmp_path: Path) -> None:
+    # An incremental run prefers the already-indexed document: a new copy that
+    # sorts first must not replace (and so delete) the indexed original.
+    same = "the quick brown fox jumps over the lazy dog repeatedly today"
+    _write_json_doc(tmp_path / "a_copy.json", "id-copy", same)
+    _write_json_doc(tmp_path / "b_original.json", "id-original", same)
+    loader = DirectoryLoader(tmp_path, similarity_threshold=0.9)
+    docs = loader.load()
+    assert [d.document_id for d in docs] == ["id-copy", "id-original"]
 
-
-def test_compute_jaccard_similarity_missing_minhash_returns_none() -> None:
-    text = "only one side has a minhash registered for this pair"
-    m0 = compute_minhash((0, text), num_permutations=64, n_grams=3)
-    assert m0 is not None
-    assert compute_jaccard_similarity((0, 99), {0: m0[1]}) is None
+    kept = loader.deduplicate_documents(docs)
+    assert [d.document_id for d in kept] == ["id-copy"]
+    kept = loader.deduplicate_documents(
+        docs, keep=lambda d: d.document_id == "id-original"
+    )
+    assert [d.document_id for d in kept] == ["id-original"]
 
 
 # --------------------------------------------------------------------------- #
