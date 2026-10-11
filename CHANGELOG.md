@@ -269,6 +269,10 @@ Library API (Python callers and custom backends).
   previously only transitive, are now declared (#226).
 
 ### Fixed
+- A `local` query against a missing index (for example a wrong `--suffix`)
+  no longer also logs "_GatheringFuture exception was never retrieved" with
+  a second traceback: the community-report, relationship and claim sections
+  that fail alongside the entity chain have their error consumed (#PR).
 - A `GraphRAGChain` reused across event loops (one `asyncio.run` per query)
   closes the retrievers of each finished loop again: their synchronous close
   ran inside the next query's running loop, where the Neptune (Gremlin)

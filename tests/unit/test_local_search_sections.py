@@ -13,6 +13,9 @@ flatten results, so Bedrock is never touched.
 
 from __future__ import annotations
 
+import asyncio
+import gc
+
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
@@ -25,6 +28,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
 )
 from unified_kg_rag.domain.retrieval.strategy_registry import get_strategy_spec
+from unified_kg_rag.shared.exceptions import IndexNotFoundError
 
 pytestmark = pytest.mark.unit
 
@@ -396,3 +400,39 @@ async def test_text_unit_fetch_is_capped_at_the_text_quota(config: Config) -> No
     (fetch,) = [q for q in os_r.calls if q.filters and "id" in q.filters]
     assert fetch.filters is not None
     assert len(fetch.filters["id"]) == quota < 500
+
+
+async def test_failed_side_section_is_retrieved_when_the_entity_chain_fails(
+    config: Config,
+) -> None:
+    # The side sections run while the entity chain does. When both fail (a
+    # missing index fails every section), the side sections' error must be
+    # consumed with the chain's, not logged later as "exception was never
+    # retrieved".
+    strategy, _, _ = _make_strategy(config)
+
+    async def missing_index(*_args: object) -> list[RetrievalResult]:
+        raise IndexNotFoundError("no index")
+
+    async def chain_fails_later(*_args: object) -> object:
+        await asyncio.sleep(0.01)
+        raise IndexNotFoundError("no index")
+
+    strategy._retrieve_community_reports = missing_index  # type: ignore[method-assign]
+    strategy._retrieve_entity_chain = chain_fails_later  # type: ignore[method-assign]
+    unretrieved: list[dict[str, object]] = []
+    loop = asyncio.get_running_loop()
+    previous = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: unretrieved.append(context))
+    try:
+        raised = False
+        try:
+            await strategy.asearch(_query())
+        except IndexNotFoundError:
+            raised = True
+        assert raised
+        await asyncio.sleep(0)
+        gc.collect()
+    finally:
+        loop.set_exception_handler(previous)
+    assert unretrieved == []
