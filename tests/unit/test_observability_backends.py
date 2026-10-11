@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import sys
 import types
 from collections.abc import Iterator
 from typing import Any
+from unittest import mock
 
 import pytest
 from opentelemetry.sdk.trace import ReadableSpan
@@ -75,15 +77,22 @@ def no_global_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(otel.trace, "set_tracer_provider", _refuse)
 
 
+def _with_env(env: dict[str, str], build: Any, *args: Any, **kwargs: Any) -> Any:
+    """``build(*args, **kwargs)`` with exactly ``env`` as the environment."""
+    with mock.patch.dict(os.environ, env, clear=True):
+        return build(*args, **kwargs)
+
+
 def _install(
     backend: str, environ: dict[str, str] | None = None, **settings: Any
 ) -> tuple[InMemorySpanExporter, otel.OTelTracerBackend]:
     exporter = InMemorySpanExporter()
     config = _config(backend, **settings)
-    tracer = otel.build_backend(
+    tracer = _with_env(
+        _LANGFUSE_ENV if environ is None else environ,
+        otel.build_backend,
         config,
         span_exporter=exporter,
-        environ=_LANGFUSE_ENV if environ is None else environ,
     )
     observability.install(
         tracer,
@@ -249,8 +258,8 @@ def test_backend_builds_a_bounded_otlp_exporter_without_logging_secrets(
 ) -> None:
     monkeypatch.setattr(otel.trace, "set_tracer_provider", lambda provider: None)
     with caplog.at_level(logging.DEBUG):
-        tracer = otel.build_backend(
-            _config(backend, export_timeout_seconds=3), environ=env
+        tracer = _with_env(
+            env, otel.build_backend, _config(backend, export_timeout_seconds=3)
         )
     tracer.shutdown()
     (kwargs,) = fake_otlp
@@ -276,8 +285,8 @@ def test_grpc_protocol_selects_the_grpc_exporter(
         "opentelemetry.exporter.otlp.proto.grpc.trace_exporter"
     ].OTLPSpanExporter = _Grpc  # type: ignore[attr-defined]
     monkeypatch.setattr(otel.trace, "set_tracer_provider", lambda provider: None)
-    tracer = otel.build_backend(
-        _config("phoenix"), environ={"OTEL_EXPORTER_OTLP_PROTOCOL": "grpc"}
+    tracer = _with_env(
+        {"OTEL_EXPORTER_OTLP_PROTOCOL": "grpc"}, otel.build_backend, _config("phoenix")
     )
     tracer.shutdown()
     assert calls == ["grpc"]
@@ -497,8 +506,8 @@ def test_content_is_redacted_at_capture_on_every_backend(
     build = otel.build_backend
 
     def _in_memory(config: ObservabilityConfig, tracer_provider: Any = None) -> Any:
-        return build(
-            config, span_exporter=InMemorySpanExporter(), environ=_LANGFUSE_ENV
+        return _with_env(
+            _LANGFUSE_ENV, build, config, span_exporter=InMemorySpanExporter()
         )
 
     monkeypatch.setattr(otel, "build_backend", _in_memory)
@@ -528,7 +537,7 @@ def test_word_boundary_pattern_next_to_a_newline_is_redacted(
     build = otel.build_backend
 
     def _in_memory(config: ObservabilityConfig, tracer_provider: Any = None) -> Any:
-        return build(config, span_exporter=exporter, environ=_LANGFUSE_ENV)
+        return _with_env(_LANGFUSE_ENV, build, config, span_exporter=exporter)
 
     monkeypatch.setattr(otel, "build_backend", _in_memory)
     configure_observability(

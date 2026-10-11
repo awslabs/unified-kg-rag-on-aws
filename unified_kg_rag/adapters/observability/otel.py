@@ -203,7 +203,6 @@ def build_backend(
     tracer_provider: Any | None = None,
     *,
     span_exporter: Any | None = None,
-    environ: Mapping[str, str] | None = None,
 ) -> OTelTracerBackend:
     """The tracer backend ``config`` asks for.
 
@@ -212,10 +211,10 @@ def build_backend(
     with the backend, and no vendor mapping or redaction is added to it.
     ``span_exporter`` replaces the OTLP exporter of an exporting backend
     (tests use an in-memory one) while keeping its sampler, batching, vendor
-    mapping and redaction; the provider is then not made global.
-    ``environ`` defaults to ``os.environ``.
+    mapping and redaction; the provider is then not made global. The
+    OpenTelemetry environment variables are read from ``os.environ``.
     """
-    env = os.environ if environ is None else environ
+    env = os.environ
     owned: Any | None = None
     if tracer_provider is not None:
         provider = tracer_provider
