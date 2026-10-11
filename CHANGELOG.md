@@ -251,6 +251,10 @@ Library API (Python callers and custom backends).
   does not run, no claim is indexed; the unresolved claims (no subject or
   object id) no longer reach the graph, the claims index or the document
   lineage (#PR).
+- An entity named only inside a relationship is created under the
+  relationship's index suffix and filters, so the edge write no longer fails
+  (and the document is no longer retried forever) when ingesting with
+  `index_value` (#PR).
 - Parsing: the LLM XML parser keeps `&`, `<`, repeated siblings and
   sections with a missing closing tag; truncated responses fail instead of
   parsing as partial successes (#165, #174, #182, #213).
