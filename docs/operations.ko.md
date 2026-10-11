@@ -48,7 +48,7 @@ CDK 스택에서 `start-execution` 한 번은 네 단계를 차례로 실행하�
 자동화가) `start-execution`을 호출할 때만 실행이 시작되지만, 상태 머신은 실행
 중에 두 번째 실행이 시작되는 것을 막지 않습니다. 먼저 위 명령으로 `RUNNING`
 실행이 있는지 확인하고 실행이 겹치지 않게 합니다. 일정을 추가한다면 이전 실행이
-아직 돌고 있을 수 있는 동안(상태 머신 제한 시간 6시간까지)에는 실행되지 않게
+아직 돌고 있을 수 있는 동안(상태 머신 제한 시간 `sfn_timeout_hours`, 기본 6시간까지)에는 실행되지 않게
 설정합니다.
 
 ## 다시 수집하기
@@ -191,12 +191,13 @@ OpenSearch나 Neptune에 쓰는 데 실패하면 그 문서는 `FAILED`로 기�
 넘으면 인덱싱 단계가 실패하고 문서를 기록하지 않으므로, 다음 실행이 다시
 시도합니다. 그 이하이면 실행은 성공하고, 실패한 산출물을 가진 문서만 `FAILED`로
 기록됩니다. 백엔드가 항목 ID 없이 보고한 실패가 있으면 그 실행의 모든 문서를
-`FAILED`로 기록합니다. CDK 스택에서는 다음 세 경보가 SNS 토픽으로 문제를
+`FAILED`로 기록합니다. CDK 스택에서는 다음 네 경보가 SNS 토픽으로 문제를
 알립니다.
 
 | 경보 | 발생 조건 |
 |---|---|
 | `PipelineFailures` | Step Functions 실행이 실패함 |
+| `PipelineTimedOutOrAborted` | 실행이 상태 머신 제한 시간을 넘겼거나 중지됨 |
 | `IndexingFailures` | 실행이 성공했더라도 인덱싱에서 실패한 항목이 있음 |
 | `ExtractionFailures` | 추출, gleaning, 주장 추출이 일부 텍스트 단위에서 실패함 |
 
@@ -218,6 +219,59 @@ CDK 캐시 버킷은 `pipeline-runs/`와 `embedding-cache/` 아래의 객체만 
 
 `pipeline_id`는 캐시 디렉터리와 S3 접두사 이름이 되므로 영문 소문자, 숫자,
 하이픈, 밑줄만 쓸 수 있습니다.
+
+## OpenSearch 복제본
+
+CDK 스택에서 다중 노드 도메인(`opensearch_count` > 1, dev가 아닌 환경의 기본값)은
+인덱스마다 복제본을 하나 두므로 노드나 AZ 하나를 잃어도 모든 샤드를 쓸 수
+있습니다. 단일 노드인 dev 도메인은 복제본이 없습니다. 컴퓨트 스택이 설정하는
+`OPENSEARCH_NUMBER_OF_REPLICAS`가 인덱스를 만들 때
+`indexing.opensearch.index_settings.number_of_replicas`를 덮어씁니다. 그 전에
+만든 인덱스는 복제본 수가 그대로이므로 VPC 안에서 한 번 설정합니다.
+
+```bash
+curl -X PUT "https://<OpenSearch endpoint>/_all/_settings" \
+  --aws-sigv4 "aws:amz:<region>:es" --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
+  -H "x-amz-security-token: $AWS_SESSION_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"index": {"number_of_replicas": 1}}'
+```
+
+## 백업과 복원
+
+세 저장소는 백업 주기가 다르고 내용이 서로를 참조합니다(레지스트리가 문서별
+그래프·인덱스 산출물을 기록함). 따라서 세 저장소를 같은 시점으로 함께 복원하거나
+아예 복원하지 않습니다.
+
+| 저장소 | 백업 | 보존 기간 |
+|---|---|---|
+| Neptune | 자동 백업, 특정 시점 복원 | `backup_retention_days`(기본 7일) |
+| OpenSearch | 매시간 자동 스냅샷(`cs-automated-enc` 저장소) | 14일 |
+| DynamoDB 문서 상태 테이블 | 특정 시점 복구(PITR) | 35일 |
+| S3 캐시 버킷 | 없음(버전 관리 없음, 단계 체크포인트는 다시 만들 수 있음) | — |
+
+S3의 코퍼스가 원본이므로 모든 저장소는 코퍼스에서 다시 만들 수 있습니다.
+
+**Neptune 보존 기간 안이면** 세 저장소를 같은 시점으로 복원합니다.
+
+1. 복원하는 동안 쓰기가 없도록 수집을 멈춥니다(`RUNNING` 실행 없음).
+2. 마지막 수집 실행이 끝난 뒤 만들어진 OpenSearch 스냅샷을 고르고
+   (`GET _snapshot/cs-automated-enc/_all`), 그 시작 시각을 복원 시점으로 씁니다.
+3. Neptune은 `aws neptune restore-db-cluster-to-point-in-time`, 테이블은
+   `aws dynamodb restore-table-to-point-in-time`으로 그 시점에 복원합니다. 둘 다
+   기본 설정의 *새* 리소스를 만듭니다(Neptune 클러스터에 인스턴스를 추가하고,
+   테이블의 PITR과 삭제 방지를 다시 켭니다).
+4. 도메인의 현재 인덱스를 삭제한 뒤 스냅샷의 인덱스와 별칭을 복원합니다
+   (`POST _snapshot/cs-automated-enc/<snapshot>/_restore`).
+5. 데이터 플레인이 복원한 클러스터 엔드포인트와 테이블을 쓰도록 바꿉니다
+   (`NEPTUNE_ENDPOINT`, `GRAPHRAG_DOC_STATUS_TABLE`). 태스크 역할, DynamoDB
+   게이트웨이 엔드포인트 정책과 경보는 스택의 클러스터와 테이블로 범위가
+   정해져 있으므로 복원한 리소스에도 권한을 줍니다.
+
+**Neptune 보존 기간을 지났거나** 5단계를 할 만한 가치가 없으면 공통 시점이 없으므로
+`indexing.reset: true`로 전체를 한 번 다시 만듭니다([다시 수집하기](#다시-수집하기)
+참고). 이 인덱스 네임스페이스의 저장소와 레지스트리 레코드를 지우고 코퍼스 전체를
+다시 인덱싱합니다. 다른 네임스페이스가 테이블을 함께 쓸 때만 테이블을 먼저
+복원합니다.
 
 ## 시작 시 엔드포인트 검사
 

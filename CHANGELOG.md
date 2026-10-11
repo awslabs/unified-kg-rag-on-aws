@@ -13,6 +13,11 @@ Amazon Bedrock, Neptune, OpenSearch, and DynamoDB. Entries marked
 **Breaking** change configuration, stored index data, or a public interface.
 
 ### Added
+- Operations runbook: "Backup and restore" (the three stores' backup
+  windows, restoring all of them to one point inside Neptune's window, and a
+  full `indexing.reset` rebuild outside it) and "OpenSearch replicas" (the
+  one-off `PUT _settings` for indices created before the replica override)
+  (#PR).
 - CDK context keys `sfn_timeout_hours` (state machine timeout, default 6),
   `opensearch_volume_gib` (data-node volume, default 50; the free-storage
   alarm threshold follows it) and `guardrail_version` (injected as the new
